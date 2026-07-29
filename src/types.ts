@@ -44,8 +44,15 @@ export interface ExecLogger {
 
 export interface ExecContext {
   logger: ExecLogger;
-  /** 通过智能体 id 调用 LLM，多协议路由由内部完成 */
-  llm(agentId: string, messages: ChatMessage[]): Promise<string>;
+  /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
+   * 传入 onToken 回调即启用流式输出（逐 token 回传）。 */
+  llm(
+    agentId: string,
+    messages: ChatMessage[],
+    onToken?: (text: string) => void,
+  ): Promise<string>;
+  /** 执行中实时回写当前节点的某输出端口，用于流式预览 */
+  setPartial(key: string, value: unknown): void;
   storage: {
     get(key: string): Promise<string | null>;
     set(key: string, value: string): Promise<void>;

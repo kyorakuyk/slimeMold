@@ -28,6 +28,8 @@ export default function TopBar({
   const running = useWorkflowStore((s) => s.running);
   const failFast = useWorkflowStore((s) => s.failFast);
   const setFailFast = useWorkflowStore((s) => s.setFailFast);
+  const maxConcurrency = useWorkflowStore((s) => s.maxConcurrency);
+  const setMaxConcurrency = useWorkflowStore((s) => s.setMaxConcurrency);
   const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
 
   return (
@@ -73,6 +75,19 @@ export default function TopBar({
           onChange={(e) => setFailFast(e.target.checked)}
         />
         失败即停
+      </label>
+
+      <span className="mx-1 h-4 w-px bg-line" />
+      <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-ink-faint">
+        并发
+        <input
+          type="number"
+          min={1}
+          max={20}
+          className="w-12 rounded border border-line bg-transparent px-1 py-0.5 text-center text-xs text-ink outline-none focus:border-accent-soft"
+          value={maxConcurrency}
+          onChange={(e) => setMaxConcurrency(Number(e.target.value))}
+        />
       </label>
 
       <button className="sm-btn" onClick={onOpenAgents}>

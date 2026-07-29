@@ -41,9 +41,10 @@ const BaseNode = memo(({ data, selected }: NodeProps<FlowNode>) => {
     })
     .filter(Boolean) as string[];
 
+  // 任意节点在执行中/完成后都展示首个输出端口的实时预览（流式输出可见）
   const previewValue =
-    data.typeId === 'output.preview' && data.outputs
-      ? summarize(data.outputs.value, 140)
+    data.outputs && Object.keys(data.outputs).length > 0
+      ? summarize(Object.values(data.outputs)[0], data.typeId === 'output.preview' ? 140 : 90)
       : null;
 
   return (

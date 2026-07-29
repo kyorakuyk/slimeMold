@@ -61,7 +61,11 @@ const agentChat: NodeDefinition = {
     if (system) messages.push({ role: 'system' as const, content: system });
     messages.push({ role: 'user' as const, content: prompt });
     ctx.logger.info(`智能体请求，prompt ${prompt.length} 字`);
-    const text = await ctx.llm(agentId, messages);
+    let acc = '';
+    const text = await ctx.llm(agentId, messages, (delta) => {
+      acc += delta;
+      ctx.setPartial('text', acc);
+    });
     return { text };
   },
 };

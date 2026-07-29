@@ -28,6 +28,8 @@ interface WorkflowState {
   selectedNodeId: string | null;
   running: boolean;
   failFast: boolean;
+  /** LLM 并发上限：同一时刻最多进行的智能体请求数 */
+  maxConcurrency: number;
   logs: LogEntry[];
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
@@ -51,6 +53,7 @@ interface WorkflowState {
   setSelected: (id: string | null) => void;
   setRunning: (running: boolean) => void;
   setFailFast: (v: boolean) => void;
+  setMaxConcurrency: (v: number) => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
 
@@ -83,6 +86,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       selectedNodeId: null,
       running: false,
       failFast: true,
+      maxConcurrency: 3,
       logs: [],
 
       onNodesChange: (changes) =>
@@ -174,6 +178,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       setSelected: (id) => set({ selectedNodeId: id }),
       setRunning: (running) => set({ running }),
       setFailFast: (v) => set({ failFast: v }),
+      setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),
 
       addLog: (level, message) =>
         set({
@@ -213,6 +218,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         edges: s.edges,
         agents: s.agents,
         failFast: s.failFast,
+        maxConcurrency: s.maxConcurrency,
       }),
     },
   ),

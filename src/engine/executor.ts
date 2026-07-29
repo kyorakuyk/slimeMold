@@ -4,6 +4,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { chatWithAgent } from '../agents/agentManager';
 import { scopedStorage } from '../platform/env';
+import { Semaphore, withRetry } from './rateLimiter';
 
 let currentAbort: AbortController | null = null;
 
@@ -53,7 +54,13 @@ export async function runWorkflow(): Promise<void> {
   const signal = currentAbort.signal;
   wf.setRunning(true);
   wf.resetStatuses();
-  wf.addLog('info', `开始执行「${wf.workflowName}」，共 ${nodes.length} 个节点、${layers.length} 层`);
+
+  // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行
+  const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
+  const MAX_RETRIES = 3;
+  const RETRY_BASE_MS = 800;
+
+  wf.addLog('info', `开始执行「${wf.workflowName}」，共 ${nodes.length} 个节点、${layers.length} 层，并发上限 ${wf.maxConcurrency ?? 3}`);
 
   const outputsMap = new Map<string, Record<string, unknown>>();
   const failed = new Set<string>();
@@ -64,7 +71,9 @@ export async function runWorkflow(): Promise<void> {
     if (signal.aborted) break;
     // 同层节点相互独立，可并行调度（瓶颈在 LLM I/O）
     await Promise.all(
-      layer.map((id) => executeNode(id, nodeById, edges, outputsMap, failed, signal)),
+      layer.map((id) =>
+        executeNode(id, nodeById, edges, outputsMap, failed, signal, limiter, MAX_RETRIES, RETRY_BASE_MS),
+      ),
     );
     if (failFast && failed.size > 0) {
       currentAbort.abort();
@@ -92,6 +101,9 @@ async function executeNode(
   outputsMap: Map<string, Record<string, unknown>>,
   failed: Set<string>,
   signal: AbortSignal,
+  limiter: Semaphore,
+  MAX_RETRIES: number,
+  RETRY_BASE_MS: number,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -120,12 +132,37 @@ async function executeNode(
       info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
       error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages) => {
+    llm: async (agentId, messages, onToken) => {
       const agent = useWorkflowStore
         .getState()
         .agents.find((a) => a.id === agentId);
       if (!agent) throw new Error(`智能体不存在: ${agentId}`);
-      return chatWithAgent(agent, messages, signal);
+      // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
+      const release = await limiter.acquire();
+      try {
+        return await withRetry(
+          () => chatWithAgent(agent, messages, signal, onToken),
+          {
+            retries: MAX_RETRIES,
+            baseDelay: RETRY_BASE_MS,
+            signal,
+            onRetry: (msg, delay, attempt) =>
+              store.addLog(
+                'error',
+                `[${node.data.label}] 限流重试(${attempt}/${MAX_RETRIES})：${msg}，等待 ${delay}ms`,
+              ),
+          },
+        );
+      } finally {
+        release();
+      }
+    },
+    setPartial: (key, value) => {
+      const cur =
+        useWorkflowStore.getState().nodes.find((n) => n.id === id)?.data.outputs ?? {};
+      useWorkflowStore.getState().setNodeStatus(id, 'running', {
+        outputs: { ...cur, [key]: value },
+      });
     },
     storage: scopedStorage(def.pluginId ?? 'core'),
   };

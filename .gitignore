@@ -17,5 +17,5 @@ src-tauri/gen/schemas
 /token
 
 # CodeBuddy
-.codebuddy
+#.codebuddy
 

@@ -5,24 +5,31 @@ import { chatOllama } from './providers/ollama';
 
 const providers: Record<
   Protocol,
-  (a: AgentConfig, m: ChatMessage[], s: AbortSignal) => Promise<string>
+  (
+    a: AgentConfig,
+    m: ChatMessage[],
+    s: AbortSignal,
+    onToken?: (text: string) => void,
+  ) => Promise<string>
 > = {
   openai: chatOpenAI,
   anthropic: chatAnthropic,
   ollama: chatOllama,
 };
 
-/** 多协议路由：按 agent.protocol 分发到对应 provider */
+/** 多协议路由：按 agent.protocol 分发到对应 provider。
+ * 传入 onToken 回调即启用流式输出（逐 token 回传）。 */
 export async function chatWithAgent(
   agent: AgentConfig,
   messages: ChatMessage[],
   signal: AbortSignal,
+  onToken?: (text: string) => void,
 ): Promise<string> {
   const provider = providers[agent.protocol];
   if (!provider) {
     throw new Error(`未知协议: ${agent.protocol}`);
   }
-  return provider(agent, messages, signal);
+  return provider(agent, messages, signal, onToken);
 }
 
 export const protocolDefaults: Record<
