@@ -1,0 +1,25 @@
+{
+  "id": "example.word-counter",
+  "name": "字数统计",
+  "version": "0.1.0",
+  "description": "示例插件：统计输入文本的字符数与词数，并输出统计报告",
+  "entry": "index.js",
+  "nodes": [
+    {
+      "typeId": "example.word-counter.count",
+      "name": "字数统计",
+      "category": "插件·示例",
+      "description": "统计文本的字符数、行数与词数",
+      "inputs": [{ "id": "text", "label": "文本" }],
+      "outputs": [{ "id": "report", "label": "统计报告" }],
+      "params": [
+        {
+          "key": "prefix",
+          "label": "报告前缀",
+          "type": "text",
+          "default": "统计结果"
+        }
+      ]
+    }
+  ]
+}

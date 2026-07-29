@@ -1,0 +1,96 @@
+import {
+  FilePlus2,
+  FolderOpen,
+  Save,
+  Play,
+  Square,
+  Bot,
+  Puzzle,
+  PanelLeft,
+} from 'lucide-react';
+import { useWorkflowStore } from '../store/workflowStore';
+import { runWorkflow, stopWorkflow } from '../engine/executor';
+import { exportWorkflow, importWorkflow } from '../io/workflowIO';
+
+interface TopBarProps {
+  onToggleSidebar: () => void;
+  onOpenAgents: () => void;
+  onOpenPlugins: () => void;
+}
+
+export default function TopBar({
+  onToggleSidebar,
+  onOpenAgents,
+  onOpenPlugins,
+}: TopBarProps) {
+  const workflowName = useWorkflowStore((s) => s.workflowName);
+  const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
+  const running = useWorkflowStore((s) => s.running);
+  const failFast = useWorkflowStore((s) => s.failFast);
+  const setFailFast = useWorkflowStore((s) => s.setFailFast);
+  const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
+
+  return (
+    <header className="fixed left-0 right-0 top-0 z-30 flex h-11 items-center gap-2 border-b border-line bg-white px-3">
+      <button
+        className="sm-btn border-transparent px-1.5"
+        title="收起/展开节点面板"
+        onClick={onToggleSidebar}
+      >
+        <PanelLeft size={15} />
+      </button>
+
+      <span className="select-none text-[13px] font-semibold tracking-wide text-ink">
+        SlimeMold
+      </span>
+      <span className="mx-1 h-4 w-px bg-line" />
+
+      <input
+        className="w-44 rounded border border-transparent bg-transparent px-2 py-1 text-[13px] text-ink outline-none transition-colors hover:border-line focus:border-accent-soft"
+        value={workflowName}
+        onChange={(e) => setWorkflowName(e.target.value)}
+        placeholder="工作流名称"
+      />
+
+      <span className="mx-1 h-4 w-px bg-line" />
+      <button className="sm-btn" onClick={newWorkflow} title="新建工作流">
+        <FilePlus2 size={14} /> 新建
+      </button>
+      <button className="sm-btn" onClick={() => importWorkflow()} title="从 JSON 导入">
+        <FolderOpen size={14} /> 导入
+      </button>
+      <button className="sm-btn" onClick={() => exportWorkflow()} title="导出为 JSON">
+        <Save size={14} /> 导出
+      </button>
+
+      <div className="flex-1" />
+
+      <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-ink-faint">
+        <input
+          type="checkbox"
+          className="accent-accent"
+          checked={failFast}
+          onChange={(e) => setFailFast(e.target.checked)}
+        />
+        失败即停
+      </label>
+
+      <button className="sm-btn" onClick={onOpenAgents}>
+        <Bot size={14} /> 智能体
+      </button>
+      <button className="sm-btn" onClick={onOpenPlugins}>
+        <Puzzle size={14} /> 插件
+      </button>
+
+      {running ? (
+        <button className="sm-btn text-err hover:border-err hover:text-err" onClick={stopWorkflow}>
+          <Square size={13} /> 停止
+        </button>
+      ) : (
+        <button className="sm-btn sm-btn-primary" onClick={() => runWorkflow()}>
+          <Play size={13} /> 运行
+        </button>
+      )}
+    </header>
+  );
+}

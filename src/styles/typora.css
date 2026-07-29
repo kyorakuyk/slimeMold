@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sm-bg: #ffffff;
+  --sm-bg-soft: #fafafa;
+  --sm-bg-deep: #f5f5f5;
+  --sm-ink: #2b2b2b;
+  --sm-ink-soft: #5c5c5c;
+  --sm-ink-faint: #8a8a8a;
+  --sm-line: #e6e6e6;
+  --sm-accent: #3b82f6;
+  --sm-accent-soft: #5b8def;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--sm-ink);
+  background: var(--sm-bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d9d9d9;
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- React Flow：Typora 式柔和风格 ---------- */
+.react-flow__pane {
+  cursor: default;
+}
+.react-flow__edge-path {
+  stroke: #c9c9c9;
+  stroke-width: 1.6;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--sm-accent-soft);
+}
+.react-flow__connection-path {
+  stroke: var(--sm-accent-soft);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
+}
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  background: #ffffff;
+  border: 1.5px solid #b9b9b9;
+  border-radius: 50%;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.react-flow__handle:hover,
+.react-flow__handle.connectionindicator {
+  border-color: var(--sm-accent);
+  background: #eaf2ff;
+  transform: scale(1.2);
+}
+.react-flow__node {
+  font-family: inherit;
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__controls {
+  border: 1px solid var(--sm-line);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: none;
+}
+.react-flow__controls-button {
+  background: #ffffff;
+  border-bottom: 1px solid var(--sm-line);
+  color: var(--sm-ink-soft);
+}
+.react-flow__controls-button:hover {
+  background: var(--sm-bg-soft);
+}
+.react-flow__minimap {
+  border: 1px solid var(--sm-line);
+  border-radius: 6px;
+}
+
+/* 运行中指示器 */
+@keyframes sm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sm-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid #c9dcff;
+  border-top-color: var(--sm-accent);
+  border-radius: 50%;
+  animation: sm-spin 0.7s linear infinite;
+}
+
+/* 输入控件统一样式（Typora 式低干扰） */
+.sm-input {
+  @apply w-full rounded border border-line bg-white px-2 py-1.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-accent-soft;
+  box-shadow: none;
+}
+textarea.sm-input {
+  @apply resize-y leading-relaxed;
+  min-height: 64px;
+}
+.sm-btn {
+  @apply inline-flex cursor-pointer items-center gap-1.5 rounded border border-line bg-white px-2.5 py-1 text-[13px] text-ink-soft transition-colors hover:border-accent-soft hover:text-accent;
+}
+.sm-btn:disabled {
+  @apply cursor-not-allowed opacity-50 hover:border-line hover:text-ink-soft;
+}
+.sm-btn-primary {
+  @apply border-accent bg-accent text-white hover:border-accent hover:bg-accent-soft hover:text-white;
+}
