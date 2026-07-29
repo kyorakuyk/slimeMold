@@ -12,3 +12,10 @@ src-tauri/gen/schemas
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# Token & secrets
+/token
+
+# CodeBuddy
+.codebuddy
+
