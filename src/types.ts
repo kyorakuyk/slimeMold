@@ -58,6 +58,8 @@ export interface ExecContext {
     set(key: string, value: string): Promise<void>;
   };
   signal: AbortSignal;
+  /** 全局变量（可在 {{}} 模板与表达式中引用） */
+  vars: Record<string, unknown>;
 }
 
 export type NodeExecuteFn = (
@@ -118,6 +120,29 @@ export interface WorkflowFile {
   nodes: WorkflowFileNode[];
   edges: WorkflowFileEdge[];
   agents: AgentConfig[];
+  /** 全局变量（随工作流一起保存/加载） */
+  variables?: Record<string, unknown>;
+}
+
+/* ---------- 运行历史 ---------- */
+export interface RunNodeResult {
+  id: string;
+  label: string;
+  typeId: string;
+  status: NodeStatus;
+  outputs: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface RunRecord {
+  id: string;
+  name: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  status: 'success' | 'error' | 'aborted';
+  nodeCount: number;
+  nodes: RunNodeResult[];
 }
 
 /* ---------- 插件 ---------- */

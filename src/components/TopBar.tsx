@@ -7,6 +7,8 @@ import {
   Bot,
   Puzzle,
   PanelLeft,
+  Variable,
+  History,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
@@ -16,12 +18,16 @@ interface TopBarProps {
   onToggleSidebar: () => void;
   onOpenAgents: () => void;
   onOpenPlugins: () => void;
+  onOpenVariables: () => void;
+  onOpenHistory: () => void;
 }
 
 export default function TopBar({
   onToggleSidebar,
   onOpenAgents,
   onOpenPlugins,
+  onOpenVariables,
+  onOpenHistory,
 }: TopBarProps) {
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
@@ -95,6 +101,12 @@ export default function TopBar({
       </button>
       <button className="sm-btn" onClick={onOpenPlugins}>
         <Puzzle size={14} /> 插件
+      </button>
+      <button className="sm-btn" onClick={onOpenVariables} title="全局变量">
+        <Variable size={14} /> 变量
+      </button>
+      <button className="sm-btn" onClick={onOpenHistory} title="运行历史">
+        <History size={14} /> 历史
       </button>
 
       {running ? (

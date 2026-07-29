@@ -1,15 +1,20 @@
 import type { NodeDefinition } from '../types';
 import { httpFetch } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
+import { evalExpr } from '../engine/expr';
 
-/** 将模板中的 {{key}} 替换为 inputs/params 值 */
+/** 将模板中的 {{key}} 替换为 scope 中的值（对象会 JSON 序列化） */
 function renderTemplate(
   template: string,
-  values: Record<string, unknown>,
+  scope: Record<string, unknown>,
 ): string {
   return template.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => {
-    const v = values[key];
-    return v === undefined || v === null ? '' : String(v);
+    const v = scope[key];
+    return v === undefined || v === null
+      ? ''
+      : typeof v === 'object'
+        ? JSON.stringify(v)
+        : String(v);
   });
 }
 
@@ -89,9 +94,9 @@ const template: NodeDefinition = {
       placeholder: '使用 {{a}}、{{b}} 引用输入端口…',
     },
   ],
-  async execute(inputs, params) {
+  async execute(inputs, params, ctx) {
     return {
-      text: renderTemplate(String(params.template ?? ''), inputs),
+      text: renderTemplate(String(params.template ?? ''), { ...ctx.vars, ...inputs }),
     };
   },
 };
@@ -151,12 +156,181 @@ const preview: NodeDefinition = {
   },
 };
 
+const listNode: NodeDefinition = {
+  typeId: 'flow.list',
+  name: '构造列表',
+  category: '流程',
+  description: '将文本按分隔方式拆分为数组 items，供循环批处理 / 合并文本节点使用',
+  inputs: [],
+  outputs: [{ id: 'items', label: '列表' }],
+  params: [
+    {
+      key: 'text',
+      label: '文本',
+      type: 'textarea',
+      default: '',
+      placeholder: '每行一个元素…',
+    },
+    {
+      key: 'split',
+      label: '分隔方式',
+      type: 'select',
+      default: 'newline',
+      options: [
+        { label: '换行', value: 'newline' },
+        { label: '逗号', value: 'comma' },
+        { label: '空格', value: 'space' },
+        { label: '指定字符', value: 'char' },
+      ],
+    },
+    { key: 'sep', label: '分隔字符（分隔方式=指定字符 时生效）', type: 'text', default: ',' },
+  ],
+  async execute(_inputs, params) {
+    const text = String(params.text ?? '');
+    const split = String(params.split ?? 'newline');
+    let items: string[];
+    if (split === 'newline') items = text.split(/\r?\n/);
+    else if (split === 'comma') items = text.split(',');
+    else if (split === 'space') items = text.split(/\s+/);
+    else items = text.split(String(params.sep ?? ','));
+    items = items.map((s) => s.trim()).filter((s) => s.length > 0);
+    return { items };
+  },
+};
+
+const mapNode: NodeDefinition = {
+  typeId: 'flow.map',
+  name: '循环批处理',
+  category: '流程',
+  description:
+    '对输入 items 数组逐项处理，输出 results 数组。支持「模板」模式（{{item}}/{{index}} 渲染）或「智能体」模式（逐项调用 LLM）',
+  inputs: [{ id: 'items', label: '列表' }],
+  outputs: [{ id: 'results', label: '结果' }],
+  params: [
+    {
+      key: 'mode',
+      label: '处理模式',
+      type: 'select',
+      default: 'template',
+      options: [
+        { label: '模板', value: 'template' },
+        { label: '智能体', value: 'agent' },
+      ],
+    },
+    {
+      key: 'template',
+      label: '模板（{{item}} 当前项 / {{index}} 序号）',
+      type: 'textarea',
+      default: '{{item}}',
+      placeholder: '例如：第{{index}}项：{{item}}',
+    },
+    { key: 'agentId', label: '智能体（智能体模式）', type: 'agent', default: '' },
+    {
+      key: 'prompt',
+      label: '提示词模板（{{item}} 为当前项）',
+      type: 'textarea',
+      default: '',
+      placeholder: '请处理：{{item}}',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const raw = inputs.items;
+    const arr: unknown[] = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+        : [];
+    const mode = String(params.mode ?? 'template');
+    const results: unknown[] = [];
+    if (mode === 'agent') {
+      const agentId = String(params.agentId ?? '');
+      if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择');
+      const promptTpl = String(params.prompt ?? '{{item}}');
+      let idx = 0;
+      for (const item of arr) {
+        if (ctx.signal.aborted) throw new Error('已中止');
+        const prompt = renderTemplate(promptTpl, { ...ctx.vars, item, index: idx });
+        let acc = '';
+        const text = await ctx.llm(
+          agentId,
+          [{ role: 'user', content: prompt }],
+          (d) => {
+            acc += d;
+            ctx.setPartial('results', [...results, acc]);
+          },
+        );
+        results.push(acc || text);
+        ctx.setPartial('results', [...results]);
+        idx++;
+      }
+    } else {
+      const tpl = String(params.template ?? '{{item}}');
+      let idx = 0;
+      for (const item of arr) {
+        if (ctx.signal.aborted) throw new Error('已中止');
+        results.push(renderTemplate(tpl, { ...ctx.vars, item, index: idx }));
+        ctx.setPartial('results', [...results]);
+        idx++;
+      }
+    }
+    return { results };
+  },
+};
+
+const joinNode: NodeDefinition = {
+  typeId: 'flow.join',
+  name: '合并文本',
+  category: '流程',
+  description: '将数组 items 用分隔符拼接为文本 text',
+  inputs: [{ id: 'items', label: '列表' }],
+  outputs: [{ id: 'text', label: '文本' }],
+  params: [{ key: 'sep', label: '分隔符', type: 'text', default: '\n' }],
+  async execute(inputs, params) {
+    const arr = Array.isArray(inputs.items) ? inputs.items : [];
+    const sep = String(params.sep ?? '\n');
+    const text = arr
+      .map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x ?? '')))
+      .join(sep);
+    return { text };
+  },
+};
+
+const exprNode: NodeDefinition = {
+  typeId: 'tool.expr',
+  name: '表达式',
+  category: '工具',
+  description:
+    '计算一个安全表达式，可引用输入端口 a/b、全局变量，输出 result。支持 + - * / % 比较 逻辑 三元 及 len/upper/lower/split/join/contains 等函数',
+  inputs: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }],
+  outputs: [{ id: 'result', label: '结果' }],
+  params: [
+    {
+      key: 'expression',
+      label: '表达式',
+      type: 'textarea',
+      default: '',
+      placeholder: '例如：a + b * 2，或 len(a)',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const expr = String(params.expression ?? '').trim();
+    if (!expr) return { result: undefined };
+    const scope = { ...ctx.vars, ...inputs };
+    const result = evalExpr(expr, scope);
+    return { result };
+  },
+};
+
 export const builtinDefs: NodeDefinition[] = [
   textInput,
   agentChat,
   template,
   httpRequest,
   preview,
+  listNode,
+  mapNode,
+  joinNode,
+  exprNode,
 ];
 
 export function registerBuiltins(): void {

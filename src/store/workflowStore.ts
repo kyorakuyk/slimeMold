@@ -14,6 +14,7 @@ import type {
   FlowNode,
   LogEntry,
   NodeStatus,
+  RunRecord,
   WorkflowNodeData,
 } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
@@ -31,6 +32,10 @@ interface WorkflowState {
   /** LLM 并发上限：同一时刻最多进行的智能体请求数 */
   maxConcurrency: number;
   logs: LogEntry[];
+  /** 全局变量（可在 {{}} 模板与表达式中引用），随工作流保存 */
+  variables: Record<string, unknown>;
+  /** 历史运行记录（持久化） */
+  runHistory: RunRecord[];
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
@@ -56,6 +61,11 @@ interface WorkflowState {
   setMaxConcurrency: (v: number) => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
+
+  setVariable: (key: string, value: unknown) => void;
+  removeVariable: (key: string) => void;
+  pushRunHistory: (rec: RunRecord) => void;
+  clearRunHistory: () => void;
 
   setWorkflowName: (name: string) => void;
   loadGraph: (
@@ -88,6 +98,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       failFast: true,
       maxConcurrency: 3,
       logs: [],
+      variables: {},
+      runHistory: [],
 
       onNodesChange: (changes) =>
         set({ nodes: applyNodeChanges(changes, get().nodes) }),
@@ -189,6 +201,19 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
       clearLogs: () => set({ logs: [] }),
 
+      setVariable: (key, value) => {
+        if (!key) return;
+        set({ variables: { ...get().variables, [key]: value } });
+      },
+      removeVariable: (key) => {
+        const next = { ...get().variables };
+        delete next[key];
+        set({ variables: next });
+      },
+      pushRunHistory: (rec) =>
+        set({ runHistory: [rec, ...get().runHistory].slice(0, 30) }),
+      clearRunHistory: () => set({ runHistory: [] }),
+
       setWorkflowName: (name) => set({ workflowName: name }),
 
       loadGraph: (name, nodes, edges, agents) =>
@@ -219,6 +244,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         agents: s.agents,
         failFast: s.failFast,
         maxConcurrency: s.maxConcurrency,
+        variables: s.variables,
+        runHistory: s.runHistory,
       }),
     },
   ),

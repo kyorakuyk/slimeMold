@@ -1,7 +1,10 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { RotateCcw } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
+import { useWorkflowStore } from '../../store/workflowStore';
+import { retryNode } from '../../engine/executor';
 
 function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
   if (status === 'running') return <span className="sm-spinner" />;
@@ -25,8 +28,9 @@ function summarize(value: unknown, max = 90): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-const BaseNode = memo(({ data, selected }: NodeProps<FlowNode>) => {
+const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
+  const running = useWorkflowStore((s) => s.running);
   const missing = !def || def.missing;
   const inputs = def?.inputs ?? [];
   const outputs = def?.outputs ?? [];
@@ -130,6 +134,20 @@ const BaseNode = memo(({ data, selected }: NodeProps<FlowNode>) => {
             <p className="break-all text-[11px] leading-relaxed text-err">{data.error}</p>
           )}
         </div>
+      )}
+
+      {(data.status === 'error' || data.status === 'success') && (
+        <button
+          className="flex w-full items-center justify-center gap-1 border-t border-line py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!running) void retryNode(id);
+          }}
+          disabled={running}
+          title="仅重新执行这个节点（复用上游已有的输出）"
+        >
+          <RotateCcw size={11} /> 重新执行此节点
+        </button>
       )}
     </div>
   );

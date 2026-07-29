@@ -1,4 +1,4 @@
-import type { ExecContext, FlowEdge, FlowNode } from '../types';
+import type { ExecContext, FlowEdge, FlowNode, RunRecord } from '../types';
 import { topoLayers } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -13,7 +13,7 @@ export function stopWorkflow(): void {
 }
 
 /** 汇集上游输出：edge.targetHandle <- outputs[edge.source][edge.sourceHandle] */
-function collectInputs(
+export function collectInputs(
   nodeId: string,
   edges: FlowEdge[],
   outputsMap: Map<string, Record<string, unknown>>,
@@ -66,6 +66,7 @@ export async function runWorkflow(): Promise<void> {
   const failed = new Set<string>();
   const nodeById = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
   const startAt = performance.now();
+  const startedWall = Date.now();
 
   for (const layer of layers) {
     if (signal.aborted) break;
@@ -90,6 +91,30 @@ export async function runWorkflow(): Promise<void> {
   } else {
     store.addLog('info', `执行完成，全部节点成功（${elapsed}s）`);
   }
+
+  // 记录运行历史（持久化到 localStorage）
+  const nodesNow = useWorkflowStore.getState().nodes;
+  const status: RunRecord['status'] =
+    failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
+  const rec: RunRecord = {
+    id: `run_${Date.now()}`,
+    name: wf.workflowName,
+    startedAt: new Date(startedWall).toISOString(),
+    endedAt: new Date().toISOString(),
+    durationMs: Math.round(performance.now() - startAt),
+    status,
+    nodeCount: nodes.length,
+    nodes: nodesNow.map((n) => ({
+      id: n.id,
+      label: n.data.label,
+      typeId: n.data.typeId,
+      status: n.data.status ?? 'idle',
+      outputs: n.data.outputs ?? null,
+      error: n.data.error ?? null,
+    })),
+  };
+  useWorkflowStore.getState().pushRunHistory(rec);
+
   store.setRunning(false);
   currentAbort = null;
 }
@@ -165,6 +190,7 @@ async function executeNode(
       });
     },
     storage: scopedStorage(def.pluginId ?? 'core'),
+    vars: useWorkflowStore.getState().variables,
   };
 
   store.setNodeStatus(id, 'running');
@@ -181,3 +207,69 @@ async function executeNode(
     store.addLog('error', `[${node.data.label}] 执行失败：${message}`);
   }
 }
+
+/**
+ * 重跑单个失败节点：从当前画布已有的节点输出里收集上游输入，
+ * 单独执行该节点并写回结果，不影响其它节点。
+ */
+export async function retryNode(id: string): Promise<void> {
+  const store = useWorkflowStore.getState();
+  const node = store.nodes.find((n) => n.id === id);
+  if (!node) throw new Error('节点不存在');
+  const def = useRegistryStore.getState().defs[node.data.typeId];
+  if (!def || def.missing) {
+    store.addLog('error', `节点类型 ${node.data.typeId} 缺失，无法重跑`);
+    return;
+  }
+
+  const edges = store.edges;
+  const outputsMap = new Map<string, Record<string, unknown>>();
+  for (const n of store.nodes) {
+    if (n.data.outputs) outputsMap.set(n.id, n.data.outputs);
+  }
+  const inputs = collectInputs(id, edges, outputsMap);
+
+  // 复用正在运行的 AbortController（若有），否则独立信号
+  const signal = currentAbort?.signal ?? new AbortController().signal;
+  const limiter = new Semaphore(1);
+
+  const ctx: ExecContext = {
+    signal,
+    logger: {
+      info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
+      error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
+    },
+    llm: async (agentId, messages, onToken) => {
+      const agent = useWorkflowStore.getState().agents.find((a) => a.id === agentId);
+      if (!agent) throw new Error(`智能体不存在: ${agentId}`);
+      const release = await limiter.acquire();
+      try {
+        return await chatWithAgent(agent, messages, signal, onToken);
+      } finally {
+        release();
+      }
+    },
+    setPartial: (key, value) => {
+      const cur =
+        useWorkflowStore.getState().nodes.find((n) => n.id === id)?.data.outputs ?? {};
+      useWorkflowStore.getState().setNodeStatus(id, 'running', {
+        outputs: { ...cur, [key]: value },
+      });
+    },
+    storage: scopedStorage(def.pluginId ?? 'core'),
+    vars: useWorkflowStore.getState().variables,
+  };
+
+  store.setNodeStatus(id, 'running');
+  store.addLog('info', `[${node.data.label}] 重新执行该节点`);
+  try {
+    const outputs = await def.execute(inputs, node.data.params, ctx);
+    store.setNodeStatus(id, 'success', { outputs: outputs ?? {} });
+    store.addLog('info', `[${node.data.label}] 重跑成功`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    store.setNodeStatus(id, 'error', { error: message });
+    store.addLog('error', `[${node.data.label}] 重跑失败：${message}`);
+  }
+}
+
