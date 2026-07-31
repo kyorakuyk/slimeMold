@@ -435,6 +435,67 @@ const ifNode: NodeDefinition = {
   },
 };
 
+const mergeNode: NodeDefinition = {
+  typeId: 'flow.merge',
+  name: '聚合',
+  category: '流程',
+  description:
+    '将多路上游输入汇聚为一个数组输出，用于把并行或分支的结果重新汇合。未接入的端口忽略；另输出 first（第一个非空输入）便于直接取用单值。',
+  inputs: [
+    { id: 'a', label: '输入 A', type: 'any' },
+    { id: 'b', label: '输入 B', type: 'any' },
+    { id: 'c', label: '输入 C', type: 'any' },
+  ],
+  outputs: [
+    { id: 'items', label: '数组', type: 'list' },
+    { id: 'first', label: '首个', type: 'any' },
+  ],
+  params: [],
+  async execute(inputs) {
+    const present = [inputs.a, inputs.b, inputs.c].filter(
+      (v) => v !== undefined && v !== null && v !== '',
+    );
+    return { items: present, first: present[0] ?? null };
+  },
+};
+
+const delayNode: NodeDefinition = {
+  typeId: 'flow.delay',
+  name: '延迟',
+  category: '流程',
+  description:
+    '等待指定毫秒后透传输入值，用于限速、节流或在分支流程中插入人工观察窗口。受全局中止信号控制，运行中可手动停止。',
+  inputs: [{ id: 'value', label: '数据', type: 'any' }],
+  outputs: [{ id: 'value', label: '数据', type: 'any' }],
+  params: [
+    {
+      key: 'ms',
+      label: '延迟（毫秒）',
+      type: 'number',
+      default: 1000,
+      placeholder: '如 1000 表示等待 1 秒',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const ms = Math.max(0, Number(params.ms ?? 0) || 0);
+    if (ms > 0) {
+      ctx.logger.info(`延迟 ${ms}ms`);
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, ms);
+        ctx.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(t);
+            reject(new Error('已中止'));
+          },
+          { once: true },
+        );
+      });
+    }
+    return { value: inputs.value };
+  },
+};
+
 /** 真值判断：非空、非零、非空字符串/数组/对象 */
 function isTruthy(v: unknown): boolean {
   if (v === null || v === undefined) return false;
@@ -457,6 +518,8 @@ export const builtinDefs: NodeDefinition[] = [
   joinNode,
   exprNode,
   ifNode,
+  mergeNode,
+  delayNode,
 ];
 
 export function registerBuiltins(): void {
