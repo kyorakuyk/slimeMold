@@ -19,6 +19,8 @@ import type {
   RoleTemplate,
   RunRecord,
   WorkflowFile,
+  WorkflowFileNode,
+  WorkflowFileEdge,
   WorkflowNodeData,
 } from '../types';
 import { arePortsCompatible } from '../types';
@@ -34,6 +36,10 @@ interface WorkflowState {
   /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
   roles: RoleTemplate[];
   selectedNodeId: string | null;
+  /** 焦点节点所属工作流 id（拆分视图下，焦点节点可能在非激活工作流中） */
+  focusWfId: string;
+  /** 示例库次级窗口是否打开（UI 状态，不持久化） */
+  examplesOpen: boolean;
   running: boolean;
   failFast: boolean;
   /** LLM 并发上限：同一时刻最多进行的智能体请求数 */
@@ -61,11 +67,11 @@ interface WorkflowState {
   onConnect: (conn: Connection) => void;
 
   addNode: (typeId: string, position: { x: number; y: number }) => void;
-  removeNode: (id: string) => void;
+  removeNode: (id: string, wfId?: string) => void;
   deleteSelected: () => void;
   clearGraph: () => void;
-  updateNodeParams: (id: string, patch: Record<string, unknown>) => void;
-  setNodeLabel: (id: string, label: string) => void;
+  updateNodeParams: (id: string, patch: Record<string, unknown>, wfId?: string) => void;
+  setNodeLabel: (id: string, label: string, wfId?: string) => void;
   setNodeStatus: (
     id: string,
     status: NodeStatus,
@@ -83,7 +89,7 @@ interface WorkflowState {
   upsertRole: (role: RoleTemplate) => void;
   removeRole: (id: string) => void;
 
-  setSelected: (id: string | null) => void;
+  setSelected: (id: string | null, wfId?: string) => void;
   setRunning: (running: boolean) => void;
   setFailFast: (v: boolean) => void;
   setMaxConcurrency: (v: number) => void;
@@ -121,6 +127,11 @@ interface WorkflowState {
   renameWorkflow: (name: string) => void;
   /** 删除一个工作流（至少保留一个） */
   removeWorkflow: (id: string) => void;
+  /** 将指定工作流的图（节点/连线）写回 workflows 字典，保留其余字段（用于拆分视图分栏编辑） */
+  updateWorkflowGraph: (id: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
+
+  /** 打开/关闭示例库次级窗口 */
+  setExamplesOpen: (open: boolean) => void;
 }
 
 function defaultParams(typeId: string): Record<string, unknown> {
@@ -157,6 +168,27 @@ function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
     sourceHandle: e.sourceHandle ?? undefined,
     targetHandle: e.targetHandle ?? undefined,
   }));
+}
+
+/** 画布 FlowNode → 存储轻量节点（拆分视图分栏写回用） */
+function storedNodeOf(n: FlowNode): WorkflowFileNode {
+  return {
+    id: n.id,
+    typeId: n.data.typeId,
+    label: n.data.label,
+    position: { x: n.position.x, y: n.position.y },
+    params: n.data.params ?? {},
+  };
+}
+/** 画布 FlowEdge → 存储轻量连线 */
+function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
+  return {
+    id: e.id,
+    source: e.source,
+    sourceHandle: e.sourceHandle ?? null,
+    target: e.target,
+    targetHandle: e.targetHandle ?? null,
+  };
 }
 
 /** 把当前编辑态序列化为一个 WorkflowFile（用于收纳游离态/写回） */
@@ -201,6 +233,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       agents: [createAgent('ollama')],
       roles: builtinRoles.map((r) => ({ ...r })),
       selectedNodeId: null,
+      focusWfId: '',
+      examplesOpen: false,
       running: false,
       failFast: true,
       maxConcurrency: 3,
@@ -289,49 +323,92 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ nodes: [...get().nodes, node], selectedNodeId: node.id });
       },
 
-      removeNode: (id) =>
+      removeNode: (id, wfId) => {
+        // 未指定 wfId → 作用于当前激活工作流；否则作用于指定工作流（拆分视图分栏）
+        if (wfId && wfId !== get().activeWfId) {
+          const wf = get().workflows[wfId];
+          if (!wf) return;
+          const nodes = (wf.nodes ?? []).filter((n) => n.id !== id);
+          const edges = (wf.edges ?? []).filter((e) => e.source !== id && e.target !== id);
+          set({
+            workflows: { ...get().workflows, [wfId]: { ...wf, nodes, edges } },
+            selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
+          });
+          return;
+        }
         set({
           nodes: get().nodes.filter((n) => n.id !== id),
           edges: get().edges.filter((e) => e.source !== id && e.target !== id),
           selectedNodeId:
             get().selectedNodeId === id ? null : get().selectedNodeId,
-        }),
+        });
+      },
 
       deleteSelected: () => {
         const id = get().selectedNodeId;
         if (!id) return;
-        get().removeNode(id);
+        get().removeNode(id, get().focusWfId);
       },
 
       clearGraph: () =>
         set({ nodes: [], edges: [], selectedNodeId: null, logs: [] }),
 
-      updateNodeParams: (id, patch) => {
-        set({
-          nodes: get().nodes.map((n) =>
-            n.id === id
-              ? { ...n, data: { ...n.data, params: { ...n.data.params, ...patch } } }
-              : n,
-          ),
-        });
-        // 参数变更：该节点及其下游需重新执行
-        get().markDirty(id);
+      updateNodeParams: (id, patch, wfId) => {
+        // 未指定 wfId 或作用于激活工作流
+        if (!wfId || wfId === get().activeWfId) {
+          set({
+            nodes: get().nodes.map((n) =>
+              n.id === id
+                ? { ...n, data: { ...n.data, params: { ...n.data.params, ...patch } } }
+                : n,
+            ),
+          });
+          get().markDirty(id);
+          return;
+        }
+        // 作用于拆分视图中的其他工作流
+        const wf = get().workflows[wfId];
+        if (!wf) return;
+        const nodes = (wf.nodes ?? []).map((n) =>
+          n.id === id ? { ...n, params: { ...(n.params ?? {}), ...patch } } : n,
+        );
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
       },
 
-      setNodeLabel: (id, label) =>
-        set({
-          nodes: get().nodes.map((n) =>
-            n.id === id ? { ...n, data: { ...n.data, label } } : n,
-          ),
-        }),
+      setNodeLabel: (id, label, wfId) => {
+        if (!wfId || wfId === get().activeWfId) {
+          set({
+            nodes: get().nodes.map((n) =>
+              n.id === id ? { ...n, data: { ...n.data, label } } : n,
+            ),
+          });
+          return;
+        }
+        const wf = get().workflows[wfId];
+        if (!wf) return;
+        const nodes = (wf.nodes ?? []).map((n) => (n.id === id ? { ...n, label } : n));
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
+      },
 
       setNodeStatus: (id, status, patch) =>
-        set({
-          nodes: get().nodes.map((n) =>
-            n.id === id
-              ? { ...n, data: { ...n.data, ...patch, status } }
-              : n,
-          ),
+        set((state) => {
+          const nodes = state.nodes.map((n) =>
+            n.id === id ? { ...n, data: { ...n.data, ...patch, status } } : n,
+          );
+          // 运行中：让指向该节点的入边显示流动动画；否则清除
+          const edges = state.edges.map((e) => {
+            if (e.target !== id) return e;
+            const isRunning = status === 'running';
+            const has = (e.className ?? '').split(' ').includes('sm-edge-running');
+            if (isRunning && !has) {
+              return { ...e, className: (e.className ? e.className + ' ' : '') + 'sm-edge-running' };
+            }
+            if (!isRunning && has) {
+              return { ...e, className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' ') };
+            }
+            return e;
+          });
+          return { nodes, edges };
         }),
 
       resetStatuses: () =>
@@ -339,6 +416,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           nodes: get().nodes.map((n) => ({
             ...n,
             data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined },
+          })),
+          edges: get().edges.map((e) => ({
+            ...e,
+            className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' '),
           })),
         }),
 
@@ -402,7 +483,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ roles: get().roles.filter((r) => r.id !== id) });
       },
 
-      setSelected: (id) => set({ selectedNodeId: id }),
+      setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
       setRunning: (running) => set({ running }),
       setFailFast: (v) => set({ failFast: v }),
       setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),
@@ -458,6 +539,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           logs: [],
           // 空画布无需标记，但保持一致性：clearDirty 语义下无任何脏节点
         }),
+
+      setExamplesOpen: (open: boolean) => set({ examplesOpen: open }),
 
       /* ---- 项目层方法实现 ---- */
 
@@ -591,9 +674,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       newWorkflowInProject: () => {
         const s = get();
         const workflows = { ...s.workflows };
-        // 若当前为游离态（无对应工作流），先把现有编辑态收纳为默认工作流
+        // 若当前为游离态（无对应工作流）且已有编辑内容，先把现有编辑态收纳为默认工作流
         let baseActive = s.activeWfId;
-        if (!baseActive) {
+        if (!baseActive && (s.nodes.length || s.edges.length)) {
           baseActive = `wf-${Date.now()}`;
           workflows[baseActive] = serializeCurrent(s);
         }
@@ -636,13 +719,24 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       removeWorkflow: (id) => {
         const s = get();
-        const ids = Object.keys(s.workflows);
-        if (ids.length <= 1) {
-          get().addLog('error', '至少需保留一个工作流');
-          return;
-        }
         const next = { ...s.workflows };
         delete next[id];
+        // 删到零工作流：进入「无激活工作流」状态，画布显示欢迎背景
+        if (Object.keys(next).length === 0) {
+          set({
+            workflows: next,
+            activeWfId: '',
+            workflowName: '',
+            nodes: [],
+            edges: [],
+            agents: [createAgent('ollama')],
+            roles: builtinRoles.map((r) => ({ ...r })),
+            variables: {},
+            selectedNodeId: null,
+            logs: [],
+          });
+          return;
+        }
         if (id === s.activeWfId) {
           const newId = Object.keys(next)[0];
           const wf = next[newId];
@@ -661,6 +755,21 @@ export const useWorkflowStore = create<WorkflowState>()(
         } else {
           set({ workflows: next });
         }
+      },
+      updateWorkflowGraph: (id, nodes, edges) => {
+        const s = get();
+        const wf = s.workflows[id];
+        if (!wf) return;
+        set({
+          workflows: {
+            ...s.workflows,
+            [id]: {
+              ...wf,
+              nodes: nodes.map((n) => storedNodeOf(n)),
+              edges: edges.map((e) => storedEdgeOf(e)),
+            },
+          },
+        });
       },
     }),
     {

@@ -7,6 +7,7 @@ import StatusBar from './components/StatusBar';
 import SettingsModal from './components/SettingsModal';
 import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar';
 import ShortcutsModal from './components/ShortcutsModal';
+import ExamplesModal from './components/ExamplesModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
@@ -17,48 +18,74 @@ import { useViewStore } from './store/viewStore';
 
 registerBuiltins();
 
-/** 拆分视图：在画布右侧并排显示当前工作流的节点概览（辅助视图） */
-function SplitViewPanel() {
-  const nodes = useWorkflowStore((s) => s.nodes);
-  const edges = useWorkflowStore((s) => s.edges);
+/** 拆分视图：左右并排显示两个不同的工作流图，右侧边栏显示焦点节点信息 */
+function SplitCanvas({
+  splitWfId,
+  setSplitWfId,
+}: {
+  splitWfId: string;
+  setSplitWfId: (id: string) => void;
+}) {
+  const workflows = useWorkflowStore((s) => s.workflows);
+  const activeWfId = useWorkflowStore((s) => s.activeWfId);
+  const ids = Object.keys(workflows);
+  // 右侧分栏默认显示「非当前激活」的第一个工作流
+  const targetId =
+    splitWfId && workflows[splitWfId]
+      ? splitWfId
+      : ids.find((id) => id !== activeWfId) ?? activeWfId;
+
   return (
-    <div
-      className="flex w-[280px] shrink-0 flex-col border-l"
-      style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg)' }}
-    >
-      <div
-        className="flex h-8 shrink-0 items-center justify-between border-b px-3"
-        style={{ borderColor: 'var(--sm-line)' }}
-      >
-        <span className="text-[12px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-          拆分视图
-        </span>
-        <span className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          {nodes.length} 节点 · {edges.length} 连线
-        </span>
+    <div className="flex min-w-0 flex-1">
+      {/* 左：当前激活工作流 */}
+      <div className="min-w-0 flex-1 border-r" style={{ borderColor: 'var(--sm-line)' }}>
+        <div
+          className="flex h-7 shrink-0 items-center gap-2 border-b px-3 text-[12px]"
+          style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
+        >
+          <span className="font-semibold" style={{ color: 'var(--sm-ink)' }}>主工作流</span>
+          <span className="truncate" style={{ color: 'var(--sm-ink-faint)' }}>
+            {workflows[activeWfId]?.name ?? ''}
+          </span>
+        </div>
+        <div className="h-[calc(100%-1.75rem)]">
+          <WorkflowEditor />
+        </div>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-        {nodes.length === 0 && (
-          <p className="px-1 py-2 text-[12px]" style={{ color: 'var(--sm-ink-faint)' }}>
-            画布为空。
-          </p>
-        )}
-        {nodes.map((n) => (
-          <div
-            key={n.id}
-            className="flex items-center gap-2 rounded border px-2 py-1.5 text-[12px]"
+
+      {/* 右：另一个工作流（可在下拉中切换） */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div
+          className="flex h-7 shrink-0 items-center gap-2 border-b px-3"
+          style={{ borderColor: 'var(--sm-line)' }}
+        >
+          <span className="shrink-0 text-[12px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+            拆分视图
+          </span>
+          <select
+            className="max-w-[200px] flex-1 rounded border bg-transparent px-1.5 py-0.5 text-[11.5px] outline-none"
             style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
+            value={targetId}
+            onChange={(e) => setSplitWfId(e.target.value)}
+            title="选择右侧分栏显示的工作流"
           >
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: 'var(--sm-accent)' }}
-            />
-            <span className="truncate">{String(n.data?.label ?? n.id)}</span>
-            <span className="ml-auto shrink-0 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              {String(n.data?.category ?? '节点')}
-            </span>
-          </div>
-        ))}
+            {ids.map((id) => (
+              <option key={id} value={id} className="bg-[var(--sm-bg)]">
+                {workflows[id]?.name ?? id}
+                {id === activeWfId ? '（主）' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="min-h-0 flex-1">
+          {ids.length <= 1 ? (
+            <div className="flex h-full items-center justify-center p-6 text-center text-[12.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
+              项目中只有一个工作流。新建一个工作流即可在拆分视图中并排查看/编辑不同工作流。
+            </div>
+          ) : (
+            <WorkflowEditor wfId={targetId} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -66,19 +93,28 @@ function SplitViewPanel() {
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [activePanel, setActivePanel] = useState<SidePanelKey | null>(null);
+  // 右侧边栏（检查器）开关从 viewStore 读取（持久化，记住上次状态）
+  const inspectorOpen = useViewStore((s) => s.inspectorOpen);
+  const toggleInspector = useViewStore((s) => s.toggleInspector);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const examplesOpen = useWorkflowStore((s) => s.examplesOpen);
+  const setExamplesOpen = useWorkflowStore((s) => s.setExamplesOpen);
   const [showSettings, setShowSettings] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const splitView = useViewStore((s) => s.splitView);
+  const splitWfId = useViewStore((s) => s.splitWfId);
+  const setSplitWfId = useViewStore((s) => s.setSplitWfId);
+  // 底侧边栏开关与高度从 viewStore 读取（持久化，记住上次状态）
+  const panelOpen = useViewStore((s) => s.panelOpen);
+  const togglePanel = useViewStore((s) => s.togglePanel);
+  const panelH = useViewStore((s) => s.panelH);
+  const setPanelH = useViewStore((s) => s.setPanelH);
 
   // 面板尺寸（可拖拽调节）
   const [leftW, setLeftW] = useState(248);
   const [rightW, setRightW] = useState(288);
-  const [panelH, setPanelH] = useState(208);
   const [shortcutsH, setShortcutsH] = useState(208);
 
   const openPanel = (key: SidePanelKey) => setActivePanel(key);
@@ -157,9 +193,9 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           panelOpen={panelOpen}
-          onTogglePanel={() => setPanelOpen((v) => !v)}
+          onTogglePanel={togglePanel}
           inspectorOpen={inspectorOpen}
-          onToggleInspector={() => setInspectorOpen((v) => !v)}
+          onToggleInspector={toggleInspector}
           onOpenPanel={openPanel}
           onOpenShortcuts={() => setShowShortcutsModal(true)}
         />
@@ -170,12 +206,14 @@ export default function App() {
               active={activePanel}
               onClose={closePanel}
               onOpen={openPanel}
+              onOpenExamples={() => setExamplesOpen(true)}
+              examplesActive={examplesOpen}
               onOpenSettings={() => setShowSettings(true)}
               onToggleTheme={toggleTheme}
               shortcutsOpen={shortcutsOpen}
               onToggleShortcuts={() => setShortcutsOpen((v) => !v)}
               panelOpen={panelOpen}
-              onTogglePanel={() => setPanelOpen((v) => !v)}
+              onTogglePanel={togglePanel}
             />
           )}
           {/* 内容区：展开面板 + 画布 + Inspector + 底部面板（均位于图标条右侧） */}
@@ -197,10 +235,18 @@ export default function App() {
                   />
                 </>
               )}
-          <div className="min-w-0 flex-1">
-              <WorkflowEditor />
+          <div className="flex min-w-0 flex-1">
+              {splitView ? (
+                <SplitCanvas
+                  splitWfId={splitWfId}
+                  setSplitWfId={setSplitWfId}
+                />
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <WorkflowEditor />
+                </div>
+              )}
             </div>
-            {splitView && <SplitViewPanel />}
             {inspectorOpen && (
               <>
                 <Inspector width={rightW} />
@@ -250,13 +296,14 @@ export default function App() {
                   onPointerDown={startResize('y', 'bottom', panelH)}
                   title="拖动调节底部面板高度"
                 />
-                <StatusBar open={panelOpen} height={panelH} onToggle={() => setPanelOpen((v) => !v)} />
+                <StatusBar open={panelOpen} height={panelH} onToggle={togglePanel} />
               </>
             )}
           </div>
         </main>
         {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
         {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+        {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
       </div>
     </ReactFlowProvider>
   );

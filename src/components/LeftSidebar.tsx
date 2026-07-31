@@ -38,10 +38,9 @@ interface PanelItem {
   shortcut?: string;
 }
 
-// 上半部分：点击展开左侧面板内容
+// 上半部分：点击展开左侧面板内容（示例库改为独立次级窗口，不在此展开）
 const PANEL_ITEMS: PanelItem[] = [
   { key: 'nodes', label: '节点库', icon: Boxes, shortcut: '' },
-  { key: 'examples', label: '示例库', icon: LayoutTemplate, shortcut: '' },
   { key: 'plugins', label: '插件', icon: Puzzle, shortcut: '' },
   { key: 'agents', label: '智能体库', icon: Users, shortcut: '' },
   { key: 'variables', label: '变量', icon: Variable, shortcut: '' },
@@ -63,8 +62,6 @@ export function renderSidePanel(key: SidePanelKey) {
       return <VariablesPanel embedded />;
     case 'history':
       return <RunHistoryPanel embedded />;
-    case 'examples':
-      return <ExamplesPanel embedded />;
     case 'help':
       return (
         <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -141,6 +138,8 @@ interface SideRailProps {
   active: SidePanelKey | null;
   onClose: () => void;
   onOpen: (key: SidePanelKey) => void;
+  onOpenExamples: () => void;
+  examplesActive?: boolean;
   onOpenSettings: () => void;
   onToggleTheme: () => void;
   shortcutsOpen: boolean;
@@ -154,6 +153,8 @@ export function SideRail({
   active,
   onClose,
   onOpen,
+  onOpenExamples,
+  examplesActive,
   onOpenSettings,
   onToggleTheme,
   shortcutsOpen,
@@ -166,8 +167,14 @@ export function SideRail({
       className="flex w-12 shrink-0 flex-col items-center justify-between border-r py-2"
       style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg-deep)' }}
     >
-      {/* 上半：展开面板类 */}
+      {/* 上半：展开面板类（示例库为独立次级窗口，单独处理） */}
       <div className="flex flex-col items-center gap-1">
+        <IconButton
+          label="示例库"
+          icon={LayoutTemplate}
+          isActive={!!examplesActive}
+          onClick={onOpenExamples}
+        />
         {PANEL_ITEMS.map((it) => (
           <IconButton
             key={it.key}

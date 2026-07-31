@@ -1,7 +1,12 @@
 import { useState } from 'react';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { X, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
-import { createAgent, protocolDefaults } from '../agents/agentManager';
+import {
+  createAgent,
+  protocolDefaults,
+  ollamaModels,
+  fetchOllamaModels,
+} from '../agents/agentManager';
 import type { AgentConfig, Protocol, RoleTemplate } from '../types';
 
 interface AgentPanelProps {
@@ -93,7 +98,20 @@ function AgentsTab() {
   const upsertAgent = useWorkflowStore((s) => s.upsertAgent);
   const removeAgent = useWorkflowStore((s) => s.removeAgent);
   const [editingId, setEditingId] = useState<string | null>(agents[0]?.id ?? null);
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const editing = agents.find((a) => a.id === editingId);
+
+  const pullLocalModels = async () => {
+    if (!editing) return;
+    setLoadingModels(true);
+    try {
+      const list = await fetchOllamaModels(editing.baseUrl || 'http://127.0.0.1:11434');
+      setLocalModels(list);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
   const patch = (p: Partial<AgentConfig>) => {
     if (!editing) return;
@@ -202,12 +220,76 @@ function AgentsTab() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">模型</label>
-              <input
-                className="sm-input"
-                value={editing.model}
-                onChange={(e) => patch({ model: e.target.value })}
-              />
+              <label className="mb-1 block text-xs text-ink-soft">
+                模型{editing.protocol === 'ollama' ? '（本地 Ollama）' : ''}
+              </label>
+              {editing.protocol === 'ollama' ? (
+                <div className="space-y-1.5">
+                  <div className="flex gap-1.5">
+                    <select
+                      className="sm-input cursor-pointer flex-1"
+                      value={ollamaModels.some((m) => m.id === editing.model) ? editing.model : ''}
+                      onChange={(e) => patch({ model: e.target.value })}
+                    >
+                      <option value="">— 推荐模型 —</option>
+                      {ollamaModels.map((m) => (
+                        <option key={m.id} value={m.id} title={m.note}>
+                          {m.id}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="sm-btn shrink-0 px-2"
+                      title="拉取本机已安装模型"
+                      disabled={loadingModels}
+                      onClick={pullLocalModels}
+                    >
+                      <RefreshCw size={13} className={loadingModels ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                  {ollamaModels.find((m) => m.id === editing.model)?.note && (
+                    <p className="text-[11px] text-ink-faint">
+                      {ollamaModels.find((m) => m.id === editing.model)?.note}
+                    </p>
+                  )}
+                  {localModels.length > 0 && (
+                    <select
+                      className="sm-input cursor-pointer"
+                      value={localModels.includes(editing.model) ? editing.model : ''}
+                      onChange={(e) => patch({ model: e.target.value })}
+                    >
+                      <option value="">— 本机已安装 —</option>
+                      {localModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {localModels.length === 0 && !loadingModels && (
+                    <button
+                      type="button"
+                      className="text-[11px] text-accent hover:underline"
+                      onClick={pullLocalModels}
+                    >
+                      未检测到本机模型？点击拉取已安装的 Ollama 模型
+                    </button>
+                  )}
+                  <input
+                    className="sm-input mt-1"
+                    value={editing.model}
+                    placeholder="或直接输入模型名，如 qwen2.5:3b"
+                    onChange={(e) => patch({ model: e.target.value })}
+                  />
+                </div>
+              ) : (
+                <input
+                  className="sm-input"
+                  value={editing.model}
+                  onChange={(e) => patch({ model: e.target.value })}
+                />
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs text-ink-soft">

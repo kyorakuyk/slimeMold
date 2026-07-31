@@ -37,6 +37,8 @@ icon_gen.log
 tauri_build2.log
 vite_verify.log
 *.local.log
+tauri-dev.log
+tauri-dev.err
 
 # Local analysis / reference docs (not committed)
 GAP_ANALYSIS.md

@@ -1,7 +1,7 @@
 import { Trash2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
-import type { ParamDef } from '../types';
+import type { ParamDef, FlowNode } from '../types';
 
 function ParamField({
   def,
@@ -98,17 +98,34 @@ function ParamField({
 /** 右侧属性检查面板 */
 export default function Inspector({ width = 288 }: { width?: number }) {
   const selectedId = useWorkflowStore((s) => s.selectedNodeId);
+  const focusWfId = useWorkflowStore((s) => s.focusWfId);
+  const activeWfId = useWorkflowStore((s) => s.activeWfId);
+  const workflows = useWorkflowStore((s) => s.workflows);
+  // 焦点节点可能在激活工作流，也可能在拆分视图所显示的其他工作流中
+  const focusIsActive = !focusWfId || focusWfId === activeWfId;
   const node = useWorkflowStore((s) =>
     s.nodes.find((n) => n.id === s.selectedNodeId),
   );
+  const splitNodeDef = !focusIsActive && selectedId
+    ? workflows[focusWfId]?.nodes?.find((n) => n.id === selectedId)
+    : undefined;
+  const splitNode = splitNodeDef
+    ? ({
+        id: splitNodeDef.id,
+        type: 'base',
+        position: splitNodeDef.position,
+        data: { typeId: splitNodeDef.typeId, label: splitNodeDef.label, params: splitNodeDef.params ?? {} },
+      } as FlowNode)
+    : null;
+  const resolvedNode = node ?? splitNode;
   const updateNodeParams = useWorkflowStore((s) => s.updateNodeParams);
   const setNodeLabel = useWorkflowStore((s) => s.setNodeLabel);
   const removeNode = useWorkflowStore((s) => s.removeNode);
   const def = useRegistryStore((s) =>
-    node ? s.defs[node.data.typeId] : undefined,
+    resolvedNode ? s.defs[resolvedNode.data.typeId] : undefined,
   );
 
-  if (!node || !selectedId) {
+  if (!resolvedNode || !selectedId) {
     return (
       <aside className="flex h-full shrink-0 flex-col border-l" style={{ width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)' }}>
         <div className="flex flex-1 items-center justify-center px-6 text-center">
@@ -127,12 +144,12 @@ export default function Inspector({ width = 288 }: { width?: number }) {
       <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
         <div>
           <h2 className="text-[13px] font-semibold text-ink">{def?.name ?? '节点'}</h2>
-          <p className="mt-0.5 text-[11px] text-ink-faint">{node.data.typeId}</p>
+          <p className="mt-0.5 text-[11px] text-ink-faint">{resolvedNode.data.typeId}</p>
         </div>
         <button
           className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-err"
           title="删除节点"
-          onClick={() => removeNode(selectedId)}
+          onClick={() => removeNode(selectedId, focusWfId)}
         >
           <Trash2 size={14} />
         </button>
@@ -143,8 +160,8 @@ export default function Inspector({ width = 288 }: { width?: number }) {
           <label className="mb-1 block text-xs text-ink-soft">节点名称</label>
           <input
             className="sm-input"
-            value={node.data.label}
-            onChange={(e) => setNodeLabel(selectedId, e.target.value)}
+            value={resolvedNode.data.label}
+            onChange={(e) => setNodeLabel(selectedId, e.target.value, focusWfId)}
           />
         </div>
 
@@ -153,8 +170,8 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             <label className="mb-1 block text-xs text-ink-soft">{p.label}</label>
             <ParamField
               def={p}
-              value={node.data.params[p.key]}
-              onChange={(v) => updateNodeParams(selectedId, { [p.key]: v })}
+              value={resolvedNode.data.params[p.key]}
+              onChange={(v) => updateNodeParams(selectedId, { [p.key]: v }, focusWfId)}
             />
           </div>
         ))}
@@ -165,20 +182,20 @@ export default function Inspector({ width = 288 }: { width?: number }) {
           </p>
         )}
 
-        {node.data.error && (
+        {resolvedNode.data.error && (
           <div>
             <label className="mb-1 block text-xs text-err">错误信息</label>
             <p className="break-all rounded border border-err/30 bg-white px-2.5 py-2 text-[12px] leading-relaxed text-err">
-              {node.data.error}
+              {resolvedNode.data.error}
             </p>
           </div>
         )}
 
-        {node.data.outputs && (
+        {resolvedNode.data.outputs && (
           <div>
             <label className="mb-1 block text-xs text-ink-soft">最近输出</label>
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-line bg-white px-2.5 py-2 text-[12px] leading-relaxed text-ink-soft">
-              {JSON.stringify(node.data.outputs, null, 2)}
+              {JSON.stringify(resolvedNode.data.outputs, null, 2)}
             </pre>
           </div>
         )}

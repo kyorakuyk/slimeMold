@@ -96,9 +96,7 @@ export default function TopBar({
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const hasNodes = useWorkflowStore((s) => s.nodes.length > 0);
   const showGrid = useViewStore((s) => s.showGrid);
-  const showMinimap = useViewStore((s) => s.showMinimap);
   const toggleGrid = useViewStore((s) => s.toggleGrid);
-  const toggleMinimap = useViewStore((s) => s.toggleMinimap);
   const splitView = useViewStore((s) => s.splitView);
   const toggleSplit = useViewStore((s) => s.toggleSplit);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
@@ -193,7 +191,6 @@ export default function TopBar({
         { label: '适配窗口', icon: <Maximize size={14} />, shortcut: 'Shift+1', onClick: () => fitView({ padding: 0.2, duration: 200 }) },
         'separator',
         { label: showGrid ? '隐藏网格' : '显示网格', icon: <Grid3x3 size={14} />, onClick: toggleGrid },
-        { label: showMinimap ? '隐藏小地图' : '显示小地图', icon: <Map size={14} />, onClick: toggleMinimap },
       ],
     },
     {
@@ -464,18 +461,16 @@ export default function TopBar({
                     <span className="truncate">{wf.name}</span>
                   </button>
                 )}
-                {wfList.length > 1 && (
-                  <button
-                    className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
-                    title="关闭工作流"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeWorkflow(id);
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                )}
+                <button
+                  className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
+                  title="关闭工作流"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeWorkflow(id);
+                  }}
+                >
+                  <X size={12} />
+                </button>
               </div>
             );
           })}

@@ -26,6 +26,14 @@
   --cat-tool: #f08c00;
   --cat-output: #e64980;
   --cat-flow: #15aabf;
+
+  /* 端口类型色（ComfyUI 风格） */
+  --pt-text: #2f9e44;
+  --pt-number: #f08c00;
+  --pt-boolean: #e03131;
+  --pt-list: #1c7ed6;
+  --pt-json: #9b59d0;
+  --pt-any: #8a8a8a;
 }
 
 /* 深色主题（面向开发者，默认启用，仿 VS Code Dark） */
@@ -53,6 +61,14 @@
   --cat-tool: #ffa94d;
   --cat-output: #f783ac;
   --cat-flow: #3bc9db;
+
+  /* 端口类型色（深色，与浅色同语义） */
+  --pt-text: #51cf66;
+  --pt-number: #ffa94d;
+  --pt-boolean: #ff6b6b;
+  --pt-list: #4dabf7;
+  --pt-json: #b197fc;
+  --pt-any: #8a8a8a;
 }
 
 html,
@@ -87,25 +103,35 @@ body {
 .react-flow__pane {
   cursor: default;
 }
+/* ComfyUI 风：平滑贝塞尔、较粗、圆角线帽、无箭头；颜色跟随源端口类型 */
 .react-flow__edge-path {
-  stroke: var(--sm-edge);
-  stroke-width: 2;
+  stroke: var(--edge-color, var(--sm-edge));
+  stroke-width: 3;
+  stroke-linecap: round;
 }
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:hover .react-flow__edge-path {
   stroke: var(--sm-accent);
-  stroke-width: 2.6;
+  stroke-width: 3.4;
 }
 .react-flow__edge .react-flow__edge-path {
   transition: stroke 0.12s ease, stroke-width 0.12s ease;
 }
-.react-flow__arrowhead * {
-  fill: var(--sm-edge);
-  stroke: var(--sm-edge);
+/* 运行中：连线流动虚线动画（ComfyUI 风格） */
+.react-flow__edge.sm-edge-running .react-flow__edge-path {
+  stroke: var(--sm-accent);
+  stroke-dasharray: 7 5;
+  animation: sm-edge-flow 0.5s linear infinite;
+}
+@keyframes sm-edge-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
 }
 .react-flow__connection-path {
   stroke: var(--sm-accent);
-  stroke-width: 2;
+  stroke-width: 3;
+  stroke-linecap: round;
   stroke-dasharray: 5 4;
 }
 .react-flow__node {
@@ -114,26 +140,88 @@ body {
 .react-flow__attribution {
   display: none;
 }
-.react-flow__controls {
-  border: 1px solid var(--sm-line);
-  border-radius: 7px;
-  overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+/* ---------- 画布浮层控件（ComfyUI 风格） ---------- */
+.sm-cv-panel.react-flow__panel {
+  margin: 12px;
 }
-.react-flow__controls-button {
+/* 通用圆形/方形按钮 */
+.sm-cv-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   background: var(--sm-bg-soft);
-  border-bottom: 1px solid var(--sm-line);
+  border: 1px solid var(--sm-line);
   color: var(--sm-ink-soft);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
-.react-flow__controls-button:hover {
+.sm-cv-btn:hover {
+  background: var(--sm-bg-deep);
+  color: var(--sm-ink);
+  border-color: var(--sm-accent-soft);
+}
+.sm-cv-btn:active {
+  transform: scale(0.94);
+}
+.sm-cv-btn.active {
+  background: var(--sm-accent);
+  border-color: var(--sm-accent);
+  color: #fff;
+}
+.sm-cv-btn.active:hover {
+  color: #fff;
+}
+/* 左下：模式切换组 */
+.sm-cv-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 右下：缩放组 */
+.sm-cv-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--sm-bg-soft);
+  border: 1px solid var(--sm-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.sm-cv-zoom .sm-cv-btn {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  width: 28px;
+  height: 28px;
+}
+.sm-cv-zoom .sm-cv-btn:hover {
   background: var(--sm-bg-deep);
 }
-.react-flow__controls-button svg {
-  fill: var(--sm-ink-soft);
+.sm-cv-zoom-val {
+  min-width: 48px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--sm-ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.sm-cv-zoom-val:hover {
+  background: var(--sm-bg-deep);
+  color: var(--sm-ink);
 }
 .react-flow__minimap {
   border: 1px solid var(--sm-line);
-  border-radius: 7px;
+  border-radius: 8px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
@@ -369,6 +457,19 @@ textarea.sm-input {
 .sm-node:hover {
   border-color: color-mix(in srgb, var(--sm-line) 50%, var(--sm-accent-soft));
 }
+/* 节点执行态整体高亮描边（ComfyUI 风格） */
+.sm-node[data-status='running'] {
+  border-color: var(--sm-accent);
+  box-shadow: 0 0 0 2px var(--sm-accent), 0 0 18px color-mix(in srgb, var(--sm-accent) 45%, transparent);
+}
+.sm-node[data-status='done'] {
+  border-color: var(--sm-ok);
+  box-shadow: 0 0 0 1px var(--sm-ok), 0 0 14px color-mix(in srgb, var(--sm-ok) 38%, transparent);
+}
+.sm-node[data-status='error'] {
+  border-color: var(--sm-err);
+  box-shadow: 0 0 0 2px var(--sm-err), 0 0 16px color-mix(in srgb, var(--sm-err) 42%, transparent);
+}
 /* 标题条：左侧色块 + 分类色 */
 .sm-node-header {
   display: flex;
@@ -436,30 +537,35 @@ textarea.sm-input {
   font-style: italic;
 }
 
-/* ---------- 放大端口锚点（易点） ---------- */
+/* ---------- 放大端口锚点（易点，ComfyUI 实心圆点） ---------- */
 .react-flow__handle {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: var(--sm-bg);
-  border: 2px solid var(--sm-accent);
+  background: var(--pt-any);
+  border: 2px solid var(--sm-bg);
   transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 .react-flow__handle:hover {
-  transform: scale(1.35);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sm-accent) 30%, transparent);
+  transform: scale(1.4);
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 30%, transparent);
 }
 .react-flow__handle.connectionindicator {
-  border-color: var(--sm-accent);
-  background: color-mix(in srgb, var(--sm-accent) 25%, var(--sm-bg));
-  transform: scale(1.2);
+  transform: scale(1.25);
 }
 .react-flow__handle-left {
-  left: -6px;
+  left: -7px;
 }
 .react-flow__handle-right {
-  right: -6px;
+  right: -7px;
 }
+/* 端口按数据类型上色（ComfyUI 风格） */
+.react-flow__handle[data-porttype='text'] { background: var(--pt-text); color: var(--pt-text); }
+.react-flow__handle[data-porttype='number'] { background: var(--pt-number); color: var(--pt-number); }
+.react-flow__handle[data-porttype='boolean'] { background: var(--pt-boolean); color: var(--pt-boolean); }
+.react-flow__handle[data-porttype='list'] { background: var(--pt-list); color: var(--pt-list); }
+.react-flow__handle[data-porttype='json'] { background: var(--pt-json); color: var(--pt-json); }
+.react-flow__handle[data-porttype='any'] { background: var(--pt-any); color: var(--pt-any); }
 
 /* ---------- 小地图节点按分类配色 ---------- */
 .react-flow__minimap {

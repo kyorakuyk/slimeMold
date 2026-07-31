@@ -82,6 +82,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
     <div
       className={`sm-node ${selected ? 'selected' : ''}`}
       data-cat={def?.category}
+      data-status={data.status ?? 'idle'}
     >
       {/* 分类配色标题栏 */}
       <div className="sm-node-header" title={def?.description}>
@@ -120,6 +121,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     id={inputs[i].id}
                     type="target"
                     position={Position.Left}
+                    data-porttype={inputs[i].type ?? 'any'}
                   />
                   <span className="text-xs text-ink-soft">
                     {inputs[i].label}
@@ -139,6 +141,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     id={outputs[i].id}
                     type="source"
                     position={Position.Right}
+                    data-porttype={outputs[i].type ?? 'any'}
                   />
                 </>
               ) : (
