@@ -14,18 +14,21 @@ import type {
   FlowNode,
   LogEntry,
   NodeStatus,
+  RoleTemplate,
   RunRecord,
   WorkflowNodeData,
 } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { getNodeDef } from './registryStore';
-import { createAgent } from '../agents/agentManager';
+import { createAgent, builtinRoles } from '../agents/agentManager';
 
 interface WorkflowState {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
   agents: AgentConfig[];
+  /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
+  roles: RoleTemplate[];
   selectedNodeId: string | null;
   running: boolean;
   failFast: boolean;
@@ -55,6 +58,9 @@ interface WorkflowState {
   upsertAgent: (agent: AgentConfig) => void;
   removeAgent: (id: string) => void;
 
+  upsertRole: (role: RoleTemplate) => void;
+  removeRole: (id: string) => void;
+
   setSelected: (id: string | null) => void;
   setRunning: (running: boolean) => void;
   setFailFast: (v: boolean) => void;
@@ -73,6 +79,7 @@ interface WorkflowState {
     nodes: FlowNode[],
     edges: FlowEdge[],
     agents: AgentConfig[],
+    roles?: RoleTemplate[],
   ) => void;
   newWorkflow: () => void;
 }
@@ -93,6 +100,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       nodes: [],
       edges: [],
       agents: [createAgent('ollama')],
+      roles: builtinRoles.map((r) => ({ ...r })),
       selectedNodeId: null,
       running: false,
       failFast: true,
@@ -187,6 +195,24 @@ export const useWorkflowStore = create<WorkflowState>()(
       removeAgent: (id) =>
         set({ agents: get().agents.filter((a) => a.id !== id) }),
 
+      upsertRole: (role) => {
+        const exists = get().roles.some((r) => r.id === role.id);
+        set({
+          roles: exists
+            ? get().roles.map((r) => (r.id === role.id ? role : r))
+            : [...get().roles, role],
+        });
+      },
+
+      removeRole: (id) => {
+        const role = get().roles.find((r) => r.id === id);
+        if (role?.builtin) {
+          get().addLog('error', '内置角色不可删除');
+          return;
+        }
+        set({ roles: get().roles.filter((r) => r.id !== id) });
+      },
+
       setSelected: (id) => set({ selectedNodeId: id }),
       setRunning: (running) => set({ running }),
       setFailFast: (v) => set({ failFast: v }),
@@ -216,12 +242,17 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       setWorkflowName: (name) => set({ workflowName: name }),
 
-      loadGraph: (name, nodes, edges, agents) =>
+      loadGraph: (name, nodes, edges, agents, roles) =>
         set({
           workflowName: name,
           nodes,
           edges,
           agents: agents.length > 0 ? agents : get().agents,
+          // 内置角色始终保留；加载文件中的自定义角色（非 builtin）并入
+          roles: [
+            ...builtinRoles.map((r) => ({ ...r })),
+            ...(roles ?? []).filter((r) => !r.builtin),
+          ],
           selectedNodeId: null,
           logs: [],
         }),
@@ -231,6 +262,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           workflowName: '未命名工作流',
           nodes: [],
           edges: [],
+          roles: builtinRoles.map((r) => ({ ...r })),
           selectedNodeId: null,
           logs: [],
         }),
@@ -242,6 +274,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodes: s.nodes,
         edges: s.edges,
         agents: s.agents,
+        roles: s.roles,
         failFast: s.failFast,
         maxConcurrency: s.maxConcurrency,
         variables: s.variables,

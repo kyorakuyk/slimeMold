@@ -13,6 +13,7 @@ function ParamField({
   onChange: (v: unknown) => void;
 }) {
   const agents = useWorkflowStore((s) => s.agents);
+  const roles = useWorkflowStore((s) => s.roles);
 
   if (def.type === 'textarea') {
     return (
@@ -60,6 +61,25 @@ function ParamField({
         {agents.map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}（{a.model}）
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (def.type === 'role') {
+    return (
+      <select
+        className="sm-input cursor-pointer"
+        value={String(value ?? '')}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">— 不使用角色 —</option>
+        {roles.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.icon ? `${r.icon} ` : ''}
+            {r.name}
+            {r.builtin ? '（内置）' : ''}
+            {r.model ? ` · ${r.model}` : ''}
           </option>
         ))}
       </select>

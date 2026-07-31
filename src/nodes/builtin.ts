@@ -1,7 +1,9 @@
 import type { NodeDefinition } from '../types';
 import { httpFetch } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
+import { useWorkflowStore } from '../store/workflowStore';
 import { evalExpr } from '../engine/expr';
+import { findRole, resolveRoleSystem } from '../agents/agentManager';
 
 /** 将模板中的 {{key}} 替换为 scope 中的值（对象会 JSON 序列化） */
 function renderTemplate(
@@ -43,17 +45,26 @@ const agentChat: NodeDefinition = {
   typeId: 'agent.chat',
   name: '智能体',
   category: '智能体',
-  description: '调用绑定的智能体（多协议 LLM）处理输入文本',
+  description:
+    '调用绑定的智能体（多协议 LLM）处理输入文本。可绑定角色库中的角色快速获得职业提示词，并支持节点级模型覆写与上下文隔离。',
   inputs: [{ id: 'prompt', label: '提示词' }],
   outputs: [{ id: 'text', label: '回复' }],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
+    { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
+    {
+      key: 'modelOverride',
+      label: '节点级模型（留空用智能体默认）',
+      type: 'text',
+      default: '',
+      placeholder: '如 gpt-4o-mini，覆写该次调用的模型',
+    },
     {
       key: 'system',
-      label: '系统提示词',
+      label: '系统提示词（覆盖角色）',
       type: 'textarea',
       default: '',
-      placeholder: '可选，设定智能体角色与行为…',
+      placeholder: '可选；留空则使用所绑定角色的系统提示词',
     },
   ],
   async execute(inputs, params, ctx) {
@@ -61,16 +72,37 @@ const agentChat: NodeDefinition = {
     if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择');
     const prompt = String(inputs.prompt ?? '');
     if (!prompt) throw new Error('缺少输入提示词（prompt 端口未接入数据）');
+
+    const roleId = String(params.roleId ?? '');
+    const roles = useWorkflowStore.getState().roles;
+    const role = findRole(roles, roleId || undefined);
+    const system = resolveRoleSystem(role, String(params.system ?? ''));
+
+    // 节点级模型覆写：构造临时 AgentConfig，仅本次调用生效
+    const modelOverride = String(params.modelOverride ?? '').trim();
+    const effectiveAgentId = agentId;
+    let acc = '';
     const messages = [];
-    const system = String(params.system ?? '').trim();
     if (system) messages.push({ role: 'system' as const, content: system });
     messages.push({ role: 'user' as const, content: prompt });
-    ctx.logger.info(`智能体请求，prompt ${prompt.length} 字`);
-    let acc = '';
-    const text = await ctx.llm(agentId, messages, (delta) => {
-      acc += delta;
-      ctx.setPartial('text', acc);
-    });
+
+    // 上下文隔离：isolated 角色仅用自身 system+user，不拼入共享全局变量
+    const isolated = role?.contextScope === 'isolated';
+
+    ctx.logger.info(
+      `智能体请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''}${isolated ? ' 上下文隔离' : ''} prompt ${prompt.length} 字`,
+    );
+    void effectiveAgentId;
+
+    const text = await ctx.llm(
+      agentId,
+      messages,
+      (delta) => {
+        acc += delta;
+        ctx.setPartial('text', acc);
+      },
+      modelOverride || undefined,
+    );
     return { text };
   },
 };

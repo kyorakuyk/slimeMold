@@ -34,6 +34,7 @@ export function serializeWorkflow(): WorkflowFile {
       targetHandle: e.targetHandle ?? null,
     })),
     agents: s.agents,
+    roles: s.roles,
     variables: s.variables,
   };
 }
@@ -94,7 +95,7 @@ export function applyWorkflowFile(text: string): void {
 
   useWorkflowStore
     .getState()
-    .loadGraph(raw.name || '导入的工作流', nodes, edges, raw.agents ?? []);
+    .loadGraph(raw.name || '导入的工作流', nodes, edges, raw.agents ?? [], raw.roles ?? []);
   // 工作流私有变量随文件一起载入
   useWorkflowStore.setState({ variables: raw.variables ?? {} });
   log('info', `工作流已导入：${raw.name}（${nodes.length} 节点 / ${edges.length} 连线）`);

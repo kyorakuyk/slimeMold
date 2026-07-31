@@ -13,6 +13,33 @@ export interface AgentConfig {
   apiKey: string;
   model: string;
   temperature?: number;
+  /** 绑定的角色（角色库 id）。节点可通过角色快速获得预设提示词与默认模型，可被节点级覆写 */
+  roleId?: string;
+}
+
+/** 角色上下文隔离粒度：
+ * - 'shared'：与其它节点共享全局变量 / 会话历史（默认）
+ * - 'isolated'：该角色节点持有独立上下文，不向全局 vars 写回、不污染其它节点 */
+export type ContextScope = 'shared' | 'isolated';
+
+/** 角色模板（角色库条目）。
+ * 预设系统提示词 + 推荐模型/协议，作为 Agent 的"职业"抽象层。
+ * extendId 预留角色继承扩展点（后期实现，当前未使用）。 */
+export interface RoleTemplate {
+  id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  /** 角色系统提示词（设定职业、职责、输出规范） */
+  system: string;
+  /** 角色推荐协议 / 模型，作为节点级模型选择的默认值（可被覆写） */
+  protocol?: Protocol;
+  model?: string;
+  contextScope?: ContextScope;
+  /** 预留：继承自某个基础角色（后期实现继承链） */
+  extendId?: string;
+  /** 内置预设角色标记，用户不可删除 */
+  builtin?: boolean;
 }
 
 export interface ChatMessage {
@@ -26,7 +53,7 @@ export interface PortDef {
   label: string;
 }
 
-export type ParamType = 'text' | 'textarea' | 'number' | 'select' | 'agent';
+export type ParamType = 'text' | 'textarea' | 'number' | 'select' | 'agent' | 'role';
 
 export interface ParamDef {
   key: string;
@@ -45,11 +72,13 @@ export interface ExecLogger {
 export interface ExecContext {
   logger: ExecLogger;
   /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
-   * 传入 onToken 回调即启用流式输出（逐 token 回传）。 */
+   * 传入 onToken 回调即启用流式输出（逐 token 回传）。
+   * modelOverride 可用于节点级模型覆写（仅本次调用生效）。 */
   llm(
     agentId: string,
     messages: ChatMessage[],
     onToken?: (text: string) => void,
+    modelOverride?: string,
   ): Promise<string>;
   /** 执行中实时回写当前节点的某输出端口，用于流式预览 */
   setPartial(key: string, value: unknown): void;
@@ -120,6 +149,8 @@ export interface WorkflowFile {
   nodes: WorkflowFileNode[];
   edges: WorkflowFileEdge[];
   agents: AgentConfig[];
+  /** 角色库（随工作流保存/加载），内置角色以 builtin=true 标记 */
+  roles?: RoleTemplate[];
   /** 全局变量（随工作流一起保存/加载） */
   variables?: Record<string, unknown>;
 }

@@ -157,16 +157,19 @@ async function executeNode(
       info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
       error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages, onToken) => {
+    llm: async (agentId, messages, onToken, modelOverride) => {
       const agent = useWorkflowStore
         .getState()
         .agents.find((a) => a.id === agentId);
       if (!agent) throw new Error(`智能体不存在: ${agentId}`);
+      const effective = modelOverride
+        ? { ...agent, model: modelOverride }
+        : agent;
       // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
       const release = await limiter.acquire();
       try {
         return await withRetry(
-          () => chatWithAgent(agent, messages, signal, onToken),
+          () => chatWithAgent(effective, messages, signal, onToken),
           {
             retries: MAX_RETRIES,
             baseDelay: RETRY_BASE_MS,
@@ -239,12 +242,15 @@ export async function retryNode(id: string): Promise<void> {
       info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
       error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages, onToken) => {
+    llm: async (agentId, messages, onToken, modelOverride) => {
       const agent = useWorkflowStore.getState().agents.find((a) => a.id === agentId);
       if (!agent) throw new Error(`智能体不存在: ${agentId}`);
+      const effective = modelOverride
+        ? { ...agent, model: modelOverride }
+        : agent;
       const release = await limiter.acquire();
       try {
-        return await chatWithAgent(agent, messages, signal, onToken);
+        return await chatWithAgent(effective, messages, signal, onToken);
       } finally {
         release();
       }
