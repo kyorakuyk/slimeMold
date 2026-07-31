@@ -16,8 +16,15 @@ src-tauri/gen/schemas
 # Token & secrets
 /token
 
-# CodeBuddy
-#.codebuddy
+# CodeBuddy (plans, skills, devlogs are local-only)
+.codebuddy/plans/
+.codebuddy/skills/
+.codebuddy/**/*.zip
+.devlog/
+feasibility-study.skill.zip
+
+# Generated assets
+generated-images/
 
 # Local dev helpers & logs (not committed)
 start-hidden.bat
@@ -25,4 +32,6 @@ tauri_dev.local.log
 dev.log
 icon_gen.log
 tauri_build2.log
+vite_verify.log
+*.local.log
 
