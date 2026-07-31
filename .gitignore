@@ -26,6 +26,9 @@ feasibility-study.skill.zip
 # Generated assets
 generated-images/
 
+# npm local config
+.npmrc
+
 # Local dev helpers & logs (not committed)
 start-hidden.bat
 tauri_dev.local.log
