@@ -41,7 +41,7 @@ import type { SidePanelKey } from './LeftSidebar';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
-import { exportWorkflow, importWorkflow } from '../io/workflowIO';
+import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import {
   openProjectFile,
   getRecentProjects,
@@ -175,6 +175,7 @@ export default function TopBar({
         { label: '导入工作流…', icon: <FileDown size={14} />, onClick: importWorkflow },
         { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
         { label: '导出工作流…', icon: <Save size={14} />, onClick: () => exportWorkflow() },
+        { label: '复制工作流文本', icon: <FileStack size={14} />, onClick: () => copyWorkflowText() },
       ],
     },
     {

@@ -231,21 +231,36 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       onConnect: (conn) => {
         if (!conn.source || !conn.target) return;
+        const srcDef = getNodeDef(conn.source);
+        const tgtDef = getNodeDef(conn.target);
+        const srcName = srcDef?.name ?? conn.source;
+        const tgtName = tgtDef?.name ?? conn.target;
+
         if (wouldCreateCycle(conn.source, conn.target, get().edges)) {
-          get().addLog('error', '已拦截连线：该连接会形成环路（工作流必须是 DAG）');
+          get().addLog(
+            'error',
+            `「${srcName}」和「${tgtName}」这样连会绕成死循环，换一种接法吧`,
+          );
           return;
         }
         // 端口类型校验：source 输出端口类型须与 target 输入端口类型兼容
-        const srcDef = getNodeDef(conn.source);
-        const tgtDef = getNodeDef(conn.target);
         const srcPort = srcDef?.outputs.find((o) => o.id === conn.sourceHandle);
         const tgtPort = tgtDef?.inputs.find((i) => i.id === conn.targetHandle);
         const srcType: PortType | undefined = srcPort?.type;
         const tgtType: PortType | undefined = tgtPort?.type;
         if (!arePortsCompatible(srcType, tgtType)) {
+          // 在目标节点上找一个兼容的输入端口，给出更友好的引导
+          const suggest = tgtDef?.inputs.find((i) =>
+            arePortsCompatible(srcType, i.type),
+          );
+          const srcLabel = srcPort?.label ?? '输出';
+          const tgtLabel = tgtPort?.label ?? '输入';
+          const hint = suggest
+            ? `可以把「${srcName}」的「${srcLabel}」连到「${tgtName}」的「${suggest.label}」端口`
+            : `「${srcName}」提供的内容类型，和「${tgtName}」需要的对不上`;
           get().addLog(
             'error',
-            `已拦截连线：端口类型不匹配（输出「${srcType ?? 'any'}」→ 输入「${tgtType ?? 'any'}」）`,
+            `这条线连不上：「${srcName}」的「${srcLabel}」和「${tgtName}」的「${tgtLabel}」内容类型不一样。${hint}`,
           );
           return;
         }

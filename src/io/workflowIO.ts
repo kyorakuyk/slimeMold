@@ -159,3 +159,15 @@ export async function importWorkflow(): Promise<void> {
   };
   input.click();
 }
+
+/* ---------- 复制文本（轻量分享） ---------- */
+export async function copyWorkflowText(): Promise<void> {
+  const wf = serializeWorkflow();
+  const text = JSON.stringify(wf, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    log('info', '工作流文本已复制到剪贴板，可直接发给同事');
+  } catch {
+    log('error', '复制失败：当前环境不支持剪贴板，请改用「导出工作流」保存为文件');
+  }
+}

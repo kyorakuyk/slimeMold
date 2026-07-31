@@ -27,10 +27,10 @@
 - [x] **新手模板**：内置「把一句话变成正式邮件」等开箱即用模板（`src/data/starterTemplates.ts`）
 - [x] **运行提示人话化**：日志改为普通用户能看懂的中文（AI 节点「正在让 AI 处理…」、重试「网络有点忙，正在重试」、失败「这一步出错了」、完成「全部完成 ✓」、`空画布/环路` 等友好提示）（`src/engine/executor.ts`）
 - [x] **节点中文 tooltip**：节点库项与画布节点标题栏显示节点用途说明（`NodePalette.tsx` / `BaseNode.tsx`）
-- [ ] 端口连线时的友好校验提示（替代当前的硬校验报错）
+- [x] **友好端口校验提示**：连线不兼容时用节点名+端口中文标签说明原因，并提示「可以连到哪个端口」；画布加 `isValidConnection` 即时视觉反馈（`src/store/workflowStore.ts` `onConnect` / `WorkflowEditor.tsx`）
 
 ### 1.2 易用性增强（P1 — Community 增强）
-- [ ] **工作流分享**：导出/导入 JSON、分享链接
+- [x] **工作流分享**：导出为文件（Tauri 对话框 / 浏览器下载）、从文件导入、复制工作流文本到剪贴板轻量分享（`src/io/workflowIO.ts` + `TopBar.tsx` 文件菜单）
 - [ ] 模板市场（内置更多场景模板）
 - [ ] 一键示例库
 

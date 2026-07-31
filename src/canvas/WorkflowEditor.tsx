@@ -8,12 +8,17 @@ import {
   MarkerType,
   useReactFlow,
   type NodeTypes,
+  type Connection,
+  type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
+import { getNodeDef } from '../store/registryStore';
+import { arePortsCompatible } from '../types';
+import { wouldCreateCycle } from '../engine/topoSort';
 
 const nodeTypes: NodeTypes = { base: BaseNode };
 
@@ -42,6 +47,21 @@ export default function WorkflowEditor() {
   const showGrid = useViewStore((s) => s.showGrid);
   const showMinimap = useViewStore((s) => s.showMinimap);
   const { screenToFlowPosition } = useReactFlow();
+
+  // 连线时的友好预校验：环路或端口类型不兼容时，手柄直接显示不可连接
+  const isValidConnection = useCallback(
+    (conn: Connection | Edge) => {
+      if (!conn.source || !conn.target) return false;
+      if (conn.source === conn.target) return false;
+      if (wouldCreateCycle(conn.source, conn.target, edges)) return false;
+      const srcDef = getNodeDef(conn.source);
+      const tgtDef = getNodeDef(conn.target);
+      const srcPort = srcDef?.outputs.find((o) => o.id === conn.sourceHandle);
+      const tgtPort = tgtDef?.inputs.find((i) => i.id === conn.targetHandle);
+      return arePortsCompatible(srcPort?.type, tgtPort?.type);
+    },
+    [edges],
+  );
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -83,6 +103,7 @@ export default function WorkflowEditor() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        isValidConnection={isValidConnection}
         onNodeClick={(_, node) => setSelected(node.id)}
         onPaneClick={() => setSelected(null)}
         defaultEdgeOptions={defaultEdgeOptions}
