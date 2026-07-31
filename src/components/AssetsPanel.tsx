@@ -22,11 +22,12 @@ function mimeOf(name: string): string {
 
 export default function AssetsPanel({ embedded = false }: { onClose?: () => void; embedded?: boolean }) {
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
-  const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets ?? []);
+  const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets);
   const removeAsset = useWorkflowStore((s) => s.removeAsset);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const selected: AssetMeta | null = assets.find((a) => a.id === selectedId) ?? assets[0] ?? null;
+  const assetList = assets ?? [];
+  const selected: AssetMeta | null = assetList.find((a) => a.id === selectedId) ?? assetList[0] ?? null;
 
   const handleDownload = (a: AssetMeta) => {
     downloadBlob(a.name, a.content, mimeOf(a.name));
@@ -48,12 +49,12 @@ export default function AssetsPanel({ embedded = false }: { onClose?: () => void
       <div className="w-[200px] shrink-0 overflow-y-auto border-r border-line bg-paper-soft">
         {!activeWfId ? (
           <p className="px-3 py-4 text-xs text-ink-faint">请先创建或打开工作流</p>
-        ) : assets.length === 0 ? (
+        ) : assetList.length === 0 ? (
           <p className="px-3 py-4 text-xs text-ink-faint">
             还没有资产。用「写文件」节点生成的文件会显示在这里。
           </p>
         ) : (
-          assets.map((a) => (
+          assetList.map((a) => (
             <button
               key={a.id}
               onClick={() => setSelectedId(a.id)}
