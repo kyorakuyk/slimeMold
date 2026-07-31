@@ -19,7 +19,7 @@
 | API 模式 | 可纯 API 提交 prompt（headless） | 仅 UI 触发运行 | 低 | 低 | 未做 |
 | 观察/调试 | 节点级图像预览 + 实时进度条 | 日志 + 状态色 + 运行历史 + 节点耗时可视化 | 低 | 低 | 已落地（耗时可视化在节点/历史面板） |
 | 工作流分享 | `workflow.json` + API 调用 + 复制子图 | `ProjectFile` 持久化 + 单节点重试 | 低 | 低 | 未做 |
-| 分支/流程控制 | switch / 条件节点丰富 | 线性 DAG + merge/delay；无 if/聚合节点 | 中 | 中 | 部分落地（merge/delay 已加，flow.if/聚合未做） |
+| 分支/流程控制 | switch / 条件节点丰富 | if/merge/map/join/list/delay/switch 齐备；缺 while 条件循环 | 中 | 中 | 已较完整覆盖（if/merge/map/join/list/delay/switch，分支剪枝生效）；while 循环未做 |
 
 ---
 

@@ -496,6 +496,65 @@ const delayNode: NodeDefinition = {
   },
 };
 
+const switchNode: NodeDefinition = {
+  typeId: 'flow.switch',
+  name: '多路路由',
+  category: '流程',
+  description:
+    '根据「匹配键」将流程路由到 c1~c4 中第一个匹配的分支，无匹配时走 _default 分支。未命中的分支下游被剪枝（不执行）。匹配键可由表达式计算（引用输入与全局变量），或留空直接用输入端口「键」。',
+  inputs: [
+    { id: 'key', label: '键(可选)', type: 'any' },
+  ],
+  outputs: [
+    { id: 'c1', label: '分支1', type: 'any' },
+    { id: 'c2', label: '分支2', type: 'any' },
+    { id: 'c3', label: '分支3', type: 'any' },
+    { id: 'c4', label: '分支4', type: 'any' },
+    { id: '_default', label: '默认', type: 'any' },
+  ],
+  params: [
+    {
+      key: 'expression',
+      label: '匹配键表达式（可选，留空则用输入端口「键」）',
+      type: 'textarea',
+      default: '',
+      placeholder: '例如：key，或 input.category',
+    },
+    { key: 'm1', label: '分支1 匹配值', type: 'text', default: '' },
+    { key: 'm2', label: '分支2 匹配值', type: 'text', default: '' },
+    { key: 'm3', label: '分支3 匹配值', type: 'text', default: '' },
+    { key: 'm4', label: '分支4 匹配值', type: 'text', default: '' },
+  ],
+  async execute(inputs, params, ctx) {
+    const expr = String(params.expression ?? '').trim();
+    const keyVal = expr
+      ? String(evalExpr(expr, { ...ctx.vars, ...inputs }))
+      : String(inputs.key ?? '');
+    const matches: Array<[string, string]> = [
+      ['c1', String(params.m1 ?? '')],
+      ['c2', String(params.m2 ?? '')],
+      ['c3', String(params.m3 ?? '')],
+      ['c4', String(params.m4 ?? '')],
+    ];
+    let taken = '_default';
+    for (const [handle, want] of matches) {
+      if (want !== '' && keyVal === want) {
+        taken = handle;
+        break;
+      }
+    }
+    ctx.logger.info(`路由：键=${keyVal} → ${taken}`);
+    ctx.setBranches?.([taken]);
+    return {
+      c1: inputs.key,
+      c2: inputs.key,
+      c3: inputs.key,
+      c4: inputs.key,
+      _default: inputs.key,
+    };
+  },
+};
+
 /** 真值判断：非空、非零、非空字符串/数组/对象 */
 function isTruthy(v: unknown): boolean {
   if (v === null || v === undefined) return false;
@@ -520,6 +579,7 @@ export const builtinDefs: NodeDefinition[] = [
   ifNode,
   mergeNode,
   delayNode,
+  switchNode,
 ];
 
 export function registerBuiltins(): void {
