@@ -1,70 +1,158 @@
-import { useState } from 'react';
-import { ChevronUp, ChevronDown, Eraser } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Terminal, History, Variable, Eraser } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 
-/** 底部状态栏：执行状态 + 日志摘要，可展开日志抽屉 */
-export default function StatusBar() {
+type Tab = 'log' | 'history' | 'vars';
+
+/** 底部可停靠面板（VS Code Panel 风）：默认终端/日志流，附带历史与变量选项卡 */
+export default function StatusBar({
+  open,
+  height = 208,
+  onToggle,
+}: {
+  open: boolean;
+  height?: number;
+  onToggle: () => void;
+}) {
   const logs = useWorkflowStore((s) => s.logs);
   const running = useWorkflowStore((s) => s.running);
   const clearLogs = useWorkflowStore((s) => s.clearLogs);
   const nodes = useWorkflowStore((s) => s.nodes);
-  const [open, setOpen] = useState(false);
+  const variables = useWorkflowStore((s) => s.variables);
+  const runHistory = useWorkflowStore((s) => s.runHistory);
+  const [tab, setTab] = useState<Tab>('log');
+  const logEndRef = useRef<HTMLDivElement>(null);
 
-  const last = logs[logs.length - 1];
   const successCount = nodes.filter((n) => n.data.status === 'success').length;
   const errorCount = nodes.filter((n) => n.data.status === 'error').length;
 
+  // 日志自动滚动到底
+  useEffect(() => {
+    if (open && tab === 'log') logEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [logs, open, tab]);
+
+  const levelColor: Record<string, string> = {
+    error: 'var(--sm-err)',
+    info: 'var(--sm-ink-soft)',
+    warn: '#e3a008',
+  };
+
   return (
-    <footer className="fixed bottom-0 left-0 right-0 z-30 border-t border-line bg-white">
-      {open && (
-        <div className="max-h-48 overflow-y-auto border-b border-line px-3 py-2">
-          {logs.length === 0 ? (
-            <p className="text-xs text-ink-faint">暂无日志</p>
-          ) : (
-            <ul className="space-y-1">
-              {logs.map((l, i) => (
-                <li key={i} className="flex gap-2 text-xs leading-relaxed">
-                  <span className="shrink-0 text-ink-faint">{l.time}</span>
-                  <span className={l.level === 'error' ? 'text-err' : 'text-ink-soft'}>
-                    {l.message}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      <div className="flex h-7 items-center gap-3 px-3">
-        {running ? (
-          <span className="flex items-center gap-1.5 text-xs text-accent">
-            <span className="sm-spinner" /> 执行中…
-          </span>
-        ) : (
-          <span className="text-xs text-ink-faint">就绪</span>
-        )}
-        <span className="text-xs text-ink-faint">
-          节点 {nodes.length} · 成功 <span className="text-ok">{successCount}</span> · 失败{' '}
-          <span className={errorCount > 0 ? 'text-err' : ''}>{errorCount}</span>
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">
-          {last ? (
-            <span className={last.level === 'error' ? 'text-err' : ''}>{last.message}</span>
-          ) : null}
-        </span>
+    <footer className="sm-panel shrink-0" style={{ color: 'var(--sm-ink-soft)' }}>
+      <div className="sm-panel-tabs">
         <button
-          className="cursor-pointer text-ink-faint transition-colors hover:text-ink"
+          className="sm-panel-tab"
+          data-active={tab === 'log'}
+          onClick={() => setTab('log')}
+        >
+          <Terminal size={12} /> 终端
+        </button>
+        <button
+          className="sm-panel-tab"
+          data-active={tab === 'history'}
+          onClick={() => setTab('history')}
+        >
+          <History size={12} /> 历史 ({runHistory.length})
+        </button>
+        <button
+          className="sm-panel-tab"
+          data-active={tab === 'vars'}
+          onClick={() => setTab('vars')}
+        >
+          <Variable size={12} /> 变量
+        </button>
+
+        <div className="flex flex-1 items-center justify-end gap-3 px-3 text-[11px]">
+          {running ? (
+            <span className="flex items-center gap-1.5" style={{ color: 'var(--sm-accent)' }}>
+              <span className="sm-spinner" /> 执行中…
+            </span>
+          ) : (
+            <span>就绪</span>
+          )}
+          <span>
+            节点 {nodes.length} · 成功{' '}
+            <span style={{ color: 'var(--sm-ok)' }}>{successCount}</span> · 失败{' '}
+            <span style={{ color: errorCount > 0 ? 'var(--sm-err)' : undefined }}>{errorCount}</span>
+          </span>
+        </div>
+        <button
+          className="flex cursor-pointer items-center gap-1 px-3 text-[11px] transition-colors hover:text-ink"
+          style={{ color: 'var(--sm-ink-faint)' }}
           title="清空日志"
           onClick={clearLogs}
         >
-          <Eraser size={13} />
+          <Eraser size={12} /> 清空
         </button>
         <button
-          className="flex cursor-pointer items-center gap-1 text-xs text-ink-faint transition-colors hover:text-ink"
-          onClick={() => setOpen(!open)}
+          className="flex cursor-pointer items-center gap-1 border-l px-3 text-[11px] transition-colors hover:text-ink"
+          style={{ color: 'var(--sm-ink-faint)', borderColor: 'var(--sm-line)' }}
+          onClick={onToggle}
+          title="折叠/展开面板"
         >
-          日志 ({logs.length}) {open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+          {open ? <ChevronDown size={13} /> : <ChevronDown size={13} style={{ transform: 'rotate(180deg)' }} />}
         </button>
       </div>
+
+      {open && (
+        <div className="overflow-y-auto px-3 py-2" style={{ height }}>
+          {tab === 'log' && (
+            logs.length === 0 ? (
+              <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>
+                暂无日志，运行工作流后将在此实时显示。
+              </p>
+            ) : (
+              <div>
+                {logs.map((l, i) => (
+                  <div key={i} className="sm-log-line">
+                    <span className="sm-log-time">{l.time}</span>
+                    <span
+                      className="sm-log-msg"
+                      style={{ color: levelColor[l.level] ?? 'var(--sm-ink-soft)' }}
+                    >
+                      {l.message}
+                    </span>
+                  </div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            )
+          )}
+          {tab === 'history' && (
+            runHistory.length === 0 ? (
+              <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>暂无运行历史。</p>
+            ) : (
+              <ul className="space-y-1 text-xs">
+                {runHistory.map((r) => (
+                  <li key={r.id} className="flex gap-3">
+                    <span style={{ color: 'var(--sm-ink-faint)' }}>{r.startedAt}</span>
+                    <span>{r.note}</span>
+                    <span style={{ color: r.ok ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
+                      {r.ok ? '成功' : '失败'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          )}
+          {tab === 'vars' && (
+            Object.keys(variables).length === 0 ? (
+              <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>
+                暂无全局变量，可在「变量」面板中添加。
+              </p>
+            ) : (
+              <ul className="space-y-1 font-mono text-xs">
+                {Object.entries(variables).map(([k, v]) => (
+                  <li key={k}>
+                    <span style={{ color: 'var(--sm-accent)' }}>{k}</span> ={' '}
+                    <span>{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          )}
+        </div>
+      )}
     </footer>
   );
 }

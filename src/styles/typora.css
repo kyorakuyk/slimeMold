@@ -12,6 +12,45 @@
   --sm-line: #e6e6e6;
   --sm-accent: #3b82f6;
   --sm-accent-soft: #5b8def;
+  --sm-canvas: #f3f1ec;
+  --sm-canvas-grid: #e3ded3;
+  --sm-panel: #fbfaf8;
+  --sm-ok: #2f9e44;
+  --sm-err: #e03131;
+
+  /* 节点分类配色（ComfyUI 风格） */
+  --cat-input: #2f9e44;
+  --cat-agent: #7048e8;
+  --cat-text: #1c7ed6;
+  --cat-tool: #f08c00;
+  --cat-output: #e64980;
+  --cat-flow: #15aabf;
+}
+
+/* 深色主题（面向开发者，默认启用，仿 VS Code Dark） */
+[data-theme='dark'] {
+  --sm-bg: #1e1e1e;
+  --sm-bg-soft: #252526;
+  --sm-bg-deep: #2d2d30;
+  --sm-ink: #e4e4e4;
+  --sm-ink-soft: #b6b6b6;
+  --sm-ink-faint: #8a8a8a;
+  --sm-line: #3a3a3d;
+  --sm-accent: #4a9eff;
+  --sm-accent-soft: #6db1ff;
+  --sm-canvas: #1a1a1a;
+  --sm-canvas-grid: #2a2a2a;
+  --sm-panel: #1f1f1f;
+  --sm-ok: #4ecb71;
+  --sm-err: #f16363;
+
+  /* 节点分类配色（深色下略提亮，与浅色同语义） */
+  --cat-input: #51cf66;
+  --cat-agent: #9775fa;
+  --cat-text: #4dabf7;
+  --cat-tool: #ffa94d;
+  --cat-output: #f783ac;
+  --cat-flow: #3bc9db;
 }
 
 html,
@@ -114,17 +153,46 @@ body {
   animation: sm-spin 0.7s linear infinite;
 }
 
-/* 输入控件统一样式（Typora 式低干扰） */
+/* 输入控件统一样式（深色/浅色自适应） */
 .sm-input {
-  @apply w-full rounded border border-line bg-white px-2 py-1.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-accent-soft;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--sm-line);
+  background: var(--sm-bg);
+  color: var(--sm-ink);
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
   box-shadow: none;
 }
+.sm-input::placeholder {
+  color: var(--sm-ink-faint);
+}
+.sm-input:focus {
+  border-color: var(--sm-accent-soft);
+}
 textarea.sm-input {
-  @apply resize-y leading-relaxed;
+  resize: y;
+  line-height: 1.6;
   min-height: 64px;
 }
 .sm-btn {
-  @apply inline-flex cursor-pointer items-center gap-1.5 rounded border border-line bg-white px-2.5 py-1 text-[13px] text-ink-soft transition-colors hover:border-accent-soft hover:text-accent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid var(--sm-line);
+  background: var(--sm-bg);
+  color: var(--sm-ink-soft);
+  padding: 4px 10px;
+  font-size: 13px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.sm-btn:hover {
+  border-color: var(--sm-accent-soft);
+  color: var(--sm-accent);
 }
 .sm-btn:disabled {
   @apply cursor-not-allowed opacity-50 hover:border-line hover:text-ink-soft;
@@ -132,3 +200,268 @@ textarea.sm-input {
 .sm-btn-primary {
   @apply border-accent bg-accent text-white hover:border-accent hover:bg-accent-soft hover:text-white;
 }
+
+/* ---------- 画布点阵背景（深浅自适应） ---------- */
+.sm-canvas-dot {
+  background-color: var(--sm-canvas);
+  background-image: radial-gradient(var(--sm-canvas-grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* ---------- 底部可停靠面板（VS Code Panel 风） ---------- */
+.sm-panel {
+  background: var(--sm-panel);
+  border-top: 1px solid var(--sm-line);
+}
+.sm-panel-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  border-bottom: 1px solid var(--sm-line);
+  background: var(--sm-bg-soft);
+}
+.sm-panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sm-ink-faint);
+  cursor: pointer;
+  border-right: 1px solid var(--sm-line);
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.sm-panel-tab:hover {
+  color: var(--sm-ink-soft);
+}
+.sm-panel-tab[data-active='true'] {
+  color: var(--sm-ink);
+  background: var(--sm-panel);
+  border-bottom: 2px solid var(--sm-accent);
+}
+.sm-log-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.sm-log-time {
+  flex-shrink: 0;
+  color: var(--sm-ink-faint);
+}
+.sm-log-msg {
+  color: var(--sm-ink-soft);
+}
+
+/* ---------- 节点库（ComfyUI 风：搜索 + 分类折叠） ---------- */
+.sm-palette-search {
+  background: var(--sm-bg-deep);
+  border: 1px solid var(--sm-line);
+  color: var(--sm-ink);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  outline: none;
+}
+.sm-palette-search:focus {
+  border-color: var(--sm-accent-soft);
+}
+.sm-palette-cat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sm-ink-faint);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.sm-palette-cat:hover {
+  color: var(--sm-ink-soft);
+}
+.sm-palette-item {
+  border: 1px solid var(--sm-line);
+  background: var(--sm-bg);
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: grab;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.sm-palette-item:hover {
+  border-color: var(--sm-accent-soft);
+  background: var(--sm-bg-soft);
+}
+.sm-palette-item:active {
+  cursor: grabbing;
+}
+
+/* ---------- 滚动条（深色适配） ---------- */
+[data-theme='dark'] *::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+}
+[data-theme='dark'] *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- 文本色跟随主题（覆盖 tailwind 固定 token） ---------- */
+.text-ink {
+  color: var(--sm-ink);
+}
+.text-ink-soft {
+  color: var(--sm-ink-soft);
+}
+.text-ink-faint {
+  color: var(--sm-ink-faint);
+}
+.text-accent {
+  color: var(--sm-accent);
+}
+.border-line {
+  border-color: var(--sm-line);
+}
+.border-accent-soft {
+  border-color: var(--sm-accent-soft);
+}
+.bg-paper-soft {
+  background: var(--sm-bg-soft);
+}
+.bg-paper-deep {
+  background: var(--sm-bg-deep);
+}
+.bg-ok {
+  background: var(--sm-ok);
+}
+.bg-err {
+  background: var(--sm-err);
+}
+.text-ok {
+  color: var(--sm-ok);
+}
+.text-err {
+  color: var(--sm-err);
+}
+
+/* ---------- 节点分类配色标题条（ComfyUI 风格） ---------- */
+.sm-node {
+  border-radius: 9px;
+  border: 1px solid var(--sm-line);
+  background: var(--sm-bg-soft);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  min-width: 168px;
+  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.sm-node.selected {
+  border-color: var(--sm-accent);
+  box-shadow: 0 0 0 1px var(--sm-accent), 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+/* 标题条：左侧色块 + 分类色 */
+.sm-node-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.sm-node-header .sm-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  flex: none;
+}
+.sm-node-header .sm-node-title {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-node-cat {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* 按 data-cat 映射分类色 */
+.sm-node[data-cat='输入'] { --cat: var(--cat-input); }
+.sm-node[data-cat='智能体'] { --cat: var(--cat-agent); }
+.sm-node[data-cat='文本'] { --cat: var(--cat-text); }
+.sm-node[data-cat='工具'] { --cat: var(--cat-tool); }
+.sm-node[data-cat='输出'] { --cat: var(--cat-output); }
+.sm-node[data-cat='流程'] { --cat: var(--cat-flow); }
+.sm-node-header {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cat) 88%, #000 0%), color-mix(in srgb, var(--cat) 72%, #000 0%));
+}
+.sm-node-body {
+  padding: 9px 11px;
+  font-size: 12px;
+  color: var(--sm-ink-soft);
+}
+.sm-node-field {
+  margin-bottom: 5px;
+}
+.sm-node-field:last-child {
+  margin-bottom: 0;
+}
+.sm-node-field-label {
+  font-size: 10.5px;
+  color: var(--sm-ink-faint);
+  margin-bottom: 2px;
+}
+.sm-node-field-value {
+  color: var(--sm-ink);
+  word-break: break-word;
+}
+.sm-node-field-value.empty {
+  color: var(--sm-ink-faint);
+  font-style: italic;
+}
+
+/* ---------- 放大端口锚点（易点） ---------- */
+.react-flow__handle {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--sm-bg);
+  border: 2px solid var(--sm-accent);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.react-flow__handle:hover {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sm-accent) 30%, transparent);
+}
+.react-flow__handle-left {
+  left: -6px;
+}
+.react-flow__handle-right {
+  right: -6px;
+}
+
+/* ---------- 小地图节点按分类配色 ---------- */
+.react-flow__minimap {
+  background: var(--sm-bg-deep) !important;
+  border: 1px solid var(--sm-line);
+  border-radius: 8px;
+}
+.react-flow__minimap-node[data-cat='输入'] { fill: var(--cat-input); }
+.react-flow__minimap-node[data-cat='智能体'] { fill: var(--cat-agent); }
+.react-flow__minimap-node[data-cat='文本'] { fill: var(--cat-text); }
+.react-flow__minimap-node[data-cat='工具'] { fill: var(--cat-tool); }
+.react-flow__minimap-node[data-cat='输出'] { fill: var(--cat-output); }
+.react-flow__minimap-node[data-cat='流程'] { fill: var(--cat-flow); }
+

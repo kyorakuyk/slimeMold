@@ -96,7 +96,7 @@ function ParamField({
 }
 
 /** 右侧属性检查面板 */
-export default function Inspector() {
+export default function Inspector({ width = 288 }: { width?: number }) {
   const selectedId = useWorkflowStore((s) => s.selectedNodeId);
   const node = useWorkflowStore((s) =>
     s.nodes.find((n) => n.id === s.selectedNodeId),
@@ -110,7 +110,7 @@ export default function Inspector() {
 
   if (!node || !selectedId) {
     return (
-      <aside className="flex h-full w-72 shrink-0 flex-col border-l border-line bg-paper-soft">
+      <aside className="flex h-full shrink-0 flex-col border-l" style={{ width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)' }}>
         <div className="flex flex-1 items-center justify-center px-6 text-center">
           <p className="text-[13px] leading-relaxed text-ink-faint">
             选中一个节点后
@@ -123,7 +123,7 @@ export default function Inspector() {
   }
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-l border-line bg-paper-soft">
+    <aside className="flex h-full shrink-0 flex-col border-l" style={{ width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)' }}>
       <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
         <div>
           <h2 className="text-[13px] font-semibold text-ink">{def?.name ?? '节点'}</h2>

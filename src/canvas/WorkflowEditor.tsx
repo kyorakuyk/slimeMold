@@ -14,6 +14,16 @@ import BaseNode from './nodes/BaseNode';
 
 const nodeTypes: NodeTypes = { base: BaseNode };
 
+// 小地图节点配色（与 CSS 分类变量同语义，深色调更亮以保证可见）
+const CAT_COLORS: Record<string, string> = {
+  输入: '#51cf66',
+  智能体: '#9775fa',
+  文本: '#4dabf7',
+  工具: '#ffa94d',
+  输出: '#f783ac',
+  流程: '#3bc9db',
+};
+
 export const DND_MIME = 'application/x-slime-node';
 
 export default function WorkflowEditor() {
@@ -40,7 +50,7 @@ export default function WorkflowEditor() {
   const defaultEdgeOptions = useMemo(() => ({ type: 'default' as const }), []);
 
   return (
-    <div className="h-full w-full" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+    <div className="sm-canvas-dot h-full w-full" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -68,8 +78,9 @@ export default function WorkflowEditor() {
           position="bottom-right"
           pannable
           zoomable
-          nodeColor={() => '#ececec'}
-          maskColor="rgba(250,250,250,0.7)"
+          nodeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
+          nodeStrokeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
+          maskColor="rgba(0,0,0,0.45)"
         />
       </ReactFlow>
     </div>

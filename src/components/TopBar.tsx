@@ -7,15 +7,21 @@ import {
   Bot,
   Puzzle,
   PanelLeft,
+  PanelBottom,
   Variable,
   History,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow } from '../io/workflowIO';
 
 interface TopBarProps {
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
   onToggleSidebar: () => void;
+  onTogglePanel: () => void;
   onOpenAgents: () => void;
   onOpenPlugins: () => void;
   onOpenVariables: () => void;
@@ -23,7 +29,10 @@ interface TopBarProps {
 }
 
 export default function TopBar({
+  theme,
+  onToggleTheme,
   onToggleSidebar,
+  onTogglePanel,
   onOpenAgents,
   onOpenPlugins,
   onOpenVariables,
@@ -39,7 +48,10 @@ export default function TopBar({
   const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
 
   return (
-    <header className="fixed left-0 right-0 top-0 z-30 flex h-11 items-center gap-2 border-b border-line bg-white px-3">
+    <header
+      className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3"
+      style={{ background: 'var(--sm-bg-soft)' }}
+    >
       <button
         className="sm-btn border-transparent px-1.5"
         title="收起/展开节点面板"
@@ -107,6 +119,18 @@ export default function TopBar({
       </button>
       <button className="sm-btn" onClick={onOpenHistory} title="运行历史">
         <History size={14} /> 历史
+      </button>
+
+      <span className="mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
+      <button
+        className="sm-btn px-1.5"
+        title="切换深色/浅色"
+        onClick={onToggleTheme}
+      >
+        {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+      </button>
+      <button className="sm-btn px-1.5" title="显示/隐藏底部面板" onClick={onTogglePanel}>
+        <PanelBottom size={15} />
       </button>
 
       {running ? (

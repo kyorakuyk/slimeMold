@@ -53,26 +53,17 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
 
   return (
     <div
-      className={`w-56 rounded-md border bg-white transition-[border-color,box-shadow] ${
-        selected
-          ? 'border-accent-soft shadow-[0_0_0_2px_rgba(91,141,239,0.15)]'
-          : missing
-            ? 'border-err/50'
-            : 'border-line hover:border-[#cfcfcf]'
-      }`}
+      className={`sm-node ${selected ? 'selected' : ''}`}
+      data-cat={def?.category}
     >
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between rounded-t-md border-b border-line bg-paper-soft px-3 py-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[13px] font-semibold text-ink">
-            {data.label}
-          </span>
-          {def?.pluginId && (
-            <span className="shrink-0 rounded bg-paper-deep px-1 text-[10px] text-ink-faint">
-              插件
-            </span>
-          )}
-        </div>
+      {/* 分类配色标题栏 */}
+      <div className="sm-node-header">
+        <span className="sm-node-dot" />
+        <span className="sm-node-title">{data.label}</span>
+        {def?.pluginId && (
+          <span className="shrink-0 rounded bg-white/15 px-1 text-[9px]">插件</span>
+        )}
+        <span className="sm-node-cat">{def?.category}</span>
         <StatusDot status={data.status} error={data.error} />
       </div>
 
@@ -87,7 +78,6 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     id={inputs[i].id}
                     type="target"
                     position={Position.Left}
-                    style={{ left: -5 }}
                   />
                   <span className="text-xs text-ink-soft">{inputs[i].label}</span>
                 </>
@@ -101,7 +91,6 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     id={outputs[i].id}
                     type="source"
                     position={Position.Right}
-                    style={{ right: -5 }}
                   />
                 </>
               ) : (
