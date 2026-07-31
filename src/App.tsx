@@ -1,17 +1,19 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import TopBar from './components/TopBar';
 import NodePalette from './components/NodePalette';
 import Inspector from './components/Inspector';
 import StatusBar from './components/StatusBar';
-import AgentPanel from './components/AgentPanel';
-import PluginPanel from './components/PluginPanel';
-import VariablesPanel from './components/VariablesPanel';
-import RunHistoryPanel from './components/RunHistoryPanel';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
+
+// 非首屏面板懒加载，减小首屏 JS 解析量（打开对应面板时才拉取 chunk）
+const AgentPanel = lazy(() => import('./components/AgentPanel'));
+const PluginPanel = lazy(() => import('./components/PluginPanel'));
+const VariablesPanel = lazy(() => import('./components/VariablesPanel'));
+const RunHistoryPanel = lazy(() => import('./components/RunHistoryPanel'));
 
 registerBuiltins();
 
@@ -45,10 +47,12 @@ export default function App() {
           <Inspector />
         </main>
         <StatusBar />
-        {showAgents && <AgentPanel onClose={() => setShowAgents(false)} />}
-        {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
-        {showVariables && <VariablesPanel onClose={() => setShowVariables(false)} />}
-        {showHistory && <RunHistoryPanel onClose={() => setShowHistory(false)} />}
+        <Suspense fallback={null}>
+          {showAgents && <AgentPanel onClose={() => setShowAgents(false)} />}
+          {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
+          {showVariables && <VariablesPanel onClose={() => setShowVariables(false)} />}
+          {showHistory && <RunHistoryPanel onClose={() => setShowHistory(false)} />}
+        </Suspense>
       </div>
     </ReactFlowProvider>
   );

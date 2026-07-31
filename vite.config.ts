@@ -15,5 +15,20 @@ export default defineConfig({
   build: {
     target: 'es2021',
     sourcemap: false,
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          xyflow: ['@xyflow/react'],
+          tauri: [
+            '@tauri-apps/api',
+            '@tauri-apps/plugin-dialog',
+            '@tauri-apps/plugin-fs',
+            '@tauri-apps/plugin-http',
+          ],
+        },
+      },
+    },
   },
 });

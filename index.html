@@ -6,7 +6,15 @@
     <title>SlimeMold · Agent 工作流</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-loader" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#f7f5f1;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#9a948a;">
+        <div style="width:34px;height:34px;border:3px solid #e3ddd2;border-top-color:#7c9a6b;border-radius:50%;animation:sm-spin .8s linear infinite;"></div>
+        <div style="font-size:13px;letter-spacing:.04em;">SlimeMold 加载中…</div>
+      </div>
+      <style>
+        @keyframes sm-spin { to { transform: rotate(360deg); } }
+      </style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
