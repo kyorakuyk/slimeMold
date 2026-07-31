@@ -19,3 +19,10 @@ src-tauri/gen/schemas
 # CodeBuddy
 #.codebuddy
 
+# Local dev helpers & logs (not committed)
+start-hidden.bat
+tauri_dev.local.log
+dev.log
+icon_gen.log
+tauri_build2.log
+
