@@ -10,6 +10,7 @@ import {
   Puzzle,
   PanelLeft,
   PanelBottom,
+  PanelRight,
   Variable,
   History,
   Sun,
@@ -24,13 +25,18 @@ import {
   Keyboard,
   Info,
   FilePlus,
+  FileDown,
   FolderPlus,
   FileStack,
   Wrench,
   HelpCircle,
   ChevronDown,
   FileBox,
+  Columns2,
+  Plus,
+  X,
 } from 'lucide-react';
+import type { SidePanelKey } from './LeftSidebar';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
@@ -45,12 +51,13 @@ import {
 interface TopBarProps {
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  panelOpen: boolean;
   onTogglePanel: () => void;
-  onOpenAgents: () => void;
-  onOpenPlugins: () => void;
-  onOpenVariables: () => void;
-  onOpenHistory: () => void;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
+  onOpenPanel: (key: SidePanelKey) => void;
   onOpenShortcuts: () => void;
 }
 
@@ -70,21 +77,18 @@ interface MenuDef {
 export default function TopBar({
   theme,
   onToggleTheme,
+  sidebarOpen,
   onToggleSidebar,
+  panelOpen,
   onTogglePanel,
-  onOpenAgents,
-  onOpenPlugins,
-  onOpenVariables,
-  onOpenHistory,
+  inspectorOpen,
+  onToggleInspector,
+  onOpenPanel,
   onOpenShortcuts,
 }: TopBarProps) {
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
   const running = useWorkflowStore((s) => s.running);
-  const failFast = useWorkflowStore((s) => s.failFast);
-  const setFailFast = useWorkflowStore((s) => s.setFailFast);
-  const maxConcurrency = useWorkflowStore((s) => s.maxConcurrency);
-  const setMaxConcurrency = useWorkflowStore((s) => s.setMaxConcurrency);
   const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
   const deleteSelected = useWorkflowStore((s) => s.deleteSelected);
   const clearGraph = useWorkflowStore((s) => s.clearGraph);
@@ -94,6 +98,8 @@ export default function TopBar({
   const showMinimap = useViewStore((s) => s.showMinimap);
   const toggleGrid = useViewStore((s) => s.toggleGrid);
   const toggleMinimap = useViewStore((s) => s.toggleMinimap);
+  const splitView = useViewStore((s) => s.splitView);
+  const toggleSplit = useViewStore((s) => s.toggleSplit);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   // 项目层状态
@@ -164,8 +170,8 @@ export default function TopBar({
           })(),
         },
         'separator',
-        { label: '新建工作流', icon: <FilePlus size={14} />, shortcut: 'Ctrl+N', onClick: newWorkflowInProject },
         { label: '打开工作流…', icon: <FilePlus2 size={14} />, onClick: newWorkflow },
+        { label: '导入工作流…', icon: <FileDown size={14} />, onClick: importWorkflow },
         { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
         { label: '导出工作流…', icon: <Save size={14} />, onClick: () => exportWorkflow() },
       ],
@@ -197,10 +203,10 @@ export default function TopBar({
     {
       label: '工具',
       items: [
-        { label: '智能体 / 角色库', icon: <Bot size={14} />, onClick: onOpenAgents },
-        { label: '插件管理', icon: <Puzzle size={14} />, onClick: onOpenPlugins },
-        { label: '全局变量', icon: <Variable size={14} />, onClick: onOpenVariables },
-        { label: '运行历史', icon: <History size={14} />, onClick: onOpenHistory },
+        { label: '智能体 / 角色库', icon: <Bot size={14} />, onClick: () => onOpenPanel('agents') },
+        { label: '插件管理', icon: <Puzzle size={14} />, onClick: () => onOpenPanel('plugins') },
+        { label: '全局变量', icon: <Variable size={14} />, onClick: () => onOpenPanel('variables') },
+        { label: '运行历史', icon: <History size={14} />, onClick: () => onOpenPanel('history') },
       ],
     },
     {
@@ -214,7 +220,7 @@ export default function TopBar({
 
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [openSub, setOpenSub] = useState<number | null>(null);
-  const [wfOpen, setWfOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -222,14 +228,12 @@ export default function TopBar({
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setOpenMenu(null);
         setOpenSub(null);
-        setWfOpen(false);
       }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpenMenu(null);
         setOpenSub(null);
-        setWfOpen(false);
       }
     };
     document.addEventListener('mousedown', onDocClick);
@@ -364,138 +368,142 @@ export default function TopBar({
             )}
           </div>
         ))}
+
+        {/* 面板开关（菜单条右上角）：左 / 底 / 右 */}
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
+            title="显示/隐藏左侧栏"
+            onClick={onToggleSidebar}
+            style={
+              sidebarOpen
+                ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' }
+                : { color: 'var(--sm-ink-faint)' }
+            }
+          >
+            <PanelLeft size={14} />
+          </button>
+          <button
+            className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
+            title="显示/隐藏底部面板"
+            onClick={onTogglePanel}
+            style={
+              panelOpen
+                ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' }
+                : { color: 'var(--sm-ink-faint)' }
+            }
+          >
+            <PanelBottom size={14} />
+          </button>
+          <button
+            className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
+            title="显示/隐藏右侧属性面板"
+            onClick={onToggleInspector}
+            style={
+              inspectorOpen
+                ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' }
+                : { color: 'var(--sm-ink-faint)' }
+            }
+          >
+            <PanelRight size={14} />
+          </button>
+        </div>
       </div>
 
-      {/* 工具条 */}
+      {/* 工具条：工作流标签浏览器 */}
       <div className="flex h-11 items-center gap-2 border-t px-3" style={{ borderColor: 'var(--sm-line)' }}>
-        <button
-          className="sm-btn border-transparent px-1.5"
-          title="收起/展开节点面板"
-          onClick={onToggleSidebar}
-        >
-          <PanelLeft size={15} />
-        </button>
-
-        {/* 工作流选择器 */}
-        <div className="relative">
-          <button
-            className="sm-btn max-w-[180px] gap-1.5"
-            onClick={() => setWfOpen((v) => !v)}
-            title="切换 / 新建工作流"
-          >
-            <FileBox size={14} />
-            <span className="truncate">{workflowName}</span>
-            <ChevronDown size={13} />
-          </button>
-          {wfOpen && (
-            <div
-              className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border py-1 shadow-lg"
-              style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
-            >
-              <button
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink-soft hover:bg-black/10"
-                onClick={() => {
-                  newWorkflowInProject();
-                  setWfOpen(false);
+        {/* 标签条 + 新建加号 */}
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {wfList.map(([id, wf]) => {
+            const active = id === activeWfId;
+            return (
+              <div
+                key={id}
+                className="group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md border-b-2 px-2.5"
+                style={{
+                  borderColor: active ? 'var(--sm-accent)' : 'transparent',
+                  background: active ? 'color-mix(in srgb, var(--sm-accent) 12%, transparent)' : 'transparent',
+                  color: active ? 'var(--sm-accent)' : 'var(--sm-ink-soft)',
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = 'var(--sm-bg)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = 'transparent';
                 }}
               >
-                <FilePlus size={13} /> 新建工作流
-              </button>
-              <div className="my-1 h-px" style={{ background: 'var(--sm-line)' }} />
-              {wfList.length === 0 && (
-                <div className="px-3 py-1.5 text-[12px] text-ink-faint">无工作流</div>
-              )}
-              {wfList.map(([id, wf]) => (
-                <div key={id} className="group flex items-center hover:bg-black/10">
-                  <button
-                    className={`flex flex-1 items-center gap-2 px-3 py-1.5 text-left text-[12.5px] ${
-                      id === activeWfId ? 'text-accent' : 'text-ink-soft'
-                    }`}
-                    onClick={() => {
-                      switchWorkflow(id);
-                      setWfOpen(false);
+                {editingId === id ? (
+                  <input
+                    autoFocus
+                    className="w-24 bg-transparent text-[12.5px] outline-none"
+                    defaultValue={wf.name}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v) renameWorkflow(v);
+                      setEditingId(null);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
+                  />
+                ) : (
+                  <button
+                    className="flex min-w-0 items-center gap-1.5 truncate text-[12.5px]"
+                    onClick={() => switchWorkflow(id)}
+                    onDoubleClick={() => {
+                      switchWorkflow(id);
+                      setEditingId(id);
+                    }}
+                    title={wf.name}
                   >
-                    <FileBox size={13} />
+                    <FileBox size={12} />
                     <span className="truncate">{wf.name}</span>
                   </button>
-                  {wfList.length > 1 && (
-                    <button
-                      className="px-2 text-ink-faint opacity-0 group-hover:opacity-100 hover:text-err"
-                      title="删除工作流"
-                      onClick={() => removeWorkflow(id)}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+                )}
+                {wfList.length > 1 && (
+                  <button
+                    className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
+                    title="关闭工作流"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeWorkflow(id);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <button
+            className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
+            title="新建工作流"
+            onClick={() => newWorkflowInProject()}
+          >
+            <Plus size={14} />
+          </button>
         </div>
 
-        <span className="mx-1 h-4 w-px bg-line" />
-
-        <button className="sm-btn" onClick={() => importWorkflow()} title="从 JSON 导入">
-          <FolderOpen size={14} /> 导入
-        </button>
-        <button className="sm-btn" onClick={handleSaveProject} title="保存项目 (.smproj)">
-          <Save size={14} /> 保存项目
-        </button>
-
-        <div className="flex-1" />
-
-        <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-ink-faint">
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={failFast}
-            onChange={(e) => setFailFast(e.target.checked)}
-          />
-          失败即停
-        </label>
-
-        <span className="mx-1 h-4 w-px bg-line" />
-        <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-ink-faint">
-          并发
-          <input
-            type="number"
-            min={1}
-            max={20}
-            className="w-12 rounded border border-line bg-transparent px-1 py-0.5 text-center text-xs text-ink outline-none focus:border-accent-soft"
-            value={maxConcurrency}
-            onChange={(e) => setMaxConcurrency(Number(e.target.value))}
-          />
-        </label>
-
-        <button className="sm-btn" onClick={onOpenAgents}>
-          <Bot size={14} /> 智能体
-        </button>
-        <button className="sm-btn" onClick={onOpenPlugins}>
-          <Puzzle size={14} /> 插件
-        </button>
-        <button className="sm-btn" onClick={onOpenVariables} title="全局变量">
-          <Variable size={14} /> 变量
-        </button>
-        <button className="sm-btn" onClick={onOpenHistory} title="运行历史">
-          <History size={14} /> 历史
-        </button>
-
         <span className="mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
-        <button className="sm-btn px-1.5" title="切换深色/浅色" onClick={onToggleTheme}>
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
-        <button className="sm-btn px-1.5" title="显示/隐藏底部面板" onClick={onTogglePanel}>
-          <PanelBottom size={15} />
+        {/* 拆分视图气泡 */}
+        <button
+          className="sm-btn px-1.5"
+          title="拆分视图"
+          data-active={splitView}
+          onClick={toggleSplit}
+          style={splitView ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
+        >
+          <Columns2 size={15} />
         </button>
 
         {running ? (
-          <button className="sm-btn text-err hover:border-err hover:text-err" onClick={stopWorkflow}>
-            <Square size={13} /> 停止
+          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title="停止运行" onClick={stopWorkflow}>
+            <Square size={14} />
           </button>
         ) : (
-          <button className="sm-btn sm-btn-primary" onClick={() => runWorkflow()}>
-            <Play size={13} /> 运行
+          <button className="sm-btn sm-btn-primary px-1.5" title="运行工作流" onClick={() => runWorkflow()}>
+            <Play size={14} />
           </button>
         )}
       </div>

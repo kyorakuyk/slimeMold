@@ -123,6 +123,65 @@ function defaultParams(typeId: string): Record<string, unknown> {
   return params;
 }
 
+/** 把 WorkflowFile 的轻量节点还原为画布 FlowNode */
+function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
+  return (wf.nodes ?? []).map((n) => ({
+    id: n.id,
+    type: 'base',
+    position: n.position,
+    data: {
+      typeId: n.typeId,
+      label: n.label,
+      params: n.params ?? {},
+      status: 'idle' as NodeStatus,
+    },
+  }));
+}
+
+/** 把 WorkflowFile 的轻量连线还原为画布 FlowEdge */
+function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
+  return (wf.edges ?? []).map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? undefined,
+    targetHandle: e.targetHandle ?? undefined,
+  }));
+}
+
+/** 把当前编辑态序列化为一个 WorkflowFile（用于收纳游离态/写回） */
+function serializeCurrent(s: {
+  workflowName: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: AgentConfig[];
+  roles: RoleTemplate[];
+  variables: Record<string, unknown>;
+}): WorkflowFile {
+  return {
+    version: 1,
+    name: s.workflowName || '未命名工作流',
+    savedAt: new Date().toISOString(),
+    nodes: s.nodes.map((n) => ({
+      id: n.id,
+      typeId: n.data.typeId,
+      label: n.data.label,
+      position: { x: n.position.x, y: n.position.y },
+      params: n.data.params ?? {},
+    })),
+    edges: s.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle ?? null,
+      target: e.target,
+      targetHandle: e.targetHandle ?? null,
+    })),
+    agents: s.agents,
+    roles: s.roles,
+    variables: s.variables,
+  };
+}
+
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => ({
@@ -420,40 +479,18 @@ export const useWorkflowStore = create<WorkflowState>()(
       switchWorkflow: (id) => {
         const s = get();
         if (id === s.activeWfId) return;
-        // 写回当前
+        // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
         const synced: Record<string, WorkflowFile> = { ...s.workflows };
-        if (s.activeWfId) {
-          synced[s.activeWfId] = {
-            version: 1,
-            name: s.workflowName,
-            savedAt: new Date().toISOString(),
-            nodes: s.nodes.map((n) => ({
-              id: n.id,
-              typeId: n.data.typeId,
-              label: n.data.label,
-              position: { x: n.position.x, y: n.position.y },
-              params: n.data.params,
-            })),
-            edges: s.edges.map((e) => ({
-              id: e.id,
-              source: e.source,
-              sourceHandle: e.sourceHandle ?? null,
-              target: e.target,
-              targetHandle: e.targetHandle ?? null,
-            })),
-            agents: s.agents,
-            roles: s.roles,
-            variables: s.variables,
-          };
-        }
+        const curId = s.activeWfId || `wf-${Date.now()}`;
+        synced[curId] = serializeCurrent(s);
         const target = synced[id];
         if (!target) return;
         set({
           workflows: synced,
           activeWfId: id,
           workflowName: target.name,
-          nodes: [],
-          edges: [],
+          nodes: flowNodesFrom(target),
+          edges: flowEdgesFrom(target),
           agents: target.agents?.length ? target.agents : s.agents,
           roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
           variables: target.variables ?? {},
@@ -464,10 +501,17 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       newWorkflowInProject: () => {
         const s = get();
-        const id = `wf-${Date.now()}`;
+        const workflows = { ...s.workflows };
+        // 若当前为游离态（无对应工作流），先把现有编辑态收纳为默认工作流
+        let baseActive = s.activeWfId;
+        if (!baseActive) {
+          baseActive = `wf-${Date.now()}`;
+          workflows[baseActive] = serializeCurrent(s);
+        }
+        const id = `wf-${Date.now() + 1}`;
         const wf: WorkflowFile = {
           version: 1,
-          name: `工作流 ${Object.keys(s.workflows).length + 1}`,
+          name: `工作流 ${Object.keys(workflows).length + 1}`,
           savedAt: new Date().toISOString(),
           nodes: [],
           edges: [],
@@ -475,7 +519,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
         };
-        const workflows = { ...s.workflows, [id]: wf };
+        workflows[id] = wf;
         set({
           workflows,
           activeWfId: id,
@@ -517,8 +561,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             workflows: next,
             activeWfId: newId,
             workflowName: wf.name,
-            nodes: [],
-            edges: [],
+            nodes: flowNodesFrom(wf),
+            edges: flowEdgesFrom(wf),
             agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
             roles: [...builtinRoles.map((r) => ({ ...r })), ...(wf.roles ?? []).filter((r) => !r.builtin)],
             variables: wf.variables ?? {},
@@ -533,6 +577,8 @@ export const useWorkflowStore = create<WorkflowState>()(
     {
       name: 'slime-mold-workflow',
       partialize: (s) => ({
+        workflows: s.workflows,
+        activeWfId: s.activeWfId,
         workflowName: s.workflowName,
         nodes: s.nodes,
         edges: s.edges,
@@ -546,3 +592,17 @@ export const useWorkflowStore = create<WorkflowState>()(
     },
   ),
 );
+
+// 确保启动/恢复后始终有一个激活的工作流承载当前画布（避免游离态丢节点）
+{
+  const st = useWorkflowStore.getState();
+  const hasWf = Object.keys(st.workflows).length > 0;
+  if (!st.activeWfId || !hasWf) {
+    const id = `wf-${Date.now()}`;
+    useWorkflowStore.setState({
+      workflows: hasWf ? st.workflows : { [id]: serializeCurrent(st) },
+      activeWfId: st.activeWfId || id,
+      workflowName: st.workflowName || '未命名工作流',
+    });
+  }
+}

@@ -9,6 +9,7 @@ import {
   Settings,
   Keyboard,
   PanelBottom,
+  Sun,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -135,6 +136,7 @@ interface SideRailProps {
   onClose: () => void;
   onOpen: (key: SidePanelKey) => void;
   onOpenSettings: () => void;
+  onToggleTheme: () => void;
   shortcutsOpen: boolean;
   onToggleShortcuts: () => void;
   panelOpen: boolean;
@@ -147,6 +149,7 @@ export function SideRail({
   onClose,
   onOpen,
   onOpenSettings,
+  onToggleTheme,
   shortcutsOpen,
   onToggleShortcuts,
   panelOpen,
@@ -171,7 +174,7 @@ export function SideRail({
         ))}
       </div>
 
-      {/* 下半（从下到上）：帮助中心 / 底部面板 / 快捷键查看 / 设置 */}
+      {/* 下半（从下到上）：帮助中心 / 底部面板 / 快捷键查看 / 深浅色 / 设置 */}
       <div className="flex flex-col items-center gap-1">
         <IconButton
           label="帮助中心"
@@ -191,6 +194,7 @@ export function SideRail({
           isActive={shortcutsOpen}
           onClick={onToggleShortcuts}
         />
+        <IconButton label="切换深浅色" icon={Sun} isActive={false} onClick={onToggleTheme} />
         <IconButton label="设置" icon={Settings} isActive={false} onClick={onOpenSettings} />
       </div>
     </nav>
