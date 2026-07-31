@@ -140,13 +140,16 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const store = useWorkflowStore.getState();
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
   const skipped = skippedCount();
+  // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
+  const pruned = store.nodes.filter((n) => n.data.status === 'skipped').length;
   if (signal.aborted && failed.size === 0) {
     store.addLog('info', `执行已手动停止（${elapsed}s）`);
   } else if (failed.size > 0) {
     store.addLog('error', `执行结束：${failed.size} 个节点失败（${elapsed}s）`);
   } else {
-    const skipMsg = skipped > 0 ? `，缓存命中跳过 ${skipped} 个节点` : '';
-    store.addLog('info', `执行完成，全部节点成功（${elapsed}s${skipMsg}）`);
+    const skipMsg = skipped > 0 ? `，缓存命中 ${skipped}` : '';
+    const pruneMsg = pruned > 0 ? `、分支跳过 ${pruned}` : '';
+    store.addLog('info', `执行完成，全部节点成功（${elapsed}s${skipMsg}${pruneMsg}）`);
   }
 
   // 记录运行历史（持久化到 localStorage）
@@ -168,6 +171,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       status: n.data.status ?? 'idle',
       outputs: n.data.outputs ?? null,
       error: n.data.error ?? null,
+      startedAt: n.data.startedAt ?? null,
+      durationMs: n.data.durationMs ?? null,
     })),
   };
   useWorkflowStore.getState().pushRunHistory(rec);
@@ -201,7 +206,11 @@ async function executeNode(
   if (upstreamFailed) {
     failed.add(id);
     branchState.set(id, new Set());
-    store.setNodeStatus(id, 'error', { error: '上游节点失败，已跳过' });
+    store.setNodeStatus(id, 'error', {
+      error: '上游节点失败，已跳过',
+      startedAt: null,
+      durationMs: null,
+    });
     return;
   }
 
@@ -230,7 +239,7 @@ async function executeNode(
     });
     if (allBlocked) {
       branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
-      store.setNodeStatus(id, 'skipped');
+      store.setNodeStatus(id, 'skipped', { startedAt: null, durationMs: null });
       return;
     }
   }
@@ -245,7 +254,11 @@ async function executeNode(
       // 命中缓存的普通节点视为全部输出端口激活
       branchState.set(id, new Set(def.outputs.map((o) => o.id)));
       countSkip();
-      store.setNodeStatus(id, 'cached', { outputs: cached });
+      store.setNodeStatus(id, 'cached', {
+        outputs: cached,
+        startedAt: null,
+        durationMs: null,
+      });
       return;
     }
   }
@@ -301,6 +314,8 @@ async function executeNode(
 
   store.setNodeStatus(id, 'running');
   const inputs = collectInputs(id, edges, outputsMap);
+  const startedAt = Date.now();
+  const perfStart = performance.now();
   try {
     const outputs = await def.execute(inputs, node.data.params, ctx);
     outputsMap.set(id, outputs ?? {});
@@ -314,13 +329,21 @@ async function executeNode(
         ? new Set(branchesTaken)
         : new Set(def.outputs.map((o) => o.id)),
     );
-    store.setNodeStatus(id, 'success', { outputs: outputs ?? {} });
+    store.setNodeStatus(id, 'success', {
+      outputs: outputs ?? {},
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs: Math.round(performance.now() - perfStart),
+    });
   } catch (err) {
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);
     branchState.set(id, new Set()); // 失败节点视为屏蔽下游
-    store.setNodeStatus(id, 'error', { error: message });
+    store.setNodeStatus(id, 'error', {
+      error: message,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs: Math.round(performance.now() - perfStart),
+    });
     store.addLog('error', `[${node.data.label}] 执行失败：${message}`);
   }
 }

@@ -152,6 +152,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   outputs?: Record<string, unknown>;
   /** 增量执行标记：true 表示该节点被修改/受影响，需重新执行；false 或缺失表示可命中缓存 */
   dirty?: boolean;
+  /** 最近一次执行耗时（毫秒）；缓存命中/跳过为 null。仅用于画布展示 */
+  durationMs?: number | null;
+  /** 最近一次真正执行的开始时间戳（ISO）；缓存命中/跳过为 null */
+  startedAt?: string | null;
 }
 
 export type FlowNode = Node<WorkflowNodeData>;
@@ -219,6 +223,10 @@ export interface RunNodeResult {
   status: NodeStatus;
   outputs: Record<string, unknown> | null;
   error: string | null;
+  /** 节点开始执行的时间戳（ISO），缓存/跳过节点为 null（未真正执行） */
+  startedAt: string | null;
+  /** 节点实际执行耗时（毫秒）；缓存命中/跳过/上游失败为 null */
+  durationMs: number | null;
 }
 
 export interface RunRecord {

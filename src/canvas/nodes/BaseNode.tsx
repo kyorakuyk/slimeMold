@@ -91,6 +91,21 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           <span className="shrink-0 rounded bg-white/15 px-1 text-[9px]">插件</span>
         )}
         <span className="sm-node-cat">{def?.category}</span>
+        {data.durationMs != null &&
+          (data.status === 'success' ||
+            data.status === 'error' ||
+            data.status === 'cached') && (
+            <span
+              className="shrink-0 rounded bg-black/10 px-1 text-[9px] tabular-nums text-white/90"
+              title={
+                data.status === 'cached'
+                  ? '缓存命中（未实际执行）'
+                  : `耗时 ${data.durationMs}ms`
+              }
+            >
+              {data.status === 'cached' ? '缓存' : `${data.durationMs}ms`}
+            </span>
+          )}
         <StatusDot status={data.status} error={data.error} />
       </div>
 

@@ -91,11 +91,29 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
             <div className="space-y-2">
               {selected.nodes.map((n) => (
                 <div key={n.id} className="rounded border border-line p-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-medium text-ink" title={n.label}>
                       {n.label}
                     </span>
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${nodeStatusCls[n.status]}`} />
+                    <div className="flex shrink-0 items-center gap-2">
+                      {n.durationMs != null ? (
+                        <span
+                          className="rounded bg-paper px-1 text-[10px] tabular-nums text-ink-faint"
+                          title={`开始：${n.startedAt ? new Date(n.startedAt).toLocaleTimeString() : '—'}`}
+                        >
+                          {n.durationMs}ms
+                        </span>
+                      ) : n.status === 'cached' ? (
+                        <span className="rounded bg-paper px-1 text-[10px] text-accent" title="结果来自缓存（未实际执行）">
+                          缓存
+                        </span>
+                      ) : n.status === 'skipped' ? (
+                        <span className="rounded bg-paper px-1 text-[10px] text-ink-faint" title="因分支条件未命中而跳过">
+                          跳过
+                        </span>
+                      ) : null}
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${nodeStatusCls[n.status]}`} />
+                    </div>
                   </div>
                   {n.error ? (
                     <p className="mt-1 break-all text-[11px] leading-relaxed text-err">
