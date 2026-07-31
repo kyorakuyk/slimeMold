@@ -4,6 +4,7 @@ import { ChevronRight, ChevronDown, Search } from 'lucide-react';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { DND_MIME } from '../canvas/WorkflowEditor';
+import { CATEGORY_ORDER } from '../nodes/builtin';
 import type { NodeDefinition } from '../types';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
@@ -25,7 +26,13 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       list.push(def);
       map.set(def.category, list);
     }
-    return Array.from(map.entries());
+    // 按 Community 友好分类顺序排列，未列出的分类排到最后
+    const ordered = Array.from(map.entries()).sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a[0] as (typeof CATEGORY_ORDER)[number]);
+      const ib = CATEGORY_ORDER.indexOf(b[0] as (typeof CATEGORY_ORDER)[number]);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+    return ordered;
   }, [defs, query]);
 
   const addToCenter = (typeId: string) => {

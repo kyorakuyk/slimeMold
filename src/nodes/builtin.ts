@@ -44,7 +44,7 @@ const textInput: NodeDefinition = {
 const agentChat: NodeDefinition = {
   typeId: 'agent.chat',
   name: '智能体',
-  category: '智能体',
+  category: 'AI',
   description:
     '调用绑定的智能体（多协议 LLM）处理输入文本。可绑定角色库中的角色快速获得职业提示词，并支持节点级模型覆写与上下文隔离。',
   inputs: [{ id: 'prompt', label: '提示词', type: 'text' }],
@@ -566,20 +566,23 @@ function isTruthy(v: unknown): boolean {
   return Boolean(v);
 }
 
+// Community 友好分类顺序：输入 → 文本 → AI → 流程 → 工具 → 输出（普通用户语义）
+export const CATEGORY_ORDER = ['输入', '文本', 'AI', '流程', '工具', '输出'] as const;
+
 export const builtinDefs: NodeDefinition[] = [
   textInput,
-  agentChat,
   template,
-  httpRequest,
-  preview,
+  agentChat,
   listNode,
   mapNode,
   joinNode,
-  exprNode,
   ifNode,
   mergeNode,
   delayNode,
   switchNode,
+  exprNode,
+  httpRequest,
+  preview,
 ];
 
 export function registerBuiltins(): void {

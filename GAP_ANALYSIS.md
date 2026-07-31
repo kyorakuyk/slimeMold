@@ -1,81 +1,86 @@
-# 差距参考表 · SlimeMold ↔ ComfyUI
+# slimeMold 产品路线图与能力缺口分析
 
-> 用途：记录 SlimeMold 与 ComfyUI 在关键能力维度上的差距，作为后续逐项讨论取舍的输入。
-> 状态说明：`gap` 差距大小（高/中/低），`priority` 建议优先级，`decided` 是否已拍板方案（默认空，待讨论）。
-> 本文档只记录事实与待决问题，不写具体实现代码。
-
----
-
-## 一、整体对照
-
-| 维度 | ComfyUI 现状 | SlimeMold 现状 | gap | priority | decided |
-|---|---|---|---|---|---|
-| 执行位置 | 后端服务（Python）异步队列，前端不阻塞 | 路线A：调度仍在前端，但 LLM 调用通道可切后端（Rust `chat_completion`，密钥不出渲染层）；路线B（feature/backend-engine）：整图调度搬 Rust | 高 | 高 | 路线A已落地(默认backend)；路线B设计占位 |
-| 结果缓存 | 子图缓存命中跳过重复计算 | `nodeCache` 已实现：命中跳过 + 「缓存」徽标 | 中 | 高 | 已落地（内存缓存，命中跳过） |
-| 增量执行 | 只重跑脏节点及其下游 | `incremental` + `markDirty` + 下游传播已实现 | 中 | 高 | 已落地（脏标记 + 下游传播） |
-| 节点生态 | 数百种官方 + 社区节点 | 11 个内置节点（含 flow.merge / flow.delay） | 中 | 中 | 已落地部分；分支/聚合类仍缺 |
-| 端口类型校验 | 端口声明类型，连线前校验兼容 | `arePortsCompatible` 已实现（连线/运行前校验） | 低 | 低 | 已落地 |
-| 中断粒度 | 单节点 cancel + 重算子图 | 全局 abort + 子图裁剪重跑 + 「重跑到此节点」 | 中 | 中 | 已落地 |
-| API 模式 | 可纯 API 提交 prompt（headless） | `engine/headless.ts` + `npm run headless` CLI，无 UI 运行工作流 | 低 | 低 | 已落地（CLI 入口；Tauri 命令触发待接入） |
-| 观察/调试 | 节点级图像预览 + 实时进度条 | 日志 + 状态色 + 运行历史 + 节点耗时可视化 | 低 | 低 | 已落地（耗时可视化在节点/历史面板） |
-| 工作流分享 | `workflow.json` + API 调用 + 复制子图 | `ProjectFile` 持久化 + 单节点重试 | 低 | 低 | 未做 |
-| 分支/流程控制 | switch / 条件节点丰富 | if/merge/map/join/list/delay/switch 齐备；缺 while 条件循环 | 中 | 中 | 已较完整覆盖（if/merge/map/join/list/delay/switch，分支剪枝生效）；while 循环未做 |
+> 战略定位：首发 **Community（普通用户）** 版，界面干净好懂、操作易于学习；
+> 逐步扩充 **Professional（企业级）** 版（参考 PyCharm Community / Professional 双版本模式）。
 
 ---
 
-## 二、逐项待决问题（后续讨论清单）
+## 0. 双轨总览
 
-每个维度列出「值得讨论的取舍点」，讨论后回填到上表 `decided` 列。
+| 维度 | Community（首发） | Professional（后续） |
+|------|------------------|---------------------|
+| 目标人群 | 普通用户、个人创作者、学习者 | 企业团队、工程化/规模化使用 |
+| 核心目标 | 上手快、看得懂、跑得通 | 可控、可集成、可审计、可扩展 |
+| 界面基调 | 干净、引导式、人话提示 | 专业配置、批量、权限 |
+| 已落地的专业能力 | 执行引擎核心（缓存/增量/端口校验/分支）隐藏在底层 | 后端 LLM 通道、Headless API、分支节点 |
 
-### 1. 执行位置：前端 vs 后端
-- 是否引入后端服务（Rust/Tauri sidecar 或独立进程）来承载执行，还是保持纯前端？
-- 纯前端的代价：长工作流阻塞主线程、无法 headless 调度。
-- 引入后端的代价：部署复杂度上升、Tauri 打包体积、调试链路变长。
-
-### 2. 结果缓存
-- 缓存 key 取什么？（`typeId + params 哈希 + 上游输出哈希`？）
-- 缓存范围：内存（单次会话）还是落盘（跨会话复用）？
-- 缓存失效策略：参数变更即失效，还是手动清除？
-
-### 3. 增量执行
-- 脏节点如何标记？（编辑即脏 / 显式「标记重跑」）
-- 是否复用 `retryNode` 思路扩展为「脏标记 + 下游传播」？
-
-### 4. 节点生态
-- 优先补哪类节点：流程控制（分支/循环增强）？IO（文件读写）？还是领域工具（向量检索/RAG）？
-- 内置节点与插件节点的边界如何划？
-
-### 5. 端口类型校验
-- 端口类型体系：`text` / `list` / `any` / `image` / `json` ？
-- 校验时机：连线时拦截，还是允许连接但运行前告警？
-
-### 6. 中断粒度
-- 是否需要单节点取消、子图重跑？
-- 与全局 abort 如何共存（部分取消 vs 全停）？
-
-### 7. API / Headless
-- 是否需要「命令行提交工作流并取结果」？
-- 与桌面端定位是否冲突？
-
-### 8. 观察 / 调试
-- 节点内预览当前输出（如长文本流式）是否够用？
-- 是否需要执行时间轴 / 各节点耗时对比？
-
-### 9. 工作流分享
-- 是否需要「复制选中子图」「分享为单文件 .workflow.json」？
-- 与现有 `.smproj` 项目文件格式如何分工？
-
-### 10. 分支 / 流程控制
-- 是否需要 `flow.if`（按表达式选 true/false 下游）？
-- 是否需要聚合节点（多路汇入）与延迟/等待节点？
+**原则**：已做的专业能力（路线 A 后端通道、Headless、switch 等）**不回退**，
+但在 Community 首发版中应「藏好 / 默认关 / 不喧宾夺主」。
 
 ---
 
-## 三、建议推进顺序（初稿，待确认）
+## 1. Community 首发（P0 — 当前阶段）
 
-1. **增量执行 + 节点缓存**（体验质变，建立在已有 `topoLayers` / `retryNode` 之上）
-2. **分支/流程控制节点**（补齐 DAG 表达能力）
-3. **端口类型校验**（降低运行时错误）
-4. 其余按需求优先级填充
+### 1.1 界面打磨与新手引导
+- [x] **内置节点友好分类**：`input / 文本 / AI / 逻辑 / 工具 / 流程 / 输出` 中文分组，面向普通用户语义（见 `src/nodes/builtin.ts` 的 `category` 字段）
+- [x] **画布空状态引导**：零节点时显示欢迎卡片 + 一键「从模板开始」（`WorkflowEditor.tsx`）
+- [x] **新手模板**：内置「把一句话变成正式邮件」等开箱即用模板（`src/data/starterTemplates.ts`）
+- [ ] 运行过程提示人话化（如「AI 正在写…」「已跳过此分支，因为条件不成立」）
+- [ ] 节点中文标题 / 说明 tooltip，避免术语门槛
+- [ ] 端口连线时的友好校验提示（替代当前的硬校验报错）
 
-> 注：以上顺序为初步建议，需结合每项的取舍讨论后定稿。
+### 1.2 易用性增强（P1 — Community 增强）
+- [ ] **工作流分享**：导出/导入 JSON、分享链接
+- [ ] 模板市场（内置更多场景模板）
+- [ ] 一键示例库
+
+---
+
+## 2. Professional 后续（P2 — 企业级）
+
+### 2.1 后端化与 API
+- [x] **LLM 后端通道（路线 A）**：Rust `chat_completion`，密钥不出渲染层（`src/agents/llmChannel.ts` + `src-tauri/src/lib.rs`）
+- [x] **Headless / API 运行**：无 UI runner + CLI（`src/engine/headless.ts` + `scripts/headless-run.ts`）
+- [ ] Tauri 命令 `run_workflow` 触发 headless（让 Rust 也能跑整图）
+- [ ] Anthropic 原生 SSE（目前仅 OpenAI 兼容）
+- [ ] REST API 服务化
+
+### 2.2 工程化执行引擎（已落地，Pro 复用）
+- [x] 结果缓存 / 增量执行（`nodeCache`）
+- [x] 端口兼容性校验（`arePortsCompatible`）
+- [x] 中断粒度 / 重试（`withRetry` + `Semaphore` 并发）
+- [x] 分支剪枝（`setBranches`，`flow.if` / `flow.switch` / `flow.merge`）
+- [x] 分支 / 流程控制节点（`flow.switch` 新增）
+
+### 2.3 扩展与企业能力
+- [ ] 路线 B 实现：整图搬 Rust（`ExecutionBackend` 契约，占位见 `docs/BACKEND_ENGINE_DESIGN.md`，`feature/backend-engine` 分支）
+- [ ] 插件市场 / 自定义节点发布
+- [ ] 审计日志 / 操作追溯
+- [ ] SSO / 团队权限 / 协作
+
+---
+
+## 3. 执行引擎能力回溯（已完成，底层支撑）
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 拓扑分层 | ✅ | `topoLayers` |
+| 节点缓存 | ✅ | `nodeCache`（增量执行） |
+| 端口校验 | ✅ | `arePortsCompatible` |
+| 重试 / 并发 | ✅ | `withRetry` + `Semaphore` |
+| 分支剪枝 | ✅ | `setBranches` |
+| 分支节点 | ✅ | `flow.if` / `flow.switch` / `flow.merge` |
+
+---
+
+## 4. 专业能力清单（已交付，Pro 向）
+
+1. **LLM 后端通道（路线 A）** — 密钥安全、可切换前后端
+2. **执行引擎核心** — 缓存/增量/端口校验/中断/重试/分支
+3. **分支 / 流程控制节点** — if / switch / merge
+4. **Headless / API 运行模式** — 无 UI runner + CLI，已实跑验证
+
+## 5. 仍需补齐的缺口（按轨）
+
+- Community：运行提示人话化、中文 tooltip、友好端口校验、工作流分享
+- Professional：Tauri `run_workflow`、Anthropic SSE、路线 B 实现、插件市场、审计/SSO
