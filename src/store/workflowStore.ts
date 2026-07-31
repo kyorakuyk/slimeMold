@@ -14,12 +14,14 @@ import type {
   FlowNode,
   LogEntry,
   NodeStatus,
+  PortType,
   ProjectFile,
   RoleTemplate,
   RunRecord,
   WorkflowFile,
   WorkflowNodeData,
 } from '../types';
+import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { getNodeDef } from './registryStore';
 import { createAgent, builtinRoles } from '../agents/agentManager';
@@ -227,6 +229,20 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!conn.source || !conn.target) return;
         if (wouldCreateCycle(conn.source, conn.target, get().edges)) {
           get().addLog('error', '已拦截连线：该连接会形成环路（工作流必须是 DAG）');
+          return;
+        }
+        // 端口类型校验：source 输出端口类型须与 target 输入端口类型兼容
+        const srcDef = getNodeDef(conn.source);
+        const tgtDef = getNodeDef(conn.target);
+        const srcPort = srcDef?.outputs.find((o) => o.id === conn.sourceHandle);
+        const tgtPort = tgtDef?.inputs.find((i) => i.id === conn.targetHandle);
+        const srcType: PortType | undefined = srcPort?.type;
+        const tgtType: PortType | undefined = tgtPort?.type;
+        if (!arePortsCompatible(srcType, tgtType)) {
+          get().addLog(
+            'error',
+            `已拦截连线：端口类型不匹配（输出「${srcType ?? 'any'}」→ 输入「${tgtType ?? 'any'}」）`,
+          );
           return;
         }
         set({

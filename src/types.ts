@@ -48,9 +48,37 @@ export interface ChatMessage {
 }
 
 /* ---------- 节点定义 ---------- */
+/** 端口数据类型。用于连线时的类型校验，避免「把 list 接到只收 text 的端口」这类运行期才发现的问题。 */
+export type PortType =
+  | 'any' // 通配：与任何类型兼容（兜底，默认）
+  | 'text' // 文本 / 标量（与 number、boolean 互通，运行时模板会处理）
+  | 'number'
+  | 'boolean'
+  | 'list' // 列表：仅与 list 兼容
+  | 'json'; // 结构化对象：仅与 json 兼容
+
 export interface PortDef {
   id: string;
   label: string;
+  /** 端口数据类型，缺省视为 'any'（兼容所有，向后兼容旧节点） */
+  type?: PortType;
+}
+
+/**
+ * 连线兼容性：返回 source 端口输出能否连到 target 端口输入。
+ * 规则：
+ *  - 任一为 'any' -> 兼容（通配兜底）
+ *  - 类型相同 -> 兼容
+ *  - text / number / boolean 三者互通（标量，运行时表达式与模板可处理）
+ *  - list 仅兼容 list；json 仅兼容 json
+ */
+export function arePortsCompatible(src?: PortType, tgt?: PortType): boolean {
+  const s: PortType = src ?? 'any';
+  const t: PortType = tgt ?? 'any';
+  if (s === 'any' || t === 'any') return true;
+  if (s === t) return true;
+  const scalar = new Set<PortType>(['text', 'number', 'boolean']);
+  return scalar.has(s) && scalar.has(t);
 }
 
 export type ParamType = 'text' | 'textarea' | 'number' | 'select' | 'agent' | 'role';

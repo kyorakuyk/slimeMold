@@ -26,7 +26,7 @@ const textInput: NodeDefinition = {
   category: '输入',
   description: '提供固定文本，作为工作流的起点数据源',
   inputs: [],
-  outputs: [{ id: 'text', label: '文本' }],
+  outputs: [{ id: 'text', label: '文本', type: 'text' }],
   params: [
     {
       key: 'text',
@@ -47,8 +47,8 @@ const agentChat: NodeDefinition = {
   category: '智能体',
   description:
     '调用绑定的智能体（多协议 LLM）处理输入文本。可绑定角色库中的角色快速获得职业提示词，并支持节点级模型覆写与上下文隔离。',
-  inputs: [{ id: 'prompt', label: '提示词' }],
-  outputs: [{ id: 'text', label: '回复' }],
+  inputs: [{ id: 'prompt', label: '提示词', type: 'text' }],
+  outputs: [{ id: 'text', label: '回复', type: 'text' }],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
@@ -159,10 +159,10 @@ const template: NodeDefinition = {
   category: '文本',
   description: '用 {{a}} {{b}} 占位符将多路输入拼装为一段文本',
   inputs: [
-    { id: 'a', label: '输入 A' },
-    { id: 'b', label: '输入 B' },
+    { id: 'a', label: '输入 A', type: 'text' },
+    { id: 'b', label: '输入 B', type: 'text' },
   ],
-  outputs: [{ id: 'text', label: '文本' }],
+  outputs: [{ id: 'text', label: '文本', type: 'text' }],
   params: [
     {
       key: 'template',
@@ -184,8 +184,8 @@ const httpRequest: NodeDefinition = {
   name: 'HTTP 请求',
   category: '工具',
   description: '发起 HTTP 请求，URL 支持 {{url}} 端口注入',
-  inputs: [{ id: 'url', label: 'URL(可选)' }],
-  outputs: [{ id: 'body', label: '响应体' }],
+  inputs: [{ id: 'url', label: 'URL(可选)', type: 'text' }],
+  outputs: [{ id: 'body', label: '响应体', type: 'text' }],
   params: [
     { key: 'url', label: 'URL', type: 'text', default: '', placeholder: 'https://…' },
     {
@@ -226,7 +226,7 @@ const preview: NodeDefinition = {
   name: '结果预览',
   category: '输出',
   description: '展示上游节点的输出结果，作为工作流终点',
-  inputs: [{ id: 'value', label: '数据' }],
+  inputs: [{ id: 'value', label: '数据', type: 'any' }],
   outputs: [],
   params: [],
   async execute(inputs) {
@@ -240,7 +240,7 @@ const listNode: NodeDefinition = {
   category: '流程',
   description: '将文本按分隔方式拆分为数组 items，供循环批处理 / 合并文本节点使用',
   inputs: [],
-  outputs: [{ id: 'items', label: '列表' }],
+  outputs: [{ id: 'items', label: '列表', type: 'list' }],
   params: [
     {
       key: 'text',
@@ -282,8 +282,8 @@ const mapNode: NodeDefinition = {
   category: '流程',
   description:
     '对输入 items 数组逐项处理，输出 results 数组。支持「模板」模式（{{item}}/{{index}} 渲染）或「智能体」模式（逐项调用 LLM）',
-  inputs: [{ id: 'items', label: '列表' }],
-  outputs: [{ id: 'results', label: '结果' }],
+  inputs: [{ id: 'items', label: '列表', type: 'list' }],
+  outputs: [{ id: 'results', label: '结果', type: 'list' }],
   params: [
     {
       key: 'mode',
@@ -360,8 +360,8 @@ const joinNode: NodeDefinition = {
   name: '合并文本',
   category: '流程',
   description: '将数组 items 用分隔符拼接为文本 text',
-  inputs: [{ id: 'items', label: '列表' }],
-  outputs: [{ id: 'text', label: '文本' }],
+  inputs: [{ id: 'items', label: '列表', type: 'list' }],
+  outputs: [{ id: 'text', label: '文本', type: 'text' }],
   params: [{ key: 'sep', label: '分隔符', type: 'text', default: '\n' }],
   async execute(inputs, params) {
     const arr = Array.isArray(inputs.items) ? inputs.items : [];
@@ -379,8 +379,8 @@ const exprNode: NodeDefinition = {
   category: '工具',
   description:
     '计算一个安全表达式，可引用输入端口 a/b、全局变量，输出 result。支持 + - * / % 比较 逻辑 三元 及 len/upper/lower/split/join/contains 等函数',
-  inputs: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }],
-  outputs: [{ id: 'result', label: '结果' }],
+  inputs: [{ id: 'a', label: 'a', type: 'any' }, { id: 'b', label: 'b', type: 'any' }],
+  outputs: [{ id: 'result', label: '结果', type: 'any' }],
   params: [
     {
       key: 'expression',
@@ -405,10 +405,10 @@ const ifNode: NodeDefinition = {
   category: '流程',
   description:
     '根据条件表达式求值结果，只走 true / false 其中一条分支。下游若只连到未激活的分支则被跳过（不执行）。表达式可引用输入端口与全局变量，结果按「真值」判断（非空、非零、非空字符串、非空数组）。',
-  inputs: [{ id: 'cond', label: '条件' }],
+  inputs: [{ id: 'cond', label: '条件', type: 'any' }],
   outputs: [
-    { id: 'true', label: '真' },
-    { id: 'false', label: '假' },
+    { id: 'true', label: '真', type: 'any' },
+    { id: 'false', label: '假', type: 'any' },
   ],
   params: [
     {

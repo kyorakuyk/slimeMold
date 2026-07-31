@@ -36,6 +36,25 @@ function summarize(value: unknown, max = 90): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/** 端口类型徽标配色（与连线校验语义一致） */
+const portBadgeCls: Record<string, string> = {
+  any: 'bg-[#9aa0a6]',
+  text: 'bg-[#3b82f6]',
+  number: 'bg-[#16a34a]',
+  boolean: 'bg-[#d97706]',
+  list: 'bg-[#a855f7]',
+  json: 'bg-[#db2777]',
+};
+function PortBadge({ type }: { type?: string }) {
+  const t = type ?? 'any';
+  return (
+    <span
+      title={`端口类型：${t}`}
+      className={`ml-1.5 inline-block h-1.5 w-1.5 rounded-full ${portBadgeCls[t] ?? portBadgeCls.any}`}
+    />
+  );
+}
+
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
   const running = useWorkflowStore((s) => s.running);
@@ -87,14 +106,20 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     type="target"
                     position={Position.Left}
                   />
-                  <span className="text-xs text-ink-soft">{inputs[i].label}</span>
+                  <span className="text-xs text-ink-soft">
+                    {inputs[i].label}
+                    <PortBadge type={inputs[i].type} />
+                  </span>
                 </>
               ) : (
                 <span />
               )}
               {outputs[i] ? (
                 <>
-                  <span className="text-xs text-ink-soft">{outputs[i].label}</span>
+                  <span className="text-xs text-ink-soft">
+                    {outputs[i].label}
+                    <PortBadge type={outputs[i].type} />
+                  </span>
                   <Handle
                     id={outputs[i].id}
                     type="source"
