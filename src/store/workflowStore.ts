@@ -805,3 +805,32 @@ export const useWorkflowStore = create<WorkflowState>()(
     });
   }
 }
+
+// 一次性迁移：把持久化中遗留的旧默认模型 qwen2.5:7b 纠正为 qwen2.5:3b
+// （仅当 agent 仍是旧默认值，且为 ollama 协议时；不动用户手动选择过的其它模型）
+{
+  const st = useWorkflowStore.getState();
+  const migratedAgents = st.agents.map((a) =>
+    a.protocol === 'ollama' && a.model === 'qwen2.5:7b'
+      ? { ...a, model: 'qwen2.5:3b' }
+      : a,
+  );
+  const migratedWorkflows: Record<string, WorkflowFile> = {};
+  for (const [id, wf] of Object.entries(st.workflows)) {
+    const ma = (wf.agents ?? []).map((a) =>
+      a.protocol === 'ollama' && a.model === 'qwen2.5:7b'
+        ? { ...a, model: 'qwen2.5:3b' }
+        : a,
+    );
+    migratedWorkflows[id] = ma === wf.agents ? wf : { ...wf, agents: ma };
+  }
+  if (
+    migratedAgents !== st.agents ||
+    JSON.stringify(migratedWorkflows) !== JSON.stringify(st.workflows)
+  ) {
+    useWorkflowStore.setState({
+      agents: migratedAgents,
+      workflows: migratedWorkflows,
+    });
+  }
+}
