@@ -37,6 +37,7 @@ struct ChatMessage {
 }
 
 #[derive(Deserialize, Clone)]
+#[allow(non_snake_case)]
 struct AgentConfig {
     #[allow(dead_code)]
     id: Option<String>,
