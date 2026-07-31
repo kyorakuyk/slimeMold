@@ -66,10 +66,19 @@ const agentChat: NodeDefinition = {
       default: '',
       placeholder: '可选；留空则使用所绑定角色的系统提示词',
     },
+    {
+      key: 'simulate',
+      label: '离线模拟模式（不调 LLM，回显角色链路）',
+      type: 'select',
+      default: 'off',
+      options: [
+        { value: 'off', label: '关闭（真实调用）' },
+        { value: 'on', label: '开启（离线回显）' },
+      ],
+    },
   ],
   async execute(inputs, params, ctx) {
     const agentId = String(params.agentId ?? '');
-    if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择');
     const prompt = String(inputs.prompt ?? '');
     if (!prompt) throw new Error('缺少输入提示词（prompt 端口未接入数据）');
 
@@ -80,20 +89,57 @@ const agentChat: NodeDefinition = {
 
     // 节点级模型覆写：构造临时 AgentConfig，仅本次调用生效
     const modelOverride = String(params.modelOverride ?? '').trim();
-    const effectiveAgentId = agentId;
-    let acc = '';
+    const isolated = role?.contextScope === 'isolated';
+
+    // —— 离线模拟模式：不发起真实 LLM 调用，按角色链路回显，便于无模型时验证 ——
+    if (String(params.simulate ?? 'off') === 'on') {
+      const roleTag = role
+        ? `${role.icon ? role.icon + ' ' : ''}${role.name}（${isolated ? '隔离上下文' : '共享上下文'}）`
+        : '（无角色）';
+      const agent = useWorkflowStore
+        .getState()
+        .agents.find((a) => a.id === agentId);
+      const modelTag = modelOverride || agent?.model || '—';
+      const lines = [
+        `【离线模拟 · 角色链路回显】`,
+        `角色：${roleTag}`,
+        `智能体：${agent ? agent.name : '（未绑定）'}`,
+        `模型：${modelTag}`,
+        `上下文：${isolated ? 'isolated（独立，不污染共享）' : 'shared（共用全局）'}`,
+        ``,
+        `— 系统提示词 —`,
+        system || '（无）',
+        ``,
+        `— 用户输入 —`,
+        prompt,
+        ``,
+        `— 模拟回复 —`,
+        `[本节点在模拟模式下不调用真实 LLM，以上为角色链路装配结果。关闭"离线模拟模式"并配置可用智能体后，此处将替换为模型实际输出。]`,
+      ];
+      // 模拟流式逐段回显
+      let acc = '';
+      for (const seg of lines) {
+        acc += (acc ? '\n' : '') + seg;
+        ctx.setPartial('text', acc);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      ctx.logger.info(
+        `离线模拟完成 角色=${role?.name ?? '无'}${isolated ? ' 隔离' : ''} prompt ${prompt.length} 字`,
+      );
+      return { text: acc };
+    }
+
+    // —— 真实调用 ——
+    if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择（或开启离线模拟模式）');
     const messages = [];
     if (system) messages.push({ role: 'system' as const, content: system });
     messages.push({ role: 'user' as const, content: prompt });
 
-    // 上下文隔离：isolated 角色仅用自身 system+user，不拼入共享全局变量
-    const isolated = role?.contextScope === 'isolated';
-
     ctx.logger.info(
       `智能体请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''}${isolated ? ' 上下文隔离' : ''} prompt ${prompt.length} 字`,
     );
-    void effectiveAgentId;
 
+    let acc = '';
     const text = await ctx.llm(
       agentId,
       messages,
