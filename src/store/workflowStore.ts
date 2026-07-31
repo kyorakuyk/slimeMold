@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import type {
   AgentConfig,
+  AssetMeta,
   FlowEdge,
   FlowNode,
   LogEntry,
@@ -121,8 +122,12 @@ interface WorkflowState {
   saveProject: () => Promise<string>;
   /** 切换当前激活工作流（先写回当前，再加载目标） */
   switchWorkflow: (id: string) => void;
-  /** 在项目内新建一个工作流并激活 */
-  newWorkflowInProject: () => void;
+  /** 在项目内新建一个工作流并激活；workspaceDir 为用户指定的工作区文件夹（null=不创建，产物随工作流销毁） */
+  newWorkflowInProject: (workspaceDir?: string | null) => void;
+  /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
+  addAsset: (meta: AssetMeta) => void;
+  /** 删除一条资产元数据 */
+  removeAsset: (assetId: string) => void;
   /** 重命名当前工作流 */
   renameWorkflow: (name: string) => void;
   /** 删除一个工作流（至少保留一个） */
@@ -671,7 +676,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      newWorkflowInProject: () => {
+      newWorkflowInProject: (workspaceDir?: string | null) => {
         const s = get();
         const workflows = { ...s.workflows };
         // 若当前为游离态（无对应工作流）且已有编辑内容，先把现有编辑态收纳为默认工作流
@@ -690,6 +695,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           agents: [createAgent('ollama')],
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
+          workspaceDir: workspaceDir ?? null,
+          assets: [],
         };
         workflows[id] = wf;
         set({
@@ -703,6 +710,38 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: wf.variables!,
           selectedNodeId: null,
           logs: [],
+        });
+      },
+
+      /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
+      addAsset: (meta) => {
+        const s = get();
+        if (!s.activeWfId) return;
+        const wf = s.workflows[s.activeWfId];
+        if (!wf) return;
+        const assets = [...(wf.assets ?? []), meta];
+        set({
+          workflows: {
+            ...s.workflows,
+            [s.activeWfId]: { ...wf, assets },
+          },
+        });
+      },
+
+      /** 删除一条资产（仅元数据；已落盘文件由用户自行管理） */
+      removeAsset: (assetId) => {
+        const s = get();
+        if (!s.activeWfId) return;
+        const wf = s.workflows[s.activeWfId];
+        if (!wf?.assets) return;
+        set({
+          workflows: {
+            ...s.workflows,
+            [s.activeWfId]: {
+              ...wf,
+              assets: wf.assets.filter((a) => a.id !== assetId),
+            },
+          },
         });
       },
 
@@ -720,6 +759,18 @@ export const useWorkflowStore = create<WorkflowState>()(
       removeWorkflow: (id) => {
         const s = get();
         const next = { ...s.workflows };
+        const target = s.workflows[id];
+        // 未指定工作区（workspaceDir=null）时，产物落在 AppData 内部目录，
+        // 删除工作流时一并清理，避免残留文件。用户指定工作区的不动。
+        if (target && !target.workspaceDir) {
+          import('@tauri-apps/api/path')
+            .then(async (p) => {
+              const base = `${await p.appDataDir()}/slime-mold/${id}`;
+              const fs = await import('@tauri-apps/plugin-fs');
+              await fs.remove(base, { recursive: true });
+            })
+            .catch(() => {});
+        }
         delete next[id];
         // 删到零工作流：进入「无激活工作流」状态，画布显示欢迎背景
         if (Object.keys(next).length === 0) {

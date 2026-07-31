@@ -29,3 +29,32 @@ export function scopedStorage(scope: string) {
     },
   };
 }
+
+/** 浏览器副本下载：把文本通过 a 标签下载到本机 */
+export function downloadBlob(name: string, content: string, mime = 'text/plain') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** 选择文件夹对话框（Tauri 桌面端）。浏览器环境返回 null。 */
+export async function openDirDialog(): Promise<string | null> {
+  if (isTauri) {
+    try {
+      const tauri = (window as any).__TAURI__;
+      const selected: string[] | string | null = await tauri.dialog.open({
+        directory: true,
+        multiple: false,
+        title: '选择工作区文件夹',
+      });
+      return Array.isArray(selected) ? selected[0] ?? null : selected;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

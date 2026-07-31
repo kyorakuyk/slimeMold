@@ -189,6 +189,33 @@ export interface WorkflowFile {
   roles?: RoleTemplate[];
   /** 全局变量（随工作流一起保存/加载） */
   variables?: Record<string, unknown>;
+  /**
+   * 工作区目录（绝对路径）。
+   * - null/undefined：未创建工作区，写文件节点产物落到工作流内部目录，随工作流删除销毁。
+   * - 字符串：用户指定的文件夹，写文件产物落到此处。
+   */
+  workspaceDir?: string | null;
+  /** 本工作流产出的资产（文件/预览）元数据，用于左侧「资产」面板的预览与导出 */
+  assets?: AssetMeta[];
+}
+
+/** 资产（写文件节点产出的文件/预览）元数据 */
+export interface AssetMeta {
+  id: string;
+  /** 显示名（通常带扩展名），如 hello_world.py */
+  name: string;
+  /** 落盘的绝对路径；若为 null 表示仅存入工作流内部、随工作流销毁（未真正写盘） */
+  path: string | null;
+  /** 文件类型提示，如 'python' / 'text' / 'image' / 'json' */
+  kind: string;
+  /** 文本内容（用于预览与导出；二进制资产可为空） */
+  content: string;
+  /** 创建时间 ISO 字符串 */
+  createdAt: string;
+  /** 产出该资产的节点 id */
+  nodeId?: string;
+  /** 是否为工作区文件（true=落到用户指定文件夹；false=工作流内部临时目录） */
+  inWorkspace: boolean;
 }
 
 /* ---------- 项目文件（.smproj，含多个工作流） ---------- */

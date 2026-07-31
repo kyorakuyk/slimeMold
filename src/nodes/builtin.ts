@@ -1,9 +1,20 @@
-import type { NodeDefinition } from '../types';
-import { httpFetch } from '../platform/env';
+import type { NodeDefinition, AssetMeta } from '../types';
+import { httpFetch, isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { evalExpr } from '../engine/expr';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';
+
+/** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
+function inferAssetKind(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  if (['py', 'js', 'ts', 'jsx', 'tsx', 'java', 'go', 'rs', 'cpp', 'c', 'sh'].includes(ext))
+    return 'code';
+  if (ext === 'json') return 'json';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
+  if (['md', 'txt', 'log'].includes(ext)) return 'text';
+  return 'text';
+}
 
 /** 将模板中的 {{key}} 替换为 scope 中的值（对象会 JSON 序列化） */
 function renderTemplate(
@@ -218,6 +229,98 @@ const httpRequest: NodeDefinition = {
     const body = await res.text();
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
     return { body };
+  },
+};
+
+/** 写文件节点：把输入内容写入工作区（或工作流内部目录），并登记为资产 */
+export const nodeWriteFile: NodeDefinition = {
+  typeId: 'tool.writeFile',
+  name: '写文件',
+  category: '工具',
+  description:
+    '将输入内容写入工作区文件夹（创建工作流时指定）或工作流内部目录，并在左侧「资产」面板生成预览。浏览器环境不落盘，仅登记预览。',
+  inputs: [
+    { id: 'content', label: '内容', type: 'text' },
+    { id: 'filename', label: '文件名(可选)', type: 'text' },
+  ],
+  outputs: [{ id: 'path', label: '文件路径', type: 'text' }],
+  params: [
+    {
+      key: 'filename',
+      label: '文件名',
+      type: 'text',
+      default: 'output.txt',
+      placeholder: 'hello_world.py',
+    },
+    {
+      key: 'overwrite',
+      label: '覆盖已存在文件',
+      type: 'select',
+      default: 'true',
+      options: [
+        { label: '覆盖', value: 'true' },
+        { label: '不覆盖(重命名)', value: 'false' },
+      ],
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const content = String(inputs.content ?? '');
+    if (!content) throw new Error('输入内容为空，无法写文件');
+    const filename = String(inputs.filename ?? params.filename ?? 'output.txt').trim();
+    if (!filename) throw new Error('文件名为空');
+
+    const wfId = useWorkflowStore.getState().activeWfId;
+    const wf = useWorkflowStore.getState().workflows[wfId];
+    const workspaceDir = wf?.workspaceDir ?? null;
+
+    let absPath: string | null = null;
+    let inWorkspace = false;
+
+    if (isTauri) {
+      const fs = await import('@tauri-apps/plugin-fs');
+      const pathMod = await import('@tauri-apps/api/path');
+      const baseDir = workspaceDir
+        ? workspaceDir
+        : `${await pathMod.appDataDir()}/slime-mold/${wfId}`;
+      inWorkspace = !!workspaceDir;
+      // 工作流内部目录需先确保存在
+      if (!workspaceDir) {
+        await fs.mkdir(baseDir, { recursive: true });
+      }
+
+      // 处理重名：不覆盖时追加 _1 _2 …
+      let finalName = filename;
+      if (params.overwrite !== 'true') {
+        const exists = await fs.exists(`${baseDir}/${finalName}`);
+        if (exists) {
+          const dot = finalName.lastIndexOf('.');
+          const stem = dot > 0 ? finalName.slice(0, dot) : finalName;
+          const ext = dot > 0 ? finalName.slice(dot) : '';
+          let i = 1;
+          while (await fs.exists(`${baseDir}/${stem}_${i}${ext}`)) i++;
+          finalName = `${stem}_${i}${ext}`;
+        }
+      }
+      absPath = `${baseDir}/${finalName}`;
+      await fs.writeTextFile(absPath, content);
+      ctx.logger.info(`已写入文件：${absPath}`);
+    } else {
+      // 浏览器环境无法落盘，仅登记资产预览
+      ctx.logger.info('浏览器环境不支持写文件，仅生成资产预览（未落盘）');
+    }
+
+    const meta: AssetMeta = {
+      id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: filename,
+      path: absPath,
+      kind: inferAssetKind(filename),
+      content,
+      createdAt: new Date().toISOString(),
+      inWorkspace,
+    };
+    useWorkflowStore.getState().addAsset(meta);
+
+    return { path: absPath ?? `[资产预览] ${filename}` };
   },
 };
 

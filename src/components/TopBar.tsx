@@ -42,6 +42,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
+import { openDirDialog } from '../platform/env';
 import {
   openProjectFile,
   getRecentProjects,
@@ -476,8 +477,12 @@ export default function TopBar({
           })}
           <button
             className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
-            title="新建工作流"
-            onClick={() => newWorkflowInProject()}
+            title="新建工作流（可指定工作区文件夹）"
+            onClick={async () => {
+              const ws = await openDirDialog();
+              // 用户选了文件夹 → 作为工作区；取消/关闭 → 不创建工作区（产物随工作流销毁）
+              newWorkflowInProject(ws);
+            }}
           >
             <Plus size={14} />
           </button>

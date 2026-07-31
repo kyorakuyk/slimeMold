@@ -12,6 +12,7 @@ import {
   Sun,
   X,
   LayoutTemplate,
+  Archive,
   type LucideIcon,
 } from 'lucide-react';
 import NodePalette from './NodePalette';
@@ -20,6 +21,7 @@ import AgentPanel from './AgentPanel';
 import VariablesPanel from './VariablesPanel';
 import RunHistoryPanel from './RunHistoryPanel';
 import ExamplesPanel from './ExamplesPanel';
+import AssetsPanel from './AssetsPanel';
 import ShortcutsModal from './ShortcutsModal';
 
 export type SidePanelKey =
@@ -28,6 +30,7 @@ export type SidePanelKey =
   | 'agents'
   | 'variables'
   | 'history'
+  | 'assets'
   | 'examples'
   | 'help';
 
@@ -43,6 +46,7 @@ const PANEL_ITEMS: PanelItem[] = [
   { key: 'nodes', label: '节点库', icon: Boxes, shortcut: '' },
   { key: 'plugins', label: '插件', icon: Puzzle, shortcut: '' },
   { key: 'agents', label: '智能体库', icon: Users, shortcut: '' },
+  { key: 'assets', label: '资产', icon: Archive, shortcut: '' },
   { key: 'variables', label: '变量', icon: Variable, shortcut: '' },
   { key: 'history', label: '运行历史', icon: History, shortcut: '' },
 ];
@@ -62,6 +66,8 @@ export function renderSidePanel(key: SidePanelKey) {
       return <VariablesPanel embedded />;
     case 'history':
       return <RunHistoryPanel embedded />;
+    case 'assets':
+      return <AssetsPanel embedded />;
     case 'help':
       return (
         <div className="flex-1 overflow-y-auto px-4 py-3">
