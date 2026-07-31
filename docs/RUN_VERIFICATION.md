@@ -34,8 +34,15 @@
 - [ ] 中断粒度：全局 Abort + 子图裁剪重跑 + 「重跑到此节点」
 - [ ] 端口类型校验：不兼容端口连接被拦截或运行前告警
 
+### API / Headless 验证
+- [ ] `npm run headless -- examples/headless-demo.json` 可无窗口运行，输出各节点状态
+- [ ] 分支剪枝生效：未激活分支的下游节点显示 `skipped`
+- [ ] 纯本地节点（模板/表达式/流程控制）无需 API Key 即可运行
+- [ ] LLM 节点 headless 运行走 `ctx.llm` 通道（默认 backend，需有效 Key 与 Tauri 环境）
+- [ ] `--channel frontend|backend` 与 `--vars '{}'` 参数可用
+
 ## 四、已知缺口（本次未覆盖，记录待办）
 
 - 后端 SSE 对 Anthropic 原生流式格式的支持（见上）
 - 路线 B（feature/backend-engine）：整图调度搬入 Rust，仅设计占位，未实现
-- 分支/流程控制节点（flow.if、聚合节点）尚未提供
+- Tauri 命令触发 headless（`run_workflow` 供外部进程/服务端调用）尚未接入，当前仅 CLI 入口

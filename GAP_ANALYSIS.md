@@ -16,7 +16,7 @@
 | 节点生态 | 数百种官方 + 社区节点 | 11 个内置节点（含 flow.merge / flow.delay） | 中 | 中 | 已落地部分；分支/聚合类仍缺 |
 | 端口类型校验 | 端口声明类型，连线前校验兼容 | `arePortsCompatible` 已实现（连线/运行前校验） | 低 | 低 | 已落地 |
 | 中断粒度 | 单节点 cancel + 重算子图 | 全局 abort + 子图裁剪重跑 + 「重跑到此节点」 | 中 | 中 | 已落地 |
-| API 模式 | 可纯 API 提交 prompt（headless） | 仅 UI 触发运行 | 低 | 低 | 未做 |
+| API 模式 | 可纯 API 提交 prompt（headless） | `engine/headless.ts` + `npm run headless` CLI，无 UI 运行工作流 | 低 | 低 | 已落地（CLI 入口；Tauri 命令触发待接入） |
 | 观察/调试 | 节点级图像预览 + 实时进度条 | 日志 + 状态色 + 运行历史 + 节点耗时可视化 | 低 | 低 | 已落地（耗时可视化在节点/历史面板） |
 | 工作流分享 | `workflow.json` + API 调用 + 复制子图 | `ProjectFile` 持久化 + 单节点重试 | 低 | 低 | 未做 |
 | 分支/流程控制 | switch / 条件节点丰富 | if/merge/map/join/list/delay/switch 齐备；缺 while 条件循环 | 中 | 中 | 已较完整覆盖（if/merge/map/join/list/delay/switch，分支剪枝生效）；while 循环未做 |

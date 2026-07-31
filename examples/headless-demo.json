@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "Headless 演示（纯本地节点）",
+  "savedAt": "2026-08-01T00:00:00.000Z",
+  "nodes": [
+    { "id": "in", "typeId": "input.text", "label": "输入", "position": { "x": 0, "y": 0 }, "params": { "text": "branch-b" } },
+    { "id": "tmpl", "typeId": "text.template", "label": "模板", "position": { "x": 200, "y": 0 }, "params": { "template": "键={{a}}" } },
+    { "id": "br", "typeId": "flow.if", "label": "条件", "position": { "x": 400, "y": 0 }, "params": { "expression": "a == 'branch-a'", "trueLabel": "A", "falseLabel": "B" } },
+    { "id": "outA", "typeId": "output.preview", "label": "A路", "position": { "x": 640, "y": -80 }, "params": {} },
+    { "id": "outB", "typeId": "output.preview", "label": "B路", "position": { "x": 640, "y": 80 }, "params": {} },
+    { "id": "expr", "typeId": "tool.expr", "label": "表达式", "position": { "x": 400, "y": 200 }, "params": { "expression": "len(a) * 2" } },
+    { "id": "outC", "typeId": "output.preview", "label": "表达式结果", "position": { "x": 640, "y": 200 }, "params": {} }
+  ],
+  "edges": [
+    { "id": "e1", "source": "in", "sourceHandle": "text", "target": "tmpl", "targetHandle": "a" },
+    { "id": "e2", "source": "tmpl", "sourceHandle": "text", "target": "br", "targetHandle": "cond" },
+    { "id": "e3", "source": "br", "sourceHandle": "true", "target": "outA", "targetHandle": "value" },
+    { "id": "e4", "source": "br", "sourceHandle": "false", "target": "outB", "targetHandle": "value" },
+    { "id": "e5", "source": "tmpl", "sourceHandle": "text", "target": "expr", "targetHandle": "a" },
+    { "id": "e6", "source": "expr", "sourceHandle": "result", "target": "outC", "targetHandle": "value" }
+  ],
+  "agents": [],
+  "variables": { "env": "demo" }
+}
