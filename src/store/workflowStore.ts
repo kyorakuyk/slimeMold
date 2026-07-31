@@ -46,6 +46,8 @@ interface WorkflowState {
 
   addNode: (typeId: string, position: { x: number; y: number }) => void;
   removeNode: (id: string) => void;
+  deleteSelected: () => void;
+  clearGraph: () => void;
   updateNodeParams: (id: string, patch: Record<string, unknown>) => void;
   setNodeLabel: (id: string, label: string) => void;
   setNodeStatus: (
@@ -149,6 +151,15 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId:
             get().selectedNodeId === id ? null : get().selectedNodeId,
         }),
+
+      deleteSelected: () => {
+        const id = get().selectedNodeId;
+        if (!id) return;
+        get().removeNode(id);
+      },
+
+      clearGraph: () =>
+        set({ nodes: [], edges: [], selectedNodeId: null, logs: [] }),
 
       updateNodeParams: (id, patch) =>
         set({

@@ -5,6 +5,7 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  MarkerType,
   useReactFlow,
   type NodeTypes,
 } from '@xyflow/react';
@@ -47,7 +48,13 @@ export default function WorkflowEditor() {
     [addNode, screenToFlowPosition],
   );
 
-  const defaultEdgeOptions = useMemo(() => ({ type: 'default' as const }), []);
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      type: 'smoothstep' as const,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: 'var(--sm-edge)' },
+    }),
+    [],
+  );
 
   return (
     <div className="sm-canvas-dot h-full w-full" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
@@ -69,9 +76,9 @@ export default function WorkflowEditor() {
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={22}
-          size={1.2}
-          color="#e2e2e2"
+          gap={20}
+          size={1.5}
+          color="var(--sm-canvas-grid)"
         />
         <Controls position="bottom-left" showInteractive={false} />
         <MiniMap

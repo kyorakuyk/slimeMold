@@ -8,6 +8,8 @@ import WorkflowEditor from './canvas/WorkflowEditor';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
+import { exportWorkflow, importWorkflow } from './io/workflowIO';
+import { useWorkflowStore } from './store/workflowStore';
 
 // 非首屏面板懒加载，减小首屏 JS 解析量（打开对应面板时才拉取 chunk）
 const AgentPanel = lazy(() => import('./components/AgentPanel'));
@@ -75,6 +77,24 @@ export default function App() {
   useEffect(() => {
     // 桌面端启动时自动扫描插件目录
     if (isTauri) scanPluginsDir();
+  }, []);
+
+  // 全局快捷键（与菜单标注一致）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        exportWorkflow();
+      } else if (mod && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        useWorkflowStore.getState().newWorkflow();
+      } else if (mod && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   return (

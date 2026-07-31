@@ -12,6 +12,7 @@
   --sm-line: #e6e6e6;
   --sm-accent: #3b82f6;
   --sm-accent-soft: #5b8def;
+  --sm-edge: #9aa0a6;
   --sm-canvas: #f3f1ec;
   --sm-canvas-grid: #e3ded3;
   --sm-panel: #fbfaf8;
@@ -38,6 +39,7 @@
   --sm-line: #3a3a3d;
   --sm-accent: #4a9eff;
   --sm-accent-soft: #6db1ff;
+  --sm-edge: #6b7280;
   --sm-canvas: #1a1a1a;
   --sm-canvas-grid: #2a2a2a;
   --sm-panel: #1f1f1f;
@@ -81,36 +83,30 @@ body {
   background: transparent;
 }
 
-/* ---------- React Flow：Typora 式柔和风格 ---------- */
+/* ---------- React Flow：ComfyUI 风连线 + 控件 ---------- */
 .react-flow__pane {
   cursor: default;
 }
 .react-flow__edge-path {
-  stroke: #c9c9c9;
-  stroke-width: 1.6;
+  stroke: var(--sm-edge);
+  stroke-width: 2;
 }
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:hover .react-flow__edge-path {
-  stroke: var(--sm-accent-soft);
+  stroke: var(--sm-accent);
+  stroke-width: 2.6;
+}
+.react-flow__edge .react-flow__edge-path {
+  transition: stroke 0.12s ease, stroke-width 0.12s ease;
+}
+.react-flow__arrowhead * {
+  fill: var(--sm-edge);
+  stroke: var(--sm-edge);
 }
 .react-flow__connection-path {
-  stroke: var(--sm-accent-soft);
-  stroke-width: 1.6;
+  stroke: var(--sm-accent);
+  stroke-width: 2;
   stroke-dasharray: 5 4;
-}
-.react-flow__handle {
-  width: 9px;
-  height: 9px;
-  background: #ffffff;
-  border: 1.5px solid #b9b9b9;
-  border-radius: 50%;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
-}
-.react-flow__handle:hover,
-.react-flow__handle.connectionindicator {
-  border-color: var(--sm-accent);
-  background: #eaf2ff;
-  transform: scale(1.2);
 }
 .react-flow__node {
   font-family: inherit;
@@ -120,21 +116,25 @@ body {
 }
 .react-flow__controls {
   border: 1px solid var(--sm-line);
-  border-radius: 6px;
+  border-radius: 7px;
   overflow: hidden;
-  box-shadow: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 .react-flow__controls-button {
-  background: #ffffff;
+  background: var(--sm-bg-soft);
   border-bottom: 1px solid var(--sm-line);
   color: var(--sm-ink-soft);
 }
 .react-flow__controls-button:hover {
-  background: var(--sm-bg-soft);
+  background: var(--sm-bg-deep);
+}
+.react-flow__controls-button svg {
+  fill: var(--sm-ink-soft);
 }
 .react-flow__minimap {
   border: 1px solid var(--sm-line);
-  border-radius: 6px;
+  border-radius: 7px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 /* 运行中指示器 */
@@ -366,6 +366,9 @@ textarea.sm-input {
   border-color: var(--sm-accent);
   box-shadow: 0 0 0 1px var(--sm-accent), 0 6px 18px rgba(0, 0, 0, 0.35);
 }
+.sm-node:hover {
+  border-color: color-mix(in srgb, var(--sm-line) 50%, var(--sm-accent-soft));
+}
 /* 标题条：左侧色块 + 分类色 */
 .sm-node-header {
   display: flex;
@@ -406,6 +409,7 @@ textarea.sm-input {
 .sm-node[data-cat='流程'] { --cat: var(--cat-flow); }
 .sm-node-header {
   background: linear-gradient(180deg, color-mix(in srgb, var(--cat) 88%, #000 0%), color-mix(in srgb, var(--cat) 72%, #000 0%));
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
 }
 .sm-node-body {
   padding: 9px 11px;
@@ -444,6 +448,11 @@ textarea.sm-input {
 .react-flow__handle:hover {
   transform: scale(1.35);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--sm-accent) 30%, transparent);
+}
+.react-flow__handle.connectionindicator {
+  border-color: var(--sm-accent);
+  background: color-mix(in srgb, var(--sm-accent) 25%, var(--sm-bg));
+  transform: scale(1.2);
 }
 .react-flow__handle-left {
   left: -6px;
