@@ -336,6 +336,7 @@ export default function TopBar({
                       </div>
                     );
                   }
+                  if ('type' in it) return null;
                   return (
                     <button
                       key={j}

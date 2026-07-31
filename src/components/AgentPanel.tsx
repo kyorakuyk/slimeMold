@@ -5,12 +5,43 @@ import { createAgent, protocolDefaults } from '../agents/agentManager';
 import type { AgentConfig, Protocol, RoleTemplate } from '../types';
 
 interface AgentPanelProps {
-  onClose: () => void;
+  onClose?: () => void;
+  embedded?: boolean;
 }
 
 /** 智能体管理弹层：多协议配置的增删改 + 角色库（角色模板）管理 */
-export default function AgentPanel({ onClose }: AgentPanelProps) {
+export default function AgentPanel({ onClose, embedded = false }: AgentPanelProps) {
   const [tab, setTab] = useState<'agents' | 'roles'>('agents');
+
+  const inner = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center border-b border-line px-3">
+        <button
+          className={`px-3 py-3 text-[13px] font-medium transition-colors ${
+            tab === 'agents'
+              ? 'border-b-2 border-accent text-ink'
+              : 'text-ink-faint hover:text-ink'
+          }`}
+          onClick={() => setTab('agents')}
+        >
+          智能体
+        </button>
+        <button
+          className={`px-3 py-3 text-[13px] font-medium transition-colors ${
+            tab === 'roles'
+              ? 'border-b-2 border-accent text-ink'
+              : 'text-ink-faint hover:text-ink'
+          }`}
+          onClick={() => setTab('roles')}
+        >
+          角色库
+        </button>
+      </div>
+      {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
+    </div>
+  );
+
+  if (embedded) return inner;
 
   return (
     <div
@@ -21,8 +52,7 @@ export default function AgentPanel({ onClose }: AgentPanelProps) {
         className="flex h-[520px] w-[720px] flex-col overflow-hidden rounded-lg border border-line bg-white"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 顶部 Tab */}
-        <div className="flex items-center justify-between border-b border-line px-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-3">
           <div className="flex">
             <button
               className={`px-3 py-3 text-[13px] font-medium transition-colors ${
@@ -52,7 +82,6 @@ export default function AgentPanel({ onClose }: AgentPanelProps) {
             <X size={16} />
           </button>
         </div>
-
         {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
       </div>
     </div>

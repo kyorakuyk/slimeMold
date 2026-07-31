@@ -1,38 +1,38 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
+import { X, Keyboard } from 'lucide-react';
 import TopBar from './components/TopBar';
-import NodePalette from './components/NodePalette';
 import Inspector from './components/Inspector';
 import StatusBar from './components/StatusBar';
+import SettingsModal from './components/SettingsModal';
+import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar';
+import ShortcutsModal from './components/ShortcutsModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
-import { exportWorkflow, importWorkflow } from './io/workflowIO';
+import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
-
-// 非首屏面板懒加载，减小首屏 JS 解析量（打开对应面板时才拉取 chunk）
-const AgentPanel = lazy(() => import('./components/AgentPanel'));
-const PluginPanel = lazy(() => import('./components/PluginPanel'));
-const VariablesPanel = lazy(() => import('./components/VariablesPanel'));
-const RunHistoryPanel = lazy(() => import('./components/RunHistoryPanel'));
 
 registerBuiltins();
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
-  const [showAgents, setShowAgents] = useState(false);
-  const [showPlugins, setShowPlugins] = useState(false);
-  const [showVariables, setShowVariables] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [activePanel, setActivePanel] = useState<SidePanelKey | null>(null);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   // 面板尺寸（可拖拽调节）
-  const [leftW, setLeftW] = useState(224);
+  const [leftW, setLeftW] = useState(248);
   const [rightW, setRightW] = useState(288);
   const [panelH, setPanelH] = useState(208);
+  const [shortcutsH, setShortcutsH] = useState(208);
+
+  const openPanel = (key: SidePanelKey) => setActivePanel(key);
+  const closePanel = () => setActivePanel(null);
 
   const toggleTheme = () => {
     setTheme((t) => {
@@ -106,111 +106,101 @@ export default function App() {
           onToggleTheme={toggleTheme}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onTogglePanel={() => setPanelOpen((v) => !v)}
-          onOpenAgents={() => setShowAgents(true)}
-          onOpenPlugins={() => setShowPlugins(true)}
-          onOpenVariables={() => setShowVariables(true)}
-          onOpenHistory={() => setShowHistory(true)}
-          onOpenShortcuts={() => setShowShortcuts(true)}
+          onOpenAgents={() => openPanel('agents')}
+          onOpenPlugins={() => openPanel('plugins')}
+          onOpenVariables={() => openPanel('variables')}
+          onOpenHistory={() => openPanel('history')}
+          onOpenShortcuts={() => setShowShortcutsModal(true)}
         />
         <main className="flex flex-1 overflow-hidden">
+          {/* 通栏图标条：贯穿整个高度，底部面板在其右侧打开，永不被遮盖 */}
           {sidebarOpen && (
-            <>
-              <NodePalette width={leftW} />
+            <SideRail
+              active={activePanel}
+              onClose={closePanel}
+              onOpen={openPanel}
+              onOpenSettings={() => setShowSettings(true)}
+              shortcutsOpen={shortcutsOpen}
+              onToggleShortcuts={() => setShortcutsOpen((v) => !v)}
+              panelOpen={panelOpen}
+              onTogglePanel={() => setPanelOpen((v) => !v)}
+            />
+          )}
+          {/* 内容区：展开面板 + 画布 + Inspector + 底部面板（均位于图标条右侧） */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              {sidebarOpen && activePanel && (
+                <>
+                  <SidePanel
+                    active={activePanel}
+                    width={leftW}
+                    onResize={setLeftW}
+                    onClose={closePanel}
+                  />
+                  <div
+                    className="w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
+                    style={{ background: 'var(--sm-line)' }}
+                    onPointerDown={startResize('x', 'left', leftW)}
+                    title="拖动调节展开面板宽度"
+                  />
+                </>
+              )}
+              <div className="min-w-0 flex-1">
+                <WorkflowEditor />
+              </div>
+              <Inspector width={rightW} />
               <div
                 className="w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
                 style={{ background: 'var(--sm-line)' }}
-                onPointerDown={startResize('x', 'left', leftW)}
-                title="拖动调节节点库宽度"
+                onPointerDown={startResize('x', 'right', rightW)}
+                title="拖动调节属性面板宽度"
               />
-            </>
-          )}
-          <div className="min-w-0 flex-1">
-            <WorkflowEditor />
+            </div>
+            {/* 底部面板：仅在图标条右侧的内容区出现，不遮盖图标条 */}
+            {shortcutsOpen && (
+              <>
+                <div
+                  className="h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
+                  style={{ background: 'var(--sm-line)' }}
+                  onPointerDown={startResize('y', 'bottom', shortcutsH)}
+                  title="拖动调节快捷键面板高度"
+                />
+                <div className="sm-panel shrink-0" style={{ color: 'var(--sm-ink-soft)' }}>
+                  <div className="sm-panel-tabs">
+                    <button className="sm-panel-tab" data-active={true}>
+                      <Keyboard size={12} /> 快捷键
+                    </button>
+                    <div className="flex flex-1 items-center justify-end">
+                      <button
+                        className="flex cursor-pointer items-center gap-1 border-l px-3 text-[11px] transition-colors hover:text-ink"
+                        style={{ color: 'var(--sm-ink-faint)', borderColor: 'var(--sm-line)' }}
+                        onClick={() => setShortcutsOpen(false)}
+                        title="关闭快捷键面板"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+                  <ShortcutsModal inline />
+                </div>
+              </>
+            )}
+            {panelOpen && (
+              <>
+                <div
+                  className="h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
+                  style={{ background: 'var(--sm-line)' }}
+                  onPointerDown={startResize('y', 'bottom', panelH)}
+                  title="拖动调节底部面板高度"
+                />
+                <StatusBar open={panelOpen} height={panelH} onToggle={() => setPanelOpen((v) => !v)} />
+              </>
+            )}
           </div>
-          <Inspector width={rightW} />
-          <div
-            className="w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
-            style={{ background: 'var(--sm-line)' }}
-            onPointerDown={startResize('x', 'right', rightW)}
-            title="拖动调节属性面板宽度"
-          />
         </main>
-        {panelOpen && (
-          <>
-            <div
-              className="h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
-              style={{ background: 'var(--sm-line)' }}
-              onPointerDown={startResize('y', 'bottom', panelH)}
-              title="拖动调节底部面板高度"
-            />
-            <StatusBar open={panelOpen} height={panelH} onToggle={() => setPanelOpen((v) => !v)} />
-          </>
-        )}
-        <Suspense fallback={null}>
-          {showAgents && <AgentPanel onClose={() => setShowAgents(false)} />}
-          {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
-          {showVariables && <VariablesPanel onClose={() => setShowVariables(false)} />}
-          {showHistory && <RunHistoryPanel onClose={() => setShowHistory(false)} />}
-        </Suspense>
-        {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+        {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
+        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       </div>
     </ReactFlowProvider>
-  );
-}
-
-function ShortcutsModal({ onClose }: { onClose: () => void }) {
-  const rows: [string, string][] = [
-    ['Ctrl/Cmd + Shift + N', '新建项目'],
-    ['Ctrl/Cmd + N', '新建工作流'],
-    ['Ctrl/Cmd + S', '保存项目'],
-    ['Ctrl/Cmd + =', '放大视图'],
-    ['Ctrl/Cmd + -', '缩小视图'],
-    ['Shift + 1', '适配窗口'],
-    ['Delete / Backspace', '删除选中节点'],
-    ['Esc', '关闭菜单 / 弹窗'],
-  ];
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)' }}
-      onMouseDown={onClose}
-    >
-      <div
-        className="w-[420px] rounded-lg border p-4 shadow-2xl"
-        style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-            快捷键速查
-          </h2>
-          <button className="sm-btn px-2 py-0.5" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-        <table className="w-full text-[13px]">
-          <tbody>
-            {rows.map(([k, v]) => (
-              <tr key={k} className="border-t" style={{ borderColor: 'var(--sm-line)' }}>
-                <td className="py-1.5 pr-3 font-mono text-[12px]" style={{ color: 'var(--sm-accent-soft)' }}>
-                  {k}
-                </td>
-                <td className="py-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
-                  {v}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }

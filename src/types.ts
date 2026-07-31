@@ -198,6 +198,9 @@ export interface RunRecord {
   status: 'success' | 'error' | 'aborted';
   nodeCount: number;
   nodes: RunNodeResult[];
+  /** 摘要说明与成败标记（StatusBar 运行历史行使用） */
+  note?: string;
+  ok?: boolean;
 }
 
 /* ---------- 插件 ---------- */
@@ -232,4 +235,7 @@ export interface LogEntry {
   time: string;
   level: 'info' | 'error';
   message: string;
+  /** 可选：单次运行的摘要说明与成败标记（运行历史行使用） */
+  note?: string;
+  ok?: boolean;
 }

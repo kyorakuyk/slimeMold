@@ -7,7 +7,7 @@ import { DND_MIME } from '../canvas/WorkflowEditor';
 import type { NodeDefinition } from '../types';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
-export default function NodePalette({ width = 224 }: { width?: number }) {
+export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
   const defs = useRegistryStore((s) => s.defs);
   const addNode = useWorkflowStore((s) => s.addNode);
   const { screenToFlowPosition } = useReactFlow();
@@ -39,29 +39,36 @@ export default function NodePalette({ width = 224 }: { width?: number }) {
     });
   };
 
+  const searchBox = (
+    <div className="relative mt-2">
+      <Search
+        size={13}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2"
+        style={{ color: 'var(--sm-ink-faint)' }}
+      />
+      <input
+        className="sm-palette-search w-full pl-7"
+        value={query}
+        placeholder="搜索节点…"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+    </div>
+  );
+
   return (
     <aside
-      className="flex h-full shrink-0 flex-col border-r"
-      style={{ width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)' }}
+      className="flex h-full min-h-0 flex-col"
+      style={width ? { width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)', borderRight: '1px solid var(--sm-line)' } : undefined}
     >
-      <div className="border-b px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
-        <h2 className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-          节点库
-        </h2>
-        <div className="relative mt-2">
-          <Search
-            size={13}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2"
-            style={{ color: 'var(--sm-ink-faint)' }}
-          />
-          <input
-            className="sm-palette-search w-full pl-7"
-            value={query}
-            placeholder="搜索节点…"
-            onChange={(e) => setQuery(e.target.value)}
-          />
+      {!embedded && (
+        <div className="border-b px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
+          <h2 className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+            节点库
+          </h2>
+          {searchBox}
         </div>
-      </div>
+      )}
+      {embedded && <div className="border-b px-2 py-1.5" style={{ borderColor: 'var(--sm-line)' }}>{searchBox}</div>}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
           <p className="px-1 py-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
