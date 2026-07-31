@@ -1,10 +1,10 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, StepForward } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
-import { retryNode } from '../../engine/executor';
+import { retryNode, runToNode } from '../../engine/executor';
 
 function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
   if (status === 'running') return <span className="sm-spinner" />;
@@ -174,17 +174,31 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
       )}
 
       {(data.status === 'error' || data.status === 'success' || data.status === 'cached') && (
-        <button
-          className="flex w-full items-center justify-center gap-1 border-t border-line py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!running) void retryNode(id);
-          }}
-          disabled={running}
-          title="重新执行此节点及其下游（复用上游已有输出，并清除该节点缓存）"
-        >
-          <RotateCcw size={11} /> 重新执行此节点
-        </button>
+        <div className="flex border-t border-line">
+          <button
+            className="flex flex-1 items-center justify-center gap-1 py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!running) void retryNode(id);
+            }}
+            disabled={running}
+            title="重新执行此节点及其下游（复用上游已有输出，并清除该节点缓存）"
+          >
+            <RotateCcw size={11} /> 重跑子图
+          </button>
+          <span className="my-1 w-px bg-line" />
+          <button
+            className="flex flex-1 items-center justify-center gap-1 py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!running) void runToNode(id);
+            }}
+            disabled={running}
+            title="只重跑到此节点为止，其下游不再执行（标记 skipped）"
+          >
+            <StepForward size={11} /> 重跑到此节点
+          </button>
+        </div>
       )}
     </div>
   );

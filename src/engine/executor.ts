@@ -43,6 +43,8 @@ export interface RunOptions {
   incremental?: boolean;
   /** 强制重算的节点集合（重跑单节点时使用），会清除其缓存 */
   forceNodes?: string[];
+  /** 执行到这些节点为止（含），其下游不再执行（标记 skipped）。用于「重跑到此节点」 */
+  stopAfterNodes?: string[];
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
@@ -67,6 +69,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   }
 
   const force = new Set(opts.forceNodes ?? []);
+  const stopAfter = new Set(opts.stopAfterNodes ?? []);
   // 全量运行：清除所有脏标记（之后全部节点都视为需执行，命中缓存者跳过）
   // 增量运行：保留脏标记，仅执行脏节点及其下游
   if (!opts.incremental) {
@@ -106,6 +109,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   //  - 具体 handle：仅列出的分支端口激活（条件节点声明）
   const branchState = new Map<string, Set<string | undefined>>();
   const failed = new Set<string>();
+  // 裁剪集合：stopAfter 节点的下游会被加入此集合并在调度前跳过（标记 skipped）
+  const cutSet = new Set<string>();
   const nodeById = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
   const startAt = performance.now();
   const startedWall = Date.now();
@@ -122,6 +127,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           outputsMap,
           branchState,
           failed,
+          cutSet,
+          stopAfter,
           signal,
           limiter,
           MAX_RETRIES,
@@ -181,6 +188,22 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   currentAbort = null;
 }
 
+/** 将 startId 的全部下游节点加入 cutSet（BFS） */
+function addDownstreamToCut(startId: string, edges: FlowEdge[], cutSet: Set<string>): void {
+  const queue = [startId];
+  const seen = new Set([startId]);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const e of edges) {
+      if (e.source === cur && !seen.has(e.target)) {
+        seen.add(e.target);
+        cutSet.add(e.target);
+        queue.push(e.target);
+      }
+    }
+  }
+}
+
 async function executeNode(
   id: string,
   nodeById: Map<string, FlowNode>,
@@ -188,6 +211,8 @@ async function executeNode(
   outputsMap: Map<string, Record<string, unknown>>,
   branchState: Map<string, Set<string | undefined>>,
   failed: Set<string>,
+  cutSet: Set<string>,
+  stopAfter: Set<string>,
   signal: AbortSignal,
   limiter: Semaphore,
   MAX_RETRIES: number,
@@ -244,6 +269,13 @@ async function executeNode(
     }
   }
 
+  // 裁剪：stopAfter 节点的下游不再执行（其本身已执行完毕）
+  if (cutSet.has(id)) {
+    branchState.set(id, new Set());
+    store.setNodeStatus(id, 'skipped', { startedAt: null, durationMs: null });
+    return;
+  }
+
   // 缓存命中判断：相同 类型+参数+上游输出 直接复用结果（forced 时已在 runWorkflow 内 strike）
   if (!forced) {
     const upstreamOutputs = collectInputs(id, edges, outputsMap);
@@ -259,6 +291,7 @@ async function executeNode(
         startedAt: null,
         durationMs: null,
       });
+      if (stopAfter.has(id)) addDownstreamToCut(id, edges, cutSet);
       return;
     }
   }
@@ -334,6 +367,7 @@ async function executeNode(
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
     });
+    if (stopAfter.has(id)) addDownstreamToCut(id, edges, cutSet);
   } catch (err) {
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
@@ -359,5 +393,17 @@ export async function retryNode(id: string): Promise<void> {
   if (store.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id] });
+}
+
+/**
+ * 重跑到指定节点为止：执行该节点及其上游链（上游脏则重算、否则复用缓存），
+ * 但该节点完成之后其下游不再执行（标记 skipped）。用于「中断粒度」——只跑部分子图。
+ */
+export async function runToNode(id: string): Promise<void> {
+  const store = useWorkflowStore.getState();
+  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.running) return;
+  store.markDirty(id);
+  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id] });
 }
 
