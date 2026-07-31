@@ -1,7 +1,7 @@
 import type { Node, Edge } from '@xyflow/react';
 
 /* ---------- 节点状态与协议 ---------- */
-export type NodeStatus = 'idle' | 'running' | 'success' | 'error';
+export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached';
 export type Protocol = 'openai' | 'anthropic' | 'ollama';
 
 /* ---------- 智能体配置 ---------- */
@@ -120,6 +120,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   status: NodeStatus;
   error?: string;
   outputs?: Record<string, unknown>;
+  /** 增量执行标记：true 表示该节点被修改/受影响，需重新执行；false 或缺失表示可命中缓存 */
+  dirty?: boolean;
 }
 
 export type FlowNode = Node<WorkflowNodeData>;

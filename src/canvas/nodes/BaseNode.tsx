@@ -13,10 +13,13 @@ function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
     running: '',
     success: 'bg-ok',
     error: 'bg-err',
+    cached: 'bg-accent',
   };
+  const title =
+    status === 'cached' ? '结果来自缓存（未重新执行）' : error;
   return (
     <span
-      title={error}
+      title={title}
       className={`inline-block h-2 w-2 rounded-full transition-colors ${cls[status]}`}
     />
   );
@@ -125,7 +128,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         </div>
       )}
 
-      {(data.status === 'error' || data.status === 'success') && (
+      {(data.status === 'error' || data.status === 'success' || data.status === 'cached') && (
         <button
           className="flex w-full items-center justify-center gap-1 border-t border-line py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
           onClick={(e) => {
@@ -133,7 +136,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
             if (!running) void retryNode(id);
           }}
           disabled={running}
-          title="仅重新执行这个节点（复用上游已有的输出）"
+          title="重新执行此节点及其下游（复用上游已有输出，并清除该节点缓存）"
         >
           <RotateCcw size={11} /> 重新执行此节点
         </button>

@@ -35,6 +35,7 @@ import {
   Columns2,
   Plus,
   X,
+  FastForward,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -197,7 +198,8 @@ export default function TopBar({
     {
       label: '运行',
       items: [
-        { label: running ? '停止运行' : '运行工作流', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow() },
+        { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow() },
+        { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true }), disabled: running },
       ],
     },
     {

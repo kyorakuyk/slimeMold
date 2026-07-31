@@ -68,6 +68,10 @@ interface WorkflowState {
     patch?: Partial<WorkflowNodeData>,
   ) => void;
   resetStatuses: () => void;
+  /** 标记节点及其下游为脏（需重新执行），用于增量执行 */
+  markDirty: (id: string) => void;
+  /** 清除全部脏标记（全量运行前调用） */
+  clearDirty: () => void;
 
   upsertAgent: (agent: AgentConfig) => void;
   removeAgent: (id: string) => void;
@@ -123,7 +127,7 @@ function defaultParams(typeId: string): Record<string, unknown> {
   return params;
 }
 
-/** 把 WorkflowFile 的轻量节点还原为画布 FlowNode */
+/** 把 WorkflowFile 的轻量节点还原为画布 FlowNode（载入时标记为脏，首次运行必执行） */
 function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
   return (wf.nodes ?? []).map((n) => ({
     id: n.id,
@@ -134,6 +138,7 @@ function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
       label: n.label,
       params: n.params ?? {},
       status: 'idle' as NodeStatus,
+      dirty: true,
     },
   }));
 }
@@ -203,8 +208,18 @@ export const useWorkflowStore = create<WorkflowState>()(
       workflows: {},
       activeWfId: '',
 
-      onNodesChange: (changes) =>
-        set({ nodes: applyNodeChanges(changes, get().nodes) }),
+      onNodesChange: (changes) => {
+        set({ nodes: applyNodeChanges(changes, get().nodes) });
+        // 删除节点会改变其下游输入：标记下游为脏
+        const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
+        for (const id of removed) {
+          // 找出以该节点为 source 的边对应的 target
+          const targets = get().edges
+            .filter((e) => e.source === id)
+            .map((e) => e.target);
+          for (const t of targets) get().markDirty(t);
+        }
+      },
       onEdgesChange: (changes) =>
         set({ edges: applyEdgeChanges(changes, get().edges) }),
 
@@ -217,6 +232,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({
           edges: addEdge({ ...conn }, get().edges),
         });
+        // 新连线改变了数据依赖：两端节点及其下游需重新执行
+        get().markDirty(conn.source);
+        get().markDirty(conn.target);
       },
 
       addNode: (typeId, position) => {
@@ -253,14 +271,17 @@ export const useWorkflowStore = create<WorkflowState>()(
       clearGraph: () =>
         set({ nodes: [], edges: [], selectedNodeId: null, logs: [] }),
 
-      updateNodeParams: (id, patch) =>
+      updateNodeParams: (id, patch) => {
         set({
           nodes: get().nodes.map((n) =>
             n.id === id
               ? { ...n, data: { ...n.data, params: { ...n.data.params, ...patch } } }
               : n,
           ),
-        }),
+        });
+        // 参数变更：该节点及其下游需重新执行
+        get().markDirty(id);
+      },
 
       setNodeLabel: (id, label) =>
         set({
@@ -284,6 +305,36 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...n,
             data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined },
           })),
+        }),
+
+      /** 计算从某节点出发、沿边可到达的所有下游节点 id（含自身） */
+      markDirty: (startId: string) => {
+        const { nodes, edges } = get();
+        if (!nodes.some((n) => n.id === startId)) return;
+        // BFS 收集下游
+        const downstream = new Set<string>([startId]);
+        const queue = [startId];
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          for (const e of edges) {
+            if (e.source === cur && !downstream.has(e.target)) {
+              downstream.add(e.target);
+              queue.push(e.target);
+            }
+          }
+        }
+        set({
+          nodes: nodes.map((n) =>
+            downstream.has(n.id) ? { ...n, data: { ...n.data, dirty: true } } : n,
+          ),
+        });
+      },
+
+      clearDirty: () =>
+        set({
+          nodes: get().nodes.map((n) =>
+            n.data.dirty ? { ...n, data: { ...n.data, dirty: undefined } } : n,
+          ),
         }),
 
       upsertAgent: (agent) => {
@@ -348,7 +399,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       loadGraph: (name, nodes, edges, agents, roles) =>
         set({
           workflowName: name,
-          nodes,
+          // 载入即标记为脏，保证运行时会真正执行而非命中空缓存
+          nodes: nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
           edges,
           agents: agents.length > 0 ? agents : get().agents,
           // 内置角色始终保留；加载文件中的自定义角色（非 builtin）并入
@@ -368,6 +420,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           roles: builtinRoles.map((r) => ({ ...r })),
           selectedNodeId: null,
           logs: [],
+          // 空画布无需标记，但保持一致性：clearDirty 语义下无任何脏节点
         }),
 
       /* ---- 项目层方法实现 ---- */

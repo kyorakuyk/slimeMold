@@ -1,10 +1,19 @@
-import type { ExecContext, FlowEdge, FlowNode, RunRecord } from '../types';
+import type { ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../types';
 import { topoLayers } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { chatWithAgent } from '../agents/agentManager';
 import { scopedStorage } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
+import {
+  beginRun,
+  cacheKey,
+  countSkip,
+  getCached,
+  setCached,
+  skippedCount,
+  strike,
+} from './nodeCache';
 
 let currentAbort: AbortController | null = null;
 
@@ -29,7 +38,14 @@ export function collectInputs(
   return inputs;
 }
 
-export async function runWorkflow(): Promise<void> {
+export interface RunOptions {
+  /** 增量模式：只执行脏节点及其下游（非脏节点复用已有/缓存结果） */
+  incremental?: boolean;
+  /** 强制重算的节点集合（重跑单节点时使用），会清除其缓存 */
+  forceNodes?: string[];
+}
+
+export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const wf = useWorkflowStore.getState();
   if (wf.running) return;
   const { nodes, edges, failFast } = wf;
@@ -50,19 +66,40 @@ export async function runWorkflow(): Promise<void> {
     return;
   }
 
+  const force = new Set(opts.forceNodes ?? []);
+  // 全量运行：清除所有脏标记（之后全部节点都视为需执行，命中缓存者跳过）
+  // 增量运行：保留脏标记，仅执行脏节点及其下游
+  if (!opts.incremental) {
+    wf.clearDirty();
+    for (const id of force) strike(wf.nodes.find((n) => n.id === id)?.data.typeId ?? '');
+  } else {
+    for (const id of force) strike(wf.nodes.find((n) => n.id === id)?.data.typeId ?? '');
+  }
+  // 未显式 force 的增量运行：以当前 data.dirty 决定执行集
+  const dirtySet = new Set(nodes.filter((n) => n.data.dirty).map((n) => n.id));
+  for (const id of force) dirtySet.add(id);
+
   currentAbort = new AbortController();
   const signal = currentAbort.signal;
   wf.setRunning(true);
   wf.resetStatuses();
+  beginRun();
 
   // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行
   const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
 
-  wf.addLog('info', `开始执行「${wf.workflowName}」，共 ${nodes.length} 个节点、${layers.length} 层，并发上限 ${wf.maxConcurrency ?? 3}`);
+  const modeLabel = opts.incremental ? '增量' : '全量';
+  wf.addLog('info', `开始${modeLabel}执行「${wf.workflowName}」，共 ${nodes.length} 个节点、${layers.length} 层，并发上限 ${wf.maxConcurrency ?? 3}`);
 
   const outputsMap = new Map<string, Record<string, unknown>>();
+  // 预填已存在且非脏节点的输出，作为下游依赖输入（增量模式下复用既有结果）
+  for (const n of nodes) {
+    if (!dirtySet.has(n.id) && n.data.outputs) {
+      outputsMap.set(n.id, n.data.outputs);
+    }
+  }
   const failed = new Set<string>();
   const nodeById = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
   const startAt = performance.now();
@@ -73,7 +110,19 @@ export async function runWorkflow(): Promise<void> {
     // 同层节点相互独立，可并行调度（瓶颈在 LLM I/O）
     await Promise.all(
       layer.map((id) =>
-        executeNode(id, nodeById, edges, outputsMap, failed, signal, limiter, MAX_RETRIES, RETRY_BASE_MS),
+        executeNode(
+          id,
+          nodeById,
+          edges,
+          outputsMap,
+          failed,
+          signal,
+          limiter,
+          MAX_RETRIES,
+          RETRY_BASE_MS,
+          dirtySet.has(id),
+          force.has(id),
+        ),
       ),
     );
     if (failFast && failed.size > 0) {
@@ -84,12 +133,14 @@ export async function runWorkflow(): Promise<void> {
 
   const store = useWorkflowStore.getState();
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
+  const skipped = skippedCount();
   if (signal.aborted && failed.size === 0) {
     store.addLog('info', `执行已手动停止（${elapsed}s）`);
   } else if (failed.size > 0) {
     store.addLog('error', `执行结束：${failed.size} 个节点失败（${elapsed}s）`);
   } else {
-    store.addLog('info', `执行完成，全部节点成功（${elapsed}s）`);
+    const skipMsg = skipped > 0 ? `，缓存命中跳过 ${skipped} 个节点` : '';
+    store.addLog('info', `执行完成，全部节点成功（${elapsed}s${skipMsg}）`);
   }
 
   // 记录运行历史（持久化到 localStorage）
@@ -129,6 +180,8 @@ async function executeNode(
   limiter: Semaphore,
   MAX_RETRIES: number,
   RETRY_BASE_MS: number,
+  shouldRun: boolean,
+  forced: boolean,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -149,6 +202,25 @@ async function executeNode(
       error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
     });
     return;
+  }
+
+  // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
+  if (!shouldRun && !forced) {
+    store.setNodeStatus(id, node.data.status === 'cached' ? 'cached' : (node.data.status ?? 'idle'));
+    return;
+  }
+
+  // 缓存命中判断：相同 类型+参数+上游输出 直接复用结果（forced 时已在 runWorkflow 内 strike）
+  if (!forced) {
+    const upstreamOutputs = collectInputs(id, edges, outputsMap);
+    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs);
+    const cached = getCached(key);
+    if (cached) {
+      outputsMap.set(id, cached);
+      countSkip();
+      store.setNodeStatus(id, 'cached', { outputs: cached });
+      return;
+    }
   }
 
   const ctx: ExecContext = {
@@ -201,6 +273,9 @@ async function executeNode(
   try {
     const outputs = await def.execute(inputs, node.data.params, ctx);
     outputsMap.set(id, outputs ?? {});
+    // 写入缓存：以「类型+参数+上游输出」为 key，下游命中时自动复用
+    const key = cacheKey(node.data.typeId, node.data.params, inputs);
+    setCached(key, outputs ?? {});
     store.setNodeStatus(id, 'success', { outputs: outputs ?? {} });
   } catch (err) {
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
@@ -212,70 +287,15 @@ async function executeNode(
 }
 
 /**
- * 重跑单个失败节点：从当前画布已有的节点输出里收集上游输入，
- * 单独执行该节点并写回结果，不影响其它节点。
+ * 重跑单个节点（及其下游）：标记该节点为脏并强制重算（清除其缓存），
+ * 再以增量模式运行——等价于 ComfyUI 的「重跑该子图」。
+ * 上游结果直接复用，避免重复调用。
  */
 export async function retryNode(id: string): Promise<void> {
   const store = useWorkflowStore.getState();
-  const node = store.nodes.find((n) => n.id === id);
-  if (!node) throw new Error('节点不存在');
-  const def = useRegistryStore.getState().defs[node.data.typeId];
-  if (!def || def.missing) {
-    store.addLog('error', `节点类型 ${node.data.typeId} 缺失，无法重跑`);
-    return;
-  }
-
-  const edges = store.edges;
-  const outputsMap = new Map<string, Record<string, unknown>>();
-  for (const n of store.nodes) {
-    if (n.data.outputs) outputsMap.set(n.id, n.data.outputs);
-  }
-  const inputs = collectInputs(id, edges, outputsMap);
-
-  // 复用正在运行的 AbortController（若有），否则独立信号
-  const signal = currentAbort?.signal ?? new AbortController().signal;
-  const limiter = new Semaphore(1);
-
-  const ctx: ExecContext = {
-    signal,
-    logger: {
-      info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
-      error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
-    },
-    llm: async (agentId, messages, onToken, modelOverride) => {
-      const agent = useWorkflowStore.getState().agents.find((a) => a.id === agentId);
-      if (!agent) throw new Error(`智能体不存在: ${agentId}`);
-      const effective = modelOverride
-        ? { ...agent, model: modelOverride }
-        : agent;
-      const release = await limiter.acquire();
-      try {
-        return await chatWithAgent(effective, messages, signal, onToken);
-      } finally {
-        release();
-      }
-    },
-    setPartial: (key, value) => {
-      const cur =
-        useWorkflowStore.getState().nodes.find((n) => n.id === id)?.data.outputs ?? {};
-      useWorkflowStore.getState().setNodeStatus(id, 'running', {
-        outputs: { ...cur, [key]: value },
-      });
-    },
-    storage: scopedStorage(def.pluginId ?? 'core'),
-    vars: useWorkflowStore.getState().variables,
-  };
-
-  store.setNodeStatus(id, 'running');
-  store.addLog('info', `[${node.data.label}] 重新执行该节点`);
-  try {
-    const outputs = await def.execute(inputs, node.data.params, ctx);
-    store.setNodeStatus(id, 'success', { outputs: outputs ?? {} });
-    store.addLog('info', `[${node.data.label}] 重跑成功`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    store.setNodeStatus(id, 'error', { error: message });
-    store.addLog('error', `[${node.data.label}] 重跑失败：${message}`);
-  }
+  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.running) return;
+  store.markDirty(id);
+  await runWorkflow({ incremental: true, forceNodes: [id] });
 }
 
