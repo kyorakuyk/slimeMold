@@ -38,3 +38,6 @@ tauri_build2.log
 vite_verify.log
 *.local.log
 
+# Local analysis / reference docs (not committed)
+GAP_ANALYSIS.md
+
