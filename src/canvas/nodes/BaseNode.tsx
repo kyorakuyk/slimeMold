@@ -84,7 +84,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
       data-cat={def?.category}
     >
       {/* 分类配色标题栏 */}
-      <div className="sm-node-header">
+      <div className="sm-node-header" title={def?.description}>
         <span className="sm-node-dot" />
         <span className="sm-node-title">{data.label}</span>
         {def?.pluginId && (

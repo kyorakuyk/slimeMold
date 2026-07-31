@@ -52,7 +52,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   if (wf.running) return;
   const { nodes, edges, failFast } = wf;
   if (nodes.length === 0) {
-    wf.addLog('error', '画布为空，请先添加节点');
+    wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
     return;
   }
 
@@ -61,10 +61,13 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     edges,
   );
   if (cyclic.length > 0) {
+    const labels = cyclic
+      .map((id) => nodes.find((n) => n.id === id)?.data.label ?? id)
+      .join('、');
     for (const id of cyclic) {
-      wf.setNodeStatus(id, 'error', { error: '处于环路中，无法执行' });
+      wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' });
     }
-    wf.addLog('error', `检测到环路，涉及 ${cyclic.length} 个节点，已终止`);
+    wf.addLog('error', `有节点连成了死循环（${labels}），请拆掉其中一条连线后再运行`);
     return;
   }
 
@@ -93,8 +96,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
 
-  const modeLabel = opts.incremental ? '增量' : '全量';
-  wf.addLog('info', `开始${modeLabel}执行「${wf.workflowName}」，共 ${nodes.length} 个节点、${layers.length} 层，并发上限 ${wf.maxConcurrency ?? 3}`);
+  const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';
+  wf.addLog('info', `开始运行（${modeLabel}），一共 ${nodes.length} 个节点`);
 
   const outputsMap = new Map<string, Record<string, unknown>>();
   // 预填已存在且非脏节点的输出，作为下游依赖输入（增量模式下复用既有结果）
@@ -150,13 +153,16 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
   const pruned = store.nodes.filter((n) => n.data.status === 'skipped').length;
   if (signal.aborted && failed.size === 0) {
-    store.addLog('info', `执行已手动停止（${elapsed}s）`);
+    store.addLog('info', `已手动停止（用时 ${elapsed}s）`);
   } else if (failed.size > 0) {
-    store.addLog('error', `执行结束：${failed.size} 个节点失败（${elapsed}s）`);
+    store.addLog(
+      'error',
+      `有 ${failed.size} 个步骤没跑通，请检查标红的节点（用时 ${elapsed}s）`,
+    );
   } else {
-    const skipMsg = skipped > 0 ? `，缓存命中 ${skipped}` : '';
-    const pruneMsg = pruned > 0 ? `、分支跳过 ${pruned}` : '';
-    store.addLog('info', `执行完成，全部节点成功（${elapsed}s${skipMsg}${pruneMsg}）`);
+    const skipMsg = skipped > 0 ? `，${skipped} 步用了缓存结果` : '';
+    const pruneMsg = pruned > 0 ? `，${pruned} 步因条件不成立而跳过` : '';
+    store.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
   }
 
   // 记录运行历史（持久化到 localStorage）
@@ -329,8 +335,8 @@ async function executeNode(
             signal,
             onRetry: (msg, delay, attempt) =>
               store.addLog(
-                'error',
-                `[${node.data.label}] 限流重试(${attempt}/${MAX_RETRIES})：${msg}，等待 ${delay}ms`,
+                'info',
+                `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
               ),
           },
         );
@@ -353,6 +359,10 @@ async function executeNode(
   };
 
   store.setNodeStatus(id, 'running');
+  const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');
+  if (isAgent) {
+    store.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
+  }
   const inputs = collectInputs(id, edges, outputsMap);
   const startedAt = Date.now();
   const perfStart = performance.now();
@@ -385,7 +395,7 @@ async function executeNode(
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
     });
-    store.addLog('error', `[${node.data.label}] 执行失败：${message}`);
+    store.addLog('error', `「${node.data.label}」这一步出错了：${message}`);
   }
 }
 
