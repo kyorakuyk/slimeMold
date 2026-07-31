@@ -2,7 +2,7 @@ import type { ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../
 import { topoLayers } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
-import { chatWithAgent } from '../agents/agentManager';
+import { getChannel } from '../agents/llmChannel';
 import { scopedStorage } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import {
@@ -260,7 +260,7 @@ async function executeNode(
     const allBlocked = incoming.every((e) => {
       const s = branchState.get(e.source);
       // 未登记（普通节点缺省）= 全激活；已登记且不含该 handle = 屏蔽
-      return s !== undefined && !s.has(e.sourceHandle);
+      return s !== undefined && !s.has(e.sourceHandle ?? undefined);
     });
     if (allBlocked) {
       branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
@@ -311,11 +311,18 @@ async function executeNode(
       const effective = modelOverride
         ? { ...agent, model: modelOverride }
         : agent;
+      const channel = getChannel(useWorkflowStore.getState().llmChannel);
       // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
       const release = await limiter.acquire();
       try {
         return await withRetry(
-          () => chatWithAgent(effective, messages, signal, onToken),
+          () =>
+            channel.chat({
+              agent: effective,
+              messages,
+              signal,
+              onToken,
+            }),
           {
             retries: MAX_RETRIES,
             baseDelay: RETRY_BASE_MS,

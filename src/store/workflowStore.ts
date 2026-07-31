@@ -38,6 +38,8 @@ interface WorkflowState {
   failFast: boolean;
   /** LLM 并发上限：同一时刻最多进行的智能体请求数 */
   maxConcurrency: number;
+  /** LLM 调用通道：'backend'（经 Tauri Rust 命令，密钥不出前端）/ 'frontend'（WebView 直接请求）。默认 backend。 */
+  llmChannel: 'backend' | 'frontend';
   logs: LogEntry[];
   /** 全局变量（可在 {{}} 模板与表达式中引用），随工作流保存 */
   variables: Record<string, unknown>;
@@ -85,6 +87,7 @@ interface WorkflowState {
   setRunning: (running: boolean) => void;
   setFailFast: (v: boolean) => void;
   setMaxConcurrency: (v: number) => void;
+  setLlmChannel: (v: 'backend' | 'frontend') => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
 
@@ -201,6 +204,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       running: false,
       failFast: true,
       maxConcurrency: 3,
+      llmChannel: 'backend',
       logs: [],
       variables: {},
       runHistory: [],
@@ -387,6 +391,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       setRunning: (running) => set({ running }),
       setFailFast: (v) => set({ failFast: v }),
       setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),
+      setLlmChannel: (v) => set({ llmChannel: v }),
 
       addLog: (level, message) =>
         set({
@@ -655,6 +660,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         roles: s.roles,
         failFast: s.failFast,
         maxConcurrency: s.maxConcurrency,
+        llmChannel: s.llmChannel,
         variables: s.variables,
         runHistory: s.runHistory,
       }),
