@@ -58,9 +58,11 @@ class BackendChannel implements LLMChannel {
       req.onToken?.(token);
     });
     const result = await invoke<string>('chat_completion', {
-      agent: req.agent,
-      messages: req.messages,
-      stream: !!req.onToken,
+      args: {
+        agent: req.agent,
+        messages: req.messages,
+        stream: !!req.onToken,
+      },
       onTokenChannel: channel,
     });
     // 非流式时后端直接返回完整文本；流式时以回传 token 拼接为准（result 可能为空串）

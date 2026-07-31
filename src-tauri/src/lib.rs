@@ -54,7 +54,6 @@ struct ChatCompletionArgs {
     agent: AgentConfig,
     messages: Vec<ChatMessage>,
     stream: bool,
-    on_token_channel: tauri::ipc::Channel<String>,
 }
 
 /// 在 Rust 侧发起 LLM 请求。非流式直接返回完整文本；流式经 Channel 逐片回传 token。
@@ -63,6 +62,7 @@ struct ChatCompletionArgs {
 async fn chat_completion(
     app: AppHandle,
     args: ChatCompletionArgs,
+    on_token_channel: tauri::ipc::Channel<String>,
 ) -> Result<String, String> {
     let agent = args.agent;
     let base = agent.baseUrl.trim_end_matches('/');
@@ -107,7 +107,7 @@ async fn chat_completion(
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("LLM 后端返回 {status}: {}", text.slice(0, 300)));
+        return Err(format!("LLM 后端返回 {status}: {}", text.slice(300)));
     }
 
     if !args.stream {
@@ -155,7 +155,7 @@ async fn chat_completion(
                         .and_then(|v| v.as_str())
                     {
                         full.push_str(delta);
-                        let _ = args.on_token_channel.send(delta.to_string());
+                        let _ = on_token_channel.send(delta.to_string());
                     }
                 }
             }
