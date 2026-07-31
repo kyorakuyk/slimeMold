@@ -14,9 +14,14 @@ function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
     success: 'bg-ok',
     error: 'bg-err',
     cached: 'bg-accent',
+    skipped: 'bg-[#9aa0a6]',
   };
   const title =
-    status === 'cached' ? '结果来自缓存（未重新执行）' : error;
+    status === 'cached'
+      ? '结果来自缓存（未重新执行）'
+      : status === 'skipped'
+        ? '因分支条件未命中而跳过（未执行）'
+        : error;
   return (
     <span
       title={title}

@@ -1,7 +1,7 @@
 import type { Node, Edge } from '@xyflow/react';
 
 /* ---------- 节点状态与协议 ---------- */
-export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached';
+export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped';
 export type Protocol = 'openai' | 'anthropic' | 'ollama';
 
 /* ---------- 智能体配置 ---------- */
@@ -82,6 +82,8 @@ export interface ExecContext {
   ): Promise<string>;
   /** 执行中实时回写当前节点的某输出端口，用于流式预览 */
   setPartial(key: string, value: unknown): void;
+  /** 分支节点在执行时声明「激活的输出端口 handle 集合」，未列出的下游分支将被跳过 */
+  setBranches?(handles: string[]): void;
   storage: {
     get(key: string): Promise<string | null>;
     set(key: string, value: string): Promise<void>;

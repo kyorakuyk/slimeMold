@@ -399,6 +399,53 @@ const exprNode: NodeDefinition = {
   },
 };
 
+const ifNode: NodeDefinition = {
+  typeId: 'flow.if',
+  name: '条件分支',
+  category: '流程',
+  description:
+    '根据条件表达式求值结果，只走 true / false 其中一条分支。下游若只连到未激活的分支则被跳过（不执行）。表达式可引用输入端口与全局变量，结果按「真值」判断（非空、非零、非空字符串、非空数组）。',
+  inputs: [{ id: 'cond', label: '条件' }],
+  outputs: [
+    { id: 'true', label: '真' },
+    { id: 'false', label: '假' },
+  ],
+  params: [
+    {
+      key: 'expression',
+      label: '条件表达式（可选，留空则直接用输入端口「条件」）',
+      type: 'textarea',
+      default: '',
+      placeholder: '例如：cond > 3，或 len(a) > 0',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const expr = String(params.expression ?? '').trim();
+    let value: unknown;
+    if (expr) {
+      const result = evalExpr(expr, { ...ctx.vars, ...inputs });
+      value = result;
+    } else {
+      value = inputs.cond;
+    }
+    const truthy = isTruthy(value);
+    // 声明激活分支：仅 true 或仅 false 端口生效，另一分支的下游被剪枝
+    ctx.setBranches?.(truthy ? ['true'] : ['false']);
+    return { result: truthy, taken: truthy ? 'true' : 'false' };
+  },
+};
+
+/** 真值判断：非空、非零、非空字符串/数组/对象 */
+function isTruthy(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return v.trim() !== '' && v !== 'false' && v !== '0';
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as object).length > 0;
+  return Boolean(v);
+}
+
 export const builtinDefs: NodeDefinition[] = [
   textInput,
   agentChat,
@@ -409,6 +456,7 @@ export const builtinDefs: NodeDefinition[] = [
   mapNode,
   joinNode,
   exprNode,
+  ifNode,
 ];
 
 export function registerBuiltins(): void {

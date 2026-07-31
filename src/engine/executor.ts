@@ -100,6 +100,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       outputsMap.set(n.id, n.data.outputs);
     }
   }
+  // 分支状态：nodeId -> 激活的输出 handle 集合。
+  //  - 未登记：视为该节点所有输出 handle 均激活（普通节点缺省语义）
+  //  - 空集合：全部屏蔽（被剪枝的下游节点登记此值，使其更下游也被剪枝）
+  //  - 具体 handle：仅列出的分支端口激活（条件节点声明）
+  const branchState = new Map<string, Set<string | undefined>>();
   const failed = new Set<string>();
   const nodeById = new Map<string, FlowNode>(nodes.map((n) => [n.id, n]));
   const startAt = performance.now();
@@ -115,6 +120,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           nodeById,
           edges,
           outputsMap,
+          branchState,
           failed,
           signal,
           limiter,
@@ -175,6 +181,7 @@ async function executeNode(
   nodeById: Map<string, FlowNode>,
   edges: FlowEdge[],
   outputsMap: Map<string, Record<string, unknown>>,
+  branchState: Map<string, Set<string | undefined>>,
   failed: Set<string>,
   signal: AbortSignal,
   limiter: Semaphore,
@@ -187,10 +194,13 @@ async function executeNode(
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
 
-  // 上游失败传染：直接标记失败，不执行
-  const upstreamFailed = edges.some((e) => e.target === id && failed.has(e.source));
+  const incoming = edges.filter((e) => e.target === id);
+
+  // 上游失败传染：直接标记失败，不执行（其下游会因 failed 集合被继续传染）
+  const upstreamFailed = incoming.some((e) => failed.has(e.source));
   if (upstreamFailed) {
     failed.add(id);
+    branchState.set(id, new Set());
     store.setNodeStatus(id, 'error', { error: '上游节点失败，已跳过' });
     return;
   }
@@ -198,6 +208,7 @@ async function executeNode(
   const def = useRegistryStore.getState().defs[node.data.typeId];
   if (!def || def.missing) {
     failed.add(id);
+    branchState.set(id, new Set());
     store.setNodeStatus(id, 'error', {
       error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
     });
@@ -210,6 +221,20 @@ async function executeNode(
     return;
   }
 
+  // 分支剪枝：若所有入边都来自「分支节点且未被激活」的分支，则整条子图跳过
+  if (incoming.length > 0) {
+    const allBlocked = incoming.every((e) => {
+      const s = branchState.get(e.source);
+      // 未登记（普通节点缺省）= 全激活；已登记且不含该 handle = 屏蔽
+      return s !== undefined && !s.has(e.sourceHandle);
+    });
+    if (allBlocked) {
+      branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
+      store.setNodeStatus(id, 'skipped');
+      return;
+    }
+  }
+
   // 缓存命中判断：相同 类型+参数+上游输出 直接复用结果（forced 时已在 runWorkflow 内 strike）
   if (!forced) {
     const upstreamOutputs = collectInputs(id, edges, outputsMap);
@@ -217,12 +242,15 @@ async function executeNode(
     const cached = getCached(key);
     if (cached) {
       outputsMap.set(id, cached);
+      // 命中缓存的普通节点视为全部输出端口激活
+      branchState.set(id, new Set(def.outputs.map((o) => o.id)));
       countSkip();
       store.setNodeStatus(id, 'cached', { outputs: cached });
       return;
     }
   }
 
+  let branchesTaken: string[] | undefined;
   const ctx: ExecContext = {
     signal,
     logger: {
@@ -264,6 +292,9 @@ async function executeNode(
         outputs: { ...cur, [key]: value },
       });
     },
+    setBranches: (handles) => {
+      branchesTaken = handles;
+    },
     storage: scopedStorage(def.pluginId ?? 'core'),
     vars: useWorkflowStore.getState().variables,
   };
@@ -276,11 +307,19 @@ async function executeNode(
     // 写入缓存：以「类型+参数+上游输出」为 key，下游命中时自动复用
     const key = cacheKey(node.data.typeId, node.data.params, inputs);
     setCached(key, outputs ?? {});
+    // 登记分支状态：分支节点用其声明的激活 handle，普通节点视为全部输出端口激活
+    branchState.set(
+      id,
+      branchesTaken !== undefined
+        ? new Set(branchesTaken)
+        : new Set(def.outputs.map((o) => o.id)),
+    );
     store.setNodeStatus(id, 'success', { outputs: outputs ?? {} });
   } catch (err) {
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);
+    branchState.set(id, new Set()); // 失败节点视为屏蔽下游
     store.setNodeStatus(id, 'error', { error: message });
     store.addLog('error', `[${node.data.label}] 执行失败：${message}`);
   }

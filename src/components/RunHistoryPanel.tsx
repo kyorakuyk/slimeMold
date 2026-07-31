@@ -19,6 +19,8 @@ const nodeStatusCls: Record<string, string> = {
   partial: 'bg-yel',
   failed: 'bg-err',
   running: 'bg-accent',
+  cached: 'bg-accent',
+  skipped: 'bg-[#9aa0a6]',
 };
 
 function summarize(v: unknown): string {
