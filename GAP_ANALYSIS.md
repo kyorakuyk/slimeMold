@@ -31,8 +31,7 @@
 
 ### 1.2 易用性增强（P1 — Community 增强）
 - [x] **工作流分享**：导出为文件（Tauri 对话框 / 浏览器下载）、从文件导入、复制工作流文本到剪贴板轻量分享（`src/io/workflowIO.ts` + `TopBar.tsx` 文件菜单）
-- [ ] 模板市场（内置更多场景模板）
-- [ ] 一键示例库
+- [x] **示例库 / 模板市场**：左侧 Activity Bar 新增「示例库」面板，内置 8 个场景模板（邮件润色、批量翻译、条件分流、文章大纲、信息提取、长文摘要、情绪分流、多语言标题），点击「使用此模板」一键载入；AI 模板默认离线模拟开箱即用（`ExamplesPanel.tsx` + `starterTemplates.ts` + `LeftSidebar.tsx`）
 
 ---
 
@@ -82,5 +81,5 @@
 
 ## 5. 仍需补齐的缺口（按轨）
 
-- Community：运行提示人话化、中文 tooltip、友好端口校验、工作流分享
+- Community：已整体完成（分类 / 空状态 / 人话日志 / tooltip / 友好端口校验 / 分享 / 示例库）
 - Professional：Tauri `run_workflow`、Anthropic SSE、路线 B 实现、插件市场、审计/SSO
