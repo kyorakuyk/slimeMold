@@ -6,13 +6,14 @@
 
 | 快捷键 | 作用 |
 | --- | --- |
-| `Ctrl/Cmd + N` | 新建工作流 |
-| `Ctrl/Cmd + S` | 导出工作流为 JSON |
+| `Ctrl/Cmd + Shift + N` | 新建项目 |
+| `Ctrl/Cmd + N` | 新建工作流（当前项目内） |
+| `Ctrl/Cmd + S` | 保存项目（.smproj） |
 | `Ctrl/Cmd + =` / `+` | 放大画布视图 |
 | `Ctrl/Cmd + -` | 缩小画布视图 |
 | `Shift + 1` | 适配窗口（缩放到全部节点） |
 | `Delete` / `Backspace` | 删除当前选中的节点 |
-| `Esc` | 关闭打开的下拉菜单 / 面板 |
+| `Esc` | 关闭打开的下拉菜单 / 弹窗 |
 
 ## 画布交互（React Flow 默认）
 

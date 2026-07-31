@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "name": "演示工作流",
+  "savedAt": "2026-07-30T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "n-input",
+      "typeId": "input.text",
+      "label": "文本输入",
+      "position": { "x": 40, "y": 80 },
+      "params": {
+        "text": "你好，SlimeMold！这是节点式 Agent 工作流的最小演示。"
+      }
+    },
+    {
+      "id": "n-template",
+      "typeId": "text.template",
+      "label": "模板拼接",
+      "position": { "x": 340, "y": 80 },
+      "params": { "template": "{{a}}" }
+    },
+    {
+      "id": "n-agent",
+      "typeId": "agent.chat",
+      "label": "智能体",
+      "position": { "x": 640, "y": 80 },
+      "params": { "agentId": "", "system": "" }
+    },
+    {
+      "id": "n-preview",
+      "typeId": "output.preview",
+      "label": "结果预览",
+      "position": { "x": 940, "y": 80 },
+      "params": {}
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-template", "targetHandle": "a" },
+    { "id": "e2", "source": "n-template", "sourceHandle": "text", "target": "n-agent", "targetHandle": "prompt" },
+    { "id": "e3", "source": "n-agent", "sourceHandle": "text", "target": "n-preview", "targetHandle": "value" }
+  ],
+  "agents": []
+}

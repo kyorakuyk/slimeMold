@@ -19,10 +19,28 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
+  Grid3x3,
+  Map,
+  Keyboard,
+  Info,
+  FilePlus,
+  FolderPlus,
+  FileStack,
+  Wrench,
+  HelpCircle,
+  ChevronDown,
+  FileBox,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow } from '../io/workflowIO';
+import {
+  openProjectFile,
+  getRecentProjects,
+  clearRecentProjects,
+  pushRecentProject,
+} from '../io/projectIO';
 
 interface TopBarProps {
   theme: 'dark' | 'light';
@@ -33,6 +51,7 @@ interface TopBarProps {
   onOpenPlugins: () => void;
   onOpenVariables: () => void;
   onOpenHistory: () => void;
+  onOpenShortcuts: () => void;
 }
 
 interface MenuAction {
@@ -45,7 +64,7 @@ interface MenuAction {
 }
 interface MenuDef {
   label: string;
-  items: (MenuAction | 'separator')[];
+  items: (MenuAction | 'separator' | { type: 'submenu'; label: string; icon?: React.ReactNode; items: MenuAction[] })[];
 }
 
 export default function TopBar({
@@ -57,6 +76,7 @@ export default function TopBar({
   onOpenPlugins,
   onOpenVariables,
   onOpenHistory,
+  onOpenShortcuts,
 }: TopBarProps) {
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
@@ -70,15 +90,84 @@ export default function TopBar({
   const clearGraph = useWorkflowStore((s) => s.clearGraph);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const hasNodes = useWorkflowStore((s) => s.nodes.length > 0);
+  const showGrid = useViewStore((s) => s.showGrid);
+  const showMinimap = useViewStore((s) => s.showMinimap);
+  const toggleGrid = useViewStore((s) => s.toggleGrid);
+  const toggleMinimap = useViewStore((s) => s.toggleMinimap);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
+
+  // 项目层状态
+  const projectName = useWorkflowStore((s) => s.projectName);
+  const workflows = useWorkflowStore((s) => s.workflows);
+  const activeWfId = useWorkflowStore((s) => s.activeWfId);
+  const newProject = useWorkflowStore((s) => s.newProject);
+  const openProject = useWorkflowStore((s) => s.openProject);
+  const saveProject = useWorkflowStore((s) => s.saveProject);
+  const switchWorkflow = useWorkflowStore((s) => s.switchWorkflow);
+  const newWorkflowInProject = useWorkflowStore((s) => s.newWorkflowInProject);
+  const renameWorkflow = useWorkflowStore((s) => s.renameWorkflow);
+  const removeWorkflow = useWorkflowStore((s) => s.removeWorkflow);
+
+  const wfList = Object.entries(workflows);
+
+  const handleNewProject = () => {
+    const name = window.prompt('项目名称', '未命名项目')?.trim();
+    if (!name) return;
+    newProject(name);
+  };
+
+  const handleOpenProject = async () => {
+    try {
+      const file = await openProjectFile();
+      if (!file) return;
+      // 浏览器退化：path 用项目名；Tauri：需拿真实路径，这里用 file.name 占位
+      openProject(file, file.name);
+      pushRecentProject({ path: file.name, name: file.name, openedAt: new Date().toISOString() });
+    } catch (e) {
+      alert('打开项目失败：' + (e as Error).message);
+    }
+  };
+
+  const handleSaveProject = async () => {
+    try {
+      const path = await saveProject();
+      pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
+    } catch (e) {
+      alert('保存项目失败：' + (e as Error).message);
+    }
+  };
 
   const menus: MenuDef[] = [
     {
       label: '文件',
       items: [
-        { label: '新建工作流', icon: <FilePlus2 size={14} />, shortcut: 'Ctrl+N', onClick: newWorkflow },
-        { label: '导入 JSON…', icon: <FolderOpen size={14} />, onClick: () => importWorkflow() },
-        { label: '导出 JSON', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: () => exportWorkflow() },
+        { label: '新建项目', icon: <FolderPlus size={14} />, shortcut: 'Ctrl+Shift+N', onClick: handleNewProject },
+        { label: '打开项目…', icon: <FolderOpen size={14} />, onClick: handleOpenProject },
+        {
+          type: 'submenu',
+          label: '打开最近项目',
+          icon: <FileStack size={14} />,
+          items: (() => {
+            const recents = getRecentProjects();
+            if (recents.length === 0) return [{ label: '（无最近项目）', onClick: () => {} }];
+            return [
+              ...recents.map((r) => ({
+                label: r.name,
+                onClick: async () => {
+                  const { openProjectByPath } = await import('../io/projectIO');
+                  const file = await openProjectByPath(r.path);
+                  if (file) openProject(file, r.path);
+                },
+              })),
+              { label: '清除最近记录', danger: true, onClick: clearRecentProjects },
+            ] as MenuAction[];
+          })(),
+        },
+        'separator',
+        { label: '新建工作流', icon: <FilePlus size={14} />, shortcut: 'Ctrl+N', onClick: newWorkflowInProject },
+        { label: '打开工作流…', icon: <FilePlus2 size={14} />, onClick: newWorkflow },
+        { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
+        { label: '导出工作流…', icon: <Save size={14} />, onClick: () => exportWorkflow() },
       ],
     },
     {
@@ -95,9 +184,8 @@ export default function TopBar({
         { label: '缩小', icon: <ZoomOut size={14} />, shortcut: 'Ctrl+-', onClick: () => zoomOut() },
         { label: '适配窗口', icon: <Maximize size={14} />, shortcut: 'Shift+1', onClick: () => fitView({ padding: 0.2, duration: 200 }) },
         'separator',
-        { label: '显示/隐藏节点库', onClick: onToggleSidebar },
-        { label: '显示/隐藏底部面板', onClick: onTogglePanel },
-        { label: '切换深色/浅色主题', icon: theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />, onClick: onToggleTheme },
+        { label: showGrid ? '隐藏网格' : '显示网格', icon: <Grid3x3 size={14} />, onClick: toggleGrid },
+        { label: showMinimap ? '隐藏小地图' : '显示小地图', icon: <Map size={14} />, onClick: toggleMinimap },
       ],
     },
     {
@@ -106,18 +194,43 @@ export default function TopBar({
         { label: running ? '停止运行' : '运行工作流', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow() },
       ],
     },
+    {
+      label: '工具',
+      items: [
+        { label: '智能体 / 角色库', icon: <Bot size={14} />, onClick: onOpenAgents },
+        { label: '插件管理', icon: <Puzzle size={14} />, onClick: onOpenPlugins },
+        { label: '全局变量', icon: <Variable size={14} />, onClick: onOpenVariables },
+        { label: '运行历史', icon: <History size={14} />, onClick: onOpenHistory },
+      ],
+    },
+    {
+      label: '帮助',
+      items: [
+        { label: '快捷键速查', icon: <Keyboard size={14} />, onClick: onOpenShortcuts },
+        { label: '关于 SlimeMold', icon: <Info size={14} />, onClick: () => alert('SlimeMold — Agent 工作流编辑器\n版本 0.1.0') },
+      ],
+    },
   ];
 
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [openSub, setOpenSub] = useState<number | null>(null);
+  const [wfOpen, setWfOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (openMenu === null) return;
     const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpenMenu(null);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenu(null);
+        setOpenSub(null);
+        setWfOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenMenu(null);
+      if (e.key === 'Escape') {
+        setOpenMenu(null);
+        setOpenSub(null);
+        setWfOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
@@ -125,13 +238,15 @@ export default function TopBar({
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKey);
     };
-  }, [openMenu]);
+  }, []);
 
-  // 视图快捷键（与菜单标注一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && (e.key === '=' || e.key === '+')) {
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleNewProject();
+      } else if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
         zoomIn();
       } else if (mod && e.key === '-') {
@@ -160,23 +275,68 @@ export default function TopBar({
           <div key={m.label} className="relative">
             <button
               className={`rounded px-2.5 py-1 text-[12.5px] transition-colors ${
-                openMenu === i ? 'bg-accent-soft text-white' : 'text-ink-soft hover:bg-black/10'
+                openMenu === i ? '' : 'text-ink-soft hover:bg-black/10'
               }`}
-              style={openMenu === i ? { background: 'var(--sm-accent)' } : undefined}
-              onClick={() => setOpenMenu(openMenu === i ? null : i)}
+              style={openMenu === i ? { background: 'var(--sm-accent)', color: '#fff' } : undefined}
+              onClick={() => {
+                setOpenMenu(openMenu === i ? null : i);
+                setOpenSub(null);
+              }}
               onMouseEnter={() => openMenu !== null && setOpenMenu(i)}
             >
               {m.label}
             </button>
             {openMenu === i && (
               <div
-                className="absolute left-0 top-full z-50 min-w-[200px] rounded-md border py-1 shadow-lg"
+                className="absolute left-0 top-full z-50 min-w-[210px] rounded-md border py-1 shadow-lg"
                 style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
               >
-                {m.items.map((it, j) =>
-                  it === 'separator' ? (
-                    <div key={j} className="my-1 h-px" style={{ background: 'var(--sm-line)' }} />
-                  ) : (
+                {m.items.map((it, j) => {
+                  if (it === 'separator')
+                    return <div key={j} className="my-1 h-px" style={{ background: 'var(--sm-line)' }} />;
+                  if ('type' in it && it.type === 'submenu') {
+                    return (
+                      <div
+                        key={j}
+                        className="relative"
+                        onMouseEnter={() => setOpenSub(j)}
+                      >
+                        <button
+                          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] text-ink-soft hover:bg-black/10"
+                          onClick={() => setOpenSub(openSub === j ? null : j)}
+                        >
+                          <span className="flex w-4 justify-center">{it.icon}</span>
+                          <span className="flex-1">{it.label}</span>
+                          <span className="text-ink-faint">▸</span>
+                        </button>
+                        {openSub === j && (
+                          <div
+                            className="absolute left-full top-0 z-50 min-w-[200px] rounded-md border py-1 shadow-lg"
+                            style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)', marginLeft: 2 }}
+                          >
+                            {it.items.map((sub, k) => (
+                              <button
+                                key={k}
+                                disabled={sub.disabled}
+                                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] ${
+                                  sub.disabled ? 'cursor-not-allowed text-ink-faint opacity-50' : sub.danger ? 'text-err hover:bg-err/10' : 'text-ink-soft hover:bg-black/10'
+                                }`}
+                                onClick={() => {
+                                  if (sub.disabled) return;
+                                  sub.onClick();
+                                  setOpenMenu(null);
+                                  setOpenSub(null);
+                                }}
+                              >
+                                <span className="flex-1">{sub.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
                     <button
                       key={j}
                       disabled={it.disabled}
@@ -195,12 +355,10 @@ export default function TopBar({
                     >
                       <span className="flex w-4 justify-center">{it.icon}</span>
                       <span className="flex-1">{it.label}</span>
-                      {it.shortcut && (
-                        <span className="text-[11px] text-ink-faint">{it.shortcut}</span>
-                      )}
+                      {it.shortcut && <span className="text-[11px] text-ink-faint">{it.shortcut}</span>}
                     </button>
-                  ),
-                )}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -217,23 +375,71 @@ export default function TopBar({
           <PanelLeft size={15} />
         </button>
 
-        <input
-          className="w-44 rounded border border-transparent bg-transparent px-2 py-1 text-[13px] text-ink outline-none transition-colors hover:border-line focus:border-accent-soft"
-          value={workflowName}
-          onChange={(e) => setWorkflowName(e.target.value)}
-          placeholder="工作流名称"
-        />
+        {/* 工作流选择器 */}
+        <div className="relative">
+          <button
+            className="sm-btn max-w-[180px] gap-1.5"
+            onClick={() => setWfOpen((v) => !v)}
+            title="切换 / 新建工作流"
+          >
+            <FileBox size={14} />
+            <span className="truncate">{workflowName}</span>
+            <ChevronDown size={13} />
+          </button>
+          {wfOpen && (
+            <div
+              className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border py-1 shadow-lg"
+              style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
+            >
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink-soft hover:bg-black/10"
+                onClick={() => {
+                  newWorkflowInProject();
+                  setWfOpen(false);
+                }}
+              >
+                <FilePlus size={13} /> 新建工作流
+              </button>
+              <div className="my-1 h-px" style={{ background: 'var(--sm-line)' }} />
+              {wfList.length === 0 && (
+                <div className="px-3 py-1.5 text-[12px] text-ink-faint">无工作流</div>
+              )}
+              {wfList.map(([id, wf]) => (
+                <div key={id} className="group flex items-center hover:bg-black/10">
+                  <button
+                    className={`flex flex-1 items-center gap-2 px-3 py-1.5 text-left text-[12.5px] ${
+                      id === activeWfId ? 'text-accent' : 'text-ink-soft'
+                    }`}
+                    onClick={() => {
+                      switchWorkflow(id);
+                      setWfOpen(false);
+                    }}
+                  >
+                    <FileBox size={13} />
+                    <span className="truncate">{wf.name}</span>
+                  </button>
+                  {wfList.length > 1 && (
+                    <button
+                      className="px-2 text-ink-faint opacity-0 group-hover:opacity-100 hover:text-err"
+                      title="删除工作流"
+                      onClick={() => removeWorkflow(id)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <span className="mx-1 h-4 w-px bg-line" />
 
-        <button className="sm-btn" onClick={newWorkflow} title="新建工作流">
-          <FilePlus2 size={14} /> 新建
-        </button>
         <button className="sm-btn" onClick={() => importWorkflow()} title="从 JSON 导入">
           <FolderOpen size={14} /> 导入
         </button>
-        <button className="sm-btn" onClick={() => exportWorkflow()} title="导出为 JSON">
-          <Save size={14} /> 导出
+        <button className="sm-btn" onClick={handleSaveProject} title="保存项目 (.smproj)">
+          <Save size={14} /> 保存项目
         </button>
 
         <div className="flex-1" />
@@ -275,11 +481,7 @@ export default function TopBar({
         </button>
 
         <span className="mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
-        <button
-          className="sm-btn px-1.5"
-          title="切换深色/浅色"
-          onClick={onToggleTheme}
-        >
+        <button className="sm-btn px-1.5" title="切换深色/浅色" onClick={onToggleTheme}>
           {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
         </button>
         <button className="sm-btn px-1.5" title="显示/隐藏底部面板" onClick={onTogglePanel}>

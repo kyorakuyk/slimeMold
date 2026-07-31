@@ -155,6 +155,30 @@ export interface WorkflowFile {
   variables?: Record<string, unknown>;
 }
 
+/* ---------- 项目文件（.smproj，含多个工作流） ---------- */
+export interface ProjectFile {
+  version: 1;
+  kind: 'project';
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  /** 项目内工作流集合，key 为工作流 id */
+  workflows: Record<string, WorkflowFile>;
+  /** 当前激活的工作流 id */
+  activeId: string;
+  /** 角色库（项目级，跨工作流共享），内置角色以 builtin=true 标记 */
+  roles?: RoleTemplate[];
+  /** 项目级全局变量 */
+  variables?: Record<string, unknown>;
+}
+
+/** 最近项目记录（持久化在 localStorage，不随项目文件本身） */
+export interface RecentProject {
+  path: string;
+  name: string;
+  openedAt: string;
+}
+
 /* ---------- 运行历史 ---------- */
 export interface RunNodeResult {
   id: string;

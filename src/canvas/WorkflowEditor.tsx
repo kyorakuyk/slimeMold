@@ -11,6 +11,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
 
 const nodeTypes: NodeTypes = { base: BaseNode };
@@ -35,6 +36,8 @@ export default function WorkflowEditor() {
   const onConnect = useWorkflowStore((s) => s.onConnect);
   const addNode = useWorkflowStore((s) => s.addNode);
   const setSelected = useWorkflowStore((s) => s.setSelected);
+  const showGrid = useViewStore((s) => s.showGrid);
+  const showMinimap = useViewStore((s) => s.showMinimap);
   const { screenToFlowPosition } = useReactFlow();
 
   const onDrop = useCallback(
@@ -74,21 +77,25 @@ export default function WorkflowEditor() {
         minZoom={0.2}
         maxZoom={2.5}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1.5}
-          color="var(--sm-canvas-grid)"
-        />
+        {showGrid && (
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1.5}
+            color="var(--sm-canvas-grid)"
+          />
+        )}
         <Controls position="bottom-left" showInteractive={false} />
-        <MiniMap
-          position="bottom-right"
-          pannable
-          zoomable
-          nodeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
-          nodeStrokeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
-          maskColor="rgba(0,0,0,0.45)"
-        />
+        {showMinimap && (
+          <MiniMap
+            position="bottom-right"
+            pannable
+            zoomable
+            nodeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
+            nodeStrokeColor={(n) => CAT_COLORS[(n.data?.category as keyof typeof CAT_COLORS)] ?? '#9aa0a6'}
+            maskColor="rgba(0,0,0,0.45)"
+          />
+        )}
       </ReactFlow>
     </div>
   );

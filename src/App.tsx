@@ -26,6 +26,7 @@ export default function App() {
   const [showPlugins, setShowPlugins] = useState(false);
   const [showVariables, setShowVariables] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   // 面板尺寸（可拖拽调节）
@@ -88,7 +89,7 @@ export default function App() {
         exportWorkflow();
       } else if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        useWorkflowStore.getState().newWorkflow();
+        useWorkflowStore.getState().newWorkflowInProject();
       } else if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
       }
@@ -109,6 +110,7 @@ export default function App() {
           onOpenPlugins={() => setShowPlugins(true)}
           onOpenVariables={() => setShowVariables(true)}
           onOpenHistory={() => setShowHistory(true)}
+          onOpenShortcuts={() => setShowShortcuts(true)}
         />
         <main className="flex flex-1 overflow-hidden">
           {sidebarOpen && (
@@ -150,7 +152,65 @@ export default function App() {
           {showVariables && <VariablesPanel onClose={() => setShowVariables(false)} />}
           {showHistory && <RunHistoryPanel onClose={() => setShowHistory(false)} />}
         </Suspense>
+        {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       </div>
     </ReactFlowProvider>
+  );
+}
+
+function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  const rows: [string, string][] = [
+    ['Ctrl/Cmd + Shift + N', '新建项目'],
+    ['Ctrl/Cmd + N', '新建工作流'],
+    ['Ctrl/Cmd + S', '保存项目'],
+    ['Ctrl/Cmd + =', '放大视图'],
+    ['Ctrl/Cmd + -', '缩小视图'],
+    ['Shift + 1', '适配窗口'],
+    ['Delete / Backspace', '删除选中节点'],
+    ['Esc', '关闭菜单 / 弹窗'],
+  ];
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      onMouseDown={onClose}
+    >
+      <div
+        className="w-[420px] rounded-lg border p-4 shadow-2xl"
+        style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+            快捷键速查
+          </h2>
+          <button className="sm-btn px-2 py-0.5" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        <table className="w-full text-[13px]">
+          <tbody>
+            {rows.map(([k, v]) => (
+              <tr key={k} className="border-t" style={{ borderColor: 'var(--sm-line)' }}>
+                <td className="py-1.5 pr-3 font-mono text-[12px]" style={{ color: 'var(--sm-accent-soft)' }}>
+                  {k}
+                </td>
+                <td className="py-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
+                  {v}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

@@ -14,8 +14,10 @@ import type {
   FlowNode,
   LogEntry,
   NodeStatus,
+  ProjectFile,
   RoleTemplate,
   RunRecord,
+  WorkflowFile,
   WorkflowNodeData,
 } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
@@ -39,6 +41,16 @@ interface WorkflowState {
   variables: Record<string, unknown>;
   /** 历史运行记录（持久化） */
   runHistory: RunRecord[];
+
+  /* ---- 项目层（多工作流） ---- */
+  /** 当前项目名（无项目时为 null，表示游离单工作流） */
+  projectName: string | null;
+  /** 当前项目文件路径（Tauri 下为磁盘路径，浏览器下为项目名；未保存为 null） */
+  projectPath: string | null;
+  /** 项目内工作流集合 */
+  workflows: Record<string, WorkflowFile>;
+  /** 当前激活的工作流 id */
+  activeWfId: string;
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
@@ -84,6 +96,22 @@ interface WorkflowState {
     roles?: RoleTemplate[],
   ) => void;
   newWorkflow: () => void;
+
+  /* ---- 项目层方法 ---- */
+  /** 新建项目（清空为多工作流容器，含一个空白工作流） */
+  newProject: (name: string) => void;
+  /** 载入整个项目文件，并激活 activeId 对应工作流；path 为磁盘路径（Tauri）或项目名（浏览器） */
+  openProject: (file: ProjectFile, path?: string) => void;
+  /** 保存当前项目为 .smproj（返回保存路径/名称） */
+  saveProject: () => Promise<string>;
+  /** 切换当前激活工作流（先写回当前，再加载目标） */
+  switchWorkflow: (id: string) => void;
+  /** 在项目内新建一个工作流并激活 */
+  newWorkflowInProject: () => void;
+  /** 重命名当前工作流 */
+  renameWorkflow: (name: string) => void;
+  /** 删除一个工作流（至少保留一个） */
+  removeWorkflow: (id: string) => void;
 }
 
 function defaultParams(typeId: string): Record<string, unknown> {
@@ -110,6 +138,11 @@ export const useWorkflowStore = create<WorkflowState>()(
       logs: [],
       variables: {},
       runHistory: [],
+
+      projectName: null,
+      projectPath: null,
+      workflows: {},
+      activeWfId: '',
 
       onNodesChange: (changes) =>
         set({ nodes: applyNodeChanges(changes, get().nodes) }),
@@ -277,6 +310,225 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         }),
+
+      /* ---- 项目层方法实现 ---- */
+
+      // 把当前编辑态写回到 workflows[activeWfId]
+      // （注意：此方法在 (set,get)=> 闭包内，通过 get() 访问最新状态）
+      // 通过下方 newProject/openProject/switchWorkflow/saveProject 间接调用。
+
+      newProject: (name) => {
+        const id = `wf-${Date.now()}`;
+        const wf: WorkflowFile = {
+          version: 1,
+          name: '未命名工作流',
+          savedAt: new Date().toISOString(),
+          nodes: [],
+          edges: [],
+          agents: [createAgent('ollama')],
+          roles: builtinRoles.map((r) => ({ ...r })),
+          variables: {},
+        };
+        set({
+          projectName: name,
+          projectPath: null,
+          workflows: { [id]: wf },
+          activeWfId: id,
+          workflowName: wf.name,
+          nodes: [],
+          edges: [],
+          agents: wf.agents,
+          roles: wf.roles!,
+          variables: wf.variables!,
+          selectedNodeId: null,
+          logs: [],
+        });
+      },
+
+      openProject: (file, path) => {
+        const id = file.activeId ?? Object.keys(file.workflows)[0];
+        const wf = file.workflows[id];
+        if (!wf) return;
+        set({
+          projectName: file.name,
+          projectPath: path ?? file.name, // 实际磁盘路径由调用方传入
+          workflows: file.workflows,
+          activeWfId: id,
+          workflowName: wf.name,
+          nodes: [],
+          edges: [],
+          agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
+          roles: [
+            ...builtinRoles.map((r) => ({ ...r })),
+            ...(wf.roles ?? []).filter((r) => !r.builtin),
+          ],
+          variables: wf.variables ?? {},
+          selectedNodeId: null,
+          logs: [],
+        });
+        // 标记项目路径：若调用方传入的是已解析的项目（含 path），由调用处再 set
+      },
+
+      saveProject: async () => {
+        const s = get();
+        // 同步当前工作流
+        const current: WorkflowFile = {
+          version: 1,
+          name: s.workflowName,
+          savedAt: new Date().toISOString(),
+          nodes: s.nodes.map((n) => ({
+            id: n.id,
+            typeId: n.data.typeId,
+            label: n.data.label,
+            position: { x: n.position.x, y: n.position.y },
+            params: n.data.params,
+          })),
+          edges: s.edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            sourceHandle: e.sourceHandle ?? null,
+            target: e.target,
+            targetHandle: e.targetHandle ?? null,
+          })),
+          agents: s.agents,
+          roles: s.roles,
+          variables: s.variables,
+        };
+        const workflows = { ...s.workflows };
+        if (s.activeWfId) workflows[s.activeWfId] = current;
+        else {
+          const id = `wf-${Date.now()}`;
+          workflows[id] = current;
+        }
+        const file: ProjectFile = {
+          version: 1,
+          kind: 'project',
+          name: s.projectName ?? s.workflowName,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          workflows,
+          activeId: s.activeWfId || Object.keys(workflows)[0],
+          roles: s.roles,
+          variables: s.variables,
+        };
+        const { saveProjectFile } = await import('../io/projectIO');
+        const path = await saveProjectFile(file);
+        set({ projectPath: path });
+        return path;
+      },
+
+      switchWorkflow: (id) => {
+        const s = get();
+        if (id === s.activeWfId) return;
+        // 写回当前
+        const synced: Record<string, WorkflowFile> = { ...s.workflows };
+        if (s.activeWfId) {
+          synced[s.activeWfId] = {
+            version: 1,
+            name: s.workflowName,
+            savedAt: new Date().toISOString(),
+            nodes: s.nodes.map((n) => ({
+              id: n.id,
+              typeId: n.data.typeId,
+              label: n.data.label,
+              position: { x: n.position.x, y: n.position.y },
+              params: n.data.params,
+            })),
+            edges: s.edges.map((e) => ({
+              id: e.id,
+              source: e.source,
+              sourceHandle: e.sourceHandle ?? null,
+              target: e.target,
+              targetHandle: e.targetHandle ?? null,
+            })),
+            agents: s.agents,
+            roles: s.roles,
+            variables: s.variables,
+          };
+        }
+        const target = synced[id];
+        if (!target) return;
+        set({
+          workflows: synced,
+          activeWfId: id,
+          workflowName: target.name,
+          nodes: [],
+          edges: [],
+          agents: target.agents?.length ? target.agents : s.agents,
+          roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
+          variables: target.variables ?? {},
+          selectedNodeId: null,
+          logs: [],
+        });
+      },
+
+      newWorkflowInProject: () => {
+        const s = get();
+        const id = `wf-${Date.now()}`;
+        const wf: WorkflowFile = {
+          version: 1,
+          name: `工作流 ${Object.keys(s.workflows).length + 1}`,
+          savedAt: new Date().toISOString(),
+          nodes: [],
+          edges: [],
+          agents: [createAgent('ollama')],
+          roles: builtinRoles.map((r) => ({ ...r })),
+          variables: {},
+        };
+        const workflows = { ...s.workflows, [id]: wf };
+        set({
+          workflows,
+          activeWfId: id,
+          workflowName: wf.name,
+          nodes: [],
+          edges: [],
+          agents: wf.agents,
+          roles: wf.roles!,
+          variables: wf.variables!,
+          selectedNodeId: null,
+          logs: [],
+        });
+      },
+
+      renameWorkflow: (name) => {
+        const s = get();
+        set({ workflowName: name });
+        if (s.activeWfId) {
+          const wf = s.workflows[s.activeWfId];
+          if (wf) {
+            set({ workflows: { ...s.workflows, [s.activeWfId]: { ...wf, name } } });
+          }
+        }
+      },
+
+      removeWorkflow: (id) => {
+        const s = get();
+        const ids = Object.keys(s.workflows);
+        if (ids.length <= 1) {
+          get().addLog('error', '至少需保留一个工作流');
+          return;
+        }
+        const next = { ...s.workflows };
+        delete next[id];
+        if (id === s.activeWfId) {
+          const newId = Object.keys(next)[0];
+          const wf = next[newId];
+          set({
+            workflows: next,
+            activeWfId: newId,
+            workflowName: wf.name,
+            nodes: [],
+            edges: [],
+            agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
+            roles: [...builtinRoles.map((r) => ({ ...r })), ...(wf.roles ?? []).filter((r) => !r.builtin)],
+            variables: wf.variables ?? {},
+            selectedNodeId: null,
+            logs: [],
+          });
+        } else {
+          set({ workflows: next });
+        }
+      },
     }),
     {
       name: 'slime-mold-workflow',
