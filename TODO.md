@@ -10,10 +10,10 @@
 
 **核心理念**：传统 agent 客户端对多任务协同不友好；用可视化、直观的流水线来派发任务，可冲破这一局限。
 
-**模型分工设想（各取所长）**：
-- **Claude Code**：整体项目架构、建模、项目管理，以及对具体任务的**分割与派发**（调度层角色）。
+**模型分工设想（各取所长，模型名即角色示例）**：
+- **Claude Code（cc，模型名）**：整体项目架构、建模、项目管理，以及对具体任务的**分割与派发**（调度层角色）→ 对应节点建议名 **Architect**。
 - **Gemini**：视觉方向 / UI 设计。
-- **DeepSeek**：简单但重复度高、大量消耗 tokens 的任务。
+- **DeepSeek（ds，模型名）**：简单但重复度高、大量消耗 tokens 的任务（如写壳子/定式代码）→ 对应节点建议名 **Scaffolder**。
 - **ChatGPT（多模态）**：测试、总结等。
 
 **目标价值**：可视化、直观地派发任务给不同模型，让「性价比最优」成为可编排、可观测的设计目标，而非事后统计。
@@ -29,9 +29,9 @@
 
 **流水线阶段**：
 1. **Planner（规划者）**：接收 idea 或 project 文档，产出详细**计划书**。该节点输出与「project 文档入口」归并到同一后续入口。
-2. **架构师（示例：Claude Code）**：对计划书做**可行性分析**，组织项目架构（语言选型、目录分层、接口与类名的最初规划），交付架构产物。
-3. **脚手架工（示例：DeepSeek）**：依据架构产物，写出项目"壳子"——抽象类、getter/setter 等定式、重复度高的基础代码。
-4. **任务派发（Dispatcher）**：由某一模型/agent（CC、DS 或任意）**划分任务**，从右侧拉出 **1:n 连线**，将具体任务派发到对应节点，**并行施工**。
+2. **架构师（建议名 Architect，常用 Claude Code 承担）**：对计划书做**可行性分析**，组织项目架构（语言选型、目录分层、接口与类名的最初规划），交付架构产物。
+3. **脚手架工（建议名 Scaffolder，常用 DeepSeek 承担）**：依据架构产物，写出项目"壳子"——抽象类、getter/setter 等定式、重复度高的基础代码。
+4. **任务派发（Dispatcher）**：由某一模型/agent（Claude Code、DeepSeek 或任意）**划分任务**，从右侧拉出 **1:n 连线**，将具体任务派发到对应节点，**并行施工**。
 5. **协调者（Coordinator）**：辅助 agent，检测并消除两个涉及同一文件 / 同一接口 / 抽象类的任务的**并发冲突**（冲突仲裁）。
 6. **书记员（Stenographer）**：辅助 agent，记录所有项目更改、撰写日志文件；额外记录每个环节花费的**时间与 tokens**，写成文档供用户参考，甚至写入 skill 供下次任务**自优化**。
 7. **建造者（Builder）**：经 Coordinator 审核后的任务输出到 Builder 执行具体施工。
@@ -51,8 +51,8 @@
 | 用户原叫法 | 建议名 | 理由 |
 |---|---|---|
 | Planner | Planner / Orchestrator | 兼"分解+调度"，可细分 |
-| cc（架构师） | **Architect** | 架构/选型/分层语义准确 |
-| ds（脚手架工） | **Scaffolder** | "写壳子/定式代码"，与 Builder 区分 |
+| cc（Claude Code） | **Architect** | 原意是模型名 Claude Code，常承担架构/选型/分层职责，故建议名 Architect |
+| ds（DeepSeek） | **Scaffolder** | 原意是模型名 DeepSeek，常承担写壳子/定式代码等高重复度任务，故建议名 Scaffolder |
 | 工作派发节点 | **Dispatcher / TaskSplitter** | 强调"切分+派发" |
 | Coordinator | **Conflict Resolver / Merge Coordinator** | 本质是并发冲突仲裁 |
 | Stenographer | **Auditor / Bookkeeper** | 记录+成本统计+自优化，不止速记 |

@@ -4,7 +4,7 @@ import { X, Keyboard } from 'lucide-react';
 import TopBar from './components/TopBar';
 import Inspector from './components/Inspector';
 import StatusBar from './components/StatusBar';
-import SettingsModal from './components/SettingsModal';
+import SettingsCenter from './components/SettingsCenter';
 import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar';
 import ShortcutsModal from './components/ShortcutsModal';
 import ExamplesModal from './components/ExamplesModal';
@@ -103,7 +103,8 @@ export default function App() {
   const setExamplesOpen = useWorkflowStore((s) => s.setExamplesOpen);
   const [showSettings, setShowSettings] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const viewTheme = useViewStore((s) => s.theme);
+  const setViewTheme = useViewStore((s) => s.setTheme);
   const [prompt, setPrompt] = useState<{ title: string; initial: string; onConfirm: (name: string) => void } | null>(null);
   const splitView = useViewStore((s) => s.splitView);
   const splitWfId = useViewStore((s) => s.splitWfId);
@@ -123,12 +124,13 @@ export default function App() {
   const closePanel = () => setActivePanel(null);
 
   const toggleTheme = () => {
-    setTheme((t) => {
-      const next = t === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      return next;
-    });
+    setViewTheme(viewTheme === 'dark' ? 'light' : 'dark');
   };
+
+  // 应用持久化的主题到 <html data-theme>，保证刷新后主题保持不变
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', viewTheme);
+  }, [viewTheme]);
 
   // 拖拽分隔条
   const startResize = (
@@ -208,7 +210,7 @@ export default function App() {
     <ReactFlowProvider>
       <div className="flex h-screen flex-col font-app" style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink)' }}>
         <TopBar
-          theme={theme}
+          theme={viewTheme}
           onToggleTheme={toggleTheme}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -322,7 +324,7 @@ export default function App() {
           </div>
         </main>
         {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
-        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+        {showSettings && <SettingsCenter onClose={() => setShowSettings(false)} />}
         {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
         {prompt && (
           <NamePrompt

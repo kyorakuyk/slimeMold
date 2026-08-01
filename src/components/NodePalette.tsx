@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { ChevronRight, ChevronDown, Search, Boxes, Trash2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Search, Boxes, Trash2, Pencil } from 'lucide-react';
 import { NamePrompt } from './NamePrompt';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -13,9 +13,66 @@ import type { NodeDefinition } from '../types';
 export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
   const defs = useRegistryStore((s) => s.defs);
   const { screenToFlowPosition } = useReactFlow();
+  const addNode = useWorkflowStore((s) => s.addNode);
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+
+  // 双击兜底添加：部分 WebView/浏览器对 HTML5 拖拽支持不稳定，双击直接落到画布中心
+  const addAtCenter = (typeId: string) => {
+    const center = screenToFlowPosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    });
+    addNode(typeId, { x: center.x - 112, y: center.y - 20 });
+  };
+  const addSubgraphAtCenter = (sgId: string) => {
+    const center = screenToFlowPosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    });
+    addSubgraphRef(sgId, { x: center.x - 112, y: center.y - 20 });
+  };
+
+  // 指针事件拖拽（取代 HTML5 DnD，WebView2 下更可靠，避免禁止符号）
+  const [dragGhost, setDragGhost] = useState<{
+    typeId: string;
+    label: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const beginDrag = (typeId: string, label: string, e: React.PointerEvent) => {
+    const move = (ev: PointerEvent) =>
+      setDragGhost({ typeId, label, x: ev.clientX, y: ev.clientY });
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setDragGhost(null);
+      const canvas = document.querySelector('.sm-canvas-dot') as HTMLElement | null;
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      if (
+        ev.clientX >= r.left &&
+        ev.clientX <= r.right &&
+        ev.clientY >= r.top &&
+        ev.clientY <= r.bottom
+      ) {
+        const pos = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+        if (typeId.startsWith(`${SUBGRAPH_REF_TYPE}:`)) {
+          addSubgraphRef(typeId.slice(SUBGRAPH_REF_TYPE.length + 1), {
+            x: pos.x - 112,
+            y: pos.y - 20,
+          });
+        } else {
+          addNode(typeId, { x: pos.x - 112, y: pos.y - 20 });
+        }
+      }
+    };
+    setDragGhost({ typeId, label, x: e.clientX, y: e.clientY });
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   const groups = useMemo(() => {
     const map = new Map<string, NodeDefinition[]>();
@@ -112,10 +169,10 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                   {list.map((def) => (
                     <li
                       key={def.typeId}
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData(DND_MIME, def.typeId)}
-                      title={`${def.description || def.name}\n拖入画布以添加节点`}
-                      className="sm-palette-item cursor-grab"
+                      onPointerDown={(e) => beginDrag(def.typeId, def.name, e)}
+                      onDoubleClick={() => addAtCenter(def.typeId)}
+                      title={`${def.description || def.name}\n拖入画布以添加节点（或双击直接添加）`}
+                      className="sm-palette-item cursor-grab select-none"
                     >
                       <p className="text-[13px]" style={{ color: 'var(--sm-ink)' }}>
                         {def.name}
@@ -146,16 +203,16 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                 {subgraphList.map((sg) => (
                   <li
                     key={sg.id}
-                    draggable
-                    onDragStart={(e) =>
-                      e.dataTransfer.setData(DND_MIME, `${SUBGRAPH_REF_TYPE}:${sg.id}`)
+                    onPointerDown={(e) =>
+                      beginDrag(`${SUBGRAPH_REF_TYPE}:${sg.id}`, sg.name, e)
                     }
                     onDoubleClick={(e) => {
                       e.stopPropagation();
-                      setRenaming({ id: sg.id, name: sg.name });
+                      if ((e.target as HTMLElement).closest('button')) return;
+                      addSubgraphAtCenter(sg.id);
                     }}
                     title={`${sg.nodes.length} 个步骤 · ${sg.inputs.length} 入 / ${sg.outputs.length} 出\n双击可重命名`}
-                    className="sm-palette-item group/sg relative"
+                    className="sm-palette-item group/sg relative select-none"
                   >
                     <p
                       className="flex items-center gap-1.5 pr-5 text-[13px]"
@@ -169,6 +226,17 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                     </p>
                     <button
                       className="absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
+                      style={{ color: 'var(--sm-ink-faint)' }}
+                      title="重命名这个子图"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenaming({ id: sg.id, name: sg.name });
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      className="absolute right-8 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
                       style={{ color: 'var(--sm-ink-faint)' }}
                       title="删除这个子图（画布上已放置的引用会失效）"
                       onClick={(e) => {
@@ -196,6 +264,14 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
         />
       )}
       </div>
+      {dragGhost && (
+        <div
+          className="pointer-events-none fixed z-[9999] rounded border border-[var(--sm-ink-faint)] bg-[var(--sm-surface)] px-2 py-1 text-[12px] shadow-lg"
+          style={{ left: dragGhost.x + 12, top: dragGhost.y + 12, color: 'var(--sm-ink)' }}
+        >
+          {dragGhost.label}
+        </div>
+      )}
     </aside>
   );
 }

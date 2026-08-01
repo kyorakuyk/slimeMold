@@ -1,6 +1,13 @@
 import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
 import { chatWithAgent } from './agentManager';
 import { isTauri } from '../platform/env';
+import { useViewStore } from '../store/viewStore';
+
+/** 解析生效的代理：agent 级 proxyUrl 优先，其次全局代理；均空则直连 */
+function resolveProxy(agent: AgentConfig): string {
+  const g = useViewStore.getState().globalProxyUrl?.trim() ?? '';
+  return (agent.proxyUrl?.trim() || g) || '';
+}
 
 /**
  * LLM 通道抽象层。
@@ -33,7 +40,9 @@ export interface LLMChannel {
 class FrontendChannel implements LLMChannel {
   readonly mode = 'frontend' as const;
   async chat(req: LLMRequest): Promise<LLMResponse> {
-    return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
+    const proxy = resolveProxy(req.agent);
+    const agent = proxy && !req.agent.proxyUrl?.trim() ? { ...req.agent, proxyUrl: proxy } : req.agent;
+    return chatWithAgent(agent, req.messages, req.signal, req.onToken);
   }
 }
 
@@ -62,6 +71,7 @@ class BackendChannel implements LLMChannel {
         agent: req.agent,
         messages: req.messages,
         stream: !!req.onToken,
+        global_proxy_url: resolveProxy(req.agent),
       },
       onTokenChannel: channel,
     });

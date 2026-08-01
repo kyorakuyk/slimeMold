@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type ThemeMode = 'dark' | 'light';
+
 interface ViewState {
   showGrid: boolean;
   showMinimap: boolean;
+  /** 颜色主题：dark / light，持久化，全局跟随 */
+  theme: 'dark' | 'light';
   /** 鼠标模式：move=拖动画布 / select=框选节点 / click=点击选中（不拖动、不框选） */
   interactionMode: 'move' | 'select' | 'click';
+  /** 全局默认代理（本地代理转发）：留空则各 agent 用自己的 proxyUrl，非空则作为默认出口 */
+  globalProxyUrl: string;
   /** 拆分视图：画布右侧并排显示辅助面板 */
   splitView: boolean;
   /** 底侧边栏（底部面板）开关状态，持久化以记住上次选择 */
@@ -27,6 +33,7 @@ interface ViewState {
   toggleInspector: () => void;
   setSplitWfId: (id: string) => void;
   setFocusedSubgraph: (id: string | null) => void;
+  setTheme: (t: 'dark' | 'light') => void;
 }
 
 export const useViewStore = create<ViewState>()(
@@ -34,6 +41,7 @@ export const useViewStore = create<ViewState>()(
     (set) => ({
       showGrid: true,
       showMinimap: false,
+      theme: 'dark',
       interactionMode: 'move',
       splitView: false,
       panelOpen: true,
@@ -41,6 +49,7 @@ export const useViewStore = create<ViewState>()(
       inspectorOpen: true,
       splitWfId: '',
       focusedSubgraphId: null,
+      globalProxyUrl: '',
       toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
       toggleMinimap: () => set((s) => ({ showMinimap: !s.showMinimap })),
       setInteractionMode: (mode) => set({ interactionMode: mode }),
@@ -50,6 +59,11 @@ export const useViewStore = create<ViewState>()(
       toggleInspector: () => set((s) => ({ inspectorOpen: !s.inspectorOpen })),
       setSplitWfId: (id) => set({ splitWfId: id }),
       setFocusedSubgraph: (id) => set({ focusedSubgraphId: id }),
+      setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
+      setTheme: (t) => {
+        document.documentElement.setAttribute('data-theme', t);
+        set({ theme: t });
+      },
     }),
     {
       name: 'slime-mold-view',

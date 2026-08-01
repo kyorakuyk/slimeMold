@@ -92,6 +92,8 @@ interface WorkflowState {
   nodes: FlowNode[];
   edges: FlowEdge[];
   agents: AgentConfig[];
+  /** 默认智能体 id：节点未指定智能体时引用此默认项 */
+  defaultAgentId: string | null;
   /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
   roles: RoleTemplate[];
   selectedNodeId: string | null;
@@ -148,6 +150,7 @@ interface WorkflowState {
 
   upsertAgent: (agent: AgentConfig) => void;
   removeAgent: (id: string) => void;
+  setDefaultAgent: (id: string | null) => void;
 
   upsertRole: (role: RoleTemplate) => void;
   removeRole: (id: string) => void;
@@ -299,6 +302,7 @@ function serializeCurrent(s: {
   roles: RoleTemplate[];
   variables: Record<string, unknown>;
   groups?: NodeGroup[];
+  defaultAgentId?: string | null;
 }): WorkflowFile {
   return {
     version: 1,
@@ -333,6 +337,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       nodes: [],
       edges: [],
       agents: [createAgent('ollama')],
+      defaultAgentId: null,
       roles: builtinRoles.map((r) => ({ ...r })),
       selectedNodeId: null,
       focusWfId: '',
@@ -583,7 +588,12 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       removeAgent: (id) =>
-        set({ agents: get().agents.filter((a) => a.id !== id) }),
+        set((s) => ({
+          agents: s.agents.filter((a) => a.id !== id),
+          defaultAgentId: s.defaultAgentId === id ? null : s.defaultAgentId,
+        })),
+
+      setDefaultAgent: (id) => set({ defaultAgentId: id }),
 
       upsertRole: (role) => {
         const exists = get().roles.some((r) => r.id === role.id);
@@ -689,6 +699,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           nodes: [],
           edges: [],
           agents: wf.agents,
+          defaultAgentId: wf.defaultAgentId ?? null,
           roles: wf.roles!,
           variables: wf.variables!,
           selectedNodeId: null,
@@ -709,6 +720,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           nodes: [],
           edges: [],
           agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
+          defaultAgentId: wf.defaultAgentId ?? get().defaultAgentId,
           roles: [
             ...builtinRoles.map((r) => ({ ...r })),
             ...(wf.roles ?? []).filter((r) => !r.builtin),
@@ -828,6 +840,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           nodes: [],
           edges: [],
           agents: wf.agents,
+          defaultAgentId: wf.defaultAgentId ?? null,
           roles: wf.roles!,
           variables: wf.variables!,
           groups: [],
@@ -921,6 +934,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             nodes: flowNodesFrom(wf),
             edges: flowEdgesFrom(wf),
             agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
+            defaultAgentId: wf.defaultAgentId ?? null,
             roles: [...builtinRoles.map((r) => ({ ...r })), ...(wf.roles ?? []).filter((r) => !r.builtin)],
             variables: wf.variables ?? {},
             selectedNodeId: null,

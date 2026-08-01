@@ -128,6 +128,65 @@ export const protocolDefaults: Record<
   },
 };
 
+/** 供应商预设库（参考 cc-switch 的 Presets 思路）：选一个即自动补全 Base URL + 默认模型。
+ * 适用于 OpenAI 兼容中转/官方。自定义项仅占位，Base URL 留空让用户手填。 */
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  protocol: Protocol;
+  baseUrl: string;
+  defaultModel: string;
+  /** 是否允许用户编辑 Base URL（中转自定义场景为 true） */
+  editableBaseUrl: boolean;
+}
+
+export const providerPresets: ProviderPreset[] = [
+  {
+    id: 'openai',
+    name: 'OpenAI 官方',
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    editableBaseUrl: false,
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek 官方',
+    protocol: 'openai',
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    editableBaseUrl: false,
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动 SiliconFlow',
+    protocol: 'openai',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    defaultModel: 'deepseek-ai/DeepSeek-V3',
+    editableBaseUrl: false,
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter 聚合',
+    protocol: 'openai',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    defaultModel: 'openai/gpt-4o-mini',
+    editableBaseUrl: false,
+  },
+  {
+    id: 'custom',
+    name: '自定义中转',
+    protocol: 'openai',
+    baseUrl: '',
+    defaultModel: '',
+    editableBaseUrl: true,
+  },
+];
+
+export function findProviderPreset(id?: string): ProviderPreset | undefined {
+  return providerPresets.find((p) => p.id === id);
+}
+
 /** 推荐给本地 Ollama 的模型（按显存友好度排序）。
  * 6GB 显存（如 RTX 2060）优先 qwen2.5:3b；7b/8b 也能跑但接近占满显存。 */
 export const ollamaModels: { id: string; note: string }[] = [
@@ -152,14 +211,144 @@ export async function fetchOllamaModels(baseUrl: string): Promise<string[]> {
   }
 }
 
-export function createAgent(protocol: Protocol): AgentConfig {
+/** 拉取 OpenAI 兼容中转站 / 官方服务的可用模型列表。
+ * 走 `${baseUrl}/models`，用 Bearer 密钥鉴权；失败返回空数组。
+ * 适用于中转站（one-api / NewAPI / OpenRouter 等）及官方 OpenAI。 */
+export async function fetchOpenAIModels(
+  baseUrl: string,
+  apiKey?: string,
+  proxyUrl?: string,
+): Promise<string[]> {
+  try {
+    const base = baseUrl.replace(/\/+$/, '');
+    const proxyOpt = proxyUrl?.trim() ? { proxy: proxyUrl.trim() } : {};
+    const res = await httpFetch(`${base}/models`, {
+      method: 'GET',
+      ...proxyOpt,
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: { id: string }[] };
+    const ids = (data.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string');
+    return ids.sort();
+  } catch {
+    return [];
+  }
+}
+
+/** API 可用性探测结果。
+ * stage 表示失败发生在哪一环，便于用户区分"网址错"还是"key 错"还是"模型错"。 */
+export interface ProbeResult {
+  ok: boolean;
+  stage: 'url' | 'auth' | 'model' | 'ok';
+  message: string;
+  /** 本次探测是否经本地代理转发（proxyUrl / 全局代理） */
+  proxied?: boolean;
+}
+
+/**
+ * 探测一个智能体配置是否真正可用：发一个最小请求（max_tokens=1）。
+ * - 网络层/URL 失败 → stage='url'
+ * - 401/403 → stage='auth'（key 无效或无权限）
+ * - 404/400 且提示模型不存在 → stage='model'
+ * - 正常返回 → stage='ok'
+ */
+export async function probeAgent(
+  config: { protocol: Protocol; baseUrl: string; model: string },
+  apiKey?: string,
+  proxyUrl?: string,
+): Promise<ProbeResult> {
+  const base = (config.baseUrl || '').replace(/\/+$/, '');
+  const proxied = !!proxyUrl?.trim();
+  // 本地代理转发（参考 cc-switch 路由）：经该代理出口做连通性探测，
+  // 代理通 + 目标可达 → 证明整条链路（含代理）可用。
+  const proxyOpt = proxied ? { proxy: proxyUrl!.trim() } : {};
+  if (!base) {
+    return { ok: false, stage: 'url', message: 'Base URL 为空', proxied };
+  }
+  try {
+    if (config.protocol === 'ollama') {
+      const res = await httpFetch(`${base}/api/chat`, {
+        method: 'POST',
+        ...proxyOpt,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: 'user', content: 'ping' }],
+          stream: false,
+          options: { num_predict: 1 },
+        }),
+      });
+      if (res.ok) return { ok: true, stage: 'ok', message: '连接成功，模型可用', proxied };
+      if (res.status === 404) {
+        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不存在于该 Ollama 服务`, proxied };
+      }
+      return { ok: false, stage: 'url', message: `Ollama 返回 ${res.status}`, proxied };
+    }
+
+    // OpenAI 兼容 / Anthropic（中转多为 OpenAI 格式）
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await httpFetch(`${base}/chat/completions`, {
+      method: 'POST',
+      ...proxyOpt,
+      headers,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+        stream: false,
+      }),
+    });
+    if (res.ok) {
+      return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
+    }
+    if (res.status === 404) {
+      return { ok: false, stage: 'url', message: `地址返回 404，请检查 Base URL 是否带 /v1 后缀`, proxied };
+    }
+    // 尝试解析错误信息，判断是否为模型不存在
+    let detail = '';
+    try {
+      const err = (await res.json()) as { error?: { message?: string; type?: string } };
+      detail = err.error?.message ?? '';
+    } catch {
+      /* ignore */
+    }
+    if (/model/i.test(detail) && /(not|exist|found|invalid)/i.test(detail)) {
+      return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${detail}`, proxied };
+    }
+    return {
+      ok: false,
+      stage: 'url',
+      message: `请求失败（${res.status}）${detail ? '：' + detail : '，请检查 Base URL 与模型名'}`,
+      proxied,
+    };
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    return {
+      ok: false,
+      stage: 'url',
+      message: `无法连接（网络/地址错误）：${msg}`,
+      proxied,
+    };
+  }
+}
+
+export function createAgent(protocol: Protocol, presetId?: string): AgentConfig {
   const d = protocolDefaults[protocol];
+  const preset = presetId ? findProviderPreset(presetId) : undefined;
   return {
     id: crypto.randomUUID(),
-    name: `${d.label}智能体`,
-    protocol,
-    baseUrl: d.baseUrl,
-    model: d.model,
+    name: preset ? `${preset.name}智能体` : `${d.label}智能体`,
+    protocol: preset ? preset.protocol : protocol,
+    baseUrl: preset ? preset.baseUrl : d.baseUrl,
+    model: preset ? preset.defaultModel : d.model,
     temperature: 0.7,
+    providerId: presetId,
   };
 }

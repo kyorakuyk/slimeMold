@@ -295,7 +295,7 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      const typeId = e.dataTransfer.getData(DND_MIME);
+      const typeId = e.dataTransfer.getData(DND_MIME) || e.dataTransfer.getData('text/plain');
       if (!typeId) return;
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       // 子图载荷格式：`subgraph.ref:<子图 id>`
@@ -444,7 +444,10 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     <div
       className="sm-canvas-dot relative h-full w-full"
       onDrop={onDrop}
-      onDragOver={(e) => e.preventDefault()}
+      onDragOverCapture={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }}
       onMouseDownCapture={onPaneMouseDownCapture}
       onDoubleClick={onCanvasDoubleClick}
     >

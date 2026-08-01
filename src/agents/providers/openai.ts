@@ -17,10 +17,14 @@ export async function chatOpenAI(
     stream: !!onToken,
   };
 
+  // 本地代理转发（参考 cc-switch 路由）：非空时经该代理出口（前端通道依赖 plugin-http 的 proxy 选项）。
+  const proxyOpt = agent.proxyUrl?.trim() ? { proxy: agent.proxyUrl.trim() } : {};
+
   if (!onToken) {
     const res = await httpFetch(`${base}/chat/completions`, {
       method: 'POST',
       signal,
+      ...proxyOpt,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${agent.apiKey}`,
@@ -53,6 +57,7 @@ export async function chatOpenAI(
   const res = await httpFetch(`${base}/chat/completions`, {
     method: 'POST',
     signal,
+    ...proxyOpt,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${agent.apiKey}`,
