@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Plus, Trash2, RefreshCw } from 'lucide-react';
+import { X, Plus, Trash2, RefreshCw, KeyRound, Check } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import {
   createAgent,
@@ -7,6 +7,8 @@ import {
   ollamaModels,
   fetchOllamaModels,
 } from '../agents/agentManager';
+import { saveCredential, removeCredential, defaultCredentialKey } from '../agents/credentialStore';
+import { isTauri } from '../platform/env';
 import type { AgentConfig, Protocol, RoleTemplate } from '../types';
 
 interface AgentPanelProps {
@@ -209,16 +211,20 @@ function AgentsTab() {
                 onChange={(e) => patch({ baseUrl: e.target.value })}
               />
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-ink-soft">API Key</label>
-              <input
-                type="password"
-                className="sm-input"
-                value={editing.apiKey}
-                placeholder={editing.protocol === 'ollama' ? '本地模型无需填写' : 'sk-…'}
-                onChange={(e) => patch({ apiKey: e.target.value })}
+            {editing.protocol === 'ollama' ? (
+              <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
+                <p className="text-[11px] text-ink-faint">
+                  本地 Ollama 模型无需 API Key，凭据留空即可。
+                </p>
+              </div>
+            ) : (
+              <ApiKeyField
+                protocol={editing.protocol}
+                credentialKey={editing.credentialKey}
+                onSaved={(ck) => patch({ credentialKey: ck, apiKey: undefined })}
+                onCleared={() => patch({ credentialKey: undefined })}
               />
-            </div>
+            )}
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
                 模型{editing.protocol === 'ollama' ? '（本地 Ollama）' : ''}
@@ -321,6 +327,104 @@ function AgentsTab() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * API Key 录入组件（Step 0.5）：明文仅在本组件的临时 state 中存在，
+ * 点「保存到系统密钥库」后写入 OS 密钥库，并向上回报 credentialKey；
+ * 工作流 / agent 配置中只保留 credentialKey，绝不持久化明文。
+ */
+function ApiKeyField({
+  protocol,
+  credentialKey,
+  onSaved,
+  onCleared,
+}: {
+  protocol: Protocol;
+  credentialKey?: string;
+  onSaved: (ck: string) => void;
+  onCleared: () => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [status, setStatus] = useState<'' | 'ok' | 'err'>('');
+
+  const ck = credentialKey ?? defaultCredentialKey(protocol);
+
+  const handleSave = async () => {
+    if (!draft.trim()) return;
+    if (!isTauri) {
+      setStatus('err');
+      return;
+    }
+    try {
+      await saveCredential(ck, draft.trim());
+      onSaved(ck);
+      setDraft('');
+      setStatus('ok');
+    } catch {
+      setStatus('err');
+    }
+  };
+
+  const handleClear = async () => {
+    try {
+      await removeCredential(ck);
+    } catch {
+      /* 忽略：即便删除失败也清空本地引用 */
+    }
+    onCleared();
+    setStatus('');
+  };
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-ink-soft">API Key（存于系统密钥库）</label>
+      <div className="flex gap-1.5">
+        <input
+          type="password"
+          className="sm-input flex-1"
+          value={draft}
+          placeholder={isTauri ? '输入后点击下方保存' : '仅桌面版支持密钥库'}
+          disabled={!isTauri}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave();
+          }}
+        />
+        <button
+          type="button"
+          className="sm-btn shrink-0 px-2.5"
+          disabled={!isTauri || !draft.trim()}
+          onClick={handleSave}
+        >
+          <KeyRound size={13} /> 保存
+        </button>
+      </div>
+      <div className="mt-1 flex items-center justify-between">
+        <p className="text-[11px] text-ink-faint">
+          {credentialKey ? (
+            <span className="inline-flex items-center gap-1 text-ok">
+              <Check size={11} /> 已保存（凭据键：{ck}）
+            </span>
+          ) : (
+            '尚未保存，运行时将无法取回密钥'
+          )}
+        </p>
+        {credentialKey && (
+          <button
+            type="button"
+            className="text-[11px] text-ink-faint hover:text-err"
+            onClick={handleClear}
+          >
+            清除
+          </button>
+        )}
+      </div>
+      {status === 'err' && (
+        <p className="mt-1 text-[11px] text-err">保存失败（请使用桌面版，或检查系统密钥库权限）</p>
+      )}
     </div>
   );
 }

@@ -34,7 +34,9 @@ export function serializeWorkflow(): WorkflowFile {
       targetHandle: e.targetHandle ?? null,
       kind: e.data?.kind ?? 'data',
     })),
-    agents: s.agents,
+    // Step 0.5-c：序列化时剥离明文 apiKey，只保留 credentialKey（密钥库键）。
+    // 即便某 agent 仍带着 apiKey 字段，导出文件也不应持久化明文密钥。
+    agents: s.agents.map(({ apiKey: _drop, ...rest }) => rest),
     roles: s.roles,
     variables: s.variables,
   };

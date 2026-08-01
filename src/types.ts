@@ -10,7 +10,12 @@ export interface AgentConfig {
   name: string;
   protocol: Protocol;
   baseUrl: string;
-  apiKey: string;
+  /** 明文 apiKey：仅在 headless / 本地 Ollama（无需 key）场景下使用。
+   *  桌面生产链路应通过 credentialKey 从系统密钥库取，UI 不编辑此字段。 */
+  apiKey?: string;
+  /** 系统密钥库中的凭据键；非空时 Rust 侧按此从 OS 密钥库取回真实 key（Step 0.5）。
+   *  工作流文件只存此键，绝不存明文 key。 */
+  credentialKey?: string;
   model: string;
   temperature?: number;
   /** 绑定的角色（角色库 id）。节点可通过角色快速获得预设提示词与默认模型，可被节点级覆写 */

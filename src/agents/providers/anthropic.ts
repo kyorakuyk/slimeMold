@@ -32,7 +32,7 @@ export async function chatAnthropic(
       signal,
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': agent.apiKey,
+        'x-api-key': agent.apiKey ?? '',
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),
@@ -65,7 +65,7 @@ export async function chatAnthropic(
     signal,
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': agent.apiKey,
+      'x-api-key': agent.apiKey ?? '',
       'anthropic-version': '2023-06-01',
       accept: 'text/event-stream',
     },

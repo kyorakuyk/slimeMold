@@ -159,7 +159,6 @@ export function createAgent(protocol: Protocol): AgentConfig {
     name: `${d.label}智能体`,
     protocol,
     baseUrl: d.baseUrl,
-    apiKey: '',
     model: d.model,
     temperature: 0.7,
   };

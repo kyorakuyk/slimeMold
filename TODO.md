@@ -186,6 +186,47 @@
 
 ---
 
+## 四、关键架构讨论结论（2026-08-02，用户口述引发的澄清）
+
+> 以下为「agent 是什么」「本地 vs 云端」「API key 安全」三轮讨论的共识，作为后续设计的硬约束。
+
+### 4.1 对「agent」的定义对齐（已与用户确认：采用混合路线）
+- **普通节点**（Scaffolder/Implementer 等）= 单次 `ctx.llm()` 调用，宏观编排由用户在画布上画。
+- **自主节点**（用户脑洞里真正「聪明」的角色，如 Validator、autonomous.coder）= 节点 `execute` 内部跑 `think → act(工具) → observe` 小循环，封在节点里；对外仍只是一个输入/输出端口，画布无感。
+- 结论：**画布管宏观编排（谁依赖谁），节点内部管微观自主**。这既保留「按 token 性价比分配谁干什么」的编排权，又不用把「测试失败→重试」画成一大坨边。
+- 当前 `agentManager` 的 agent 实为「命名 model 端点」（一次一问一答，无工具/无记忆），是混合路线里「普通节点」的实现基础；自主节点是增量增强。
+
+### 4.2 本地 vs 云端算力边界（已澄清）
+- 有 API key + 自写程序时，**推理算力 100% 在云端 GPU**，本地只做：拼请求、发网络、收结果（CPU + 带宽，几乎不吃显卡）。
+- 本地模型（Ollama）才在本地吃算力；云端 API 模式本地零显卡消耗。
+- 对 slimeMold 的意义：当前架构天然是「编排在本地（Tauri 桌面程序：DAG/成本账本/节点调度）、推理在云端（ctx.llm 打到 API）」的混合。编排权永远在本地，算力按需从云端买。
+
+### 4.3 API key 安全策略（已澄清，落地见 Step 0.5）
+- 铁律：**key 永不明文进工作流文件 / 永不入 git / 永不明文睡在 config**。
+- 推荐链路：设置界面输入 → Tauri `plugin-keyring`（走系统密钥库：Windows Credential Manager / macOS Keychain / Linux libsecret）→ 运行时取回内存 → 喂 provider。
+- **更优**：让 `src-tauri` Rust 侧做 API 代理，前端只说「用 X 跑这段 messages」，Rust 从密钥库取 key 发请求回传文本，**前端 JS 全程不碰 key**（规避 devtools 泄露 + CORS 逼前端持 key 的问题）。这正是 Tauri 相对纯 Web 的优势。
+- 当前隐患：`src/agents/llmChannel.ts` 是**前端直连云端 API + 透传 key**，需改为走 Rust 代理。
+
+### 4.4 落地优先级重排（插入 Step 0.5，位于 Step 4 之后、Step 5 之前）
+1. ✅ 步骤 1：边类型分层
+2. ✅ 步骤 2：成本 schema + Auditor + UI
+3. ✅ 步骤 3：Dispatcher/Resolver 框架
+4. ✅ 步骤 4：stage 化拓扑 + loopGate
+5. ✅ **Step 0.5：API key 安全（密钥库 + Rust 代理）** —— keyring 落盘（set/get/delete_credential）+ chat_completion 改从密钥库按 credentialKey 取 key + 前端设置面板不再编辑明文 + workflowIO 序列化剥离 apiKey。已落地（cargo check + tsc 通过）。
+6. ⬜ **Step 5：具体 worker 节点（Scaffolder/Implementer/Validator）**，其中 Validator 试点「自主节点」内部循环
+7. ⬜ **Step 6（建议新增）：执行引擎迭代循环** —— 让 loopGate 真正多次跑循环体（步骤 4 框架的收尾）
+
+> 理由：Step 0.5 是安全地基，应在任何「真去调云端 API 干活」之前补；Step 6 让 4 的循环语义闭环，与 5 的自主节点互相印证。
+
+### 4.5 前端/后端编排权决策（2026-08-02，用户拍板：按 AI 直觉走）
+- **结论：短期走方案 X，长期向方案 Y 演进。**
+  - **X（短期）**：节点 `execute` 仍跑在前端 TS，拼好 messages 后调 Tauri 命令 `proxy_llm(agentId, messages)`；Rust 侧只负责「取 key + 转发 API + 回传文本/usage」。前端是大脑，Rust 是哑管道。现有 `builtin.ts` 节点逻辑几乎不动。
+  - **Y（长期）**：节点 `execute` 只产出「意图」（如 `{role, input}`），真正拼 prompt、调 API、跑 think-act 内部循环下沉到 Rust；前端只渲染。自主节点（Validator 等）天然在后端跑，能真调工具/读文件且不卡 UI，key 完全不进前端。
+- 落地顺序：先以 X 完成 Step 0.5（密钥库 + 前端→Rust 代理转发），不阻断现有代码；自主节点成熟后再把对应节点逻辑沉到 Y。
+- 约束：无论 X/Y，**前端 JS 永不持有明文 key**（X 下 key 也只在 Rust 内存 + 系统密钥库）。
+
+---
+
 ## 一、子图（Subgraph）与分组（Group）功能 —— 已封存（2026-08-02）
 
 **封存原因**：该功能涉及大量交互细节（代理端口双向连接、键盘事件隔离、父图/子图同步等），反复调试消耗过多时间与 token，且仍未完全稳定。决定暂时封存，先推进其他更核心的工作；相关代码保留在仓库中，不删除，待后续回归。
