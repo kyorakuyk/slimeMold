@@ -57,8 +57,6 @@ export default function AssetsPanel({
   const [hashMap, setHashMap] = useState<Record<string, string>>({});
 
   const assetList = assets ?? [];
-  const selected: AssetMeta | null =
-    assetList.find((a) => a.id === selectedId) ?? assetList[0] ?? null;
 
   // 异步预计算每项资产内容的 SHA-256（十六进制），用于按"文件哈希"检索
   useEffect(() => {
@@ -66,7 +64,8 @@ export default function AssetsPanel({
     (async () => {
       const next: Record<string, string> = {};
       for (const a of assetList) {
-        if (!a.content) {
+        // 图片资产 content 为巨大 base64，哈希计算慢且检索价值低，跳过
+        if (!a.content || a.kind === 'image') {
           next[a.id] = '';
           continue;
         }
@@ -95,6 +94,10 @@ export default function AssetsPanel({
           a.name.toLowerCase().includes(q) || (hashMap[a.id] ?? '').includes(q),
       )
     : assetList;
+
+  // 选中项优先取 selectedId 且在可见列表中，否则回退到可见列表首项
+  const selected: AssetMeta | null =
+    visibleAssets.find((a) => a.id === selectedId) ?? visibleAssets[0] ?? null;
 
   const handleDownload = (a: AssetMeta) => {
     downloadBlob(a.name, a.content, mimeOf(a.name));

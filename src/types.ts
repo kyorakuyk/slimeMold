@@ -42,9 +42,17 @@ export interface RoleTemplate {
   builtin?: boolean;
 }
 
+/** 多模态消息内容片段（对齐 OpenAI / Anthropic vision 结构）。
+ * - text：纯文本段
+ * - image：图片段，url 为 data URL（data:image/png;base64,…）或 https 链接 */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; url: string; mediaType?: string };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  /** 文本消息为 string；多模态（图生文）消息为内容片段数组 */
+  content: string | ContentPart[];
 }
 
 /* ---------- 节点定义 ---------- */
@@ -55,7 +63,8 @@ export type PortType =
   | 'number'
   | 'boolean'
   | 'list' // 列表：仅与 list 兼容
-  | 'json'; // 结构化对象：仅与 json 兼容
+  | 'json' // 结构化对象：仅与 json 兼容
+  | 'image'; // 图片（data URL 或 https 链接），用于多模态图生文
 
 export interface PortDef {
   id: string;
@@ -81,7 +90,14 @@ export function arePortsCompatible(src?: PortType, tgt?: PortType): boolean {
   return scalar.has(s) && scalar.has(t);
 }
 
-export type ParamType = 'text' | 'textarea' | 'number' | 'select' | 'agent' | 'role';
+export type ParamType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'select'
+  | 'agent'
+  | 'role'
+  | 'asset'; // 从当前工作流资产库选择（图片资产下拉 + 气泡手填路径）
 
 export interface ParamDef {
   key: string;
@@ -119,6 +135,10 @@ export interface ExecContext {
   signal: AbortSignal;
   /** 全局变量（可在 {{}} 模板与表达式中引用） */
   vars: Record<string, unknown>;
+  /** 当前工作流的资产库（图片资产直连用），含 id/name/kind/content 等 */
+  assets: AssetMeta[];
+  /** 向当前工作流追加一条资产记录（图片保存节点用） */
+  addAsset(meta: AssetMeta): void;
 }
 
 export type NodeExecuteFn = (

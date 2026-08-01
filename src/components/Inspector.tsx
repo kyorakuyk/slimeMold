@@ -1,6 +1,8 @@
 import { Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
+import { isTauri } from '../platform/env';
 import type { ParamDef, FlowNode } from '../types';
 
 function ParamField({
@@ -14,6 +16,81 @@ function ParamField({
 }) {
   const agents = useWorkflowStore((s) => s.agents);
   const roles = useWorkflowStore((s) => s.roles);
+  const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  if (def.type === 'asset') {
+    const imageAssets = (assets ?? []).filter((a) => a.kind === 'image');
+    // 本地文件选择模式：值以 "path:"（桌面端系统路径）或 "file:"（浏览器 data URL）前缀
+    const isFile = typeof value === 'string' && (value.startsWith('path:') || value.startsWith('file:'));
+    const fileLabel = isFile
+      ? value.startsWith('file:')
+        ? '已选本地图片'
+        : value.slice(5)
+      : '';
+
+    // 打开文件资源管理器：桌面端用系统对话框，浏览器用隐藏 file input
+    const openPicker = async () => {
+      if (isTauri) {
+        try {
+          const tauri = (window as any).__TAURI__;
+          const picked: string | string[] | null = await tauri.dialog.open({
+            multiple: false,
+            filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+            title: '选择图片',
+          });
+          const p = Array.isArray(picked) ? picked[0] : picked;
+          if (p) onChange('path:' + p);
+        } catch {
+          /* 用户取消 */
+        }
+      } else {
+        fileRef.current?.click();
+      }
+    };
+
+    const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => onChange('file:' + String(reader.result));
+      reader.readAsDataURL(f);
+      e.target.value = '';
+    };
+
+    return (
+      <div className="flex items-center gap-1.5">
+        <select
+          className="sm-input min-w-0 flex-1 cursor-pointer"
+          value={isFile ? '' : String(value ?? '')}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">— 选择图片资产 —</option>
+          {imageAssets.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+          {isFile && <option value="__file__">{fileLabel}</option>}
+        </select>
+        <button
+          type="button"
+          className={`sm-btn shrink-0 px-2 ${isFile ? 'text-accent' : 'text-ink-faint'}`}
+          title="从本机选择图片文件"
+          onClick={openPicker}
+        >
+          📂
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onFileChange}
+        />
+      </div>
+    );
+  }
 
   if (def.type === 'textarea') {
     return (

@@ -12,7 +12,8 @@ export async function chatAnthropic(
   const base = agent.baseUrl.replace(/\/+$/, '');
   const system = messages
     .filter((m) => m.role === 'system')
-    .map((m) => m.content)
+    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .filter((s) => s)
     .join('\n');
   const chat = messages.filter((m) => m.role !== 'system');
 

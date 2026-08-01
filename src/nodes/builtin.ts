@@ -1,4 +1,4 @@
-import type { NodeDefinition, AssetMeta } from '../types';
+import type { NodeDefinition, AssetMeta, ContentPart, ChatMessage } from '../types';
 import { httpFetch, isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -58,7 +58,10 @@ const agentChat: NodeDefinition = {
   category: 'AI',
   description:
     '调用绑定的智能体（多协议 LLM）处理输入文本。可绑定角色库中的角色快速获得职业提示词，并支持节点级模型覆写与上下文隔离。',
-  inputs: [{ id: 'prompt', label: '提示词', type: 'text' }],
+  inputs: [
+    { id: 'prompt', label: '提示词', type: 'text' },
+    { id: 'image', label: '图片', type: 'image' },
+  ],
   outputs: [{ id: 'text', label: '回复', type: 'text' }],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
@@ -142,9 +145,22 @@ const agentChat: NodeDefinition = {
 
     // —— 真实调用 ——
     if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择（或开启离线模拟模式）');
-    const messages = [];
+    const messages: ChatMessage[] = [];
     if (system) messages.push({ role: 'system' as const, content: system });
-    messages.push({ role: 'user' as const, content: prompt });
+
+    // 多模态：若接入了图片（data URL 或 https 链接），构造图生文 user 消息
+    const image = inputs.image != null ? String(inputs.image) : '';
+    if (image) {
+      const parts: ContentPart[] = [{ type: 'text', text: prompt || '请描述这张图片' }];
+      const isDataUrl = image.startsWith('data:');
+      const mediaType = isDataUrl
+        ? image.slice(5, image.indexOf(';')) || 'image/png'
+        : undefined;
+      parts.push({ type: 'image', url: image, mediaType });
+      messages.push({ role: 'user' as const, content: parts });
+    } else {
+      messages.push({ role: 'user' as const, content: prompt });
+    }
 
     ctx.logger.info(
       `智能体请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''}${isolated ? ' 上下文隔离' : ''} prompt ${prompt.length} 字`,
@@ -161,6 +177,99 @@ const agentChat: NodeDefinition = {
       modelOverride || undefined,
     );
     return { text };
+  },
+};
+
+/** 图片源：输入图片 URL 或 data URL，输出 image 端口，供图生文（如 agent.chat 的「图片」输入）使用。
+ * 对应 ComfyUI 的 Load Image 节点，是图像管线的起点。 */
+const imageLoad: NodeDefinition = {
+  typeId: 'image.load',
+  name: '图片',
+  category: '输入',
+  description: '加载一张图片（URL 或 data URL），输出 image 端口，可接入多模态智能体节点',
+  inputs: [{ id: 'url', label: '图片 URL', type: 'text' }],
+  outputs: [{ id: 'image', label: '图片', type: 'image' }],
+  execute: async (_ctx, inputs) => {
+    const url = inputs.url != null ? String(inputs.url).trim() : '';
+    if (!url) throw new Error('请填写图片 URL 或 data URL');
+    return { image: url };
+  },
+};
+
+/** 图片导入：从资产库下拉选图，或手动填文件路径/URL，输出 image 端口。
+ * 对应 ComfyUI 的 Load Image（但支持直接绑定已上传的资产）。 */
+const imageImport: NodeDefinition = {
+  typeId: 'image.import',
+  name: '图片导入',
+  category: '输入',
+  description: '从资产库选择已上传的图片，或点气泡从本机文件资源管理器选图，输出 image 端口',
+  params: [{ key: 'asset', label: '选择图片', type: 'asset' }],
+  inputs: [],
+  outputs: [{ id: 'image', label: '图片', type: 'image' }],
+  execute: async (_inputs, params, ctx) => {
+    const raw = (params.asset != null ? String(params.asset) : '') as string;
+    // 桌面端从文件资源管理器选的本地系统路径
+    if (raw.startsWith('path:')) {
+      const p = raw.slice(5).trim();
+      if (!p) throw new Error('未选择图片文件');
+      return { image: p };
+    }
+    // 浏览器预览环境选的本地文件，已读为 data URL
+    if (raw.startsWith('file:')) {
+      const dataUrl = raw.slice(5);
+      if (!dataUrl) throw new Error('未选择图片文件');
+      return { image: dataUrl };
+    }
+    if (!raw) throw new Error('请在右侧下拉选择图片资产，或点 📂 从本机选图');
+    const asset = ctx.assets.find((a) => a.id === raw);
+    if (!asset) throw new Error('找不到对应图片资产（可能已被删除）');
+    if (!asset.content) throw new Error('该资产无图片内容（请确认是图片资产）');
+    return { image: asset.content }; // data URL
+  },
+};
+
+/** 图片预览：输入 image 端口，把图片直接作为输出，在节点卡片上缩略图预览。 */
+const imagePreview: NodeDefinition = {
+  typeId: 'image.preview',
+  name: '图片预览',
+  category: '预览',
+  description: '预览上游传来的图片（image 端口），在节点卡片上显示缩略图',
+  inputs: [{ id: 'image', label: '图片', type: 'image' }],
+  outputs: [{ id: 'image', label: '图片', type: 'image' }],
+  execute: async (_ctx, inputs) => {
+    const img = inputs.image != null ? String(inputs.image) : '';
+    if (!img) throw new Error('未接入图片');
+    return { image: img };
+  },
+};
+
+/** 图片保存：把上游 image 端口的图片写入资产库，供「资产」面板查看与导出。 */
+const imageSave: NodeDefinition = {
+  typeId: 'image.save',
+  name: '图片保存',
+  category: '资产',
+  description: '把上游传来的图片（image 端口）保存到当前工作流资产库',
+  params: [{ key: 'name', label: '资产名', type: 'text', default: 'image', placeholder: '如 cat.png' }],
+  inputs: [{ id: 'image', label: '图片', type: 'image' }],
+  outputs: [{ id: 'image', label: '图片', type: 'image' }],
+  execute: async (inputs, params, ctx) => {
+    const img = inputs.image != null ? String(inputs.image) : '';
+    if (!img) throw new Error('未接入图片');
+    const name = (params.name ? String(params.name) : 'image') || 'image';
+    const ext = img.startsWith('data:')
+      ? img.slice(5, img.indexOf(';')).split('/')[1] || 'png'
+      : name.includes('.') ? '' : 'png';
+    const finalName = ext && !name.includes('.') ? `${name}.${ext}` : name;
+    ctx.addAsset({
+      id: `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+      name: finalName,
+      path: null,
+      kind: 'image',
+      content: img,
+      createdAt: new Date().toISOString(),
+      nodeId: '',
+    });
+    return { image: img };
   },
 };
 
@@ -676,6 +785,10 @@ export const builtinDefs: NodeDefinition[] = [
   textInput,
   template,
   agentChat,
+  imageLoad,
+  imageImport,
+  imagePreview,
+  imageSave,
   listNode,
   mapNode,
   joinNode,

@@ -356,6 +356,8 @@ async function executeNode(
     },
     storage: scopedStorage(def.pluginId ?? 'core'),
     vars: useWorkflowStore.getState().variables,
+    assets: (useWorkflowStore.getState().workflows[useWorkflowStore.getState().activeWfId ?? '']?.assets ?? []) as never,
+    addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
   };
 
   store.setNodeStatus(id, 'running');

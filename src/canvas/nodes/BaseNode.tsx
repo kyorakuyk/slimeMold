@@ -77,6 +77,11 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
     data.outputs && Object.keys(data.outputs).length > 0
       ? summarize(Object.values(data.outputs)[0], data.typeId === 'output.preview' ? 140 : 90)
       : null;
+  // 图片预览节点：直接渲染缩略图
+  const previewImage =
+    data.typeId === 'image.preview' && data.outputs?.image
+      ? String(data.outputs.image)
+      : null;
 
   return (
     <div
@@ -165,7 +170,14 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               {s}
             </p>
           ))}
-          {previewValue !== null && (
+          {previewImage !== null && (
+            <img
+              src={previewImage}
+              alt="preview"
+              className="max-h-40 w-full rounded border border-line object-contain"
+            />
+          )}
+          {previewValue !== null && previewImage === null && (
             <p className="whitespace-pre-wrap break-all rounded bg-paper-soft px-2 py-1.5 text-[11px] leading-relaxed text-ink-soft">
               {previewValue || '（空）'}
             </p>
