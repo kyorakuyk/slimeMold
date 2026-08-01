@@ -1,14 +1,14 @@
 import { httpFetch } from '../../platform/env';
-import type { AgentConfig, ChatMessage } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../../types';
 import { forEachSSEData } from '../streamSSE';
 
-/** Ollama 本地模型协议 */
+/** Ollama 本地模型协议（本地模型通常不返回 token 用量，usage 为 undefined） */
 export async function chatOllama(
   agent: AgentConfig,
   messages: ChatMessage[],
   signal: AbortSignal,
   onToken?: (text: string) => void,
-): Promise<string> {
+): Promise<LLMResponse> {
   const base = agent.baseUrl.replace(/\/+$/, '');
   const body = {
     model: agent.model,
@@ -33,7 +33,7 @@ export async function chatOllama(
     if (typeof content !== 'string') {
       throw new Error('Ollama 响应缺少 message.content');
     }
-    return content;
+    return { text: content, usage: undefined };
   }
 
   // 流式路径
@@ -55,5 +55,5 @@ export async function chatOllama(
       onToken(delta);
     }
   });
-  return acc;
+  return { text: acc, usage: undefined };
 }

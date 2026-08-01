@@ -114,10 +114,7 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
                   className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/g:opacity-100"
                   style={{ color: 'var(--sm-ink-faint)' }}
                   title="删除这个分组（不影响组内节点）"
-                  onClick={() => {
-                    if (window.confirm(`删除分组「${g.title}」？组内节点不会删除，只是不再编组。`))
-                      removeGroup(g.id);
-                  }}
+                  onClick={() => removeGroup(g.id)}
                 >
                   <Trash2 size={13} />
                 </button>

@@ -1,9 +1,10 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Boxes, RotateCcw, StepForward, Ungroup } from 'lucide-react';
+import { Boxes, Copy, RotateCcw, StepForward, Ungroup } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
+import { useViewStore } from '../../store/viewStore';
 import { retryNode, runToNode } from '../../engine/executor';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 
@@ -68,6 +69,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const allDefs = useRegistryStore((s) => s.defs);
   const allSubgraphs = useWorkflowStore((s) => s.subgraphs);
   const unpack = useWorkflowStore((s) => s.unpackSubgraphNode);
+  const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
 
   const missing = isSubgraph ? !subgraph : !def || def.missing;
   const resolved = resolvePorts(data.typeId, data.params, allDefs, allSubgraphs);
@@ -85,9 +87,13 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
     .filter(Boolean) as string[];
 
   // 任意节点在执行中/完成后都展示首个输出端口的实时预览（流式输出可见）
+  const isTextOutput = data.typeId === 'output.text';
   const previewValue =
     data.outputs && Object.keys(data.outputs).length > 0
-      ? summarize(Object.values(data.outputs)[0], data.typeId === 'output.preview' ? 140 : 90)
+      ? summarize(
+          Object.values(data.outputs)[0],
+          isTextOutput ? 2000 : data.typeId === 'output.preview' ? 140 : 90,
+        )
       : null;
   // 图片预览节点：直接渲染缩略图
   const previewImage =
@@ -196,9 +202,27 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
             />
           )}
           {previewValue !== null && previewImage === null && (
-            <p className="whitespace-pre-wrap break-all rounded bg-paper-soft px-2 py-1.5 text-[11px] leading-relaxed text-ink-soft">
-              {previewValue || '（空）'}
-            </p>
+            <div>
+              <p
+                className={`whitespace-pre-wrap break-all rounded bg-paper-soft px-2 py-1.5 text-[11px] leading-relaxed text-ink-soft ${
+                  isTextOutput ? 'max-h-72 overflow-auto' : ''
+                }`}
+              >
+                {previewValue || '（空）'}
+              </p>
+              {isTextOutput && previewValue && (
+                <button
+                  className="mt-1 flex w-full items-center justify-center gap-1 rounded py-1 text-[11px] text-accent transition-colors hover:bg-paper-soft"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void navigator.clipboard?.writeText(previewValue);
+                  }}
+                  title="复制文本内容"
+                >
+                  <Copy size={11} /> 复制文本
+                </button>
+              )}
+            </div>
           )}
           {data.error && (
             <p className="break-all text-[11px] leading-relaxed text-err">{data.error}</p>
@@ -208,6 +232,17 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
 
       {isSubgraph && subgraph && (
         <div className="flex border-t border-line">
+          <button
+            className="flex flex-1 items-center justify-center gap-1 py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              setFocusedSubgraph(String(data.params?.subgraphId ?? ''));
+            }}
+            title="进入子图内部进行编辑"
+          >
+            <Boxes size={11} /> 进入子图
+          </button>
+          <span className="my-1 w-px bg-line" />
           <button
             className="flex flex-1 items-center justify-center gap-1 py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
             onClick={(e) => {

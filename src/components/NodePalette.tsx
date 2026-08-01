@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronRight, ChevronDown, Search, Boxes, Trash2 } from 'lucide-react';
+import { NamePrompt } from './NamePrompt';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { DND_MIME } from '../canvas/WorkflowEditor';
@@ -11,10 +12,10 @@ import type { NodeDefinition } from '../types';
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
 export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
   const defs = useRegistryStore((s) => s.defs);
-  const addNode = useWorkflowStore((s) => s.addNode);
   const { screenToFlowPosition } = useReactFlow();
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
   const groups = useMemo(() => {
     const map = new Map<string, NodeDefinition[]>();
@@ -51,21 +52,6 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       .filter((sg) => !q || `${sg.name} ${sg.description ?? ''}`.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
   }, [subgraphs, query]);
-
-  const centerPos = () => {
-    const center = screenToFlowPosition({
-      x: window.innerWidth / 2,
-      y: window.innerHeight / 2,
-    });
-    return {
-      x: center.x - 112 + Math.random() * 40 - 20,
-      y: center.y - 40 + Math.random() * 40 - 20,
-    };
-  };
-
-  const addToCenter = (typeId: string) => {
-    addNode(typeId, centerPos());
-  };
 
   const searchBox = (
     <div className="relative mt-2">
@@ -128,9 +114,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       key={def.typeId}
                       draggable
                       onDragStart={(e) => e.dataTransfer.setData(DND_MIME, def.typeId)}
-                      onClick={() => addToCenter(def.typeId)}
-                      title={def.description}
-                      className="sm-palette-item"
+                      title={`${def.description || def.name}\n拖入画布以添加节点`}
+                      className="sm-palette-item cursor-grab"
                     >
                       <p className="text-[13px]" style={{ color: 'var(--sm-ink)' }}>
                         {def.name}
@@ -165,10 +150,9 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                     onDragStart={(e) =>
                       e.dataTransfer.setData(DND_MIME, `${SUBGRAPH_REF_TYPE}:${sg.id}`)
                     }
-                    onClick={() => addSubgraphRef(sg.id, centerPos())}
-                    onDoubleClick={() => {
-                      const name = window.prompt('重命名子图', sg.name);
-                      if (name?.trim()) renameSubgraph(sg.id, name.trim());
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setRenaming({ id: sg.id, name: sg.name });
                     }}
                     title={`${sg.nodes.length} 个步骤 · ${sg.inputs.length} 入 / ${sg.outputs.length} 出\n双击可重命名`}
                     className="sm-palette-item group/sg relative"
@@ -189,8 +173,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       title="删除这个子图（画布上已放置的引用会失效）"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (window.confirm(`删除子图「${sg.name}」？画布上已放置的引用会失效。`))
-                          removeSubgraph(sg.id);
+                        removeSubgraph(sg.id);
                       }}
                     >
                       <Trash2 size={12} />
@@ -201,6 +184,17 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
             )}
           </section>
         )}
+      {renaming && (
+        <NamePrompt
+          title="重命名子图"
+          initial={renaming.name}
+          onConfirm={(name) => {
+            renameSubgraph(renaming.id, name);
+            setRenaming(null);
+          }}
+          onCancel={() => setRenaming(null)}
+        />
+      )}
       </div>
     </aside>
   );

@@ -32,6 +32,7 @@ export function serializeWorkflow(): WorkflowFile {
       sourceHandle: e.sourceHandle ?? null,
       target: e.target,
       targetHandle: e.targetHandle ?? null,
+      kind: e.data?.kind ?? 'data',
     })),
     agents: s.agents,
     roles: s.roles,
@@ -91,6 +92,8 @@ export function applyWorkflowFile(text: string): void {
     sourceHandle: e.sourceHandle,
     target: e.target,
     targetHandle: e.targetHandle,
+    type: 'kind',
+    data: { kind: e.kind ?? 'data' },
   }));
 
   useWorkflowStore

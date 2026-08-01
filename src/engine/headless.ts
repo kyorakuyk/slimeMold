@@ -192,7 +192,7 @@ export async function runWorkflowHeadless(
             const effective = modelOverride ? { ...agent, model: modelOverride } : agent;
             const release = await limiter.acquire();
             try {
-              return await withRetry(
+              const resp = await withRetry(
                 () =>
                   channel.chat({
                     agent: effective as any,
@@ -207,10 +207,14 @@ export async function runWorkflowHeadless(
                   onRetry: () => {},
                 },
               );
+              return resp.text;
             } finally {
               release();
             }
           },
+          // headless 模式不累积成本账本（仅做无副作用预演）
+          reportCost: () => {},
+          costLog: [],
           setPartial: () => {},
           setBranches: (handles) => {
             branchesTaken = handles;

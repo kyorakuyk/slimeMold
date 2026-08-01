@@ -71,6 +71,33 @@ export interface PortDef {
   label: string;
   /** 端口数据类型，缺省视为 'any'（兼容所有，向后兼容旧节点） */
   type?: PortType;
+  /** 端口连线语义：
+   * - 'data'：值传递（默认，现有语义）
+   * - 'task'：任务派发（控制流，带 scope，用于 Dispatcher → 下游并行施工）
+   * - 'control'：条件/循环断点（控制流，拓扑排序时视作 stage 边界）
+   * 缺省视为 'data'，向后兼容旧节点。 */
+  flow?: EdgeKind;
+}
+
+/* ---------- 连线语义分层（data / task / control） ---------- */
+/** 连线种类：
+ * - 'data'：数据流（值传递，现有默认）
+ * - 'task'：任务流（派发任务，控制流，带 scope）
+ * - 'control'：控制流（条件/循环断点，拓扑排序视作断点） */
+export type EdgeKind = 'data' | 'task' | 'control';
+
+/** 连线展示样式：按 kind 区分颜色与线型 */
+export const EDGE_KIND_STYLE: Record<EdgeKind, { color: string; dash?: string; label: string }> = {
+  data: { color: '#9ca3af', label: '数据' },
+  task: { color: '#f59e0b', dash: '6 3', label: '任务' },
+  control: { color: '#8b5cf6', dash: '2 4', label: '控制' },
+};
+
+/** 画布连线的 data 载荷 */
+export interface FlowEdgeData extends Record<string, unknown> {
+  kind?: EdgeKind;
+  /** task 流的派发影响域声明（affected files / symbols），供 Coordinator 冲突检测 */
+  scope?: string[];
 }
 
 /**
@@ -113,6 +140,57 @@ export interface ExecLogger {
   error(message: string): void;
 }
 
+/* ---------- 成本遥测（Auditor / 自优化闭环） ---------- */
+/** 单次 LLM 调用的 token 用量（与 OpenAI/Anthropic 对齐，缺字段为 undefined） */
+export interface TokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+/** 一次 LLM 调用的统一返回（文本 + 可选用量） */
+export interface LLMResponse {
+  text: string;
+  usage?: TokenUsage;
+}
+
+/** 一条成本记录：可供 Coordinator/Stenographer/Auditor 复用 */
+export interface CostRecord {
+  /** 产生该记录的节点 id（engine 填充） */
+  nodeId: string;
+  nodeLabel: string;
+  /** 实际使用的智能体 id 与模型（含 modelOverride） */
+  agentId: string;
+  model: string;
+  /** token 用量（provider 未返回则为 undefined） */
+  usage?: TokenUsage;
+  /** 本次调用耗时（毫秒） */
+  durationMs: number;
+  /** 发生时间戳（ISO） */
+  at: string;
+  /** 调用是否失败 */
+  ok: boolean;
+  /** 失败原因（ok=false 时） */
+  error?: string;
+}
+
+/** 成本账本：运行期累积数组 */
+export type CostLedger = CostRecord[];
+
+/* ---------- 任务派发协议（Dispatcher / Coordinator） ---------- */
+/** 一个被派发的任务单元。
+ * - label：任务名（供 Coordinator / Auditor 展示）
+ * - scope：影响域声明（涉及的文件 / 接口 / 抽象类），供 Conflict Resolver 做并发冲突检测
+ * - payload：任务实际内容（文本 / 结构化数据），由下游 Builder 消费
+ * 约定：scope 走数据协议（任务对象自带），不依赖引擎改动，便于框架先行落地。 */
+export interface TaskItem {
+  label: string;
+  scope?: string[];
+  payload?: unknown;
+  /** 上游派发节点赋予的序号，便于追踪 */
+  index?: number;
+}
+
 export interface ExecContext {
   logger: ExecLogger;
   /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
@@ -124,6 +202,11 @@ export interface ExecContext {
     onToken?: (text: string) => void,
     modelOverride?: string,
   ): Promise<string>;
+  /** 成本遥测：每次 LLM 调用后由引擎回调，记录 token 用量与耗时。
+   * Auditor 节点借此汇总全链路成本。 */
+  reportCost(record: CostRecord): void;
+  /** 本次运行全程的成本账本（累积数组），Auditor 节点读取生成报告 */
+  costLog: CostRecord[];
   /** 执行中实时回写当前节点的某输出端口，用于流式预览 */
   setPartial(key: string, value: unknown): void;
   /** 分支节点在执行时声明「激活的输出端口 handle 集合」，未列出的下游分支将被跳过 */
@@ -179,7 +262,7 @@ export interface WorkflowNodeData extends Record<string, unknown> {
 }
 
 export type FlowNode = Node<WorkflowNodeData>;
-export type FlowEdge = Edge;
+export type FlowEdge = Edge<FlowEdgeData>;
 
 /* ---------- 工作流文件 ---------- */
 export interface WorkflowFileNode {
@@ -196,6 +279,8 @@ export interface WorkflowFileEdge {
   sourceHandle: string | null;
   target: string;
   targetHandle: string | null;
+  /** 连线语义（data/task/control），缺省 'data'，向后兼容旧工作流文件 */
+  kind?: EdgeKind;
 }
 
 export interface WorkflowFile {
@@ -256,21 +341,55 @@ export interface SubgraphDef {
   outputs: SubgraphPort[];
 }
 
-/* ---------- 节点组（纯视觉编组） ---------- */
+/* ---------- 节点组（升级为子图引用） ---------- */
+
+/** 聚合代理端口：按「端口类型」合并子图内部同类端口。
+ * - 折叠态分组标签按聚合端口生成虚拟端口（外部多对一、内部一对多）。
+ * - 例：子图内部共需 2×img + 1×txt 输入 -> 仅生成 img、txt 两个聚合端口。 */
+export interface ProxyPort {
+  /** 稳定 id，如 `${groupId}:in:img` / `${groupId}:out:text` */
+  id: string;
+  kind: 'input' | 'output';
+  /** 聚合类型（取内部同类端口的类型，缺省 'any'） */
+  type?: PortType;
+  /** 显示名，如 'img' / 'txt' */
+  label: string;
+  /** 内部一对多：该聚合端口分发到的子图内部目标（节点端口）。
+   * - input 代理：外部数据广播给这些内部输入端口
+   * - output 代理：这些内部输出端口汇聚到该代理端口 */
+  internalTargets: Array<{ nodeId: string; portId: string }>;
+}
+
+/** 虚拟边：聚合代理端口 -> 多个内部端口的一对多映射（Q10=A）。
+ * 渲染时按 targets 展开成多条实际连线；执行时数据广播给所有目标。 */
+export interface VirtualEdge {
+  id: string;
+  /** 子图侧聚合代理端口 id（如 `${groupId}:in:img`） */
+  proxyPortId: string;
+  kind: 'input' | 'output';
+  /** 内部一对多目标（节点端口） */
+  targets: Array<{ nodeId: string; portId: string }>;
+}
 
 /** 节点组：把若干节点框在一起，可整体拖动 / 折叠 / 配色。
- * 纯视觉概念，不参与执行，不改变图的拓扑结构。 */
+ * 现升级为「子图引用」：折叠时对外呈现聚合代理端口，双击进入子图编辑视图。 */
 export interface NodeGroup {
   id: string;
   title: string;
-  /** 组内成员节点 id */
+  /** 组内成员节点 id（= 子图内部节点） */
   nodeIds: string[];
   /** 组框颜色（CSS 颜色值） */
   color: string;
-  /** 是否折叠（折叠时组内节点隐藏，仅显示标题条） */
+  /** 是否折叠（折叠时组内节点隐藏，仅显示聚合代理端口卡片） */
   collapsed: boolean;
   /** 折叠前记录的组框区域，用于折叠态占位与展开还原 */
   bounds?: { x: number; y: number; width: number; height: number };
+  /** 关联的子图定义 id（分组即子图，新建分组时自动生成空子图） */
+  subgraphId?: string;
+  /** 折叠态聚合代理端口（按类型合并，自动推导内部端口类型并集） */
+  proxyPorts?: ProxyPort[];
+  /** 内部一对多虚拟边（聚合端口 -> 内部端口映射） */
+  virtualEdges?: VirtualEdge[];
 }
 
 /** 资产（写文件节点产出的文件/预览）元数据 */
@@ -330,6 +449,8 @@ export interface RunNodeResult {
   startedAt: string | null;
   /** 节点实际执行耗时（毫秒）；缓存命中/跳过/上游失败为 null */
   durationMs: number | null;
+  /** 该节点产生的成本记录（仅 LLM 节点有；非 LLM 或缓存命中为 null） */
+  cost?: CostRecord[] | null;
 }
 
 export interface RunRecord {
@@ -341,6 +462,16 @@ export interface RunRecord {
   status: 'success' | 'error' | 'aborted';
   nodeCount: number;
   nodes: RunNodeResult[];
+  /** 成本聚合：全链路 token 用量与耗时（成本可观测性 / 自优化闭环） */
+  cost?: {
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    totalTokens: number;
+    totalDurationMs: number;
+    /** 按模型归类的用量，便于「性价比」分析 */
+    byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }>;
+    records: CostRecord[];
+  } | null;
   /** 摘要说明与成败标记（StatusBar 运行历史行使用） */
   note?: string;
   ok?: boolean;

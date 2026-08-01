@@ -1,4 +1,4 @@
-import type { NodeDefinition, AssetMeta, ContentPart, ChatMessage } from '../types';
+import type { NodeDefinition, AssetMeta, ContentPart, ChatMessage, TaskItem } from '../types';
 import { httpFetch, isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -450,6 +450,19 @@ const preview: NodeDefinition = {
   },
 };
 
+const textOutput: NodeDefinition = {
+  typeId: 'output.text',
+  name: '文本输出',
+  category: '输出',
+  description: '将上游输出的文字内容完整展示在节点卡片上，支持一键复制，作为工作流终点',
+  inputs: [{ id: 'text', label: '文本', type: 'any' }],
+  outputs: [],
+  params: [],
+  async execute(inputs) {
+    return { value: inputs.text };
+  },
+};
+
 const listNode: NodeDefinition = {
   typeId: 'flow.list',
   name: '构造列表',
@@ -803,7 +816,205 @@ const subgraphRef: NodeDefinition = {
 };
 
 // Community 友好分类顺序：输入 → 文本 → AI → 流程 → 工具 → 输出（普通用户语义）
-export const CATEGORY_ORDER = ['输入', '文本', 'AI', '流程', '工具', '输出'] as const;
+export const CATEGORY_ORDER = ['输入', '文本', 'AI', '流程', '工具', '输出', '审计', '派发', '协调'] as const;
+
+/**
+ * 成本审计节点（Auditor / 书记员骨架）：
+ * 运行结束时输出本次全流程的 token 用量与耗时汇总（JSON 文本）。
+ * 不消费数据流——它通过 ExecContext.costLog 读取引擎累积的成本账本，
+ * 因此放在工作流任何位置都会上报全链路成本；多个 Auditor 节点互不影响。
+ */
+export const nodeAuditor: NodeDefinition = {
+  typeId: 'auditor.bookkeeper',
+  name: '成本审计',
+  category: '审计',
+  description:
+    '汇总本次运行所有 LLM 调用的 token 用量与耗时，输出成本报告（JSON）。不消费数据流，仅读取引擎成本账本。',
+  inputs: [],
+  outputs: [
+    { id: 'report', label: '成本报告', type: 'text' },
+    { id: 'totalTokens', label: '总 Token', type: 'number' },
+    { id: 'totalDurationMs', label: '总耗时(ms)', type: 'number' },
+  ],
+  params: [
+    {
+      key: 'includeRecords',
+      label: '包含逐条明细',
+      type: 'select',
+      default: 'on',
+      options: [
+        { value: 'on', label: '包含（完整账本）' },
+        { value: 'off', label: '仅汇总（按模型归类）' },
+      ],
+    },
+  ],
+  async execute(_inputs, params, ctx) {
+    const log = ctx.costLog ?? [];
+    const includeRecords = params.includeRecords !== 'off';
+    const byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }> = {};
+    let totalPrompt = 0;
+    let totalCompletion = 0;
+    let totalDuration = 0;
+    for (const r of log) {
+      totalDuration += r.durationMs;
+      if (!r.usage) continue;
+      totalPrompt += r.usage.promptTokens ?? 0;
+      totalCompletion += r.usage.completionTokens ?? 0;
+      const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
+      m.promptTokens += r.usage.promptTokens ?? 0;
+      m.completionTokens += r.usage.completionTokens ?? 0;
+      m.calls += 1;
+    }
+    const report = {
+      summary: {
+        totalPromptTokens: totalPrompt,
+        totalCompletionTokens: totalCompletion,
+        totalTokens: totalPrompt + totalCompletion,
+        totalDurationMs: totalDuration,
+        llmCalls: log.length,
+      },
+      byModel: includeRecords ? byModel : undefined,
+      records: includeRecords ? log : undefined,
+    };
+    return {
+      report: JSON.stringify(report, null, 2),
+      totalTokens: totalPrompt + totalCompletion,
+      totalDurationMs: totalDuration,
+    };
+  },
+};
+
+/**
+ * 任务派发节点（Dispatcher / TaskSplitter）：
+ * 接收一个任务列表（每个元素为 TaskItem：{label, scope?, payload?}），
+ * 1:n 扇出到 t1~t4 固定端口 + _rest；下游经「task」语义连线并行施工。
+ * 框架层仅做数据扇出与 scope 标注，真正并行由执行引擎的拓扑并行调度完成。
+ */
+export const nodeDispatch: NodeDefinition = {
+  typeId: 'dispatch.split',
+  name: '任务派发',
+  category: '派发',
+  description:
+    '将任务列表（TaskItem[]）扇出到多条任务连线并行派发。每个输出端口携带一个任务（含 scope 影响域声明）。未分配完的余数走「其余」端口。配合「task」语义连线（橙色）使用。',
+  inputs: [{ id: 'tasks', label: '任务列表', type: 'list' }],
+  outputs: [
+    { id: 'task1', label: '任务1', type: 'any', flow: 'task' },
+    { id: 'task2', label: '任务2', type: 'any', flow: 'task' },
+    { id: 'task3', label: '任务3', type: 'any', flow: 'task' },
+    { id: 'task4', label: '任务4', type: 'any', flow: 'task' },
+    { id: 'rest', label: '其余', type: 'list', flow: 'task' },
+  ],
+  params: [
+    {
+      key: 'label1',
+      label: '任务1 标签(可选)',
+      type: 'text',
+      default: '',
+      placeholder: '覆盖原任务 label',
+    },
+    { key: 'label2', label: '任务2 标签(可选)', type: 'text', default: '' },
+    { key: 'label3', label: '任务3 标签(可选)', type: 'text', default: '' },
+    { key: 'label4', label: '任务4 标签(可选)', type: 'text', default: '' },
+  ],
+  async execute(inputs, params) {
+    const raw = Array.isArray(inputs.tasks) ? inputs.tasks : [];
+    const tasks: TaskItem[] = raw.map((t, i) => {
+      if (typeof t === 'object' && t !== null && 'payload' in t) {
+        return { ...(t as TaskItem), index: i };
+      }
+      // 允许传入纯字符串/文本，自动包装为 TaskItem
+      return { label: typeof t === 'string' ? t : `任务${i + 1}`, payload: t, index: i };
+    });
+    const labels = [params.label1, params.label2, params.label3, params.label4].map((s) => String(s ?? ''));
+    const pick = (i: number, fallback: TaskItem) => {
+      const t = { ...fallback };
+      if (labels[i]) t.label = labels[i];
+      return t;
+    };
+    const out: Record<string, unknown> = {};
+    out.task1 = tasks[0] ? pick(0, tasks[0]) : undefined;
+    out.task2 = tasks[1] ? pick(1, tasks[1]) : undefined;
+    out.task3 = tasks[2] ? pick(2, tasks[2]) : undefined;
+    out.task4 = tasks[3] ? pick(3, tasks[3]) : undefined;
+    out.rest = tasks.slice(4);
+    return out;
+  },
+};
+
+/**
+ * 冲突协调者（Conflict Resolver / Merge Coordinator）：
+ * 接收来自多条并行任务线的输出（每个输出应携带 scope 影响域声明），
+ * 检测任意两个任务是否涉及同一文件/接口/抽象类（scope 交集）。
+ * - 有冲突：走 `conflicts` 端口输出冲突清单（供人工/仲裁节点处理）
+ * - 无冲突：走 `merged` 端口输出汇总的 scope 与结果
+ * 框架层实现交并检测算法；真实「串行化重排」留给后续执行引擎增强。
+ */
+export const nodeResolver: NodeDefinition = {
+  typeId: 'coord.resolver',
+  name: '冲突协调者',
+  category: '协调',
+  description:
+    '汇聚多路并行任务的输出，检测 scope（影响域）交集冲突。无冲突走「已合并」，有冲突走「冲突」端口输出冲突清单。每个上游任务输出建议携带 scope 字段（string[]）。',
+  inputs: [
+    { id: 'in1', label: '任务线1', type: 'any' },
+    { id: 'in2', label: '任务线2', type: 'any' },
+    { id: 'in3', label: '任务线3', type: 'any' },
+    { id: 'in4', label: '任务线4', type: 'any' },
+  ],
+  outputs: [
+    { id: 'merged', label: '已合并', type: 'list' },
+    { id: 'conflicts', label: '冲突', type: 'list' },
+  ],
+  params: [
+    {
+      key: 'mode',
+      label: '冲突处理方式',
+      type: 'select',
+      default: 'report',
+      options: [
+        { value: 'report', label: '仅报告（输出冲突清单，不阻断）' },
+        { value: 'block', label: '阻断（有冲突则报错，下游不执行）' },
+      ],
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const present = [inputs.in1, inputs.in2, inputs.in3, inputs.in4].filter((v) => v != null);
+    // 从每个上游输出中提取 scope（兼容 TaskItem 或 {scope:[...]} 结构）
+    const entries = present.map((v, i) => {
+      const scope = (typeof v === 'object' && v !== null && Array.isArray((v as any).scope))
+        ? ((v as any).scope as string[])
+        : [];
+      const label = (typeof v === 'object' && v !== null && typeof (v as any).label === 'string')
+        ? (v as any).label
+        : `任务线${i + 1}`;
+      return { label, scope, value: v };
+    });
+
+    // 两两检测 scope 交集
+    const conflicts: Array<{ a: string; b: string; overlap: string[] }> = [];
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const overlap = entries[i].scope.filter((s) => entries[j].scope.includes(s));
+        if (overlap.length > 0) {
+          conflicts.push({ a: entries[i].label, b: entries[j].label, overlap });
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      ctx.logger.error(`检测到 ${conflicts.length} 处任务冲突：${conflicts.map((c) => `${c.a}↔${c.b}`).join(', ')}`);
+      if (params.mode === 'block') {
+        throw new Error(
+          `冲突协调者阻断执行：\n${conflicts
+            .map((c) => `- ${c.a} 与 ${c.b} 争用 ${c.overlap.join(', ')}`)
+            .join('\n')}`,
+        );
+      }
+      return { merged: [], conflicts };
+    }
+    return { merged: present, conflicts: [] };
+  },
+};
 
 export const builtinDefs: NodeDefinition[] = [
   textInput,
@@ -824,6 +1035,10 @@ export const builtinDefs: NodeDefinition[] = [
   exprNode,
   httpRequest,
   preview,
+  textOutput,
+  nodeAuditor,
+  nodeDispatch,
+  nodeResolver,
 ];
 
 export function registerBuiltins(): void {

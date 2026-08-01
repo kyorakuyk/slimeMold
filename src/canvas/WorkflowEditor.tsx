@@ -18,19 +18,24 @@ import {
   type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { LayoutTemplate, FilePlus2, FolderOpen, Sparkles, X, Hand, BoxSelect, Map, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
+import { LayoutTemplate, FilePlus2, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
+import GroupProxyNode from './nodes/GroupProxyNode';
+import { KindEdge } from './KindEdge';
 import GroupLayer from './GroupLayer';
+import SubgraphEditor from './SubgraphEditor';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { NamePrompt } from '../components/NamePrompt';
+import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
 
-const nodeTypes: NodeTypes = { base: BaseNode };
+const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
+const edgeTypes = { kind: KindEdge };
 
 // 小地图节点配色（与 CSS 分类变量同语义，深色调更亮以保证可见）
 const CAT_COLORS: Record<string, string> = {
@@ -83,23 +88,74 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
   }, [isSplit, splitWf]);
 
   const groups = useWorkflowStore((s) => s.groups);
-  const rawNodes = isSplit ? splitNodes : activeNodes;
+  const focusedSubgraphId = useViewStore((s) => s.focusedSubgraphId);
+  const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
+  const inspectorOpen = useViewStore((s) => s.inspectorOpen);
+  const toggleInspector = useViewStore((s) => s.toggleInspector);
+  // grpnode_* 是折叠组的派生代理节点，只由本组件生成，不应出现在 store.nodes 里。
+  // 兜底过滤一层，防止历史数据（早期版本误写入）把组当成普通节点。
+  const rawNodes = isSplit ? splitNodes : activeNodes.filter((n) => !n.id.startsWith('grpnode_'));
   const edges = isSplit ? splitEdges : activeEdges;
 
-  // 折叠的节点组：其成员节点在画布上隐藏（仅保留组标题条）
+  // 折叠的节点组：其成员节点在画布上隐藏（仅保留组代理节点）
   const hiddenByGroup = useMemo(() => {
     if (isSplit) return new Set<string>();
     const s = new Set<string>();
     for (const g of groups) if (g.collapsed) for (const id of g.nodeIds) s.add(id);
     return s;
   }, [groups, isSplit]);
-  const nodes = useMemo(
-    () =>
+
+  // 折叠分组 -> 代理节点：左右按类型聚合生成虚拟端口，作为 React Flow 节点
+  const groupProxyNodes = useMemo<FlowNode[]>(() => {
+    if (isSplit) return [];
+    const out: FlowNode[] = [];
+    for (const g of groups) {
+      if (!g.collapsed) continue;
+      // 折叠态位置：优先用记录的包围盒，否则按成员位置估算
+      let x = g.bounds?.x ?? 0;
+      let y = g.bounds?.y ?? 0;
+      let w = g.bounds?.width ?? 200;
+      if (g.bounds == null && g.nodeIds.length) {
+        const ms = rawNodes.filter((n) => g.nodeIds.includes(n.id));
+        if (ms.length) {
+          x = Math.min(...ms.map((n) => n.position.x));
+          y = Math.min(...ms.map((n) => n.position.y));
+          w = 200;
+        }
+      }
+      out.push({
+        id: `grpnode_${g.id}`,
+        type: 'groupProxy',
+        position: { x, y },
+        data: { group: g, box: { x, y, width: w, height: 60 } },
+        selected: g.nodeIds.some((id) => rawNodes.find((n) => n.id === id)?.selected),
+      } as unknown as FlowNode);
+    }
+    return out;
+  }, [groups, rawNodes, isSplit]);
+
+  // 折叠组：成员 -> 代理端口 handle 映射（用于重定向外部连线）
+  const memberToProxy = useMemo(() => {
+    const map = new Map<string, { nodeId: string; handle: string; type: string }>();
+    for (const g of groups) {
+      if (!g.collapsed || !g.proxyPorts) continue;
+      for (const p of g.proxyPorts) {
+        const nodeId = `grpnode_${g.id}`;
+        for (const t of p.internalTargets) {
+          map.set(t.nodeId, { nodeId, handle: p.id, type: p.kind });
+        }
+      }
+    }
+    return map;
+  }, [groups]);
+
+  const nodes = useMemo(() => {
+    const base =
       hiddenByGroup.size === 0
         ? rawNodes
-        : rawNodes.map((n) => (hiddenByGroup.has(n.id) ? { ...n, hidden: true } : n)),
-    [rawNodes, hiddenByGroup],
-  );
+        : rawNodes.map((n) => (hiddenByGroup.has(n.id) ? { ...n, hidden: true } : n));
+    return [...base, ...groupProxyNodes];
+  }, [rawNodes, hiddenByGroup, groupProxyNodes]);
 
   const onNodesChange: OnNodesChange<FlowNode> = isSplit
     ? (changes) => setSplitNodes((ns) => applyNodeChanges(changes, ns))
@@ -108,7 +164,10 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     ? (changes) => setSplitEdges((es) => applyEdgeChanges(changes, es))
     : storeOnEdgesChange;
   const onConnect: (conn: Connection) => void = isSplit
-    ? (conn) => setSplitEdges((es) => addEdge({ ...conn, id: `e-${conn.source}-${conn.target}-${Date.now()}` }, es))
+    ? (conn) =>
+        setSplitEdges((es) =>
+          addEdge({ ...conn, id: `e-${conn.source}-${conn.target}-${Date.now()}`, type: 'kind', data: { kind: 'data' } }, es),
+        )
     : storeOnConnect;
 
   // 分栏编辑时，把最新图写回 store
@@ -142,13 +201,28 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       outsByNode[n.id] = resolvePorts(n.data.typeId, n.data.params, allDefs, subgraphs).outputs;
     }
     return edges.map((e): Edge => {
-      const outs = outsByNode[e.source] ?? [];
-      const out = outs.find((o) => o.id === (e.sourceHandle ?? outs[0]?.id));
+      // 折叠组成员端点重定向到分组代理节点（外部多对一）
+      let src = e.source;
+      let srcH = e.sourceHandle ?? undefined;
+      let tgt = e.target;
+      let tgtH = e.targetHandle ?? undefined;
+      const sm = memberToProxy.get(e.source);
+      if (sm && sm.type === 'output') {
+        src = sm.nodeId;
+        srcH = sm.handle;
+      }
+      const tm = memberToProxy.get(e.target);
+      if (tm && tm.type === 'input') {
+        tgt = tm.nodeId;
+        tgtH = tm.handle;
+      }
+      const outs = outsByNode[src] ?? [];
+      const out = outs.find((o) => o.id === (srcH ?? outs[0]?.id));
       const pt = out?.type ?? 'any';
       const colorVar = PORT_COLOR_VAR[pt] ?? 'var(--sm-edge)';
-      return { ...e, style: { ...(e.style ?? {}), ['--edge-color']: colorVar } } as Edge;
+      return { ...e, source: src, sourceHandle: srcH, target: tgt, targetHandle: tgtH, style: { ...(e.style ?? {}), ['--edge-color']: colorVar } } as Edge;
     });
-  }, [nodes, edges, allDefs, subgraphs]);
+  }, [nodes, edges, allDefs, subgraphs, memberToProxy]);
 
   const showGrid = useViewStore((s) => s.showGrid);
   const showMinimap = useViewStore((s) => s.showMinimap);
@@ -278,7 +352,7 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
 
   const defaultEdgeOptions = useMemo(
     () => ({
-      type: 'default' as const,
+      type: 'kind' as const,
     }),
     [],
   );
@@ -329,6 +403,39 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     createGroup(targetIds);
   };
 
+  // 仿 ComfyUI：双击空白画布弹出节点选择窗口
+  const [pickerPos, setPickerPos] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!pickerPos) return;
+    // 弹窗内部已 stopPropagation，外部点击冒泡到此关闭
+    const onDocDown = () => setPickerPos(null);
+    window.addEventListener('mousedown', onDocDown);
+    return () => window.removeEventListener('mousedown', onDocDown);
+  }, [pickerPos]);
+
+  const onCanvasDoubleClick = useCallback((e: React.MouseEvent) => {
+    const el = e.target as HTMLElement;
+    // 只有双击空白画布（非节点/边/控制条/端口等）才弹出节点选择窗
+    if (el.closest('.react-flow__node, .react-flow__edge, .react-flow__controls, .react-flow__minimap, .react-flow__panel, .react-flow__handle')) {
+      return;
+    }
+    setPickerPos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const onPickNode = useCallback(
+    (payload: PickPayload) => {
+      if (!pickerPos) return;
+      const pos = screenToFlowPosition({ x: pickerPos.x, y: pickerPos.y });
+      if (payload.kind === 'subgraph') {
+        if (!isSplit) addSubgraphRef(payload.id, { x: pos.x - 112, y: pos.y - 20 });
+      } else {
+        addNode(payload.id, { x: pos.x - 112, y: pos.y - 20 });
+      }
+      setPickerPos(null);
+    },
+    [pickerPos, screenToFlowPosition, addSubgraphRef, addNode, isSplit],
+  );
+
   // 鼠标模式：click=仅点击选中（左键不平移画布、不框选）；move=拖动；select=框选
   const selectionOnDrag = interactionMode === 'select';
   const panOnDrag: number[] = interactionMode === 'move' ? [0, 1] : [1];
@@ -339,17 +446,36 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
       onMouseDownCapture={onPaneMouseDownCapture}
+      onDoubleClick={onCanvasDoubleClick}
     >
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         onNodeClick={handleNodeClick}
+        onNodeDoubleClick={(_, node) => {
+          if (node.type === 'groupProxy') {
+            const gid = (node.data as { group?: { subgraphId?: string } })?.group?.subgraphId;
+            if (gid) setFocusedSubgraph(gid);
+            return;
+          }
+          // 从「我的子图」库拖出的子图引用节点也支持双击进入编辑
+          if (node.data?.typeId === SUBGRAPH_REF_TYPE) {
+            const gid = String(node.data?.params?.subgraphId ?? '');
+            if (gid) setFocusedSubgraph(gid);
+            return;
+          }
+          // 双击普通节点：选中它并展开右侧 Inspector 展示详细信息
+          setSelected(node.id);
+          if (!inspectorOpen) toggleInspector();
+        }}
         onPaneClick={() => setSelected(null, wfId)}
+        zoomOnDoubleClick={false}
         onNodeContextMenu={(e, node) => {
           if (isSplit) return;
           // 右键拖动框选（已移动）不弹菜单，仅清除标记
@@ -381,7 +507,10 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
         }}
         defaultEdgeOptions={defaultEdgeOptions}
         connectionLineType={ConnectionLineType.Bezier}
-        deleteKeyCode={['Backspace', 'Delete']}
+        // 子图编辑视图打开时，父图 ReactFlow 实例仍需挂载（作为兄弟节点），
+        // 但其 deleteKeyCode 监听挂在 document 上会与子图实例冲突（误删分组）。
+        // 因此子图打开期间临时禁用父图删除快捷键，交由其内部实例处理。
+        deleteKeyCode={focusedSubgraphId ? null : ['Backspace', 'Delete']}
         // 中键（button 1）始终拖动画布；右键长按（rightSelecting）时仅中键平移，左键用于框选
         panOnDrag={panOnDrag}
         selectionOnDrag={selectionOnDrag}
@@ -435,7 +564,7 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
               title={showMinimap ? '隐藏小地图' : '显示小地图'}
               onClick={toggleMinimap}
             >
-              <Map size={15} />
+              <MapIcon size={15} />
             </button>
           </div>
         </Panel>
@@ -651,6 +780,14 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
           }}
           onCancel={() => setPackPrompt(false)}
         />
+      )}
+
+      {/* 双击折叠组进入的子图编辑视图（Q5=D） */}
+      {!isSplit && focusedSubgraphId && <SubgraphEditor subgraphId={focusedSubgraphId} />}
+
+      {/* 仿 ComfyUI：双击空白画布弹出节点选择窗口 */}
+      {pickerPos && (
+        <NodePickerModal screenPos={pickerPos} onSelect={onPickNode} onClose={() => setPickerPos(null)} />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
 import { chatWithAgent } from './agentManager';
 import { isTauri } from '../platform/env';
 
@@ -26,13 +26,13 @@ export interface LLMRequest {
 
 export interface LLMChannel {
   readonly mode: LLMChannelMode;
-  chat(req: LLMRequest): Promise<string>;
+  chat(req: LLMRequest): Promise<LLMResponse>;
 }
 
 /** 前端通道：WebView 内直接发起请求（plugin-http / window.fetch）。 */
 class FrontendChannel implements LLMChannel {
   readonly mode = 'frontend' as const;
-  async chat(req: LLMRequest): Promise<string> {
+  async chat(req: LLMRequest): Promise<LLMResponse> {
     return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
   }
 }
@@ -45,7 +45,7 @@ class FrontendChannel implements LLMChannel {
 class BackendChannel implements LLMChannel {
   readonly mode = 'backend' as const;
 
-  async chat(req: LLMRequest): Promise<string> {
+  async chat(req: LLMRequest): Promise<LLMResponse> {
     if (!isTauri) {
       // 浏览器预览环境无 Rust 后端，降级
       return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
@@ -66,7 +66,9 @@ class BackendChannel implements LLMChannel {
       onTokenChannel: channel,
     });
     // 非流式时后端直接返回完整文本；流式时以回传 token 拼接为准（result 可能为空串）
-    return result && (!req.onToken || acc.length === 0) ? result : acc.join('');
+    const text = result && (!req.onToken || acc.length === 0) ? result : acc.join('');
+    // 后端通道暂未回流 usage（路线 B 可在 Rust 侧填充）。前端已能拿到用量。
+    return { text, usage: undefined };
   }
 }
 

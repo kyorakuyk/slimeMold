@@ -1,4 +1,4 @@
-import type { ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../types';
+import type { CostRecord, ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../types';
 import { topoLayers } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -141,6 +141,10 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const startAt = performance.now();
   const startedWall = Date.now();
 
+  // 成本账本：运行期累积全部 LLM 调用的 token 用量与耗时（Auditor / 自优化闭环）
+  const costLog: CostRecord[] = [];
+  const costByNode = new Map<string, CostRecord[]>();
+
   for (const layer of layers) {
     if (signal.aborted) break;
     // 同层节点相互独立，可并行调度（瓶颈在 LLM I/O）
@@ -161,6 +165,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           RETRY_BASE_MS,
           dirtySet.has(id),
           force.has(id),
+          costLog,
+          costByNode,
         ),
       ),
     );
@@ -192,6 +198,24 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const nodesNow = useWorkflowStore.getState().nodes;
   const status: RunRecord['status'] =
     failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
+
+  // 成本聚合：按模型归类，便于「性价比」分析
+  const byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }> = {};
+  let totalPrompt = 0;
+  let totalCompletion = 0;
+  let totalDuration = 0;
+  for (const r of costLog) {
+    totalDuration += r.durationMs;
+    if (!r.usage) continue;
+    totalPrompt += r.usage.promptTokens ?? 0;
+    totalCompletion += r.usage.completionTokens ?? 0;
+    const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
+    m.promptTokens += r.usage.promptTokens ?? 0;
+    m.completionTokens += r.usage.completionTokens ?? 0;
+    m.calls += 1;
+  }
+  const hasCost = costLog.length > 0;
+
   const rec: RunRecord = {
     id: `run_${Date.now()}`,
     name: wf.workflowName,
@@ -209,7 +233,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       error: n.data.error ?? null,
       startedAt: n.data.startedAt ?? null,
       durationMs: n.data.durationMs ?? null,
+      cost: costByNode.get(n.id) ?? null,
     })),
+    cost: hasCost
+      ? {
+          totalPromptTokens: totalPrompt,
+          totalCompletionTokens: totalCompletion,
+          totalTokens: totalPrompt + totalCompletion,
+          totalDurationMs: totalDuration,
+          byModel,
+          records: costLog,
+        }
+      : null,
   };
   useWorkflowStore.getState().pushRunHistory(rec);
 
@@ -248,6 +283,8 @@ async function executeNode(
   RETRY_BASE_MS: number,
   shouldRun: boolean,
   forced: boolean,
+  costLog: CostRecord[],
+  costByNode: Map<string, CostRecord[]>,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -349,8 +386,11 @@ async function executeNode(
       const channel = getChannel(useWorkflowStore.getState().llmChannel);
       // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
       const release = await limiter.acquire();
+      const callStart = performance.now();
+      let ok = true;
+      let errMsg: string | undefined;
       try {
-        return await withRetry(
+        const resp = await withRetry(
           () =>
             channel.chat({
               agent: effective,
@@ -369,9 +409,51 @@ async function executeNode(
               ),
           },
         );
+        // 成本遥测：记录本次调用的 token 用量与耗时
+        const rec: CostRecord = {
+          nodeId: id,
+          nodeLabel: node.data.label,
+          agentId,
+          model: effective.model,
+          usage: resp.usage,
+          durationMs: Math.round(performance.now() - callStart),
+          at: new Date().toISOString(),
+          ok: true,
+        };
+        costLog.push(rec);
+        const arr = costByNode.get(id) ?? [];
+        arr.push(rec);
+        costByNode.set(id, arr);
+        return resp.text;
+      } catch (err) {
+        ok = false;
+        errMsg = err instanceof Error ? err.message : String(err);
+        const rec: CostRecord = {
+          nodeId: id,
+          nodeLabel: node.data.label,
+          agentId,
+          model: effective.model,
+          durationMs: Math.round(performance.now() - callStart),
+          at: new Date().toISOString(),
+          ok: false,
+          error: errMsg,
+        };
+        costLog.push(rec);
+        const arr = costByNode.get(id) ?? [];
+        arr.push(rec);
+        costByNode.set(id, arr);
+        throw err;
       } finally {
         release();
       }
+    },
+    // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
+    costLog,
+    reportCost: (rec) => {
+      costLog.push(rec);
+      const arr = costByNode.get(rec.nodeId) ?? [];
+      arr.push(rec);
+      costByNode.set(rec.nodeId, arr);
     },
     setPartial: (key, value) => {
       const target = owner ?? id;

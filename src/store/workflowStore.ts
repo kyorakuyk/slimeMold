@@ -16,7 +16,10 @@ import type {
   LogEntry,
   NodeGroup,
   NodeStatus,
+  ProxyPort,
+  VirtualEdge,
   PortType,
+  EdgeKind,
   ProjectFile,
   RoleTemplate,
   RunRecord,
@@ -29,8 +32,60 @@ import type {
 import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { useRegistryStore, getNodeDef } from './registryStore';
+import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
+
+/**
+ * 根据分组内部节点，按「端口类型」聚合推导折叠态的代理端口（ProxyPort）
+ * 与一对多虚拟边（VirtualEdge）。
+ * - 内部共需 2×img + 1×txt 输入 -> 仅生成 img、txt 两个聚合输入端口。
+ * - 外部多对一：多个父图连线可连到同一个聚合端口。
+ * - 内部一对多：聚合端口 -> 所有同类型内部端口（virtualEdges.targets）。
+ */
+export function recomputeProxyPorts(
+  group: NodeGroup,
+  sg: SubgraphDef,
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+): NodeGroup {
+  const defs = useRegistryStore.getState().defs;
+  const memberSet = new Set(group.nodeIds);
+
+  // 聚合：type -> 内部端口列表
+  const inByType = new Map<string, Array<{ nodeId: string; portId: string }>>();
+  const outByType = new Map<string, Array<{ nodeId: string; portId: string }>>();
+  for (const n of nodes) {
+    if (!memberSet.has(n.id)) continue;
+    const def = defs[n.data.typeId];
+    if (!def) continue;
+    for (const p of def.inputs ?? []) {
+      const list = inByType.get(p.type ?? 'any') ?? [];
+      list.push({ nodeId: n.id, portId: p.id });
+      inByType.set(p.type ?? 'any', list);
+    }
+    for (const p of def.outputs ?? []) {
+      const list = outByType.get(p.type ?? 'any') ?? [];
+      list.push({ nodeId: n.id, portId: p.id });
+      outByType.set(p.type ?? 'any', list);
+    }
+  }
+
+  const proxyPorts: ProxyPort[] = [];
+  const virtualEdges: VirtualEdge[] = [];
+  let idx = 0;
+  for (const [type, targets] of inByType) {
+    const id = `${group.id}:in:${type}`;
+    proxyPorts.push({ id, kind: 'input', type: type as PortType, label: type, internalTargets: targets });
+    virtualEdges.push({ id: `ve_${idx++}`, proxyPortId: id, kind: 'input', targets });
+  }
+  for (const [type, targets] of outByType) {
+    const id = `${group.id}:out:${type}`;
+    proxyPorts.push({ id, kind: 'output', type: type as PortType, label: type, internalTargets: targets });
+    virtualEdges.push({ id: `ve_${idx++}`, proxyPortId: id, kind: 'output', targets });
+  }
+  return { ...group, proxyPorts, virtualEdges };
+}
 
 interface WorkflowState {
   workflowName: string;
@@ -165,6 +220,8 @@ interface WorkflowState {
   updateGroup: (groupId: string, patch: Partial<Omit<NodeGroup, 'id'>>) => void;
   /** 折叠/展开一个组 */
   toggleGroupCollapsed: (groupId: string) => void;
+  /** 子图定义更新后，重算所有引用该子图的分组的代理端口/虚拟边，使父图实时同步 */
+  syncGroupProxies: (subgraphId: string) => void;
   /** 整体平移一个组内所有节点 */
   moveGroup: (groupId: string, dx: number, dy: number) => void;
 
@@ -229,6 +286,7 @@ function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
     sourceHandle: e.sourceHandle ?? null,
     target: e.target,
     targetHandle: e.targetHandle ?? null,
+    kind: e.data?.kind ?? 'data',
   };
 }
 
@@ -259,6 +317,7 @@ function serializeCurrent(s: {
       sourceHandle: e.sourceHandle ?? null,
       target: e.target,
       targetHandle: e.targetHandle ?? null,
+      kind: e.data?.kind ?? 'data',
     })),
     agents: s.agents,
     roles: s.roles,
@@ -294,9 +353,13 @@ export const useWorkflowStore = create<WorkflowState>()(
       groups: [],
 
       onNodesChange: (changes) => {
-        set({ nodes: applyNodeChanges(changes, get().nodes) });
+        // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
+        // 否则会被当成真实节点（「分组被判定为节点」），并污染编组/计数等逻辑。
+        const realChanges = changes.filter((c) => !String(c.id).startsWith('grpnode_'));
+        if (realChanges.length === 0) return;
+        set({ nodes: applyNodeChanges(realChanges, get().nodes) });
         // 删除节点会改变其下游输入：标记下游为脏
-        const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
+        const removed = realChanges.filter((c) => c.type === 'remove').map((c) => c.id);
         for (const id of removed) {
           // 找出以该节点为 source 的边对应的 target
           const targets = get().edges
@@ -350,8 +413,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           );
           return;
         }
+        // 推断连线语义：默认 'data'，若 source 输出端口声明了 flow 则采用该语义
+        const kind = (srcPort?.flow as EdgeKind | undefined) ?? 'data';
         set({
-          edges: addEdge({ ...conn }, get().edges),
+          edges: addEdge(
+            { ...conn, type: 'kind', data: { kind } },
+            get().edges,
+          ),
         });
         // 新连线改变了数据依赖：两端节点及其下游需重新执行
         get().markDirty(conn.source);
@@ -674,6 +742,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             sourceHandle: e.sourceHandle ?? null,
             target: e.target,
             targetHandle: e.targetHandle ?? null,
+            kind: e.data?.kind ?? 'data',
           })),
           agents: s.agents,
           roles: s.roles,
@@ -986,6 +1055,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           sourceHandle: e.sourceHandle ?? undefined,
           target: idMap.get(e.target)!,
           targetHandle: e.targetHandle ?? undefined,
+          type: 'kind',
+          data: { kind: e.kind ?? 'data' },
         }));
 
         // 原先接在 ref 节点上的外部连线，改接到对应的内部节点端口
@@ -1044,8 +1115,22 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       saveSubgraphDef: (def) => {
         const s = get();
-        // 保存时按最新内容重新推断对外端口
-        const { inputs, outputs } = inferPorts(def.nodes, def.edges, useRegistryStore.getState().defs);
+        const defs = useRegistryStore.getState().defs;
+        // 重新推断「未连接到子图内部的端口」，作为对外端口的补充项
+        const inferred = inferPorts(def.nodes, def.edges, defs);
+        // 关键：保留 def 中已显式定义的端口（含用户在子图里手动连代理端口得到的），
+        // 只补充新出现的、尚未在 def 中登记的未连接端口。
+        // 否则在子图里增删节点 / 手动连线后，整体覆盖会把端口清空成「无」。
+        const seenIn = new Set(def.inputs.map((p) => `${p.innerNodeId}|${p.innerHandle}`));
+        const seenOut = new Set(def.outputs.map((p) => `${p.innerNodeId}|${p.innerHandle}`));
+        const inputs = [
+          ...def.inputs,
+          ...inferred.inputs.filter((p) => !seenIn.has(`${p.innerNodeId}|${p.innerHandle}`)),
+        ];
+        const outputs = [
+          ...def.outputs,
+          ...inferred.outputs.filter((p) => !seenOut.has(`${p.innerNodeId}|${p.innerHandle}`)),
+        ];
         const next: SubgraphDef = {
           ...def,
           inputs,
@@ -1092,20 +1177,83 @@ export const useWorkflowStore = create<WorkflowState>()(
         const cleaned = s.groups
           .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((id) => !valid.includes(id)) }))
           .filter((g) => g.nodeIds.length > 0);
+        const groupId = `grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const color = GROUP_COLORS[cleaned.length % GROUP_COLORS.length];
+        // 分组即子图：自动生成一份子图定义，并把成员节点作为其内容
+        const sgId = `sg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const members = s.nodes.filter((n) => valid.includes(n.id));
+        const sgNodes: WorkflowFileNode[] = members.map((n) => ({
+          id: n.id,
+          typeId: n.data.typeId,
+          label: n.data.label,
+          position: { ...n.position },
+          params: { ...n.data.params },
+        }));
+        const idSet = new Set(valid);
+        const sgEdges: WorkflowFileEdge[] = s.edges
+          .filter((e) => idSet.has(e.source) && idSet.has(e.target))
+          .map((e) => ({
+            id: e.id,
+            source: e.source,
+            sourceHandle: e.sourceHandle ?? null,
+            target: e.target,
+            targetHandle: e.targetHandle ?? null,
+            kind: e.data?.kind ?? 'data',
+          }));
+        const now = new Date().toISOString();
+        const sg: SubgraphDef = {
+          id: sgId,
+          name: title || `分组 ${cleaned.length + 1}`,
+          category: '分组',
+          createdAt: now,
+          updatedAt: now,
+          nodes: sgNodes,
+          edges: sgEdges,
+          inputs: [],
+          outputs: [],
+        };
+        // 计算成员节点包围盒，折叠态用它占位（避免节点落到画布原点 (0,0) 不可见）
+        const memberNodes = s.nodes.filter((n) => valid.includes(n.id));
+        let bounds: { x: number; y: number; width: number; height: number } | undefined;
+        if (memberNodes.length) {
+          const xs = memberNodes.map((n) => n.position.x);
+          const ys = memberNodes.map((n) => n.position.y);
+          const minX = Math.min(...xs);
+          const minY = Math.min(...ys);
+          const maxX = Math.max(...xs);
+          const maxY = Math.max(...ys);
+          bounds = { x: minX, y: minY, width: Math.max(160, maxX - minX + 220), height: Math.max(60, maxY - minY + 120) };
+        }
         const group: NodeGroup = {
-          id: `grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: groupId,
           title: title || `分组 ${cleaned.length + 1}`,
           nodeIds: valid,
-          color: GROUP_COLORS[cleaned.length % GROUP_COLORS.length],
+          color,
           collapsed: false,
+          bounds,
+          subgraphId: sgId,
         };
-        set({ groups: [...cleaned, group] });
-        s.addLog('info', `已把 ${valid.length} 个节点编为「${group.title}」`);
+        const withProxy = recomputeProxyPorts({ ...group }, sg, s.nodes, s.edges);
+        set({
+          subgraphs: { ...s.subgraphs, [sgId]: sg },
+          groups: [...cleaned, withProxy],
+        });
+        s.addLog('info', `已把 ${valid.length} 个节点编为「${group.title}」（子图：${sg.name}）`);
         return group.id;
       },
 
       removeGroup: (groupId) =>
-        set({ groups: get().groups.filter((g) => g.id !== groupId) }),
+        set((st) => {
+          const g = st.groups.find((x) => x.id === groupId);
+          const groups = st.groups.filter((x) => x.id !== groupId);
+          const subgraphs = { ...st.subgraphs };
+          if (g?.subgraphId && subgraphs[g.subgraphId]) delete subgraphs[g.subgraphId];
+          // 如果当前正在该子图里编辑，退出聚焦（viewStore 是独立 store）
+          if (g?.subgraphId && useViewStore.getState().focusedSubgraphId === g.subgraphId) {
+            useViewStore.getState().setFocusedSubgraph(null);
+          }
+          return { groups, subgraphs };
+        }),
 
       updateGroup: (groupId, patch) =>
         set({
@@ -1113,10 +1261,48 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       toggleGroupCollapsed: (groupId) =>
-        set({
-          groups: get().groups.map((g) =>
-            g.id === groupId ? { ...g, collapsed: !g.collapsed } : g,
-          ),
+        set((st) => ({
+          groups: st.groups.map((g) => {
+            if (g.id !== groupId) return g;
+            const next = { ...g, collapsed: !g.collapsed };
+            const sg = st.subgraphs[g.subgraphId ?? ''];
+            let out = sg ? recomputeProxyPorts(next, sg, st.nodes, st.edges) : next;
+            // 折叠时若缺少包围盒，按成员当前位置补算，避免代理节点落到 (0,0) 消失
+            if (out.collapsed && !out.bounds) {
+              const ms = st.nodes.filter((n) => out.nodeIds.includes(n.id));
+              if (ms.length) {
+                const xs = ms.map((n) => n.position.x);
+                const ys = ms.map((n) => n.position.y);
+                const minX = Math.min(...xs);
+                const minY = Math.min(...ys);
+                const maxX = Math.max(...xs);
+                const maxY = Math.max(...ys);
+                out = { ...out, bounds: { x: minX, y: minY, width: Math.max(160, maxX - minX + 220), height: Math.max(60, maxY - minY + 120) } };
+              }
+            }
+            return out;
+          }),
+        })),
+
+      recomputeGroupProxy: (groupId) =>
+        set((st) => {
+          const g = st.groups.find((x) => x.id === groupId);
+          if (!g || !g.subgraphId) return {};
+          const sg = st.subgraphs[g.subgraphId];
+          if (!sg) return {};
+          return { groups: st.groups.map((x) => (x.id === groupId ? recomputeProxyPorts(x, sg, st.nodes, st.edges) : x)) };
+        }),
+
+      /** 子图定义更新后，重算所有引用该子图的分组的代理端口/虚拟边，使父图实时同步 */
+      syncGroupProxies: (subgraphId) =>
+        set((st) => {
+          const sg = st.subgraphs[subgraphId];
+          if (!sg) return {};
+          return {
+            groups: st.groups.map((g) =>
+              g.subgraphId === subgraphId ? recomputeProxyPorts(g, sg, st.nodes, st.edges) : g,
+            ),
+          };
         }),
 
       moveGroup: (groupId, dx, dy) => {

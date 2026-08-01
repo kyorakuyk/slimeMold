@@ -130,6 +130,11 @@ export default function StatusBar({
                     <span style={{ color: r.ok ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
                       {r.ok ? '成功' : '失败'}
                     </span>
+                    {r.cost ? (
+                      <span style={{ color: 'var(--sm-ink-faint)' }} title="本次运行总 Token 用量">
+                        · {r.cost.totalTokens.toLocaleString()} tok
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>

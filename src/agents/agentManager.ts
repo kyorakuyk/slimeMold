@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, Protocol, RoleTemplate } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate } from '../types';
 import { chatOpenAI } from './providers/openai';
 import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';
@@ -85,7 +85,7 @@ const providers: Record<
     m: ChatMessage[],
     s: AbortSignal,
     onToken?: (text: string) => void,
-  ) => Promise<string>
+  ) => Promise<LLMResponse>
 > = {
   openai: chatOpenAI,
   anthropic: chatAnthropic,
@@ -99,7 +99,7 @@ export async function chatWithAgent(
   messages: ChatMessage[],
   signal: AbortSignal,
   onToken?: (text: string) => void,
-): Promise<string> {
+): Promise<LLMResponse> {
   const provider = providers[agent.protocol];
   if (!provider) {
     throw new Error(`未知协议: ${agent.protocol}`);

@@ -369,7 +369,10 @@ export default function GroupLayer() {
           inset: 0,
         }}
       >
-        {groups.map((g) => {
+        {groups
+          // 折叠态的组交给 GroupProxyNode（带代理端口、双击进子图），这里不再渲染，避免两套逻辑冲突
+          .filter((g) => !g.collapsed)
+          .map((g) => {
           const members = nodes.filter((n) => g.nodeIds.includes(n.id));
           const box = g.collapsed
             ? (g.bounds ?? boundsOf(members, measured))

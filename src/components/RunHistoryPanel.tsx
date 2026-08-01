@@ -86,7 +86,54 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
               </div>
               <div>耗时：{(selected.durationMs / 1000).toFixed(1)} 秒</div>
               <div>开始：{new Date(selected.startedAt).toLocaleString()}</div>
+              {selected.cost ? (
+                <div className="mt-1 border-t border-line pt-1 text-ink">
+                  <div>
+                    总 Token：
+                    <span className="font-semibold tabular-nums">
+                      {selected.cost.totalTokens.toLocaleString()}
+                    </span>
+                    <span className="text-ink-faint">
+                      {' '}（in {selected.cost.totalPromptTokens.toLocaleString()} / out{' '}
+                      {selected.cost.totalCompletionTokens.toLocaleString()}）
+                    </span>
+                  </div>
+                  <div>
+                    LLM 调用：<span className="font-semibold tabular-nums">{selected.cost.records.length}</span>
+                    {' · '}模型{' '}
+                    <span className="font-semibold tabular-nums">{Object.keys(selected.cost.byModel).length}</span> 种
+                  </div>
+                  <div>
+                    Token 耗时：
+                    <span className="font-semibold tabular-nums">
+                      {(selected.cost.totalDurationMs / 1000).toFixed(1)}
+                    </span>{' '}
+                    秒
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-1 border-t border-line pt-1 text-ink-faint">本次运行无 LLM 成本记录</div>
+              )}
             </div>
+
+            {selected.cost && Object.keys(selected.cost.byModel).length > 0 && (
+              <div className="rounded border border-line p-2 text-xs">
+                <div className="mb-1 font-medium text-ink">按模型拆解（性价比）</div>
+                <div className="space-y-1">
+                  {Object.entries(selected.cost.byModel).map(([model, m]) => (
+                    <div key={model} className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-[11px] text-ink-soft" title={model}>
+                        {model}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-ink-faint">
+                        {m.promptTokens.toLocaleString()}+{m.completionTokens.toLocaleString()} tok ·{' '}
+                        {m.calls} 次
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               {selected.nodes.map((n) => (
@@ -103,7 +150,19 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
                         >
                           {n.durationMs}ms
                         </span>
-                      ) : n.status === 'cached' ? (
+                      ) : null}
+                      {n.cost && n.cost.length > 0 ? (
+                        <span
+                          className="rounded bg-amber-50 px-1 text-[10px] tabular-nums text-amber-700"
+                          title={`模型：${n.cost.map((c) => c.model).join(', ')}；含失败 ${n.cost.filter((c) => !c.ok).length} 次`}
+                        >
+                          {n.cost
+                            .reduce((s, c) => s + (c.usage?.totalTokens ?? 0), 0)
+                            .toLocaleString()}{' '}
+                          tok
+                        </span>
+                      ) : null}
+                      {n.durationMs != null ? null : n.status === 'cached' ? (
                         <span className="rounded bg-paper px-1 text-[10px] text-accent" title="结果来自缓存（未实际执行）">
                           缓存
                         </span>
