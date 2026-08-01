@@ -213,8 +213,8 @@
 3. ✅ 步骤 3：Dispatcher/Resolver 框架
 4. ✅ 步骤 4：stage 化拓扑 + loopGate
 5. ✅ **Step 0.5：API key 安全（密钥库 + Rust 代理）** —— keyring 落盘（set/get/delete_credential）+ chat_completion 改从密钥库按 credentialKey 取 key + 前端设置面板不再编辑明文 + workflowIO 序列化剥离 apiKey。已落地（cargo check + tsc 通过）。
-6. ⬜ **Step 5：具体 worker 节点（Scaffolder/Implementer/Validator）**，其中 Validator 试点「自主节点」内部循环
-7. ⬜ **Step 6（建议新增）：执行引擎迭代循环** —— 让 loopGate 真正多次跑循环体（步骤 4 框架的收尾）
+6. ✅ **Step 5：具体 worker 节点（Scaffolder/Implementer/Validator）** —— 三者均为绑定智能体 + 角色 + 模型覆写 + 离线模拟；Scaffolder/Implementer 为普通节点（单次 ctx.llm），**Validator 为「自主节点」试点**（节点内部 think→评估→不合格带批评重跑，maxIter 轮，对外单一端口）。已落地（tsc 通过）。
+7. ⬜ **Step 6（建议新增）：执行引擎迭代循环** —— 让 loopGate 真正多次跑循环体（步骤 4 框架的收尾）；与 Step 5 的 Validator 自主循环互补（前者是画布级回路，后者是节点内回路）
 
 > 理由：Step 0.5 是安全地基，应在任何「真去调云端 API 干活」之前补；Step 6 让 4 的循环语义闭环，与 5 的自主节点互相印证。
 
