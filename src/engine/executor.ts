@@ -1,5 +1,5 @@
 import type { CostRecord, ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../types';
-import { topoLayers } from './topoSort';
+import { topoStages } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { getChannel } from '../agents/llmChannel';
@@ -74,9 +74,17 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
   }
 
-  const { layers, cyclic } = topoLayers(
+  // 控制流（control）边作为 stage 断点，不计入 DAG 环检测；data/task 边参与拓扑
+  const dataEdges = edges
+    .filter((e) => (e.data?.kind ?? 'data') !== 'control')
+    .map((e) => ({ source: e.source, target: e.target }));
+  const controlEdges = edges
+    .filter((e) => (e.data?.kind ?? 'data') === 'control')
+    .map((e) => ({ source: e.source, target: e.target }));
+  const { stages, cyclic } = topoStages(
     nodes.map((n) => n.id),
-    edges,
+    dataEdges,
+    controlEdges,
   );
   if (cyclic.length > 0) {
     const labels = cyclic
@@ -145,9 +153,10 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const costLog: CostRecord[] = [];
   const costByNode = new Map<string, CostRecord[]>();
 
-  for (const layer of layers) {
+  for (const layer of stages) {
     if (signal.aborted) break;
-    // 同层节点相互独立，可并行调度（瓶颈在 LLM I/O）
+    // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
+    // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
     await Promise.all(
       layer.map((id) =>
         executeNode(

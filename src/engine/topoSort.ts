@@ -48,15 +48,19 @@ export function topoLayers(
   };
 }
 
-/** 判断新增边 source->target 后是否成环（用于连线时即时拦截） */
+/** 判断新增边 source->target 后是否成环（用于连线时即时拦截）。
+ * ignoreControl=true（默认）：忽略 control 语义边（条件/循环断点），
+ * 允许「条件节点 → 循环体 → 回指条件节点」这类伪环存在而不误报。 */
 export function wouldCreateCycle(
   source: string,
   target: string,
-  edges: { source: string; target: string }[],
+  edges: { source: string; target: string; data?: { kind?: string } }[],
+  ignoreControl = true,
 ): boolean {
   if (source === target) return true;
+  const eff = ignoreControl ? edges.filter((e) => (e.data?.kind ?? 'data') !== 'control') : edges;
   const adjacency = new Map<string, string[]>();
-  for (const e of edges) {
+  for (const e of eff) {
     const list = adjacency.get(e.source) ?? [];
     list.push(e.target);
     adjacency.set(e.source, list);
@@ -72,4 +76,73 @@ export function wouldCreateCycle(
     for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
   }
   return false;
+}
+
+/**
+ * stage 化拓扑排序：把控制流（control）边视为「断点」，将图切成多个 stage。
+ * - 仅 data/task 边参与 Kahn 分层（同 stage 内节点并行）。
+ * - 每条 control 边 from→to 强制 to 及其 data/task 下游进入更高 stage，
+ *   从而「条件/循环断点」不会破坏 DAG 检测，又能保证执行顺序。
+ * 返回 stages（每个 stage 内可并行）与 cyclic（纯 data/task 成环的节点）。
+ */
+export interface StageResult {
+  stages: string[][];
+  cyclic: string[];
+}
+
+export function topoStages(
+  nodeIds: string[],
+  edges: { source: string; target: string }[],
+  controlEdges: { source: string; target: string }[],
+): StageResult {
+  // Pass A：仅 data/task 边做标准 Kahn 分层
+  const { layers, cyclic } = topoLayers(nodeIds, edges);
+  if (cyclic.length > 0) {
+    return { stages: layers, cyclic };
+  }
+
+  // Pass B：沿 control 边把下游抬高到更高 stage
+  const stageOf = new Map<string, number>();
+  layers.forEach((layer, i) => layer.forEach((id) => stageOf.set(id, i)));
+
+  // data/task 邻接表，用于向下游传播 stage
+  const adjacency = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = adjacency.get(e.source) ?? [];
+    list.push(e.target);
+    adjacency.set(e.source, list);
+  }
+
+  // 迭代至稳定：每条 control 边都要求 target 严格晚于 source
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const e of controlEdges) {
+      const fs = stageOf.get(e.source);
+      const ts = stageOf.get(e.target);
+      if (fs == null || ts == null) continue;
+      if (ts <= fs) {
+        const need = fs + 1;
+        const stack = [e.target];
+        const seen = new Set<string>();
+        while (stack.length > 0) {
+          const cur = stack.pop()!;
+          if (seen.has(cur)) continue;
+          seen.add(cur);
+          const curS = stageOf.get(cur) ?? 0;
+          if (curS < need) {
+            stageOf.set(cur, need);
+            changed = true;
+          }
+          for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
+        }
+      }
+    }
+  }
+
+  const maxStage = nodeIds.reduce((m, id) => Math.max(m, stageOf.get(id) ?? 0), -1);
+  const stages: string[][] = [];
+  for (let i = 0; i <= maxStage; i++) stages.push([]);
+  for (const id of nodeIds) stages[stageOf.get(id) ?? 0].push(id);
+  return { stages, cyclic: [] };
 }

@@ -164,6 +164,26 @@
 - Builder/Scaffolder/Implementer/Validator 等具体干活节点尚未新增（路线步骤 5）。
 - 节点 palette / Inspector 对 scope 的可视化编辑未做（仅数据透传）。
 
+#### ✅ 步骤 4：条件断点 / stage 化拓扑排序（已完成，2026-08-02）
+- **`src/engine/topoSort.ts`**：
+  - `wouldCreateCycle` 新增 `ignoreControl` 参数（默认 true）：忽略 `control` 语义边，允许「条件节点 → 循环体 → 回指条件节点」这类伪环存在而不误报。
+  - 新增 `topoStages(nodeIds, dataEdges, controlEdges)`：把 control 边视作 stage 边界。
+    - Pass A：仅 data/task 边做标准 Kahn 分层（同 stage 内并行）。
+    - Pass B：每条 control 边 `from→to` 强制 `to` 及其 data/task 下游进入更高 stage（迭代至稳定）。
+    - 返回 `stages: string[][]`（每 stage 内可并行）与 `cyclic`（仅纯 data/task 成环的节点）。
+- **`src/engine/executor.ts` / `src/engine/headless.ts`**：运行前拆分 data/control 边，改用 `topoStages` 调度（stage 间严格有序，stage 内并行）。原 `layers` 概念升级为 `stages`。
+- **`src/nodes/builtin.ts`**：新增 **`flow.loopGate`（循环/条件断点）** 节点（分类「流程」）：
+  - 输出 `pass` 端口声明 `flow: 'control'`（紫色 control 线），作为 stage 断点；
+  - 条件表达式求值（复用 evalExpr/isTruthy），仅激活 `pass`/`stop` 分支之一（下游剪枝）。
+- **`wouldCreateCycle` 调用点**（workflowStore 388 / WorkflowEditor 280）无需改动（默认 ignoreControl=true）。
+
+**验证**：`npx tsc --noEmit` 无新增错误（executor/headless 解构修正后通过）；剩余错误仅在封存 `SubgraphEditor.tsx` 与 workflowStore 两处 pre-existing 位置。
+
+**框架边界（本轮刻意未做）**：
+- 执行引擎**迭代循环**未实现：当前每轮运行 loopGate 只做单轮 gate（条件为假则下游剪枝）。真正「多次迭代循环体」需执行引擎支持循环执行（重复调度 stage 直至条件终止），列为后续增强。
+- `PortDef.flow` 一致性校验未强制：control 边当前可连任何端口（语义上可接受，校验留待步骤 1 收尾）。
+- 循环的可视化（如循环体高亮）未做。
+
 ---
 
 ## 一、子图（Subgraph）与分组（Group）功能 —— 已封存（2026-08-02）

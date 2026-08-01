@@ -1,7 +1,7 @@
 // 无 UI 工作流运行器：不依赖 zustand store，适合 CLI / API / 测试场景。
 // 复用与 executor 相同的执行内核（拓扑分层、缓存、分支剪枝、限流重试）。
 import type { ExecContext, FlowEdge, FlowNode } from '../types';
-import { topoLayers } from './topoSort';
+import { topoStages } from './topoSort';
 import { getChannel } from '../agents/llmChannel';
 import { scopedStorage } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
@@ -85,9 +85,16 @@ export async function runWorkflowHeadless(
 
   beginRun();
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  const { layers, cyclic } = topoLayers(
+  const dataEdges = edges
+    .filter((e) => (e.data?.kind ?? 'data') !== 'control')
+    .map((e) => ({ source: e.source, target: e.target }));
+  const controlEdges = edges
+    .filter((e) => (e.data?.kind ?? 'data') === 'control')
+    .map((e) => ({ source: e.source, target: e.target }));
+  const { stages, cyclic } = topoStages(
     nodes.map((n) => n.id),
-    edges,
+    dataEdges,
+    controlEdges,
   );
   if (cyclic.length > 0) {
     for (const id of cyclic) {
@@ -113,7 +120,7 @@ export async function runWorkflowHeadless(
     }
   };
 
-  for (const layer of layers) {
+  for (const layer of stages) {
     await Promise.all(
       layer.map(async (id) => {
         const node = nodeById.get(id);
