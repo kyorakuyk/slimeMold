@@ -1,10 +1,11 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { RotateCcw, StepForward } from 'lucide-react';
+import { Boxes, RotateCcw, StepForward, Ungroup } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { retryNode, runToNode } from '../../engine/executor';
+import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 
 function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
   if (status === 'running') return <span className="sm-spinner" />;
@@ -44,6 +45,7 @@ const portBadgeCls: Record<string, string> = {
   boolean: 'bg-[#d97706]',
   list: 'bg-[#a855f7]',
   json: 'bg-[#db2777]',
+  image: 'bg-[#0891b2]',
 };
 function PortBadge({ type }: { type?: string }) {
   const t = type ?? 'any';
@@ -58,9 +60,19 @@ function PortBadge({ type }: { type?: string }) {
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
   const running = useWorkflowStore((s) => s.running);
-  const missing = !def || def.missing;
-  const inputs = def?.inputs ?? [];
-  const outputs = def?.outputs ?? [];
+  const isSubgraph = data.typeId === SUBGRAPH_REF_TYPE;
+  // 子图节点的端口由其引用的子图定义动态决定，普通节点取自类型定义
+  const subgraph = useWorkflowStore((s) =>
+    isSubgraph ? s.subgraphs[String(data.params?.subgraphId ?? '')] : undefined,
+  );
+  const allDefs = useRegistryStore((s) => s.defs);
+  const allSubgraphs = useWorkflowStore((s) => s.subgraphs);
+  const unpack = useWorkflowStore((s) => s.unpackSubgraphNode);
+
+  const missing = isSubgraph ? !subgraph : !def || def.missing;
+  const resolved = resolvePorts(data.typeId, data.params, allDefs, allSubgraphs);
+  const inputs = resolved.inputs;
+  const outputs = resolved.outputs;
   const rows = Math.max(inputs.length, outputs.length);
 
   // 参数摘要（最多两条）
@@ -158,11 +170,17 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
       )}
 
       {/* 参数摘要 / 预览 / 错误 */}
-      {(paramSummary.length > 0 || previewValue || data.error || missing) && (
+      {(paramSummary.length > 0 || previewValue || data.error || missing || isSubgraph) && (
         <div className="space-y-1 border-t border-line px-3 py-2">
           {missing && (
             <p className="text-[11px] leading-relaxed text-err">
-              节点类型缺失：{data.typeId}
+              {isSubgraph ? '子图定义已丢失，请重新创建或删除该节点' : `节点类型缺失：${data.typeId}`}
+            </p>
+          )}
+          {isSubgraph && subgraph && (
+            <p className="flex items-center gap-1 text-[11px] leading-relaxed text-ink-faint">
+              <Boxes size={11} />
+              内含 {subgraph.nodes.length} 个步骤 · {inputs.length} 入 / {outputs.length} 出
             </p>
           )}
           {paramSummary.map((s, i) => (
@@ -185,6 +203,22 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           {data.error && (
             <p className="break-all text-[11px] leading-relaxed text-err">{data.error}</p>
           )}
+        </div>
+      )}
+
+      {isSubgraph && subgraph && (
+        <div className="flex border-t border-line">
+          <button
+            className="flex flex-1 items-center justify-center gap-1 py-1.5 text-[11px] text-accent transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!running) unpack(id);
+            }}
+            disabled={running}
+            title="把子图内部的节点还原到画布上（解组）"
+          >
+            <Ungroup size={11} /> 展开子图
+          </button>
         </div>
       )}
 

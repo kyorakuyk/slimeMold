@@ -217,6 +217,60 @@ export interface WorkflowFile {
   workspaceDir?: string | null;
   /** 本工作流产出的资产（文件/预览）元数据，用于左侧「资产」面板的预览与导出 */
   assets?: AssetMeta[];
+  /** 节点组（纯视觉编组，不参与执行） */
+  groups?: NodeGroup[];
+}
+
+/* ---------- 子图（可复用节点组合） ---------- */
+
+/** 子图对外暴露的一个端口。
+ * 由子图内部某个节点的某个端口「提升」而来：外部连到该端口的数据，
+ * 在扁平化展开时会被直接接到 innerNodeId/innerHandle 上。 */
+export interface SubgraphPort {
+  /** 端口 id（子图引用节点上的 handle id），如 'in_1' */
+  id: string;
+  /** 端口显示名 */
+  label: string;
+  type?: PortType;
+  /** 内部承接该端口的节点 id */
+  innerNodeId: string;
+  /** 内部节点上的 handle id */
+  innerHandle: string | null;
+}
+
+/** 子图定义：一组节点+连线的可复用封装。
+ * 存放在项目级 subgraphs 字典中，被 subgraph.ref 节点通过 subgraphId 引用。 */
+export interface SubgraphDef {
+  id: string;
+  name: string;
+  description?: string;
+  /** 节点库中的分组（用于左侧面板归类） */
+  category?: string;
+  createdAt: string;
+  updatedAt: string;
+  nodes: WorkflowFileNode[];
+  edges: WorkflowFileEdge[];
+  /** 对外输入端口（内部未被连接的输入端口自动提升） */
+  inputs: SubgraphPort[];
+  /** 对外输出端口（内部未被连接的输出端口自动提升） */
+  outputs: SubgraphPort[];
+}
+
+/* ---------- 节点组（纯视觉编组） ---------- */
+
+/** 节点组：把若干节点框在一起，可整体拖动 / 折叠 / 配色。
+ * 纯视觉概念，不参与执行，不改变图的拓扑结构。 */
+export interface NodeGroup {
+  id: string;
+  title: string;
+  /** 组内成员节点 id */
+  nodeIds: string[];
+  /** 组框颜色（CSS 颜色值） */
+  color: string;
+  /** 是否折叠（折叠时组内节点隐藏，仅显示标题条） */
+  collapsed: boolean;
+  /** 折叠前记录的组框区域，用于折叠态占位与展开还原 */
+  bounds?: { x: number; y: number; width: number; height: number };
 }
 
 /** 资产（写文件节点产出的文件/预览）元数据 */
@@ -253,6 +307,8 @@ export interface ProjectFile {
   roles?: RoleTemplate[];
   /** 项目级全局变量 */
   variables?: Record<string, unknown>;
+  /** 项目级子图库（可复用节点组合），key 为子图 id */
+  subgraphs?: Record<string, SubgraphDef>;
 }
 
 /** 最近项目记录（持久化在 localStorage，不随项目文件本身） */

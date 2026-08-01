@@ -1,7 +1,8 @@
-import { Trash2 } from 'lucide-react';
+import { Boxes, Trash2, Ungroup } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
+import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { isTauri } from '../platform/env';
 import type { ParamDef, FlowNode } from '../types';
 
@@ -201,6 +202,13 @@ export default function Inspector({ width = 288 }: { width?: number }) {
   const def = useRegistryStore((s) =>
     resolvedNode ? s.defs[resolvedNode.data.typeId] : undefined,
   );
+  // 子图引用节点：取出它引用的子图定义，用于展示构成与端口
+  const selectedSubgraph = useWorkflowStore((s) =>
+    resolvedNode?.data.typeId === SUBGRAPH_REF_TYPE
+      ? s.subgraphs[String(resolvedNode.data.params?.subgraphId ?? '')]
+      : undefined,
+  );
+  const unpackSubgraph = useWorkflowStore((s) => s.unpackSubgraphNode);
 
   if (!resolvedNode || !selectedId) {
     return (
@@ -253,7 +261,55 @@ export default function Inspector({ width = 288 }: { width?: number }) {
           </div>
         ))}
 
-        {def?.description && (
+        {/* 子图节点：展示所引用子图的构成与对外端口，并提供展开入口 */}
+        {resolvedNode.data.typeId === SUBGRAPH_REF_TYPE &&
+          (selectedSubgraph ? (
+            <div className="space-y-2 rounded border border-line bg-paper-deep px-2.5 py-2">
+              <p className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                <Boxes size={12} /> {selectedSubgraph.name}
+              </p>
+              <p className="text-[11px] leading-relaxed text-ink-faint">
+                内含 {selectedSubgraph.nodes.length} 个步骤，运行时会自动展开执行。
+              </p>
+              {selectedSubgraph.inputs.length > 0 && (
+                <div>
+                  <p className="mb-0.5 text-[11px] text-ink-soft">输入</p>
+                  <ul className="space-y-0.5">
+                    {selectedSubgraph.inputs.map((p) => (
+                      <li key={p.id} className="truncate text-[11px] text-ink-faint">
+                        · {p.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {selectedSubgraph.outputs.length > 0 && (
+                <div>
+                  <p className="mb-0.5 text-[11px] text-ink-soft">输出</p>
+                  <ul className="space-y-0.5">
+                    {selectedSubgraph.outputs.map((p) => (
+                      <li key={p.id} className="truncate text-[11px] text-ink-faint">
+                        · {p.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <button
+                className="sm-btn w-full justify-center text-[12px]"
+                onClick={() => unpackSubgraph(selectedId)}
+                title="把子图内部的节点还原到画布上"
+              >
+                <Ungroup size={12} /> 展开为普通节点
+              </button>
+            </div>
+          ) : (
+            <p className="rounded border border-err/30 bg-white px-2.5 py-2 text-[11px] leading-relaxed text-err">
+              这个子图的定义已丢失，请删除该节点或重新打包一个子图。
+            </p>
+          ))}
+
+        {def?.description && resolvedNode.data.typeId !== SUBGRAPH_REF_TYPE && (
           <p className="rounded bg-paper-deep px-2.5 py-2 text-[11px] leading-relaxed text-ink-faint">
             {def.description}
           </p>

@@ -13,8 +13,16 @@ import {
   X,
   LayoutTemplate,
   Archive,
+  FolderTree,
+  Folder,
+  FolderOpen,
+  Trash2,
+  Crosshair,
+  ChevronRight,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react';
+import { useReactFlow } from '@xyflow/react';
 import NodePalette from './NodePalette';
 import PluginPanel from './PluginPanel';
 import AgentPanel from './AgentPanel';
@@ -22,6 +30,7 @@ import VariablesPanel from './VariablesPanel';
 import RunHistoryPanel from './RunHistoryPanel';
 import ExamplesPanel from './ExamplesPanel';
 import AssetsPanel from './AssetsPanel';
+import GroupsPanel from './GroupsPanel';
 import ShortcutsModal from './ShortcutsModal';
 
 export type SidePanelKey =
@@ -31,6 +40,7 @@ export type SidePanelKey =
   | 'variables'
   | 'history'
   | 'assets'
+  | 'groups'
   | 'examples'
   | 'help';
 
@@ -44,6 +54,7 @@ interface PanelItem {
 // 上半部分：点击展开左侧面板内容（示例库改为独立次级窗口，不在此展开）
 const PANEL_ITEMS: PanelItem[] = [
   { key: 'nodes', label: '节点库', icon: Boxes, shortcut: '' },
+  { key: 'groups', label: '组', icon: FolderTree, shortcut: '' },
   { key: 'plugins', label: '插件', icon: Puzzle, shortcut: '' },
   { key: 'agents', label: '智能体库', icon: Users, shortcut: '' },
   { key: 'assets', label: '资产', icon: Archive, shortcut: '' },
@@ -68,6 +79,8 @@ export function renderSidePanel(key: SidePanelKey) {
       return <RunHistoryPanel embedded />;
     case 'assets':
       return <AssetsPanel embedded />;
+    case 'groups':
+      return <GroupsPanel embedded />;
     case 'help':
       return (
         <div className="flex-1 overflow-y-auto px-4 py-3">

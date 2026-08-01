@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -18,14 +18,17 @@ import {
   type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { LayoutTemplate, FilePlus2, FolderOpen, Sparkles, X, Hand, BoxSelect, Map, Minus, Plus, Maximize2 } from 'lucide-react';
+import { LayoutTemplate, FilePlus2, FolderOpen, Sparkles, X, Hand, BoxSelect, Map, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
+import GroupLayer from './GroupLayer';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
-import { getNodeDef } from '../store/registryStore';
-import { arePortsCompatible, type NodeDefinition, type FlowNode, type FlowEdge, type NodeStatus } from '../types';
+import { getNodeDef, useRegistryStore } from '../store/registryStore';
+import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
+import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
+import { NamePrompt } from '../components/NamePrompt';
 
 const nodeTypes: NodeTypes = { base: BaseNode };
 
@@ -79,8 +82,24 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     );
   }, [isSplit, splitWf]);
 
-  const nodes = isSplit ? splitNodes : activeNodes;
+  const groups = useWorkflowStore((s) => s.groups);
+  const rawNodes = isSplit ? splitNodes : activeNodes;
   const edges = isSplit ? splitEdges : activeEdges;
+
+  // 折叠的节点组：其成员节点在画布上隐藏（仅保留组标题条）
+  const hiddenByGroup = useMemo(() => {
+    if (isSplit) return new Set<string>();
+    const s = new Set<string>();
+    for (const g of groups) if (g.collapsed) for (const id of g.nodeIds) s.add(id);
+    return s;
+  }, [groups, isSplit]);
+  const nodes = useMemo(
+    () =>
+      hiddenByGroup.size === 0
+        ? rawNodes
+        : rawNodes.map((n) => (hiddenByGroup.has(n.id) ? { ...n, hidden: true } : n)),
+    [rawNodes, hiddenByGroup],
+  );
 
   const onNodesChange: OnNodesChange<FlowNode> = isSplit
     ? (changes) => setSplitNodes((ns) => applyNodeChanges(changes, ns))
@@ -103,6 +122,9 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     [setSelected, wfId],
   );
 
+  const allDefs = useRegistryStore((s) => s.defs);
+  const subgraphs = useWorkflowStore((s) => s.subgraphs);
+
   // 数据流向可视化：连线颜色跟随「源端口类型」（ComfyUI 风格）
   const PORT_COLOR_VAR: Record<string, string> = {
     text: 'var(--pt-text)',
@@ -110,29 +132,71 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
     boolean: 'var(--pt-boolean)',
     list: 'var(--pt-list)',
     json: 'var(--pt-json)',
+    image: 'var(--pt-image)',
     any: 'var(--sm-edge)',
   };
   const styledEdges = useMemo(() => {
-    const outTypeByNode: Record<string, NodeDefinition> = {};
+    // 按节点实例解析端口（子图节点的端口是动态的）
+    const outsByNode: Record<string, PortDef[]> = {};
     for (const n of nodes) {
-      const def = getNodeDef(n.data.typeId);
-      if (def) outTypeByNode[n.id] = def;
+      outsByNode[n.id] = resolvePorts(n.data.typeId, n.data.params, allDefs, subgraphs).outputs;
     }
     return edges.map((e): Edge => {
-      const def = outTypeByNode[e.source];
-      const out = def?.outputs.find((o: { id: string }) => o.id === (e.sourceHandle ?? def.outputs[0]?.id));
+      const outs = outsByNode[e.source] ?? [];
+      const out = outs.find((o) => o.id === (e.sourceHandle ?? outs[0]?.id));
       const pt = out?.type ?? 'any';
       const colorVar = PORT_COLOR_VAR[pt] ?? 'var(--sm-edge)';
       return { ...e, style: { ...(e.style ?? {}), ['--edge-color']: colorVar } } as Edge;
     });
-  }, [nodes, edges]);
+  }, [nodes, edges, allDefs, subgraphs]);
 
   const showGrid = useViewStore((s) => s.showGrid);
   const showMinimap = useViewStore((s) => s.showMinimap);
   const toggleMinimap = useViewStore((s) => s.toggleMinimap);
   const interactionMode = useViewStore((s) => s.interactionMode);
   const setInteractionMode = useViewStore((s) => s.setInteractionMode);
-  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { screenToFlowPosition, getNodes, zoomIn, zoomOut, fitView } = useReactFlow();
+
+  // 右键长按框选：按住右键拖动在画布上画矩形，命中节点高亮；短按则弹右键菜单
+  const [rightBox, setRightBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const rightStart = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const onPaneMouseDownCapture = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 2) return; // 仅右键
+    e.preventDefault();
+    rightStart.current = { x: e.clientX, y: e.clientY, moved: false };
+    setRightBox({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
+  }, []);
+  useEffect(() => {
+    if (!rightStart.current) return;
+    const onMove = (ev: MouseEvent) => {
+      if (!rightStart.current) return;
+      if (Math.abs(ev.clientX - rightStart.current.x) + Math.abs(ev.clientY - rightStart.current.y) > 4) {
+        rightStart.current.moved = true;
+      }
+      setRightBox((b) => (b ? { ...b, x1: ev.clientX, y1: ev.clientY } : b));
+      const sx = Math.min(rightStart.current.x, ev.clientX);
+      const sy = Math.min(rightStart.current.y, ev.clientY);
+      const ex = Math.max(rightStart.current.x, ev.clientX);
+      const ey = Math.max(rightStart.current.y, ev.clientY);
+      const tl = screenToFlowPosition({ x: sx, y: sy });
+      const br = screenToFlowPosition({ x: ex, y: ey });
+      const hit = getNodes()
+        .filter((n) => {
+          const w = n.measured?.width ?? 160;
+          const h = n.measured?.height ?? 70;
+          return n.position.x < br.x && n.position.x + w > tl.x && n.position.y < br.y && n.position.y + h > tl.y;
+        })
+        .map((n) => n.id);
+      useWorkflowStore.setState((st) => ({ nodes: st.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })) }));
+    };
+    const onUp = () => setRightBox(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [rightBox, screenToFlowPosition]);
 
   // 连线时的友好预校验：环路或端口类型不兼容时，手柄直接显示不可连接
   const isValidConnection = useCallback(
@@ -140,14 +204,19 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       if (!conn.source || !conn.target) return false;
       if (conn.source === conn.target) return false;
       if (wouldCreateCycle(conn.source, conn.target, edges)) return false;
-      const srcDef = getNodeDef(conn.source);
-      const tgtDef = getNodeDef(conn.target);
-      const srcPort = srcDef?.outputs.find((o) => o.id === conn.sourceHandle);
-      const tgtPort = tgtDef?.inputs.find((i) => i.id === conn.targetHandle);
+      // 端口须按节点实例解析：子图节点的端口来自其引用的子图定义
+      const srcNode = nodes.find((n) => n.id === conn.source);
+      const tgtNode = nodes.find((n) => n.id === conn.target);
+      const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, allDefs, subgraphs);
+      const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, allDefs, subgraphs);
+      const srcPort = srcDef.outputs.find((o) => o.id === conn.sourceHandle);
+      const tgtPort = tgtDef.inputs.find((i) => i.id === conn.targetHandle);
       return arePortsCompatible(srcPort?.type, tgtPort?.type);
     },
-    [edges],
+    [edges, nodes, allDefs, subgraphs],
   );
+
+  const addSubgraphRef = useWorkflowStore((s) => s.addSubgraphRefNode);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -155,6 +224,15 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       const typeId = e.dataTransfer.getData(DND_MIME);
       if (!typeId) return;
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      // 子图载荷格式：`subgraph.ref:<子图 id>`
+      if (typeId.startsWith(`${SUBGRAPH_REF_TYPE}:`)) {
+        if (isSplit) return;
+        addSubgraphRef(typeId.slice(SUBGRAPH_REF_TYPE.length + 1), {
+          x: position.x - 112,
+          y: position.y - 20,
+        });
+        return;
+      }
       // 分栏工作流：拖入的节点加入本地副本（随后写回 workflows）
       if (isSplit) {
         const id = `n-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
@@ -174,7 +252,7 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       }
       addNode(typeId, { x: position.x - 112, y: position.y - 20 });
     },
-    [addNode, screenToFlowPosition, isSplit],
+    [addNode, screenToFlowPosition, isSplit, addSubgraphRef],
   );
 
   const setExamplesOpen = useWorkflowStore((s) => s.setExamplesOpen);
@@ -208,8 +286,60 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
   const noWorkflows = workflowCount === 0;
   const [zoomPct, setZoomPct] = useState(100);
 
+  /* ---------- 画布右键菜单：打包为子图 / 编组 ---------- */
+  const packAsSubgraph = useWorkflowStore((s) => s.packSelectionAsSubgraph);
+  const createGroup = useWorkflowStore((s) => s.createGroup);
+  const unpackSubgraph = useWorkflowStore((s) => s.unpackSubgraphNode);
+  const [menu, setMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null);
+  // 右键时的选中节点：React Flow 的多选状态记录在 node.selected 上
+  const selectedIds = useMemo(() => nodes.filter((n) => n.selected).map((n) => n.id), [nodes]);
+
+  const closeMenu = useCallback(() => setMenu(null), []);
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = () => closeMenu();
+    window.addEventListener('click', onDown);
+    window.addEventListener('contextmenu', onDown);
+    return () => {
+      window.removeEventListener('click', onDown);
+      window.removeEventListener('contextmenu', onDown);
+    };
+  }, [menu, closeMenu]);
+
+  /** 右键目标节点未被选中时，把它视为唯一选区 */
+  const targetIds = useMemo(() => {
+    if (!menu) return [];
+    if (menu.nodeId && !selectedIds.includes(menu.nodeId)) return [menu.nodeId];
+    return selectedIds;
+  }, [menu, selectedIds]);
+
+  const menuRefNode = menu?.nodeId
+    ? nodes.find((n) => n.id === menu.nodeId && n.data.typeId === SUBGRAPH_REF_TYPE)
+    : undefined;
+
+  const [packPrompt, setPackPrompt] = useState(false);
+  const handlePack = () => {
+    closeMenu();
+    if (targetIds.length === 0) return;
+    setPackPrompt(true);
+  };
+  const handleGroup = () => {
+    closeMenu();
+    if (targetIds.length === 0) return;
+    createGroup(targetIds);
+  };
+
+  // 鼠标模式：click=仅点击选中（左键不平移画布、不框选）；move=拖动；select=框选
+  const selectionOnDrag = interactionMode === 'select';
+  const panOnDrag: number[] = interactionMode === 'move' ? [0, 1] : [1];
+
   return (
-    <div className="sm-canvas-dot relative h-full w-full" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+    <div
+      className="sm-canvas-dot relative h-full w-full"
+      onDrop={onDrop}
+      onDragOver={(e) => e.preventDefault()}
+      onMouseDownCapture={onPaneMouseDownCapture}
+    >
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
@@ -220,13 +350,42 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
         isValidConnection={isValidConnection}
         onNodeClick={handleNodeClick}
         onPaneClick={() => setSelected(null, wfId)}
+        onNodeContextMenu={(e, node) => {
+          if (isSplit) return;
+          // 右键拖动框选（已移动）不弹菜单，仅清除标记
+          if (rightStart.current?.moved) {
+            e.preventDefault();
+            rightStart.current = null;
+            return;
+          }
+          e.preventDefault();
+          rightStart.current = null;
+          setMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+        }}
+        onPaneContextMenu={(e) => {
+          if (isSplit) return;
+          if (rightStart.current?.moved) {
+            e.preventDefault();
+            rightStart.current = null;
+            return;
+          }
+          e.preventDefault();
+          rightStart.current = null;
+          const ev = e as React.MouseEvent;
+          setMenu({ x: ev.clientX, y: ev.clientY });
+        }}
+        onSelectionContextMenu={(e) => {
+          if (isSplit) return;
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
         defaultEdgeOptions={defaultEdgeOptions}
         connectionLineType={ConnectionLineType.Bezier}
         deleteKeyCode={['Backspace', 'Delete']}
-        // 中键（button 1）始终拖动画布；拖动模式下左键（button 0）也拖动画布
-        panOnDrag={interactionMode === 'move' ? [0, 1] : [1]}
-        selectionOnDrag={interactionMode === 'select'}
-        selectionMode={interactionMode === 'select' ? SelectionMode.Partial : SelectionMode.Full}
+        // 中键（button 1）始终拖动画布；右键长按（rightSelecting）时仅中键平移，左键用于框选
+        panOnDrag={panOnDrag}
+        selectionOnDrag={selectionOnDrag}
+        selectionMode={selectionOnDrag ? SelectionMode.Partial : SelectionMode.Full}
         // 滚轮始终缩放画布（不平移），与鼠标模式无关
         panOnScroll={false}
         zoomOnScroll
@@ -263,6 +422,13 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
               onClick={() => setInteractionMode('select')}
             >
               <BoxSelect size={15} />
+            </button>
+            <button
+              className={`sm-cv-btn ${interactionMode === 'click' ? 'active' : ''}`}
+              title="点击模式（左键点击选中节点，不平移也不框选）"
+              onClick={() => setInteractionMode('click')}
+            >
+              <MousePointer2 size={15} />
             </button>
             <button
               className={`sm-cv-btn ${showMinimap ? 'active' : ''}`}
@@ -304,6 +470,57 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
           />
         )}
       </ReactFlow>
+
+      {/* 节点组框（纯视觉 overlay，置于 React Flow 之上，仅标题条可交互） */}
+      {!isSplit && <GroupLayer />}
+
+      {/* 右键菜单：子图打包 / 展开、节点编组 */}
+      {menu && !isSplit && (
+        <div
+          className="fixed z-50 min-w-[176px] overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-xl"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {menuRefNode ? (
+            <button
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-paper-soft"
+              onClick={() => {
+                closeMenu();
+                unpackSubgraph(menuRefNode.id);
+              }}
+            >
+              <Ungroup size={13} /> 展开子图
+            </button>
+          ) : (
+            <>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+                onClick={handlePack}
+                title="把选中的节点打包成可复用的子图"
+                disabled={targetIds.length === 0}
+              >
+                <Boxes size={13} /> 打包为子图
+                <span className="ml-auto text-[10.5px] text-ink-faint">{targetIds.length} 个</span>
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
+                onClick={handleGroup}
+                disabled={targetIds.length === 0}
+                title="把选中的节点框成一组，可整体移动、折叠（不影响运行）"
+              >
+                <Group size={13} /> 编为一组
+                <span className="ml-auto text-[10.5px] text-ink-faint">{targetIds.length} 个</span>
+              </button>
+            </>
+          )}
+          {targetIds.length === 0 && !menuRefNode && (
+            <p className="px-3 py-1 text-[11px] leading-relaxed text-ink-faint">
+              先用框选模式选中若干节点
+            </p>
+          )}
+        </div>
+      )}
 
       {noWorkflows && !isSplit && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
@@ -410,6 +627,30 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {rightBox && (
+        <div
+          className="pointer-events-none fixed z-30 border border-sky-400 bg-sky-400/10"
+          style={{
+            left: Math.min(rightBox.x0, rightBox.x1),
+            top: Math.min(rightBox.y0, rightBox.y1),
+            width: Math.abs(rightBox.x1 - rightBox.x0),
+            height: Math.abs(rightBox.y1 - rightBox.y0),
+          }}
+        />
+      )}
+
+      {packPrompt && (
+        <NamePrompt
+          title="给这个子图起个名字"
+          initial={`子图 ${Object.keys(subgraphs).length + 1}`}
+          onConfirm={(name) => {
+            packAsSubgraph(targetIds, name);
+            setPackPrompt(false);
+          }}
+          onCancel={() => setPackPrompt(false)}
+        />
       )}
     </div>
   );

@@ -9,6 +9,7 @@ import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar
 import ShortcutsModal from './components/ShortcutsModal';
 import ExamplesModal from './components/ExamplesModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
+import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
@@ -103,6 +104,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [prompt, setPrompt] = useState<{ title: string; initial: string; onConfirm: (name: string) => void } | null>(null);
   const splitView = useViewStore((s) => s.splitView);
   const splitWfId = useViewStore((s) => s.splitWfId);
   const setSplitWfId = useViewStore((s) => s.setSplitWfId);
@@ -176,6 +178,24 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         useWorkflowStore.getState().newWorkflowInProject();
+      } else if (mod && e.key.toLowerCase() === 'g') {
+        // Ctrl+G 把选中节点编为一组；Ctrl+Shift+G 打包成可复用子图
+        e.preventDefault();
+        const st = useWorkflowStore.getState();
+        const ids = st.nodes.filter((n) => n.selected).map((n) => n.id);
+        if (ids.length === 0) {
+          st.addLog('error', '请先框选若干节点，再按 Ctrl+G');
+          return;
+        }
+        if (e.shiftKey) {
+          setPrompt({
+            title: '给这个子图起个名字',
+            initial: `子图 ${Object.keys(st.subgraphs).length + 1}`,
+            onConfirm: (name) => st.packSelectionAsSubgraph(ids, name),
+          });
+        } else {
+          st.createGroup(ids);
+        }
       } else if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
       }
@@ -304,6 +324,17 @@ export default function App() {
         {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
         {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
         {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
+        {prompt && (
+          <NamePrompt
+            title={prompt.title}
+            initial={prompt.initial}
+            onConfirm={(name) => {
+              prompt.onConfirm(name);
+              setPrompt(null);
+            }}
+            onCancel={() => setPrompt(null)}
+          />
+        )}
       </div>
     </ReactFlowProvider>
   );

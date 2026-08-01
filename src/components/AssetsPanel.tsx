@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Download,
   Trash2,
@@ -56,7 +56,7 @@ export default function AssetsPanel({
   const [query, setQuery] = useState('');
   const [hashMap, setHashMap] = useState<Record<string, string>>({});
 
-  const assetList = assets ?? [];
+  const assetList = useMemo(() => assets ?? [], [assets]);
 
   // 异步预计算每项资产内容的 SHA-256（十六进制），用于按"文件哈希"检索
   useEffect(() => {

@@ -3,6 +3,7 @@ import { httpFetch, isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { evalExpr } from '../engine/expr';
+import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
@@ -187,6 +188,7 @@ const imageLoad: NodeDefinition = {
   name: '图片',
   category: '输入',
   description: '加载一张图片（URL 或 data URL），输出 image 端口，可接入多模态智能体节点',
+  params: [],
   inputs: [{ id: 'url', label: '图片 URL', type: 'text' }],
   outputs: [{ id: 'image', label: '图片', type: 'image' }],
   execute: async (_ctx, inputs) => {
@@ -234,9 +236,10 @@ const imagePreview: NodeDefinition = {
   name: '图片预览',
   category: '预览',
   description: '预览上游传来的图片（image 端口），在节点卡片上显示缩略图',
+  params: [],
   inputs: [{ id: 'image', label: '图片', type: 'image' }],
   outputs: [{ id: 'image', label: '图片', type: 'image' }],
-  execute: async (_ctx, inputs) => {
+  execute: async (inputs) => {
     const img = inputs.image != null ? String(inputs.image) : '';
     if (!img) throw new Error('未接入图片');
     return { image: img };
@@ -268,6 +271,7 @@ const imageSave: NodeDefinition = {
       content: img,
       createdAt: new Date().toISOString(),
       nodeId: '',
+      inWorkspace: false,
     });
     return { image: img };
   },
@@ -778,6 +782,26 @@ function isTruthy(v: unknown): boolean {
   return Boolean(v);
 }
 
+/**
+ * 子图引用：把一组打包好的节点当作一个整体放到画布上。
+ *
+ * 它的端口是动态的——由所引用子图的 inputs/outputs 决定（见 engine/subgraph.ts 的 resolvePorts），
+ * 所以这里 inputs/outputs 留空。运行前 executor 会调 flattenSubgraphs() 把它替换成内部节点，
+ * 因此 execute 正常情况下不会被调用；保留实现只是为了兜底报错。
+ */
+const subgraphRef: NodeDefinition = {
+  typeId: SUBGRAPH_REF_TYPE,
+  name: '子图',
+  category: '流程',
+  description: '引用一个打包好的节点组合，可在多处复用；双击可进入编辑',
+  params: [],
+  inputs: [],
+  outputs: [],
+  execute: async () => {
+    throw new Error('子图节点应在运行前被展开，请检查该子图的定义是否存在');
+  },
+};
+
 // Community 友好分类顺序：输入 → 文本 → AI → 流程 → 工具 → 输出（普通用户语义）
 export const CATEGORY_ORDER = ['输入', '文本', 'AI', '流程', '工具', '输出'] as const;
 
@@ -785,6 +809,7 @@ export const builtinDefs: NodeDefinition[] = [
   textInput,
   template,
   agentChat,
+  subgraphRef,
   imageLoad,
   imageImport,
   imagePreview,

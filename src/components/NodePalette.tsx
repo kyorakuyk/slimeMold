@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { ChevronRight, ChevronDown, Search } from 'lucide-react';
+import { ChevronRight, ChevronDown, Search, Boxes, Trash2 } from 'lucide-react';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { DND_MIME } from '../canvas/WorkflowEditor';
 import { CATEGORY_ORDER } from '../nodes/builtin';
+import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import type { NodeDefinition } from '../types';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
@@ -20,6 +21,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
     const q = query.trim().toLowerCase();
     for (const def of Object.values(defs)) {
       if (def.missing) continue;
+      // 子图节点不能凭空添加（必须指定引用哪个子图），统一在下方「我的子图」分区里列出
+      if (def.typeId === SUBGRAPH_REF_TYPE) continue;
       if (q && !`${def.name} ${def.description ?? ''} ${def.category}`.toLowerCase().includes(q))
         continue;
       const list = map.get(def.category) ?? [];
@@ -35,15 +38,33 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
     return ordered;
   }, [defs, query]);
 
-  const addToCenter = (typeId: string) => {
+  // 项目内已打包的子图，按名称/描述参与同一个搜索框过滤
+  const subgraphs = useWorkflowStore((s) => s.subgraphs);
+  const addSubgraphRef = useWorkflowStore((s) => s.addSubgraphRefNode);
+  const removeSubgraph = useWorkflowStore((s) => s.removeSubgraph);
+  const renameSubgraph = useWorkflowStore((s) => s.renameSubgraph);
+  const [sgCollapsed, setSgCollapsed] = useState(false);
+
+  const subgraphList = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return Object.values(subgraphs)
+      .filter((sg) => !q || `${sg.name} ${sg.description ?? ''}`.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  }, [subgraphs, query]);
+
+  const centerPos = () => {
     const center = screenToFlowPosition({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
     });
-    addNode(typeId, {
+    return {
       x: center.x - 112 + Math.random() * 40 - 20,
       y: center.y - 40 + Math.random() * 40 - 20,
-    });
+    };
+  };
+
+  const addToCenter = (typeId: string) => {
+    addNode(typeId, centerPos());
   };
 
   const searchBox = (
@@ -77,7 +98,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       )}
       {embedded && <div className="border-b px-2 py-1.5" style={{ borderColor: 'var(--sm-line)' }}>{searchBox}</div>}
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {groups.length === 0 && (
+        {groups.length === 0 && subgraphList.length === 0 && (
           <p className="px-1 py-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
             无匹配节点
           </p>
@@ -126,6 +147,60 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
             </section>
           );
         })}
+
+        {/* 我的子图：把打包好的节点组合当作一个节点复用 */}
+        {subgraphList.length > 0 && (
+          <section className="mb-2">
+            <button className="sm-palette-cat" onClick={() => setSgCollapsed((v) => !v)}>
+              {sgCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              我的子图
+              <span className="ml-auto text-[10px] normal-case">{subgraphList.length}</span>
+            </button>
+            {!sgCollapsed && (
+              <ul className="mt-1 space-y-1">
+                {subgraphList.map((sg) => (
+                  <li
+                    key={sg.id}
+                    draggable
+                    onDragStart={(e) =>
+                      e.dataTransfer.setData(DND_MIME, `${SUBGRAPH_REF_TYPE}:${sg.id}`)
+                    }
+                    onClick={() => addSubgraphRef(sg.id, centerPos())}
+                    onDoubleClick={() => {
+                      const name = window.prompt('重命名子图', sg.name);
+                      if (name?.trim()) renameSubgraph(sg.id, name.trim());
+                    }}
+                    title={`${sg.nodes.length} 个步骤 · ${sg.inputs.length} 入 / ${sg.outputs.length} 出\n双击可重命名`}
+                    className="sm-palette-item group/sg relative"
+                  >
+                    <p
+                      className="flex items-center gap-1.5 pr-5 text-[13px]"
+                      style={{ color: 'var(--sm-ink)' }}
+                    >
+                      <Boxes size={12} style={{ color: 'var(--sm-ink-faint)' }} />
+                      <span className="truncate">{sg.name}</span>
+                    </p>
+                    <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                      {sg.nodes.length} 个步骤 · {sg.inputs.length} 入 / {sg.outputs.length} 出
+                    </p>
+                    <button
+                      className="absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
+                      style={{ color: 'var(--sm-ink-faint)' }}
+                      title="删除这个子图（画布上已放置的引用会失效）"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`删除子图「${sg.name}」？画布上已放置的引用会失效。`))
+                          removeSubgraph(sg.id);
+                      }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
       </div>
     </aside>
   );

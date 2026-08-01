@@ -5,6 +5,7 @@ import { useRegistryStore } from '../store/registryStore';
 import { getChannel } from '../agents/llmChannel';
 import { scopedStorage } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
+import { flattenSubgraphs, ownerRefId } from './subgraph';
 import {
   beginRun,
   cacheKey,
@@ -50,10 +51,27 @@ export interface RunOptions {
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const wf = useWorkflowStore.getState();
   if (wf.running) return;
-  const { nodes, edges, failFast } = wf;
-  if (nodes.length === 0) {
+  const { failFast } = wf;
+  if (wf.nodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
     return;
+  }
+
+  // 子图扁平化：把 subgraph.ref 节点就地展开成内部节点，
+  // 之后整条执行链路（拓扑/缓存/剪枝/增量）看到的都是一张普通扁平图。
+  let nodes: FlowNode[];
+  let edges: FlowEdge[];
+  try {
+    const flat = flattenSubgraphs(wf.nodes, wf.edges, wf.subgraphs);
+    nodes = flat.nodes;
+    edges = flat.edges;
+  } catch (err) {
+    wf.addLog('error', err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const expandedCount = nodes.length - wf.nodes.length;
+  if (expandedCount > 0) {
+    wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
   }
 
   const { layers, cyclic } = topoLayers(
@@ -84,6 +102,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 未显式 force 的增量运行：以当前 data.dirty 决定执行集
   const dirtySet = new Set(nodes.filter((n) => n.data.dirty).map((n) => n.id));
   for (const id of force) dirtySet.add(id);
+  // 子图展开出的虚拟节点不存在于画布，没有独立的脏标记与既有输出可复用，
+  // 一律视为「需执行」——真正的重复计算由 nodeCache 按 类型+参数+上游输出 拦截。
+  for (const n of nodes) {
+    if (ownerRefId(n.id)) dirtySet.add(n.id);
+  }
 
   currentAbort = new AbortController();
   const signal = currentAbort.signal;
@@ -230,6 +253,12 @@ async function executeNode(
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
 
+  // 子图展开出来的虚拟节点在画布上并不存在，把它的状态回写到承载它的 subgraph.ref 节点上，
+  // 这样用户能在画布上看到子图整体的运行/失败状态。
+  const owner = ownerRefId(id);
+  const setStatus: typeof store.setNodeStatus = (nid, status, patch) =>
+    store.setNodeStatus(owner ?? nid, status, patch);
+
   const incoming = edges.filter((e) => e.target === id);
 
   // 上游失败传染：直接标记失败，不执行（其下游会因 failed 集合被继续传染）
@@ -237,7 +266,7 @@ async function executeNode(
   if (upstreamFailed) {
     failed.add(id);
     branchState.set(id, new Set());
-    store.setNodeStatus(id, 'error', {
+    setStatus(id, 'error', {
       error: '上游节点失败，已跳过',
       startedAt: null,
       durationMs: null,
@@ -249,7 +278,7 @@ async function executeNode(
   if (!def || def.missing) {
     failed.add(id);
     branchState.set(id, new Set());
-    store.setNodeStatus(id, 'error', {
+    setStatus(id, 'error', {
       error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
     });
     return;
@@ -257,7 +286,7 @@ async function executeNode(
 
   // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
   if (!shouldRun && !forced) {
-    store.setNodeStatus(id, node.data.status === 'cached' ? 'cached' : (node.data.status ?? 'idle'));
+    setStatus(id, node.data.status === 'cached' ? 'cached' : (node.data.status ?? 'idle'));
     return;
   }
 
@@ -270,7 +299,7 @@ async function executeNode(
     });
     if (allBlocked) {
       branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
-      store.setNodeStatus(id, 'skipped', { startedAt: null, durationMs: null });
+      setStatus(id, 'skipped', { startedAt: null, durationMs: null });
       return;
     }
   }
@@ -278,7 +307,7 @@ async function executeNode(
   // 裁剪：stopAfter 节点的下游不再执行（其本身已执行完毕）
   if (cutSet.has(id)) {
     branchState.set(id, new Set());
-    store.setNodeStatus(id, 'skipped', { startedAt: null, durationMs: null });
+    setStatus(id, 'skipped', { startedAt: null, durationMs: null });
     return;
   }
 
@@ -292,7 +321,7 @@ async function executeNode(
       // 命中缓存的普通节点视为全部输出端口激活
       branchState.set(id, new Set(def.outputs.map((o) => o.id)));
       countSkip();
-      store.setNodeStatus(id, 'cached', {
+      setStatus(id, 'cached', {
         outputs: cached,
         startedAt: null,
         durationMs: null,
@@ -345,9 +374,10 @@ async function executeNode(
       }
     },
     setPartial: (key, value) => {
+      const target = owner ?? id;
       const cur =
-        useWorkflowStore.getState().nodes.find((n) => n.id === id)?.data.outputs ?? {};
-      useWorkflowStore.getState().setNodeStatus(id, 'running', {
+        useWorkflowStore.getState().nodes.find((n) => n.id === target)?.data.outputs ?? {};
+      setStatus(id, 'running', {
         outputs: { ...cur, [key]: value },
       });
     },
@@ -360,7 +390,7 @@ async function executeNode(
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
   };
 
-  store.setNodeStatus(id, 'running');
+  setStatus(id, 'running');
   const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');
   if (isAgent) {
     store.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
@@ -381,7 +411,7 @@ async function executeNode(
         ? new Set(branchesTaken)
         : new Set(def.outputs.map((o) => o.id)),
     );
-    store.setNodeStatus(id, 'success', {
+    setStatus(id, 'success', {
       outputs: outputs ?? {},
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
@@ -392,7 +422,7 @@ async function executeNode(
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);
     branchState.set(id, new Set()); // 失败节点视为屏蔽下游
-    store.setNodeStatus(id, 'error', {
+    setStatus(id, 'error', {
       error: message,
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),

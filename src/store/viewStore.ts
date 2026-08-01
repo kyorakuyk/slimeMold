@@ -4,8 +4,8 @@ import { persist } from 'zustand/middleware';
 interface ViewState {
   showGrid: boolean;
   showMinimap: boolean;
-  /** 鼠标模式：move=拖动画布 / select=框选节点（ComfyUI 风格） */
-  interactionMode: 'move' | 'select';
+  /** 鼠标模式：move=拖动画布 / select=框选节点 / click=点击选中（不拖动、不框选） */
+  interactionMode: 'move' | 'select' | 'click';
   /** 拆分视图：画布右侧并排显示辅助面板 */
   splitView: boolean;
   /** 底侧边栏（底部面板）开关状态，持久化以记住上次选择 */
@@ -18,7 +18,7 @@ interface ViewState {
   splitWfId: string;
   toggleGrid: () => void;
   toggleMinimap: () => void;
-  setInteractionMode: (mode: 'move' | 'select') => void;
+  setInteractionMode: (mode: 'move' | 'select' | 'click') => void;
   toggleSplit: () => void;
   togglePanel: () => void;
   setPanelH: (h: number) => void;

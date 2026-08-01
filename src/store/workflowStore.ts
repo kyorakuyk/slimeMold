@@ -14,11 +14,13 @@ import type {
   FlowEdge,
   FlowNode,
   LogEntry,
+  NodeGroup,
   NodeStatus,
   PortType,
   ProjectFile,
   RoleTemplate,
   RunRecord,
+  SubgraphDef,
   WorkflowFile,
   WorkflowFileNode,
   WorkflowFileEdge,
@@ -26,7 +28,8 @@ import type {
 } from '../types';
 import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
-import { getNodeDef } from './registryStore';
+import { useRegistryStore, getNodeDef } from './registryStore';
+import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
 
 interface WorkflowState {
@@ -62,6 +65,10 @@ interface WorkflowState {
   workflows: Record<string, WorkflowFile>;
   /** 当前激活的工作流 id */
   activeWfId: string;
+  /** 项目级子图库（可复用节点组合） */
+  subgraphs: Record<string, SubgraphDef>;
+  /** 当前工作流的节点组（纯视觉编组） */
+  groups: NodeGroup[];
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
@@ -135,9 +142,38 @@ interface WorkflowState {
   /** 将指定工作流的图（节点/连线）写回 workflows 字典，保留其余字段（用于拆分视图分栏编辑） */
   updateWorkflowGraph: (id: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
 
+  /* ---- 子图（方案 A：引用节点 + 执行期扁平化） ---- */
+  /** 把选中的一批节点打包成子图，并用一个 subgraph.ref 节点替换它们。返回新子图 id */
+  packSelectionAsSubgraph: (nodeIds: string[], name: string) => string | null;
+  /** 就地展开一个 subgraph.ref 节点，把子图内容还原成普通节点（解组） */
+  unpackSubgraphNode: (refNodeId: string) => void;
+  /** 在画布上放置一个引用指定子图的 subgraph.ref 节点（节点库拖放/点击时调用） */
+  addSubgraphRefNode: (subgraphId: string, position: { x: number; y: number }) => void;
+  /** 用当前画布内容覆盖保存某个子图定义（子图编辑模式保存时调用） */
+  saveSubgraphDef: (def: SubgraphDef) => void;
+  /** 删除一个子图定义（画布上已有的引用节点会变为缺失态） */
+  removeSubgraph: (id: string) => void;
+  /** 重命名子图 */
+  renameSubgraph: (id: string, name: string) => void;
+
+  /* ---- 节点组（方案 B：纯视觉编组） ---- */
+  /** 把一批节点编为一组，返回组 id */
+  createGroup: (nodeIds: string[], title?: string) => string | null;
+  /** 解散一个组（节点保留） */
+  removeGroup: (groupId: string) => void;
+  /** 修改组属性（标题/颜色/折叠/成员） */
+  updateGroup: (groupId: string, patch: Partial<Omit<NodeGroup, 'id'>>) => void;
+  /** 折叠/展开一个组 */
+  toggleGroupCollapsed: (groupId: string) => void;
+  /** 整体平移一个组内所有节点 */
+  moveGroup: (groupId: string, dx: number, dy: number) => void;
+
   /** 打开/关闭示例库次级窗口 */
   setExamplesOpen: (open: boolean) => void;
 }
+
+/** 组框预设配色（创建时轮换取用） */
+const GROUP_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
 
 function defaultParams(typeId: string): Record<string, unknown> {
   const def = getNodeDef(typeId);
@@ -204,6 +240,7 @@ function serializeCurrent(s: {
   agents: AgentConfig[];
   roles: RoleTemplate[];
   variables: Record<string, unknown>;
+  groups?: NodeGroup[];
 }): WorkflowFile {
   return {
     version: 1,
@@ -226,6 +263,7 @@ function serializeCurrent(s: {
     agents: s.agents,
     roles: s.roles,
     variables: s.variables,
+    groups: s.groups ?? [],
   };
 }
 
@@ -252,6 +290,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       projectPath: null,
       workflows: {},
       activeWfId: '',
+      subgraphs: {},
+      groups: [],
 
       onNodesChange: (changes) => {
         set({ nodes: applyNodeChanges(changes, get().nodes) });
@@ -270,10 +310,17 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       onConnect: (conn) => {
         if (!conn.source || !conn.target) return;
-        const srcDef = getNodeDef(conn.source);
-        const tgtDef = getNodeDef(conn.target);
-        const srcName = srcDef?.name ?? conn.source;
-        const tgtName = tgtDef?.name ?? conn.target;
+        // 注意：端口须按「节点实例」解析——普通节点取自类型定义，
+        // 子图引用节点（subgraph.ref）的端口是动态的，取自其引用的子图定义。
+        const nodesNow = get().nodes;
+        const srcNode = nodesNow.find((n) => n.id === conn.source);
+        const tgtNode = nodesNow.find((n) => n.id === conn.target);
+        const defs = useRegistryStore.getState().defs;
+        const sgs = get().subgraphs;
+        const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, sgs);
+        const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, sgs);
+        const srcName = srcNode?.data.label ?? srcDef.name;
+        const tgtName = tgtNode?.data.label ?? tgtDef.name;
 
         if (wouldCreateCycle(conn.source, conn.target, get().edges)) {
           get().addLog(
@@ -283,13 +330,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
         // 端口类型校验：source 输出端口类型须与 target 输入端口类型兼容
-        const srcPort = srcDef?.outputs.find((o) => o.id === conn.sourceHandle);
-        const tgtPort = tgtDef?.inputs.find((i) => i.id === conn.targetHandle);
+        const srcPort = srcDef.outputs.find((o) => o.id === conn.sourceHandle);
+        const tgtPort = tgtDef.inputs.find((i) => i.id === conn.targetHandle);
         const srcType: PortType | undefined = srcPort?.type;
         const tgtType: PortType | undefined = tgtPort?.type;
         if (!arePortsCompatible(srcType, tgtType)) {
           // 在目标节点上找一个兼容的输入端口，给出更友好的引导
-          const suggest = tgtDef?.inputs.find((i) =>
+          const suggest = tgtDef.inputs.find((i) =>
             arePortsCompatible(srcType, i.type),
           );
           const srcLabel = srcPort?.label ?? '输出';
@@ -356,7 +403,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       clearGraph: () =>
-        set({ nodes: [], edges: [], selectedNodeId: null, logs: [] }),
+        set({ nodes: [], edges: [], groups: [], selectedNodeId: null, logs: [] }),
 
       updateNodeParams: (id, patch, wfId) => {
         // 未指定 wfId 或作用于激活工作流
@@ -599,6 +646,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...(wf.roles ?? []).filter((r) => !r.builtin),
           ],
           variables: wf.variables ?? {},
+          subgraphs: file.subgraphs ?? {},
+          groups: wf.groups ?? [],
           selectedNodeId: null,
           logs: [],
         });
@@ -629,6 +678,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           agents: s.agents,
           roles: s.roles,
           variables: s.variables,
+          groups: s.groups,
         };
         const workflows = { ...s.workflows };
         if (s.activeWfId) workflows[s.activeWfId] = current;
@@ -646,6 +696,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           activeId: s.activeWfId || Object.keys(workflows)[0],
           roles: s.roles,
           variables: s.variables,
+          subgraphs: s.subgraphs,
         };
         const { saveProjectFile } = await import('../io/projectIO');
         const path = await saveProjectFile(file);
@@ -671,6 +722,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           agents: target.agents?.length ? target.agents : s.agents,
           roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
           variables: target.variables ?? {},
+          groups: target.groups ?? [],
           selectedNodeId: null,
           logs: [],
         });
@@ -697,6 +749,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: {},
           workspaceDir: workspaceDir ?? null,
           assets: [],
+          groups: [],
         };
         workflows[id] = wf;
         set({
@@ -708,6 +761,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           agents: wf.agents,
           roles: wf.roles!,
           variables: wf.variables!,
+          groups: [],
           selectedNodeId: null,
           logs: [],
         });
@@ -822,6 +876,262 @@ export const useWorkflowStore = create<WorkflowState>()(
           },
         });
       },
+
+      /* ---------- 子图 ---------- */
+
+      packSelectionAsSubgraph: (nodeIds, name) => {
+        const s = get();
+        const idSet = new Set(nodeIds);
+        const selected = s.nodes.filter((n) => idSet.has(n.id));
+        if (selected.length === 0) {
+          s.addLog('error', '请先选中要打包的节点');
+          return null;
+        }
+        if (selected.some((n) => n.data.typeId === SUBGRAPH_REF_TYPE)) {
+          s.addLog('error', '暂不支持把已有的子图节点再次打包，请先展开它');
+          return null;
+        }
+
+        const defs = useRegistryStore.getState().defs;
+        const sg = packSubgraph(name || '未命名子图', selected, s.edges, defs);
+
+        // ref 节点落在选区的几何中心
+        const cx = selected.reduce((a, n) => a + n.position.x, 0) / selected.length;
+        const cy = selected.reduce((a, n) => a + n.position.y, 0) / selected.length;
+        const refId = crypto.randomUUID();
+        const refNode: FlowNode = {
+          id: refId,
+          type: 'base',
+          position: { x: cx, y: cy },
+          data: {
+            typeId: SUBGRAPH_REF_TYPE,
+            label: sg.name,
+            params: { subgraphId: sg.id },
+            status: 'idle',
+            dirty: true,
+          },
+        };
+
+        // 跨边界连线重定向到 ref 节点的对外端口；选区内部连线随节点一起移除
+        const inByInner = new Map(sg.inputs.map((p) => [`${p.innerNodeId}|${p.innerHandle}`, p.id]));
+        const outByInner = new Map(
+          sg.outputs.map((p) => [`${p.innerNodeId}|${p.innerHandle}`, p.id]),
+        );
+        const edges: FlowEdge[] = [];
+        for (const e of s.edges) {
+          const srcIn = idSet.has(e.source);
+          const dstIn = idSet.has(e.target);
+          if (srcIn && dstIn) continue; // 内部连线：已随子图带走
+          if (!srcIn && !dstIn) {
+            edges.push(e);
+            continue;
+          }
+          if (dstIn) {
+            const handle = inByInner.get(`${e.target}|${e.targetHandle ?? ''}`);
+            if (!handle) continue;
+            edges.push({ ...e, target: refId, targetHandle: handle });
+          } else {
+            const handle = outByInner.get(`${e.source}|${e.sourceHandle ?? ''}`);
+            if (!handle) continue;
+            edges.push({ ...e, source: refId, sourceHandle: handle });
+          }
+        }
+
+        set({
+          subgraphs: { ...s.subgraphs, [sg.id]: sg },
+          nodes: [...s.nodes.filter((n) => !idSet.has(n.id)), refNode],
+          edges,
+          // 被打包的节点若在某个组里，把组内成员一并清理
+          groups: s.groups
+            .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((id) => !idSet.has(id)) }))
+            .filter((g) => g.nodeIds.length > 0),
+          selectedNodeId: refId,
+        });
+        s.addLog(
+          'info',
+          `已打包 ${selected.length} 个节点为子图「${sg.name}」（${sg.inputs.length} 入 / ${sg.outputs.length} 出）`,
+        );
+        return sg.id;
+      },
+
+      unpackSubgraphNode: (refNodeId) => {
+        const s = get();
+        const ref = s.nodes.find((n) => n.id === refNodeId);
+        if (!ref || ref.data.typeId !== SUBGRAPH_REF_TYPE) return;
+        const sg = s.subgraphs[String(ref.data.params?.subgraphId ?? '')];
+        if (!sg) {
+          s.addLog('error', '这个子图的定义已丢失，无法展开');
+          return;
+        }
+
+        // 内部节点重新分配 id，避免与画布上已有节点（含同一子图的其他实例）冲突
+        const idMap = new Map<string, string>();
+        for (const n of sg.nodes) idMap.set(n.id, crypto.randomUUID());
+
+        const newNodes: FlowNode[] = sg.nodes.map((n) => ({
+          id: idMap.get(n.id)!,
+          type: 'base',
+          position: { x: ref.position.x + n.position.x * 0.35, y: ref.position.y + n.position.y * 0.35 },
+          data: {
+            typeId: n.typeId,
+            label: n.label,
+            params: { ...n.params },
+            status: 'idle' as NodeStatus,
+            dirty: true,
+          },
+        }));
+        const newEdges: FlowEdge[] = sg.edges.map((e) => ({
+          id: crypto.randomUUID(),
+          source: idMap.get(e.source)!,
+          sourceHandle: e.sourceHandle ?? undefined,
+          target: idMap.get(e.target)!,
+          targetHandle: e.targetHandle ?? undefined,
+        }));
+
+        // 原先接在 ref 节点上的外部连线，改接到对应的内部节点端口
+        const inPort = new Map(sg.inputs.map((p) => [p.id, p]));
+        const outPort = new Map(sg.outputs.map((p) => [p.id, p]));
+        for (const e of s.edges) {
+          if (e.target === refNodeId) {
+            const p = inPort.get(e.targetHandle ?? '');
+            if (!p) continue;
+            newEdges.push({
+              ...e,
+              id: crypto.randomUUID(),
+              target: idMap.get(p.innerNodeId)!,
+              targetHandle: p.innerHandle ?? undefined,
+            });
+          } else if (e.source === refNodeId) {
+            const p = outPort.get(e.sourceHandle ?? '');
+            if (!p) continue;
+            newEdges.push({
+              ...e,
+              id: crypto.randomUUID(),
+              source: idMap.get(p.innerNodeId)!,
+              sourceHandle: p.innerHandle ?? undefined,
+            });
+          } else {
+            newEdges.push(e);
+          }
+        }
+
+        set({
+          nodes: [...s.nodes.filter((n) => n.id !== refNodeId), ...newNodes],
+          edges: newEdges,
+          selectedNodeId: newNodes[0]?.id ?? null,
+        });
+        s.addLog('info', `已展开子图「${sg.name}」，还原为 ${newNodes.length} 个节点`);
+      },
+
+      addSubgraphRefNode: (subgraphId, position) => {
+        const s = get();
+        const sg = s.subgraphs[subgraphId];
+        if (!sg) return;
+        const node: FlowNode = {
+          id: crypto.randomUUID(),
+          type: 'base',
+          position,
+          data: {
+            typeId: SUBGRAPH_REF_TYPE,
+            label: sg.name,
+            params: { subgraphId },
+            status: 'idle',
+            dirty: true,
+          },
+        };
+        set({ nodes: [...s.nodes, node], selectedNodeId: node.id });
+      },
+
+      saveSubgraphDef: (def) => {
+        const s = get();
+        // 保存时按最新内容重新推断对外端口
+        const { inputs, outputs } = inferPorts(def.nodes, def.edges, useRegistryStore.getState().defs);
+        const next: SubgraphDef = {
+          ...def,
+          inputs,
+          outputs,
+          updatedAt: new Date().toISOString(),
+        };
+        set({ subgraphs: { ...s.subgraphs, [def.id]: next } });
+      },
+
+      removeSubgraph: (id) => {
+        const s = get();
+        const rest = { ...s.subgraphs };
+        delete rest[id];
+        set({ subgraphs: rest });
+      },
+
+      renameSubgraph: (id, name) => {
+        const s = get();
+        const sg = s.subgraphs[id];
+        if (!sg) return;
+        set({
+          subgraphs: { ...s.subgraphs, [id]: { ...sg, name, updatedAt: new Date().toISOString() } },
+          // 画布上未被用户改过名的引用节点跟随更新
+          nodes: s.nodes.map((n) =>
+            n.data.typeId === SUBGRAPH_REF_TYPE &&
+            n.data.params?.subgraphId === id &&
+            n.data.label === sg.name
+              ? { ...n, data: { ...n.data, label: name } }
+              : n,
+          ),
+        });
+      },
+
+      /* ---------- 节点组 ---------- */
+
+      createGroup: (nodeIds, title) => {
+        const s = get();
+        const valid = nodeIds.filter((id) => s.nodes.some((n) => n.id === id));
+        if (valid.length === 0) {
+          s.addLog('error', '请先选中要编组的节点');
+          return null;
+        }
+        // 一个节点只属于一个组：先从旧组里摘出去
+        const cleaned = s.groups
+          .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((id) => !valid.includes(id)) }))
+          .filter((g) => g.nodeIds.length > 0);
+        const group: NodeGroup = {
+          id: `grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          title: title || `分组 ${cleaned.length + 1}`,
+          nodeIds: valid,
+          color: GROUP_COLORS[cleaned.length % GROUP_COLORS.length],
+          collapsed: false,
+        };
+        set({ groups: [...cleaned, group] });
+        s.addLog('info', `已把 ${valid.length} 个节点编为「${group.title}」`);
+        return group.id;
+      },
+
+      removeGroup: (groupId) =>
+        set({ groups: get().groups.filter((g) => g.id !== groupId) }),
+
+      updateGroup: (groupId, patch) =>
+        set({
+          groups: get().groups.map((g) => (g.id === groupId ? { ...g, ...patch } : g)),
+        }),
+
+      toggleGroupCollapsed: (groupId) =>
+        set({
+          groups: get().groups.map((g) =>
+            g.id === groupId ? { ...g, collapsed: !g.collapsed } : g,
+          ),
+        }),
+
+      moveGroup: (groupId, dx, dy) => {
+        const s = get();
+        const g = s.groups.find((x) => x.id === groupId);
+        if (!g) return;
+        const member = new Set(g.nodeIds);
+        set({
+          nodes: s.nodes.map((n) =>
+            member.has(n.id)
+              ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+              : n,
+          ),
+        });
+      },
     }),
     {
       name: 'slime-mold-workflow',
@@ -838,6 +1148,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         llmChannel: s.llmChannel,
         variables: s.variables,
         runHistory: s.runHistory,
+        subgraphs: s.subgraphs,
+        groups: s.groups,
       }),
     },
   ),

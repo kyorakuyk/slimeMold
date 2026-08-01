@@ -7,6 +7,8 @@ const ROWS: [string, string][] = [
   ['Ctrl/Cmd + =', '放大视图'],
   ['Ctrl/Cmd + -', '缩小视图'],
   ['Shift + 1', '适配窗口'],
+  ['Ctrl/Cmd + G', '把选中节点编为一组'],
+  ['Ctrl/Cmd + Shift + G', '把选中节点打包为子图'],
   ['Delete / Backspace', '删除选中节点'],
   ['Esc', '关闭菜单 / 弹窗'],
 ];

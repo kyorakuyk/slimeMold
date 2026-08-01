@@ -33,6 +33,7 @@
   --pt-boolean: #e03131;
   --pt-list: #1c7ed6;
   --pt-json: #9b59d0;
+  --pt-image: #0891b2;
   --pt-any: #8a8a8a;
 }
 
@@ -68,6 +69,7 @@
   --pt-boolean: #ff6b6b;
   --pt-list: #4dabf7;
   --pt-json: #b197fc;
+  --pt-image: #22d3ee;
   --pt-any: #8a8a8a;
 }
 
@@ -537,6 +539,87 @@ textarea.sm-input {
   font-style: italic;
 }
 
+/* 折叠态分组卡片：视觉风格对齐普通节点（同 .sm-node 外壳 + 分类配色标题条） */
+.sm-group-collapsed {
+  border-radius: 9px;
+  border: 1px solid var(--sm-line);
+  background: var(--sm-bg-soft);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  min-width: 168px;
+  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.sm-group-collapsed:hover {
+  border-color: color-mix(in srgb, var(--sm-line) 50%, var(--sm-accent-soft));
+}
+.sm-group-collapsed.selected {
+  border-color: var(--sm-accent);
+  box-shadow: 0 0 0 1px var(--sm-accent), 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+/* 标题条：组色圆点（对应 .sm-node-dot）+ 组色渐变标题（对应 .sm-node-header） */
+.sm-group-collapsed .sm-group-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #fff;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--grp) 88%, #000 0%), color-mix(in srgb, var(--grp) 72%, #000 0%));
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+}
+.sm-group-collapsed .sm-group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  flex: none;
+}
+.sm-group-collapsed .sm-group-title {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-group-collapsed .sm-group-cat {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.85;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* 折叠态的展开按钮：明显可点（白底描边 + 文字标签） */
+.sm-group-collapsed .sm-group-expand-btn {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--grp, #6366f1);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.08s ease, background 0.12s ease;
+}
+.sm-group-collapsed .sm-group-expand-btn:hover {
+  background: #fff;
+  transform: translateY(-1px);
+}
+.sm-group-collapsed .sm-group-expand-btn:active {
+  transform: translateY(0);
+}
+.sm-group-collapsed .sm-group-body {
+  padding: 9px 11px;
+  font-size: 12px;
+  color: var(--sm-ink-soft);
+}
+.sm-group-collapsed .sm-group-count {
+  color: var(--sm-ink-faint);
+}
+
 /* ---------- 放大端口锚点（易点，ComfyUI 实心圆点） ---------- */
 .react-flow__handle {
   width: 12px;
@@ -565,6 +648,7 @@ textarea.sm-input {
 .react-flow__handle[data-porttype='boolean'] { background: var(--pt-boolean); color: var(--pt-boolean); }
 .react-flow__handle[data-porttype='list'] { background: var(--pt-list); color: var(--pt-list); }
 .react-flow__handle[data-porttype='json'] { background: var(--pt-json); color: var(--pt-json); }
+.react-flow__handle[data-porttype='image'] { background: var(--pt-image); color: var(--pt-image); }
 .react-flow__handle[data-porttype='any'] { background: var(--pt-any); color: var(--pt-any); }
 
 /* ---------- 小地图节点按分类配色 ---------- */

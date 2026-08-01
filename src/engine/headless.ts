@@ -217,6 +217,8 @@ export async function runWorkflowHeadless(
           },
           storage: scopedStorage('core'),
           vars,
+          assets: [] as never,
+          addAsset: () => {},
         };
 
         const inputs = collectInputs(id, edges, outputsMap);
