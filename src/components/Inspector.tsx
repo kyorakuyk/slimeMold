@@ -1,9 +1,11 @@
-import { Boxes, Trash2, Ungroup } from 'lucide-react';
+import { Boxes, Trash2, Ungroup, Download, FolderOpen } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
+import { useViewStore } from '../store/viewStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { isTauri } from '../platform/env';
+import { isTauri, downloadBlob } from '../platform/env';
+import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef, FlowNode } from '../types';
 
 function ParamField({
@@ -179,6 +181,11 @@ export default function Inspector({ width = 288 }: { width?: number }) {
   const focusWfId = useWorkflowStore((s) => s.focusWfId);
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
   const workflows = useWorkflowStore((s) => s.workflows);
+  const inspectAssetId = useViewStore((s) => s.inspectAssetId);
+  const setInspectAsset = useViewStore((s) => s.setInspectAsset);
+  const removeAsset = useWorkflowStore((s) => s.removeAsset);
+  const addLog = useWorkflowStore((s) => s.addLog);
+  const isTauri = typeof (window as any).__TAURI__ !== 'undefined';
   // 焦点节点可能在激活工作流，也可能在拆分视图所显示的其他工作流中
   const focusIsActive = !focusWfId || focusWfId === activeWfId;
   const node = useWorkflowStore((s) =>
@@ -209,6 +216,83 @@ export default function Inspector({ width = 288 }: { width?: number }) {
       : undefined,
   );
   const unpackSubgraph = useWorkflowStore((s) => s.unpackSubgraphNode);
+
+  // 资产详情视图：点击资产文件时在右侧栏展示（复用 Inspector 容器）
+  const asset = inspectAssetId
+    ? useWorkflowStore.getState().workflows[activeWfId]?.assets?.find((a) => a.id === inspectAssetId)
+    : undefined;
+  if (asset) {
+    const openInExplorer = async () => {
+      if (!asset.path || !isTauri) return;
+      const winPath = asset.path.replace(/\//g, '\\');
+      const dir = winPath.includes('\\') ? winPath.slice(0, winPath.lastIndexOf('\\')) : winPath;
+      try {
+        await revealItemInDir(winPath);
+      } catch (err1) {
+        console.error('revealItemInDir 失败', err1);
+        try {
+          await openPath(dir);
+        } catch (err2) {
+          console.error('openPath 失败', err2);
+          window.alert(`无法打开文件夹：\n${winPath}`);
+        }
+      }
+    };
+    const fmtBytes = (c: string) => {
+      const b = new TextEncoder().encode(c).length;
+      if (b < 1024) return `${b} B`;
+      if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+      return `${(b / 1024 / 1024).toFixed(2)} MB`;
+    };
+    return (
+      <aside className="flex h-full shrink-0 flex-col border-l" style={{ width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)' }}>
+        <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
+          <div className="min-w-0">
+            <h2 className="truncate text-[13px] font-semibold text-ink" title={asset.name}>{asset.name}</h2>
+            <p className="mt-0.5 text-[11px] text-ink-faint">资产 · {asset.kind}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title="下载 / 导出" onClick={() => downloadBlob(asset.name, asset.content, asset.kind === 'image' ? 'image/png' : 'text/plain')}>
+              <Download size={14} />
+            </button>
+            {asset.path && isTauri && (
+              <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title="在文件管理器中打开" onClick={openInExplorer}>
+                <FolderOpen size={14} />
+              </button>
+            )}
+            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-err" title="删除资产" onClick={() => { removeAsset(asset.id); setInspectAsset(null); }}>
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+          <div className="grid grid-cols-2 gap-2 text-[11px] text-ink-soft">
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">类型：{asset.kind}</div>
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">大小：{fmtBytes(asset.content)}</div>
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">来源：{asset.inWorkspace ? '工作区文件' : '工作流内资产'}</div>
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">创建：{new Date(asset.createdAt).toLocaleString()}</div>
+          </div>
+          {asset.path && (
+            <div>
+              <label className="mb-1 block text-xs text-ink-soft">磁盘路径</label>
+              <p className="break-all rounded border border-line bg-white px-2.5 py-2 text-[11px] leading-relaxed text-ink-faint">{asset.path}</p>
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-xs text-ink-soft">内容预览</label>
+            {asset.kind === 'image' ? (
+              <img src={asset.content.startsWith('data:') ? asset.content : `data:image/png;base64,${asset.content}`} alt={asset.name} className="max-w-full rounded border border-line" />
+            ) : (
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded border border-line bg-white px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">{asset.content}</pre>
+            )}
+          </div>
+          <button className="sm-btn w-full justify-center text-[12px]" onClick={() => setInspectAsset(null)} title="返回节点属性视图">
+            返回节点视图
+          </button>
+        </div>
+      </aside>
+    );
+  }
 
   if (!resolvedNode || !selectedId) {
     return (

@@ -18,6 +18,7 @@
   --sm-panel: #fbfaf8;
   --sm-ok: #2f9e44;
   --sm-err: #e03131;
+  --sm-run: #e0a200;
 
   /* 节点分类配色（ComfyUI 风格） */
   --cat-input: #2f9e44;
@@ -54,6 +55,7 @@
   --sm-panel: #1f1f1f;
   --sm-ok: #4ecb71;
   --sm-err: #f16363;
+  --sm-run: #f5b301;
 
   /* 节点分类配色（深色下略提亮，与浅色同语义） */
   --cat-input: #51cf66;
@@ -90,6 +92,7 @@
   --sm-panel: #fbfaf8;
   --sm-ok: #2f9e44;
   --sm-err: #e03131;
+  --sm-run: #e0a200;
 
   /* 节点分类配色 */
   --cat-input: #2f9e44;
@@ -530,8 +533,8 @@ textarea.sm-input {
 }
 /* 节点执行态：整体霓虹描边 + 光晕 + 脉冲 */
 .sm-node[data-status='running'] {
-  border-color: var(--sm-accent);
-  box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 22px color-mix(in srgb, var(--sm-accent) 50%, transparent);
+  border-color: var(--sm-run);
+  box-shadow: 0 0 0 1.5px var(--sm-run), 0 0 22px color-mix(in srgb, var(--sm-run) 50%, transparent);
   animation: sm-node-pulse 1.4s ease-in-out infinite;
 }
 .sm-node[data-status='success'] {
@@ -552,8 +555,8 @@ textarea.sm-input {
   filter: saturate(0.7);
 }
 @keyframes sm-node-pulse {
-  0%, 100% { box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 16px color-mix(in srgb, var(--sm-accent) 36%, transparent); }
-  50% { box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 26px color-mix(in srgb, var(--sm-accent) 60%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 1.5px var(--sm-run), 0 0 16px color-mix(in srgb, var(--sm-run) 36%, transparent); }
+  50% { box-shadow: 0 0 0 1.5px var(--sm-run), 0 0 26px color-mix(in srgb, var(--sm-run) 60%, transparent); }
 }
 @keyframes sm-node-shake {
   0%, 100% { transform: translateX(0); }
@@ -579,7 +582,7 @@ textarea.sm-input {
 }
 /* 执行态时标题条注入状态色 */
 .sm-node[data-status='running'] .sm-node-header {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--sm-accent) 82%, #04070d 18%), color-mix(in srgb, var(--sm-accent) 52%, #04070d 48%));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--sm-run) 82%, #04070d 18%), color-mix(in srgb, var(--sm-run) 52%, #04070d 48%));
 }
 .sm-node[data-status='success'] .sm-node-header {
   background: linear-gradient(90deg, color-mix(in srgb, var(--sm-ok) 80%, #04070d 20%), color-mix(in srgb, var(--sm-ok) 50%, #04070d 50%));

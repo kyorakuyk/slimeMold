@@ -58,6 +58,8 @@ interface ViewState {
   splitWfId: string;
   /** 当前正在编辑的子图作用域 id（双击折叠组进入子图；null=父图） */
   focusedSubgraphId: string | null;
+  /** 当前在右侧 Inspector 中查看的资产 id（null=查看节点信息） */
+  inspectAssetId: string | null;
   toggleGrid: () => void;
   toggleMinimap: () => void;
   setInteractionMode: (mode: 'move' | 'select' | 'click') => void;
@@ -67,6 +69,7 @@ interface ViewState {
   toggleInspector: () => void;
   setSplitWfId: (id: string) => void;
   setFocusedSubgraph: (id: string | null) => void;
+  setInspectAsset: (id: string | null) => void;
   setTheme: (t: ThemeMode) => void;
   /** 当前实际生效的主题（system 时按系统偏好解析为 dark/light） */
   effectiveTheme: () => 'dark' | 'light';
@@ -85,6 +88,7 @@ export const useViewStore = create<ViewState>()(
       inspectorOpen: true,
       splitWfId: '',
       focusedSubgraphId: null,
+      inspectAssetId: null,
       globalProxyUrl: '',
       toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
       toggleMinimap: () => set((s) => ({ showMinimap: !s.showMinimap })),
@@ -95,6 +99,7 @@ export const useViewStore = create<ViewState>()(
       toggleInspector: () => set((s) => ({ inspectorOpen: !s.inspectorOpen })),
       setSplitWfId: (id) => set({ splitWfId: id }),
       setFocusedSubgraph: (id) => set({ focusedSubgraphId: id }),
+      setInspectAsset: (id) => set({ inspectAssetId: id }),
       setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
       setTheme: (t) => {
         applyTheme(t);

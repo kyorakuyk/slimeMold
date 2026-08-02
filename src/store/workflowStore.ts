@@ -885,6 +885,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!s.activeWfId) return;
         const wf = s.workflows[s.activeWfId];
         if (!wf?.assets) return;
+        // 找到待删资产，记录落盘路径以便一并删除磁盘文件
+        const target = wf.assets.find((a) => a.id === assetId);
         set({
           workflows: {
             ...s.workflows,
@@ -894,6 +896,18 @@ export const useWorkflowStore = create<WorkflowState>()(
             },
           },
         });
+        // 删除磁盘上的实际文件（path 为 null 表示未真正落盘，仅删记录）
+        if (target?.path) {
+          (async () => {
+            try {
+              const fs = await import('@tauri-apps/plugin-fs');
+              await fs.remove(target.path as string);
+              s.addLog('info', `已删除资产文件：${target.path}`);
+            } catch (err) {
+              s.addLog('warn', `删除资产文件失败（记录已移除）：${err instanceof Error ? err.message : String(err)}`);
+            }
+          })();
+        }
       },
 
       renameWorkflow: (name) => {

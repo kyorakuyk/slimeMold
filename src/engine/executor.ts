@@ -372,6 +372,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   };
   useWorkflowStore.getState().pushRunHistory(rec);
 
+  // 非循环工作流 + 正常跑完（无失败、未被手动停止）：将「运行指针」回退到第一个节点，
+  // 使「开始」键可立刻跑下一个任务。循环工作流（hasLoop=true）依赖上一轮输出作为下一轮输入，
+  // 指针不回退；失败 / 手动停止需用户介入，也不回退。
+  const finishedClean = !hasLoop && failed.size === 0 && !signal.aborted;
+  if (finishedClean) {
+    const firstId = stages[0]?.[0] ?? nodes[0]?.id;
+    if (firstId && firstId !== store.selectedNodeId) {
+      store.setSelected(firstId, store.activeWfId);
+    }
+    store.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+  }
+
   store.setRunning(false);
   currentAbort = null;
 }
