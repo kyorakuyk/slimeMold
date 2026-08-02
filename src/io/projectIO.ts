@@ -126,7 +126,7 @@ export function clearLastSession() {
 export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
   let root = existingRoot;
   if (!root) {
-    if (isTauri()) {
+    if (isTauri) {
       const picked = await showSaveDirDialog(file.name);
       if (!picked) throw new Error('已取消保存');
       root = picked;
@@ -145,7 +145,7 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
   const wfDir = joinPath(cfg, WORKFLOWS_DIR);
   const runsDir = joinPath(cfg, RUNS_DIR);
 
-  if (isTauri()) {
+  if (isTauri) {
     const { mkdir, writeTextFile, exists } = await import('@tauri-apps/plugin-fs');
     await mkdir(cfg, { recursive: true });
     await mkdir(wfDir, { recursive: true });
@@ -190,7 +190,7 @@ async function readTextTauri(path: string): Promise<string> {
 async function loadFromDir(root: string): Promise<ProjectFile | null> {
   const cfg = joinPath(root, SLIMEMOLD_DIR);
   const projectJsonPath = joinPath(cfg, PROJECT_JSON);
-  if (isTauri()) {
+  if (isTauri) {
     const { exists, readDir } = await import('@tauri-apps/plugin-fs');
     if (!(await exists(projectJsonPath))) return null;
     const text = await readTextTauri(projectJsonPath);
@@ -228,7 +228,7 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
 /** 兼容旧版单文件 .smproj。 */
 async function loadFromLegacy(path: string): Promise<ProjectFile | null> {
   let text: string;
-  if (isTauri()) {
+  if (isTauri) {
     text = await readTextTauri(path);
   } else {
     const raw = localStorage.getItem('sm.project');
@@ -247,7 +247,7 @@ async function loadFromLegacy(path: string): Promise<ProjectFile | null> {
  * 返回带 `path`（项目根）的 ProjectFile。
  */
 export async function openProjectFile(): Promise<(ProjectFile & { path: string }) | null> {
-  if (isTauri()) {
+  if (isTauri) {
     const picked = await pickProjectFile();
     if (!picked) return null;
     return await openProjectByPath(picked);

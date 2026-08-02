@@ -847,7 +847,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         // 落盘根目录：用户指定优先；未指定则在桌面端落到「文档/SlimeMold/<项目名>」，
         // 保证“新建项目”即自动生成 .slimemold 目录骨架（浏览器无磁盘环境仍按内存草稿处理）
         let saveRoot: string | null = location ?? null;
-        if (!saveRoot && isTauri()) {
+        if (!saveRoot && isTauri) {
           try {
             const base = (await defaultStandaloneDir()).replace(/\/未归类$/, '');
             const safe = (name.trim() || '未命名项目').replace(/[\\/:*?"<>|]/g, '_');
@@ -1289,7 +1289,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       saveProjectAs: async () => {
         const s = get();
-        if (!isTauri()) {
+        if (!isTauri) {
           get().addLog('warn', '「将项目另存为」需要桌面端（Tauri）环境');
           return null;
         }

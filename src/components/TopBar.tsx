@@ -182,7 +182,7 @@ export default function TopBar({
   };
 
   const handleSaveProjectAs = async () => {
-    if (!isTauri()) {
+    if (!isTauri) {
       alert('「将项目另存为」需要桌面端（Tauri）环境');
       return;
     }
@@ -199,7 +199,7 @@ export default function TopBar({
 
   const handleCloseProject = async () => {
     if (projectDirty) {
-      const ok = isTauri()
+      const ok = isTauri
         ? await confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？', {
             title: '关闭项目',
             kind: 'warning',
