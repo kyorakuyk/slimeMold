@@ -18,7 +18,7 @@ import {
   type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { LayoutTemplate, FilePlus2, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
+import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
@@ -50,7 +50,13 @@ const CAT_COLORS: Record<string, string> = {
 
 export const DND_MIME = 'application/x-slime-node';
 
-export default function WorkflowEditor({ wfId }: { wfId?: string }) {
+export default function WorkflowEditor({
+  wfId,
+  onNewProject,
+}: {
+  wfId?: string;
+  onNewProject?: () => void;
+}) {
   // 无 wfId：渲染当前激活工作流（全局状态）；有 wfId：渲染并编辑指定工作流（拆分视图分栏）
   const isSplit = !!wfId;
   const activeNodes = useWorkflowStore((s) => s.nodes);
@@ -666,11 +672,11 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => newWorkflow()}
+                onClick={() => (onNewProject ? onNewProject() : newWorkflow())}
                 className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-white transition"
                 style={{ background: 'var(--sm-accent)' }}
               >
-                新建工作流
+                新建项目
               </button>
               <button
                 onClick={() => setWelcomeDismissed(false)}
@@ -714,12 +720,12 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
 
               <div className="mt-4 flex flex-col gap-1.5">
                 <button
-                  onClick={() => newWorkflow()}
+                  onClick={() => (onNewProject ? onNewProject() : newWorkflow())}
                   className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition hover:bg-[var(--sm-bg-soft)]"
                   style={{ color: 'var(--sm-ink)' }}
                 >
-                  <FilePlus2 size={16} style={{ color: 'var(--sm-accent)' }} />
-                  新建工作流
+                  <FolderPlus size={16} style={{ color: 'var(--sm-accent)' }} />
+                  新建项目
                   <span className="ml-auto text-[11px] opacity-0 transition-opacity group-hover:opacity-60"
                     style={{ color: 'var(--sm-ink-faint)' }}>Ctrl/Cmd+N</span>
                 </button>

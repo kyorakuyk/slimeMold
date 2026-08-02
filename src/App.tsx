@@ -53,7 +53,7 @@ function SplitCanvas({
           </span>
         </div>
         <div className="h-[calc(100%-1.75rem)]">
-          <WorkflowEditor />
+          <WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />
         </div>
       </div>
 
@@ -87,7 +87,7 @@ function SplitCanvas({
               项目中只有一个工作流。新建一个工作流即可在拆分视图中并排查看/编辑不同工作流。
             </div>
           ) : (
-            <WorkflowEditor wfId={targetId} />
+            <WorkflowEditor wfId={targetId} onNewProject={() => setNewProjectOpen(true)} />
           )}
         </div>
       </div>
@@ -308,7 +308,7 @@ export default function App() {
                 />
               ) : (
                 <div className="min-w-0 flex-1">
-                  <WorkflowEditor />
+                  <WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />
                 </div>
               )}
             </div>
