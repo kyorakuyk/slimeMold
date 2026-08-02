@@ -77,6 +77,44 @@ export function clearRecentProjects() {
   writeRecent([]);
 }
 
+// ---------- 会话恢复：记住上次打开的项目与激活工作流 ----------
+
+const SESSION_KEY = 'sm.lastSession';
+
+export interface LastSession {
+  /** 项目根目录（磁盘真相） */
+  path: string;
+  /** 上次激活的工作流 id */
+  activeId?: string;
+}
+
+export function saveLastSession(s: LastSession) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getLastSession(): LastSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as LastSession;
+    return s && s.path ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearLastSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---------- 写入：目录式 .slimemold/ ----------
 
 /**

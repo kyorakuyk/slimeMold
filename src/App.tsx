@@ -13,6 +13,7 @@ import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
+import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
 import { useViewStore } from './store/viewStore';
@@ -167,6 +168,37 @@ export default function App() {
   useEffect(() => {
     // 桌面端启动时自动扫描插件目录
     if (isTauri) scanPluginsDir();
+  }, []);
+
+  // P3：桌面端启动自动恢复上次项目（含激活工作流），仅当当前尚无已加载项目时
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    (async () => {
+      const sess = getLastSession();
+      if (!sess) return;
+      const st = useWorkflowStore.getState();
+      // 已有项目（如持久化恢复）则不抢占
+      if (st.projectId) return;
+      try {
+        const fs = await import('@tauri-apps/plugin-fs');
+        const ok = await fs.exists(sess.path);
+        if (!ok || cancelled) return;
+        const { openProjectByPath } = await import('./io/projectIO');
+        const file = await openProjectByPath(sess.path);
+        if (!file || cancelled) return;
+        // 优先恢复会话里记录的激活工作流
+        if (sess.activeId && file.workflows[sess.activeId]) {
+          file.activeId = sess.activeId;
+        }
+        useWorkflowStore.getState().openProject(file, sess.path);
+      } catch {
+        /* 恢复失败不阻塞启动 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 全局快捷键（与菜单标注一致）

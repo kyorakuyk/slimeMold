@@ -366,7 +366,7 @@
 - [x] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」（`scope` 切换 + 导入/删除路由到对应作用域）；executor 合并项目级与工作流级资产（工作流级同名覆盖）；删除项目资产时扫描所有工作流节点 params 做跨工作流 `assetId` 引用检测并提示；`serializeCurrent` 写回时保留当前工作流 `assets`（修复切换/保存丢资产隐患）。
 - [x] **P2 变量两级**：项目级 variables 落 `ProjectFile.variables`（project.json 顶层），工作流级 variables 存 `workflows[x].variables`；求值时 `extraVars < 项目级 < 工作流级`（工作流覆盖项目）；`VariablesPanel` 分「项目级/工作流级」两个作用域编辑并标注覆盖关系（`被覆盖`/`覆盖项目`）。
 - [x] **P2 成本跟项目**：`runHistory` 落盘到 `.slimemold/runs/history.json`（`ProjectFile.runs.history`）；`saveProject` 注入、`openProject` 读回；`RunHistoryPanel`/`TokenUsagePanel`/`StatusBar` 直接读 store.runHistory，天然按项目归属。全局 persist 仍保留 runHistory 作为无项目态兼容（打开项目后由磁盘主导）。
-- [ ] **P3 恢复上次界面**：会话状态存 localStorage（上次项目路径 + 激活工作流 id），启动自动恢复；打不开时优雅降级到欢迎页。
+- [x] **P3 恢复上次界面**：上次打开/保存的项目根路径 + 激活工作流 id 存 `localStorage`（`sm.lastSession`）；桌面端启动时自动 `openProjectByPath` 恢复（含激活工作流，校验路径仍存在、跳过已持久化恢复的项目）；新建项目时清除会话记录；打开/保存/最近项目均更新会话。
 - [ ] **P3 项目欢迎页**：最近项目列表 / 新建 / 打开。
 
 ---

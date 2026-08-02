@@ -52,6 +52,8 @@ import {
   getRecentProjects,
   clearRecentProjects,
   pushRecentProject,
+  saveLastSession,
+  clearLastSession,
 } from '../io/projectIO';
 
 interface TopBarProps {
@@ -143,6 +145,13 @@ export default function TopBar({
     const name = window.prompt('项目名称', '未命名项目')?.trim();
     if (!name) return;
     newProject(name);
+    clearLastSession();
+  };
+
+  // 记录"上次会话"：项目根路径 + 当前激活工作流 id，供下次启动自动恢复
+  const persistSession = (path: string) => {
+    const s = useWorkflowStore.getState();
+    saveLastSession({ path, activeId: s.activeWfId ?? undefined });
   };
 
   const handleOpenProject = async () => {
@@ -152,6 +161,7 @@ export default function TopBar({
       // P1：openProjectFile 返回带 path（项目根目录）的项目，直接作为磁盘真相传给 store
       const path = (file as ProjectFile & { path?: string }).path ?? file.name;
       openProject(file, path);
+      persistSession(path);
       pushRecentProject({ path, name: file.name, openedAt: new Date().toISOString() });
       if ((file as ProjectFile & { legacy?: boolean }).legacy) {
         addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
@@ -164,6 +174,7 @@ export default function TopBar({
   const handleSaveProject = async () => {
     try {
       const path = await saveProject();
+      persistSession(path);
       pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
     } catch (e) {
       alert('保存项目失败：' + (e as Error).message);
@@ -191,6 +202,7 @@ export default function TopBar({
                   const file = await openProjectByPath(r.path);
                   if (file) {
                     openProject(file, r.path);
+                    persistSession(r.path);
                     pushRecentProject({ path: r.path, name: file.name, openedAt: new Date().toISOString() });
                     if ((file as ProjectFile & { legacy?: boolean }).legacy) {
                       addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
