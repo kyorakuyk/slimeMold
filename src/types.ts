@@ -294,9 +294,30 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   durationMs?: number | null;
   /** 最近一次真正执行的开始时间戳（ISO）；缓存命中/跳过为 null */
   startedAt?: string | null;
+  /** 最近一次运行中该节点自身的 token 用量；无 LLM 调用时缺失 */
+  usage?: NodeUsageStat;
 }
 
 export type FlowNode = Node<WorkflowNodeData>;
+
+/** 单个节点在最近一次运行中的 token 用量聚合（画布悬停浮层展示用） */
+export interface NodeUsageStat {
+  /** 该节点累计发生的 LLM 调用次数 */
+  calls: number;
+  /** 其中失败的调用次数 */
+  failedCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedPromptTokens: number;
+  writtenPromptTokens: number;
+  reasoningTokens: number;
+  replyTokens: number;
+  /** 累计 LLM 调用耗时（毫秒），不含节点自身其他开销 */
+  llmDurationMs: number;
+  /** 参与过的模型名（去重，按首次出现顺序） */
+  models: string[];
+}
 export type FlowEdge = Edge<FlowEdgeData>;
 
 /* ---------- 工作流文件 ---------- */
@@ -339,6 +360,14 @@ export interface WorkflowFile {
   assets?: AssetMeta[];
   /** 节点组（纯视觉编组，不参与执行） */
   groups?: NodeGroup[];
+  /**
+   * 归属声明（游离工作流 vs 项目内工作流）：
+   * - 属于某项目时填 `belongsToProject`（项目 id），资产/变量作用域走项目级；
+   * - 游离工作流填 `standalonePath`（磁盘绝对路径，单文件存盘位置），仅工作流级作用域。
+   * 两者至多其一。缺失即视为游离且尚未存盘（路径未知）。
+   */
+  belongsToProject?: string;
+  standalonePath?: string;
 }
 
 /* ---------- 子图（可复用节点组合） ---------- */
@@ -450,6 +479,8 @@ export interface AssetMeta {
 export interface ProjectFile {
   version: 1;
   kind: 'project';
+  /** 项目唯一 id（由 createProjectFile 生成），工作流通过 belongsToProject 反向引用 */
+  id: string;
   name: string;
   createdAt: string;
   updatedAt: string;

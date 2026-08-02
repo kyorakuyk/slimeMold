@@ -36,6 +36,7 @@ export function createProjectFile(name: string): ProjectFile {
   return {
     version: 1,
     kind: 'project',
+    id: `proj-${Date.now()}`,
     name,
     createdAt: now,
     updatedAt: now,
@@ -59,21 +60,26 @@ export function createProjectFile(name: string): ProjectFile {
 
 /* ---------------- 保存项目 ---------------- */
 
-export async function saveProjectFile(file: ProjectFile): Promise<string> {
+export async function saveProjectFile(file: ProjectFile, existingPath?: string): Promise<string> {
   file.updatedAt = new Date().toISOString();
   const text = JSON.stringify(file, null, 2);
 
   if (isTauri) {
     // 动态引入 Tauri 插件（避免浏览器侧打包报错）
-    const [{ save }, { writeTextFile }, { BaseDirectory }] = await Promise.all([
+    const [{ save }, { writeTextFile }] = await Promise.all([
       import('@tauri-apps/plugin-dialog'),
       import('@tauri-apps/plugin-fs'),
-      import('@tauri-apps/api/path'),
     ]);
-    const path = await save({
-      defaultPath: `${file.name}.smproj`,
-      filters: [{ name: 'SlimeMold Project', extensions: ['smproj'] }],
-    });
+    // P0：已存盘（existingPath 已知）则直接覆盖，不再弹另存为
+    let path = existingPath;
+    if (!path) {
+      const { basename } = await import('@tauri-apps/api/path');
+      const def = existingPath ?? `${file.name}.smproj`;
+      path = await save({
+        defaultPath: def,
+        filters: [{ name: 'SlimeMold Project', extensions: ['smproj'] }],
+      });
+    }
     if (!path) return file.name; // 用户取消
     await writeTextFile(path, text);
     return path;
@@ -102,6 +108,8 @@ export async function openProjectFile(): Promise<ProjectFile | null> {
     const text = await readTextFile(path);
     const file = JSON.parse(text) as ProjectFile;
     if (file.kind !== 'project') throw new Error('不是有效的项目文件');
+    // P0：把真实磁盘路径随文件一并带出，openProject 据此记录真相
+    (file as ProjectFile & { path?: string }).path = path;
     return file;
   }
 

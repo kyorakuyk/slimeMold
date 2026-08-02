@@ -300,6 +300,75 @@
 
 ---
 
+## 五、「项目（Project）」概念完善（2026-08-03 与用户确认，待实施）
+
+> 目标：把当前「一堆平铺工作流 + localStorage」升级为真正的项目概念：
+> 磁盘为唯一真相、项目文件夹形态、资产两级、变量两级、成本跟项目走。
+
+### 5.0 现状与已确认的断裂点
+
+`ProjectFile` 类型、`src/io/projectIO.ts`、`newProject/openProject/saveProject`、文件菜单入口**均已存在**，
+`.smproj` 为单个 JSON 大文件。但存在以下明确缺陷：
+
+| # | 问题 | 位置 |
+|---|---|---|
+| 1 | `projectName`/`projectPath` **不在 persist 白名单**，重启后项目身份丢失 | `workflowStore.ts` persist partialize |
+| 2 | 打开项目时传的是**项目名而非磁盘路径**，"最近项目"记录的 path 是假的，二次打开必失败 | `TopBar.tsx:138` `openProject(file, file.name)` |
+| 3 | `saveProject` 每次重写 `createdAt`，且**始终弹另存对话框**，无"保存到已有路径" | `workflowStore.ts` saveProject |
+| 4 | 资产 `assets` 与 `workspaceDir` 均为**工作流级**，项目没有自己的根目录 | `WorkflowFile` |
+| 5 | `workflows` 是**无序字典**，无排序/分组字段 | `workflowStore.ts` |
+| 6 | `runHistory`/`variables` 在**全局 persist 白名单**里，与「跟项目走」矛盾，切项目会串数据 | persist partialize |
+| 7 | Tauri 权限**只有读写文本文件**，缺 `mkdir`/`read-dir`/`remove`/`exists`，建不了项目目录 | `src-tauri/capabilities/default.json` |
+
+### 5.1 已拍板的设计决策
+
+- **存储真相**：**磁盘为唯一真相**。localStorage 降级为「崩溃恢复草稿 + 会话状态」（开了哪些项目、标签分组折叠状态）。dirty 定义即 `内存态 ≠ 磁盘态`。
+- **工作流 ≠ 必须属于项目**：新建工作流**不强制依附项目**。**游离工作流（standalone workflow）** 也是一等公民——它可以不属于任何项目，存成一个独立 `.json` 文件。用户**需指定存放位置**，未指定时落到**默认位置**（如 `文档/SlimeMold/未归类/`）。项目内工作流与游离工作流在编辑器里体验一致，区别在于归属与资产/变量的作用域大小。
+- **物理形态**：**项目文件夹**（非单文件，仅当工作流归属项目时使用）
+  ```
+  MyProject/
+    project.json          # 项目元信息 + 标签分组 + 项目级变量 + 角色 + 子图
+    workflows/*.json      # 每个工作流独立文件，便于 git diff
+    assets/               # 项目级共享资产
+    runs/history.json     # 运行历史 + token 统计
+  ```
+  游离工作流不建文件夹，直接存 `{用户指定位置|默认位置}/xxx.json`，其运行历史/资产/变量**自带于该工作流文件**（或就近 `xxx.runs.json` 旁挂文件），不共享。
+- **资产**：**两级并存**（项目级共享 + 工作流级私有），**支持跨工作流引用**（`assetId` 全局唯一）。删除项目级资产时需检测被哪些工作流引用并提示。游离工作流只有工作流级资产，无项目级共享层。
+- **变量**：**两级**（项目级 + 工作流级），工作流级优先覆盖项目级，Inspector 标注来源。游离工作流仅工作流级变量生效。
+- **runHistory / token 统计**：**跟项目走**，落 `runs/history.json`，需移出全局 persist。
+- **agents（模型/API Key 配置）**：**保持全局**，不进项目文件（避免 Key 泄露；Key 本身已走系统密钥库，见 4.3）。
+- **保存**：**手动保存**（Ctrl+S），不做自动保存。需 **dirty 标记**（标题栏 `*` + 关闭前拦截）。
+- **切换项目**：有未保存改动时**弹窗提醒**。
+- **运行隔离**：Community 版**同一时刻只允许一个工作流在跑**；多工作流/多项目并行运行归入 Professional。
+- **恢复上次界面**：**Community 一期就要实装**（记住上次打开的项目与激活工作流）。
+
+### 5.2 旧数据迁移策略（已确认）
+
+**问题**：现有工作流全在 localStorage（`slime-mold-workflow`），磁盘无对应文件。
+改为「磁盘唯一真相」后若不处理，用户升级即见空白界面，误以为数据丢失。
+
+**采用方案：静默自动迁移 + 事后可另存**
+1. 首次启动检测到旧 localStorage 数据且无项目记录时，自动在默认位置
+   （如 `文档/SlimeMold/默认项目/`）创建项目文件夹并写入全部历史工作流；
+2. 正常打开该项目，标题栏提示一次「已迁移到 xxx，可另存到其他位置」；
+3. **迁移后不立刻删除 localStorage 旧数据**，保留一个版本周期作为保险。
+
+### 5.3 实施步骤（建议顺序）
+
+- [x] **P0 补权限**：`capabilities/default.json` 增加 `fs:allow-mkdir`/`read-dir`/`remove`/`exists`，否则后续全阻塞。
+- [x] **P0 修断裂点**：`projectName`/`projectId`/`projectCreatedAt`/`projectPath` 进 persist；`openProject` 传真实磁盘路径（修 `TopBar.tsx:138`，`openProjectFile` 带出 path）；`saveProject` 支持「保存到已有路径（projectPath 已知则直接覆盖，不弹另存为）」且不重写 `createdAt`。`ProjectFile` 新增 `id` 字段。
+- [x] **P0 游离工作流入口**：「新建工作流」区分「新建到项目」与「新建游离工作流（指定位置，缺省落默认位置 `文档/SlimeMold/未归类/`）」；存档态记录 `belongsToProject?: string`（项目 id）或 `standalonePath: string`；编辑器据有无归属决定资产/变量作用域与运行历史落点。`WorkflowFile` 已加 `belongsToProject`/`standalonePath`；`serializeCurrent` 保留身份；导入工作流标记 `standalonePath`。
+- [ ] **P1 项目文件夹 IO**：`projectIO.ts` 从单文件改为目录读写（`project.json` + `workflows/*.json` + `runs/history.json`），保留 `.smproj` 单文件的**读**兼容做迁移入口。
+- [ ] **P1 dirty 标记**：内存态与磁盘态比对，标题栏 `*`、关闭/切换前拦截弹窗。
+- [ ] **P1 旧数据迁移**：按 5.2 实现静默迁移 + 提示。
+- [ ] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」；跨工作流按 `assetId` 引用；删除时做引用检测。
+- [ ] **P2 变量两级**：项目级 variables 落 `project.json`；求值时工作流级覆盖项目级；Inspector 标注来源。
+- [ ] **P2 成本跟项目**：`runHistory` 移出全局 persist，落 `runs/history.json`；Token 面板按项目统计。
+- [ ] **P3 恢复上次界面**：会话状态存 localStorage（上次项目路径 + 激活工作流 id），启动自动恢复；打不开时优雅降级到欢迎页。
+- [ ] **P3 项目欢迎页**：最近项目列表 / 新建 / 打开。
+
+---
+
 ## 三、其他潜在待做（未开始）
 
 - [ ] 插件系统（plugin-examples 已有示例）与运行时执行链路联调。
@@ -309,4 +378,4 @@
 
 ---
 
-*最后更新：2026-08-02*
+*最后更新：2026-08-03*

@@ -22,8 +22,11 @@
     "fs:allow-appdata-read-recursive",
     "fs:allow-appdata-write-recursive",
     "fs:allow-mkdir",
+    "fs:allow-read-dir",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
+    "fs:allow-remove",
+    "fs:allow-exists",
     {
       "identifier": "fs:scope",
       "allow": [{ "path": "**" }, { "path": "$APPDATA/**" }]

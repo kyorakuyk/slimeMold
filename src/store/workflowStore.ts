@@ -35,6 +35,7 @@ import { useRegistryStore, getNodeDef } from './registryStore';
 import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
+import { defaultStandaloneDir } from '../platform/env';
 
 /**
  * 根据分组内部节点，按「端口类型」聚合推导折叠态的代理端口（ProxyPort）
@@ -124,6 +125,10 @@ interface WorkflowState {
   /* ---- 项目层（多工作流） ---- */
   /** 当前项目名（无项目时为 null，表示游离单工作流） */
   projectName: string | null;
+  /** 当前项目 id（对应磁盘 project.json 的 id；游离态为 null） */
+  projectId: string | null;
+  /** 当前项目创建时间（磁盘唯一真相，保存时不得重写） */
+  projectCreatedAt: string | null;
   /** 当前项目文件路径（Tauri 下为磁盘路径，浏览器下为项目名；未保存为 null） */
   projectPath: string | null;
   /** 项目内工作流集合 */
@@ -303,16 +308,20 @@ function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
 }
 
 /** 把当前编辑态序列化为一个 WorkflowFile（用于收纳游离态/写回） */
-function serializeCurrent(s: {
-  workflowName: string;
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-  agents: AgentConfig[];
-  roles: RoleTemplate[];
-  variables: Record<string, unknown>;
-  groups?: NodeGroup[];
-  defaultAgentId?: string | null;
-}): WorkflowFile {
+function serializeCurrent(
+  s: {
+    workflowName: string;
+    nodes: FlowNode[];
+    edges: FlowEdge[];
+    agents: AgentConfig[];
+    roles: RoleTemplate[];
+    variables: Record<string, unknown>;
+    groups?: NodeGroup[];
+    defaultAgentId?: string | null;
+  },
+  /** 归属声明：保留原工作流的文件身份（项目内 / 游离路径） */
+  identity?: { belongsToProject?: string; standalonePath?: string },
+): WorkflowFile {
   return {
     version: 1,
     name: s.workflowName || '未命名工作流',
@@ -336,6 +345,8 @@ function serializeCurrent(s: {
     roles: s.roles,
     variables: s.variables,
     groups: s.groups ?? [],
+    belongsToProject: identity?.belongsToProject,
+    standalonePath: identity?.standalonePath,
   };
 }
 
@@ -362,6 +373,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       lastAutosave: null,
 
       projectName: null,
+      projectId: null,
+      projectCreatedAt: null,
       projectPath: null,
       workflows: {},
       activeWfId: '',
@@ -551,7 +564,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({
           nodes: get().nodes.map((n) => ({
             ...n,
-            data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined },
+            data: {
+              ...n.data,
+              status: 'idle' as NodeStatus,
+              error: undefined,
+              outputs: undefined,
+              usage: undefined,
+            },
           })),
           edges: get().edges.map((e) => ({
             ...e,
@@ -695,18 +714,23 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       newProject: (name) => {
         const id = `wf-${Date.now()}`;
+        const projId = `proj-${Date.now()}`;
+        const now = new Date().toISOString();
         const wf: WorkflowFile = {
           version: 1,
           name: '未命名工作流',
-          savedAt: new Date().toISOString(),
+          savedAt: now,
           nodes: [],
           edges: [],
           agents: [createAgent('ollama')],
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
+          belongsToProject: projId,
         };
         set({
           projectName: name,
+          projectId: projId,
+          projectCreatedAt: now,
           projectPath: null,
           workflows: { [id]: wf },
           activeWfId: id,
@@ -785,8 +809,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         const file: ProjectFile = {
           version: 1,
           kind: 'project',
+          id: s.projectId ?? `proj-${Date.now()}`,
           name: s.projectName ?? s.workflowName,
-          createdAt: new Date().toISOString(),
+          // P0：createdAt 为磁盘真相，已存在则保留，绝不重写
+          createdAt: s.projectCreatedAt ?? new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           workflows,
           activeId: s.activeWfId || Object.keys(workflows)[0],
@@ -795,8 +821,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           subgraphs: s.subgraphs,
         };
         const { saveProjectFile } = await import('../io/projectIO');
-        const path = await saveProjectFile(file);
-        set({ projectPath: path });
+        // P0：已存盘则直接覆盖原路径，不再弹另存为
+        const path = await saveProjectFile(file, s.projectPath ?? undefined);
+        set({
+          projectId: file.id,
+          projectCreatedAt: file.createdAt,
+          projectPath: path,
+        });
         return path;
       },
 
@@ -806,7 +837,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
         const synced: Record<string, WorkflowFile> = { ...s.workflows };
         const curId = s.activeWfId || `wf-${Date.now()}`;
-        synced[curId] = serializeCurrent(s);
+        const prev = s.workflows[curId];
+        synced[curId] = serializeCurrent(s, {
+          belongsToProject: prev?.belongsToProject,
+          standalonePath: prev?.standalonePath,
+        });
         const target = synced[id];
         if (!target) return;
         set({
@@ -824,28 +859,47 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      newWorkflowInProject: (workspaceDir?: string | null) => {
+      /**
+       * 新建工作流。两种归属：
+       * - 若当前处于项目内（projectId 非空）→ 工作流归属项目（belongsToProject）。
+       * - 否则为游离工作流（standalone）：workspaceDir 为存放位置，缺省落默认位置
+       *   （文档/SlimeMold/未归类/），并记录 standalonePath。
+       */
+      newWorkflowInProject: async (workspaceDir?: string | null) => {
         const s = get();
         const workflows = { ...s.workflows };
+        const inProject = !!s.projectId;
+        // 游离工作流未指定位置时，落到默认位置（文档/SlimeMold/未归类/）
+        let standalonePath: string | undefined;
+        if (!inProject) {
+          standalonePath = workspaceDir ?? (await defaultStandaloneDir());
+        }
         // 若当前为游离态（无对应工作流）且已有编辑内容，先把现有编辑态收纳为默认工作流
         let baseActive = s.activeWfId;
         if (!baseActive && (s.nodes.length || s.edges.length)) {
           baseActive = `wf-${Date.now()}`;
-          workflows[baseActive] = serializeCurrent(s);
+          const prev = s.workflows[baseActive];
+          workflows[baseActive] = serializeCurrent(s, {
+            belongsToProject: prev?.belongsToProject,
+            standalonePath: prev?.standalonePath,
+          });
         }
         const id = `wf-${Date.now() + 1}`;
+        const index = Object.keys(workflows).length + 1;
         const wf: WorkflowFile = {
           version: 1,
-          name: `工作流 ${Object.keys(workflows).length + 1}`,
+          name: `工作流 ${index}`,
           savedAt: new Date().toISOString(),
           nodes: [],
           edges: [],
           agents: [createAgent('ollama')],
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
-          workspaceDir: workspaceDir ?? null,
+          workspaceDir: standalonePath ?? null,
           assets: [],
           groups: [],
+          belongsToProject: inProject ? s.projectId! : undefined,
+          standalonePath: inProject ? undefined : standalonePath,
         };
         workflows[id] = wf;
         set({
@@ -1367,6 +1421,10 @@ export const useWorkflowStore = create<WorkflowState>()(
       partialize: (s) => ({
         workflows: s.workflows,
         activeWfId: s.activeWfId,
+        projectName: s.projectName,
+        projectId: s.projectId,
+        projectCreatedAt: s.projectCreatedAt,
+        projectPath: s.projectPath,
         workflowName: s.workflowName,
         nodes: s.nodes,
         edges: s.edges,

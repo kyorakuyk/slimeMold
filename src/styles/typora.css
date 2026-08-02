@@ -823,6 +823,70 @@ textarea.sm-input {
   letter-spacing: 0.04em;
 }
 
+/* 节点底部 token 用量条 + 悬停明细浮层 */
+.sm-node-usage {
+  position: relative;
+  border-top: 1px solid color-mix(in srgb, var(--sm-line) 60%, transparent);
+  background: color-mix(in srgb, #04070d 26%, var(--sm-bg-soft) 74%);
+}
+.sm-node-usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--sm-ink-faint);
+  cursor: default;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sm-node-usage:hover .sm-node-usage-bar {
+  background: color-mix(in srgb, var(--sm-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--sm-accent) 80%, var(--sm-ink) 20%);
+}
+.sm-node-usage-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  min-width: 190px;
+  padding: 8px 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--sm-accent) 26%, var(--sm-line));
+  background: color-mix(in srgb, #04070d 82%, var(--sm-bg) 18%);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(6px);
+  animation: sm-usage-in 0.12s ease-out;
+  cursor: default;
+}
+.sm-node-usage-pop::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  background: color-mix(in srgb, #04070d 82%, var(--sm-bg) 18%);
+  border-left: 1px solid color-mix(in srgb, var(--sm-accent) 26%, var(--sm-line));
+  border-top: 1px solid color-mix(in srgb, var(--sm-accent) 26%, var(--sm-line));
+}
+@keyframes sm-usage-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* 折叠态分组卡片：视觉风格对齐普通节点（同 .sm-node 外壳 + 分类配色标题条） */
 .sm-group-collapsed {
   border-radius: 9px;

@@ -58,3 +58,20 @@ export async function openDirDialog(): Promise<string | null> {
   }
   return null;
 }
+
+/**
+ * 游离工作流的默认存放位置：未指定时使用。
+ * Tauri 下落到「文档/SlimeMold/未归类/」，浏览器退化为固定逻辑名。
+ */
+export async function defaultStandaloneDir(): Promise<string> {
+  if (isTauri) {
+    try {
+      const { documentDir } = await import('@tauri-apps/api/path');
+      const docs = await documentDir();
+      return `${docs}/SlimeMold/未归类`.replace(/\\/g, '/');
+    } catch {
+      return 'SlimeMold/未归类';
+    }
+  }
+  return 'SlimeMold/未归类';
+}

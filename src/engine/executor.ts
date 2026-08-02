@@ -1,4 +1,12 @@
-import type { CostRecord, ExecContext, FlowEdge, FlowNode, NodeStatus, RunRecord } from '../types';
+import type {
+  CostRecord,
+  ExecContext,
+  FlowEdge,
+  FlowNode,
+  NodeStatus,
+  NodeUsageStat,
+  RunRecord,
+} from '../types';
 import { topoStages } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -460,6 +468,42 @@ function collectReachable(start: string, gateId: string, edges: FlowEdge[], out:
   }
 }
 
+/** 把一条成本记录累加进节点级用量统计，返回新的统计对象（不改动入参） */
+function accumulateUsage(prev: NodeUsageStat | undefined, rec: CostRecord): NodeUsageStat {
+  const base: NodeUsageStat = prev ?? {
+    calls: 0,
+    failedCalls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedPromptTokens: 0,
+    writtenPromptTokens: 0,
+    reasoningTokens: 0,
+    replyTokens: 0,
+    llmDurationMs: 0,
+    models: [],
+  };
+  const u = rec.usage;
+  const prompt = u?.promptTokens ?? 0;
+  const completion = u?.completionTokens ?? 0;
+  return {
+    calls: base.calls + 1,
+    failedCalls: base.failedCalls + (rec.ok ? 0 : 1),
+    promptTokens: base.promptTokens + prompt,
+    completionTokens: base.completionTokens + completion,
+    totalTokens: base.totalTokens + (u?.totalTokens ?? prompt + completion),
+    cachedPromptTokens: base.cachedPromptTokens + (u?.cachedPromptTokens ?? 0),
+    writtenPromptTokens: base.writtenPromptTokens + (u?.writtenPromptTokens ?? 0),
+    reasoningTokens: base.reasoningTokens + (u?.reasoningTokens ?? 0),
+    replyTokens: base.replyTokens + (u?.replyTokens ?? completion),
+    llmDurationMs: base.llmDurationMs + (rec.durationMs ?? 0),
+    models:
+      rec.model && !base.models.includes(rec.model)
+        ? [...base.models, rec.model]
+        : base.models,
+  };
+}
+
 async function executeNode(
   id: string,
   nodeById: Map<string, FlowNode>,
@@ -490,6 +534,25 @@ async function executeNode(
   const owner = ownerRefId(id);
   const setStatus: typeof store.setNodeStatus = (nid, status, patch) =>
     store.setNodeStatus(owner ?? nid, status, patch);
+
+  /**
+   * 记录一条成本，并把节点级 token 用量实时回写到画布节点上，
+   * 这样运行过程中把鼠标放到节点上就能看到它自己的实时消耗。
+   */
+  const trackCost = (rec: CostRecord) => {
+    costLog.push(rec);
+    const arr = costByNode.get(rec.nodeId) ?? [];
+    arr.push(rec);
+    costByNode.set(rec.nodeId, arr);
+
+    const target = owner ?? rec.nodeId;
+    const wf = useWorkflowStore.getState();
+    const cur = wf.nodes.find((n) => n.id === target);
+    if (!cur) return;
+    wf.setNodeStatus(target, cur.data.status, {
+      usage: accumulateUsage(cur.data.usage, rec),
+    });
+  };
 
   const incoming = edges.filter((e) => e.target === id);
 
@@ -627,10 +690,7 @@ async function executeNode(
           at: new Date().toISOString(),
           ok: true,
         };
-        costLog.push(rec);
-        const arr = costByNode.get(id) ?? [];
-        arr.push(rec);
-        costByNode.set(id, arr);
+        trackCost(rec);
         return resp.text;
       } catch (err) {
         ok = false;
@@ -645,10 +705,7 @@ async function executeNode(
           ok: false,
           error: errMsg,
         };
-        costLog.push(rec);
-        const arr = costByNode.get(id) ?? [];
-        arr.push(rec);
-        costByNode.set(id, arr);
+        trackCost(rec);
         throw err;
       } finally {
         release();
@@ -656,12 +713,7 @@ async function executeNode(
     },
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,
-    reportCost: (rec) => {
-      costLog.push(rec);
-      const arr = costByNode.get(rec.nodeId) ?? [];
-      arr.push(rec);
-      costByNode.set(rec.nodeId, arr);
-    },
+    reportCost: (rec) => trackCost(rec),
     setPartial: (key, value) => {
       const target = owner ?? id;
       const cur =

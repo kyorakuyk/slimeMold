@@ -43,7 +43,7 @@ export function serializeWorkflow(): WorkflowFile {
 }
 
 /* ---------- 反序列化与校验 ---------- */
-export function applyWorkflowFile(text: string): void {
+export function applyWorkflowFile(text: string, standalonePath?: string): void {
   const raw = JSON.parse(text) as WorkflowFile;
   if (raw.version !== 1) {
     throw new Error(`不支持的工作流版本: ${String(raw.version)}`);
@@ -108,11 +108,23 @@ export function applyWorkflowFile(text: string): void {
     data: { kind: e.kind ?? 'data' },
   }));
 
-  useWorkflowStore
-    .getState()
-    .loadGraph(raw.name || '导入的工作流', nodes, edges, raw.agents ?? [], raw.roles ?? []);
+  const store = useWorkflowStore.getState();
+  store.loadGraph(raw.name || '导入的工作流', nodes, edges, raw.agents ?? [], raw.roles ?? []);
   // 工作流私有变量随文件一起载入
   useWorkflowStore.setState({ variables: raw.variables ?? {} });
+  // 导入的工作流标记为游离态：记录其磁盘路径（若有），便于后续原地保存
+  if (standalonePath) {
+    const s = useWorkflowStore.getState();
+    const activeId = s.activeWfId;
+    if (activeId) {
+      useWorkflowStore.setState({
+        workflows: {
+          ...s.workflows,
+          [activeId]: { ...s.workflows[activeId], belongsToProject: undefined, standalonePath },
+        },
+      });
+    }
+  }
   log('info', `工作流已导入：${raw.name}（${nodes.length} 节点 / ${edges.length} 连线）`);
 }
 
@@ -158,7 +170,7 @@ export async function importWorkflow(): Promise<void> {
     });
     if (typeof path !== 'string') return;
     const text = await fs.readTextFile(path);
-    applyWorkflowFile(text);
+    applyWorkflowFile(text, path);
     return;
   }
 
@@ -170,7 +182,7 @@ export async function importWorkflow(): Promise<void> {
     const file = input.files?.[0];
     if (!file) return;
     const text = await file.text();
-    applyWorkflowFile(text);
+    applyWorkflowFile(text, file.name);
   };
   input.click();
 }

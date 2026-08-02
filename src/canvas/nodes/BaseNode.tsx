@@ -7,6 +7,7 @@ import { useWorkflowStore } from '../../store/workflowStore';
 import { useViewStore } from '../../store/viewStore';
 import { retryNode, runToNode } from '../../engine/executor';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
+import NodeUsageBadge from './NodeUsageBadge';
 
 function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
   if (status === 'running') return <span className="sm-spinner" />;
@@ -254,6 +255,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           {data.error && <p className="sm-node-error">{data.error}</p>}
         </div>
       )}
+
+      {/* 本节点单独的 token 用量：悬停展开明细（与左侧总览面板并存） */}
+      {data.usage && data.usage.calls > 0 && <NodeUsageBadge usage={data.usage} />}
 
       {isSubgraph && subgraph && (
         <div className="sm-node-actions">

@@ -85,6 +85,60 @@ subgraph.output  —— 子图内部的出口，对外暴露为 ref 节点的一
 
 ---
 
+## D. 多项目同开 + 标签页分组
+
+### 背景
+
+「项目」概念的 Community 一期（见 `TODO.md` 第五节）确立了：项目文件夹形态、磁盘为唯一真相、
+资产/变量两级、手动保存 + dirty 标记、恢复上次打开的界面。
+
+以下两项在讨论中已确认要做，但**刻意推迟到 Professional**。
+
+### D1. 多项目同开
+
+**目标**：标签栏可同时打开多个项目，各项目独立运行、互不干扰。
+
+**Community 一期的约束**：同一时刻**只允许一个工作流在跑**（单项目、单运行）。
+
+**Professional 目标态**：
+- 允许**多个工作流甚至多个项目同时运行**
+- 运行状态、日志、成本账本、节点缓存**按项目隔离**
+
+**为什么现在不做**：
+
+| 维度 | 说明 |
+|---|---|
+| 状态隔离 | 当前 `workflowStore` 是单例全局 store，`running`/`logs`/`runHistory`/`nodeCache` 全是单份，多项目并行需要拆成「按项目分片」的状态树 |
+| 执行引擎 | `runWorkflow` 依赖 `useWorkflowStore.getState()` 读写激活工作流，并行运行需把执行上下文与 store 解耦，改动面大 |
+| 并发资源 | 多项目同跑会放大 API 限流、本地算力争抢问题，需要全局并发闸门与配额策略 |
+| 收益比 | 单人创作场景下，先把单项目体验做扎实收益更高 |
+
+**何时开始做**：单项目体验稳定，且出现「跑长任务时想同时编辑另一个项目」的真实诉求时。
+
+**怎么做（要点）**：
+- `workflowStore` 按 `projectId` 分片：`projects: Record<string, ProjectState>`，全局只留 UI 偏好与 agents
+- 执行引擎接收显式的 `ProjectState` 句柄而非从全局 store 取，`nodeCache` 的 key 加项目前缀
+- 增加全局并发闸门（最大并行运行数、按 provider 的限流配额）
+- 状态栏/标签页展示各项目运行态，避免用户搞不清"到底谁在跑"
+
+### D2. 标签页分组（Chrome / Edge 风格）
+
+**目标**：工作流标签支持**分组、着色、折叠/展开、拖拽排序**，分组状态存 `project.json`。
+
+**Community 一期的约束**：`workflows` 是无序字典，标签平铺，无分组无排序。
+
+**为什么现在不做**：
+- 依赖 D1 的多项目标签栏一起设计，否则做两遍
+- 需要给 `ProjectFile` 增加 `tabGroups` 与工作流 `order` 字段，序列化格式变更宜与 D1 一次性做完
+- 拖拽排序 + 折叠动画 + 跨组拖拽是一整套交互，成本不低
+
+**怎么做（要点）**：
+- `ProjectFile` 增加 `tabGroups: Array<{ id, name, color, collapsed, workflowIds }>` 与工作流 `order`
+- 标签栏支持组内/跨组拖拽、右键分组菜单、组标题双击重命名
+- 折叠状态属会话状态（localStorage），分组结构属项目数据（`project.json`）—— 两者分开存
+
+---
+
 ## 其他 Professional 储备项
 
 以下条目同样归入 professional，暂不排期，按需提级：

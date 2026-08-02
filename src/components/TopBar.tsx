@@ -41,6 +41,7 @@ import {
   SkipForward,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
+import type { ProjectFile } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
@@ -134,9 +135,10 @@ export default function TopBar({
     try {
       const file = await openProjectFile();
       if (!file) return;
-      // 浏览器退化：path 用项目名；Tauri：需拿真实路径，这里用 file.name 占位
-      openProject(file, file.name);
-      pushRecentProject({ path: file.name, name: file.name, openedAt: new Date().toISOString() });
+      // P0：Tauri 下 openProjectFile 已返回真实磁盘路径，直接传给 store 作为真相
+      const path = (file as ProjectFile & { path?: string }).path ?? file.name;
+      openProject(file, path);
+      pushRecentProject({ path, name: file.name, openedAt: new Date().toISOString() });
     } catch (e) {
       alert('打开项目失败：' + (e as Error).message);
     }
@@ -498,11 +500,16 @@ export default function TopBar({
           })}
           <button
             className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
-            title="新建工作流（可指定工作区文件夹）"
+            title={projectName ? '新建工作流（加入当前项目）' : '新建游离工作流（可指定存放位置，缺省落默认位置）'}
             onClick={async () => {
+              if (projectName) {
+                // 已在项目内：工作流归属项目，无需指定路径
+                newWorkflowInProject();
+                return;
+              }
+              // 游离工作流：让用户指定存放位置；取消则落默认位置
               const ws = await openDirDialog();
-              // 用户选了文件夹 → 作为工作区；取消/关闭 → 不创建工作区（产物随工作流销毁）
-              newWorkflowInProject(ws);
+              newWorkflowInProject(ws); // ws 为 null 时 store 内部记为游离、未指定路径
             }}
           >
             <Plus size={14} />
