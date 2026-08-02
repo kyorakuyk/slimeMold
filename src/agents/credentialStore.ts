@@ -2,22 +2,17 @@ import { isTauri } from '../platform/env';
 import type { ApiEndpoint } from '../types';
 
 /**
- * 系统密钥库封装（Step 0.5）。
+ * API 接入点存储封装（路线 A）。
  *
- * 凭据以 (service, key) 维度存于 OS 密钥库：
- *   - Windows → Credential Manager
- *   - macOS   → Keychain
- *   - Linux   → secret-service (gnome-keyring / kwallet)
+ * 接入点整条（name / protocol / baseUrl / apiKey）落盘在 AppData 的
+ * endpoints.json 文件；其中 apiKey 字段由 Rust 侧以 AES-GCM 加密存储
+ * （主密钥存于 OS 密钥库），读取时解密，磁盘上不出现明文 key。
  *
- * 明文 key 永不以文件形式落盘，也不进入工作流 JSON。前端只持有「凭据键」
- * （credentialKey），运行时由 Rust 侧按此键从密钥库取回真实 key 并发起请求。
+ * 凭据库（keyring）现仅用于存放 AES 主密钥（单条），不再逐条登记 apiKey；
+ * 智能体运行时按 name 经 loadEndpointKey 从 endpoints.json 解密取回 key。
  *
- * 两类条目共存于同一服务下：
- *   - 纯密钥：`key = name`，value = 明文 key。智能体「单独配置」时按 name 引用。
- *   - API 接入点：`key = ep::<name>`，value = JSON 整条（含明文 key）。
- *     索引键 `__ep_index__` 记录所有 endpoint 的 name，供 listEndpoints 枚举。
- *   内部索引键均以下划线开头（___cred_index___ / __ep_index__），
- *   不会泄漏进纯密钥或 endpoint 列表（Rust 端已过滤）。
+ * 历史方案（ep:: 前缀 / __ep_index__ 元键 / 独立 endpoints service）已废弃，
+ * 因 Windows 凭据管理器对下划线元键读写不一致；详见 lib.rs 注释。
  */
 
 export type CredentialKey = string;
@@ -25,7 +20,7 @@ export type CredentialKey = string;
 /** Tauri 命令返回 Option<String> 在前端表现为 string | null。 */
 type OptionString = string | null;
 
-/** 内部：接入点整条（含明文 key，仅存于密钥库）。 */
+/** 内部：接入点整条（含明文 key，落盘时由 Rust 加密，读取时解密）。 */
 type StoredEndpoint = ApiEndpoint & { apiKey: string };
 
 async function invokeRaw<T>(cmd: string, args: Record<string, unknown>): Promise<T> {

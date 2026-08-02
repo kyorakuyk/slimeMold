@@ -37,10 +37,8 @@ icon_gen.log
 tauri_build2.log
 vite_verify.log
 *.local.log
-tauri-dev.log
-tauri-dev.err
-tauri-dev2.log
-tauri-dev3.log
+tauri-dev*.log
+tauri-dev*.err
 exe_err.log
 exe_out.log
 cargo-check.log

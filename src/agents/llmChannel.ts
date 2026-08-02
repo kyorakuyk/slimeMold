@@ -12,11 +12,13 @@ function resolveProxy(agent: AgentConfig): string {
 /**
  * LLM 通道抽象层。
  *
- * 项目分两条演进路线：
- *  - 路线 A（当前 main）：调度仍在前端 JS，仅把「每一次 LLM HTTP 调用」的通道可切换
- *    （frontend 直接走 WebView / backend 走 Tauri Rust 命令）。密钥可留在 Rust 侧。
- *  - 路线 B（feature/backend-engine 分支）：整 DAG 调度搬进 Rust，此处的 LLMChannel
- *    抽象会被 ExecutionBackend 复用（见下方 ExecutionBackend 占位接口）。
+ * 路线 A（当前 main）已落地：所有 LLM HTTP 调用统一由前端 provider 发起
+ * （plugin-http / window.fetch，带回 token usage 统计，规避 CORS），Rust 侧
+ * 不再实现 HTTP 客户端（已移除 chat_completion）。密钥仅存于系统密钥库，
+ * 前端按 name 引用、不直接持有明文。
+ *
+ * 路线 B（feature/backend-engine 分支，未来可选）：整 DAG 调度搬进 Rust，此处的
+ * LLMChannel 抽象会被 ExecutionBackend 复用（见下方 ExecutionBackend 占位接口）。
  *
  * 节点与 executor 永远只依赖 LLMChannel，不直接 import provider，从而两条路线可无感切换。
  */
@@ -47,38 +49,17 @@ class FrontendChannel implements LLMChannel {
 }
 
 /**
- * 后端通道：请求经 Tauri `chat_completion` 命令在 Rust 侧发起。
- * 流式 token 经 tauri::ipc::Channel 回传，最终在前端逐 token 触发 onToken。
- * 若后端命令不可用（非 Tauri / 未实现），自动降级到前端通道，保证可用性。
+ * 后端通道（已废弃，路线 A 下不再使用）。
+ * 原实现经 Tauri `chat_completion` 命令在 Rust 侧发起请求，该命令已移除。
+ * 此处保留为兼容壳：直接委托前端通道，保证 getChannel('backend') 仍可工作，
+ * 且不依赖已删除的 Rust 命令。路线 B 启用时将由 ExecutionBackend 取代。
  */
 class BackendChannel implements LLMChannel {
   readonly mode = 'backend' as const;
 
   async chat(req: LLMRequest): Promise<LLMResponse> {
-    if (!isTauri) {
-      // 浏览器预览环境无 Rust 后端，降级
-      return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
-    }
-    const { invoke, Channel } = await import('@tauri-apps/api/core');
-    const acc: string[] = [];
-    const channel = new Channel<string>((token) => {
-      // 后端回传的每一片 token
-      acc.push(token);
-      req.onToken?.(token);
-    });
-    const result = await invoke<string>('chat_completion', {
-      args: {
-        agent: req.agent,
-        messages: req.messages,
-        stream: !!req.onToken,
-        global_proxy_url: resolveProxy(req.agent),
-      },
-      onTokenChannel: channel,
-    });
-    // 非流式时后端直接返回完整文本；流式时以回传 token 拼接为准（result 可能为空串）
-    const text = result && (!req.onToken || acc.length === 0) ? result : acc.join('');
-    // 后端通道暂未回流 usage（路线 B 可在 Rust 侧填充）。前端已能拿到用量。
-    return { text, usage: undefined };
+    // 委托前端 provider（plugin-http），带回 usage 统计。
+    return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
   }
 }
 
