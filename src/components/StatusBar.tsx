@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Terminal, History, Variable, Eraser } from 'lucide-react';
+import { ChevronDown, Terminal, History, Variable, Eraser, Save } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 
 type Tab = 'log' | 'history' | 'vars';
@@ -20,11 +20,19 @@ export default function StatusBar({
   const nodes = useWorkflowStore((s) => s.nodes);
   const variables = useWorkflowStore((s) => s.variables);
   const runHistory = useWorkflowStore((s) => s.runHistory);
+  const lastAutosave = useWorkflowStore((s) => s.lastAutosave);
+  const setAutosave = useWorkflowStore((s) => s.setAutosave);
   const [tab, setTab] = useState<Tab>('log');
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const successCount = nodes.filter((n) => n.data.status === 'success').length;
   const errorCount = nodes.filter((n) => n.data.status === 'error').length;
+
+  // 画布变更后防抖标记「已自动保存」（persist 已同步落盘，这里只更新 UI 时间戳）
+  useEffect(() => {
+    const t = setTimeout(() => setAutosave(), 600);
+    return () => clearTimeout(t);
+  }, [nodes, variables, runHistory, setAutosave]);
 
   // 日志自动滚动到底
   useEffect(() => {
@@ -63,6 +71,16 @@ export default function StatusBar({
         </button>
 
         <div className="flex flex-1 items-center justify-end gap-3 px-3 text-[11px]">
+          <span
+            className="flex items-center gap-1"
+            style={{ color: 'var(--sm-ink-faint)' }}
+            title="工作流已自动保存到本地，关闭后重新打开会自动恢复"
+          >
+            <Save size={12} />
+            {lastAutosave
+              ? `已自动保存 ${new Date(lastAutosave).toLocaleTimeString()}`
+              : '已自动保存'}
+          </span>
           {running ? (
             <span className="flex items-center gap-1.5" style={{ color: 'var(--sm-accent)' }}>
               <span className="sm-spinner" /> 执行中…

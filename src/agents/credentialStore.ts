@@ -58,9 +58,10 @@ export async function listCredentials(): Promise<CredentialKey[]> {
 
 /**
  * 保存一个 API 接入点（网址 + 密钥）。
- * - 完整条目（含明文 key）写入独立 endpoints service（Rust save_endpoint）。
- * - 同时把明文 key 以 `name` 登记为纯密钥（credential service），
- *   使智能体「单独配置 / 从库导入」按 credentialKey = name 引用同一把 key。
+ * 路线 A 下：整条条目（含明文 key）经 Rust `save_endpoint` 写入 AppData 的
+ * endpoints.json，其中 apiKey 字段由 Rust 侧以 AES-GCM 加密落盘（主密钥在 keyring）。
+ * 不再把 key 单独登记到 credential service——智能体按接入点 name 引用，
+ * 运行时经 loadEndpointKey 从 endpoints.json 解密取回。
  */
 export async function saveEndpoint(ep: ApiEndpoint, apiKey: string): Promise<void> {
   if (!isTauri) {
@@ -72,7 +73,6 @@ export async function saveEndpoint(ep: ApiEndpoint, apiKey: string): Promise<voi
 
   const stored: StoredEndpoint = { ...ep, name, apiKey };
   await invokeRaw('save_endpoint', { key: name, value: JSON.stringify(stored) });
-  // 纯密钥（智能体按 name 引用）由 Rust save_endpoint 一并登记到凭据 service
 }
 
 /** 读取一个 API 接入点的明文 key（校验/拉模型用）。 */
@@ -87,11 +87,14 @@ export async function loadEndpointKey(name: string): Promise<string | null> {
   }
 }
 
-/** 删除一个 API 接入点（endpoints service + 纯密钥）。 */
+/**
+ * 删除一个 API 接入点。
+ * 路线 A 下接入点仅存于 endpoints.json（apiKey 已加密），无独立的 credential 条目，
+ * 故只需删除 endpoints.json 中的对应键即可。
+ */
 export async function removeEndpoint(name: string): Promise<void> {
   if (!isTauri) return;
   await invokeRaw('delete_endpoint', { key: name });
-  await removeCredential(name);
 }
 
 /** 枚举全部 API 接入点（来自 endpoints service，Rust 端直接枚举）。 */

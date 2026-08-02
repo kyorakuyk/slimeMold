@@ -113,6 +113,12 @@ interface WorkflowState {
   /** 历史运行记录（持久化） */
   runHistory: RunRecord[];
 
+  /**
+   * 最近一次「自动保存」的时间戳（仅 UI 提示用，不持久化到磁盘，
+   * 因为 zustand persist 已在每次变更后同步写入 localStorage）。
+   */
+  lastAutosave: number | null;
+
   /* ---- 项目层（多工作流） ---- */
   /** 当前项目名（无项目时为 null，表示游离单工作流） */
   projectName: string | null;
@@ -349,6 +355,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       logs: [],
       variables: {},
       runHistory: [],
+      lastAutosave: null,
 
       projectName: null,
       projectPath: null,
@@ -627,6 +634,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           ],
         }),
       clearLogs: () => set({ logs: [] }),
+
+      /** 记录一次「自动保存」发生（仅 UI 提示，不写磁盘；persist 已同步落盘） */
+      setAutosave: () => set({ lastAutosave: Date.now() }),
 
       setVariable: (key, value) => {
         if (!key) return;
