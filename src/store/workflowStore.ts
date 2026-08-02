@@ -36,6 +36,8 @@ import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir } from '../platform/env';
+import { saveLastSession, clearLastSession } from '../io/projectIO';
+import { starterTemplates } from '../data/starterTemplates';
 
 /**
  * 根据分组内部节点，按「端口类型」聚合推导折叠态的代理端口（ProxyPort）
@@ -203,6 +205,8 @@ interface WorkflowState {
   /* ---- 项目层方法 ---- */
   /** 新建项目（清空为多工作流容器，含一个空白工作流） */
   newProject: (name: string) => void;
+  /** 引导式新建项目：可选从模板起步，可选立即落盘到指定位置 */
+  createProject: (opts: { name: string; templateId?: string; location?: string }) => Promise<void>;
   /** 载入整个项目文件，并激活 activeId 对应工作流；path 为磁盘路径（Tauri）或项目名（浏览器） */
   openProject: (file: ProjectFile, path?: string) => void;
   /** 保存当前项目（返回保存的项目根路径/名称） */
@@ -824,6 +828,75 @@ export const useWorkflowStore = create<WorkflowState>()(
           logs: [],
         });
         suppressDirty = false;
+      },
+
+      createProject: async ({ name, templateId, location }) => {
+        const tpl = templateId
+          ? starterTemplates.find((t) => t.id === templateId)
+          : undefined;
+        const id = `wf-${Date.now()}`;
+        const projId = `proj-${Date.now()}`;
+        const now = new Date().toISOString();
+        const baseAgents = tpl?.graph.agents?.length
+          ? tpl.graph.agents
+          : [createAgent('ollama')];
+        const wf: WorkflowFile = {
+          version: 1,
+          name: tpl?.graph.name ?? '未命名工作流',
+          savedAt: now,
+          nodes: tpl?.graph.nodes ?? [],
+          edges: tpl?.graph.edges ?? [],
+          agents: baseAgents,
+          roles: builtinRoles.map((r) => ({ ...r })),
+          variables: {},
+          belongsToProject: projId,
+        };
+        suppressDirty = true;
+        set({
+          projectName: name,
+          projectId: projId,
+          projectCreatedAt: now,
+          projectPath: location ?? null,
+          // 若已指定落盘位置，先按"已保存"对待，待 saveProject 成功后再定 dirty
+          projectDirty: !!location,
+          lastSavedSnapshot: null,
+          workflows: { [id]: wf },
+          activeWfId: id,
+          workflowName: wf.name,
+          // 模板节点载入即标记脏，保证运行时会真正执行而非命中空缓存
+          nodes: (tpl?.graph.nodes ?? []).map((n) => ({
+            ...n,
+            data: { ...n.data, dirty: true },
+          })),
+          edges: tpl?.graph.edges ?? [],
+          agents: baseAgents,
+          defaultAgentId: wf.defaultAgentId ?? null,
+          roles: [
+            ...builtinRoles.map((r) => ({ ...r })),
+            ...(tpl?.graph.roles ?? []).filter((r) => !r.builtin),
+          ],
+          variables: wf.variables!,
+          projectVariables: {},
+          projectAssets: [],
+          selectedNodeId: null,
+          logs: [],
+        });
+        suppressDirty = false;
+        if (location) {
+          try {
+            const root = await get().saveProject(location);
+            saveLastSession({ path: root, activeId: id });
+          } catch (e) {
+            // 落盘失败：保留在内存态（projectPath=null），用户可稍后保存
+            set({ projectPath: null, projectDirty: true });
+            get().addLog(
+              'warn',
+              `项目已创建但落盘失败：${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        } else {
+          clearLastSession();
+        }
       },
 
       openProject: (file, path) => {

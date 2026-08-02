@@ -53,7 +53,6 @@ import {
   clearRecentProjects,
   pushRecentProject,
   saveLastSession,
-  clearLastSession,
 } from '../io/projectIO';
 
 interface TopBarProps {
@@ -67,6 +66,7 @@ interface TopBarProps {
   onToggleInspector: () => void;
   onOpenPanel: (key: SidePanelKey) => void;
   onOpenShortcuts: () => void;
+  onNewProject: () => void;
 }
 
 interface MenuAction {
@@ -93,6 +93,7 @@ export default function TopBar({
   onToggleInspector,
   onOpenPanel,
   onOpenShortcuts,
+  onNewProject,
 }: TopBarProps) {
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
@@ -130,7 +131,6 @@ export default function TopBar({
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
-  const newProject = useWorkflowStore((s) => s.newProject);
   const openProject = useWorkflowStore((s) => s.openProject);
   const saveProject = useWorkflowStore((s) => s.saveProject);
   const addLog = useWorkflowStore((s) => s.addLog);
@@ -142,10 +142,7 @@ export default function TopBar({
   const wfList = Object.entries(workflows);
 
   const handleNewProject = () => {
-    const name = window.prompt('项目名称', '未命名项目')?.trim();
-    if (!name) return;
-    newProject(name);
-    clearLastSession();
+    onNewProject();
   };
 
   // 记录"上次会话"：项目根路径 + 当前激活工作流 id，供下次启动自动恢复

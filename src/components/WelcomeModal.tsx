@@ -14,11 +14,10 @@ import {
   getRecentProjects,
   clearRecentProjects,
   saveLastSession,
-  clearLastSession,
 } from '../io/projectIO';
 import type { ProjectFile } from '../types';
 
-export default function WelcomeModal({ onClose }: { onClose: () => void }) {
+export default function WelcomeModal({ onClose, onNewProject }: { onClose: () => void; onNewProject: () => void }) {
   const [recents, setRecents] = useState(() => getRecentProjects());
   const [loading, setLoading] = useState<string | null>(null);
 
@@ -62,11 +61,8 @@ export default function WelcomeModal({ onClose }: { onClose: () => void }) {
   };
 
   const handleNew = () => {
-    const name = window.prompt('项目名称', '未命名项目')?.trim();
-    if (!name) return;
-    useWorkflowStore.getState().newProject(name);
-    clearLastSession();
     onClose();
+    onNewProject();
   };
 
   return (

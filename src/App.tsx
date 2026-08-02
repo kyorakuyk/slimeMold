@@ -9,6 +9,7 @@ import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar
 import ShortcutsModal from './components/ShortcutsModal';
 import ExamplesModal from './components/ExamplesModal';
 import WelcomeModal from './components/WelcomeModal';
+import NewProjectModal from './components/NewProjectModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
@@ -204,6 +205,7 @@ export default function App() {
 
   // P3 项目欢迎页：当前无项目加载时弹出（项目加载后自动隐藏）
   const [showWelcome, setShowWelcome] = useState(() => !useWorkflowStore.getState().projectId);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   useEffect(() => {
     return useWorkflowStore.subscribe((s) => {
       if (s.projectId && showWelcome) setShowWelcome(false);
@@ -260,6 +262,7 @@ export default function App() {
           onToggleInspector={toggleInspector}
           onOpenPanel={openPanel}
           onOpenShortcuts={() => setShowShortcutsModal(true)}
+          onNewProject={() => setNewProjectOpen(true)}
         />
         <main className="flex flex-1 overflow-hidden">
           {/* 通栏图标条：贯穿整个高度，底部面板在其右侧打开，永不被遮盖 */}
@@ -377,7 +380,8 @@ export default function App() {
             onCancel={() => setPrompt(null)}
           />
         )}
-        {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} />}
+        {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} onNewProject={() => setNewProjectOpen(true)} />}
+        {newProjectOpen && <NewProjectModal onClose={() => setNewProjectOpen(false)} />}
       </div>
     </ReactFlowProvider>
   );
