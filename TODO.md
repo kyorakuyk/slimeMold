@@ -367,7 +367,7 @@
 - [x] **P2 变量两级**：项目级 variables 落 `ProjectFile.variables`（project.json 顶层），工作流级 variables 存 `workflows[x].variables`；求值时 `extraVars < 项目级 < 工作流级`（工作流覆盖项目）；`VariablesPanel` 分「项目级/工作流级」两个作用域编辑并标注覆盖关系（`被覆盖`/`覆盖项目`）。
 - [x] **P2 成本跟项目**：`runHistory` 落盘到 `.slimemold/runs/history.json`（`ProjectFile.runs.history`）；`saveProject` 注入、`openProject` 读回；`RunHistoryPanel`/`TokenUsagePanel`/`StatusBar` 直接读 store.runHistory，天然按项目归属。全局 persist 仍保留 runHistory 作为无项目态兼容（打开项目后由磁盘主导）。
 - [x] **P3 恢复上次界面**：上次打开/保存的项目根路径 + 激活工作流 id 存 `localStorage`（`sm.lastSession`）；桌面端启动时自动 `openProjectByPath` 恢复（含激活工作流，校验路径仍存在、跳过已持久化恢复的项目）；新建项目时清除会话记录；打开/保存/最近项目均更新会话。
-- [ ] **P3 项目欢迎页**：最近项目列表 / 新建 / 打开。
+- [x] **P3 项目欢迎页**：`WelcomeModal` 首屏（无项目加载时弹出，项目加载后自动隐藏），含「最近项目」列表（路径失效自动移除）、「新建项目」「打开项目…」；归档 `openProjectByPath` / `openProjectFile` / 会话持久化；与 P3 自动恢复互补（有上次会话时直接进画布，否则走欢迎页）。
 
 ---
 

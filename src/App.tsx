@@ -8,6 +8,7 @@ import SettingsCenter from './components/SettingsCenter';
 import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar';
 import ShortcutsModal from './components/ShortcutsModal';
 import ExamplesModal from './components/ExamplesModal';
+import WelcomeModal from './components/WelcomeModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
@@ -201,6 +202,14 @@ export default function App() {
     };
   }, []);
 
+  // P3 项目欢迎页：当前无项目加载时弹出（项目加载后自动隐藏）
+  const [showWelcome, setShowWelcome] = useState(() => !useWorkflowStore.getState().projectId);
+  useEffect(() => {
+    return useWorkflowStore.subscribe((s) => {
+      if (s.projectId && showWelcome) setShowWelcome(false);
+    });
+  }, [showWelcome]);
+
   // 全局快捷键（与菜单标注一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -368,6 +377,7 @@ export default function App() {
             onCancel={() => setPrompt(null)}
           />
         )}
+        {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} />}
       </div>
     </ReactFlowProvider>
   );
