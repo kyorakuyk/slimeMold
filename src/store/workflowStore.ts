@@ -834,18 +834,19 @@ export const useWorkflowStore = create<WorkflowState>()(
         const tpl = templateId
           ? starterTemplates.find((t) => t.id === templateId)
           : undefined;
+        const graph = tpl?.build();
+        const tplNodes = graph?.nodes ?? [];
+        const tplEdges = graph?.edges ?? [];
         const id = `wf-${Date.now()}`;
         const projId = `proj-${Date.now()}`;
         const now = new Date().toISOString();
-        const baseAgents = tpl?.graph.agents?.length
-          ? tpl.graph.agents
-          : [createAgent('ollama')];
+        const baseAgents = [createAgent('ollama')];
         const wf: WorkflowFile = {
           version: 1,
-          name: tpl?.graph.name ?? '未命名工作流',
+          name: tpl?.name ?? '未命名工作流',
           savedAt: now,
-          nodes: tpl?.graph.nodes ?? [],
-          edges: tpl?.graph.edges ?? [],
+          nodes: tplNodes,
+          edges: tplEdges,
           agents: baseAgents,
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
@@ -864,17 +865,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           activeWfId: id,
           workflowName: wf.name,
           // 模板节点载入即标记脏，保证运行时会真正执行而非命中空缓存
-          nodes: (tpl?.graph.nodes ?? []).map((n) => ({
+          nodes: tplNodes.map((n) => ({
             ...n,
             data: { ...n.data, dirty: true },
           })),
-          edges: tpl?.graph.edges ?? [],
+          edges: tplEdges,
           agents: baseAgents,
-          defaultAgentId: wf.defaultAgentId ?? null,
-          roles: [
-            ...builtinRoles.map((r) => ({ ...r })),
-            ...(tpl?.graph.roles ?? []).filter((r) => !r.builtin),
-          ],
+          roles: builtinRoles.map((r) => ({ ...r })),
           variables: wf.variables!,
           projectVariables: {},
           projectAssets: [],

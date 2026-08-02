@@ -93,10 +93,9 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
             <TemplateCard
               key={t.id}
               active={templateId === t.id}
-              title={t.name}
-              desc={t.description}
-              category={t.category}
-              nodeCount={t.graph.nodes.length}
+              title={`${t.emoji} ${t.name}`}
+              desc={t.desc}
+              nodeCount={t.build().nodes.length}
               onClick={() => setTemplateId(t.id)}
             />
           ))}
@@ -162,14 +161,12 @@ function TemplateCard({
   active,
   title,
   desc,
-  category,
   nodeCount,
   onClick,
 }: {
   active: boolean;
   title: string;
   desc: string;
-  category?: string;
   nodeCount: number;
   onClick: () => void;
 }) {
@@ -193,11 +190,6 @@ function TemplateCard({
       <span className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
         {title}
       </span>
-      {category && (
-        <span className="mt-0.5 w-fit rounded px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink-faint)' }}>
-          {category}
-        </span>
-      )}
       <span className="mt-1 line-clamp-2 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
         {desc}
       </span>
