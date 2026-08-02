@@ -117,7 +117,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
                 {location ? '更改位置' : '选择位置…'}
               </button>
               <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: location ? 'var(--sm-ink)' : 'var(--sm-ink-faint)' }}>
-                {location ? location : '未选择：新建后需手动保存才能落盘'}
+                {location ? location : '未选择：将自动保存到「文档/SlimeMold/<项目名>」并生成 .slimemold'}
               </span>
             </div>
           </div>

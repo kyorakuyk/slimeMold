@@ -844,6 +844,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         const id = `wf-${Date.now()}`;
         const projId = `proj-${Date.now()}`;
         const now = new Date().toISOString();
+        // 落盘根目录：用户指定优先；未指定则在桌面端落到「文档/SlimeMold/<项目名>」，
+        // 保证“新建项目”即自动生成 .slimemold 目录骨架（浏览器无磁盘环境仍按内存草稿处理）
+        let saveRoot: string | null = location ?? null;
+        if (!saveRoot && isTauri()) {
+          try {
+            const base = (await defaultStandaloneDir()).replace(/\/未归类$/, '');
+            const safe = (name.trim() || '未命名项目').replace(/[\\/:*?"<>|]/g, '_');
+            saveRoot = `${base}/${safe}`;
+          } catch {
+            saveRoot = null;
+          }
+        }
         const baseAgents = [createAgent('ollama')];
         const wf: WorkflowFile = {
           version: 1,
@@ -861,9 +873,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectName: name,
           projectId: projId,
           projectCreatedAt: now,
-          projectPath: location ?? null,
+          projectPath: saveRoot ?? null,
           // 若已指定落盘位置，先按"已保存"对待，待 saveProject 成功后再定 dirty
-          projectDirty: !!location,
+          projectDirty: !!saveRoot,
           lastSavedSnapshot: null,
           workflows: { [id]: wf },
           activeWfId: id,
@@ -883,9 +895,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           logs: [],
         });
         suppressDirty = false;
-        if (location) {
+        if (saveRoot) {
           try {
-            const root = await get().saveProject(location);
+            const root = await get().saveProject(saveRoot);
             saveLastSession({ path: root, activeId: id });
           } catch (e) {
             // 落盘失败：保留在内存态（projectPath=null），用户可稍后保存
