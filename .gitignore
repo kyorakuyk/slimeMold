@@ -33,6 +33,11 @@ generated-images/
 start-hidden.bat
 tauri_dev.local.log
 dev.log
+dev.out
+dev.err
+tauri.out
+tauri.err
+tauri.log
 icon_gen.log
 tauri_build2.log
 vite_verify.log
