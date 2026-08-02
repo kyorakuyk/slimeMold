@@ -53,19 +53,27 @@ function isRateLimitError(err: unknown): boolean {
 }
 
 /**
- * 带指数退避的重试包装。仅对限流类错误重试（默认 3 次），
+ * 带指数退避的重试包装。默认仅对限流类错误重试（默认 3 次），
  * 遇到 AbortSignal 中止或达到重试上限则原样抛出。
+ * 可通过 `shouldRetry` 覆盖重试判定（如节点级「仅瞬时错误重试」）。
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  opts: { retries: number; baseDelay: number; signal: AbortSignal; onRetry: (msg: string, delay: number, attempt: number) => void },
+  opts: {
+    retries: number;
+    baseDelay: number;
+    signal: AbortSignal;
+    onRetry: (msg: string, delay: number, attempt: number) => void;
+    shouldRetry?: (err: unknown) => boolean;
+  },
 ): Promise<T> {
+  const decide = opts.shouldRetry ?? isRateLimitError;
   let attempt = 0;
   while (true) {
     try {
       return await fn();
     } catch (err) {
-      if (opts.signal.aborted || !isRateLimitError(err) || attempt >= opts.retries) {
+      if (opts.signal.aborted || !decide(err) || attempt >= opts.retries) {
         throw err;
       }
       attempt++;

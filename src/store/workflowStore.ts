@@ -103,6 +103,8 @@ interface WorkflowState {
   examplesOpen: boolean;
   running: boolean;
   failFast: boolean;
+  /** 失败时继续（failFast 的反面策略）：某节点失败后不中断整体运行，下游以空上游输出跳过失败继续执行 */
+  skipFailed: boolean;
   /** LLM 并发上限：同一时刻最多进行的智能体请求数 */
   maxConcurrency: number;
   /** LLM 调用通道：'backend'（经 Tauri Rust 命令，密钥不出前端）/ 'frontend'（WebView 直接请求）。默认 backend。 */
@@ -164,6 +166,7 @@ interface WorkflowState {
   setSelected: (id: string | null, wfId?: string) => void;
   setRunning: (running: boolean) => void;
   setFailFast: (v: boolean) => void;
+  setSkipFailed: (v: boolean) => void;
   setMaxConcurrency: (v: number) => void;
   setLlmChannel: (v: 'backend' | 'frontend') => void;
   addLog: (level: LogEntry['level'], message: string) => void;
@@ -350,6 +353,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       examplesOpen: false,
       running: false,
       failFast: true,
+      skipFailed: false,
       maxConcurrency: 3,
       llmChannel: 'backend',
       logs: [],
@@ -623,6 +627,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
       setRunning: (running) => set({ running }),
       setFailFast: (v) => set({ failFast: v }),
+      setSkipFailed: (v) => set({ skipFailed: v }),
       setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),
       setLlmChannel: (v) => set({ llmChannel: v }),
 
@@ -1354,6 +1359,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         agents: s.agents,
         roles: s.roles,
         failFast: s.failFast,
+        skipFailed: s.skipFailed,
         maxConcurrency: s.maxConcurrency,
         llmChannel: s.llmChannel,
         variables: s.variables,

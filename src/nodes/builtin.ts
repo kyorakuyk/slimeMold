@@ -1021,15 +1021,17 @@ export const nodeResolver: NodeDefinition = {
  * 输出端口声明 `flow: 'control'`，作为 stage 边界——执行引擎在拓扑排序时
  * 把 control 边指向的下游强制推入更高 stage，从而「条件节点 → 循环体 → 回指条件节点」
  * 这类伪环不被误判成环，又能保证每一轮 gate 的顺序。
- * 框架层仅做单轮 gate（真正迭代循环需执行引擎支持，见 TODO 步骤 4）；当前每轮运行时
- * 条件为假则下游（被 control 边指向者）被剪枝，循环体不进入本轮机执行。
+ *
+ * 迭代循环（Step 6）：执行引擎识别到由 control 边构成的回环后，会重复跑整个 stage 序列。
+ * 每一轮 gate 走 `pass` 分支 ⇒ 循环继续；走 `stop` 分支 ⇒ 循环体被剪枝、本轮结束即退出循环。
+ * 每轮执行前会把当前轮次（从 0 开始）写入 `ctx.vars[loopVar]`，供循环体内部条件判断使用。
  */
 export const nodeLoopGate: NodeDefinition = {
   typeId: 'flow.loopGate',
   name: '循环/条件断点',
   category: '流程',
   description:
-    '条件判断节点，其「通过」端口为控制流（control，紫色）语义。用于构成循环：循环体尾部以 control 边回指本节点。拓扑排序时 control 边视作 stage 断点，不破坏环检测。条件为假时下游被剪枝。',
+    '条件判断节点，其「通过」端口为控制流（control，紫色）语义。用于构成循环：循环体尾部以 control 边回指本节点。拓扑排序时 control 边视作 stage 断点，不破坏环检测。条件为假时下游被剪枝。执行引擎会对 control 回环做真正的多轮迭代（Step 6）。',
   inputs: [{ id: 'cond', label: '条件', type: 'any' }],
   outputs: [
     { id: 'pass', label: '通过', type: 'any', flow: 'control' },
@@ -1041,11 +1043,26 @@ export const nodeLoopGate: NodeDefinition = {
       label: '条件表达式（可选，留空则直接用输入端口「条件」）',
       type: 'textarea',
       default: '',
-      placeholder: '例如：count < 5，或 status == "running"',
+      placeholder: '例如：i < 5，或 status == "running"（i 为循环变量）',
+    },
+    {
+      key: 'maxLoops',
+      label: '最大循环轮数（防止死循环）',
+      type: 'number',
+      default: 20,
+    },
+    {
+      key: 'loopVar',
+      label: '循环变量名（每轮写入 ctx.vars，供表达式引用）',
+      type: 'text',
+      default: 'i',
     },
   ],
   async execute(inputs, params, ctx) {
     const expr = String(params.expression ?? '').trim();
+    // 每轮由执行引擎写入当前轮次到 ctx.vars[loopVar]
+    const loopVar = String(params.loopVar ?? 'i');
+    const loopIndex = (ctx.vars[loopVar] as number) ?? 0;
     let value: unknown;
     if (expr) {
       const result = evalExpr(expr, { ...ctx.vars, ...inputs });
@@ -1056,7 +1073,11 @@ export const nodeLoopGate: NodeDefinition = {
     const truthy = isTruthy(value);
     // 仅激活「通过」或仅「终止」分支；另一分支下游被剪枝
     ctx.setBranches?.(truthy ? ['pass'] : ['stop']);
-    return { taken: truthy ? 'pass' : 'stop' };
+    return {
+      taken: truthy ? 'pass' : 'stop',
+      // 告诉执行引擎当前循环轮次，用于多轮迭代调度
+      __loopIndex: loopIndex,
+    };
   },
 };
 

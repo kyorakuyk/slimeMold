@@ -22,6 +22,17 @@ export function stopWorkflow(): void {
   currentAbort?.abort();
 }
 
+/**
+ * 判断错误是否为「瞬时错误」：仅这类（网络/超时/限流/网关）值得在节点层重试；
+ * 业务错误（参数/解析/逻辑）重试无意义，直接失败。
+ */
+function isTransient(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ECONN|ENOTFOUND|ECONNRESET|ETIMEDOUT|429|too many requests|503|502|504|gateway|rate limit|network|socket|aborted/i.test(
+    msg,
+  );
+}
+
 /** 汇集上游输出：edge.targetHandle <- outputs[edge.source][edge.sourceHandle] */
 export function collectInputs(
   nodeId: string,
@@ -46,6 +57,19 @@ export interface RunOptions {
   forceNodes?: string[];
   /** 执行到这些节点为止（含），其下游不再执行（标记 skipped）。用于「重跑到此节点」 */
   stopAfterNodes?: string[];
+  /**
+   * 失败续跑（L1 可靠执行）：仅重跑上一轮处于 error 状态的节点及其下游；
+   * 其余 success/cached 节点复用既有结果不动。需配合 incremental 使用。
+   */
+  retryFailed?: boolean;
+  /** 强制轮次上限（调试用），默认取 loopGate 节点的 maxLoops 参数 */
+  maxLoopsOverride?: number;
+  /**
+   * 失败时继续（failFast 的反面策略）：为 true 时，某节点失败后不中断整体运行，
+   * 且其下游节点不被剪枝、以空上游输出继续尝试执行（跳过失败节点而非卡死）。
+   * 配合 false 的 failFast 一起使用。
+   */
+  skipFailed?: boolean;
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
@@ -99,9 +123,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
 
   const force = new Set(opts.forceNodes ?? []);
   const stopAfter = new Set(opts.stopAfterNodes ?? []);
+  // 失败续跑（L1）：把上一轮 error 节点及其全部下游标记为本次需执行集
+  if (opts.retryFailed) {
+    const errored = nodes.filter((n) => n.data.status === 'error').map((n) => n.id);
+    for (const id of errored) {
+      const downstream = new Set<string>();
+      addDownstreamToCut(id, edges, downstream); // 含 errored 自身
+      for (const d of downstream) force.add(d);
+    }
+  }
   // 全量运行：清除所有脏标记（之后全部节点都视为需执行，命中缓存者跳过）
   // 增量运行：保留脏标记，仅执行脏节点及其下游
-  if (!opts.incremental) {
+  if (!opts.incremental && !opts.retryFailed) {
     wf.clearDirty();
     for (const id of force) strike(wf.nodes.find((n) => n.id === id)?.data.typeId ?? '');
   } else {
@@ -116,6 +149,32 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     if (ownerRefId(n.id)) dirtySet.add(n.id);
   }
 
+  // 检测是否存在「循环迭代」结构：loopGate 的 pass(control) 分支指回其某个上游。
+  // 若存在，执行引擎将重复跑整个 stage 序列（多轮）；否则单轮即可。
+  const loopGates = nodes.filter((n) => n.data.typeId === 'flow.loopGate');
+  const loopGateIds = new Set(loopGates.map((n) => n.id));
+  // 每个 loopGate 的循环变量名（缺省 'i'）与最大轮数
+  const loopVarOf = new Map<string, string>();
+  const maxLoopsOf = new Map<string, number>();
+  for (const g of loopGates) {
+    loopVarOf.set(g.id, String((g.data.params as Record<string, unknown>)?.loopVar ?? 'i'));
+    maxLoopsOf.set(g.id, Number((g.data.params as Record<string, unknown>)?.maxLoops ?? 20));
+  }
+  // 计算 loopGate 的「循环体」节点集：从 gate.pass 出发、沿控制/数据边、在被 gate.control 回指之前可达的节点
+  const hasLoop = loopGates.length > 0 &&
+    controlEdges.some((e) => loopGateIds.has(e.source) && isReachable(e.target, e.source, edges));
+  // 预计算：每个 loopGate 的循环体下游集（用于每轮强制重算）
+  const loopBodyOf = new Map<string, Set<string>>();
+  if (hasLoop) {
+    for (const g of loopGates) {
+      const body = new Set<string>();
+      // 从 pass 端口出发可达、且能绕回 gate 的节点
+      const seed = controlEdges.filter((e) => e.source === g.id).map((e) => e.target);
+      for (const s of seed) collectReachable(s, g.id, edges, body);
+      loopBodyOf.set(g.id, body);
+    }
+  }
+
   currentAbort = new AbortController();
   const signal = currentAbort.signal;
   wf.setRunning(true);
@@ -126,6 +185,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
+  // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
+  // 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
+  const NODE_RETRIES = 2;
+  const NODE_RETRY_BASE_MS = 1500;
+  const skipFailed = !!opts.skipFailed;
 
   const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';
   wf.addLog('info', `开始运行（${modeLabel}），一共 ${nodes.length} 个节点`);
@@ -153,36 +217,86 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const costLog: CostRecord[] = [];
   const costByNode = new Map<string, CostRecord[]>();
 
-  for (const layer of stages) {
-    if (signal.aborted) break;
-    // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
-    // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
-    await Promise.all(
-      layer.map((id) =>
-        executeNode(
-          id,
-          nodeById,
-          edges,
-          outputsMap,
-          branchState,
-          failed,
-          cutSet,
-          stopAfter,
-          signal,
-          limiter,
-          MAX_RETRIES,
-          RETRY_BASE_MS,
-          dirtySet.has(id),
-          force.has(id),
-          costLog,
-          costByNode,
-        ),
-      ),
-    );
-    if (failFast && failed.size > 0) {
-      currentAbort.abort();
-      break;
+  // 每个 loopGate 本轮走的分支端口（来自 setBranches 回调）
+  const gateTaken = new Map<string, string[]>();
+  // 每轮注入的循环变量：loopVar 名 -> 当前轮次值
+  const loopVarsState: Record<string, number> = {};
+  for (const gid of loopGateIds) loopVarsState[loopVarOf.get(gid)!] = 0;
+
+  // 整体轮次循环：存在 control 回环时重复跑整个 stage 序列（Step 6 迭代循环）
+  const maxRounds = opts.maxLoopsOverride ?? Math.min(50, Math.max(1, ...maxLoopsOf.values()));
+  let round = 0;
+  let loopContinued = false;
+  do {
+    if (round > 0) {
+      wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
     }
+    // 每轮前：把本轮循环变量注入 dirtySet/force，使循环体节点强制重算
+    if (round > 0) {
+      for (const [gid, body] of loopBodyOf) {
+        for (const bid of body) {
+          dirtySet.add(bid);
+          force.add(bid);
+          // 清缓存，避免循环体命中上一轮的缓存结果
+          strike(nodeById.get(bid)?.data.typeId ?? '');
+        }
+        // 循环变量递增
+        const lv = loopVarOf.get(gid)!;
+        loopVarsState[lv] = round;
+      }
+    }
+    for (const layer of stages) {
+      if (signal.aborted) break;
+      // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
+      // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
+      await Promise.all(
+        layer.map((id) =>
+          executeNode(
+            id,
+            nodeById,
+            edges,
+            outputsMap,
+            branchState,
+            failed,
+            cutSet,
+            stopAfter,
+            signal,
+            limiter,
+            MAX_RETRIES,
+            RETRY_BASE_MS,
+            dirtySet.has(id),
+            force.has(id),
+            costLog,
+            costByNode,
+            { ...loopVarsState }, // 本轮循环变量（仅注入，不污染用户全局变量）
+            (gid, handles) => gateTaken.set(gid, handles),
+            opts.skipFailed,
+          ),
+        ),
+      );
+      if (failFast && failed.size > 0) {
+        currentAbort.abort();
+        break;
+      }
+      // failFast=false 且开启「跳过失败继续」：不中断，继续下一 stage
+      // （失败节点的下游会在 executeNode 内判定为「跳过失败」而非剪枝）
+    }
+    if (signal.aborted) break;
+
+    // 判断是否需要继续迭代：任一 loopGate 本轮走了 pass 分支 ⇒ 循环体被激活 ⇒ 继续
+    loopContinued = hasLoop && [...loopGateIds].some((gid) => {
+      const taken = gateTaken.get(gid);
+      return taken ? taken.includes('pass') : false;
+    });
+    gateTaken.clear();
+    round += 1;
+    if (loopContinued && round >= maxRounds) {
+      wf.addLog('info', `已达到最大循环轮数 ${maxRounds}，强制结束循环`);
+      loopContinued = false;
+    }
+  } while (loopContinued);
+  if (hasLoop && round > 1) {
+    wf.addLog('info', `循环结束，共执行 ${round} 轮`);
   }
 
   const store = useWorkflowStore.getState();
@@ -277,6 +391,42 @@ function addDownstreamToCut(startId: string, edges: FlowEdge[], cutSet: Set<stri
   }
 }
 
+/** 沿任意边从 from 出发能否到达 target（用于检测 loopGate 的 control 回环） */
+function isReachable(from: string, target: string, edges: FlowEdge[]): boolean {
+  const queue = [from];
+  const seen = new Set([from]);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === target) return true;
+    for (const e of edges) {
+      if (e.source === cur && !seen.has(e.target)) {
+        seen.add(e.target);
+        queue.push(e.target);
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 收集从 start 出发、能绕回 gateId（未经过 gateId 自身）的可达节点集合，
+ * 即「循环体」——这些节点在每轮迭代中需强制重算。
+ */
+function collectReachable(start: string, gateId: string, edges: FlowEdge[], out: Set<string>): void {
+  const queue = [start];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === gateId) continue; // 不把 gate 本身算进 body
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    out.add(cur);
+    for (const e of edges) {
+      if (e.source === cur && e.target !== gateId) queue.push(e.target);
+    }
+  }
+}
+
 async function executeNode(
   id: string,
   nodeById: Map<string, FlowNode>,
@@ -294,6 +444,9 @@ async function executeNode(
   forced: boolean,
   costLog: CostRecord[],
   costByNode: Map<string, CostRecord[]>,
+  extraVars?: Record<string, number>,
+  onGate?: (id: string, handles: string[]) => void,
+  skipFailed?: boolean,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -344,9 +497,21 @@ async function executeNode(
       return s !== undefined && !s.has(e.sourceHandle ?? undefined);
     });
     if (allBlocked) {
-      branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
-      setStatus(id, 'skipped', { startedAt: null, durationMs: null });
-      return;
+      // 区分「条件不成立剪枝」与「上游失败」：
+      // 失败模式下（skipFailed）若仅因上游失败而阻断，则不剪枝自身、以空输入继续尝试
+      const upstreamAllFailed =
+        skipFailed && incoming.length > 0 && incoming.every((e) => failed.has(e.source));
+      if (upstreamAllFailed) {
+        store.addLog(
+          'info',
+          `「${node.data.label}」上游有失败节点，按「跳过失败继续」策略仍尝试执行`,
+        );
+        // 不 return：继续执行（下方 collectInputs 会用空上游输出）
+      } else {
+        branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
+        setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+        return;
+      }
     }
   }
 
@@ -474,9 +639,11 @@ async function executeNode(
     },
     setBranches: (handles) => {
       branchesTaken = handles;
+      // 把分支结果回报给执行引擎（loopGate 迭代判断用）
+      if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
     },
     storage: scopedStorage(def.pluginId ?? 'core'),
-    vars: useWorkflowStore.getState().variables,
+    vars: { ...useWorkflowStore.getState().variables, ...(extraVars ?? {}) },
     assets: (useWorkflowStore.getState().workflows[useWorkflowStore.getState().activeWfId ?? '']?.assets ?? []) as never,
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
   };
@@ -490,7 +657,22 @@ async function executeNode(
   const startedAt = Date.now();
   const perfStart = performance.now();
   try {
-    const outputs = await def.execute(inputs, node.data.params, ctx);
+    // 单节点实时重试：仅对瞬时错误（网络/超时/限流类）重试，业务错误不重试
+    const outputs = await withRetry(
+      () => def.execute(inputs, node.data.params, ctx),
+      {
+        retries: NODE_RETRIES,
+        baseDelay: NODE_RETRY_BASE_MS,
+        signal,
+        // 仅瞬时类错误重试；业务错误（解析/参数/逻辑）直接抛出
+        shouldRetry: (err) => isTransient(err),
+        onRetry: (msg, delay, attempt) =>
+          store.addLog(
+            'info',
+            `「${node.data.label}」节点出错，正在第 ${attempt} 次重试（稍等约 ${(delay / 1000).toFixed(1)} 秒）：${msg}`,
+          ),
+      },
+    );
     outputsMap.set(id, outputs ?? {});
     // 写入缓存：以「类型+参数+上游输出」为 key，下游命中时自动复用
     const key = cacheKey(node.data.typeId, node.data.params, inputs);
@@ -512,7 +694,12 @@ async function executeNode(
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);
-    branchState.set(id, new Set()); // 失败节点视为屏蔽下游
+    if (skipFailed) {
+      // 跳过失败模式：失败节点不屏蔽下游，使下游仍能以空上游输出继续尝试
+      branchState.set(id, new Set(def.outputs.map((o) => o.id)));
+    } else {
+      branchState.set(id, new Set()); // 失败节点视为屏蔽下游
+    }
     setStatus(id, 'error', {
       error: message,
       startedAt: new Date(startedAt).toISOString(),
@@ -545,5 +732,22 @@ export async function runToNode(id: string): Promise<void> {
   if (store.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id] });
+}
+
+/**
+ * 失败续跑（L1 可靠执行）：从上一轮失败（error 状态）的节点处继续。
+ * 已成功的节点复用既有结果不动；仅失败节点及其下游被重算。
+ * 用法：工作流跑挂后，修好问题节点 → 点「继续运行」即可断点续传。
+ */
+export async function resumeRun(): Promise<void> {
+  const store = useWorkflowStore.getState();
+  if (store.running) return;
+  const errored = store.nodes.filter((n) => n.data.status === 'error');
+  if (errored.length === 0) {
+    store.addLog('info', '没有失败的节点，无需续跑');
+    return;
+  }
+  store.addLog('info', `从断点续跑：重算 ${errored.length} 个失败节点及其下游`);
+  await runWorkflow({ incremental: true, retryFailed: true });
 }
 

@@ -36,11 +36,14 @@ import {
   Plus,
   X,
   FastForward,
+  RotateCcw,
+  Zap,
+  SkipForward,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
-import { runWorkflow, stopWorkflow } from '../engine/executor';
+import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { openDirDialog } from '../platform/env';
 import {
@@ -91,6 +94,10 @@ export default function TopBar({
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
   const running = useWorkflowStore((s) => s.running);
+  const failFast = useWorkflowStore((s) => s.failFast);
+  const skipFailed = useWorkflowStore((s) => s.skipFailed);
+  const setFailFast = useWorkflowStore((s) => s.setFailFast);
+  const setSkipFailed = useWorkflowStore((s) => s.setSkipFailed);
   const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
   const deleteSelected = useWorkflowStore((s) => s.deleteSelected);
   const clearGraph = useWorkflowStore((s) => s.clearGraph);
@@ -197,8 +204,21 @@ export default function TopBar({
     {
       label: '运行',
       items: [
-        { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow() },
-        { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true }), disabled: running },
+        { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow({ skipFailed: skipFailed }) },
+        { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed }), disabled: running },
+        { label: '从断点续跑（失败节点 + 下游）', icon: <RotateCcw size={14} />, onClick: () => resumeRun(), disabled: running },
+        { type: 'divider' as const },
+        {
+          label: failFast ? '失败即停：开' : '失败即停：关',
+          icon: <Zap size={14} />,
+          onClick: () => setFailFast(!failFast),
+        },
+        {
+          label: skipFailed ? '失败时继续：开' : '失败时继续：关',
+          icon: <SkipForward size={14} />,
+          onClick: () => setSkipFailed(!skipFailed),
+          disabled: failFast,
+        },
       ],
     },
     {

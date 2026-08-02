@@ -180,9 +180,30 @@
 **验证**：`npx tsc --noEmit` 无新增错误（executor/headless 解构修正后通过）；剩余错误仅在封存 `SubgraphEditor.tsx` 与 workflowStore 两处 pre-existing 位置。
 
 **框架边界（本轮刻意未做）**：
-- 执行引擎**迭代循环**未实现：当前每轮运行 loopGate 只做单轮 gate（条件为假则下游剪枝）。真正「多次迭代循环体」需执行引擎支持循环执行（重复调度 stage 直至条件终止），列为后续增强。
 - `PortDef.flow` 一致性校验未强制：control 边当前可连任何端口（语义上可接受，校验留待步骤 1 收尾）。
 - 循环的可视化（如循环体高亮）未做。
+
+#### ✅ 步骤 4 收尾：loopGate 迭代循环真正落地（Step 6，已完成，2026-08-02）
+- **`src/engine/executor.ts`**：
+  - `runWorkflow` 调度主循环外层包「轮次循环」：检测是否存在 `flow.loopGate` 的 `pass`(control) 分支经控制/数据边回指自身上游构成的回环（`hasLoop`）。
+  - 每轮跑完所有 stage 后，读 `gateTaken`（经 `setBranches` 回调上报）判断是否有 loopGate 走 `pass` 分支：是 ⇒ 循环体（从 gate.pass 出发绕回 gate 的节点集，见 `collectReachable`）加入下轮 `dirtySet`+`force` 并清缓存（`strike`），同时递增 `ctx.vars[loopVar]`；否 ⇒ 退出轮次循环。
+  - 最大轮数 `maxRounds` 取各 loopGate `maxLoops` 参数最小值（默认 20，上限 50，可被 `RunOptions.maxLoopsOverride` 覆盖），防死循环。
+  - 新增 `RunOptions.extraVars`/`onGate` 注入执行层，循环变量仅本轮注入、不污染用户全局变量。
+  - 新增 `resumeRun()` 失败续跑入口（见 L1）。
+- **`src/nodes/builtin.ts`**：`flow.loopGate` 新增参数 `maxLoops`(默认 20)、`loopVar`(默认 'i')；`execute` 把当前循环轮次 `ctx.vars[loopVar]` 计入条件求值，并回传 `__loopIndex`。
+- **`src/components/TopBar.tsx`**：运行菜单新增「从断点续跑（失败节点 + 下游）」入口（`RotateCcw` 图标，调用 `resumeRun`）。
+
+**效果**：画「loopGate.pass → 干活节点们 → 回指 loopGate」即构成真循环；每轮干活节点重算，循环变量 `i` 递增供条件表达式（如 `i < 5`）使用，条件为假自动退出。
+
+**验证**：`npx tsc --noEmit` 对 executor/TopBar/builtin 三处无新增错误（既有错误仅在封存 `SubgraphEditor.tsx` 与 workflowStore 两处 pre-existing）。
+
+#### ✅ L1 可靠执行：失败节点续跑（已完成，2026-08-02）
+- **`src/engine/executor.ts`**：
+  - 新增 `RunOptions.retryFailed`：配合 `incremental` 时，把上一轮 `status==='error'` 的节点及其全部下游（BFS，`addDownstreamToCut`）标记为本次执行集，其余 success/cached 节点复用既有输出不动。
+  - 新增 `resumeRun()`：检查无 error 节点时提示无需续跑；否则记日志并 `runWorkflow({ incremental: true, retryFailed: true })`。
+- **`src/components/TopBar.tsx`**：运行菜单「从断点续跑」项即触发 `resumeRun`；工作流跑挂后修好问题节点，点一下即可断点续传。
+
+**说明**：这是 L1 可靠执行的第一步——失败后续跑。真正的「单节点自动重试 + failFast=false 时跳过失败继续下游」的自动策略（无需手动点续跑）可后续作为引擎内置策略增强。
 
 ---
 
@@ -214,7 +235,17 @@
 4. ✅ 步骤 4：stage 化拓扑 + loopGate
 5. ✅ **Step 0.5：API key 安全（密钥库 + Rust 代理）** —— keyring 落盘（set/get/delete_credential）+ chat_completion 改从密钥库按 credentialKey 取 key + 前端设置面板不再编辑明文 + workflowIO 序列化剥离 apiKey。已落地（cargo check + tsc 通过）。
 6. ✅ **Step 5：具体 worker 节点（Scaffolder/Implementer/Validator）** —— 三者均为绑定智能体 + 角色 + 模型覆写 + 离线模拟；Scaffolder/Implementer 为普通节点（单次 ctx.llm），**Validator 为「自主节点」试点**（节点内部 think→评估→不合格带批评重跑，maxIter 轮，对外单一端口）。已落地（tsc 通过）。
-7. ⬜ **Step 6（建议新增）：执行引擎迭代循环** —— 让 loopGate 真正多次跑循环体（步骤 4 框架的收尾）；与 Step 5 的 Validator 自主循环互补（前者是画布级回路，后者是节点内回路）
+7. ✅ **Step 6：执行引擎迭代循环** —— loopGate 真正多次跑循环体（2026-08-02 落地，见下方执行状态）。前者是画布级回路（pass 分支绕回 gate 上游），后者是节点内回路（Validator）。
+
+### 4.5 L1 可靠执行：自动执行策略（已完成，2026-08-02）
+- **单节点实时重试**：`executeNode` 把 `def.execute` 包进 `withRetry`（节点级 `NODE_RETRIES=2`、退避 1.5s），仅对**瞬时错误**（`isTransient`：timeout/429/5xx/network/socket 等）重试；业务错误（解析/参数/逻辑）不重试，立即失败。与 LLM 网络层 `withRetry`（限流类）互补：LLM 层耗尽后仍偶发瞬时故障可在节点层再退避一次。
+- **失败跳过继续（failFast 的反面）**：新增 `RunOptions.skipFailed` + store `skipFailed` 开关（TopBar 运行菜单「失败时继续」）。
+  - 关闭「失败即停」(failFast=false) 后再开「失败时继续」：某节点失败不中断整体运行，其下游**不被剪枝**，以空上游输出继续尝试执行（并记录日志「上游有失败节点，按跳过失败继续策略仍尝试执行」）。
+  - 失败节点本身 `branchState` 在非 skipFailed 时屏蔽下游、skipFailed 时放行下游。
+- **UI/配置**：
+  - `workflowStore`：`skipFailed: boolean`（默认 false，已进 persist 白名单）+ `setSkipFailed`。
+  - `TopBar` 运行菜单：全量/增量运行入口透传 `skipFailed`；新增「失败即停：开/关」「失败时继续：开/关」两项开关（后者在 failFast 开启时禁用）。
+- **失败续跑**（上一轮已落地）：`resumeRun()` 仍以手动断点续传方式补 failFast=true 时的卡死场景。
 
 > 理由：Step 0.5 是安全地基，应在任何「真去调云端 API 干活」之前补；Step 6 让 4 的循环语义闭环，与 5 的自主节点互相印证。
 
