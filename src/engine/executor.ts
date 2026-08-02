@@ -728,8 +728,21 @@ async function executeNode(
       if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
     },
     storage: scopedStorage(def.pluginId ?? 'core'),
-    vars: { ...useWorkflowStore.getState().variables, ...(extraVars ?? {}) },
-    assets: (useWorkflowStore.getState().workflows[useWorkflowStore.getState().activeWfId ?? '']?.assets ?? []) as never,
+    // 变量：基础(extraVars) < 项目级 < 工作流级（后者覆盖前者同名项）
+    vars: {
+      ...(extraVars ?? {}),
+      ...useWorkflowStore.getState().projectVariables,
+      ...useWorkflowStore.getState().variables,
+    },
+    // 资产：项目级库与当前工作流库合并（工作流级同名 id 覆盖项目级）
+    assets: (() => {
+      const st = useWorkflowStore.getState();
+      const wfAssets = st.workflows[st.activeWfId ?? '']?.assets ?? [];
+      const byId = new Map<string, AssetMeta>();
+      for (const a of st.projectAssets) byId.set(a.id, a);
+      for (const a of wfAssets) byId.set(a.id, a);
+      return [...byId.values()] as never;
+    })(),
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
   };
 

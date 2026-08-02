@@ -3,78 +3,123 @@ import { useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 
 export default function VariablesPanel({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
-  const variables = useWorkflowStore((s) => s.variables);
+  const projectVariables = useWorkflowStore((s) => s.projectVariables);
+  const workflowVariables = useWorkflowStore((s) => s.variables);
+  const setProjectVariable = useWorkflowStore((s) => s.setProjectVariable);
+  const removeProjectVariable = useWorkflowStore((s) => s.removeProjectVariable);
   const setVariable = useWorkflowStore((s) => s.setVariable);
   const removeVariable = useWorkflowStore((s) => s.removeVariable);
+
+  const [scope, setScope] = useState<'project' | 'workflow'>('project');
   const [newKey, setNewKey] = useState('');
   const [newVal, setNewVal] = useState('');
 
   const addVar = () => {
     const k = newKey.trim();
     if (!k) return;
-    setVariable(k, newVal);
+    if (scope === 'project') setProjectVariable(k, newVal);
+    else setVariable(k, newVal);
     setNewKey('');
     setNewVal('');
   };
 
+  const curVars = scope === 'project' ? projectVariables : workflowVariables;
+  // 编辑工作流级时，标注哪些被项目级同名覆盖；编辑项目级时，标注哪些被工作流级覆盖
+  const overrideMap =
+    scope === 'project'
+      ? (Object.keys(workflowVariables) as string[])
+      : (Object.keys(projectVariables) as string[]);
+
   const body = (
-    <div className="flex-1 overflow-y-auto px-4 py-3">
-      <p className="mb-3 text-xs leading-relaxed text-ink-faint">
-        变量可在节点模板中用 <code className="rounded bg-paper-soft px-1">{'{{name}}'}</code> 引用，
-        也可在「表达式」节点里直接使用。随工作流一起保存。
-      </p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        <p className="mb-3 text-xs leading-relaxed text-ink-faint">
+          变量可在节点模板中用 <code className="rounded bg-paper-soft px-1">{'{{name}}'}</code> 引用，
+          也可在「表达式」节点里直接使用。求值顺序：<b>项目级</b> 被 <b>工作流级</b> 同名覆盖。
+        </p>
 
-      <div className="space-y-2 rounded border border-line p-2">
-        <input
-          className="sm-input"
-          placeholder="变量名"
-          value={newKey}
-          onChange={(e) => setNewKey(e.target.value)}
-        />
-        <input
-          className="sm-input"
-          placeholder="值"
-          value={newVal}
-          onChange={(e) => setNewVal(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addVar();
-          }}
-        />
-        <button
-          className="sm-btn sm-btn-primary w-full"
-          onClick={addVar}
-          disabled={!newKey.trim()}
-        >
-          添加变量
-        </button>
-      </div>
-
-      <div className="mt-3 space-y-2">
-        {Object.keys(variables).length === 0 && (
-          <p className="text-xs text-ink-faint">暂无变量</p>
-        )}
-        {Object.entries(variables).map(([k, v]) => (
-          <div
-            key={k}
-            className="flex items-center gap-2 rounded border border-line px-2 py-1.5"
+        {/* 作用域切换 */}
+        <div className="mb-3 flex overflow-hidden rounded border border-line text-[11px]">
+          <button
+            onClick={() => setScope('project')}
+            className={`flex-1 px-2 py-1 ${scope === 'project' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
           >
-            <span className="w-24 shrink-0 truncate text-xs font-medium text-ink" title={k}>
-              {k}
-            </span>
-            <input
-              className="sm-input flex-1"
-              value={String(v ?? '')}
-              onChange={(e) => setVariable(k, e.target.value)}
-            />
-            <button
-              className="sm-btn border-transparent px-1.5 text-err hover:border-err"
-              onClick={() => removeVariable(k)}
-              title="删除"
+            项目级（跨工作流）
+          </button>
+          <button
+            onClick={() => setScope('workflow')}
+            className={`flex-1 px-2 py-1 ${scope === 'workflow' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
+          >
+            工作流级
+          </button>
+        </div>
+
+        <div className="space-y-2 rounded border border-line p-2">
+          <input
+            className="sm-input"
+            placeholder="变量名"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+          />
+          <input
+            className="sm-input"
+            placeholder="值"
+            value={newVal}
+            onChange={(e) => setNewVal(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addVar();
+            }}
+          />
+          <button
+            className="sm-btn sm-btn-primary w-full"
+            onClick={addVar}
+            disabled={!newKey.trim()}
+          >
+            添加{scope === 'project' ? '项目级' : '工作流级'}变量
+          </button>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {Object.keys(curVars).length === 0 && (
+            <p className="text-xs text-ink-faint">暂无变量</p>
+          )}
+          {Object.entries(curVars).map(([k, v]) => (
+            <div
+              key={k}
+              className="flex items-center gap-2 rounded border border-line px-2 py-1.5"
             >
-              <X size={14} />
-            </button>
-          </div>
-        ))}
+              <span className="w-24 shrink-0 truncate text-xs font-medium text-ink" title={k}>
+                {k}
+              </span>
+              <input
+                className="sm-input flex-1"
+                value={String(v ?? '')}
+                onChange={(e) =>
+                  scope === 'project'
+                    ? setProjectVariable(k, e.target.value)
+                    : setVariable(k, e.target.value)
+                }
+              />
+              {overrideMap.includes(k) && (
+                <span
+                  className="shrink-0 rounded bg-amber-50 px-1 text-[10px] text-amber-600"
+                  title={scope === 'project' ? '被工作流级同名变量覆盖' : '覆盖项目级同名变量'}
+                >
+                  {scope === 'project' ? '被覆盖' : '覆盖项目'}
+                </span>
+              )}
+              <button
+                className="sm-btn border-transparent px-1.5 text-err hover:border-err"
+                onClick={() =>
+                  scope === 'project' ? removeProjectVariable(k) : removeVariable(k)
+                }
+                title="删除"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

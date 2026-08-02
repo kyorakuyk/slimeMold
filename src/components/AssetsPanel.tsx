@@ -57,8 +57,11 @@ export default function AssetsPanel({
 }) {
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
   const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets);
+  const projectAssets = useWorkflowStore((s) => s.projectAssets);
   const removeAsset = useWorkflowStore((s) => s.removeAsset);
+  const removeProjectAsset = useWorkflowStore((s) => s.removeProjectAsset);
   const addAsset = useWorkflowStore((s) => s.addAsset);
+  const addProjectAsset = useWorkflowStore((s) => s.addProjectAsset);
   const addLog = useWorkflowStore((s) => s.addLog);
   const inspectAssetId = useViewStore((s) => s.inspectAssetId);
   const setInspectAsset = useViewStore((s) => s.setInspectAsset);
@@ -66,6 +69,7 @@ export default function AssetsPanel({
   const toggleInspector = useViewStore((s) => s.toggleInspector);
 
   const [tab, setTab] = useState<'files' | 'import' | 'export'>('files');
+  const [scope, setScope] = useState<'workflow' | 'project'>('workflow');
   const [multiMode, setMultiMode] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -74,7 +78,28 @@ export default function AssetsPanel({
   const [query, setQuery] = useState('');
   const [hashMap, setHashMap] = useState<Record<string, string>>({});
 
-  const assetList = useMemo(() => assets ?? [], [assets]);
+  // 资产列表随当前作用域（工作流 / 项目）切换
+  const assetList = useMemo(
+    () => (scope === 'project' ? (projectAssets ?? []) : (assets ?? [])),
+    [scope, assets, projectAssets],
+  );
+
+  const doRemove = (id: string) => {
+    if (scope === 'project') {
+      const refs = removeProjectAsset(id);
+      if (refs.length > 0) {
+        window.alert(
+          `已删除项目资产。注意以下工作流仍引用它（引用将失效）：\n${refs.join('、')}`,
+        );
+      }
+    } else {
+      removeAsset(id);
+    }
+  };
+  const doAdd = (meta: AssetMeta) => {
+    if (scope === 'project') addProjectAsset(meta);
+    else addAsset(meta);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +195,7 @@ export default function AssetsPanel({
     const list = visibleAssets.filter((a) => selectedIds.has(a.id));
     const names = list.map((a) => a.name).join('、');
     if (!window.confirm(`确定删除选中的 ${selectedIds.size} 个资产？\n${names}`)) return;
-    list.forEach((a) => removeAsset(a.id));
+    list.forEach((a) => doRemove(a.id));
     setSelectedIds(new Set());
     setSelectAll(false);
     if (inspectAssetId && selectedIds.has(inspectAssetId)) setInspectAsset(null);
@@ -202,7 +227,7 @@ export default function AssetsPanel({
           createdAt: new Date().toISOString(),
           inWorkspace: false,
         };
-        addAsset(meta);
+        doAdd(meta);
       }
       setTab('files');
       setSelectedIds(new Set(importedIds));
@@ -265,6 +290,28 @@ export default function AssetsPanel({
             {label}
           </button>
         ))}
+      </div>
+
+      {/* 作用域切换：项目级（跨工作流共享）/ 工作流级 */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+        <span className="text-[11px] text-ink-faint">作用域</span>
+        <div className="flex overflow-hidden rounded border border-line text-[11px]">
+          <button
+            onClick={() => setScope('workflow')}
+            className={`px-2 py-1 ${scope === 'workflow' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
+          >
+            工作流
+          </button>
+          <button
+            onClick={() => setScope('project')}
+            className={`px-2 py-1 ${scope === 'project' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
+          >
+            项目
+          </button>
+        </div>
+        <span className="ml-auto text-[11px] text-ink-faint">
+          {scope === 'project' ? '跨工作流共享' : '仅当前工作流'}
+        </span>
       </div>
 
       {/* 第二行：多选键（左）+ 搜索栏（右） */}

@@ -111,8 +111,12 @@ interface WorkflowState {
   /** LLM 调用通道：'backend'（经 Tauri Rust 命令，密钥不出前端）/ 'frontend'（WebView 直接请求）。默认 backend。 */
   llmChannel: 'backend' | 'frontend';
   logs: LogEntry[];
-  /** 全局变量（可在 {{}} 模板与表达式中引用），随工作流保存 */
+  /** 当前激活工作流的全局变量（可在 {{}} 模板与表达式中引用），覆盖项目级同名变量 */
   variables: Record<string, unknown>;
+  /** 项目级变量（跨工作流共享；被工作流级 variables 覆盖同名项） */
+  projectVariables: Record<string, unknown>;
+  /** 项目级资产库（跨工作流共享） */
+  projectAssets: AssetMeta[];
   /** 历史运行记录（持久化） */
   runHistory: RunRecord[];
 
@@ -213,6 +217,14 @@ interface WorkflowState {
   addAsset: (meta: AssetMeta) => void;
   /** 删除一条资产元数据 */
   removeAsset: (assetId: string) => void;
+  /** 向项目级资产库追加一条资产（跨工作流共享） */
+  addProjectAsset: (meta: AssetMeta) => void;
+  /** 删除一条项目级资产；若某工作流通过引用依赖它，返回这些工作流名以便 UI 提醒 */
+  removeProjectAsset: (assetId: string) => string[];
+  /** 设置/覆盖项目级变量 */
+  setProjectVariable: (key: string, value: unknown) => void;
+  /** 删除项目级变量 */
+  removeProjectVariable: (key: string) => void;
   /** 重命名当前工作流 */
   renameWorkflow: (name: string) => void;
   /** 删除一个工作流（至少保留一个） */
@@ -327,6 +339,8 @@ function serializeCurrent(
   },
   /** 归属声明：保留原工作流的文件身份（项目内 / 游离路径） */
   identity?: { belongsToProject?: string; standalonePath?: string },
+  /** 现有工作流的资产库（写回时保留，避免 addAsset/removeAsset 的改动丢失） */
+  keepAssets?: AssetMeta[],
 ): WorkflowFile {
   return {
     version: 1,
@@ -351,6 +365,7 @@ function serializeCurrent(
     roles: s.roles,
     variables: s.variables,
     groups: s.groups ?? [],
+    assets: keepAssets ?? [],
     belongsToProject: identity?.belongsToProject,
     standalonePath: identity?.standalonePath,
   };
@@ -364,6 +379,8 @@ function buildProjectFile(s: {
   agents: AgentConfig[];
   roles: RoleTemplate[];
   variables: Record<string, unknown>;
+  projectVariables: Record<string, unknown>;
+  projectAssets: AssetMeta[];
   groups: NodeGroup[];
   activeWfId: string;
   workflows: Record<string, WorkflowFile>;
@@ -373,7 +390,7 @@ function buildProjectFile(s: {
   subgraphs: Record<string, SubgraphDef>;
   runHistory: RunRecord[];
 }): ProjectFile {
-  const current: WorkflowFile = serializeCurrent(s);
+  const current: WorkflowFile = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
   const workflows = { ...s.workflows };
   if (s.activeWfId) workflows[s.activeWfId] = current;
   else {
@@ -390,7 +407,8 @@ function buildProjectFile(s: {
     workflows,
     activeId: s.activeWfId || Object.keys(workflows)[0],
     roles: s.roles,
-    variables: s.variables,
+    variables: s.projectVariables,
+    assets: s.projectAssets,
     subgraphs: s.subgraphs,
     runs: { history: s.runHistory },
   };
@@ -420,6 +438,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       llmChannel: 'backend',
       logs: [],
       variables: {},
+      projectVariables: {},
+      projectAssets: [],
       runHistory: [],
       lastAutosave: null,
 
@@ -798,6 +818,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           defaultAgentId: wf.defaultAgentId ?? null,
           roles: wf.roles!,
           variables: wf.variables!,
+          projectVariables: {},
+          projectAssets: [],
           selectedNodeId: null,
           logs: [],
         });
@@ -825,6 +847,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...(wf.roles ?? []).filter((r) => !r.builtin),
           ],
           variables: wf.variables ?? {},
+          projectVariables: file.variables ?? {},
+          projectAssets: file.assets ?? [],
           subgraphs: file.subgraphs ?? {},
           groups: wf.groups ?? [],
           // P2 成本跟项目：读回运行历史（落盘于 .slimemold/runs/history.json）
@@ -890,10 +914,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         const synced: Record<string, WorkflowFile> = { ...s.workflows };
         const curId = s.activeWfId || `wf-${Date.now()}`;
         const prev = s.workflows[curId];
-        synced[curId] = serializeCurrent(s, {
-          belongsToProject: prev?.belongsToProject,
-          standalonePath: prev?.standalonePath,
-        });
+        synced[curId] = serializeCurrent(
+          s,
+          {
+            belongsToProject: prev?.belongsToProject,
+            standalonePath: prev?.standalonePath,
+          },
+          prev?.assets,
+        );
         const target = synced[id];
         if (!target) return;
         // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测
@@ -934,10 +962,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!baseActive && (s.nodes.length || s.edges.length)) {
           baseActive = `wf-${Date.now()}`;
           const prev = s.workflows[baseActive];
-          workflows[baseActive] = serializeCurrent(s, {
-            belongsToProject: prev?.belongsToProject,
-            standalonePath: prev?.standalonePath,
-          });
+          workflows[baseActive] = serializeCurrent(
+            s,
+            {
+              belongsToProject: prev?.belongsToProject,
+              standalonePath: prev?.standalonePath,
+            },
+            prev?.assets,
+          );
         }
         const id = `wf-${Date.now() + 1}`;
         const index = Object.keys(workflows).length + 1;
@@ -1017,6 +1049,64 @@ export const useWorkflowStore = create<WorkflowState>()(
             }
           })();
         }
+      },
+
+      addProjectAsset: (meta) => {
+        const s = get();
+        // 同 id 覆盖，避免重复
+        const exists = s.projectAssets.some((a) => a.id === meta.id);
+        set({
+          projectAssets: exists
+            ? s.projectAssets.map((a) => (a.id === meta.id ? meta : a))
+            : [...s.projectAssets, meta],
+        });
+      },
+
+      /**
+       * 删除一条项目级资产。返回依赖它的工作流名称列表（其节点 params 中引用了 assetId），
+       * 便于 UI 提示"这些工作流仍引用此资产"。
+       */
+      removeProjectAsset: (assetId) => {
+        const s = get();
+        const target = s.projectAssets.find((a) => a.id === assetId);
+        // 扫描所有工作流节点，找出引用该资产的（{{asset:ID}} 或显式 assetId 字段）
+        const refs: string[] = [];
+        const idToken = `{{asset:${assetId}}}`;
+        for (const id of Object.keys(s.workflows)) {
+          const wf = s.workflows[id];
+          const hit = (wf.nodes ?? []).some((n) =>
+            Object.values(n.params ?? {}).some((v) => {
+              const sv = typeof v === 'string' ? v : JSON.stringify(v);
+              return sv.includes(idToken) || (typeof v === 'object' && v !== null && (v as any).assetId === assetId);
+            }),
+          );
+          if (hit) refs.push(wf.name);
+        }
+        set({ projectAssets: s.projectAssets.filter((a) => a.id !== assetId) });
+        if (target?.path) {
+          (async () => {
+            try {
+              const fs = await import('@tauri-apps/plugin-fs');
+              await fs.remove(target.path as string);
+              s.addLog('info', `已删除项目资产文件：${target.path}`);
+            } catch (err) {
+              s.addLog('warn', `删除项目资产文件失败（记录已移除）：${err instanceof Error ? err.message : String(err)}`);
+            }
+          })();
+        }
+        return refs;
+      },
+
+      setProjectVariable: (key, value) => {
+        const s = get();
+        set({ projectVariables: { ...s.projectVariables, [key]: value } });
+      },
+
+      removeProjectVariable: (key) => {
+        const s = get();
+        const next = { ...s.projectVariables };
+        delete next[key];
+        set({ projectVariables: next });
       },
 
       renameWorkflow: (name) => {
@@ -1492,6 +1582,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         maxConcurrency: s.maxConcurrency,
         llmChannel: s.llmChannel,
         variables: s.variables,
+        projectVariables: s.projectVariables,
+        projectAssets: s.projectAssets,
         runHistory: s.runHistory,
         subgraphs: s.subgraphs,
         groups: s.groups,
@@ -1520,6 +1612,8 @@ const DIRTY_KEYS = [
   'agents',
   'roles',
   'variables',
+  'projectVariables',
+  'projectAssets',
   'groups',
   'subgraphs',
   'workflows',

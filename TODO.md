@@ -363,8 +363,8 @@
 - [x] **P1 项目文件夹 IO**：`projectIO.ts` 从单文件改为目录读写（项目根下的 **`.slimemold/project.json`** + `.slimemold/workflows/*.json` + `.slimemold/runs/history.json`）；`openProjectFile`/`openProjectByPath` 支持目录形态（选根目录或 `.slimemold`）与旧版 `.smproj` 单文件**读**兼容；`projectRootFromPath` 解析项目根。`.slimemold` 为隐藏配置目录，与用户产物平级。`pickProjectFile`/`showSaveDirDialog` 在 `env.ts`。
 - [x] **P1 dirty 标记**：`workflowStore` 引入 `projectDirty`/`lastSavedSnapshot`，订阅式派生比对（仅落盘相关字段变化才重算，跳过日志/运行态），`saveProject` 成功后清脏并记录快照，`openProject`/`newProject` 正确初始化；标题栏显示项目名 + `*` 星号；`beforeunload` 拦截未保存关闭。`isProjectDirty()` 供 UI 读。
 - [x] **P1 旧数据迁移**：`openProjectByPath` 保留旧版 `.smproj` 单文件读兼容，返回带 `legacy` 标记；打开旧项目时 `addLog` 提示「保存时将自动转换为 .slimemold/ 目录结构」，用户首次保存即完成迁移，旧 `.smproj` 不动（保留一个版本周期）。
-- [ ] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」；跨工作流按 `assetId` 引用；删除时做引用检测。
-- [ ] **P2 变量两级**：项目级 variables 落 `project.json`；求值时工作流级覆盖项目级；Inspector 标注来源。
+- [x] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」（`scope` 切换 + 导入/删除路由到对应作用域）；executor 合并项目级与工作流级资产（工作流级同名覆盖）；删除项目资产时扫描所有工作流节点 params 做跨工作流 `assetId` 引用检测并提示；`serializeCurrent` 写回时保留当前工作流 `assets`（修复切换/保存丢资产隐患）。
+- [x] **P2 变量两级**：项目级 variables 落 `ProjectFile.variables`（project.json 顶层），工作流级 variables 存 `workflows[x].variables`；求值时 `extraVars < 项目级 < 工作流级`（工作流覆盖项目）；`VariablesPanel` 分「项目级/工作流级」两个作用域编辑并标注覆盖关系（`被覆盖`/`覆盖项目`）。
 - [x] **P2 成本跟项目**：`runHistory` 落盘到 `.slimemold/runs/history.json`（`ProjectFile.runs.history`）；`saveProject` 注入、`openProject` 读回；`RunHistoryPanel`/`TokenUsagePanel`/`StatusBar` 直接读 store.runHistory，天然按项目归属。全局 persist 仍保留 runHistory 作为无项目态兼容（打开项目后由磁盘主导）。
 - [ ] **P3 恢复上次界面**：会话状态存 localStorage（上次项目路径 + 激活工作流 id），启动自动恢复；打不开时优雅降级到欢迎页。
 - [ ] **P3 项目欢迎页**：最近项目列表 / 新建 / 打开。

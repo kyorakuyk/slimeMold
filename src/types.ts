@@ -494,8 +494,10 @@ export interface ProjectFile {
   activeId: string;
   /** 角色库（项目级，跨工作流共享），内置角色以 builtin=true 标记 */
   roles?: RoleTemplate[];
-  /** 项目级全局变量 */
+  /** 项目级全局变量（工作流级 variables 覆盖同名项） */
   variables?: Record<string, unknown>;
+  /** 项目级资产库（跨工作流共享；工作流级 assets 覆盖同名 id 后并入） */
+  assets?: AssetMeta[];
   /** 项目级子图库（可复用节点组合），key 为子图 id */
   subgraphs?: Record<string, SubgraphDef>;
 }
