@@ -203,14 +203,15 @@ export default function App() {
     };
   }, []);
 
-  // P3 项目欢迎页：当前无项目加载时弹出（项目加载后自动隐藏）
+  // P3 项目欢迎页：当前无项目加载时弹出（项目加载后自动隐藏，关闭项目后重新出现）
   const [showWelcome, setShowWelcome] = useState(() => !useWorkflowStore.getState().projectId);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   useEffect(() => {
     return useWorkflowStore.subscribe((s) => {
-      if (s.projectId && showWelcome) setShowWelcome(false);
+      // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
+      setShowWelcome(!s.projectId);
     });
-  }, [showWelcome]);
+  }, []);
 
   // 全局快捷键（与菜单标注一致）
   useEffect(() => {

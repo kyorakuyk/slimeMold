@@ -46,7 +46,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
-import { openDirDialog } from '../platform/env';
+import { openDirDialog, isTauri } from '../platform/env';
 import {
   openProjectFile,
   getRecentProjects,
@@ -138,6 +138,8 @@ export default function TopBar({
   const newWorkflowInProject = useWorkflowStore((s) => s.newWorkflowInProject);
   const renameWorkflow = useWorkflowStore((s) => s.renameWorkflow);
   const removeWorkflow = useWorkflowStore((s) => s.removeWorkflow);
+  const closeProject = useWorkflowStore((s) => s.closeProject);
+  const saveProjectAs = useWorkflowStore((s) => s.saveProjectAs);
 
   const wfList = Object.entries(workflows);
 
@@ -178,6 +180,32 @@ export default function TopBar({
     }
   };
 
+  const handleSaveProjectAs = async () => {
+    if (!isTauri()) {
+      alert('「将项目另存为」需要桌面端（Tauri）环境');
+      return;
+    }
+    try {
+      const path = await saveProjectAs();
+      if (path) {
+        persistSession(path);
+        pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
+      }
+    } catch (e) {
+      alert('项目另存为失败：' + (e as Error).message);
+    }
+  };
+
+  const handleCloseProject = () => {
+    if (
+      projectDirty &&
+      !confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？')
+    ) {
+      return;
+    }
+    closeProject();
+  };
+
   const menus: MenuDef[] = [
     {
       label: '文件',
@@ -215,8 +243,11 @@ export default function TopBar({
         { label: '打开工作流…', icon: <FilePlus2 size={14} />, onClick: newWorkflow },
         { label: '导入工作流…', icon: <FileDown size={14} />, onClick: importWorkflow },
         { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
+        { label: '将项目另存为', icon: <FileBox size={14} />, onClick: handleSaveProjectAs, disabled: !projectName },
         { label: '导出工作流…', icon: <Save size={14} />, onClick: () => exportWorkflow() },
         { label: '复制工作流文本', icon: <FileStack size={14} />, onClick: () => copyWorkflowText() },
+        'separator',
+        { label: '关闭项目', icon: <X size={14} />, danger: true, disabled: !projectName, onClick: handleCloseProject },
       ],
     },
     {

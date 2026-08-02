@@ -35,7 +35,7 @@ import { useRegistryStore, getNodeDef } from './registryStore';
 import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
-import { defaultStandaloneDir } from '../platform/env';
+import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 
@@ -233,6 +233,10 @@ interface WorkflowState {
   renameWorkflow: (name: string) => void;
   /** 删除一个工作流（至少保留一个） */
   removeWorkflow: (id: string) => void;
+  /** 关闭当前项目：清空项目态并回到欢迎页。仅在内存态的项目直接丢弃，已落盘的不删磁盘文件 */
+  closeProject: () => void;
+  /** 将项目另存为：选择新目录作为项目根并完整落盘，返回新根路径（取消/失败返回 null） */
+  saveProjectAs: () => Promise<string | null>;
   /** 将指定工作流的图（节点/连线）写回 workflows 字典，保留其余字段（用于拆分视图分栏编辑） */
   updateWorkflowGraph: (id: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
 
@@ -1242,6 +1246,56 @@ export const useWorkflowStore = create<WorkflowState>()(
           set({ workflows: next });
         }
       },
+
+      closeProject: () => {
+        suppressDirty = true;
+        set({
+          projectName: null,
+          projectId: null,
+          projectCreatedAt: null,
+          projectPath: null,
+          projectDirty: false,
+          lastSavedSnapshot: null,
+          workflows: {},
+          activeWfId: '',
+          workflowName: '',
+          nodes: [],
+          edges: [],
+          agents: [createAgent('ollama')],
+          roles: builtinRoles.map((r) => ({ ...r })),
+          variables: {},
+          projectVariables: {},
+          projectAssets: [],
+          subgraphs: {},
+          groups: [],
+          selectedNodeId: null,
+          logs: [],
+        });
+        suppressDirty = false;
+        clearLastSession();
+      },
+
+      saveProjectAs: async () => {
+        const s = get();
+        if (!isTauri()) {
+          get().addLog('warn', '「将项目另存为」需要桌面端（Tauri）环境');
+          return null;
+        }
+        const picked = await showSaveDirDialog(s.projectName ?? '未命名项目');
+        if (!picked) return null;
+        const file = buildProjectFile(s);
+        const { saveProjectFile } = await import('../io/projectIO');
+        try {
+          const root = await saveProjectFile(file, picked);
+          set({ projectPath: root, projectDirty: false, lastSavedSnapshot: JSON.stringify(file) });
+          saveLastSession({ path: root, activeId: s.activeWfId || undefined });
+          return root;
+        } catch (e) {
+          get().addLog('warn', `项目另存为失败：${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        }
+      },
+
       updateWorkflowGraph: (id, nodes, edges) => {
         const s = get();
         const wf = s.workflows[id];
