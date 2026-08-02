@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Coins } from 'lucide-react';
 import type { NodeUsageStat } from '../../types';
 
@@ -43,6 +44,9 @@ function Row({
  */
 export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const barRef = useRef<HTMLSpanElement>(null);
+  const closeTimer = useRef<number | null>(null);
 
   const cacheHitRate =
     usage.promptTokens > 0
@@ -50,13 +54,31 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
       : 0;
   const avgMs = usage.calls > 0 ? Math.round(usage.llmDurationMs / usage.calls) : 0;
 
+  const show = () => {
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    const rect = barRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
+    setOpen(true);
+  };
+
+  const scheduleClose = () => {
+    if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => {
+      setOpen(false);
+      closeTimer.current = null;
+    }, 120);
+  };
+
   return (
     <div
       className="sm-node-usage"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={show}
+      onMouseLeave={scheduleClose}
     >
-      <span className="sm-node-usage-bar">
+      <span className="sm-node-usage-bar" ref={barRef}>
         <Coins size={10} className="shrink-0 opacity-70" />
         <span className="font-mono tabular-nums">{fmt(usage.totalTokens)}</span>
         <span className="opacity-60">tokens</span>
@@ -66,8 +88,15 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
         )}
       </span>
 
-      {open && (
-        <div className="sm-node-usage-pop nowheel" onClick={(e) => e.stopPropagation()}>
+      {open &&
+        createPortal(
+          <div
+            className="sm-node-usage-pop nowheel"
+            style={{ top: pos.top, left: pos.left }}
+            onMouseEnter={show}
+            onMouseLeave={scheduleClose}
+            onClick={(e) => e.stopPropagation()}
+          >
           <div className="mb-1.5 flex items-baseline justify-between gap-4 border-b border-line pb-1.5">
             <span className="text-[10px] font-semibold text-ink">本节点用量</span>
             <span className="font-mono text-[11px] tabular-nums text-ink">
@@ -140,8 +169,9 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
               ))}
             </div>
           )}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

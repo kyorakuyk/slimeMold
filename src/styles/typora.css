@@ -847,11 +847,8 @@ textarea.sm-input {
   color: color-mix(in srgb, var(--sm-accent) 80%, var(--sm-ink) 20%);
 }
 .sm-node-usage-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 40;
+  position: fixed;
+  z-index: 9999;
   min-width: 190px;
   padding: 8px 9px;
   border-radius: 6px;
