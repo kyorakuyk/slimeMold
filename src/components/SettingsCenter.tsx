@@ -142,7 +142,7 @@ function GeneralSection() {
             <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>切换后即时生效并持久化保存</span>
           </span>
           <div className="flex gap-2">
-            {([{ v: 'dark', t: '暗色' }, { v: 'light', t: '亮色' }] as const).map((opt) => (
+            {([{ v: 'dark', t: '暗色' }, { v: 'light', t: '亮色' }, { v: 'system', t: '跟随系统' }] as const).map((opt) => (
               <button
                 key={opt.v}
                 type="button"

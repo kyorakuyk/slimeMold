@@ -1,13 +1,47 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type ThemeMode = 'dark' | 'light';
+export type ThemeMode = 'dark' | 'light' | 'system';
+
+/** 读取系统配色偏好（prefers-color-scheme） */
+function systemPrefersDark(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+}
+
+/** 把主题模式解析为实际需要套用到 <html> 的实际主题 */
+function resolveTheme(mode: ThemeMode): 'dark' | 'light' {
+  if (mode === 'system') return systemPrefersDark() ? 'dark' : 'light';
+  return mode;
+}
+
+/** 把主题套用到 document，并在 system 模式下监听系统变化（单例） */
+function applyTheme(mode: ThemeMode): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.setAttribute('data-theme', resolveTheme(mode));
+  if (typeof window === 'undefined') return;
+  if (!applyTheme._mq) {
+    applyTheme._mq = window.matchMedia('(prefers-color-scheme: dark)');
+    applyTheme._mq.addEventListener('change', () => {
+      const cur = useViewStore.getState().theme;
+      if (cur === 'system') {
+        document.documentElement.setAttribute('data-theme', resolveTheme('system'));
+      }
+    });
+  }
+}
+// eslint 静态属性挂在函数上
+namespace applyTheme {
+  export let _mq: MediaQueryList | null = null;
+}
 
 interface ViewState {
   showGrid: boolean;
   showMinimap: boolean;
-  /** 颜色主题：dark / light，持久化，全局跟随 */
-  theme: 'dark' | 'light';
+  /** 颜色主题：dark / light / system（跟随系统），持久化，全局跟随 */
+  theme: ThemeMode;
   /** 鼠标模式：move=拖动画布 / select=框选节点 / click=点击选中（不拖动、不框选） */
   interactionMode: 'move' | 'select' | 'click';
   /** 全局默认代理（本地代理转发）：留空则各 agent 用自己的 proxyUrl，非空则作为默认出口 */
@@ -33,7 +67,9 @@ interface ViewState {
   toggleInspector: () => void;
   setSplitWfId: (id: string) => void;
   setFocusedSubgraph: (id: string | null) => void;
-  setTheme: (t: 'dark' | 'light') => void;
+  setTheme: (t: ThemeMode) => void;
+  /** 当前实际生效的主题（system 时按系统偏好解析为 dark/light） */
+  effectiveTheme: () => 'dark' | 'light';
 }
 
 export const useViewStore = create<ViewState>()(
@@ -61,9 +97,10 @@ export const useViewStore = create<ViewState>()(
       setFocusedSubgraph: (id) => set({ focusedSubgraphId: id }),
       setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
       setTheme: (t) => {
-        document.documentElement.setAttribute('data-theme', t);
+        applyTheme(t);
         set({ theme: t });
       },
+      effectiveTheme: () => resolveTheme(useViewStore.getState().theme),
     }),
     {
       name: 'slime-mold-view',
@@ -75,8 +112,16 @@ export const useViewStore = create<ViewState>()(
         return rest as ViewState;
       },
       onRehydrateStorage: () => (state) => {
-        if (state) state.focusedSubgraphId = null;
+        if (state) {
+          state.focusedSubgraphId = null;
+          // 持久化的主题（可能是 system）重新套用，并注册系统监听
+          applyTheme(state.theme);
+        }
       },
     },
   ),
 );
+
+// 模块加载即套用初始主题（persist 可能还未 rehydrate，但默认 dark 也会先套上；
+// rehydrate 后会再次 applyTheme，system 模式会注册系统监听）
+applyTheme(useViewStore.getState().theme);

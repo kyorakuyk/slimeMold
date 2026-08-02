@@ -73,6 +73,42 @@
   --pt-any: #8a8a8a;
 }
 
+/* 浅色主题（跟随系统时若系统偏好为亮色，显式套用，避免依赖 :root 默认） */
+[data-theme='light'] {
+  --sm-bg: #ffffff;
+  --sm-bg-soft: #fafafa;
+  --sm-bg-deep: #f5f5f5;
+  --sm-ink: #2b2b2b;
+  --sm-ink-soft: #5c5c5c;
+  --sm-ink-faint: #8a8a8a;
+  --sm-line: #e6e6e6;
+  --sm-accent: #3b82f6;
+  --sm-accent-soft: #5b8def;
+  --sm-edge: #9aa0a6;
+  --sm-canvas: #f3f1ec;
+  --sm-canvas-grid: #e3ded3;
+  --sm-panel: #fbfaf8;
+  --sm-ok: #2f9e44;
+  --sm-err: #e03131;
+
+  /* 节点分类配色 */
+  --cat-input: #2f9e44;
+  --cat-agent: #7048e8;
+  --cat-text: #1c7ed6;
+  --cat-tool: #f08c00;
+  --cat-output: #e64980;
+  --cat-flow: #15aabf;
+
+  /* 端口类型色 */
+  --pt-text: #2f9e44;
+  --pt-number: #f08c00;
+  --pt-boolean: #e03131;
+  --pt-list: #1c7ed6;
+  --pt-json: #9b59d0;
+  --pt-image: #0891b2;
+  --pt-any: #8a8a8a;
+}
+
 html,
 body,
 #root {
@@ -119,10 +155,11 @@ body {
 .react-flow__edge .react-flow__edge-path {
   transition: stroke 0.12s ease, stroke-width 0.12s ease;
 }
-/* 运行中：连线流动虚线动画（ComfyUI 风格） */
+/* 运行中：连线流动虚线动画（霓虹流光） */
 .react-flow__edge.sm-edge-running .react-flow__edge-path {
   stroke: var(--sm-accent);
   stroke-dasharray: 7 5;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--sm-accent) 70%, transparent));
   animation: sm-edge-flow 0.5s linear infinite;
 }
 @keyframes sm-edge-flow {
@@ -442,66 +479,157 @@ textarea.sm-input {
   color: var(--sm-err);
 }
 
-/* ---------- 节点分类配色标题条（ComfyUI 风格） ---------- */
+/* ---------- 节点：科技感（玻璃拟态 + 霓虹 + HUD 等宽字体） ---------- */
 .sm-node {
-  border-radius: 9px;
-  border: 1px solid var(--sm-line);
-  background: var(--sm-bg-soft);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  position: relative;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--sm-line) 70%, var(--cat, var(--sm-accent)) 22%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--sm-bg-soft) 88%, #000 12%), color-mix(in srgb, var(--sm-bg-deep) 92%, #000 8%));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 4px 14px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   overflow: hidden;
-  min-width: 168px;
-  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+  min-width: 176px;
+  backdrop-filter: blur(2px);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+/* 顶部 / 左侧霓虹扫描线 */
+.sm-node::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cat, var(--sm-accent)) 80%, transparent), transparent);
+  opacity: 0.85;
+}
+/* 右下角切角装饰（HUD 感） */
+.sm-node::after {
+  content: '';
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 10px; height: 10px;
+  background:
+    linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--cat, var(--sm-accent)) 55%, transparent) 50%);
+  pointer-events: none;
 }
 .sm-node.selected {
   border-color: var(--sm-accent);
-  box-shadow: 0 0 0 1px var(--sm-accent), 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 0 0 1px var(--sm-accent),
+    0 0 18px color-mix(in srgb, var(--sm-accent) 45%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.35);
+  transform: translateY(-1px);
 }
 .sm-node:hover {
-  border-color: color-mix(in srgb, var(--sm-line) 50%, var(--sm-accent-soft));
+  border-color: color-mix(in srgb, var(--cat, var(--sm-accent)) 55%, var(--sm-line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--cat, var(--sm-accent)) 40%, transparent),
+    0 6px 18px rgba(0, 0, 0, 0.3);
 }
-/* 节点执行态整体高亮描边（ComfyUI 风格） */
+/* 节点执行态：整体霓虹描边 + 光晕 + 脉冲 */
 .sm-node[data-status='running'] {
   border-color: var(--sm-accent);
-  box-shadow: 0 0 0 2px var(--sm-accent), 0 0 18px color-mix(in srgb, var(--sm-accent) 45%, transparent);
+  box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 22px color-mix(in srgb, var(--sm-accent) 50%, transparent);
+  animation: sm-node-pulse 1.4s ease-in-out infinite;
 }
-.sm-node[data-status='done'] {
-  border-color: var(--sm-ok);
-  box-shadow: 0 0 0 1px var(--sm-ok), 0 0 14px color-mix(in srgb, var(--sm-ok) 38%, transparent);
+.sm-node[data-status='success'] {
+  border-color: color-mix(in srgb, var(--sm-ok) 70%, var(--sm-line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sm-ok) 55%, transparent), 0 0 16px color-mix(in srgb, var(--sm-ok) 26%, transparent);
+}
+.sm-node[data-status='cached'] {
+  border-color: color-mix(in srgb, var(--sm-accent) 45%, var(--sm-line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sm-accent) 32%, transparent), 0 0 12px color-mix(in srgb, var(--sm-accent) 16%, transparent);
 }
 .sm-node[data-status='error'] {
   border-color: var(--sm-err);
-  box-shadow: 0 0 0 2px var(--sm-err), 0 0 16px color-mix(in srgb, var(--sm-err) 42%, transparent);
+  box-shadow: 0 0 0 1.5px var(--sm-err), 0 0 18px color-mix(in srgb, var(--sm-err) 42%, transparent);
+  animation: sm-node-shake 0.4s ease-in-out 2;
 }
-/* 标题条：左侧色块 + 分类色 */
+.sm-node[data-status='skipped'] {
+  opacity: 0.6;
+  filter: saturate(0.7);
+}
+@keyframes sm-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 16px color-mix(in srgb, var(--sm-accent) 36%, transparent); }
+  50% { box-shadow: 0 0 0 1.5px var(--sm-accent), 0 0 26px color-mix(in srgb, var(--sm-accent) 60%, transparent); }
+}
+@keyframes sm-node-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2.5px); }
+  75% { transform: translateX(2.5px); }
+}
+/* 标题条：HUD 等宽 + 切角 + 分类色扫描渐变 */
 .sm-node-header {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 10px;
+  padding: 7px 11px;
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 12px;
   color: #fff;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--cat) 78%, #04070d 22%),
+    color-mix(in srgb, var(--cat) 50%, #04070d 50%));
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+/* 执行态时标题条注入状态色 */
+.sm-node[data-status='running'] .sm-node-header {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--sm-accent) 82%, #04070d 18%), color-mix(in srgb, var(--sm-accent) 52%, #04070d 48%));
+}
+.sm-node[data-status='success'] .sm-node-header {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--sm-ok) 80%, #04070d 20%), color-mix(in srgb, var(--sm-ok) 50%, #04070d 50%));
+}
+.sm-node[data-status='error'] .sm-node-header {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--sm-err) 82%, #04070d 18%), color-mix(in srgb, var(--sm-err) 52%, #04070d 48%));
 }
 .sm-node-header .sm-node-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: radial-gradient(circle at 30% 30%, #fff, color-mix(in srgb, var(--cat) 55%, #fff 0%));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35), 0 0 7px color-mix(in srgb, var(--cat) 75%, transparent);
   flex: none;
+}
+.sm-node-header .sm-node-icon {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.92);
 }
 .sm-node-header .sm-node-title {
   flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
+/* 分类标签（等宽小角标） */
 .sm-node-cat {
-  font-size: 10px;
-  font-weight: 600;
-  opacity: 0.8;
+  font-size: 8.5px;
+  font-weight: 700;
+  opacity: 0.85;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+/* 插件角标 */
+.sm-node-tag {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: var(--sm-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--sm-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--sm-accent) 12%, transparent);
 }
 /* 按 data-cat 映射分类色 */
 .sm-node[data-cat='输入'] { --cat: var(--cat-input); }
@@ -510,10 +638,6 @@ textarea.sm-input {
 .sm-node[data-cat='工具'] { --cat: var(--cat-tool); }
 .sm-node[data-cat='输出'] { --cat: var(--cat-output); }
 .sm-node[data-cat='流程'] { --cat: var(--cat-flow); }
-.sm-node-header {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--cat) 88%, #000 0%), color-mix(in srgb, var(--cat) 72%, #000 0%));
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
-}
 .sm-node-body {
   padding: 9px 11px;
   font-size: 12px;
@@ -537,6 +661,163 @@ textarea.sm-input {
 .sm-node-field-value.empty {
   color: var(--sm-ink-faint);
   font-style: italic;
+}
+
+/* ---------- 端口行 / Handle 科技感 ---------- */
+.sm-port-list {
+  position: relative;
+  padding: 2px 0;
+}
+.sm-port-list::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 1px;
+  background: repeating-linear-gradient(180deg, color-mix(in srgb, var(--sm-line) 70%, transparent) 0 4px, transparent 4px 8px);
+  opacity: 0.6;
+}
+.sm-port-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding: 0 4px;
+}
+.sm-port-row + .sm-port-row {
+  border-top: 1px solid color-mix(in srgb, var(--sm-line) 50%, transparent);
+}
+.sm-port-side {
+  display: flex;
+  align-items: center;
+  flex: 1 1 50%;
+  min-width: 0;
+}
+.sm-port-out {
+  justify-content: flex-end;
+}
+.sm-port-empty {
+  display: block;
+  width: 100%;
+}
+.sm-port-label {
+  font-size: 11px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  letter-spacing: 0.01em;
+  color: var(--sm-ink-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-port-badge {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  flex: none;
+  box-shadow: 0 0 0 1px var(--sm-bg-soft), 0 0 5px color-mix(in srgb, currentColor 60%, transparent);
+}
+/* React Flow Handle：霓虹锚点 + 悬停放大 */
+.react-flow__handle.sm-handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  border: 1.5px solid var(--sm-bg-soft);
+  background: var(--sm-edge);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--sm-edge) 60%, transparent);
+  transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.react-flow__handle.sm-handle:hover {
+  transform: scale(1.4);
+  background: var(--sm-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sm-accent) 30%, transparent), 0 0 8px var(--sm-accent);
+}
+.react-flow__handle.sm-handle.connecting {
+  background: var(--sm-accent);
+}
+
+/* ---------- 节点预览卡片（终端风） ---------- */
+.sm-node-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 3px;
+  background: color-mix(in srgb, #04070d 70%, var(--sm-bg) 30%);
+  border: 1px solid color-mix(in srgb, var(--sm-line) 80%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  padding: 6px 8px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--sm-ink-soft);
+}
+.sm-node-preview.is-text {
+  max-height: 17rem;
+  overflow: auto;
+  background: color-mix(in srgb, var(--sm-accent) 8%, #04070d 92%);
+  border-color: color-mix(in srgb, var(--sm-accent) 30%, var(--sm-line));
+}
+.sm-node-error {
+  margin-top: 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sm-err) 12%, #04070d 88%);
+  border: 1px solid color-mix(in srgb, var(--sm-err) 38%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sm-err) 18%, transparent);
+  padding: 5px 8px;
+  font-size: 10.5px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  line-height: 1.5;
+  color: var(--sm-err);
+  word-break: break-word;
+}
+/* 节点底部操作条（HUD 按钮） */
+.sm-node-actions {
+  display: flex;
+  border-top: 1px solid color-mix(in srgb, var(--sm-line) 60%, transparent);
+  background: color-mix(in srgb, #04070d 30%, var(--sm-bg-soft) 70%);
+}
+.sm-node-actions button {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 4px;
+  font-size: 10.5px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--sm-accent) 85%, #fff 15%);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sm-node-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sm-accent) 16%, transparent);
+  color: var(--sm-accent-soft);
+}
+.sm-node-actions button:disabled {
+  cursor: not-allowed;
+  color: var(--sm-ink-faint);
+}
+.sm-node-actions .sm-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 0;
+  background: color-mix(in srgb, var(--sm-line) 60%, transparent);
+}
+/* 状态徽标（标题栏右侧：等宽 HUD 角标） */
+.sm-node-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
 }
 
 /* 折叠态分组卡片：视觉风格对齐普通节点（同 .sm-node 外壳 + 分类配色标题条） */

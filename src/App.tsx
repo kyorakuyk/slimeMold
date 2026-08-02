@@ -124,13 +124,12 @@ export default function App() {
   const closePanel = () => setActivePanel(null);
 
   const toggleTheme = () => {
-    setViewTheme(viewTheme === 'dark' ? 'light' : 'dark');
+    // 三态循环：dark -> light -> system -> dark
+    const next = viewTheme === 'dark' ? 'light' : viewTheme === 'light' ? 'system' : 'dark';
+    setViewTheme(next);
   };
 
-  // 应用持久化的主题到 <html data-theme>，保证刷新后主题保持不变
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', viewTheme);
-  }, [viewTheme]);
+  // setTheme 已在 store 内套用 data-theme（含 system 跟随），此处无需再手动设置
 
   // 拖拽分隔条
   const startResize = (

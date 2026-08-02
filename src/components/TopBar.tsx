@@ -54,7 +54,7 @@ import {
 } from '../io/projectIO';
 
 interface TopBarProps {
-  theme: 'dark' | 'light';
+  theme: 'dark' | 'light' | 'system';
   onToggleTheme: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;

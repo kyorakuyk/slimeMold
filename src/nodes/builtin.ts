@@ -5,6 +5,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { evalExpr } from '../engine/expr';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';
+import { creativeNodes } from './creative';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
 function inferAssetKind(filename: string): string {
@@ -1384,6 +1385,7 @@ export const builtinDefs: NodeDefinition[] = [
   workerScaffolder,
   workerImplementer,
   workerValidator,
+  ...creativeNodes,
 ];
 
 export function registerBuiltins(): void {
