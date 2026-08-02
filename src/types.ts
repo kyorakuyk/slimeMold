@@ -169,7 +169,15 @@ export interface ExecLogger {
 /** 单次 LLM 调用的 token 用量（与 OpenAI/Anthropic 对齐，缺字段为 undefined） */
 export interface TokenUsage {
   promptTokens?: number;
+  /** 命中 prompt cache 的 tokens（缓存读取） */
+  cachedPromptTokens?: number;
+  /** 新写入 prompt cache 的 tokens（缓存写入） */
+  writtenPromptTokens?: number;
   completionTokens?: number;
+  /** 推理/思考过程消耗的 tokens（如 o1 reasoning_tokens） */
+  reasoningTokens?: number;
+  /** 回复正文消耗的 tokens（completion 的子集，若 provider 未区分则与 completionTokens 相同） */
+  replyTokens?: number;
   totalTokens?: number;
 }
 
@@ -195,6 +203,8 @@ export interface CostRecord {
   at: string;
   /** 调用是否失败 */
   ok: boolean;
+  /** 是否命中节点缓存（true=未实际调用 LLM，复用缓存结果） */
+  cached?: boolean;
   /** 失败原因（ok=false 时） */
   error?: string;
 }
@@ -493,6 +503,17 @@ export interface RunRecord {
     totalCompletionTokens: number;
     totalTokens: number;
     totalDurationMs: number;
+    /** 缓存统计（命中/未命中/写入的 tokens；按 prompt tokens 口径） */
+    cache: {
+      hitTokens: number;
+      missTokens: number;
+      writeTokens: number;
+    };
+    /** 输出细分：推理过程 vs 回复内容 */
+    output: {
+      reasoningTokens: number;
+      replyTokens: number;
+    };
     /** 按模型归类的用量，便于「性价比」分析 */
     byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }>;
     records: CostRecord[];

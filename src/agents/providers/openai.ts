@@ -41,12 +41,19 @@ export async function chatOpenAI(
       throw new Error('OpenAI 协议响应缺少 choices[0].message.content');
     }
     const u = data?.usage;
+    const promptTokens = u?.prompt_tokens ?? 0;
+    const completionTokens = u?.completion_tokens ?? 0;
+    const reasoningTokens = u?.completion_tokens_details?.reasoning_tokens ?? 0;
     return {
       text: content,
       usage: u
         ? {
-            promptTokens: u.prompt_tokens,
-            completionTokens: u.completion_tokens,
+            promptTokens,
+            cachedPromptTokens: u?.prompt_tokens_details?.cached_tokens ?? 0,
+            writtenPromptTokens: 0,
+            completionTokens,
+            reasoningTokens,
+            replyTokens: Math.max(0, completionTokens - reasoningTokens),
             totalTokens: u.total_tokens,
           }
         : undefined,
@@ -78,9 +85,16 @@ export async function chatOpenAI(
     }
     // OpenAI 流式最后一帧携带 usage
     if (obj?.usage) {
+      const promptTokens = obj.usage.prompt_tokens ?? 0;
+      const completionTokens = obj.usage.completion_tokens ?? 0;
+      const reasoningTokens = obj.usage.completion_tokens_details?.reasoning_tokens ?? 0;
       usage = {
-        promptTokens: obj.usage.prompt_tokens,
-        completionTokens: obj.usage.completion_tokens,
+        promptTokens,
+        cachedPromptTokens: obj.usage.prompt_tokens_details?.cached_tokens ?? 0,
+        writtenPromptTokens: 0,
+        completionTokens,
+        reasoningTokens,
+        replyTokens: Math.max(0, completionTokens - reasoningTokens),
         totalTokens: obj.usage.total_tokens,
       };
     }

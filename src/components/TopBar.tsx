@@ -94,6 +94,7 @@ export default function TopBar({
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
   const running = useWorkflowStore((s) => s.running);
+  const resetStatuses = useWorkflowStore((s) => s.resetStatuses);
   const failFast = useWorkflowStore((s) => s.failFast);
   const skipFailed = useWorkflowStore((s) => s.skipFailed);
   const setFailFast = useWorkflowStore((s) => s.setFailFast);
@@ -518,6 +519,17 @@ export default function TopBar({
           style={splitView ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
         >
           <Columns2 size={15} />
+        </button>
+
+        <button
+          className="sm-btn px-1.5"
+          title="重置工作流工作状态（运行中点击会先停止再重置）"
+          onClick={() => {
+            stopWorkflow();
+            resetStatuses();
+          }}
+        >
+          <RotateCcw size={14} />
         </button>
 
         {running ? (

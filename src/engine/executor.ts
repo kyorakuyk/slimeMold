@@ -328,16 +328,27 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   let totalPrompt = 0;
   let totalCompletion = 0;
   let totalDuration = 0;
+  let cacheHitTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
+  let replyTokens = 0;
   for (const r of costLog) {
     totalDuration += r.durationMs;
     if (!r.usage) continue;
-    totalPrompt += r.usage.promptTokens ?? 0;
-    totalCompletion += r.usage.completionTokens ?? 0;
+    const prompt = r.usage.promptTokens ?? 0;
+    const completion = r.usage.completionTokens ?? 0;
+    totalPrompt += prompt;
+    totalCompletion += completion;
+    cacheHitTokens += r.usage.cachedPromptTokens ?? 0;
+    cacheWriteTokens += r.usage.writtenPromptTokens ?? 0;
+    reasoningTokens += r.usage.reasoningTokens ?? 0;
+    replyTokens += r.usage.replyTokens ?? completion;
     const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
-    m.promptTokens += r.usage.promptTokens ?? 0;
-    m.completionTokens += r.usage.completionTokens ?? 0;
+    m.promptTokens += prompt;
+    m.completionTokens += completion;
     m.calls += 1;
   }
+  const cacheMissTokens = Math.max(0, totalPrompt - cacheHitTokens - cacheWriteTokens);
   const hasCost = costLog.length > 0;
 
   const rec: RunRecord = {
@@ -365,6 +376,15 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           totalCompletionTokens: totalCompletion,
           totalTokens: totalPrompt + totalCompletion,
           totalDurationMs: totalDuration,
+          cache: {
+            hitTokens: cacheHitTokens,
+            missTokens: cacheMissTokens,
+            writeTokens: cacheWriteTokens,
+          },
+          output: {
+            reasoningTokens,
+            replyTokens,
+          },
           byModel,
           records: costLog,
         }

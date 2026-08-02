@@ -20,6 +20,7 @@ import {
   Crosshair,
   ChevronRight,
   ChevronDown,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
@@ -31,6 +32,7 @@ import RunHistoryPanel from './RunHistoryPanel';
 import ExamplesPanel from './ExamplesPanel';
 import AssetsPanel from './AssetsPanel';
 import GroupsPanel from './GroupsPanel';
+import TokenUsagePanel from './TokenUsagePanel';
 import ShortcutsModal from './ShortcutsModal';
 
 export type SidePanelKey =
@@ -40,6 +42,7 @@ export type SidePanelKey =
   | 'variables'
   | 'history'
   | 'assets'
+  | 'tokens'
   | 'groups'
   | 'examples'
   | 'help';
@@ -60,6 +63,7 @@ const PANEL_ITEMS: PanelItem[] = [
   { key: 'assets', label: '资产', icon: Archive, shortcut: '' },
   { key: 'variables', label: '变量', icon: Variable, shortcut: '' },
   { key: 'history', label: '运行历史', icon: History, shortcut: '' },
+  { key: 'tokens', label: 'Token', icon: BarChart3, shortcut: '' },
 ];
 
 // 下半部分：帮助中心（展开面板）/ 底部面板 / 快捷键查看 / 设置（从下到上）
@@ -79,6 +83,8 @@ export function renderSidePanel(key: SidePanelKey) {
       return <RunHistoryPanel embedded />;
     case 'assets':
       return <AssetsPanel embedded />;
+    case 'tokens':
+      return <TokenUsagePanel embedded />;
     case 'groups':
       return <GroupsPanel embedded />;
     case 'help':

@@ -40,5 +40,28 @@ export async function chatOllama(
     throw new Error('Ollama 响应缺少 message.content');
   }
   if (onToken) onToken(content);
-  return { text: content, usage: undefined };
+
+  // Ollama 非流式会返回 prompt_eval_count / eval_count 作为 token 用量
+  const promptTokens = typeof data.prompt_eval_count === 'number' ? data.prompt_eval_count : undefined;
+  const completionTokens = typeof data.eval_count === 'number' ? data.eval_count : undefined;
+  const totalTokens =
+    promptTokens != null && completionTokens != null
+      ? promptTokens + completionTokens
+      : undefined;
+
+  return {
+    text: content,
+    usage:
+      promptTokens == null && completionTokens == null
+        ? undefined
+        : {
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            cachedPromptTokens: 0,
+            writtenPromptTokens: 0,
+            reasoningTokens: 0,
+            replyTokens: completionTokens ?? 0,
+          },
+  };
 }

@@ -22,6 +22,10 @@ export interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 /** 当前运行内被强制跳过的缓存条目数（用于日志统计，每次运行前清零） */
 let skippedThisRun = 0;
+/** 当前运行内缓存命中/未命中/写入次数（每次运行前清零） */
+let hitThisRun = 0;
+let missThisRun = 0;
+let writeThisRun = 0;
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -55,13 +59,18 @@ export function cacheKey(
 
 export function getCached(key: string): Record<string, unknown> | null {
   const entry = cache.get(key);
-  if (!entry) return null;
+  if (!entry) {
+    missThisRun++;
+    return null;
+  }
   entry.hits++;
+  hitThisRun++;
   return entry.outputs;
 }
 
 export function setCached(key: string, outputs: Record<string, unknown>): void {
   cache.set(key, { outputs, hits: 0, at: Date.now() });
+  writeThisRun++;
 }
 
 /** 强制清除某节点的缓存（重跑前调用），使其下次执行不被复用 */
@@ -77,6 +86,9 @@ export function clearCache(): void {
 
 export function beginRun(): void {
   skippedThisRun = 0;
+  hitThisRun = 0;
+  missThisRun = 0;
+  writeThisRun = 0;
 }
 
 export function countSkip(): void {
@@ -85,6 +97,16 @@ export function countSkip(): void {
 
 export function skippedCount(): number {
   return skippedThisRun;
+}
+
+export function cacheStats(): {
+  hits: number;
+  misses: number;
+  writes: number;
+  skipped: number;
+  size: number;
+} {
+  return { hits: hitThisRun, misses: missThisRun, writes: writeThisRun, skipped: skippedThisRun, size: cache.size };
 }
 
 export function cacheSize(): number {

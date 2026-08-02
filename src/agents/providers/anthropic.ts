@@ -47,13 +47,19 @@ export async function chatAnthropic(
       throw new Error('Anthropic 响应缺少 content[0].text');
     }
     const u = data?.usage;
+    const promptTokens = u?.input_tokens ?? 0;
+    const completionTokens = u?.output_tokens ?? 0;
     return {
       text: content,
       usage: u
         ? {
-            promptTokens: u.input_tokens,
-            completionTokens: u.output_tokens,
-            totalTokens: (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+            promptTokens,
+            cachedPromptTokens: u.cache_read_input_tokens ?? 0,
+            writtenPromptTokens: u.cache_creation_input_tokens ?? 0,
+            completionTokens,
+            reasoningTokens: 0,
+            replyTokens: completionTokens,
+            totalTokens: promptTokens + completionTokens,
           }
         : undefined,
     };
@@ -85,10 +91,16 @@ export async function chatAnthropic(
     }
     // Anthropic 流式 message_delta 事件携带 usage
     if (obj?.type === 'message_delta' && obj?.usage) {
+      const promptTokens = obj.usage.input_tokens ?? 0;
+      const completionTokens = obj.usage.output_tokens ?? 0;
       usage = {
-        promptTokens: obj.usage.input_tokens,
-        completionTokens: obj.usage.output_tokens,
-        totalTokens: (obj.usage.input_tokens ?? 0) + (obj.usage.output_tokens ?? 0),
+        promptTokens,
+        cachedPromptTokens: obj.usage.cache_read_input_tokens ?? 0,
+        writtenPromptTokens: obj.usage.cache_creation_input_tokens ?? 0,
+        completionTokens,
+        reasoningTokens: 0,
+        replyTokens: completionTokens,
+        totalTokens: promptTokens + completionTokens,
       };
     }
   });
