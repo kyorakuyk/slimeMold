@@ -336,9 +336,10 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
   // 仅当「标签页栏没有任何标签页」（项目内零工作流）时，画布背景显示欢迎卡片
   const workflowCount = useWorkflowStore((s) => Object.keys(s.workflows).length);
 
-  // 关闭欢迎界面：新建一个空白工作流标签，进入正常编辑态
+  // 关闭欢迎界面：仅隐藏（不再自动新建工作流标签），背景退回纯色空态
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const dismissWelcome = () => {
-    newWorkflowInProject();
+    setWelcomeDismissed(true);
   };
 
   // 点击模板：新建一个工作流标签，并在该标签中打开模板
@@ -451,6 +452,7 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
       onMouseDownCapture={onPaneMouseDownCapture}
       onDoubleClick={onCanvasDoubleClick}
     >
+      {!noWorkflows && (
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
@@ -602,12 +604,13 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
           />
         )}
       </ReactFlow>
+      )}
 
       {/* 节点组框（纯视觉 overlay，置于 React Flow 之上，仅标题条可交互） */}
-      {!isSplit && <GroupLayer />}
+      {!noWorkflows && !isSplit && <GroupLayer />}
 
       {/* 右键菜单：子图打包 / 展开、节点编组 */}
-      {menu && !isSplit && (
+      {menu && !noWorkflows && !isSplit && (
         <div
           className="fixed z-50 min-w-[176px] overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-xl"
           style={{ left: menu.x, top: menu.y }}
@@ -654,10 +657,37 @@ export default function WorkflowEditor({ wfId }: { wfId?: string }) {
         </div>
       )}
 
-      {noWorkflows && !isSplit && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+      {noWorkflows && !isSplit && welcomeDismissed && (
+        <div className="flex h-full w-full items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <Sparkles size={22} style={{ color: 'var(--sm-ink-faint)' }} />
+            <p className="text-[13px]" style={{ color: 'var(--sm-ink-faint)' }}>
+              没有打开的工作流
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => newWorkflow()}
+                className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-white transition"
+                style={{ background: 'var(--sm-accent)' }}
+              >
+                新建工作流
+              </button>
+              <button
+                onClick={() => setWelcomeDismissed(false)}
+                className="rounded-lg border px-3 py-1.5 text-[12.5px] transition hover:bg-[var(--sm-bg-soft)]"
+                style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
+              >
+                查看引导
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noWorkflows && !isSplit && !welcomeDismissed && (
+        <div className="flex h-full w-full items-center justify-center p-6">
           <div
-            className="pointer-events-auto relative grid w-[720px] max-w-full grid-cols-1 gap-6 rounded-2xl border p-7 shadow-2xl md:grid-cols-[260px_1fr]"
+            className="relative grid w-[720px] max-w-full grid-cols-1 gap-6 rounded-2xl border p-7 shadow-2xl md:grid-cols-[260px_1fr]"
             style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
           >
             <button
