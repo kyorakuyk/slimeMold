@@ -371,6 +371,7 @@ function buildProjectFile(s: {
   projectId: string | null;
   projectCreatedAt: string | null;
   subgraphs: Record<string, SubgraphDef>;
+  runHistory: RunRecord[];
 }): ProjectFile {
   const current: WorkflowFile = serializeCurrent(s);
   const workflows = { ...s.workflows };
@@ -391,6 +392,7 @@ function buildProjectFile(s: {
     roles: s.roles,
     variables: s.variables,
     subgraphs: s.subgraphs,
+    runs: { history: s.runHistory },
   };
 }
 
@@ -825,6 +827,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: wf.variables ?? {},
           subgraphs: file.subgraphs ?? {},
           groups: wf.groups ?? [],
+          // P2 成本跟项目：读回运行历史（落盘于 .slimemold/runs/history.json）
+          runHistory: file.runs?.history ?? [],
           selectedNodeId: null,
           logs: [],
         });

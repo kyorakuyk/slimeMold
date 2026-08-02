@@ -370,6 +370,8 @@ export interface WorkflowFile {
   standalonePath?: string;
   /** 人类可读的配置/使用说明（示例文件常见；运行时忽略，仅供阅读与导入后展示） */
   notes?: string;
+  /** 运行历史（P2 成本跟项目：落盘到 .slimemold/runs/history.json） */
+  runs?: { history: RunRecord[] };
 }
 
 /* ---------- 子图（可复用节点组合） ---------- */

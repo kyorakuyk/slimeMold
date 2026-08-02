@@ -365,7 +365,7 @@
 - [x] **P1 旧数据迁移**：`openProjectByPath` 保留旧版 `.smproj` 单文件读兼容，返回带 `legacy` 标记；打开旧项目时 `addLog` 提示「保存时将自动转换为 .slimemold/ 目录结构」，用户首次保存即完成迁移，旧 `.smproj` 不动（保留一个版本周期）。
 - [ ] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」；跨工作流按 `assetId` 引用；删除时做引用检测。
 - [ ] **P2 变量两级**：项目级 variables 落 `project.json`；求值时工作流级覆盖项目级；Inspector 标注来源。
-- [ ] **P2 成本跟项目**：`runHistory` 移出全局 persist，落 `runs/history.json`；Token 面板按项目统计。
+- [x] **P2 成本跟项目**：`runHistory` 落盘到 `.slimemold/runs/history.json`（`ProjectFile.runs.history`）；`saveProject` 注入、`openProject` 读回；`RunHistoryPanel`/`TokenUsagePanel`/`StatusBar` 直接读 store.runHistory，天然按项目归属。全局 persist 仍保留 runHistory 作为无项目态兼容（打开项目后由磁盘主导）。
 - [ ] **P3 恢复上次界面**：会话状态存 localStorage（上次项目路径 + 激活工作流 id），启动自动恢复；打不开时优雅降级到欢迎页。
 - [ ] **P3 项目欢迎页**：最近项目列表 / 新建 / 打开。
 
