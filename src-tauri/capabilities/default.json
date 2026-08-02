@@ -7,7 +7,16 @@
     "core:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+      "allow": [
+        { "url": "https://*" },
+        { "url": "https://*:*" },
+        { "url": "https://*:*/*" },
+        { "url": "http://*" },
+        { "url": "http://*:*" },
+        { "url": "http://*:*/*" },
+        { "url": "http://127.0.0.1:11434/*" },
+        { "url": "http://localhost:11434/*" }
+      ]
     },
     "fs:default",
     "fs:allow-appdata-read-recursive",
@@ -19,6 +28,7 @@
       "identifier": "fs:scope",
       "allow": [{ "path": "**" }, { "path": "$APPDATA/**" }]
     },
-    "dialog:default"
+    "dialog:default",
+    "opener:default"
   ]
 }

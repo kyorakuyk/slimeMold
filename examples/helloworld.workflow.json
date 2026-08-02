@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "name": "生成 helloworld.py",
+  "savedAt": "2026-08-02T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "n-input",
+      "typeId": "input.text",
+      "label": "任务描述",
+      "position": { "x": 40, "y": 120 },
+      "params": {
+        "text": "请生成一个 Python 脚本，命名为 helloworld.py，运行后在终端打印 Hello, World!"
+      }
+    },
+    {
+      "id": "n-agent",
+      "typeId": "agent.chat",
+      "label": "智能体(生成代码)",
+      "position": { "x": 360, "y": 120 },
+      "params": {
+        "agentId": "",
+        "roleId": "",
+        "modelOverride": "",
+        "system": "你是一个严谨的编程助手，只输出可运行的代码，不要多余解释。",
+        "simulate": "on"
+      }
+    },
+    {
+      "id": "n-write",
+      "typeId": "tool.writeFile",
+      "label": "写文件",
+      "position": { "x": 700, "y": 120 },
+      "params": {
+        "filename": "helloworld.py",
+        "overwrite": "true"
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-agent", "targetHandle": "prompt" },
+    { "id": "e2", "source": "n-agent", "sourceHandle": "text", "target": "n-write", "targetHandle": "content" }
+  ],
+  "agents": []
+}

@@ -123,7 +123,7 @@ export const protocolDefaults: Record<
   },
   ollama: {
     label: 'Ollama 本地',
-    baseUrl: 'http://127.0.0.1:11434',
+    baseUrl: 'http://localhost:11434',
     model: 'qwen2.5:3b',
   },
 };

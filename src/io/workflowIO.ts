@@ -56,7 +56,9 @@ export function applyWorkflowFile(text: string): void {
   const registry = useRegistryStore.getState();
   const missingDefs: NodeDefinition[] = [];
   for (const n of raw.nodes) {
-    if (!registry.defs[n.typeId] && !missingDefs.some((d) => d.typeId === n.typeId)) {
+    const known = !!registry.defs[n.typeId] ||
+      Object.keys(registry.defs).some((k) => k.toLowerCase() === n.typeId.toLowerCase());
+    if (!known && !missingDefs.some((d) => d.typeId === n.typeId)) {
       missingDefs.push({
         typeId: n.typeId,
         name: `缺失: ${n.typeId}`,
@@ -75,6 +77,14 @@ export function applyWorkflowFile(text: string): void {
   if (missingDefs.length > 0) {
     registry.register(missingDefs);
     log('error', `有 ${missingDefs.length} 种节点类型缺失，已用占位节点显示`);
+  }
+
+  // 将大小写写错但可命中的 typeId 规范化回注册表里的正确写法
+  const defByLower = new Map<string, string>();
+  for (const k of Object.keys(registry.defs)) defByLower.set(k.toLowerCase(), k);
+  for (const n of raw.nodes) {
+    const canonical = defByLower.get(n.typeId.toLowerCase());
+    if (canonical) n.typeId = canonical;
   }
 
   const nodes: FlowNode[] = raw.nodes.map((n) => ({

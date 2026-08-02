@@ -49,5 +49,11 @@ export const useRegistryStore = create<RegistryState>((set) => ({
 }));
 
 export function getNodeDef(typeId: string): NodeDefinition | undefined {
-  return useRegistryStore.getState().defs[typeId];
+  const defs = useRegistryStore.getState().defs;
+  const exact = defs[typeId];
+  if (exact) return exact;
+  // 大小写不敏感回退：容忍 JSON 里 writefile / WriteFile 等写法
+  const lower = typeId.toLowerCase();
+  const hit = Object.values(defs).find((d) => d.typeId.toLowerCase() === lower);
+  return hit;
 }

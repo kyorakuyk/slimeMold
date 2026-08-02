@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "name": "全能 Worker · Ollama qwen2.5:3b 生成 helloworld.py",
+  "savedAt": "2026-08-02T00:00:00.000Z",
+  "agents": [
+    {
+      "id": "agent-ollama-qwen",
+      "name": "本地 Ollama · qwen2.5:3b",
+      "protocol": "ollama",
+      "baseUrl": "http://localhost:11434",
+      "model": "qwen2.5:3b",
+      "temperature": 0.7
+    }
+  ],
+  "defaultAgentId": "agent-ollama-qwen",
+  "nodes": [
+    {
+      "id": "n-input",
+      "typeId": "input.text",
+      "label": "任务输入",
+      "position": { "x": 40, "y": 140 },
+      "params": {
+        "text": "帮我生成一个helloworld.py文件"
+      }
+    },
+    {
+      "id": "n-worker",
+      "typeId": "agent.chat",
+      "label": "全能 Worker（Ollama qwen2.5:3b）",
+      "position": { "x": 360, "y": 140 },
+      "params": {
+        "agentId": "agent-ollama-qwen",
+        "roleId": "",
+        "modelOverride": "",
+        "system": "你是一个全能代码生成助手。当用户要求生成文件时，必须且只能输出该文件的原始内容，禁止任何解释、禁止 markdown 代码块围栏、禁止前后缀文字。输出将直接写入磁盘作为文件内容。\n示例：\n用户：帮我生成一个helloworld.py文件\n你的输出（全文只有这一行）：\nprint('Hello, World!')",
+        "simulate": "off",
+        "isolated": false
+      }
+    },
+    {
+      "id": "n-asset",
+      "typeId": "tool.writeFile",
+      "label": "资产仓库（写文件）",
+      "position": { "x": 720, "y": 140 },
+      "params": {
+        "filename": "",
+        "overwrite": "true"
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-worker", "targetHandle": "prompt" },
+    { "id": "e2", "source": "n-worker", "sourceHandle": "text", "target": "n-asset", "targetHandle": "content" },
+    { "id": "e3", "source": "n-worker", "sourceHandle": "filename", "target": "n-asset", "targetHandle": "filename" }
+  ]
+}

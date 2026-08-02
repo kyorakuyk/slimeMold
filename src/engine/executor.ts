@@ -18,6 +18,11 @@ import {
 
 let currentAbort: AbortController | null = null;
 
+// 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
+// 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
+const NODE_RETRIES = 2;
+const NODE_RETRY_BASE_MS = 1500;
+
 export function stopWorkflow(): void {
   currentAbort?.abort();
 }
@@ -185,10 +190,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
-  // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
-  // 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
-  const NODE_RETRIES = 2;
-  const NODE_RETRY_BASE_MS = 1500;
   const skipFailed = !!opts.skipFailed;
 
   const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';

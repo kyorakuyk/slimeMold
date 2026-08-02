@@ -18,6 +18,67 @@ function inferAssetKind(filename: string): string {
   return 'text';
 }
 
+/**
+ * 自动推断文件名：让上游全能 worker 自行决定文件叫什么。
+ * 1) 从 hint（上游任务文本，如「帮我生成一个 helloworld.py 文件」）提取显式文件名；
+ * 2) 从内容首行/代码块语言推断扩展名；
+ * 3) 兜底 output.txt。
+ */
+function inferFilename(opts: { hint: string; content: string }): string {
+  const { hint, content } = opts;
+
+  // 1) 从命名提示中提取 *.ext 形态的文件名（支持带路径、带引号）
+  if (hint) {
+    const m = hint.match(/[`'"\s]([A-Za-z0-9_\-./]+\.[A-Za-z0-9]{1,10})[`'"\s]/)
+      ?? hint.match(/([A-Za-z0-9_\-./]+\.[A-Za-z0-9]{1,10})/);
+    if (m) {
+      const name = m[1].split(/[\\/]/).pop()!; // 去掉可能的目录前缀
+      if (name.includes('.')) return name;
+    }
+  }
+
+  // 2) 从内容推断扩展名：先看首行 ```lang 围栏
+  const fenceLang = content.match(/^\s*```([A-Za-z0-9+#-]+)/);
+  let ext = fenceLang ? langToExt(fenceLang[1]) : '';
+  if (!ext) {
+    const head = content.slice(0, 400).toLowerCase();
+    if (/^\s*(<!doctype html|<\?xml|<html)/.test(content)) ext = 'html';
+    else if (/def\s+\w+\s*\(|import\s+(os|sys|re|json)|print\(/.test(head)) ext = 'py';
+    else if (/function\s+\w+|const\s+\w+\s*=|<script/.test(head)) ext = 'js';
+    else if (/interface\s+\w+|:\s*string\s*=|export\s+type/.test(head)) ext = 'ts';
+    else if (/{[\s\S]*}|^\[[\s\S]*\]$/.test(content.trim())) ext = 'json';
+    else if (/select\s+[\w*]+\s+from|insert\s+into|create\s+table/i.test(head)) ext = 'sql';
+    else if (/^#\s|^\*\s|-\s/.test(content)) ext = 'md';
+    else if (/:\s*\w+\s*;|@media|background:|color:/.test(head)) ext = 'css';
+  }
+
+  // 3) 尝试从内容首行拿到有意义的命名
+  const firstLine = content.split('\n')[0].replace(/^[#/*\s-]+/, '').trim();
+  let stem = 'output';
+  if (firstLine && firstLine.length <= 40 && /[A-Za-z0-9_\-]/.test(firstLine)) {
+    stem = firstLine
+      .toLowerCase()
+      .replace(/[^a-z0-9_\-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 30) || 'output';
+  }
+  return `${stem}${ext ? '.' + ext : '.txt'}`;
+}
+
+/** 把代码语言标记映射到扩展名 */
+function langToExt(lang: string): string {
+  const map: Record<string, string> = {
+    python: 'py', py: 'py', javascript: 'js', js: 'js', jsx: 'jsx',
+    typescript: 'ts', ts: 'ts', tsx: 'tsx', java: 'java', go: 'go',
+    rust: 'rs', c: 'c', cpp: 'cpp', 'c++': 'cpp', csharp: 'cs', cs: 'cs',
+    html: 'html', xml: 'xml', css: 'css', scss: 'scss', json: 'json',
+    markdown: 'md', md: 'md', sql: 'sql', bash: 'sh', sh: 'sh', shell: 'sh',
+    yaml: 'yaml', yml: 'yml', toml: 'toml', php: 'php', ruby: 'rb', r: 'r',
+    swift: 'swift', kotlin: 'kt', dart: 'dart', lua: 'lua',
+  };
+  return map[lang.toLowerCase()] ?? '';
+}
+
 /** 将模板中的 {{key}} 替换为 scope 中的值（对象会 JSON 序列化） */
 function renderTemplate(
   template: string,
@@ -64,7 +125,10 @@ const agentChat: NodeDefinition = {
     { id: 'prompt', label: '提示词', type: 'text' },
     { id: 'image', label: '图片', type: 'image' },
   ],
-  outputs: [{ id: 'text', label: '回复', type: 'text' }],
+  outputs: [
+    { id: 'text', label: '回复', type: 'text' },
+    { id: 'filename', label: '推断文件名', type: 'text' },
+  ],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
@@ -142,7 +206,8 @@ const agentChat: NodeDefinition = {
       ctx.logger.info(
         `离线模拟完成 角色=${role?.name ?? '无'}${isolated ? ' 隔离' : ''} prompt ${prompt.length} 字`,
       );
-      return { text: acc };
+      const filename = inferFilename({ hint: prompt, content: acc });
+      return { text: acc, filename };
     }
 
     // —— 真实调用 ——
@@ -178,7 +243,9 @@ const agentChat: NodeDefinition = {
       },
       modelOverride || undefined,
     );
-    return { text };
+    // 文件名由 Worker 本体自行推断：缺省时从提示词与内容猜测类型与文件名
+    const filename = inferFilename({ hint: prompt, content: text });
+    return { text, filename };
   },
 };
 
@@ -356,15 +423,16 @@ export const nodeWriteFile: NodeDefinition = {
   inputs: [
     { id: 'content', label: '内容', type: 'text' },
     { id: 'filename', label: '文件名(可选)', type: 'text' },
+    { id: 'hint', label: '命名提示(可选)', type: 'text' },
   ],
   outputs: [{ id: 'path', label: '文件路径', type: 'text' }],
   params: [
     {
       key: 'filename',
-      label: '文件名',
+      label: '文件名(留空=自动推断)',
       type: 'text',
-      default: 'output.txt',
-      placeholder: 'hello_world.py',
+      default: 'auto',
+      placeholder: 'auto 或 hello_world.py',
     },
     {
       key: 'overwrite',
@@ -378,10 +446,24 @@ export const nodeWriteFile: NodeDefinition = {
     },
   ],
   async execute(inputs, params, ctx) {
-    const content = String(inputs.content ?? '');
+    let content = String(inputs.content ?? '');
     if (!content) throw new Error('输入内容为空，无法写文件');
-    const filename = String(inputs.filename ?? params.filename ?? 'output.txt').trim();
-    if (!filename) throw new Error('文件名为空');
+
+    // 自动剥离 markdown 代码围栏（LLM 常在代码外加 ```lang ... ``` 包裹）。
+    // 若整体被单个围栏包裹，则取栅栏内纯文本，避免把解释文字写进文件。
+    const fence = content.match(/^\s*```[^\n]*\n([\s\S]*?)\n```\s*$/);
+    if (fence) content = fence[1];
+
+    // 文件名优先级：上游 filename 输入（Worker 本体推断）> 参数显式指定 > auto 时由 hint/content 推断
+    let filename = String(inputs.filename ?? '').trim();
+    if (!filename) filename = String(params.filename ?? 'auto').trim();
+    if (!filename || filename.toLowerCase() === 'auto') {
+      filename = inferFilename({
+        hint: String(inputs.hint ?? ''),
+        content,
+      });
+    }
+    if (!filename) throw new Error('无法推断文件名，请在「文件名」参数中显式指定');
 
     const wfId = useWorkflowStore.getState().activeWfId;
     const wf = useWorkflowStore.getState().workflows[wfId];
@@ -1138,7 +1220,7 @@ async function simulateWorker(
 
 const workerScaffolder: NodeDefinition = {
   typeId: 'worker.scaffolder',
-  name: '脚手架工',
+  name: '架构师',
   category: 'worker',
   description:
     '根据上游规格（spec）生成实现计划：文件树骨架 + 分步任务说明。一次 LLM 调用产出结构化 plan。',
@@ -1165,17 +1247,17 @@ const workerScaffolder: NodeDefinition = {
   ],
   async execute(inputs, params, ctx) {
     const spec = String(inputs.spec ?? '');
-    if (!spec) throw new Error('脚手架工缺少规格输入（spec 端口）');
+    if (!spec) throw new Error('架构师缺少规格输入（spec 端口）');
     const context = inputs.context != null ? String(inputs.context) : '';
     const { system, simulate } = await resolveWorkerCtx(
       params,
       ctx,
       '你是资深软件架构师。依据给定规格输出实现计划：文件树骨架与分步任务，条理清晰、可交予实现工执行。',
-      '脚手架工',
+      '架构师',
     );
     if (simulate) {
       return {
-        plan: await simulateWorker(ctx, '脚手架工', system, [
+        plan: await simulateWorker(ctx, '架构师', system, [
           `— 规格 —`,
           spec,
           context ? `— 上下文 —\n${context}` : '',
@@ -1376,6 +1458,7 @@ export const builtinDefs: NodeDefinition[] = [
   switchNode,
   exprNode,
   httpRequest,
+  nodeWriteFile,
   preview,
   textOutput,
   nodeAuditor,

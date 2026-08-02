@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { downloadBlob, isTauri } from '../platform/env';
+import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { AssetMeta } from '../types';
 
 function kindIcon(kind: string) {
@@ -105,11 +106,19 @@ export default function AssetsPanel({
 
   const openInExplorer = async (a: AssetMeta) => {
     if (!a.path || !isTauri) return;
+    // Windows 上 explorer 需要反斜杠路径；Tauri 返回的多为正斜杠
+    const winPath = a.path.replace(/\//g, '\\');
+    const dir = winPath.includes('\\') ? winPath.slice(0, winPath.lastIndexOf('\\')) : winPath;
     try {
-      const tauri = (window as any).__TAURI__;
-      await tauri.dialog.openPath?.(a.path);
-    } catch {
-      /* 忽略 */
+      await revealItemInDir(winPath);
+    } catch (err1) {
+      console.error('revealItemInDir 失败', err1);
+      try {
+        await openPath(dir);
+      } catch (err2) {
+        console.error('openPath 失败', err2);
+        window.alert(`无法打开文件夹：\n${winPath}\n\n请手动复制路径到文件资源管理器打开。`);
+      }
     }
   };
 
