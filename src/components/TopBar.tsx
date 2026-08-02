@@ -47,6 +47,7 @@ import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { openDirDialog, isTauri } from '../platform/env';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import {
   openProjectFile,
   getRecentProjects,
@@ -196,12 +197,15 @@ export default function TopBar({
     }
   };
 
-  const handleCloseProject = () => {
-    if (
-      projectDirty &&
-      !confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？')
-    ) {
-      return;
+  const handleCloseProject = async () => {
+    if (projectDirty) {
+      const ok = isTauri()
+        ? await confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？', {
+            title: '关闭项目',
+            kind: 'warning',
+          })
+        : window.confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？');
+      if (!ok) return;
     }
     closeProject();
   };
