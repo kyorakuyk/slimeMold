@@ -113,11 +113,25 @@ export default function TopBar({
 
   // 项目层状态
   const projectName = useWorkflowStore((s) => s.projectName);
+  const projectDirty = useWorkflowStore((s) => s.projectDirty);
   const workflows = useWorkflowStore((s) => s.workflows);
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
+
+  // P1：存在未保存项目改动时，关闭/刷新前拦截提示
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (useWorkflowStore.getState().projectDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
   const newProject = useWorkflowStore((s) => s.newProject);
   const openProject = useWorkflowStore((s) => s.openProject);
   const saveProject = useWorkflowStore((s) => s.saveProject);
+  const addLog = useWorkflowStore((s) => s.addLog);
   const switchWorkflow = useWorkflowStore((s) => s.switchWorkflow);
   const newWorkflowInProject = useWorkflowStore((s) => s.newWorkflowInProject);
   const renameWorkflow = useWorkflowStore((s) => s.renameWorkflow);
@@ -135,10 +149,13 @@ export default function TopBar({
     try {
       const file = await openProjectFile();
       if (!file) return;
-      // P0：Tauri 下 openProjectFile 已返回真实磁盘路径，直接传给 store 作为真相
+      // P1：openProjectFile 返回带 path（项目根目录）的项目，直接作为磁盘真相传给 store
       const path = (file as ProjectFile & { path?: string }).path ?? file.name;
       openProject(file, path);
       pushRecentProject({ path, name: file.name, openedAt: new Date().toISOString() });
+      if ((file as ProjectFile & { legacy?: boolean }).legacy) {
+        addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
+      }
     } catch (e) {
       alert('打开项目失败：' + (e as Error).message);
     }
@@ -172,7 +189,13 @@ export default function TopBar({
                 onClick: async () => {
                   const { openProjectByPath } = await import('../io/projectIO');
                   const file = await openProjectByPath(r.path);
-                  if (file) openProject(file, r.path);
+                  if (file) {
+                    openProject(file, r.path);
+                    pushRecentProject({ path: r.path, name: file.name, openedAt: new Date().toISOString() });
+                    if ((file as ProjectFile & { legacy?: boolean }).legacy) {
+                      addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
+                    }
+                  }
                 },
               })),
               { label: '清除最近记录', danger: true, onClick: clearRecentProjects },
@@ -436,6 +459,18 @@ export default function TopBar({
 
       {/* 工具条：工作流标签浏览器 */}
       <div className="flex h-11 items-center gap-2 border-t px-3" style={{ borderColor: 'var(--sm-line)' }}>
+        {/* 项目名 + 脏标记 */}
+        <div className="flex shrink-0 items-center gap-1 pr-2" style={{ borderRight: '1px solid var(--sm-line)' }}>
+          <FolderOpen size={13} className="text-ink-faint" />
+          <span className="max-w-[160px] truncate text-[12.5px] font-medium" title={projectName ?? '未命名项目'}>
+            {projectName ?? '未命名项目'}
+          </span>
+          {projectDirty && (
+            <span className="text-[13px] leading-none text-err" title="有未保存的改动">
+              *
+            </span>
+          )}
+        </div>
         {/* 标签条 + 新建加号 */}
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {wfList.map(([id, wf]) => {

@@ -368,6 +368,8 @@ export interface WorkflowFile {
    */
   belongsToProject?: string;
   standalonePath?: string;
+  /** 人类可读的配置/使用说明（示例文件常见；运行时忽略，仅供阅读与导入后展示） */
+  notes?: string;
 }
 
 /* ---------- 子图（可复用节点组合） ---------- */

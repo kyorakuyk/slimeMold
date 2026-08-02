@@ -131,6 +131,10 @@ interface WorkflowState {
   projectCreatedAt: string | null;
   /** 当前项目文件路径（Tauri 下为磁盘路径，浏览器下为项目名；未保存为 null） */
   projectPath: string | null;
+  /** 项目级脏标记：内存态 ≠ 磁盘态（与节点执行引擎的 dirty 无关） */
+  projectDirty: boolean;
+  /** 最近一次成功落盘的完整项目快照（JSON），用于派生 dirty 比对；null 表示从未保存 */
+  lastSavedSnapshot: string | null;
   /** 项目内工作流集合 */
   workflows: Record<string, WorkflowFile>;
   /** 当前激活的工作流 id */
@@ -197,8 +201,10 @@ interface WorkflowState {
   newProject: (name: string) => void;
   /** 载入整个项目文件，并激活 activeId 对应工作流；path 为磁盘路径（Tauri）或项目名（浏览器） */
   openProject: (file: ProjectFile, path?: string) => void;
-  /** 保存当前项目为 .smproj（返回保存路径/名称） */
+  /** 保存当前项目（返回保存的项目根路径/名称） */
   saveProject: () => Promise<string>;
+  /** 项目级脏标记：内存态是否不同于最近一次落盘快照 */
+  isProjectDirty: () => boolean;
   /** 切换当前激活工作流（先写回当前，再加载目标） */
   switchWorkflow: (id: string) => void;
   /** 在项目内新建一个工作流并激活；workspaceDir 为用户指定的工作区文件夹（null=不创建，产物随工作流销毁） */
@@ -350,6 +356,49 @@ function serializeCurrent(
   };
 }
 
+/** 把当前 store 态组装为完整 ProjectFile（供保存与 dirty 快照比对复用）。 */
+function buildProjectFile(s: {
+  workflowName: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: AgentConfig[];
+  roles: RoleTemplate[];
+  variables: Record<string, unknown>;
+  groups: NodeGroup[];
+  activeWfId: string;
+  workflows: Record<string, WorkflowFile>;
+  projectName: string | null;
+  projectId: string | null;
+  projectCreatedAt: string | null;
+  subgraphs: Record<string, SubgraphDef>;
+}): ProjectFile {
+  const current: WorkflowFile = serializeCurrent(s);
+  const workflows = { ...s.workflows };
+  if (s.activeWfId) workflows[s.activeWfId] = current;
+  else {
+    const id = `wf-${Date.now()}`;
+    workflows[id] = current;
+  }
+  return {
+    version: 1,
+    kind: 'project',
+    id: s.projectId ?? `proj-${Date.now()}`,
+    name: s.projectName ?? s.workflowName,
+    createdAt: s.projectCreatedAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    workflows,
+    activeId: s.activeWfId || Object.keys(workflows)[0],
+    roles: s.roles,
+    variables: s.variables,
+    subgraphs: s.subgraphs,
+  };
+}
+
+/** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等） */
+function projectSnapshot(s: ReturnType<typeof useWorkflowStore.getState>): string {
+  return JSON.stringify(buildProjectFile(s));
+}
+
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => ({
@@ -376,6 +425,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       projectId: null,
       projectCreatedAt: null,
       projectPath: null,
+      projectDirty: false,
+      lastSavedSnapshot: null,
       workflows: {},
       activeWfId: '',
       subgraphs: {},
@@ -727,11 +778,15 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: {},
           belongsToProject: projId,
         };
+        suppressDirty = true;
         set({
           projectName: name,
           projectId: projId,
           projectCreatedAt: now,
           projectPath: null,
+          // 新建项目尚未落盘：标记项目级脏，且无落盘快照
+          projectDirty: true,
+          lastSavedSnapshot: null,
           workflows: { [id]: wf },
           activeWfId: id,
           workflowName: wf.name,
@@ -744,20 +799,23 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         });
+        suppressDirty = false;
       },
 
       openProject: (file, path) => {
         const id = file.activeId ?? Object.keys(file.workflows)[0];
         const wf = file.workflows[id];
         if (!wf) return;
+        suppressDirty = true;
         set({
           projectName: file.name,
           projectPath: path ?? file.name, // 实际磁盘路径由调用方传入
           workflows: file.workflows,
           activeWfId: id,
           workflowName: wf.name,
-          nodes: [],
-          edges: [],
+          // P1：打开即把活动工作流还原到画布，保证落盘内容完整
+          nodes: flowNodesFrom(wf),
+          edges: flowEdgesFrom(wf),
           agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
           defaultAgentId: wf.defaultAgentId ?? get().defaultAgentId,
           roles: [
@@ -770,7 +828,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         });
-        // 标记项目路径：若调用方传入的是已解析的项目（含 path），由调用处再 set
+        finalizeLoaded();
       },
 
       saveProject: async () => {
@@ -800,26 +858,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: s.variables,
           groups: s.groups,
         };
-        const workflows = { ...s.workflows };
-        if (s.activeWfId) workflows[s.activeWfId] = current;
-        else {
-          const id = `wf-${Date.now()}`;
-          workflows[id] = current;
-        }
-        const file: ProjectFile = {
-          version: 1,
-          kind: 'project',
-          id: s.projectId ?? `proj-${Date.now()}`,
-          name: s.projectName ?? s.workflowName,
-          // P0：createdAt 为磁盘真相，已存在则保留，绝不重写
-          createdAt: s.projectCreatedAt ?? new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          workflows,
-          activeId: s.activeWfId || Object.keys(workflows)[0],
-          roles: s.roles,
-          variables: s.variables,
-          subgraphs: s.subgraphs,
-        };
+        const file = buildProjectFile(s);
         const { saveProjectFile } = await import('../io/projectIO');
         // P0：已存盘则直接覆盖原路径，不再弹另存为
         const path = await saveProjectFile(file, s.projectPath ?? undefined);
@@ -827,8 +866,17 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectId: file.id,
           projectCreatedAt: file.createdAt,
           projectPath: path,
+          // P1：落盘后清除项目级脏标记，并记录本次快照
+          projectDirty: false,
+          lastSavedSnapshot: JSON.stringify(file),
         });
         return path;
+      },
+
+      isProjectDirty: () => {
+        const s = get();
+        if (!s.lastSavedSnapshot) return s.projectDirty; // 从未保存过：以标记为准
+        return s.lastSavedSnapshot !== JSON.stringify(buildProjectFile(s));
       },
 
       switchWorkflow: (id) => {
@@ -844,6 +892,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
         const target = synced[id];
         if (!target) return;
+        // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测
+        suppressDirty = true;
         set({
           workflows: synced,
           activeWfId: id,
@@ -857,6 +907,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         });
+        suppressDirty = false;
       },
 
       /**
@@ -1425,6 +1476,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         projectId: s.projectId,
         projectCreatedAt: s.projectCreatedAt,
         projectPath: s.projectPath,
+        projectDirty: s.projectDirty,
+        lastSavedSnapshot: s.lastSavedSnapshot,
         workflowName: s.workflowName,
         nodes: s.nodes,
         edges: s.edges,
@@ -1442,6 +1495,50 @@ export const useWorkflowStore = create<WorkflowState>()(
     },
   ),
 );
+
+// ---------- P1：项目级脏检测（内存态 vs 磁盘态） ----------
+// 加载/切换期间临时抑制自动脏检测，避免误标
+let suppressDirty = false;
+
+/** 载入/打开项目后调用：以当前内存态作为"与磁盘一致"的基准，清除脏标记 */
+function finalizeLoaded() {
+  suppressDirty = false;
+  useWorkflowStore.setState({
+    projectDirty: false,
+    lastSavedSnapshot: projectSnapshot(useWorkflowStore.getState()),
+  });
+}
+
+// 仅当"落盘相关字段"变化时才比对快照，避免日志/运行态频繁触发 stringify
+const DIRTY_KEYS = [
+  'nodes',
+  'edges',
+  'agents',
+  'roles',
+  'variables',
+  'groups',
+  'subgraphs',
+  'workflows',
+  'projectName',
+  'activeWfId',
+  'workflowName',
+  'llmChannel',
+  'failFast',
+  'skipFailed',
+  'maxConcurrency',
+] as const;
+
+useWorkflowStore.subscribe((state, prev) => {
+  if (suppressDirty) return;
+  if (DIRTY_KEYS.every((k) => (state as any)[k] === (prev as any)[k])) return;
+  if (!state.lastSavedSnapshot) {
+    if (!state.projectDirty) useWorkflowStore.setState({ projectDirty: true });
+    return;
+  }
+  if (state.lastSavedSnapshot !== projectSnapshot(state)) {
+    if (!state.projectDirty) useWorkflowStore.setState({ projectDirty: true });
+  }
+});
 
 // 确保启动/恢复后始终有一个激活的工作流承载当前画布（避免游离态丢节点）
 {

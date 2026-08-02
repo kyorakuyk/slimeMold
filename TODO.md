@@ -324,13 +324,15 @@
 
 - **存储真相**：**磁盘为唯一真相**。localStorage 降级为「崩溃恢复草稿 + 会话状态」（开了哪些项目、标签分组折叠状态）。dirty 定义即 `内存态 ≠ 磁盘态`。
 - **工作流 ≠ 必须属于项目**：新建工作流**不强制依附项目**。**游离工作流（standalone workflow）** 也是一等公民——它可以不属于任何项目，存成一个独立 `.json` 文件。用户**需指定存放位置**，未指定时落到**默认位置**（如 `文档/SlimeMold/未归类/`）。项目内工作流与游离工作流在编辑器里体验一致，区别在于归属与资产/变量的作用域大小。
-- **物理形态**：**项目文件夹**（非单文件，仅当工作流归属项目时使用）
+- **物理形态**：**项目文件夹**（非单文件，仅当工作流归属项目时使用）。项目配置统一收进项目根下的隐藏文件夹 **`.slimemold/`**（与源码/资产并列，避免污染用户自己的工程目录，且便于 `.gitignore` 或随仓库提交）：
   ```
   MyProject/
-    project.json          # 项目元信息 + 标签分组 + 项目级变量 + 角色 + 子图
-    workflows/*.json      # 每个工作流独立文件，便于 git diff
-    assets/               # 项目级共享资产
-    runs/history.json     # 运行历史 + token 统计
+    .slimemold/
+      project.json        # 项目元信息 + 标签分组 + 项目级变量 + 角色 + 子图
+      workflows/*.json    # 每个工作流独立文件，便于 git diff
+      assets/             # 项目级共享资产
+      runs/history.json   # 运行历史 + token 统计
+    # 用户自己的产物 / 源码 与 .slimemold 平级
   ```
   游离工作流不建文件夹，直接存 `{用户指定位置|默认位置}/xxx.json`，其运行历史/资产/变量**自带于该工作流文件**（或就近 `xxx.runs.json` 旁挂文件），不共享。
 - **资产**：**两级并存**（项目级共享 + 工作流级私有），**支持跨工作流引用**（`assetId` 全局唯一）。删除项目级资产时需检测被哪些工作流引用并提示。游离工作流只有工作流级资产，无项目级共享层。
@@ -358,9 +360,9 @@
 - [x] **P0 补权限**：`capabilities/default.json` 增加 `fs:allow-mkdir`/`read-dir`/`remove`/`exists`，否则后续全阻塞。
 - [x] **P0 修断裂点**：`projectName`/`projectId`/`projectCreatedAt`/`projectPath` 进 persist；`openProject` 传真实磁盘路径（修 `TopBar.tsx:138`，`openProjectFile` 带出 path）；`saveProject` 支持「保存到已有路径（projectPath 已知则直接覆盖，不弹另存为）」且不重写 `createdAt`。`ProjectFile` 新增 `id` 字段。
 - [x] **P0 游离工作流入口**：「新建工作流」区分「新建到项目」与「新建游离工作流（指定位置，缺省落默认位置 `文档/SlimeMold/未归类/`）」；存档态记录 `belongsToProject?: string`（项目 id）或 `standalonePath: string`；编辑器据有无归属决定资产/变量作用域与运行历史落点。`WorkflowFile` 已加 `belongsToProject`/`standalonePath`；`serializeCurrent` 保留身份；导入工作流标记 `standalonePath`。
-- [ ] **P1 项目文件夹 IO**：`projectIO.ts` 从单文件改为目录读写（`project.json` + `workflows/*.json` + `runs/history.json`），保留 `.smproj` 单文件的**读**兼容做迁移入口。
-- [ ] **P1 dirty 标记**：内存态与磁盘态比对，标题栏 `*`、关闭/切换前拦截弹窗。
-- [ ] **P1 旧数据迁移**：按 5.2 实现静默迁移 + 提示。
+- [x] **P1 项目文件夹 IO**：`projectIO.ts` 从单文件改为目录读写（项目根下的 **`.slimemold/project.json`** + `.slimemold/workflows/*.json` + `.slimemold/runs/history.json`）；`openProjectFile`/`openProjectByPath` 支持目录形态（选根目录或 `.slimemold`）与旧版 `.smproj` 单文件**读**兼容；`projectRootFromPath` 解析项目根。`.slimemold` 为隐藏配置目录，与用户产物平级。`pickProjectFile`/`showSaveDirDialog` 在 `env.ts`。
+- [x] **P1 dirty 标记**：`workflowStore` 引入 `projectDirty`/`lastSavedSnapshot`，订阅式派生比对（仅落盘相关字段变化才重算，跳过日志/运行态），`saveProject` 成功后清脏并记录快照，`openProject`/`newProject` 正确初始化；标题栏显示项目名 + `*` 星号；`beforeunload` 拦截未保存关闭。`isProjectDirty()` 供 UI 读。
+- [x] **P1 旧数据迁移**：`openProjectByPath` 保留旧版 `.smproj` 单文件读兼容，返回带 `legacy` 标记；打开旧项目时 `addLog` 提示「保存时将自动转换为 .slimemold/ 目录结构」，用户首次保存即完成迁移，旧 `.smproj` 不动（保留一个版本周期）。
 - [ ] **P2 资产两级**：`ProjectFile` 增加项目级 `assets`；资产面板区分「项目资产 / 本工作流资产」；跨工作流按 `assetId` 引用；删除时做引用检测。
 - [ ] **P2 变量两级**：项目级 variables 落 `project.json`；求值时工作流级覆盖项目级；Inspector 标注来源。
 - [ ] **P2 成本跟项目**：`runHistory` 移出全局 persist，落 `runs/history.json`；Token 面板按项目统计。

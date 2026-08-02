@@ -75,3 +75,59 @@ export async function defaultStandaloneDir(): Promise<string> {
   }
   return 'SlimeMold/未归类';
 }
+
+/** Tauri dialog 封装：避免重复 import 与 try/catch 样板 */
+async function tauriDialog(): Promise<any> {
+  const tauri = (window as any).__TAURI__;
+  if (!tauri?.dialog) throw new Error('dialog 不可用');
+  return tauri.dialog;
+}
+
+/**
+ * 打开项目：优先让用户选择项目根目录 / .slimemold 目录（新形态）；
+ * 若取消，再退回到选择旧版 .smproj 单文件。
+ * 返回项目根或 .smproj 路径；取消返回 null。
+ */
+export async function pickProjectFile(): Promise<string | null> {
+  if (!isTauri) return null;
+  try {
+    const dialog = await tauriDialog();
+    const dir = await dialog.open({
+      directory: true,
+      multiple: false,
+      title: '选择项目文件夹（含 .slimemold 的目录）',
+    });
+    if (dir) return Array.isArray(dir) ? dir[0] ?? null : dir;
+    // 退回旧版单文件
+    const file = await dialog.open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'SlimeMold 项目', extensions: ['smproj'] }],
+      title: '打开旧版项目文件 (.smproj)',
+    });
+    return Array.isArray(file) ? file[0] ?? null : file;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 新建项目时选择保存位置：选一个目录作为项目根。
+ * Tauri 下可创建目录；浏览器返回 null（走 localStorage 草稿）。
+ */
+export async function showSaveDirDialog(defaultName: string): Promise<string | null> {
+  if (!isTauri) return null;
+  try {
+    const dialog = await tauriDialog();
+    const selected = await dialog.open({
+      directory: true,
+      multiple: false,
+      canCreateDirectories: true,
+      defaultPath: defaultName,
+      title: '选择项目保存位置',
+    });
+    return Array.isArray(selected) ? selected[0] ?? null : selected;
+  } catch {
+    return null;
+  }
+}

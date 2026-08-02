@@ -1,149 +1,235 @@
-import { isTauri } from '../platform/env';
-import type { ProjectFile, RecentProject } from '../types';
+import type { ProjectFile, WorkflowFile } from '../types';
+import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
 
-const RECENT_KEY = 'sm-recent-projects';
-const PROJECTS_KEY = 'sm-projects'; // 浏览器退化：项目集合
-const RECENT_MAX = 10;
+// 项目配置统一收进项目根下的隐藏目录 .slimemold/（类 Unix 约定）
+export const SLIMEMOLD_DIR = '.slimemold';
 
-/* ---------------- 最近项目（localStorage 持久化） ---------------- */
+const PROJECT_JSON = 'project.json';
+const WORKFLOWS_DIR = 'workflows';
+const RUNS_DIR = 'runs';
+const HISTORY_JSON = 'history.json';
+const LEGACY_EXT = '.smproj';
 
-export function getRecentProjects(): RecentProject[] {
+// 运行历史（可选，落盘到 .slimemold/runs/history.json；类型层宽松处理，避免与主类型耦合）
+type RunHistory = { history: unknown[] };
+
+export interface RecentProject {
+  path: string; // 项目根目录（磁盘真相）
+  name: string;
+  openedAt: string;
+}
+
+const RECENT_KEY = 'sm.recentProjects';
+const RECENT_MAX = 12;
+
+// ---------- 路径工具 ----------
+
+/** 给定任意路径，解析出项目根目录（即 .slimemold 的父目录，或路径本身）。 */
+export function projectRootFromPath(path: string): string {
+  if (!path) return path;
+  const norm = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  const segs = norm.split('/');
+  const last = segs[segs.length - 1];
+  const secondLast = segs[segs.length - 2];
+  const thirdLast = segs[segs.length - 3];
+  if (last === SLIMEMOLD_DIR) return segs.slice(0, -1).join('/');
+  if (last === PROJECT_JSON && secondLast === SLIMEMOLD_DIR)
+    return segs.slice(0, -2).join('/');
+  if (last === HISTORY_JSON && secondLast === RUNS_DIR && thirdLast === SLIMEMOLD_DIR)
+    return segs.slice(0, -3).join('/');
+  return norm;
+}
+
+function joinPath(root: string, ...parts: string[]): string {
+  const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  return [base, ...parts.map((p) => p.replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))]
+    .filter(Boolean)
+    .join('/');
+}
+
+// ---------- 最近项目记录（localStorage 缓存） ----------
+
+function readRecent(): RecentProject[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    if (!raw) return [];
-    const list = JSON.parse(raw) as RecentProject[];
-    return Array.isArray(list) ? list : [];
+    return raw ? (JSON.parse(raw) as RecentProject[]) : [];
   } catch {
     return [];
   }
 }
-
-export function pushRecentProject(p: RecentProject) {
-  const list = getRecentProjects().filter((r) => r.path !== p.path);
-  list.unshift(p);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX)));
-}
-
-export function clearRecentProjects() {
-  localStorage.removeItem(RECENT_KEY);
-}
-
-/* ---------------- 新建项目 ---------------- */
-
-export function createProjectFile(name: string): ProjectFile {
-  const now = new Date().toISOString();
-  const activeId = `wf-${Date.now()}`;
-  return {
-    version: 1,
-    kind: 'project',
-    id: `proj-${Date.now()}`,
-    name,
-    createdAt: now,
-    updatedAt: now,
-    activeId,
-    workflows: {
-      [activeId]: {
-        version: 1,
-        name: '未命名工作流',
-        savedAt: now,
-        nodes: [],
-        edges: [],
-        agents: [],
-        roles: [],
-        variables: {},
-      },
-    },
-    roles: [],
-    variables: {},
-  };
-}
-
-/* ---------------- 保存项目 ---------------- */
-
-export async function saveProjectFile(file: ProjectFile, existingPath?: string): Promise<string> {
-  file.updatedAt = new Date().toISOString();
-  const text = JSON.stringify(file, null, 2);
-
-  if (isTauri) {
-    // 动态引入 Tauri 插件（避免浏览器侧打包报错）
-    const [{ save }, { writeTextFile }] = await Promise.all([
-      import('@tauri-apps/plugin-dialog'),
-      import('@tauri-apps/plugin-fs'),
-    ]);
-    // P0：已存盘（existingPath 已知）则直接覆盖，不再弹另存为
-    let path = existingPath;
-    if (!path) {
-      const { basename } = await import('@tauri-apps/api/path');
-      const def = existingPath ?? `${file.name}.smproj`;
-      path = await save({
-        defaultPath: def,
-        filters: [{ name: 'SlimeMold Project', extensions: ['smproj'] }],
-      });
-    }
-    if (!path) return file.name; // 用户取消
-    await writeTextFile(path, text);
-    return path;
-  }
-
-  // 浏览器退化：用项目 name 作为 key 存入 localStorage
-  const map = readBrowserProjects();
-  map[file.name] = file;
-  localStorage.setItem(PROJECTS_KEY, JSON.stringify(map));
-  return file.name;
-}
-
-/* ---------------- 打开项目 ---------------- */
-
-export async function openProjectFile(): Promise<ProjectFile | null> {
-  if (isTauri) {
-    const [{ open }, { readTextFile }] = await Promise.all([
-      import('@tauri-apps/plugin-dialog'),
-      import('@tauri-apps/plugin-fs'),
-    ]);
-    const path = await open({
-      multiple: false,
-      filters: [{ name: 'SlimeMold Project', extensions: ['smproj'] }],
-    });
-    if (typeof path !== 'string') return null;
-    const text = await readTextFile(path);
-    const file = JSON.parse(text) as ProjectFile;
-    if (file.kind !== 'project') throw new Error('不是有效的项目文件');
-    // P0：把真实磁盘路径随文件一并带出，openProject 据此记录真相
-    (file as ProjectFile & { path?: string }).path = path;
-    return file;
-  }
-
-  // 浏览器退化：列出已存项目让用户选择
-  const map = readBrowserProjects();
-  const names = Object.keys(map);
-  if (names.length === 0) {
-    alert('浏览器模式下暂无已保存的项目。请先新建并保存项目。');
-    return null;
-  }
-  const name = window.prompt(`输入要打开的项目名（可选：${names.join('、')}）`, names[0]);
-  if (!name) return null;
-  return map[name] ?? null;
-}
-
-export async function openProjectByPath(path: string): Promise<ProjectFile | null> {
-  if (isTauri) {
-    const { readTextFile } = await import('@tauri-apps/plugin-fs');
-    const text = await readTextFile(path);
-    const file = JSON.parse(text) as ProjectFile;
-    if (file.kind !== 'project') throw new Error('不是有效的项目文件');
-    return file;
-  }
-  const map = readBrowserProjects();
-  return map[path] ?? null;
-}
-
-/* ---------------- 浏览器退化辅助 ---------------- */
-
-function readBrowserProjects(): Record<string, ProjectFile> {
+function writeRecent(list: RecentProject[]) {
   try {
-    const raw = localStorage.getItem(PROJECTS_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, ProjectFile>) : {};
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
   } catch {
-    return {};
+    /* ignore */
   }
+}
+
+export function getRecentProjects(): RecentProject[] {
+  return readRecent();
+}
+export function pushRecentProject(r: RecentProject) {
+  const list = readRecent().filter((x) => x.path !== r.path);
+  list.unshift(r);
+  writeRecent(list.slice(0, RECENT_MAX));
+}
+export function clearRecentProjects() {
+  writeRecent([]);
+}
+
+// ---------- 写入：目录式 .slimemold/ ----------
+
+/**
+ * 保存项目到磁盘。
+ * @param file 待保存的 ProjectFile（已含 workflows 与 runs）
+ * @param existingRoot 已知项目根目录（首次保存为 undefined，会弹目录选择）
+ * @returns 实际写入的项目根目录
+ */
+export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
+  let root = existingRoot;
+  if (!root) {
+    if (isTauri()) {
+      const picked = await showSaveDirDialog(file.name);
+      if (!picked) throw new Error('已取消保存');
+      root = picked;
+    } else {
+      // 浏览器端：仅存草稿到 localStorage
+      try {
+        localStorage.setItem('sm.project', JSON.stringify({ ...file, _root: file.name }));
+      } catch {
+        /* ignore */
+      }
+      return file.name;
+    }
+  }
+
+  const cfg = joinPath(root, SLIMEMOLD_DIR);
+  const wfDir = joinPath(cfg, WORKFLOWS_DIR);
+  const runsDir = joinPath(cfg, RUNS_DIR);
+
+  if (isTauri()) {
+    const { mkdir, writeTextFile, exists } = await import('@tauri-apps/plugin-fs');
+    await mkdir(cfg, { recursive: true });
+    await mkdir(wfDir, { recursive: true });
+    await mkdir(runsDir, { recursive: true });
+
+    // project.json（元数据 + 引用，不再内联所有 workflow 全文）
+    const meta: ProjectFile = { ...file, workflows: {} };
+    await writeTextFile(joinPath(cfg, PROJECT_JSON), JSON.stringify(meta, null, 2));
+
+    // 每个工作流一个文件
+    for (const [id, wf] of Object.entries(file.workflows ?? {})) {
+      await writeTextFile(joinPath(wfDir, `${id}.json`), JSON.stringify(wf, null, 2));
+    }
+
+    // runs/history.json（若本次 ProjectFile 附带 runs 历史则写入，否则保留已有）
+    const histPath = joinPath(runsDir, HISTORY_JSON);
+    const runs = (file as ProjectFile & { runs?: RunHistory }).runs;
+    if (runs && runs.history && runs.history.length) {
+      await writeTextFile(histPath, JSON.stringify(runs, null, 2));
+    } else if (!(await exists(histPath))) {
+      await writeTextFile(histPath, JSON.stringify({ history: [] }, null, 2));
+    }
+  } else {
+    try {
+      localStorage.setItem('sm.project', JSON.stringify({ ...file, _root: root }));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return root;
+}
+
+// ---------- 读取 ----------
+
+async function readTextTauri(path: string): Promise<string> {
+  const { readTextFile } = await import('@tauri-apps/plugin-fs');
+  return await readTextFile(path);
+}
+
+/** 从 .slimemold 目录结构组装 ProjectFile。 */
+async function loadFromDir(root: string): Promise<ProjectFile | null> {
+  const cfg = joinPath(root, SLIMEMOLD_DIR);
+  const projectJsonPath = joinPath(cfg, PROJECT_JSON);
+  if (isTauri()) {
+    const { exists, readDir } = await import('@tauri-apps/plugin-fs');
+    if (!(await exists(projectJsonPath))) return null;
+    const text = await readTextTauri(projectJsonPath);
+    const meta = JSON.parse(text) as ProjectFile;
+
+    const workflows: Record<string, WorkflowFile> = {};
+    const wfDir = joinPath(cfg, WORKFLOWS_DIR);
+    if (await exists(wfDir)) {
+      const entries = await readDir(wfDir);
+      for (const e of entries) {
+        if (e.isFile && e.name.endsWith('.json')) {
+          const wfText = await readTextTauri(joinPath(wfDir, e.name));
+          const wf = JSON.parse(wfText) as WorkflowFile;
+          const id = e.name.replace(/\.json$/, '');
+          workflows[id] = { id, ...wf };
+        }
+      }
+    }
+
+    let runs = (meta as ProjectFile & { runs?: RunHistory }).runs;
+    const histPath = joinPath(cfg, RUNS_DIR, HISTORY_JSON);
+    if (await exists(histPath)) {
+      try {
+        runs = JSON.parse(await readTextTauri(histPath));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return { ...meta, workflows, runs: runs ?? { history: [] } };
+  }
+  return null;
+}
+
+/** 兼容旧版单文件 .smproj。 */
+async function loadFromLegacy(path: string): Promise<ProjectFile | null> {
+  let text: string;
+  if (isTauri()) {
+    text = await readTextTauri(path);
+  } else {
+    const raw = localStorage.getItem('sm.project');
+    if (!raw) return null;
+    text = raw;
+  }
+  const data = JSON.parse(text) as ProjectFile;
+  if (data.kind !== 'project') return null;
+  return data;
+}
+
+/**
+ * 打开项目文件对话框。支持：
+ *  - 旧版单文件 *.smproj
+ *  - 新版目录（选 .slimemold 目录、其内 project.json、或项目根目录）
+ * 返回带 `path`（项目根）的 ProjectFile。
+ */
+export async function openProjectFile(): Promise<(ProjectFile & { path: string }) | null> {
+  if (isTauri()) {
+    const picked = await pickProjectFile();
+    if (!picked) return null;
+    return await openProjectByPath(picked);
+  }
+  const raw = localStorage.getItem('sm.project');
+  if (!raw) return null;
+  const data = JSON.parse(raw) as ProjectFile;
+  return { ...data, path: data.name };
+}
+
+/** 按路径（项目根或 .slimemold 内任意文件）打开项目。 */
+export async function openProjectByPath(path: string): Promise<(ProjectFile & { path: string }) | null> {
+  const root = projectRootFromPath(path);
+  const dirFile = await loadFromDir(root);
+  if (dirFile) return { ...dirFile, path: root };
+
+  if (path.toLowerCase().endsWith(LEGACY_EXT) || root.toLowerCase().endsWith(LEGACY_EXT)) {
+    const legacyPath = path.toLowerCase().endsWith(LEGACY_EXT) ? path : root;
+    const legacy = await loadFromLegacy(legacyPath);
+    if (legacy) return { ...legacy, path: legacyPath, legacy: true };
+  }
+  return null;
 }

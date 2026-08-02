@@ -2,6 +2,7 @@
   "version": 1,
   "name": "全能 Worker · Ollama qwen2.5:3b 生成 helloworld.py",
   "savedAt": "2026-08-02T00:00:00.000Z",
+  "notes": "【配置说明 / 运行前必读】\n\n这是一个完全本地、不依赖任何云端 API 的示例：用本机 Ollama 跑的 qwen2.5:3b 模型生成 helloworld.py，并直接写入磁盘。\n\n1) 安装并启动 Ollama\n   - 下载：https://ollama.com ，按平台安装后 Ollama 会常驻后台（默认监听 http://localhost:11434）。\n   - 终端确认：curl http://localhost:11434/api/tags 能返回模型列表即表示服务正常。\n\n2) 拉取示例所用模型\n   - 在终端执行：ollama pull qwen2.5:3b\n   - 想换模型：把文件里 agents[0].model 改成你已 pull 的模型名（如 qwen2.5:7b、llama3.1:8b），baseUrl 一般无需改动。\n\n3) 在 SlimeMold 中加载本示例\n   - 顶部「导入工作流」选择本文件；或把本文件放进项目/工作流的示例目录后从示例库打开。\n   - 导入后无需额外配置智能体：本工作流已内置 agent-ollama-qwen，协议 ollama、baseUrl http://localhost:11434、model qwen2.5:3b。\n\n4) 工作流做了什么\n   - input.text 给出任务：帮我生成一个helloworld.py文件\n   - agent.chat（全能 Worker）调用本地 Ollama 生成纯代码，并「推断文件名」输出 helloworld.py\n   - tool.writeFile 把代码写入工作区（节点 filename 留空，由上游自动推断；overwrite=true 覆盖同名文件）\n   - 运行后到左侧「资产」面板即可看到生成的 helloworld.py，可在终端 python helloworld.py 验证输出 Hello, World!。\n\n5) 常见问题\n   - 运行报错「connect ECONNREFUSED 11434」：Ollama 没启动，或不在 11434 端口，检查 baseUrl。\n   - 生成的不是纯代码/带 markdown 围栏：调高模型温度或换更大模型；system 提示词已约束「只输出原始文件内容」。\n   - simulate 为 off 才会真实调用；若只想看流程骨架，可把它临时改为 on（离线回显）。",
   "agents": [
     {
       "id": "agent-ollama-qwen",
