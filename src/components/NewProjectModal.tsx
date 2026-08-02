@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FolderPlus, MapPin, FileStack, Check, Sparkles } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
-import { starterTemplates } from '../data/starterTemplates';
+import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { isTauri, showSaveDirDialog } from '../platform/env';
 
 export default function NewProjectModal({ onClose }: { onClose: () => void }) {
@@ -14,7 +14,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   const nameValid = name.trim().length > 0;
-  const tpl = templateId ? starterTemplates.find((t) => t.id === templateId) : undefined;
+  const tpl = templateId ? STARTER_TEMPLATES.find((t) => t.id === templateId) : undefined;
 
   const chooseLocation = async () => {
     if (!isTauri) return;
@@ -89,7 +89,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
             nodeCount={0}
             onClick={() => setTemplateId('')}
           />
-          {starterTemplates.map((t) => (
+          {STARTER_TEMPLATES.map((t) => (
             <TemplateCard
               key={t.id}
               active={templateId === t.id}
@@ -133,7 +133,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
         <div className="mt-5 flex items-center justify-end gap-2">
           {tpl && (
             <span className="mr-auto text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              将载入模板「{tpl.name}」（{tpl.graph.nodes.length} 个节点）
+              将载入模板「{tpl.name}」（{tpl.build().nodes.length} 个节点）
             </span>
           )}
           <button

@@ -37,7 +37,7 @@ import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../en
 import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
-import { starterTemplates } from '../data/starterTemplates';
+import { STARTER_TEMPLATES } from '../data/starterTemplates';
 
 /**
  * 根据分组内部节点，按「端口类型」聚合推导折叠态的代理端口（ProxyPort）
@@ -832,7 +832,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       createProject: async ({ name, templateId, location }) => {
         const tpl = templateId
-          ? starterTemplates.find((t) => t.id === templateId)
+          ? STARTER_TEMPLATES.find((t) => t.id === templateId)
           : undefined;
         const graph = tpl?.build();
         const tplNodes = graph?.nodes ?? [];
