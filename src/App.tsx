@@ -19,6 +19,7 @@ import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
 import { useViewStore } from './store/viewStore';
+import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 
 registerBuiltins();
 
@@ -112,6 +113,9 @@ export default function App() {
   const splitView = useViewStore((s) => s.splitView);
   const splitWfId = useViewStore((s) => s.splitWfId);
   const setSplitWfId = useViewStore((s) => s.setSplitWfId);
+  // 允许从窗口外拖拽 .workflow.json 进入应用直接打开
+  const { dragActive, onDragEnter, onDragLeave, onDragOver, onDrop } =
+    useWorkflowFileDrop();
   // 底侧边栏开关与高度从 viewStore 读取（持久化，记住上次状态）
   const panelOpen = useViewStore((s) => s.panelOpen);
   const togglePanel = useViewStore((s) => s.togglePanel);
@@ -251,7 +255,14 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div className="flex h-screen flex-col font-app" style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink)' }}>
+      <div
+        className="flex h-screen flex-col font-app"
+        style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink)' }}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
         <TopBar
           theme={viewTheme}
           onToggleTheme={toggleTheme}
@@ -383,6 +394,22 @@ export default function App() {
         )}
         {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} onNewProject={() => setNewProjectOpen(true)} />}
         {newProjectOpen && <NewProjectModal onClose={() => setNewProjectOpen(false)} />}
+        {dragActive && (
+          <div
+            className="pointer-events-none fixed inset-0 z-[9999] flex items-center justify-center"
+            style={{
+              background: 'color-mix(in srgb, var(--sm-bg) 70%, transparent)',
+              backdropFilter: 'blur(2px)',
+            }}
+          >
+            <div
+              className="rounded-lg border-2 border-dashed px-10 py-8 text-center text-[15px] font-semibold"
+              style={{ borderColor: 'var(--sm-accent)', color: 'var(--sm-accent)' }}
+            >
+              松开以打开工作流文件 (.workflow.json)
+            </div>
+          </div>
+        )}
       </div>
     </ReactFlowProvider>
   );

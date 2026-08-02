@@ -187,6 +187,25 @@ export async function importWorkflow(): Promise<void> {
   input.click();
 }
 
+/**
+ * 从文件内容打开工作流（供「从窗口外拖拽 .workflow.json 进入」复用）。
+ * 不弹对话框：调用方负责拿到文件名与文本。非 .json 文件直接忽略。
+ * @returns 是否成功加载（false 表示文件类型不匹配或解析失败）
+ */
+export async function openWorkflowFromText(
+  name: string,
+  text: string,
+): Promise<boolean> {
+  if (!name.toLowerCase().endsWith('.json')) return false;
+  try {
+    applyWorkflowFile(text, name);
+    return true;
+  } catch (e) {
+    log('error', `拖入的文件不是有效的工作流：${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
 /* ---------- 复制文本（轻量分享） ---------- */
 export async function copyWorkflowText(): Promise<void> {
   const wf = serializeWorkflow();
