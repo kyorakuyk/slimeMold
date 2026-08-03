@@ -16,6 +16,7 @@ import {
   type Edge,
   type OnNodesChange,
   type OnEdgesChange,
+  type FinalConnectionState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
@@ -412,8 +413,30 @@ export default function WorkflowEditor({
     createGroup(targetIds);
   };
 
-  // 仿 ComfyUI：双击空白画布弹出节点选择窗口
+  // 仿 ComfyUI：双击空白画布弹出节点选择窗口；Ctrl+K / Ctrl+Space 也可唤起（命令面板式，落于屏幕中心）
   const [pickerPos, setPickerPos] = useState<{ x: number; y: number } | null>(null);
+  // 从端口拖拽到空白处建节点时，先缓存源端口上下文，待用户在命令面板选好节点后自动连边
+  const pendingConn = useRef<{
+    fromNodeId: string;
+    fromHandleId: string;
+    fromType: 'source' | 'target';
+    screen: { x: number; y: number };
+  } | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key.toLowerCase() === 'k' || e.code === 'Space')) {
+        // 避免在输入框/文本域中误触发
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        // 落点取屏幕中心，使新节点出现在当前视图中央
+        setPickerPos({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   useEffect(() => {
     if (!pickerPos) return;
     // 弹窗内部已 stopPropagation，外部点击冒泡到此关闭
@@ -435,6 +458,49 @@ export default function WorkflowEditor({
     (payload: PickPayload) => {
       if (!pickerPos) return;
       const pos = screenToFlowPosition({ x: pickerPos.x, y: pickerPos.y });
+      const pending = pendingConn.current;
+      pendingConn.current = null;
+
+      if (pending) {
+        // 从端口拖到空白：新建节点后自动连边（ComfyUI 风格）
+        const pendingPos = pickerPos; // 落点即拖拽结束处
+        const newNodeId = addNode(payload.id, { x: pos.x - 112, y: pos.y - 20 });
+        if (newNodeId) {
+          const defs = useRegistryStore.getState().defs;
+          const sgs = useWorkflowStore.getState().subgraphs;
+          const newNode = useWorkflowStore.getState().nodes.find((n) => n.id === newNodeId);
+          const newDef = newNode ? resolvePorts(newNode.data.typeId, newNode.data.params, defs, sgs) : null;
+          const srcNode = useWorkflowStore.getState().nodes.find((n) => n.id === pending.fromNodeId);
+          const srcDef = srcNode ? resolvePorts(srcNode.data.typeId, srcNode.data.params, defs, sgs) : null;
+          if (newDef) {
+            const fromIsSource = pending.fromType === 'source';
+            const srcPort = fromIsSource
+              ? srcDef?.outputs.find((o) => o.id === pending.fromHandleId)
+              : srcDef?.inputs.find((i) => i.id === pending.fromHandleId);
+            let targetHandle: string | undefined;
+            if (fromIsSource) {
+              // 新节点作为 target：找第一个与源输出类型兼容的输入端口
+              targetHandle = newDef.inputs.find(
+                (i) => srcPort && arePortsCompatible(srcPort.type, i.type),
+              )?.id ?? newDef.inputs[0]?.id;
+            } else {
+              // 新节点作为 source：找第一个与源输入类型兼容的输出端口
+              targetHandle = newDef.outputs.find(
+                (o) => srcPort && arePortsCompatible(o.type, srcPort.type),
+              )?.id ?? newDef.outputs[0]?.id;
+            }
+            if (targetHandle) {
+              const connection: Connection = fromIsSource
+                ? { source: pending.fromNodeId, sourceHandle: pending.fromHandleId, target: newNodeId, targetHandle }
+                : { source: newNodeId, sourceHandle: targetHandle, target: pending.fromNodeId, targetHandle: pending.fromHandleId };
+              useWorkflowStore.getState().onConnect(connection);
+            }
+          }
+        }
+        setPickerPos(null);
+        return;
+      }
+
       if (payload.kind === 'subgraph') {
         if (!isSplit) addSubgraphRef(payload.id, { x: pos.x - 112, y: pos.y - 20 });
       } else {
@@ -443,6 +509,28 @@ export default function WorkflowEditor({
       setPickerPos(null);
     },
     [pickerPos, screenToFlowPosition, addSubgraphRef, addNode, isSplit],
+  );
+
+  // 从端口拖拽到空白处松手：缓存源端口上下文，弹出命令面板建节点并自动连边（ComfyUI 风格）
+  const onConnectEnd = useCallback(
+    (_event: MouseEvent | TouchEvent, connState: FinalConnectionState) => {
+      // 已连到有效目标：onConnect 已建边，无需处理
+      if (connState.toHandle) return;
+      const from = connState.fromHandle;
+      if (!from) return;
+      const ev = _event as MouseEvent;
+      const screen = 'changedTouches' in _event
+        ? { x: (_event as TouchEvent).changedTouches[0].clientX, y: (_event as TouchEvent).changedTouches[0].clientY }
+        : { x: ev.clientX, y: ev.clientY };
+      pendingConn.current = {
+        fromNodeId: from.nodeId,
+        fromHandleId: from.id,
+        fromType: from.type as 'source' | 'target',
+        screen,
+      };
+      setPickerPos(screen);
+    },
+    [],
   );
 
   // 鼠标模式：click=仅点击选中（左键不平移画布、不框选）；move=拖动；select=框选
@@ -469,6 +557,7 @@ export default function WorkflowEditor({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={(_, node) => {

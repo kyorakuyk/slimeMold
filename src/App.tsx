@@ -223,9 +223,22 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      const t = e.target as HTMLElement | null;
+      const inEditable =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
       if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault();
         exportWorkflow();
+      } else if (mod && e.key.toLowerCase() === 'z') {
+        // 在输入框里不拦截，保留浏览器默认的文本撤销
+        if (inEditable) return;
+        e.preventDefault();
+        if (e.shiftKey) useWorkflowStore.getState().redo();
+        else useWorkflowStore.getState().undo();
+      } else if (mod && e.key.toLowerCase() === 'y') {
+        if (inEditable) return;
+        e.preventDefault();
+        useWorkflowStore.getState().redo();
       } else if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         useWorkflowStore.getState().newWorkflowInProject();
@@ -247,8 +260,6 @@ export default function App() {
         } else {
           st.createGroup(ids);
         }
-      } else if (mod && (e.key === '=' || e.key === '+')) {
-        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);

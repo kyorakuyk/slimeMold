@@ -91,6 +91,26 @@ export function recomputeProxyPorts(
   return { ...group, proxyPorts, virtualEdges };
 }
 
+/** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
+interface GraphSnapshot {
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
+/** 清洗节点，剔除运行期属性（status/error/durationMs/cached），使快照不携带运行态 */
+function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
+  return nodes.map((n) => ({
+    ...n,
+    data: {
+      ...n.data,
+      status: undefined,
+      error: undefined,
+      durationMs: undefined,
+      cached: undefined,
+    } as WorkflowNodeData,
+  }));
+}
+
 interface WorkflowState {
   workflowName: string;
   nodes: FlowNode[];
@@ -183,7 +203,7 @@ interface WorkflowState {
   /** 以函数式更新替换边集合（执行引擎写回 task 连线 scope 时调用） */
   setEdges: (updater: (edges: FlowEdge[]) => FlowEdge[]) => void;
 
-  addNode: (typeId: string, position: { x: number; y: number }) => void;
+  addNode: (typeId: string, position: { x: number; y: number }) => string | null;
   removeNode: (id: string, wfId?: string) => void;
   deleteSelected: () => void;
   clearGraph: () => void;
@@ -299,6 +319,21 @@ interface WorkflowState {
 
   /** 打开/关闭示例库次级窗口 */
   setExamplesOpen: (open: boolean) => void;
+
+  /* ---- 撤销 / 重做（图结构历史栈） ---- */
+  /** 历史栈上限（超出丢弃最旧记录） */
+  maxHistory: number;
+  /** 历史快照栈：past=已发生可撤销，future=已撤销可重做 */
+  past: GraphSnapshot[];
+  future: GraphSnapshot[];
+  /** 在图结构变更「之前」调用，压入当前快照 */
+  pushHistory: () => void;
+  /** 撤销最近一次图变更 */
+  undo: () => void;
+  /** 重做最近一次被撤销的变更 */
+  redo: () => void;
+  /** 清空历史栈（如打开/新建项目后） */
+  clearHistory: () => void;
 }
 
 /** 组框预设配色（创建时轮换取用） */
@@ -470,6 +505,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       selectedNodeId: null,
       focusWfId: '',
       examplesOpen: false,
+      maxHistory: 100,
+      past: [],
+      future: [],
       running: false,
       runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
       costLog: [],
@@ -561,6 +599,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         // 推断连线语义：默认 'data'，若 source 输出端口声明了 flow 则采用该语义
         const kind = (srcPort?.flow as EdgeKind | undefined) ?? 'data';
+        get().pushHistory();
         set({
           edges: addEdge(
             { ...conn, type: 'kind', data: { kind } },
@@ -574,7 +613,8 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       addNode: (typeId, position) => {
         const def = getNodeDef(typeId);
-        if (!def) return;
+        if (!def) return null;
+        get().pushHistory();
         const node: FlowNode = {
           id: crypto.randomUUID(),
           type: 'base',
@@ -587,6 +627,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           },
         };
         set({ nodes: [...get().nodes, node], selectedNodeId: node.id });
+        return node.id;
       },
 
       removeNode: (id, wfId) => {
@@ -613,11 +654,14 @@ export const useWorkflowStore = create<WorkflowState>()(
       deleteSelected: () => {
         const id = get().selectedNodeId;
         if (!id) return;
+        get().pushHistory();
         get().removeNode(id, get().focusWfId);
       },
 
-      clearGraph: () =>
-        set({ nodes: [], edges: [], groups: [], selectedNodeId: null, logs: [] }),
+      clearGraph: () => {
+        get().pushHistory();
+        set({ nodes: [], edges: [], groups: [], selectedNodeId: null, logs: [] });
+      },
 
       updateNodeParams: (id, patch, wfId) => {
         // 未指定 wfId 或作用于激活工作流
@@ -831,6 +875,41 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       setExamplesOpen: (open: boolean) => set({ examplesOpen: open }),
+
+      /* ---- 撤销 / 重做（图结构历史栈） ---- */
+      pushHistory: () => {
+        const { nodes, edges, past, maxHistory } = get();
+        const snap: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
+        const next = [...past, snap];
+        // 超出上限丢弃最旧记录
+        if (next.length > maxHistory) next.splice(0, next.length - maxHistory);
+        set({ past: next, future: [] });
+      },
+      undo: () => {
+        const { past, future, nodes, edges } = get();
+        if (past.length === 0) return;
+        const prev = past[past.length - 1];
+        const current: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
+        set({
+          nodes: sanitizeNodes(prev.nodes),
+          edges: [...prev.edges],
+          past: past.slice(0, -1),
+          future: [...future, current],
+        });
+      },
+      redo: () => {
+        const { past, future, nodes, edges } = get();
+        if (future.length === 0) return;
+        const nextSnap = future[future.length - 1];
+        const current: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
+        set({
+          nodes: sanitizeNodes(nextSnap.nodes),
+          edges: [...nextSnap.edges],
+          past: [...past, current],
+          future: future.slice(0, -1),
+        });
+      },
+      clearHistory: () => set({ past: [], future: [] }),
 
       /* ---- 项目层方法实现 ---- */
 
@@ -1374,6 +1453,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       packSelectionAsSubgraph: (nodeIds, name) => {
         const s = get();
+        get().pushHistory();
         const idSet = new Set(nodeIds);
         const selected = s.nodes.filter((n) => idSet.has(n.id));
         if (selected.length === 0) {
@@ -1449,6 +1529,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       unpackSubgraphNode: (refNodeId) => {
         const s = get();
+        get().pushHistory();
         const ref = s.nodes.find((n) => n.id === refNodeId);
         if (!ref || ref.data.typeId !== SUBGRAPH_REF_TYPE) return;
         const sg = s.subgraphs[String(ref.data.params?.subgraphId ?? '')];
@@ -1520,6 +1601,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       addSubgraphRefNode: (subgraphId, position) => {
         const s = get();
+        get().pushHistory();
         const sg = s.subgraphs[subgraphId];
         if (!sg) return;
         const node: FlowNode = {
@@ -1592,6 +1674,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       createGroup: (nodeIds, title) => {
         const s = get();
+        get().pushHistory();
         const valid = nodeIds.filter((id) => s.nodes.some((n) => n.id === id));
         if (valid.length === 0) {
           s.addLog('error', '请先选中要编组的节点');
@@ -1669,6 +1752,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       removeGroup: (groupId) =>
         set((st) => {
+          get().pushHistory();
           const g = st.groups.find((x) => x.id === groupId);
           const groups = st.groups.filter((x) => x.id !== groupId);
           const subgraphs = { ...st.subgraphs };

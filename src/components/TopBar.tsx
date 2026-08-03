@@ -40,6 +40,8 @@ import {
   RefreshCw,
   Zap,
   SkipForward,
+  Undo2,
+  Redo2,
   Wand2,
   Bug,
 } from 'lucide-react';
@@ -106,6 +108,8 @@ export default function TopBar({
   const running = useWorkflowStore((s) => s.running);
   const resetStatuses = useWorkflowStore((s) => s.resetStatuses);
   const failFast = useWorkflowStore((s) => s.failFast);
+  const canUndo = useWorkflowStore((s) => s.past.length > 0);
+  const canRedo = useWorkflowStore((s) => s.future.length > 0);
   const skipFailed = useWorkflowStore((s) => s.skipFailed);
   const setFailFast = useWorkflowStore((s) => s.setFailFast);
   const setSkipFailed = useWorkflowStore((s) => s.setSkipFailed);
@@ -635,6 +639,23 @@ export default function TopBar({
           style={debugMode ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
         >
           <Bug size={14} />
+        </button>
+
+        <button
+          className="sm-btn px-1.5"
+          title="撤销 (Ctrl+Z)"
+          disabled={!canUndo}
+          onClick={() => useWorkflowStore.getState().undo()}
+        >
+          <Undo2 size={14} />
+        </button>
+        <button
+          className="sm-btn px-1.5"
+          title="重做 (Ctrl+Shift+Z / Ctrl+Y)"
+          disabled={!canRedo}
+          onClick={() => useWorkflowStore.getState().redo()}
+        >
+          <Redo2 size={14} />
         </button>
 
         {running ? (

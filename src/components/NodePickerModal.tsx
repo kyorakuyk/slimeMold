@@ -115,7 +115,7 @@ export function NodePickerModal({ screenPos, onSelect, onClose }: Props) {
               添加节点
             </p>
             <p className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              搜索并选择节点 · 双击 / 回车 / 点击均可添加 · Esc 关闭
+              搜索并选择节点 · 双击 / 回车 / 点击均可添加 · Ctrl+K 随时唤起 · Esc 关闭
             </p>
           </div>
           <button
