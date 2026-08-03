@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "测试-scope自动串行化",
+  "savedAt": "2026-08-04T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "n-src",
+      "typeId": "input.text",
+      "label": "种子文本",
+      "position": { "x": 40, "y": 200 },
+      "params": { "text": "seed" }
+    },
+    {
+      "id": "n-w1",
+      "typeId": "flow.delay",
+      "label": "W1(争用src)",
+      "position": { "x": 360, "y": 40 },
+      "params": { "ms": 500 }
+    },
+    {
+      "id": "n-w2",
+      "typeId": "flow.delay",
+      "label": "W2(争用src)",
+      "position": { "x": 360, "y": 160 },
+      "params": { "ms": 1100 }
+    },
+    {
+      "id": "n-w3",
+      "typeId": "flow.delay",
+      "label": "W3(争用docs)",
+      "position": { "x": 360, "y": 280 },
+      "params": { "ms": 600 }
+    },
+    {
+      "id": "n-w4",
+      "typeId": "flow.delay",
+      "label": "W4(争用docs)",
+      "position": { "x": 360, "y": 400 },
+      "params": { "ms": 1000 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-src", "sourceHandle": "text", "target": "n-w1", "targetHandle": "value", "data": { "kind": "data", "scope": ["src"] } },
+    { "id": "e2", "source": "n-src", "sourceHandle": "text", "target": "n-w2", "targetHandle": "value", "data": { "kind": "data", "scope": ["src"] } },
+    { "id": "e3", "source": "n-src", "sourceHandle": "text", "target": "n-w3", "targetHandle": "value", "data": { "kind": "data", "scope": ["docs"] } },
+    { "id": "e4", "source": "n-src", "sourceHandle": "text", "target": "n-w4", "targetHandle": "value", "data": { "kind": "data", "scope": ["docs"] } }
+  ],
+  "agents": []
+}

@@ -1,4 +1,4 @@
-import type { NodeDefinition, AssetMeta, ContentPart, ChatMessage, TaskItem, ExecContext } from '../types';
+import type { NodeDefinition, AssetMeta, ContentPart, ChatMessage, TaskItem, ModuleItem, ExecContext } from '../types';
 import { httpFetch, isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -1215,6 +1215,214 @@ ${JSON.stringify(
   },
 };
 
+/**
+ * 架构师节点（Architect / 技术设计者）：
+ * 接收「目标 + 可选约束（现有代码/技术栈/边界）」，调用绑定的架构模型产出技术设计：
+ * 模块划分、职责、影响域（scope）、依赖关系。输出与派发节点协议兼容的模块清单，
+ * 可直接接入「任务派发」节点并行施工，构成 规划 → 架构 → 派发 流水线。
+ *
+ * 与 Planner 的区别：
+ * - Planner 回答「做什么 / 拆成哪些任务」（产品-计划层）
+ * - Architect 回答「怎么做 / 模块·接口·数据流如何设计」（技术设计层）
+ *
+ * 输出：
+ * - design：架构设计书（markdown，供预览/存档）
+ * - modules：模块清单（ModuleItem[]，含 scope/dependsOn，可直接接 dispatch.split）
+ * - summary：一句话摘要（供下游判断/分支）
+ *
+ * 模块切分：提示模型以「```json 模块数组```」围栏输出结构化清单
+ * （{name, responsibility?, scope?, dependsOn?, payload?}）；解析成功作为 modules，
+ * 失败降级为「把目标整体作为一个模块」。
+ */
+export const nodeArchitect: NodeDefinition = {
+  typeId: 'architect.design',
+  name: '架构师',
+  category: '派发',
+  role: 'architect',
+  whenToUse: '把目标（与现有约束）交给架构模型，产出模块划分与技术设计，输出模块清单供下游「任务派发」并行施工。',
+  description:
+    '接收目标与可选约束，调用绑定的架构模型产出技术设计书与模块清单（ModuleItem[]，含 scope 影响域与 dependsOn 依赖）。输出 design（设计书）/ modules（模块列表，可直接接「任务派发」）/ summary（一句话摘要）。',
+  inputs: [
+    { id: 'goal', label: '目标', type: 'text' },
+    { id: 'constraints', label: '约束(可选)', type: 'text' },
+  ],
+  outputs: [
+    { id: 'design', label: '设计书', type: 'text' },
+    { id: 'modules', label: '模块清单', type: 'list' },
+    { id: 'summary', label: '摘要', type: 'text' },
+  ],
+  params: [
+    { key: 'agentId', label: '绑定架构智能体', type: 'agent', default: '' },
+    { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
+    {
+      key: 'modelOverride',
+      label: '节点级模型（留空用智能体默认）',
+      type: 'text',
+      default: '',
+      placeholder: '如 claude-opus / gpt-4o；架构用强模型更稳',
+    },
+    {
+      key: 'format',
+      label: '设计书格式',
+      type: 'select',
+      default: 'modules',
+      options: [
+        { value: 'modules', label: '模块清单（含职责/依赖）' },
+        { value: 'diagram', label: '架构图式（分层/组件）' },
+        { value: 'free', label: '自由（交给模型）' },
+      ],
+    },
+    {
+      key: 'simulate',
+      label: '离线模拟模式（不调 LLM，回显链路）',
+      type: 'select',
+      default: 'off',
+      options: [
+        { value: 'off', label: '关闭（真实调用）' },
+        { value: 'on', label: '开启（离线回显）' },
+      ],
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const goal = String(inputs.goal ?? '').trim();
+    if (!goal) throw new Error('缺少目标输入（goal 端口未接入数据）');
+    const constraints = String(inputs.constraints ?? '').trim();
+
+    const agentId = String(params.agentId ?? '');
+    const roleId = String(params.roleId ?? '');
+    const roles = useWorkflowStore.getState().roles;
+    const role = findRole(roles, roleId || undefined);
+    const system =
+      resolveRoleSystem(role, String(params.system ?? '')) ||
+      '你是一名资深软件架构师。请基于用户目标（与可选约束）给出清晰、可落地的技术设计：模块划分、职责边界、影响域（涉及的文件/接口/抽象类）与依赖关系。';
+    const modelOverride = String(params.modelOverride ?? '').trim();
+    const format = String(params.format ?? 'modules');
+
+    const buildPrompt = (): string => {
+      const fmtHint =
+        format === 'diagram'
+          ? '请以分层/组件视图组织设计（可用文本图或缩进列表表达层级与依赖）。'
+          : format === 'free'
+            ? '请自由组织架构设计书，结构清晰即可。'
+            : '请将设计组织为清晰的模块清单，每项说明职责与依赖。';
+      const constraintHint = constraints
+        ? `\n\n— 现有约束 / 上下文 —\n${constraints}\n（请在设计中考量上述约束，避免与之冲突。）`
+        : '';
+      return `${fmtHint}
+
+— 目标 —
+${goal}${constraintHint}
+
+请输出架构设计书，并在最后用如下围栏块给出结构化模块数组（每项：{name, responsibility?, scope?（影响的文件/模块列表）, dependsOn?（依赖的其它模块名）, payload?}），以便下游并行派发施工：
+\`\`\`json
+[{"name":"模块名","responsibility":"职责说明","scope":["文件/模块"],"dependsOn":["其它模块名"],"payload":"可选附加内容"}]
+\`\`\`
+若确实无法切分，也请给出至少一个模块。`;
+    };
+
+    // —— 离线模拟模式：不调 LLM，按链路回显便于无模型验证 ——
+    if (String(params.simulate ?? 'off') === 'on') {
+      const agent = useWorkflowStore.getState().agents.find((a) => a.id === agentId);
+      const modelTag = modelOverride || agent?.model || '—';
+      const design = `【离线模拟 · 架构链路回显】
+
+— 目标 —
+${goal}${constraints ? `\n— 约束 —\n${constraints}` : ''}
+
+— 架构设计书（模拟） —
+1. 划分核心模块，明确职责边界。
+2. 声明每个模块的影响域（scope）与依赖（dependsOn）。
+3. 并行施工、冲突协调、质量校验。
+
+— 模块清单（模拟） —
+${JSON.stringify(
+  [
+    { name: 'api', responsibility: '对外接口层', scope: ['src/api'], dependsOn: [], payload: goal },
+    { name: 'core', responsibility: '核心业务逻辑', scope: ['src/core'], dependsOn: ['api'], payload: goal },
+    { name: 'store', responsibility: '状态与持久化', scope: ['src/store'], dependsOn: ['core'], payload: goal },
+  ],
+  null,
+  2,
+)}`;
+      const modules: ModuleItem[] = [
+        { name: 'api', responsibility: '对外接口层', scope: ['src/api'], dependsOn: [], payload: goal, index: 0 },
+        { name: 'core', responsibility: '核心业务逻辑', scope: ['src/core'], dependsOn: ['api'], payload: goal, index: 1 },
+        { name: 'store', responsibility: '状态与持久化', scope: ['src/store'], dependsOn: ['core'], payload: goal, index: 2 },
+      ];
+      ctx.logger.info(`架构(模拟)完成 智能体=${agent?.name ?? '未绑定'} 模型=${modelTag} 目标 ${goal.length} 字`);
+      let acc = '';
+      for (const seg of design) {
+        acc += seg;
+        ctx.setPartial('design', acc);
+        await new Promise((r) => setTimeout(r, 4));
+      }
+      return { design, modules, summary: goal.slice(0, 40) };
+    }
+
+    // —— 真实调用 ——
+    if (!agentId) throw new Error('未绑定架构智能体，请在右侧面板选择（或开启离线模拟模式）');
+    const messages: ChatMessage[] = [
+      { role: 'system' as const, content: system },
+      { role: 'user' as const, content: buildPrompt() },
+    ];
+
+    ctx.logger.info(
+      `架构请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''} 目标 ${goal.length} 字`,
+    );
+    let acc = '';
+    const text = await ctx.llm(
+      agentId,
+      messages,
+      (delta) => {
+        acc += delta;
+        ctx.setPartial('design', acc);
+      },
+      modelOverride || undefined,
+    );
+
+    const modules = extractModulesFromDesign(text, goal);
+    const firstLine = text.split('\n').find((l) => l.trim().length > 0);
+    const summary = (firstLine ? firstLine.replace(/^[#*\s-]+/, '').trim() : goal.slice(0, 40)).slice(0, 60);
+    return { design: text, modules, summary };
+  },
+};
+
+/** 从模型架构设计文本中提取模块清单；解析失败降级为「整个目标作为一个模块」。 */
+function extractModulesFromDesign(text: string, fallbackGoal: string): ModuleItem[] {
+  const fence = text.match(/```json\s*([\s\S]*?)```/i);
+  const raw = fence ? fence[1] : text;
+  const m = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (m) {
+    try {
+      const arr = JSON.parse(m[0]);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((t, i) => {
+          const name = typeof t?.name === 'string' && t.name.trim() ? t.name : `模块${i + 1}`;
+          const responsibility =
+            typeof t?.responsibility === 'string' && t.responsibility.trim()
+              ? t.responsibility
+              : name;
+          const scope = Array.isArray(t?.scope) ? t.scope.filter((s: unknown) => typeof s === 'string') : undefined;
+          const dependsOn = Array.isArray(t?.dependsOn)
+            ? t.dependsOn.filter((s: unknown) => typeof s === 'string')
+            : undefined;
+          return {
+            name,
+            responsibility,
+            scope: scope && scope.length > 0 ? scope : undefined,
+            dependsOn: dependsOn && dependsOn.length > 0 ? dependsOn : undefined,
+            payload: t?.payload,
+            index: i,
+          };
+        });
+      }
+    } catch {
+      /* 落入降级分支 */
+    }
+  }
+  return [{ name: fallbackGoal, responsibility: fallbackGoal, payload: fallbackGoal, index: 0 }];
+}
+
 /** 从模型计划文本中提取任务清单；解析失败降级为「整个目标作为一个任务」。 */
 function extractTasksFromPlan(text: string, fallbackGoal: string): TaskItem[] {
   const fence = text.match(/```json\s*([\s\S]*?)```/i);
@@ -1873,6 +2081,7 @@ export const builtinDefs: NodeDefinition[] = [
   textOutput,
   nodeAuditor,
   nodePlan,
+  nodeArchitect,
   nodeDispatch,
   nodeResolver,
   nodeLoopGate,

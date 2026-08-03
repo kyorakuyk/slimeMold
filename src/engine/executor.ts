@@ -116,7 +116,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const wf = useWorkflowStore.getState();
   // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
   // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
-  if (wf.running && activeRunId === currentRunId) return;
+  // 注意：currentRunId/activeRunId 是模块级变量，HMR 热更新会将其归零；若此时
+  // running 残留为 true（旧协程未复位），会误判为「有效运行」而静默拦截导致
+  // 「点运行无反应也无日志」。这里在拦截时给出可见日志，便于排查；并允许 force
+  // 强制重启（Play 按钮在检测到卡死时透传），避免永久卡死。
+  if (wf.running && activeRunId === currentRunId) {
+    if (opts.force) {
+      wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
+    } else {
+      wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
+      return;
+    }
+  }
   const myRun = ++currentRunId; // 本次运行代次
   activeRunId = myRun;
   syncDebugRun();

@@ -5,11 +5,13 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 
 ## 常用命令
 - **安装依赖**：`npm install`
-- **浏览器预览（无需 Rust）**：`npm run dev`（默认 http://localhost:1420，HTTP 走 window.fetch，可能受 CORS 限制）
-- **桌面端运行（需 Rust 工具链）**：`npm run tauri dev`
+- **浏览器预览（无需 Rust）**：`npm run dev`（默认 http://localhost:1420，`strictPort: true`；HTTP 走 window.fetch，可能受 CORS 限制）
+- **桌面端运行（需 Rust 工具链）**：`npm run tauri dev`（先启 Vite 再启 Rust 壳，端口 1420 被占用时会失败）
 - **构建前端 + 打包**：`npm run build`（执行 `tsc -b && vite build`）；桌面安装包 `npm run tauri build`
 - **类型检查**：`npx tsc --noEmit`（注意 cmd 环境下可能需要 `npx.cmd`；PowerShell 下用 `Set-Location -LiteralPath` 切目录）
-- **无头运行工作流**：`npm run headless`（执行 `scripts/headless-run.ts`，用于在 CI/命令行跑 `.workflow.json`）
+- **无头运行工作流**：`npm run headless examples/demo.workflow.json`（执行 `scripts/headless-run.ts`，CI/命令行跑 `.workflow.json`）
+- **仅校验 Rust 侧**：`cd src-tauri && cargo check`（不启动 UI，快速查后端类型/语法）
+- **查看 Tauri 环境**：`npx tauri info`（Rust 工具链、平台、依赖版本）
 - **预览生产构建**：`npm run preview`
 
 > 注：项目**没有测试框架与测试脚本**，不要臆造 `npm test`。`npm run headless` 是唯一的脚本化执行入口。
@@ -26,9 +28,17 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - `viewStore.ts`：视图态（缩放、选中、面板开关等），与执行解耦。
 
 ### 节点定义与渲染（src/nodes/、src/canvas/）
-- `NodeDefinition`（`src/types.ts`）是核心抽象：`typeId / inputs / outputs / params / execute(inputs, params, ctx)`。`execute` 返回输出对象；端口有 `PortType`（text/number/list/json/image/any）用于连线类型校验。
+- `NodeDefinition`（`src/types.ts`）是核心抽象：`typeId / inputs / outputs / params / execute(inputs, params, ctx)`。`execute` 返回输出对象；端口有 `PortType`（text/number/list/json/image/any），用 `arePortsCompatible()` 校验连线类型（标量互通、list/json 隔离）。
 - 内置节点在 `nodes/builtin.ts`（`builtinDefs`）、`nodes/creative.ts`（`creativeNodes`）；应用启动时由 `registryStore.register(...)` 注册。
-- `canvas/` 用 React Flow 渲染节点与连线；连线 `EdgeKind` 分 `data`（值传递）/ `task`（任务派发）/ `control`（控制流，拓扑排序视作断点），`EDGE_KIND_STYLE` 决定颜色线型。
+- `canvas/` 用 React Flow 渲染节点与连线。节点类型：`base`（`BaseNode`）、`groupProxy`（折叠组的代理节点）；边类型 `kind`（`KindEdge` 按 data/task/control 着色）。连线 `EdgeKind` 分 `data`（值传递）/ `task`（任务派发）/ `control`（控制流，拓扑排序视作断点），`EDGE_KIND_STYLE` 决定颜色线型。
+- `WorkflowEditor.tsx` 是主画布（支持拆分视图 `SplitCanvas`），内含拖入、连线环路校验、右键打包子图/编组、右键长按框选、分组折叠等交互。
+
+### UI 容器（src/components/）
+应用外壳为四区布局：`TopBar`（顶部菜单）+ `LeftSidebar`（左侧可展开抽屉）+ `WorkflowEditor`（画布）+ `Inspector`（右侧属性检查器）+ `StatusBar`（底部可停靠面板）。
+- `LeftSidebar`：`NodePalette`（按分类节点库，支持搜索/拖放）、`AgentPanel`（智能体/角色/端点配置）、`PluginPanel`（插件扫描/导入）、`SubgraphPanel`（已打包子图复用）。
+- `Inspector`：按选中内容动态渲染——普通节点显示参数/输入输出预览，`subgraph.ref` 节点显示子图参数，空白处显示工作流属性。
+- `StatusBar`：三个可切换 Tab——`TerminalLog`（运行日志）、`RunHistoryPanel`（历史记录）、`VariablesPanel`（变量）。面板开合/高度由 `viewStore.panelOpen` / `panelH` 管理。
+- 各面板宽度/高度可拖拽（节点库/属性 160–480px，底部 120–480px）。
 
 ### 执行引擎（src/engine/）
 这是「读懂多文件才能理解」的核心：
@@ -38,6 +48,15 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - `nodeCache.ts`：节点结果缓存（按 `cacheKey` 命中复用，支撑增量执行）。
 - `rateLimiter.ts`：`Semaphore` + `withRetry` 并发与重试控制。
 - `expr.ts`：参数模板表达式求值（如 `{{input}}` 插值）。
+
+### 子图与分组（src/engine/subgraph.ts、workflowStore）
+两种「节点聚合复用」机制，易混淆，需区分：
+- **子图（Subgraph）**：把选中节点打包为可复用的 `SubgraphDef`（含端口、内部节点/边、递归支持嵌套）。画布上以类型 `subgraph.ref`（常量 `SUBGRAPH_REF_TYPE = 'subgraph.ref'`）的引用节点出现；运行时 `flattenSubgraphs` 把它展开成内部节点再执行。端口由 `inferPorts` / `resolvePorts` 依内部 IO 节点自动推导。`packSelectionAsSubgraph` / `unpackSubgraphNode` 负责打包与就地解组。
+- **分组（NodeGroup，纯视觉）**：`createGroup` 把节点编组（`Ctrl+G`），折叠后成员隐藏、仅显示 `groupProxy` 代理节点。`recomputeProxyPorts` 按端口类型聚合内部端口为外部可见的 `ProxyPort`，连线经 `VirtualEdge` 映射到内部具体端口。分组无执行语义，仅视觉折叠。
+
+### 状态持久化与脏检测（workflowStore 尾部）
+- 用 `zustand/persist` 持久化到 `localStorage`（key `slime-mold-workflow`），但**仅序列化 `partialize` 白名单字段**（nodes/edges/agents/roles/workflows/subgraphs/groups/variables 等，见文件末尾 1740 行）。新增状态字段若不加入白名单，刷新后丢失。视图偏好存于 `viewStore`（key `slime-mold-view`）。
+- 项目级脏检测**非手动标记**：`subscribe` 监听落盘相关字段（`DIRTY_KEYS`），变化时比对 `lastSavedSnapshot`（`projectSnapshot` 序列化结果）是否一致来置 `projectDirty`。因此所有修改节点/连线/参数的操作**必须走 store 方法**（不可直接 mutate），否则脏标记不生效。
 
 ### 智能体与 LLM 通道（src/agents/）
 - `agentManager.ts`：管理 `AgentConfig`（协议/Base URL/模型/温度/`roleId`/`proxyUrl`）与 `ApiEndpoint`。工作流文件仅持久化 `credentialKey`，**绝不存明文 key**。
@@ -54,7 +73,11 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - `projectIO.ts`/`workflowIO.ts`：工作流存为 `.workflow.json`（含节点、连线、参数、智能体配置，带 `version` 与缺失类型校验）；项目可为目录形态（含 `.slimemold`）或旧版单文件 `.smproj`。导入时校验缺失 `NodeDefinition` 并提示。
 
 ### 桌面壳（src-tauri/，Rust）
-`src-tauri/src/lib.rs` 注册插件：`tauri_plugin_http / fs / dialog / opener`，并提供密钥库、文件访问等原生能力。`tauri.conf.json` 配置窗口（1280×800）与 `beforeDevCommand: npm run dev`、devUrl 1420、frontendDist `../dist`。改窗口尺寸/权限/允许的 http 域名在此文件。
+`src-tauri/src/lib.rs` 注册插件：`tauri_plugin_http / fs / dialog / opener / window_state`，并提供凭据与接入点能力。**凭据体系（重要）**：
+- 纯 API Key 存系统密钥库（`keyring` crate，Windows Credential Manager/macOS Keychain/Linux secret-service），前端只存 `credentialKey` 名称、绝不落明文。密钥库内用 `___cred_index___` 特殊条目维护枚举索引（keyring 不支持遍历）。
+- **接入点（Endpoint，含 baseUrl+apiKey）存 `AppData/com.slimemold/endpoints.json` 文件**：因 Windows keyring 存在 (service,user) 读写不一致问题，接入点列表改落文件，但其中 apiKey 用 AES-GCM（主密钥存密钥库 `___sm_master_key___`）加密成密文，磁盘无明文。
+- Rust 侧**不再实现 LLM HTTP 客户端**（原 chat_completion 已移除），所有 LLM 请求由前端 provider 经 plugin-http 发起（规避 CORS 并带回 token usage）。
+`tauri.conf.json` 配置窗口（1280×800，min 960×600）、`beforeDevCommand: npm run dev`、devUrl 1420、frontendDist `../dist`。改窗口尺寸/权限/允许的 http 域名在此文件。
 
 ### Headless（scripts/headless-run.ts、src/engine/headless.ts）
 命令行跑工作流：`agents` 配置在 headless 场景下可用明文 `apiKey`（与桌面密钥库链路区分），用于无 UI 执行与调试。
@@ -63,8 +86,10 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - `isTauri` 是布尔值，禁止写成 `isTauri()`（曾因此引发运行时 `TypeError`）。
 - 所有 HTTP 必须经 `platform/env.ts` 的 `httpFetch`，不可直接 `fetch`。
 - 编辑器代码禁止直接 import 整个另一个 store 造成循环依赖；用 `xxxStore.getState()`。
-- 工作流/项目文件不持久化明文 API Key，只存 `credentialKey`。
+- 工作流/项目文件不持久化明文 API Key，只存 `credentialKey`；接入点整条走 Rust 加密落盘。
 - 连线成环拦截忽略 `control` 边；新增控制流节点时注意该语义。
+- **执行引擎用双重代次 `currentRunId` / `activeRunId`（executor.ts 顶部）控制停止**：`stopWorkflow()` 递增 `currentRunId` 使旧协程在下一层 `await` 边界发现过期（`myRun !== currentRunId`）后静默退出。新增异步执行逻辑时，必须在关键 `await` 后检查该条件，否则旧协程会复写新运行的状态（曾导致「刷新键失效」Bug）。
+- 修改节点/连线/参数必须走 `workflowStore` 的方法（不能直接 mutate），否则 `projectDirty` 自动检测与持久化都不生效；新增需持久化字段要加进 `partialize` 白名单。
 - 改动后 Tauri dev 经 HMR 生效；若 UI 异常按 `Ctrl+R` 刷新。残留 `slime-mold` 进程与无用 cmd 窗口需手动清理。
 
 ## 开发期日志目录 `.devlog/`

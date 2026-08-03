@@ -102,6 +102,22 @@ Ollama 本地模型无需 API Key，详见 `README.md` 的「Ollama 本地模型
 
 > 调试模式偏好会被记住（持久化），下次启动沿用上次设置。它只影响调试动作的显隐，**不改变工作流本身的运行逻辑**。
 
+### 7.3 节点分层对照表（编排 → 施工）
+
+SlimeMold 的 Agent 节点可按「职责层」分五类。下面用一张表区分它们**各自负责什么、输入/输出是什么、是否调用 LLM、典型下游接谁**，帮助快速选型：
+
+| 层 | 节点（typeId） | 职责 | 输入要点 | 输出要点 | 调 LLM | 典型下游 |
+|---|---|---|---|---|---|---|
+| **规划 Planner** | `dispatch.plan` | 把目标拆成「要做什么」的任务清单 | `goal`(text) | `tasks[]`（title/scope/payload/index）、`plan`(text)、`summary` | 是（可 simulate） | `dispatch.split`、结果预览 |
+| **架构 Architect** | `architect.design` | 把目标+约束设计成「怎么干」的模块方案 | `goal`(text)、`constraints`(text，可接 plan) | `modules[]`（name/responsibility/scope/dependsOn/payload）、`design`(text)、`summary` | 是（可 simulate） | `dispatch.split`、结果预览 |
+| **派发 Dispatcher** | `dispatch.split` | 纯数据扇出，把任务/模块清单摊平成并行分支 | `tasks`(list) | `task1`~`task3`(any，带 scope 回写边) | **否** | 施工类 worker 节点 |
+| **施工 Worker** | `worker.scaffolder` / `worker.implementer` / `worker.validator` | 按 spec 实际产出（脚手架/实现/校验） | `spec`(any，接 task)、`context`(text) | `plan`(text)、`result`(text) | 是（可 simulate） | `coord.resolver`、`output.text` |
+| **协调 Resolver** | `coord.resolver` | 检测并行分支的 scope 冲突并给出协调建议 | `in1`~`in3`(any) | `report`(text)、`conflicts`(list) | **否** | 结果预览、回写 |
+
+**关系口诀**：`dispatch.plan` 定「要干啥」，`architect.design` 定「怎么干」，二者都可作为 `dispatch.split` 的输入（`tasks`/`modules` 字段协议兼容）；`dispatch.split` 把工作摊平成并行分支交给 `worker.*` 施工；`coord.resolver` 在汇合处防「撞车」（并行分支 scope 重叠时提示冲突）。即：**规划画方向 → 架构画图纸 → 派发摊开并行 → 施工盖楼 → 协调查漏**。
+
+> 完整流水线示例见 `examples/test-architect.workflow.json`：`文本输入 → dispatch.plan → architect.design → dispatch.split → 3×worker.scaffolder → coord.resolver / output.text`，全部用 `simulate` 模式，无需 API Key 即可 `npm run headless` 跑通。
+
 ---
 
 ## 常用快捷键速查

@@ -226,6 +226,22 @@ export interface TaskItem {
   index?: number;
 }
 
+/** 架构师产出的模块/组件设计单元。
+ * 与 TaskItem 字段兼容（label/scope/payload），因此架构输出可直接喂给「任务派发」节点。
+ * - name：模块名
+ * - responsibility：职责说明（作为 label 展示）
+ * - scope：影响域（涉及的文件/接口/抽象类），供 Conflict Resolver 做并发冲突检测
+ * - dependsOn：依赖的其它模块名（用于拓扑排序/施工顺序提示）
+ * - payload：模块设计详情（文本/结构化），由下游 Builder 消费 */
+export interface ModuleItem {
+  name: string;
+  responsibility?: string;
+  scope?: string[];
+  dependsOn?: string[];
+  payload?: unknown;
+  index?: number;
+}
+
 export interface ExecContext {
   logger: ExecLogger;
   /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
@@ -272,6 +288,7 @@ export type NodeExecuteFn = (
  * 用于节点面板按角色筛选与场景推荐，帮助用户快速定位「这一步该用哪类节点」。 */
 export type NodeRole =
   | 'orchestrator' // 编排 / 调度 / 控制流（flow.*、dispatch.*、coord.*）
+  | 'architect' // 架构设计 / 技术规划（architect.*）
   | 'explorer' // 探索 / 取数 / 检索（tool.http、image.load）
   | 'worker' // 执行者 / 生产内容（agent.chat、image.generate、tool.writeFile）
   | 'verifier' // 校验 / 断言 / 审计（verify.assert、auditor.*）
@@ -283,6 +300,7 @@ export const NODE_ROLE_META: Record<
   { label: string; color: string; hint: string }
 > = {
   orchestrator: { label: '编排', color: '#8b5cf6', hint: '调度流程、控制分支与循环' },
+  architect: { label: '架构', color: '#6366f1', hint: '技术设计、模块划分与接口规划' },
   explorer: { label: '探索', color: '#0ea5e9', hint: '抓取外部数据、检索与读取' },
   worker: { label: '执行', color: '#2e9e5b', hint: '调用 LLM / 生成内容 / 落盘' },
   verifier: { label: '校验', color: '#f59e0b', hint: '质量闸门、断言与成本审计' },

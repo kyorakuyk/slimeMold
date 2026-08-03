@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "name": "测试-架构流水线 plan→architect→split→worker→resolver",
+  "savedAt": "2026-08-04T00:00:00.000Z",
+  "description": "演示「规划 → 架构 → 派发 → 并行施工 → 冲突协调」完整编排链路。所有 AI 节点均为 simulate(离线模拟)模式，无需 API Key 即可在 headless 或桌面端跑通端口流通。",
+  "nodes": [
+    {
+      "id": "n-goal",
+      "typeId": "input.text",
+      "label": "项目目标",
+      "position": { "x": 40, "y": 280 },
+      "params": {
+        "text": "做一个 Todo 全栈应用：React 前端 + Node 后端 + SQLite 存储"
+      }
+    },
+    {
+      "id": "n-plan",
+      "typeId": "dispatch.plan",
+      "label": "规划/编排",
+      "position": { "x": 320, "y": 260 },
+      "params": { "agentId": "", "format": "tasks", "simulate": "on" }
+    },
+    {
+      "id": "n-arch",
+      "typeId": "architect.design",
+      "label": "架构师",
+      "position": { "x": 640, "y": 240 },
+      "params": { "agentId": "", "format": "modules", "simulate": "on" }
+    },
+    {
+      "id": "n-split",
+      "typeId": "dispatch.split",
+      "label": "任务派发",
+      "position": { "x": 960, "y": 200 },
+      "params": { "label1": "前端", "label2": "后端", "label3": "存储" }
+    },
+    {
+      "id": "n-w1",
+      "typeId": "worker.scaffolder",
+      "label": "施工-前端",
+      "position": { "x": 1280, "y": 40 },
+      "params": { "agentId": "", "simulate": "on" }
+    },
+    {
+      "id": "n-w2",
+      "typeId": "worker.scaffolder",
+      "label": "施工-后端",
+      "position": { "x": 1280, "y": 200 },
+      "params": { "agentId": "", "simulate": "on" }
+    },
+    {
+      "id": "n-w3",
+      "typeId": "worker.scaffolder",
+      "label": "施工-存储",
+      "position": { "x": 1280, "y": 360 },
+      "params": { "agentId": "", "simulate": "on" }
+    },
+    {
+      "id": "n-resolver",
+      "typeId": "coord.resolver",
+      "label": "冲突协调者",
+      "position": { "x": 1600, "y": 220 },
+      "params": { "mode": "report" }
+    },
+    {
+      "id": "n-out1",
+      "typeId": "output.text",
+      "label": "前端产出",
+      "position": { "x": 1600, "y": 20 },
+      "params": {}
+    },
+    {
+      "id": "n-out2",
+      "typeId": "output.text",
+      "label": "后端产出",
+      "position": { "x": 1600, "y": 440 },
+      "params": {}
+    }
+  ],
+  "edges": [
+    { "id": "e-goal-plan", "source": "n-goal", "sourceHandle": "text", "target": "n-plan", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-plan-arch", "source": "n-plan", "sourceHandle": "plan", "target": "n-arch", "targetHandle": "constraints", "data": { "kind": "data" } },
+    { "id": "e-goal-arch", "source": "n-goal", "sourceHandle": "text", "target": "n-arch", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-arch-split", "source": "n-arch", "sourceHandle": "modules", "target": "n-split", "targetHandle": "tasks", "data": { "kind": "data" } },
+    { "id": "e-split-w1", "source": "n-split", "sourceHandle": "task1", "target": "n-w1", "targetHandle": "spec", "data": { "kind": "task", "scope": ["src/api", "src/components"] } },
+    { "id": "e-split-w2", "source": "n-split", "sourceHandle": "task2", "target": "n-w2", "targetHandle": "spec", "data": { "kind": "task", "scope": ["src/core", "src/server"] } },
+    { "id": "e-split-w3", "source": "n-split", "sourceHandle": "task3", "target": "n-w3", "targetHandle": "spec", "data": { "kind": "task", "scope": ["src/store"] } },
+    { "id": "e-goal-w1ctx", "source": "n-goal", "sourceHandle": "text", "target": "n-w1", "targetHandle": "context", "data": { "kind": "data" } },
+    { "id": "e-goal-w2ctx", "source": "n-goal", "sourceHandle": "text", "target": "n-w2", "targetHandle": "context", "data": { "kind": "data" } },
+    { "id": "e-goal-w3ctx", "source": "n-goal", "sourceHandle": "text", "target": "n-w3", "targetHandle": "context", "data": { "kind": "data" } },
+    { "id": "e-w1-res", "source": "n-w1", "sourceHandle": "plan", "target": "n-resolver", "targetHandle": "in1", "data": { "kind": "data" } },
+    { "id": "e-w2-res", "source": "n-w2", "sourceHandle": "plan", "target": "n-resolver", "targetHandle": "in2", "data": { "kind": "data" } },
+    { "id": "e-w3-res", "source": "n-w3", "sourceHandle": "plan", "target": "n-resolver", "targetHandle": "in3", "data": { "kind": "data" } },
+    { "id": "e-w1-out", "source": "n-w1", "sourceHandle": "plan", "target": "n-out1", "targetHandle": "text", "data": { "kind": "data" } },
+    { "id": "e-w2-out", "source": "n-w2", "sourceHandle": "plan", "target": "n-out2", "targetHandle": "text", "data": { "kind": "data" } }
+  ],
+  "agents": []
+}

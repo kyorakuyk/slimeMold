@@ -454,6 +454,35 @@
 - `coord.resolver` 从「入边 scope」读取（利用阶段 A 边写回）尚未接。
 - `isValidConnection` 加 `PortDef.flow` 一致性校验（步骤 1 收尾）仍未做。
 
+#### ✅ 步骤 10：architect.design 架构节点（已完成，2026-08-04）
+> 补齐脑洞「1. 端到端工作流」第 2 阶段 **架构师（Architect）** 节点，使规划→架构→派发→施工→协调五层链路完整。
+
+- **`src/types.ts`**：
+  - 新增 `ModuleItem` 接口（`name` / `responsibility?` / `scope?` / `dependsOn?` / `payload?` / `index?`），与 `TaskItem` 平行，专供架构产出。
+  - `NodeRole` 类型增加 `'architect'`。
+  - `NODE_ROLE_META` 增加 `architect: { label: '架构', color: '#6366f1', hint: '技术设计、模块划分与接口规划' }`。
+- **`src/nodes/builtin.ts`**：
+  - 新增 **`architect.design`（架构师）** 节点（分类「派发」，角色 `architect`）：
+    - 输入 `goal`(text)、`constraints`(text，可选，常接 `dispatch.plan.plan`)。
+    - 输出 `design`(text 设计书) / `modules`(list，ModuleItem[]) / `summary`(text)。
+    - 参数 `agentId` / `roleId` / `modelOverride` / `format`(modules|diagram|free) / `simulate`(off|on)。
+    - 真实模式调 LLM 生成架构并解析 ```json``` 围栏数组；`simulate: on` 离线回显链路（含流式 `setPartial`），便于无 Key 验证。
+    - 调 `extractModulesFromDesign(text, fallbackGoal)` 解析模块数组，解析失败降级为单模块。
+  - 新增 `extractModulesFromDesign(text, fallbackGoal): ModuleItem[]`，从 ```json``` 围栏提取 `name`/`responsibility`/`scope`/`dependsOn`/`payload`/`index`。
+  - `builtinDefs` 在 `dispatch.plan` 后插入 `nodeArchitect`（确保 `modules` 可直接接 `dispatch.split.tasks`）。
+
+**协议兼容**：`ModuleItem`（name/responsibility/scope/dependsOn/payload）与 `dispatch.split` 期望的 `TaskItem`（label/payload/scope）字段对齐——`modules` 输出可直接接 `dispatch.split.tasks`，形成 `dispatch.plan → architect.design → dispatch.split` 无缝串联。
+
+**验证**：
+- 单元级：直接 import `nodeArchitect` 用模拟 ctx 调 `execute({simulate:'on'})`，断言 `modules` 可被 `dispatch.split` 消费（解析/扇出链路通过）。
+- 端到端：`tsc --noEmit -p tsconfig.app.json` 无新增错误。
+- 工作流示例：`examples/test-architect.workflow.json`（`input.text → dispatch.plan → architect.design → dispatch.split → 3×worker.scaffolder → coord.resolver / output.text`），`npm run headless` 验证 **10/10 节点 success**（全 simulate 模式，无需 API Key）。
+- 文档：`USAGE.md` 新增 §7.3「节点分层对照表」；`README.md` 功能列表补充分层编排说明；本步骤记录。
+
+**框架边界（本轮刻意未做）**：
+- 真实 LLM 架构输出仅做 ```json``` 围栏兜底，未做严格 schema 校验。
+- `format: diagram` / `free` 两种产出形态在当前 `execute` 仅作参数占位，未展开不同渲染路径（统一走 modules 解析）。
+
 ---
 
 *最后更新：2026-08-04*
