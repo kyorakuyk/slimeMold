@@ -17,6 +17,7 @@ import { flattenSubgraphs, ownerRefId } from './subgraph';
 import {
   beginRun,
   cacheKey,
+  clearCache,
   countSkip,
   getCached,
   setCached,
@@ -56,6 +57,14 @@ export function stopWorkflow(): void {
   useWorkflowStore.getState().setRunning(false);
   useWorkflowStore.getState().setRunProgress({ active: false });
   syncDebugRun();
+}
+
+/**
+ * 强制重跑：清空缓存后全量重新执行当前工作流。
+ * 等价于在运行入口传入 forceRerun，供菜单/快捷键直接调用。
+ */
+export async function rerunWorkflow(): Promise<void> {
+  return runWorkflow({ forceRerun: true });
 }
 
 /**
@@ -106,6 +115,11 @@ export interface RunOptions {
    * 配合 false 的 failFast 一起使用。
    */
   skipFailed?: boolean;
+  /**
+   * 强制重跑：清空节点结果缓存（nodeCache），使所有节点无论参数是否变化都重新执行，
+   * 不复用上一轮的 LLM 结果。等价于 ComfyUI 的「忽略缓存重新执行」。
+   */
+  forceRerun?: boolean;
   /**
    * 调度进度回调（供 Job Board 等可视化）：每一层开始前上报当前层索引、总层数、轮次。
    */
@@ -229,6 +243,12 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       for (const s of seed) collectReachable(s, g.id, edges, body);
       loopBodyOf.set(g.id, body);
     }
+  }
+
+  // 强制重跑：清空全局节点缓存，使所有节点都重新执行（不复用上一轮 LLM 结果）
+  if (opts.forceRerun) {
+    clearCache();
+    wf.addLog('info', '已清空节点结果缓存，本轮将全量重新执行（强制重跑）');
   }
 
   currentAbort = new AbortController();

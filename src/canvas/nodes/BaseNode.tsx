@@ -1,6 +1,6 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, type LucideIcon } from 'lucide-react';
+import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
@@ -83,6 +83,8 @@ function PortBadge({ type }: { type?: string }) {
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
   const running = useWorkflowStore((s) => s.running);
+  // 折叠模式（默认）：仅显示标题栏与端口区，不渲染下方文本框（预览/参数/错误），避免撑大节点边界。双击节点切换展开/收起。
+  const [expanded, setExpanded] = useState(false);
   const isSubgraph = data.typeId === SUBGRAPH_REF_TYPE;
   // 子图节点的端口由其引用的子图定义动态决定，普通节点取自类型定义
   const subgraph = useWorkflowStore((s) =>
@@ -127,9 +129,14 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const CatIcon = def?.category ? catIconMap[def.category] : undefined;
   return (
     <div
-      className={`sm-node ${selected ? 'selected' : ''}`}
+      className={`sm-node ${selected ? 'selected' : ''} ${expanded ? 'is-expanded' : 'is-collapsed'}`}
       data-cat={def?.category}
       data-status={data.status ?? 'idle'}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        setExpanded((v) => !v);
+      }}
+      title="双击展开 / 收起下方详情"
     >
       {/* 分类配色标题栏（HUD 风格） */}
       <div className="sm-node-header" title={def?.description}>
@@ -157,6 +164,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               {data.status === 'cached' ? 'CACHED' : `${data.durationMs}ms`}
             </span>
           )}
+        <span className="sm-node-collapse-hint" title={expanded ? '双击收起' : '双击展开下方详情'}>
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
         <StatusGlyph status={data.status} />
       </div>
 
@@ -208,8 +218,8 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         </div>
       )}
 
-      {/* 参数摘要 / 预览 / 错误 */}
-      {(paramSummary.length > 0 || previewValue || data.error || missing || isSubgraph) && (
+      {/* 参数摘要 / 预览 / 错误（仅在展开态显示，避免折叠时文本框撑大节点边界） */}
+      {expanded && (paramSummary.length > 0 || previewValue || data.error || missing || isSubgraph) && (
         <div className="border-t border-line px-3 py-2">
           {missing && (
             <p className="text-[11px] leading-relaxed text-err">
@@ -260,7 +270,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
       {/* 本节点单独的 token 用量：悬停展开明细（与左侧总览面板并存） */}
       {data.usage && data.usage.calls > 0 && <NodeUsageBadge usage={data.usage} />}
 
-      {isSubgraph && subgraph && (
+      {expanded && isSubgraph && subgraph && (
         <div className="sm-node-actions">
           <button
             onClick={(e) => {
@@ -285,7 +295,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         </div>
       )}
 
-      {(data.status === 'error' || data.status === 'success' || data.status === 'cached') && debugMode && (
+      {expanded && (data.status === 'error' || data.status === 'success' || data.status === 'cached') && debugMode && (
         <div className="sm-node-actions">
           <button
             onClick={(e) => {

@@ -37,6 +37,7 @@ import {
   X,
   FastForward,
   RotateCcw,
+  RefreshCw,
   Zap,
   SkipForward,
   Wand2,
@@ -46,7 +47,7 @@ import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
-import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
+import { runWorkflow, stopWorkflow, resumeRun, rerunWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { openDirDialog, isTauri } from '../platform/env';
 import { ask } from '@tauri-apps/plugin-dialog';
@@ -284,6 +285,7 @@ export default function TopBar({
         { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow({ skipFailed: skipFailed }) },
         { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed }), disabled: running },
         { label: '从断点续跑（失败节点 + 下游）', icon: <RotateCcw size={14} />, onClick: () => resumeRun(), disabled: running },
+        { label: '强制重跑（清空缓存，全量）', icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(), disabled: running },
         { type: 'divider' as const },
         {
           label: failFast ? '失败即停：开' : '失败即停：关',
