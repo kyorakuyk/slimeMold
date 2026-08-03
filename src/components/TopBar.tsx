@@ -39,6 +39,7 @@ import {
   RotateCcw,
   Zap,
   SkipForward,
+  Wand2,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
@@ -68,6 +69,7 @@ interface TopBarProps {
   onOpenPanel: (key: SidePanelKey) => void;
   onOpenShortcuts: () => void;
   onNewProject: () => void;
+  onOpenWizard: () => void;
 }
 
 interface MenuAction {
@@ -95,6 +97,7 @@ export default function TopBar({
   onOpenPanel,
   onOpenShortcuts,
   onNewProject,
+  onOpenWizard,
 }: TopBarProps) {
   const workflowName = useWorkflowStore((s) => s.workflowName);
   const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
@@ -245,6 +248,7 @@ export default function TopBar({
         },
         'separator',
         { label: '打开工作流…', icon: <FilePlus2 size={14} />, onClick: newWorkflow },
+        { label: '工作流向导…', icon: <Wand2 size={14} />, onClick: onOpenWizard },
         { label: '导入工作流…', icon: <FileDown size={14} />, onClick: importWorkflow },
         { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
         { label: '将项目另存为', icon: <FileBox size={14} />, onClick: handleSaveProjectAs, disabled: !projectName },

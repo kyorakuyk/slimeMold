@@ -1165,6 +1165,173 @@ export const nodeLoopGate: NodeDefinition = {
 };
 
 /* ============================================================================
+ * 验证 / 断言节点（verify.assert）
+ * - 流程质量 gate：对上游值做断言（条件 / JSON Schema / 相等 / 非空）。
+ * - 通过走 data 边（pass），失败走 control 边（fail，紫色），下游被剪枝 ⇒
+ *   仅下游为 fail 分支时中止，不影响 pass 分支下游（gate 语义）。
+ * - failFast 开启时直接抛错 ⇒ 该节点 error，下游按既有 failed 集合被跳过/传染。
+ * ==========================================================================*/
+
+/** 极简 JSON Schema 校验（仅支持 type/required/properties 的子集，够用且零依赖） */
+function checkJsonSchema(value: unknown, schema: Record<string, any>): string[] {
+  const errs: string[] = [];
+  const type = schema.type;
+  if (type) {
+    if (type === 'object' && (typeof value !== 'object' || value === null || Array.isArray(value)))
+      errs.push(`期望 object，实际 ${Array.isArray(value) ? 'array' : typeof value}`);
+    else if (type === 'array' && !Array.isArray(value))
+      errs.push(`期望 array，实际 ${typeof value}`);
+    else if (
+      ['string', 'number', 'boolean'].includes(type) &&
+      typeof value !== type
+    )
+      errs.push(`期望 ${type}，实际 ${typeof value}`);
+  }
+  if (schema.required && Array.isArray(value) === false && value && typeof value === 'object') {
+    for (const k of schema.required as string[]) {
+      if (!(k in (value as Record<string, any>)))
+        errs.push(`缺少必填字段 "${k}"`);
+    }
+  }
+  return errs;
+}
+
+export const nodeAssert: NodeDefinition = {
+  typeId: 'verify.assert',
+  name: '验证 / 断言',
+  category: '流程',
+  description:
+    '流程质量闸门。对上游输入 value 做断言：条件表达式为真、或匹配 JSON Schema、或等于期望值、或不为空。通过走 data 边「通过」，失败走 control 边「失败」（下游被剪枝）。开启「失败时中止」则直接抛错使下游按失败集合被跳过。',
+  inputs: [{ id: 'value', label: '待验证值', type: 'any' }],
+  outputs: [
+    { id: 'pass', label: '通过', type: 'any' },
+    { id: 'fail', label: '失败', type: 'any', flow: 'control' },
+  ],
+  params: [
+    {
+      key: 'mode',
+      label: '断言模式',
+      type: 'select',
+      options: [
+        { value: 'truthy', label: '真值（非空/非假）' },
+        { value: 'expression', label: '表达式为真（用 value 与 ctx.vars）' },
+        { value: 'equals', label: '等于期望值' },
+        { value: 'schema', label: '匹配 JSON Schema' },
+        { value: 'nonEmpty', label: '非空（字符串/数组/对象）' },
+      ],
+      default: 'truthy',
+    },
+    {
+      key: 'expression',
+      label: '表达式（mode=expression 时生效）',
+      type: 'textarea',
+      default: '',
+      placeholder: '例如：value.length > 0 或 status == "ok"',
+    },
+    {
+      key: 'expected',
+      label: '期望值（mode=equals 时生效）',
+      type: 'text',
+      default: '',
+    },
+    {
+      key: 'schema',
+      label: 'JSON Schema（mode=schema 时生效）',
+      type: 'textarea',
+      default: '',
+      placeholder: '{ "type": "object", "required": ["id"] }',
+    },
+    {
+      key: 'failFast',
+      label: '失败时中止（抛错，下游按失败集合跳过）',
+      type: 'boolean',
+      default: false,
+    },
+    {
+      key: 'message',
+      label: '断言说明（可选，用于失败日志）',
+      type: 'text',
+      default: '',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const value = inputs.value;
+    const mode = String(params.mode ?? 'truthy');
+    const note = String(params.message ?? '');
+    let ok = false;
+    const reasons: string[] = [];
+
+    switch (mode) {
+      case 'truthy':
+        ok = isTruthy(value);
+        if (!ok) reasons.push('值为 falsy');
+        break;
+      case 'expression': {
+        const expr = String(params.expression ?? '').trim();
+        if (!expr) {
+          ok = true; // 空表达式视为通过
+        } else {
+          const r = evalExpr(expr, { ...ctx.vars, value });
+          ok = isTruthy(r);
+          if (!ok) reasons.push(`表达式 "${expr}" 为假`);
+        }
+        break;
+      }
+      case 'equals': {
+        const expected = params.expected;
+        ok = JSON.stringify(value) === JSON.stringify(expected);
+        if (!ok) reasons.push(`期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(value)}`);
+        break;
+      }
+      case 'schema': {
+        const raw = String(params.schema ?? '').trim();
+        if (!raw) {
+          ok = true;
+        } else {
+          let schema: Record<string, any>;
+          try {
+            schema = JSON.parse(raw);
+          } catch (e) {
+            reasons.push('Schema 不是合法 JSON');
+            ok = false;
+            break;
+          }
+          const errs = checkJsonSchema(value, schema);
+          ok = errs.length === 0;
+          if (!ok) reasons.push(...errs);
+        }
+        break;
+      }
+      case 'nonEmpty': {
+        if (typeof value === 'string') ok = value.trim().length > 0;
+        else if (Array.isArray(value)) ok = value.length > 0;
+        else if (value && typeof value === 'object') ok = Object.keys(value).length > 0;
+        else ok = false;
+        if (!ok) reasons.push('值为空');
+        break;
+      }
+      default:
+        ok = true;
+    }
+
+    if (ok) {
+      ctx.setBranches?.(['pass']);
+      ctx.logger.info(note ? `断言通过：${note}` : '断言通过');
+      return { pass: true, fail: false, ok: true };
+    }
+
+    // 失败
+    const detail = `${note ? note + ' — ' : ''}${reasons.join('；') || '断言失败'}`;
+    if (String(params.failFast ?? false) === 'true') {
+      throw new Error(`[验证/断言] ${detail}`);
+    }
+    ctx.setBranches?.(['fail']);
+    ctx.logger.warn(`断言失败：${detail}`);
+    return { pass: false, fail: true, ok: false, reason: detail };
+  },
+};
+
+/* ============================================================================
  * Step 5：具体化 worker 节点（Scaffolder / Implementer / Validator）
  * - Scaffolder / Implementer 为「普通节点」：单次 ctx.llm 调用。
  * - Validator 为「自主节点」试点：节点内部跑 think→act→observe 小循环，
@@ -1465,6 +1632,7 @@ export const builtinDefs: NodeDefinition[] = [
   nodeDispatch,
   nodeResolver,
   nodeLoopGate,
+  nodeAssert,
   workerScaffolder,
   workerImplementer,
   workerValidator,

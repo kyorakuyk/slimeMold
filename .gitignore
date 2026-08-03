@@ -31,6 +31,7 @@ generated-images/
 
 # Local dev helpers & logs (not committed)
 start-hidden.bat
+.devlog_tauri.log
 tauri_dev.local.log
 dev.log
 dev.out

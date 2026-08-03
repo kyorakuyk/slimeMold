@@ -33,6 +33,8 @@ import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type No
 import { wouldCreateCycle } from '../engine/topoSort';
 import { NamePrompt } from '../components/NamePrompt';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
+import JobBoard from '../components/JobBoard';
+import Companion from '../components/Companion';
 
 const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
 const edgeTypes = { kind: KindEdge };
@@ -828,6 +830,11 @@ export default function WorkflowEditor({
       {pickerPos && (
         <NodePickerModal screenPos={pickerPos} onSelect={onPickNode} onClose={() => setPickerPos(null)} />
       )}
+
+      {/* 运行期调度看板（Job Board）：浮于画布右上角 */}
+      <JobBoard />
+      {/* Companion 浮窗：常驻状态球，展示运行态与 token 消耗（经 portal 渲染到 body） */}
+      <Companion />
     </div>
   );
 }

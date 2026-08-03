@@ -11,6 +11,7 @@ import {
 import type {
   AgentConfig,
   AssetMeta,
+  CostRecord,
   FlowEdge,
   FlowNode,
   LogEntry,
@@ -105,6 +106,28 @@ interface WorkflowState {
   /** 示例库次级窗口是否打开（UI 状态，不持久化） */
   examplesOpen: boolean;
   running: boolean;
+  /** 运行期调度进度（供 Job Board 可视化）：当前 stage 索引、总 stage 数、循环轮次 */
+  runProgress: {
+    active: boolean;
+    layer: number;
+    totalLayers: number;
+    round: number;
+    totalRounds: number;
+  };
+  /** 更新运行期调度进度（executor 在每一层开始前上报） */
+  setRunProgress: (p: Partial<{
+    active: boolean;
+    layer: number;
+    totalLayers: number;
+    round: number;
+    totalRounds: number;
+  }>) => void;
+  /** 运行期成本账本（实时累积 LLM token 用量，供 Companion 浮窗展示，不持久化） */
+  costLog: CostRecord[];
+  /** 运行结束后保留可读快照，供结束后回顾（setRunning(false) 后不清空，仅下次运行前重置） */
+  setCostLog: (log: CostRecord[]) => void;
+  /** 清空成本账本（重置统计） */
+  resetUsage: () => void;
   failFast: boolean;
   /** 失败时继续（failFast 的反面策略）：某节点失败后不中断整体运行，下游以空上游输出跳过失败继续执行 */
   skipFailed: boolean;
@@ -440,6 +463,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       focusWfId: '',
       examplesOpen: false,
       running: false,
+      runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
+      costLog: [],
       failFast: true,
       skipFailed: false,
       maxConcurrency: 3,
@@ -726,6 +751,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
       setRunning: (running) => set({ running }),
+      setRunProgress: (p) =>
+        set((s) => ({ runProgress: { ...s.runProgress, ...p } })),
+      setCostLog: (log) => set({ costLog: log }),
+      resetUsage: () => set({ costLog: [] }),
       setFailFast: (v) => set({ failFast: v }),
       setSkipFailed: (v) => set({ skipFailed: v }),
       setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),

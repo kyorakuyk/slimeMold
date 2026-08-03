@@ -83,6 +83,10 @@ export interface RunOptions {
    * 配合 false 的 failFast 一起使用。
    */
   skipFailed?: boolean;
+  /**
+   * 调度进度回调（供 Job Board 等可视化）：每一层开始前上报当前层索引、总层数、轮次。
+   */
+  onProgress?: (p: { layer: number; totalLayers: number; round: number; totalRounds: number }) => void;
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
@@ -192,6 +196,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const signal = currentAbort.signal;
   wf.setRunning(true);
   wf.resetStatuses();
+  // 清空运行期成本账本，供 Companion 浮窗实时展示
+  useWorkflowStore.getState().resetUsage();
   beginRun();
 
   // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行
@@ -256,6 +262,15 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     }
     for (const layer of stages) {
       if (signal.aborted) break;
+      // 上报调度进度（层索引 / 总层数 / 当前轮次 / 总轮次）
+      const progress = {
+        layer: stages.indexOf(layer) + 1,
+        totalLayers: stages.length,
+        round: round + 1,
+        totalRounds: maxRounds,
+      };
+      opts.onProgress?.(progress);
+      useWorkflowStore.getState().setRunProgress({ active: true, ...progress });
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
       // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
       await Promise.all(
@@ -413,6 +428,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   }
 
   store.setRunning(false);
+  useWorkflowStore.getState().setRunProgress({ active: false });
   currentAbort = null;
 }
 
@@ -552,6 +568,8 @@ async function executeNode(
     wf.setNodeStatus(target, cur.data.status, {
       usage: accumulateUsage(cur.data.usage, rec),
     });
+    // 同步成本账本到 store，供 Companion 浮窗实时读取（共享同一数组引用）
+    useWorkflowStore.getState().setCostLog(costLog);
   };
 
   const incoming = edges.filter((e) => e.target === id);

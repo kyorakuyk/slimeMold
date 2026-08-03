@@ -8,6 +8,7 @@ import SettingsCenter from './components/SettingsCenter';
 import { SideRail, SidePanel, type SidePanelKey } from './components/LeftSidebar';
 import ShortcutsModal from './components/ShortcutsModal';
 import ExamplesModal from './components/ExamplesModal';
+import WorkflowWizard from './components/WorkflowWizard';
 import WelcomeModal from './components/WelcomeModal';
 import NewProjectModal from './components/NewProjectModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
@@ -210,6 +211,7 @@ export default function App() {
   // P3 项目欢迎页：当前无项目加载时弹出（项目加载后自动隐藏，关闭项目后重新出现）
   const [showWelcome, setShowWelcome] = useState(() => !useWorkflowStore.getState().projectId);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   useEffect(() => {
     return useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
@@ -275,6 +277,7 @@ export default function App() {
           onOpenPanel={openPanel}
           onOpenShortcuts={() => setShowShortcutsModal(true)}
           onNewProject={() => setNewProjectOpen(true)}
+          onOpenWizard={() => setWizardOpen(true)}
         />
         <main className="flex flex-1 overflow-hidden">
           {/* 通栏图标条：贯穿整个高度，底部面板在其右侧打开，永不被遮盖 */}
@@ -381,6 +384,7 @@ export default function App() {
         {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
         {showSettings && <SettingsCenter onClose={() => setShowSettings(false)} />}
         {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
+        {wizardOpen && <WorkflowWizard onClose={() => setWizardOpen(false)} />}
         {prompt && (
           <NamePrompt
             title={prompt.title}
