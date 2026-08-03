@@ -128,6 +128,10 @@ interface WorkflowState {
   setCostLog: (log: CostRecord[]) => void;
   /** 清空成本账本（重置统计） */
   resetUsage: () => void;
+  /** 诊断用：executor 内部运行代次（current=最新代次，active=当前有效运行代次）；
+   * 若 current>active 表示有「旧协程」已过期仍在后台，stop 已生效但协程未退出。 */
+  debugRun: { current: number; active: number };
+  setDebugRun: (v: { current: number; active: number }) => void;
   failFast: boolean;
   /** 失败时继续（failFast 的反面策略）：某节点失败后不中断整体运行，下游以空上游输出跳过失败继续执行 */
   skipFailed: boolean;
@@ -465,6 +469,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       running: false,
       runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
       costLog: [],
+      debugRun: { current: 0, active: 0 },
       failFast: true,
       skipFailed: false,
       maxConcurrency: 3,
@@ -668,6 +673,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       resetStatuses: () =>
         set({
+          // 同时复位运行态，避免「卡在 running==true」时刷新键失效
+          running: false,
+          runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
+          costLog: [],
           nodes: get().nodes.map((n) => ({
             ...n,
             data: {
@@ -755,6 +764,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         set((s) => ({ runProgress: { ...s.runProgress, ...p } })),
       setCostLog: (log) => set({ costLog: log }),
       resetUsage: () => set({ costLog: [] }),
+      setDebugRun: (v) => set({ debugRun: v }),
       setFailFast: (v) => set({ failFast: v }),
       setSkipFailed: (v) => set({ skipFailed: v }),
       setMaxConcurrency: (v) => set({ maxConcurrency: Math.max(1, Math.min(20, Math.floor(v) || 1)) }),

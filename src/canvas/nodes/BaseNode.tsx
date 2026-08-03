@@ -92,6 +92,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const allSubgraphs = useWorkflowStore((s) => s.subgraphs);
   const unpack = useWorkflowStore((s) => s.unpackSubgraphNode);
   const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
+  const debugMode = useViewStore((s) => s.debugMode);
 
   const missing = isSubgraph ? !subgraph : !def || def.missing;
   const resolved = resolvePorts(data.typeId, data.params, allDefs, allSubgraphs);
@@ -284,7 +285,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         </div>
       )}
 
-      {(data.status === 'error' || data.status === 'success' || data.status === 'cached') && (
+      {(data.status === 'error' || data.status === 'success' || data.status === 'cached') && debugMode && (
         <div className="sm-node-actions">
           <button
             onClick={(e) => {

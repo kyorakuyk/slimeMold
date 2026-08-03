@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 import NodePalette from './NodePalette';
+import TemplateSuggestions from './TemplateSuggestions';
 import PluginPanel from './PluginPanel';
 import AgentPanel from './AgentPanel';
 import VariablesPanel from './VariablesPanel';
@@ -72,7 +73,14 @@ const PANEL_ITEMS: PanelItem[] = [
 export function renderSidePanel(key: SidePanelKey) {
   switch (key) {
     case 'nodes':
-      return <NodePalette embedded />;
+      return (
+        <>
+          <NodePalette embedded />
+          <div className="px-2 pb-3">
+            <TemplateSuggestions />
+          </div>
+        </>
+      );
     case 'plugins':
       return <PluginPanel embedded />;
     case 'agents':

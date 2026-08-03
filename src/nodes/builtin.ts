@@ -98,6 +98,8 @@ const textInput: NodeDefinition = {
   typeId: 'input.text',
   name: '文本输入',
   category: '输入',
+  role: 'io',
+  whenToUse: '作为工作流的起点，提供固定文本或提示词；需要动态文本时用「模板拼接」。',
   description: '提供固定文本，作为工作流的起点数据源',
   inputs: [],
   outputs: [{ id: 'text', label: '文本', type: 'text' }],
@@ -119,6 +121,8 @@ const agentChat: NodeDefinition = {
   typeId: 'agent.chat',
   name: '智能体',
   category: 'AI',
+  role: 'worker',
+  whenToUse: '需要调用 LLM 生成文本/做推理时使用；配合角色库快速获得职业提示词，支持节点级模型覆写。',
   description:
     '调用绑定的智能体（多协议 LLM）处理输入文本。可绑定角色库中的角色快速获得职业提示词，并支持节点级模型覆写与上下文隔离。',
   inputs: [
@@ -375,6 +379,8 @@ const httpRequest: NodeDefinition = {
   typeId: 'tool.http',
   name: 'HTTP 请求',
   category: '工具',
+  role: 'explorer',
+  whenToUse: '需要抓取网页、调用 REST API 或拉取外部数据时；返回 body 可接入 LLM 处理。',
   description: '发起 HTTP 请求，URL 支持 {{url}} 端口注入',
   inputs: [{ id: 'url', label: 'URL(可选)', type: 'text' }],
   outputs: [{ id: 'body', label: '响应体', type: 'text' }],
@@ -524,6 +530,8 @@ const preview: NodeDefinition = {
   typeId: 'output.preview',
   name: '结果预览',
   category: '输出',
+  role: 'observer',
+  whenToUse: '作为工作流终点，实时展示结果；开发调试时优先用于观察中间产物。',
   description: '展示上游节点的输出结果，作为工作流终点',
   inputs: [{ id: 'value', label: '数据', type: 'any' }],
   outputs: [],
@@ -715,6 +723,8 @@ const ifNode: NodeDefinition = {
   typeId: 'flow.if',
   name: '条件分支',
   category: '流程',
+  role: 'orchestrator',
+  whenToUse: '根据条件表达式只走 true/false 一条分支；未激活分支的下游会被跳过（不执行）。',
   description:
     '根据条件表达式求值结果，只走 true / false 其中一条分支。下游若只连到未激活的分支则被跳过（不执行）。表达式可引用输入端口与全局变量，结果按「真值」判断（非空、非零、非空字符串、非空数组）。',
   inputs: [{ id: 'cond', label: '条件', type: 'any' }],
@@ -911,6 +921,8 @@ export const nodeAuditor: NodeDefinition = {
   typeId: 'auditor.bookkeeper',
   name: '成本审计',
   category: '审计',
+  role: 'verifier',
+  whenToUse: '运行结束后汇总全链路 token 用量与耗时，输出成本报告，用于性价比分析与自优化闭环。',
   description:
     '汇总本次运行所有 LLM 调用的 token 用量与耗时，输出成本报告（JSON）。不消费数据流，仅读取引擎成本账本。',
   inputs: [],
@@ -977,6 +989,8 @@ export const nodeDispatch: NodeDefinition = {
   typeId: 'dispatch.split',
   name: '任务派发',
   category: '派发',
+  role: 'orchestrator',
+  whenToUse: '将任务列表扇出到多条 task 连线并行派发，配合「冲突协调者」做并发冲突检测。',
   description:
     '将任务列表（TaskItem[]）扇出到多条任务连线并行派发。每个输出端口携带一个任务（含 scope 影响域声明）。未分配完的余数走「其余」端口。配合「task」语义连线（橙色）使用。',
   inputs: [{ id: 'tasks', label: '任务列表', type: 'list' }],
@@ -1023,6 +1037,193 @@ export const nodeDispatch: NodeDefinition = {
     return out;
   },
 };
+
+/**
+ * 规划/编排节点（Plan / Orchestrator）：
+ * 把一句目标交给绑定的「规划模型」，产出计划书，并自动把计划切成任务清单（TaskItem[]），
+ * 供下游「任务派发（dispatch.split）」1:n 扇出到并行施工线。
+ *
+ * 设计动机：让「一句目标 → 计划 → 任务派发」显式画成一条流水线（对齐多 Agent 编排的
+ * Planner → 派发 分层），同时让规划模型可独立选择（性价比模型做规划，强模型做施工）。
+ *
+ * 输出：
+ * - plan：markdown 计划书（供预览 / 存档）
+ * - tasks：切分好的任务清单（TaskItem[]，直接接 dispatch.split.tasks）
+ * - summary：一句话摘要（供下游判断/分支）
+ *
+ * 任务切分：提示模型以「```json 任务数组```」围栏输出结构化清单（{label, scope?, payload?}）；
+ * 解析成功则作为 tasks，解析失败则降级为「把目标整体作为一个任务」。
+ */
+export const nodePlan: NodeDefinition = {
+  typeId: 'dispatch.plan',
+  name: '规划/编排',
+  category: '派发',
+  role: 'orchestrator',
+  whenToUse: '把一句话目标交给规划模型，生成计划书并自动切分为任务清单，供下游「任务派发」并行施工。',
+  description:
+    '接收目标描述，调用绑定的规划模型生成计划书，并把计划自动切分为任务清单（TaskItem[]）。输出 plan（计划书）/ tasks（任务列表，可直接接「任务派发」）/ summary（一句话摘要）。',
+  inputs: [{ id: 'goal', label: '目标', type: 'text' }],
+  outputs: [
+    { id: 'plan', label: '计划书', type: 'text' },
+    { id: 'tasks', label: '任务清单', type: 'list' },
+    { id: 'summary', label: '摘要', type: 'text' },
+  ],
+  params: [
+    { key: 'agentId', label: '绑定规划智能体', type: 'agent', default: '' },
+    { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
+    {
+      key: 'modelOverride',
+      label: '节点级模型（留空用智能体默认）',
+      type: 'text',
+      default: '',
+      placeholder: '如 kimi / gpt-4o-mini；规划用性价比模型更省',
+    },
+    {
+      key: 'format',
+      label: '计划书格式',
+      type: 'select',
+      default: 'tasks',
+      options: [
+        { value: 'tasks', label: '任务清单（含步骤说明）' },
+        { value: 'outline', label: '提纲（章节式）' },
+        { value: 'free', label: '自由（交给模型）' },
+      ],
+    },
+    {
+      key: 'simulate',
+      label: '离线模拟模式（不调 LLM，回显链路）',
+      type: 'select',
+      default: 'off',
+      options: [
+        { value: 'off', label: '关闭（真实调用）' },
+        { value: 'on', label: '开启（离线回显）' },
+      ],
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const goal = String(inputs.goal ?? '').trim();
+    if (!goal) throw new Error('缺少目标输入（goal 端口未接入数据）');
+
+    const agentId = String(params.agentId ?? '');
+    const roleId = String(params.roleId ?? '');
+    const roles = useWorkflowStore.getState().roles;
+    const role = findRole(roles, roleId || undefined);
+    const system = resolveRoleSystem(role, String(params.system ?? '')) ||
+      '你是一名严谨的项目规划助手。请把用户目标拆解为清晰、可执行的计划，并输出任务清单。';
+    const modelOverride = String(params.modelOverride ?? '').trim();
+    const format = String(params.format ?? 'tasks');
+
+    const buildPrompt = (): string => {
+      const fmtHint =
+        format === 'outline'
+          ? '请以章节式提纲（大纲）组织计划，先总述再分节。'
+          : format === 'free'
+            ? '请自由组织计划书，结构清晰即可。'
+            : '请把计划组织成可执行的步骤清单。';
+      return `${fmtHint}
+
+目标：
+${goal}
+
+请输出计划书，并在最后用如下围栏块给出结构化任务数组（每项：{label, scope?（影响的文件/模块列表）, payload?}），以便下游并行派发：
+\`\`\`json
+[{"label":"任务描述","scope":["文件/模块"],"payload":"可选附加内容"}]
+\`\`\`
+若确实无法切分，也请给出至少一项任务。`;
+    };
+
+    // —— 离线模拟模式：不调 LLM，按链路回显便于无模型验证 ——
+    if (String(params.simulate ?? 'off') === 'on') {
+      const agent = useWorkflowStore.getState().agents.find((a) => a.id === agentId);
+      const modelTag = modelOverride || agent?.model || '—';
+      const plan = `【离线模拟 · 规划链路回显】
+
+— 目标 —
+${goal}
+
+— 计划书（模拟） —
+1. 明确需求与边界。
+2. 拆解为若干独立子任务（每项声明影响域 scope）。
+3. 并行施工、冲突协调、质量校验。
+
+— 任务清单（模拟） —
+${JSON.stringify(
+  [
+    { label: '分析目标与约束', scope: ['docs'], payload: goal },
+    { label: '设计实现方案', scope: ['src'], payload: goal },
+    { label: '编码与自测', scope: ['src'], payload: goal },
+  ],
+  null,
+  2,
+)}
+
+（本节点在模拟模式下不调用真实 LLM，以上为链路装配结果。配置可用智能体并关闭模拟后替换为模型实际输出。）`;
+      const tasks: TaskItem[] = [
+        { label: '分析目标与约束', scope: ['docs'], payload: goal, index: 0 },
+        { label: '设计实现方案', scope: ['src'], payload: goal, index: 1 },
+        { label: '编码与自测', scope: ['src'], payload: goal, index: 2 },
+      ];
+      ctx.logger.info(`规划(模拟)完成 智能体=${agent?.name ?? '未绑定'} 模型=${modelTag} 目标 ${goal.length} 字`);
+      // 流式回显计划书
+      let acc = '';
+      for (const seg of plan) {
+        acc += seg;
+        ctx.setPartial('plan', acc);
+        await new Promise((r) => setTimeout(r, 4));
+      }
+      return { plan, tasks, summary: goal.slice(0, 40) };
+    }
+
+    // —— 真实调用 ——
+    if (!agentId) throw new Error('未绑定规划智能体，请在右侧面板选择（或开启离线模拟模式）');
+    const messages: ChatMessage[] = [
+      { role: 'system' as const, content: system },
+      { role: 'user' as const, content: buildPrompt() },
+    ];
+
+    ctx.logger.info(
+      `规划请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''} 目标 ${goal.length} 字`,
+    );
+    let acc = '';
+    const text = await ctx.llm(
+      agentId,
+      messages,
+      (delta) => {
+        acc += delta;
+        ctx.setPartial('plan', acc);
+      },
+      modelOverride || undefined,
+    );
+
+    // 解析任务清单：优先取围栏内的 json 数组
+    const tasks = extractTasksFromPlan(text, goal);
+    const firstLine = text.split('\n').find((l) => l.trim().length > 0);
+    const summary = (firstLine ? firstLine.replace(/^[#*\s-]+/, '').trim() : goal.slice(0, 40)).slice(0, 60);
+    return { plan: text, tasks, summary };
+  },
+};
+
+/** 从模型计划文本中提取任务清单；解析失败降级为「整个目标作为一个任务」。 */
+function extractTasksFromPlan(text: string, fallbackGoal: string): TaskItem[] {
+  const fence = text.match(/```json\s*([\s\S]*?)```/i);
+  const raw = fence ? fence[1] : text;
+  const m = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (m) {
+    try {
+      const arr = JSON.parse(m[0]);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((t, i) => {
+          const label = typeof t?.label === 'string' && t.label.trim() ? t.label : `任务${i + 1}`;
+          const scope = Array.isArray(t?.scope) ? t.scope.filter((s: unknown) => typeof s === 'string') : undefined;
+          return { label, scope: scope && scope.length > 0 ? scope : undefined, payload: t?.payload, index: i };
+        });
+      }
+    } catch {
+      /* 落入降级分支 */
+    }
+  }
+  return [{ label: fallbackGoal, payload: fallbackGoal, index: 0 }];
+}
 
 /**
  * 冲突协调者（Conflict Resolver / Merge Coordinator）：
@@ -1113,6 +1314,8 @@ export const nodeLoopGate: NodeDefinition = {
   typeId: 'flow.loopGate',
   name: '循环/条件断点',
   category: '流程',
+  role: 'orchestrator',
+  whenToUse: '构成循环或条件重试：循环体尾部以 control（紫色）边回指本节点，执行引擎会做多轮迭代。',
   description:
     '条件判断节点，其「通过」端口为控制流（control，紫色）语义。用于构成循环：循环体尾部以 control 边回指本节点。拓扑排序时 control 边视作 stage 断点，不破坏环检测。条件为假时下游被剪枝。执行引擎会对 control 回环做真正的多轮迭代（Step 6）。',
   inputs: [{ id: 'cond', label: '条件', type: 'any' }],
@@ -1200,6 +1403,8 @@ export const nodeAssert: NodeDefinition = {
   typeId: 'verify.assert',
   name: '验证 / 断言',
   category: '流程',
+  role: 'verifier',
+  whenToUse: '作为流程质量闸门：在关键步骤后校验输出（真值/表达式/Schema/相等/非空），失败可剪枝下游或抛错中止。',
   description:
     '流程质量闸门。对上游输入 value 做断言：条件表达式为真、或匹配 JSON Schema、或等于期望值、或不为空。通过走 data 边「通过」，失败走 control 边「失败」（下游被剪枝）。开启「失败时中止」则直接抛错使下游按失败集合被跳过。',
   inputs: [{ id: 'value', label: '待验证值', type: 'any' }],
@@ -1629,6 +1834,7 @@ export const builtinDefs: NodeDefinition[] = [
   preview,
   textOutput,
   nodeAuditor,
+  nodePlan,
   nodeDispatch,
   nodeResolver,
   nodeLoopGate,

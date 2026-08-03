@@ -7,15 +7,32 @@ export class Semaphore {
     this.permits = Math.max(1, permits);
   }
 
-  async acquire(): Promise<() => void> {
+  async acquire(signal?: AbortSignal): Promise<() => void> {
     if (this.permits > 0) {
       this.permits--;
       return () => this.release();
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const entry: { resolve: () => void; reject?: (err: Error) => void } = {
+        resolve: () => {
+          this.permits--;
+          resolve(() => this.release());
+        },
+      };
+      // 若 signal 已中止或随后中止，直接 reject 让调用方抛 AbortError
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+      const onAbort = () => {
+        const idx = this.queue.indexOf(entry as unknown as () => void);
+        if (idx >= 0) this.queue.splice(idx, 1);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
       this.queue.push(() => {
-        this.permits--;
-        resolve(() => this.release());
+        signal?.removeEventListener('abort', onAbort);
+        (entry as { resolve: () => void }).resolve();
       });
     });
   }

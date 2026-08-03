@@ -25,6 +25,21 @@ import {
 } from './nodeCache';
 
 let currentAbort: AbortController | null = null;
+/**
+ * 运行代次（run generation）：每次启动 runWorkflow 自增并取走当前代次号；
+ * stopWorkflow 会自增它，使仍在后台的「旧协程」在下一层边界发现自己已过期，
+ * 从而静默退出、不再触碰 store 状态（这是「刷新键失效」的根因：
+ * 旧 runWorkflow 卡在某节点 await，resetStatuses 只清了 UI 标志却杀不掉协程，
+ * 旧协程恢复后又把 running 复位、与新的运行互相干扰）。
+ */
+let currentRunId = 0;
+/** 当前真正在跑的代次；等于 currentRunId 表示有运行有效，stopWorkflow 会使二者不等 */
+let activeRunId = 0;
+
+/** 把运行代次同步到 store 供状态栏诊断显示 */
+function syncDebugRun(): void {
+  useWorkflowStore.getState().setDebugRun({ current: currentRunId, active: activeRunId });
+}
 
 // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
 // 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
@@ -32,7 +47,15 @@ const NODE_RETRIES = 2;
 const NODE_RETRY_BASE_MS = 1500;
 
 export function stopWorkflow(): void {
+  currentRunId += 1; // 让旧协程过期
+  activeRunId = 0; // 当前无有效运行
   currentAbort?.abort();
+  currentAbort = null;
+  // 直接复位 running，不依赖旧协程退出（旧协程可能卡在无法被 abort 的 await 上）。
+  // 否则 running 永远为 true，启动键会渲染成"停止键"，点它又变成一次空 stop。
+  useWorkflowStore.getState().setRunning(false);
+  useWorkflowStore.getState().setRunProgress({ active: false });
+  syncDebugRun();
 }
 
 /**
@@ -91,7 +114,12 @@ export interface RunOptions {
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const wf = useWorkflowStore.getState();
-  if (wf.running) return;
+  // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
+  // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
+  if (wf.running && activeRunId === currentRunId) return;
+  const myRun = ++currentRunId; // 本次运行代次
+  activeRunId = myRun;
+  syncDebugRun();
   const { failFast } = wf;
   if (wf.nodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
@@ -261,7 +289,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       }
     }
     for (const layer of stages) {
-      if (signal.aborted) break;
+      if (signal.aborted || myRun !== currentRunId) break;
       // 上报调度进度（层索引 / 总层数 / 当前轮次 / 总轮次）
       const progress = {
         layer: stages.indexOf(layer) + 1,
@@ -273,6 +301,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       useWorkflowStore.getState().setRunProgress({ active: true, ...progress });
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
       // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
+      const t0 = performance.now();
       await Promise.all(
         layer.map((id) =>
           executeNode(
@@ -295,6 +324,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
             { ...loopVarsState }, // 本轮循环变量（仅注入，不污染用户全局变量）
             (gid, handles) => gateTaken.set(gid, handles),
             opts.skipFailed,
+            !!opts.incremental,
+            myRun,
           ),
         ),
       );
@@ -305,7 +336,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       // failFast=false 且开启「跳过失败继续」：不中断，继续下一 stage
       // （失败节点的下游会在 executeNode 内判定为「跳过失败」而非剪枝）
     }
-    if (signal.aborted) break;
+    if (signal.aborted || myRun !== currentRunId) break;
 
     // 判断是否需要继续迭代：任一 loopGate 本轮走了 pass 分支 ⇒ 循环体被激活 ⇒ 继续
     loopContinued = hasLoop && [...loopGateIds].some((gid) => {
@@ -427,9 +458,14 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     store.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
   }
 
-  store.setRunning(false);
+  // 只有「最新且未被停止」的代次才允许复位 running / 清进度；
+  // 过期协程（被 stopWorkflow 抢占）静默退出，绝不回写 store 干扰新运行。
+  if (myRun === activeRunId && myRun === currentRunId) {
+    store.setRunning(false);
+  }
   useWorkflowStore.getState().setRunProgress({ active: false });
   currentAbort = null;
+  syncDebugRun();
 }
 
 /** 将 startId 的全部下游节点加入 cutSet（BFS） */
@@ -540,6 +576,8 @@ async function executeNode(
   extraVars?: Record<string, number>,
   onGate?: (id: string, handles: string[]) => void,
   skipFailed?: boolean,
+  isIncremental?: boolean,
+  myRun?: number,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -598,7 +636,9 @@ async function executeNode(
   }
 
   // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
-  if (!shouldRun && !forced) {
+  // 注意：全量运行（!isIncremental）时 dirtySet 为空、shouldRun 全部为 false，
+  // 但全量运行意图是执行所有节点，因此只在增量模式才走此跳过路径。
+  if (isIncremental && !shouldRun && !forced) {
     setStatus(id, node.data.status === 'cached' ? 'cached' : (node.data.status ?? 'idle'));
     return;
   }
@@ -673,7 +713,7 @@ async function executeNode(
         : agent;
       const channel = getChannel(useWorkflowStore.getState().llmChannel);
       // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
-      const release = await limiter.acquire();
+      const release = await limiter.acquire(signal);
       const callStart = performance.now();
       let ok = true;
       let errMsg: string | undefined;
@@ -763,6 +803,12 @@ async function executeNode(
     })(),
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
   };
+
+  // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，
+  // 避免旧协程在节点返回后仍去调 def.execute / 改 store 状态。
+  if (myRun !== currentRunId) {
+    return { id, outputs: undefined as never, error: new DOMException('Run superseded', 'AbortError') };
+  }
 
   setStatus(id, 'running');
   const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');

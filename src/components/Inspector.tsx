@@ -411,7 +411,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
         {resolvedNode.data.outputs && (
           <div>
             <label className="mb-1 block text-xs text-ink-soft">最近输出</label>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-line bg-white px-2.5 py-2 text-[12px] leading-relaxed text-ink-soft">
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-line bg-[var(--sm-bg)] px-2.5 py-2 text-[12px] leading-relaxed text-ink-soft">
               {JSON.stringify(resolvedNode.data.outputs, null, 2)}
             </pre>
           </div>

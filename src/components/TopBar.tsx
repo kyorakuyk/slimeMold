@@ -40,6 +40,7 @@ import {
   Zap,
   SkipForward,
   Wand2,
+  Bug,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
@@ -48,7 +49,7 @@ import { useViewStore } from '../store/viewStore';
 import { runWorkflow, stopWorkflow, resumeRun } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { openDirDialog, isTauri } from '../platform/env';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { ask } from '@tauri-apps/plugin-dialog';
 import {
   openProjectFile,
   getRecentProjects,
@@ -116,6 +117,8 @@ export default function TopBar({
   const toggleGrid = useViewStore((s) => s.toggleGrid);
   const splitView = useViewStore((s) => s.splitView);
   const toggleSplit = useViewStore((s) => s.toggleSplit);
+  const debugMode = useViewStore((s) => s.debugMode);
+  const toggleDebug = useViewStore((s) => s.toggleDebug);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   // 项目层状态
@@ -203,7 +206,7 @@ export default function TopBar({
   const handleCloseProject = async () => {
     if (projectDirty) {
       const ok = isTauri
-        ? await confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？', {
+        ? await ask('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？', {
             title: '关闭项目',
             kind: 'warning',
           })
@@ -620,6 +623,16 @@ export default function TopBar({
           }}
         >
           <RotateCcw size={14} />
+        </button>
+
+        <button
+          className="sm-btn px-1.5"
+          title={debugMode ? '调试模式：开（节点卡片显示重跑子图 / 重跑到此节点）' : '调试模式：关'}
+          data-active={debugMode}
+          onClick={toggleDebug}
+          style={debugMode ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
+        >
+          <Bug size={14} />
         </button>
 
         {running ? (

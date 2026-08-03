@@ -7,7 +7,8 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { DND_MIME } from '../canvas/WorkflowEditor';
 import { CATEGORY_ORDER } from '../nodes/builtin';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition, NodeRole } from '../types';
+import { NODE_ROLE_META } from '../types';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
 export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
@@ -16,6 +17,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
   const addNode = useWorkflowStore((s) => s.addNode);
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [roleFilter, setRoleFilter] = useState<NodeRole | 'all'>('all');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
   // 双击兜底添加：部分 WebView/浏览器对 HTML5 拖拽支持不稳定，双击直接落到画布中心
@@ -81,6 +83,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       if (def.missing) continue;
       // 子图节点不能凭空添加（必须指定引用哪个子图），统一在下方「我的子图」分区里列出
       if (def.typeId === SUBGRAPH_REF_TYPE) continue;
+      // 角色筛选（按节点角色分类快速定位）
+      if (roleFilter !== 'all' && def.role !== roleFilter) continue;
       if (q && !`${def.name} ${def.description ?? ''} ${def.category}`.toLowerCase().includes(q))
         continue;
       const list = map.get(def.category) ?? [];
@@ -126,6 +130,46 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
     </div>
   );
 
+  const roleOptions: { value: NodeRole | 'all'; label: string }[] = [
+    { value: 'all', label: '全部角色' },
+    ...(Object.keys(NODE_ROLE_META) as NodeRole[]).map((r) => ({
+      value: r,
+      label: NODE_ROLE_META[r].label,
+    })),
+  ];
+
+  const roleFilterBar = (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {roleOptions.map((opt) => {
+        const active = roleFilter === opt.value;
+        const meta = opt.value !== 'all' ? NODE_ROLE_META[opt.value as NodeRole] : null;
+        return (
+          <button
+            key={opt.value}
+            onClick={() => setRoleFilter(opt.value)}
+            title={meta ? meta.hint : '按角色筛选节点'}
+            className="rounded-full border px-2 py-0.5 text-[10.5px] transition-colors"
+            style={{
+              borderColor: active
+                ? meta?.color ?? 'var(--sm-accent)'
+                : 'var(--sm-line)',
+              color: active ? (meta?.color ?? 'var(--sm-accent)') : 'var(--sm-ink-faint)',
+              background: active ? `${meta?.color}14` ?? 'var(--sm-accent-soft)' : 'transparent',
+            }}
+          >
+            {meta && (
+              <span
+                className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                style={{ background: meta.color }}
+              />
+            )}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <aside
       className="flex h-full min-h-0 flex-col"
@@ -137,6 +181,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
             节点库
           </h2>
           {searchBox}
+          {roleFilterBar}
         </div>
       )}
       {embedded && <div className="border-b px-2 py-1.5" style={{ borderColor: 'var(--sm-line)' }}>{searchBox}</div>}
@@ -166,16 +211,29 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
               </button>
               {!isCollapsed && (
                 <ul className="mt-1 space-y-1">
-                  {list.map((def) => (
+                  {list.map((def) => {
+                    const roleMeta = def.role ? NODE_ROLE_META[def.role] : null;
+                    return (
                     <li
                       key={def.typeId}
                       onPointerDown={(e) => beginDrag(def.typeId, def.name, e)}
                       onDoubleClick={() => addAtCenter(def.typeId)}
-                      title={`${def.description || def.name}\n拖入画布以添加节点（或双击直接添加）`}
+                      title={
+                        def.whenToUse
+                          ? `${def.description || def.name}\n\n何时使用：${def.whenToUse}\n拖入画布以添加节点（或双击直接添加）`
+                          : `${def.description || def.name}\n拖入画布以添加节点（或双击直接添加）`
+                      }
                       className="sm-palette-item cursor-grab select-none"
                     >
-                      <p className="text-[13px]" style={{ color: 'var(--sm-ink)' }}>
-                        {def.name}
+                      <p className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sm-ink)' }}>
+                        {roleMeta && (
+                          <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full"
+                            style={{ background: roleMeta.color }}
+                            title={`角色：${roleMeta.label}（${roleMeta.hint}）`}
+                          />
+                        )}
+                        <span className="truncate">{def.name}</span>
                       </p>
                       {def.description && (
                         <p className="mt-0.5 line-clamp-1 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -183,7 +241,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                         </p>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </section>

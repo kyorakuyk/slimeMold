@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Terminal, History, Variable, Eraser, Save } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, Terminal, History, Variable, Eraser, Save, Power } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { stopWorkflow } from '../engine/executor';
 
 type Tab = 'log' | 'history' | 'vars';
 
@@ -16,6 +17,7 @@ export default function StatusBar({
 }) {
   const logs = useWorkflowStore((s) => s.logs);
   const running = useWorkflowStore((s) => s.running);
+  const debugRun = useWorkflowStore((s) => s.debugRun);
   const clearLogs = useWorkflowStore((s) => s.clearLogs);
   const nodes = useWorkflowStore((s) => s.nodes);
   const variables = useWorkflowStore((s) => s.variables);
@@ -27,6 +29,12 @@ export default function StatusBar({
 
   const successCount = nodes.filter((n) => n.data.status === 'success').length;
   const errorCount = nodes.filter((n) => n.data.status === 'error').length;
+
+  /** 强制复位：abort + 自增代次 + 清 running/进度/节点状态，让 UI 立刻恢复可启动状态 */
+  const handleForceReset = useCallback(() => {
+    stopWorkflow(); // abort signal + currentRunId++
+    useWorkflowStore.getState().resetStatuses();
+  }, []);
 
   // 画布变更后防抖标记「已自动保存」（persist 已同步落盘，这里只更新 UI 时间戳）
   useEffect(() => {
@@ -87,6 +95,33 @@ export default function StatusBar({
             </span>
           ) : (
             <span>就绪</span>
+          )}
+          <span
+            className="flex items-center gap-1 font-mono"
+            style={{
+              color:
+                debugRun.current > debugRun.active && debugRun.active !== 0
+                  ? 'var(--sm-err)'
+                  : 'var(--sm-ink-faint)',
+            }}
+            title={
+              debugRun.current > debugRun.active && debugRun.active !== 0
+                ? '有「旧运行协程」已过期但仍未退出（卡在某节点），刷新键已生效但协程需等节点返回后退出'
+                : '运行代次：current=最新代次 active=当前有效运行；二者相等或 active=0 表示无残留协程'
+            }
+          >
+            runId {debugRun.current}/{debugRun.active}
+            {debugRun.current > debugRun.active && debugRun.active !== 0 ? ' ⚠残留' : ''}
+          </span>
+          {debugRun.current > debugRun.active && debugRun.active !== 0 && (
+            <button
+              className="flex cursor-pointer items-center gap-0.5 rounded px-1.5 text-[10px] transition-colors hover:bg-red-500/15"
+              style={{ color: 'var(--sm-err)' }}
+              title="强制停止并复位运行状态（abort signal + 清 running + 重置所有节点状态）；旧协程将在节点返回后自动静默退出"
+              onClick={handleForceReset}
+            >
+              <Power size={11} /> 强制复位
+            </button>
           )}
           <span>
             节点 {nodes.length} · 成功{' '}

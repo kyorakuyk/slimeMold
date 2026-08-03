@@ -60,6 +60,8 @@ interface ViewState {
   focusedSubgraphId: string | null;
   /** 当前在右侧 Inspector 中查看的资产 id（null=查看节点信息） */
   inspectAssetId: string | null;
+  /** 调试模式：开启后画布节点卡片才显示「重跑子图 / 重跑到此节点」等调试动作 */
+  debugMode: boolean;
   toggleGrid: () => void;
   toggleMinimap: () => void;
   setInteractionMode: (mode: 'move' | 'select' | 'click') => void;
@@ -70,6 +72,7 @@ interface ViewState {
   setSplitWfId: (id: string) => void;
   setFocusedSubgraph: (id: string | null) => void;
   setInspectAsset: (id: string | null) => void;
+  toggleDebug: () => void;
   setTheme: (t: ThemeMode) => void;
   /** 当前实际生效的主题（system 时按系统偏好解析为 dark/light） */
   effectiveTheme: () => 'dark' | 'light';
@@ -89,6 +92,7 @@ export const useViewStore = create<ViewState>()(
       splitWfId: '',
       focusedSubgraphId: null,
       inspectAssetId: null,
+      debugMode: false,
       globalProxyUrl: '',
       toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
       toggleMinimap: () => set((s) => ({ showMinimap: !s.showMinimap })),
@@ -100,6 +104,7 @@ export const useViewStore = create<ViewState>()(
       setSplitWfId: (id) => set({ splitWfId: id }),
       setFocusedSubgraph: (id) => set({ focusedSubgraphId: id }),
       setInspectAsset: (id) => set({ inspectAssetId: id }),
+      toggleDebug: () => set((s) => ({ debugMode: !s.debugMode })),
       setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
       setTheme: (t) => {
         applyTheme(t);

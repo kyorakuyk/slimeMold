@@ -265,6 +265,28 @@ export type NodeExecuteFn = (
   ctx: ExecContext,
 ) => Promise<Record<string, unknown>>;
 
+/** 节点角色分类（对齐多 Agent 编排语义：编排者 / 探索者 / 执行者 / 校验者 / 观察者 / 输出）。
+ * 用于节点面板按角色筛选与场景推荐，帮助用户快速定位「这一步该用哪类节点」。 */
+export type NodeRole =
+  | 'orchestrator' // 编排 / 调度 / 控制流（flow.*、dispatch.*、coord.*）
+  | 'explorer' // 探索 / 取数 / 检索（tool.http、image.load）
+  | 'worker' // 执行者 / 生产内容（agent.chat、image.generate、tool.writeFile）
+  | 'verifier' // 校验 / 断言 / 审计（verify.assert、auditor.*）
+  | 'observer' // 观察 / 汇总 / 预览（output.*、image.preview）
+  | 'io'; // 输入 / 输出端点（input.*、output.text 等）
+
+export const NODE_ROLE_META: Record<
+  NodeRole,
+  { label: string; color: string; hint: string }
+> = {
+  orchestrator: { label: '编排', color: '#8b5cf6', hint: '调度流程、控制分支与循环' },
+  explorer: { label: '探索', color: '#0ea5e9', hint: '抓取外部数据、检索与读取' },
+  worker: { label: '执行', color: '#2e9e5b', hint: '调用 LLM / 生成内容 / 落盘' },
+  verifier: { label: '校验', color: '#f59e0b', hint: '质量闸门、断言与成本审计' },
+  observer: { label: '观察', color: '#64748b', hint: '汇总结果、预览与展示' },
+  io: { label: '端点', color: '#9ca3af', hint: '工作流的输入与输出边界' },
+};
+
 export interface NodeDefinition {
   typeId: string;
   name: string;
@@ -278,6 +300,10 @@ export interface NodeDefinition {
   pluginId?: string;
   /** 导入工作流时未找到类型的占位标记 */
   missing?: boolean;
+  /** 节点角色分类（用于面板筛选与场景推荐） */
+  role?: NodeRole;
+  /** 使用建议：何时该用这个节点（显示在面板 tooltip / 角色筛选说明） */
+  whenToUse?: string;
 }
 
 /* ---------- 画布数据 ---------- */
