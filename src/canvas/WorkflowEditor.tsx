@@ -19,7 +19,7 @@ import {
   type FinalConnectionState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2 } from 'lucide-react';
+import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2, AlignStartVertical, AlignEndVertical, AlignCenterVertical, AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal, AlignHorizontalSpaceBetween, AlignVerticalSpaceBetween } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
@@ -30,7 +30,7 @@ import SubgraphEditor from './SubgraphEditor';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus } from '../types';
+import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus, type EdgeKind } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { NamePrompt } from '../components/NamePrompt';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
@@ -71,6 +71,8 @@ export default function WorkflowEditor({
   const storeOnConnect = useWorkflowStore((s) => s.onConnect);
   const addNode = useWorkflowStore((s) => s.addNode);
   const setSelected = useWorkflowStore((s) => s.setSelected);
+  const alignSelected = useWorkflowStore((s) => s.alignSelected);
+  const distributeSelected = useWorkflowStore((s) => s.distributeSelected);
 
   // 分栏工作流：以本地状态维护其图，编辑时写回 workflows 字典
   const [splitNodes, setSplitNodes] = useState<FlowNode[]>([]);
@@ -178,6 +180,53 @@ export default function WorkflowEditor({
           addEdge({ ...conn, id: `e-${conn.source}-${conn.target}-${Date.now()}`, type: 'kind', data: { kind: 'data' } }, es),
         )
     : storeOnConnect;
+
+  // 重新连线：拖拽已有连线的一端到新端口，更新该连线端点（带环路/类型校验）
+  const onReconnect = useCallback(
+    (oldEdge: FlowEdge, conn: Connection) => {
+      const st = useWorkflowStore.getState();
+      const newSource = conn.source ?? oldEdge.source;
+      const newTarget = conn.target ?? oldEdge.target;
+      const newSH = conn.sourceHandle ?? oldEdge.sourceHandle;
+      const newTH = conn.targetHandle ?? oldEdge.targetHandle;
+
+      // 环路校验（与 onConnect 一致，忽略 control 语义）
+      if (wouldCreateCycle(newSource, newTarget, st.edges.filter((e) => e.id !== oldEdge.id))) {
+        st.addLog('error', '重新连线会形成环路，已取消');
+        return;
+      }
+      // 端口类型校验
+      const srcNode = nodes.find((n) => n.id === newSource);
+      const tgtNode = nodes.find((n) => n.id === newTarget);
+      const sgs = st.subgraphs;
+      const defs = st.defs;
+      const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, sgs);
+      const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, sgs);
+      const srcPort = srcDef.outputs.find((o) => o.id === newSH);
+      const tgtPort = tgtDef.inputs.find((i) => i.id === newTH);
+      if (!arePortsCompatible(srcPort?.type, tgtPort?.type)) {
+        st.addLog('error', '重新连线失败：端口类型不兼容');
+        return;
+      }
+      const kind = (srcPort?.flow as EdgeKind | undefined) ?? (oldEdge.data?.kind as EdgeKind) ?? 'data';
+      const updated: FlowEdge = {
+        ...oldEdge,
+        source: newSource,
+        target: newTarget,
+        sourceHandle: newSH ?? undefined,
+        targetHandle: newTH ?? undefined,
+        data: { ...(oldEdge.data ?? {}), kind },
+      };
+      if (isSplit) {
+        setSplitEdges((es) => es.map((e) => (e.id === oldEdge.id ? updated : e)));
+      } else {
+        st.pushHistory();
+        useWorkflowStore.setState({ edges: st.edges.map((e) => (e.id === oldEdge.id ? updated : e)) });
+        st.markDirty(newSource);
+      }
+    },
+    [isSplit, nodes, setSplitEdges],
+  );
 
   // 分栏编辑时，把最新图写回 store
   useEffect(() => {
@@ -557,6 +606,7 @@ export default function WorkflowEditor({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onReconnect={onReconnect}
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
         onNodeClick={handleNodeClick}
@@ -637,6 +687,22 @@ export default function WorkflowEditor({
             color="var(--sm-canvas-grid)"
           />
         )}
+        {/* 左上：对齐 / 分布工具条（ComfyUI 风格，对选中≥2节点生效） */}
+        <Panel position="top-left" className="sm-cv-panel">
+          <div className="sm-cv-modes sm-cv-modes-h" title="对齐与分布（先框选多个节点）">
+            <button className="sm-cv-btn" title="左对齐" onClick={() => alignSelected('left')}><AlignStartVertical size={15} /></button>
+            <button className="sm-cv-btn" title="水平居中" onClick={() => alignSelected('hcenter')}><AlignCenterVertical size={15} /></button>
+            <button className="sm-cv-btn" title="右对齐" onClick={() => alignSelected('right')}><AlignEndVertical size={15} /></button>
+            <span className="sm-cv-sep" />
+            <button className="sm-cv-btn" title="顶对齐" onClick={() => alignSelected('top')}><AlignStartHorizontal size={15} /></button>
+            <button className="sm-cv-btn" title="垂直居中" onClick={() => alignSelected('vcenter')}><AlignCenterHorizontal size={15} /></button>
+            <button className="sm-cv-btn" title="底对齐" onClick={() => alignSelected('bottom')}><AlignEndHorizontal size={15} /></button>
+            <span className="sm-cv-sep" />
+            <button className="sm-cv-btn" title="水平等距分布" onClick={() => distributeSelected('x')}><AlignHorizontalSpaceBetween size={15} /></button>
+            <button className="sm-cv-btn" title="垂直等距分布" onClick={() => distributeSelected('y')}><AlignVerticalSpaceBetween size={15} /></button>
+          </div>
+        </Panel>
+
         {/* 左下：鼠标模式切换 + 小地图开关（ComfyUI 风格） */}
         <Panel position="bottom-left" className="sm-cv-panel">
           <div className="sm-cv-modes">

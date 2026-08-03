@@ -10,6 +10,10 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     allowedHosts: true,
+    // 禁用 dev 服务器缓存，避免 Tauri WebView 命中旧模块（修复 TDZ/HMR 不刷新）
+    headers: {
+      'Cache-Control': 'no-store, max-age=0, must-revalidate',
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {

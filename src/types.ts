@@ -1,7 +1,7 @@
 import type { Node, Edge } from '@xyflow/react';
 
 /* ---------- 节点状态与协议 ---------- */
-export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped';
+export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
 export type Protocol = 'openai' | 'anthropic' | 'ollama';
 
 /* ---------- API 接入点（APIKEYS 分区集中管理的「网址 + 密钥」） ---------- */
@@ -343,6 +343,9 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   startedAt?: string | null;
   /** 最近一次运行中该节点自身的 token 用量；无 LLM 调用时缺失 */
   usage?: NodeUsageStat;
+  /** 调试开关：bypass=跳过执行、同名端口透传输入到输出；mute=完全屏蔽（不执行、输出为空） */
+  bypass?: boolean;
+  mute?: boolean;
 }
 
 export type FlowNode = Node<WorkflowNodeData>;

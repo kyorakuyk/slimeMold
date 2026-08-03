@@ -103,6 +103,11 @@ export interface RunOptions {
   /** 执行到这些节点为止（含），其下游不再执行（标记 skipped）。用于「重跑到此节点」 */
   stopAfterNodes?: string[];
   /**
+   * 单节点运行：仅 forceNodes 内的节点参与执行，且不汇聚任何上游输入（以空输入运行），
+   * 下游不执行。用于孤立调试单个节点。
+   */
+  isolated?: boolean;
+  /**
    * 失败续跑（L1 可靠执行）：仅重跑上一轮处于 error 状态的节点及其下游；
    * 其余 success/cached 节点复用既有结果不动。需配合 incremental 使用。
    */
@@ -193,6 +198,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
 
   const force = new Set(opts.forceNodes ?? []);
   const stopAfter = new Set(opts.stopAfterNodes ?? []);
+  const isolatedIds = opts.isolated ? new Set(opts.forceNodes ?? []) : undefined;
   // 失败续跑（L1）：把上一轮 error 节点及其全部下游标记为本次需执行集
   if (opts.retryFailed) {
     const errored = nodes.filter((n) => n.data.status === 'error').map((n) => n.id);
@@ -410,6 +416,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
                 opts.skipFailed,
                 !!opts.incremental,
                 myRun,
+                isolatedIds,
               );
             }
           })(),
@@ -664,6 +671,7 @@ async function executeNode(
   skipFailed?: boolean,
   isIncremental?: boolean,
   myRun?: number,
+  isolatedIds?: Set<string>,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -721,6 +729,32 @@ async function executeNode(
     return;
   }
 
+  // bypass / mute 调试开关（仿 ComfyUI 的 Ctrl+B / Ctrl+M）
+  if (node.data.bypass || node.data.mute) {
+    const bypassIn = edges.filter((e) => e.target === id);
+    const out: Record<string, unknown> = {};
+    if (node.data.bypass) {
+      // 同名端口透传：上游输入端口的值直接作为同 id 输出端口的值
+      for (const e of bypassIn) {
+        const inPort = def.inputs.find((i) => i.id === e.targetHandle);
+        if (!inPort) continue;
+        const outPort = def.outputs.find((o) => o.id === inPort.id);
+        if (!outPort) continue;
+        const upstreamOut = outputsMap.get(e.source);
+        out[outPort.id] = upstreamOut ? upstreamOut[e.sourceHandle ?? ''] : undefined;
+      }
+      outputsMap.set(id, out);
+      branchState.set(id, new Set(def.outputs.filter((o) => o.id in out).map((o) => o.id)));
+      setStatus(id, 'bypassed', { outputs: out, startedAt: null, durationMs: null });
+    } else {
+      // mute：不执行，输出置空
+      outputsMap.set(id, out);
+      branchState.set(id, new Set());
+      setStatus(id, 'muted', { startedAt: null, durationMs: null });
+    }
+    return;
+  }
+
   // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
   // 注意：全量运行（!isIncremental）时 dirtySet 为空、shouldRun 全部为 false，
   // 但全量运行意图是执行所有节点，因此只在增量模式才走此跳过路径。
@@ -764,7 +798,8 @@ async function executeNode(
 
   // 缓存命中判断：相同 类型+参数+上游输出 直接复用结果（forced 时已在 runWorkflow 内 strike）
   if (!forced) {
-    const upstreamOutputs = collectInputs(id, edges, outputsMap);
+    // 单节点运行（isolated）：不汇聚任何上游，强制以空输入参与缓存键计算
+    const upstreamOutputs = isolatedIds && isolatedIds.has(id) ? {} : collectInputs(id, edges, outputsMap);
     const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs);
     const cached = getCached(key);
     if (cached) {
@@ -997,6 +1032,19 @@ export async function runToNode(id: string): Promise<void> {
   if (store.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id] });
+}
+
+/**
+ * 单独运行一个节点：仅执行该节点本身，不汇聚上游、也不跑下游。
+ * 用于孤立调试单个节点（如单独重试一次 LLM 调用、查看其输出）。
+ * 输入为空对象，节点需能处理无输入的情形。
+ */
+export async function runSingleNode(id: string): Promise<void> {
+  const store = useWorkflowStore.getState();
+  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.running) return;
+  store.markDirty(id);
+  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], isolated: true });
 }
 
 /**

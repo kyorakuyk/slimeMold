@@ -1,11 +1,11 @@
 import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, ChevronDown, ChevronRight, ArrowRightLeft, VolumeX, Play, type LucideIcon } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { useViewStore } from '../../store/viewStore';
-import { retryNode, runToNode } from '../../engine/executor';
+import { retryNode, runToNode, runSingleNode } from '../../engine/executor';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 import NodeUsageBadge from './NodeUsageBadge';
 
@@ -18,13 +18,19 @@ function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
     error: 'bg-err',
     cached: 'bg-accent',
     skipped: 'bg-[#9aa0a6]',
+    bypassed: 'bg-[#c9a227]',
+    muted: 'bg-[#8a8a8a]',
   };
   const title =
     status === 'cached'
       ? '结果来自缓存（未实际执行）'
       : status === 'skipped'
         ? '因分支条件未命中而跳过（未执行）'
-        : error;
+        : status === 'bypassed'
+          ? 'bypass：跳过执行，输入已透传到输出'
+          : status === 'muted'
+            ? 'mute：已静音，不执行'
+            : error;
   return (
     <span
       title={title}
@@ -41,6 +47,10 @@ function StatusGlyph({ status }: { status: NodeStatus }) {
     return <Check size={12} className="text-white/90" strokeWidth={3} />;
   if (status === 'error')
     return <AlertTriangle size={12} className="text-white/90" />;
+  if (status === 'bypassed')
+    return <ArrowRightLeft size={12} className="text-white/90" />;
+  if (status === 'muted')
+    return <VolumeX size={12} className="text-white/90" />;
   return <StatusDot status={status} />;
 }
 
@@ -132,6 +142,8 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
       className={`sm-node ${selected ? 'selected' : ''} ${expanded ? 'is-expanded' : 'is-collapsed'}`}
       data-cat={def?.category}
       data-status={data.status ?? 'idle'}
+      data-bypass={data.bypass ? '1' : undefined}
+      data-mute={data.mute ? '1' : undefined}
       onDoubleClick={(e) => {
         e.stopPropagation();
         setExpanded((v) => !v);
@@ -149,6 +161,16 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         <span className="sm-node-title">{data.label}</span>
         {def?.pluginId && <span className="sm-node-tag">PLUGIN</span>}
         <span className="sm-node-cat">{def?.category}</span>
+        {data.bypass && (
+          <span className="sm-node-badge sm-badge-bypass" title="bypass：跳过执行，输入透传输出">
+            BYPASS
+          </span>
+        )}
+        {data.mute && (
+          <span className="sm-node-badge sm-badge-mute" title="mute：已静音，不执行">
+            MUTE
+          </span>
+        )}
         {data.durationMs != null &&
           (data.status === 'success' ||
             data.status === 'error' ||
@@ -317,6 +339,39 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
             title="只重跑到此节点为止，其下游不再执行（标记 skipped）"
           >
             <StepForward size={11} /> 重跑到此节点
+          </button>
+          <span className="sm-sep" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!running) void runSingleNode(id);
+            }}
+            disabled={running}
+            title="单独运行此节点（不执行上游/下游，用于孤立调试）"
+          >
+            <Play size={11} /> 单独运行
+          </button>
+          <span className="sm-sep" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useWorkflowStore.getState().toggleNodeBypass(id);
+            }}
+            className={data.bypass ? 'is-active' : ''}
+            title="bypass：跳过执行，同名端口输入透传输出（再次点击取消）"
+          >
+            <ArrowRightLeft size={11} /> Bypass
+          </button>
+          <span className="sm-sep" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useWorkflowStore.getState().toggleNodeMute(id);
+            }}
+            className={data.mute ? 'is-active' : ''}
+            title="mute：完全屏蔽该节点（不执行，输出为空）"
+          >
+            <VolumeX size={11} /> Mute
           </button>
         </div>
       )}

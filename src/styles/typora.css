@@ -223,6 +223,32 @@ body {
   flex-direction: column;
   gap: 6px;
 }
+/* 左上：对齐工具条（横向排布） */
+.sm-cv-modes-h {
+  flex-direction: row;
+  align-items: center;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--sm-bg-soft);
+  border: 1px solid var(--sm-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.sm-cv-modes-h .sm-cv-btn {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  width: 28px;
+  height: 28px;
+}
+.sm-cv-modes-h .sm-cv-btn:hover {
+  background: var(--sm-bg-deep);
+}
+.sm-cv-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--sm-line);
+}
 /* 右下：缩放组 */
 .sm-cv-zoom {
   display: flex;
@@ -836,6 +862,30 @@ textarea.sm-input {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
+}
+/* bypass / mute 徽标与节点边框着色（仿 ComfyUI 的节点调试态） */
+.sm-node-badge.sm-badge-bypass {
+  color: #f4d35e;
+  border-color: color-mix(in srgb, #c9a227 60%, transparent);
+  background: color-mix(in srgb, #c9a227 22%, transparent);
+}
+.sm-node-badge.sm-badge-mute {
+  color: #d0d0d0;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+}
+.sm-node[data-bypass] {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #c9a227 70%, transparent);
+}
+.sm-node[data-mute] {
+  border-color: #8a8a8a;
+  opacity: 0.72;
+}
+/* 调试操作区中处于激活态的开关按钮（bypass / mute） */
+.sm-node-actions button.is-active {
+  background: color-mix(in srgb, var(--sm-accent) 26%, transparent);
+  color: var(--sm-accent-soft);
 }
 
 /* 节点底部 token 用量条 + 悬停明细浮层 */

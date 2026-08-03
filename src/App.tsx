@@ -242,6 +242,33 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         useWorkflowStore.getState().newWorkflowInProject();
+      } else if (mod && e.key.toLowerCase() === 'c') {
+        if (inEditable) return;
+        e.preventDefault();
+        useWorkflowStore.getState().copySelection();
+      } else if (mod && e.key.toLowerCase() === 'v') {
+        if (inEditable) return;
+        e.preventDefault();
+        useWorkflowStore.getState().pasteClipboard();
+      } else if (mod && e.key.toLowerCase() === 'd') {
+        if (inEditable) return;
+        e.preventDefault();
+        e.stopPropagation();
+        useWorkflowStore.getState().duplicateSelection();
+      } else if (mod && e.key.toLowerCase() === 'a') {
+        if (inEditable) return;
+        e.preventDefault();
+        useWorkflowStore.getState().selectAll();
+      } else if (mod && e.key.toLowerCase() === 'b') {
+        if (inEditable) return;
+        e.preventDefault();
+        const st = useWorkflowStore.getState();
+        st.nodes.filter((n) => n.selected).forEach((n) => st.toggleNodeBypass(n.id));
+      } else if (mod && e.key.toLowerCase() === 'm') {
+        if (inEditable) return;
+        e.preventDefault();
+        const st = useWorkflowStore.getState();
+        st.nodes.filter((n) => n.selected).forEach((n) => st.toggleNodeMute(n.id));
       } else if (mod && e.key.toLowerCase() === 'g') {
         // Ctrl+G 把选中节点编为一组；Ctrl+Shift+G 打包成可复用子图
         e.preventDefault();

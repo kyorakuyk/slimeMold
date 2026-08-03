@@ -209,6 +209,12 @@ interface WorkflowState {
   clearGraph: () => void;
   updateNodeParams: (id: string, patch: Record<string, unknown>, wfId?: string) => void;
   setNodeLabel: (id: string, label: string, wfId?: string) => void;
+  /** 切换节点的 bypass 开关（跳过执行、同名端口透传） */
+  toggleNodeBypass: (id: string, wfId?: string) => void;
+  /** 切换节点的 mute 开关（完全屏蔽、不执行） */
+  toggleNodeMute: (id: string, wfId?: string) => void;
+  alignSelected: (mode: 'left' | 'right' | 'top' | 'bottom' | 'hcenter' | 'vcenter') => void;
+  distributeSelected: (axis: 'x' | 'y') => void;
   setNodeStatus: (
     id: string,
     status: NodeStatus,
@@ -334,6 +340,18 @@ interface WorkflowState {
   redo: () => void;
   /** 清空历史栈（如打开/新建项目后） */
   clearHistory: () => void;
+
+  /* ---- 复制 / 粘贴 / 克隆 / 全选 ---- */
+  /** 剪贴板：复制的图片段（仅含选中节点及其内部连线），不持久化 */
+  clipboard: GraphSnapshot | null;
+  /** 复制当前选中节点（含内部连线）到剪贴板 */
+  copySelection: () => void;
+  /** 粘贴剪贴板内容到画布（新 id + 偏移），可撤销 */
+  pasteClipboard: () => void;
+  /** 克隆选中（复制后立即粘贴，Ctrl+D） */
+  duplicateSelection: () => void;
+  /** 全选所有节点（Ctrl+A） */
+  selectAll: () => void;
 }
 
 /** 组框预设配色（创建时轮换取用） */
@@ -508,6 +526,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       maxHistory: 100,
       past: [],
       future: [],
+      clipboard: null,
       running: false,
       runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
       costLog: [],
@@ -652,10 +671,38 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       deleteSelected: () => {
-        const id = get().selectedNodeId;
-        if (!id) return;
         get().pushHistory();
-        get().removeNode(id, get().focusWfId);
+        const wfId = get().focusWfId;
+        // 拆分视图：作用于指定工作流（分栏内选中）
+        if (wfId && wfId !== get().activeWfId) {
+          const wf = get().workflows[wfId];
+          if (!wf) return;
+          const delNodes = new Set((wf.nodes ?? []).filter((n) => n.selected).map((n) => n.id));
+          if (get().selectedNodeId) delNodes.add(get().selectedNodeId);
+          if (delNodes.size === 0) return;
+          const nodes = (wf.nodes ?? []).filter((n) => !delNodes.has(n.id));
+          const edges = (wf.edges ?? []).filter(
+            (e) => !delNodes.has(e.source) && !delNodes.has(e.target) && !e.selected,
+          );
+          set({
+            workflows: { ...get().workflows, [wfId]: { ...wf, nodes, edges } },
+            selectedNodeId: delNodes.has(get().selectedNodeId ?? '') ? null : get().selectedNodeId,
+          });
+          return;
+        }
+        // 主工作流：删除所有被 React Flow 选中的节点与连线，以及 selectedNodeId 指向节点
+        const delNodes = new Set(
+          get().nodes.filter((n) => n.selected).map((n) => n.id),
+        );
+        if (get().selectedNodeId) delNodes.add(get().selectedNodeId);
+        if (delNodes.size === 0 && !get().edges.some((e) => e.selected)) return;
+        set({
+          nodes: get().nodes.filter((n) => !delNodes.has(n.id)),
+          edges: get().edges.filter(
+            (e) => !delNodes.has(e.source) && !delNodes.has(e.target) && !e.selected,
+          ),
+          selectedNodeId: delNodes.has(get().selectedNodeId ?? '') ? null : get().selectedNodeId,
+        });
       },
 
       clearGraph: () => {
@@ -698,6 +745,99 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!wf) return;
         const nodes = (wf.nodes ?? []).map((n) => (n.id === id ? { ...n, label } : n));
         set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
+      },
+
+      toggleNodeBypass: (id, wfId) => {
+        const flip = (n: FlowNode) =>
+          n.id === id ? { ...n, data: { ...n.data, bypass: !n.data.bypass, mute: false } } : n;
+        if (!wfId || wfId === get().activeWfId) {
+          set({ nodes: get().nodes.map(flip) });
+          return;
+        }
+        const wf = get().workflows[wfId];
+        if (!wf) return;
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes ?? []).map(flip) } } });
+      },
+
+      toggleNodeMute: (id, wfId) => {
+        const flip = (n: FlowNode) =>
+          n.id === id ? { ...n, data: { ...n.data, mute: !n.data.mute, bypass: false } } : n;
+        if (!wfId || wfId === get().activeWfId) {
+          set({ nodes: get().nodes.map(flip) });
+          return;
+        }
+        const wf = get().workflows[wfId];
+        if (!wf) return;
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes ?? []).map(flip) } } });
+      },
+
+      /** 对齐 / 分布：对当前选中的多个节点生效（少于 2 个不操作），支持拆分视图 */
+      alignSelected: (mode) => {
+        const apply = (nodes: FlowNode[]): FlowNode[] => {
+          const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
+          if (sel.length < 2) return nodes;
+          const minX = Math.min(...sel.map((n) => n.position.x));
+          const maxX = Math.max(...sel.map((n) => n.position.x));
+          const minY = Math.min(...sel.map((n) => n.position.y));
+          const maxY = Math.max(...sel.map((n) => n.position.y));
+          const cx = (minX + maxX) / 2;
+          const cy = (minY + maxY) / 2;
+          const mapBy = (n: FlowNode): [number, number] => {
+            switch (mode) {
+              case 'left': return [minX, n.position.y];
+              case 'right': return [maxX, n.position.y];
+              case 'top': return [n.position.x, minY];
+              case 'bottom': return [n.position.x, maxY];
+              case 'hcenter': return [cx, n.position.y];
+              case 'vcenter': return [n.position.x, cy];
+              default: return [n.position.x, n.position.y];
+            }
+          };
+          return nodes.map((n) => {
+            if (!sel.includes(n)) return n;
+            const [x, y] = mapBy(n);
+            return { ...n, position: { x, y } };
+          });
+        };
+        const wfId = get().focusWfId;
+        if (wfId && wfId !== get().activeWfId) {
+          const wf = get().workflows[wfId];
+          if (!wf) return;
+          get().pushHistory();
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes ?? []) } } });
+          return;
+        }
+        get().pushHistory();
+        set({ nodes: apply(get().nodes) });
+      },
+
+      distributeSelected: (axis) => {
+        const apply = (nodes: FlowNode[]): FlowNode[] => {
+          const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
+          if (sel.length < 3) return nodes;
+          const sorted = [...sel].sort((a, b) =>
+            axis === 'x' ? a.position.x - b.position.x : a.position.y - b.position.y,
+          );
+          const first = sorted[0].position[axis];
+          const last = sorted[sorted.length - 1].position[axis];
+          const step = (last - first) / (sorted.length - 1);
+          const targets = new Map(sorted.map((n, i) => [n.id, first + step * i]));
+          return nodes.map((n) => {
+            if (!targets.has(n.id)) return n;
+            const v = targets.get(n.id)!;
+            return { ...n, position: { ...n.position, [axis]: v } };
+          });
+        };
+        const wfId = get().focusWfId;
+        if (wfId && wfId !== get().activeWfId) {
+          const wf = get().workflows[wfId];
+          if (!wf) return;
+          get().pushHistory();
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes ?? []) } } });
+          return;
+        }
+        get().pushHistory();
+        set({ nodes: apply(get().nodes) });
       },
 
       setNodeStatus: (id, status, patch) =>
@@ -910,6 +1050,52 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
       clearHistory: () => set({ past: [], future: [] }),
+
+      /* ---- 复制 / 粘贴 / 克隆 / 全选 ---- */
+      copySelection: () => {
+        const { nodes, edges } = get();
+        const selIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+        if (selIds.size === 0) return;
+        const selNodes = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n, data: { ...n.data, status: undefined, error: undefined, durationMs: undefined, cached: undefined } }));
+        const selEdges = edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
+        set({ clipboard: { nodes: selNodes, edges: [...selEdges] } });
+        get().addLog('info', `已复制 ${selIds.size} 个节点到剪贴板`);
+      },
+      pasteClipboard: () => {
+        const clip = get().clipboard;
+        if (!clip || clip.nodes.length === 0) return;
+        get().pushHistory();
+        const offset = 40;
+        const idMap = new Map<string, string>();
+        const newNodes: FlowNode[] = clip.nodes.map((n) => {
+          const newId = crypto.randomUUID();
+          idMap.set(n.id, newId);
+          return {
+            ...n,
+            id: newId,
+            position: { x: n.position.x + offset, y: n.position.y + offset },
+            selected: true,
+          };
+        });
+        const newEdges: FlowEdge[] = clip.edges.map((e) => ({
+          ...e,
+          id: crypto.randomUUID(),
+          source: idMap.get(e.source) ?? e.source,
+          target: idMap.get(e.target) ?? e.target,
+        }));
+        // 取消其它节点的选中，仅选中粘贴进来的节点
+        const deselected = get().nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
+        set({
+          nodes: [...deselected, ...newNodes],
+          edges: [...get().edges, ...newEdges],
+          selectedNodeId: newNodes[0]?.id ?? null,
+        });
+      },
+      duplicateSelection: () => {
+        get().copySelection();
+        get().pasteClipboard();
+      },
+      selectAll: () => set({ nodes: get().nodes.map((n) => ({ ...n, selected: true })) }),
 
       /* ---- 项目层方法实现 ---- */
 
