@@ -180,6 +180,8 @@ interface WorkflowState {
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
   onConnect: (conn: Connection) => void;
+  /** 以函数式更新替换边集合（执行引擎写回 task 连线 scope 时调用） */
+  setEdges: (updater: (edges: FlowEdge[]) => FlowEdge[]) => void;
 
   addNode: (typeId: string, position: { x: number; y: number }) => void;
   removeNode: (id: string, wfId?: string) => void;
@@ -357,6 +359,7 @@ function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
     target: e.target,
     targetHandle: e.targetHandle ?? null,
     kind: e.data?.kind ?? 'data',
+    scope: e.data?.scope,
   };
 }
 
@@ -395,6 +398,7 @@ function serializeCurrent(
       target: e.target,
       targetHandle: e.targetHandle ?? null,
       kind: e.data?.kind ?? 'data',
+      scope: e.data?.scope,
     })),
     agents: s.agents,
     roles: s.roles,
@@ -510,6 +514,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
       onEdgesChange: (changes) =>
         set({ edges: applyEdgeChanges(changes, get().edges) }),
+
+      setEdges: (updater) => set({ edges: updater(get().edges) }),
 
       onConnect: (conn) => {
         if (!conn.source || !conn.target) return;
@@ -1005,6 +1011,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             target: e.target,
             targetHandle: e.targetHandle ?? null,
             kind: e.data?.kind ?? 'data',
+            scope: e.data?.scope,
           })),
           agents: s.agents,
           roles: s.roles,
@@ -1616,6 +1623,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             target: e.target,
             targetHandle: e.targetHandle ?? null,
             kind: e.data?.kind ?? 'data',
+            scope: e.data?.scope,
           }));
         const now = new Date().toISOString();
         const sg: SubgraphDef = {

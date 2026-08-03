@@ -1013,7 +1013,7 @@ export const nodeDispatch: NodeDefinition = {
     { key: 'label3', label: '任务3 标签(可选)', type: 'text', default: '' },
     { key: 'label4', label: '任务4 标签(可选)', type: 'text', default: '' },
   ],
-  async execute(inputs, params) {
+  async execute(inputs, params, ctx) {
     const raw = Array.isArray(inputs.tasks) ? inputs.tasks : [];
     const tasks: TaskItem[] = raw.map((t, i) => {
       if (typeof t === 'object' && t !== null && 'payload' in t) {
@@ -1029,6 +1029,18 @@ export const nodeDispatch: NodeDefinition = {
       return t;
     };
     const out: Record<string, unknown> = {};
+    const portTasks: { handle: string; task?: TaskItem }[] = [
+      { handle: 'task1', task: tasks[0] },
+      { handle: 'task2', task: tasks[1] },
+      { handle: 'task3', task: tasks[2] },
+      { handle: 'task4', task: tasks[3] },
+    ];
+    // 把每个任务端口声明的影响域(scope)写回对应的 task 连线，供下游「冲突协调者」读取
+    for (const { handle, task } of portTasks) {
+      if (task && ctx.writeOutEdgeScope) {
+        ctx.writeOutEdgeScope(handle, Array.isArray(task.scope) ? task.scope : []);
+      }
+    }
     out.task1 = tasks[0] ? pick(0, tasks[0]) : undefined;
     out.task2 = tasks[1] ? pick(1, tasks[1]) : undefined;
     out.task3 = tasks[2] ? pick(2, tasks[2]) : undefined;
@@ -1238,7 +1250,7 @@ export const nodeResolver: NodeDefinition = {
   name: '冲突协调者',
   category: '协调',
   description:
-    '汇聚多路并行任务的输出，检测 scope（影响域）交集冲突。无冲突走「已合并」，有冲突走「冲突」端口输出冲突清单。每个上游任务输出建议携带 scope 字段（string[]）。',
+    '汇聚多路并行任务的输出，检测 scope（影响域）交集冲突。无冲突走「已合并」，有冲突走「冲突」端口输出冲突清单，并额外从「建议串行顺序」端口给出按争用 scope 分组的串行化建议（供人工/后续执行引擎消解冲突）。每个上游任务输出建议携带 scope 字段（string[]）。',
   inputs: [
     { id: 'in1', label: '任务线1', type: 'any' },
     { id: 'in2', label: '任务线2', type: 'any' },
@@ -1248,6 +1260,7 @@ export const nodeResolver: NodeDefinition = {
   outputs: [
     { id: 'merged', label: '已合并', type: 'list' },
     { id: 'conflicts', label: '冲突', type: 'list' },
+    { id: 'serialOrder', label: '建议串行顺序', type: 'list' },
   ],
   params: [
     {
@@ -1285,18 +1298,43 @@ export const nodeResolver: NodeDefinition = {
       }
     }
 
+    // 把争用同一 scope 的任务线聚成「串行组」，给出建议执行顺序
+    const serialOrder: Array<{ scope: string[]; order: string[] }> = [];
     if (conflicts.length > 0) {
+      const groups: Array<{ scope: string[]; members: Set<string> }> = [];
+      for (const c of conflicts) {
+        const hit = groups.find((g) => c.overlap.some((o) => g.scope.includes(o)));
+        if (hit) {
+          hit.scope = Array.from(new Set([...hit.scope, ...c.overlap]));
+          hit.members.add(c.a);
+          hit.members.add(c.b);
+        } else {
+          groups.push({ scope: [...c.overlap], members: new Set([c.a, c.b]) });
+        }
+      }
+      for (const g of groups) {
+        // 按 entries 出现先后给出建议串行顺序
+        const order = entries.filter((e) => g.members.has(e.label)).map((e) => e.label);
+        serialOrder.push({ scope: g.scope, order });
+      }
+    }
+
+    if (conflicts.length > 0) {
+      const detail = conflicts
+        .map((c) => `- ${c.a} 与 ${c.b} 争用 ${c.overlap.join(', ')}`)
+        .join('\n');
       ctx.logger.error(`检测到 ${conflicts.length} 处任务冲突：${conflicts.map((c) => `${c.a}↔${c.b}`).join(', ')}`);
       if (params.mode === 'block') {
-        throw new Error(
-          `冲突协调者阻断执行：\n${conflicts
-            .map((c) => `- ${c.a} 与 ${c.b} 争用 ${c.overlap.join(', ')}`)
-            .join('\n')}`,
-        );
+        const advise = serialOrder.length
+          ? `\n建议串行化顺序：\n${serialOrder
+              .map((g) => `  争用[${g.scope.join(', ')}]：${g.order.join(' → ')}`)
+              .join('\n')}`
+          : '';
+        throw new Error(`冲突协调者阻断执行：\n${detail}${advise}`);
       }
-      return { merged: [], conflicts };
+      return { merged: [], conflicts, serialOrder };
     }
-    return { merged: present, conflicts: [] };
+    return { merged: present, conflicts: [], serialOrder: [] };
   },
 };
 

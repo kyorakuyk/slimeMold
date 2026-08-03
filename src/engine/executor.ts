@@ -802,6 +802,16 @@ async function executeNode(
       return [...byId.values()] as never;
     })(),
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
+    // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）
+    writeOutEdgeScope: (handle, scope) => {
+      useWorkflowStore.getState().setEdges((prev) =>
+        prev.map((e) =>
+          e.source === id && (e.sourceHandle ?? null) === (handle ?? null)
+            ? { ...e, data: { ...e.data, kind: e.data?.kind ?? 'task', scope } }
+            : e,
+        ),
+      );
+    },
   };
 
   // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，

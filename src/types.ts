@@ -257,6 +257,9 @@ export interface ExecContext {
   assets: AssetMeta[];
   /** 向当前工作流追加一条资产记录（图片保存节点用） */
   addAsset(meta: AssetMeta): void;
+  /** 执行时把当前节点某输出端口的影响域(scope)写回对应的 task 连线，
+   * 供下游「冲突协调者」与执行引擎读取。仅对 flow:'task' 端口有意义，未提供则不写回。 */
+  writeOutEdgeScope?(handle: string, scope: string[]): void;
 }
 
 export type NodeExecuteFn = (
@@ -363,6 +366,8 @@ export interface WorkflowFileEdge {
   targetHandle: string | null;
   /** 连线语义（data/task/control），缺省 'data'，向后兼容旧工作流文件 */
   kind?: EdgeKind;
+  /** task 连线的派发影响域声明（与 FlowEdgeData.scope 对应），供「冲突协调者」检测并发冲突 */
+  scope?: string[];
 }
 
 export interface WorkflowFile {

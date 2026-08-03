@@ -382,4 +382,65 @@
 
 ---
 
-*最后更新：2026-08-03*
+#### ✅ 步骤 7：dispatch.plan 规划节点 + 调试模式 + 体验修复（已完成，2026-08-04）
+- **`src/nodes/builtin.ts`**：
+  - 新增 **`dispatch.plan`（规划/编排）** 节点（分类「派发」，角色 `orchestrator`）：
+    - 输入 `goal`，输出 `plan`(计划书) / `tasks`(任务清单 TaskItem[]) / `summary`(摘要)。
+    - 参数：`agentId`(绑定规划智能体) / `roleId` / `modelOverride` / `format`(tasks|outline|free) / `simulate`(离线模拟)。
+    - 真实模式调 LLM 生成计划并用 ```json``` 围栏解析任务数组；`simulate: on` 时不调 LLM、回显链路（含流式 `setPartial`），便于无 Key 验证。
+    - 注册进 `builtinDefs`（位于 `dispatch.split` 前）。
+- **`src/store/viewStore.ts`**：
+  - 新增 `debugMode: boolean`（默认 false）+ `toggleDebug()`，随视图偏好持久化；临时态 `focusedSubgraphId` 仍不持久化。
+- **`src/components/TopBar.tsx`**：
+  - 运行按钮左侧新增 **🐛 debug 切换按钮**（lucide `Bug`），激活态高亮（accent + 浅底）；点开后在节点卡片显示调试动作。
+- **`src/canvas/nodes/BaseNode.tsx`**：
+  - 「重跑子图」(`retryNode`) /「重跑到此节点」(`runToNode`) 动作区改为**仅 `debugMode` 开启时**渲染（响应式 `useViewStore` 订阅）。
+- **`src/components/Inspector.tsx`**：
+  - 「最近输出」文本框硬编码 `bg-white` 改为 `bg-[var(--sm-bg)]`，跟随窗口深浅主题（边框/文字本就用主题变量）。
+- **`src/components/NodePalette.tsx`**（**P0 卡死修复**）：
+  - 修复 `NODE_ROLE_META` 误用 `import type` 被编译擦除 → 运行时 `ReferenceError` → ErrorBoundary 无限重建死循环（点开节点库即卡死）。改为独立 `import { NODE_ROLE_META }`。
+- **`src/components/TemplateSuggestions.tsx`**（新增）：打开节点库时渲染的模板建议面板，已加 try/catch 防御旧 `runHistory` 数据。
+- **文档**：`USAGE.md` 新增 §7「规划节点与调试模式」+ 快捷键表补充；`README.md` 功能列表补充规划/派发与调试模式。
+- **示例**：`examples/test-dispatch-plan.workflow.json`（input.text → dispatch.plan → 三个 output.text），headless 已验证 5/5 节点跑通（模拟模式）。
+
+**验证**：`npm run headless` 跑通测试工作流；GUI 实测运行、主题跟随、debug 模式显隐均正常（用户已确认）。
+
+**框架边界（本轮刻意未做）**：
+- 真实 LLM 规划输出格式校验仅做 ```json``` 围栏兜底，未做严格 schema 校验。
+- `dispatch.plan.tasks` 到 `dispatch.split` 的整条「规划→派发」闭环未做端到端示例（仅单节点验证）。
+
+#### ✅ 步骤 8：Dispatcher 写回 scope + Resolver 建议串行顺序（已完成，2026-08-04）
+> 对应 TODO「三、其他潜在待做」与步骤 3 收尾里点名的「Dispatcher 写回 scope」「Resolver 真重排」。
+
+**阶段 A：打通 scope 数据通路（Dispatcher 写回 task 边 scope）**
+- **`src/types.ts`**：
+  - `ExecContext` 新增 `writeOutEdgeScope?(handle, scope)`：节点执行时把某输出端口的影响域写回对应 task 连线。
+  - `WorkflowFileEdge` 新增 `scope?: string[]`（与 `FlowEdgeData.scope` 对应）。
+- **`src/engine/executor.ts`**：`ctx` 注入 `writeOutEdgeScope`，按 `source + sourceHandle` 匹配，把 scope 写回该 task 边的 `data.scope`（经 `useWorkflowStore.setEdges`）。
+- **`src/store/workflowStore.ts`**：
+  - 新增 `setEdges(updater)` action（函数式更新）。
+  - 4 处 edge 序列化（`storedEdgeOf` / `serializeCurrent` / `loadGraph` 收纳 / `updateSubgraph` 收纳）补 `scope: e.data?.scope`。
+- **`src/nodes/builtin.ts`**：`dispatch.split.execute` 改为带 `ctx`，对每个 task 端口（task1~task4）调 `ctx.writeOutEdgeScope(handle, task.scope ?? [])`，把任务影响域标注到 task 连线上。
+- **`src/io/workflowIO.ts`**：导出序列化补 `scope`，导入反序列化读回 `scope` 到边 `data`。
+- **验证**：直接调 `nodeDispatch.execute` + 捕获 `ctx.writeOutEdgeScope` 调用，确认 task1→["fileA.ts"]、task2→["fileA.ts"]、task3→["fileB.ts"]、task4→[] 正确按端口写回。headless 因不复用全局 store 无法直接验证写回（预期内）。
+
+**阶段 B-lite：Resolver 建议串行顺序（冲突自动解集的轻量闭环）**
+- **`src/nodes/builtin.ts`** `coord.resolver`：
+  - 新增输出端口 `serialOrder`（建议串行顺序，list）。
+  - 检测到 scope 冲突后，按「争用同一 scope」聚合为串行组，给出建议执行顺序 `order: string[]`（按上游出现先后）；多组不相交的冲突各自成组。
+  - `report` 模式从 `serialOrder` 端口输出；`block` 模式报错信息附带「建议串行化顺序」提示。
+  - 无冲突时 `serialOrder` 为空。
+- **验证**：直接调 `nodeResolver.execute`，report 模式输出 `serialOrder=[{scope:["fileA.ts"],order:["写A","写B"]},{scope:["fileB.ts"],order:["写C","写D"]}]`；block 模式错误信息含串行化建议；无冲突时 `serialOrder=[]`。
+
+**设计说明**：
+- B-lite 沿用 resolver 既有约定（scope 从上游**节点输出值**取 `{scope:string[]}`），与阶段 A 的「边写回 scope」是两条并行通道，互不冲突；阶段 A 让 scope 持久化在边上（供未来执行引擎读），B-lite 让 resolver 从上游输出读 scope 做检测+建议。
+- B-lite **不改执行引擎**，零风险：只「建议」串行顺序，实际要不要把并行改串行仍由用户/后续 B-full 决定。
+
+**框架边界（留给后续）**：
+- 阶段 B-full（执行引擎按 edge scope 自动串行化）：需改 `topoStages` + `executor` 调度，与现有 `control` stage 语义协调，工程量与回归风险大，未做。
+- `coord.resolver` 从「入边 scope」读取（利用阶段 A 边写回）尚未接：当前仅从上游输出值取 scope。接上后施工节点无需手动在输出塞 scope。
+- `isValidConnection` 加 `PortDef.flow` 一致性校验（步骤 1 收尾）仍未做。
+
+---
+
+*最后更新：2026-08-04*
