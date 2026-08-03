@@ -437,8 +437,21 @@
 - B-lite **不改执行引擎**，零风险：只「建议」串行顺序，实际要不要把并行改串行仍由用户/后续 B-full 决定。
 
 **框架边界（留给后续）**：
-- 阶段 B-full（执行引擎按 edge scope 自动串行化）：需改 `topoStages` + `executor` 调度，与现有 `control` stage 语义协调，工程量与回归风险大，未做。
 - `coord.resolver` 从「入边 scope」读取（利用阶段 A 边写回）尚未接：当前仅从上游输出值取 scope。接上后施工节点无需手动在输出塞 scope。
+- `isValidConnection` 加 `PortDef.flow` 一致性校验（步骤 1 收尾）仍未做。
+
+#### ✅ 步骤 9：执行引擎按 scope 自动串行化（B-full，已完成，2026-08-04）
+> 步骤 8 的 B-lite 只「建议」串行顺序；B-full 让执行引擎**自动**消解冲突。
+
+- **`src/engine/executor.ts`**：
+  - stage 调度内新增「scope 分区」：同 stage 内两两比较节点入边（task 边）的 `data.scope`，**相交即冲突**。用**并查集（union-find）**把冲突节点合并为同一「串行簇」，簇内按列表顺序串行执行，不同簇之间 `Promise.all` 并行——最大化并行度同时消解并发争用。
+  - 踩坑修正：并查集需**预先把本层所有节点初始化进 parent**（不能边遍历边初始化），否则内层 `find` 未初始化节点返回 `undefined` 导致错误全合并；算法经单测验证（两对独立冲突→两组、三角传递冲突→全串、无 scope→全并行均正确）。
+  - `writeOutEdgeScope` 改为**双写**：① 直接 mutate 执行器局部 `edges` 数组（保证本次调度 `scopesOf` 立刻读到写回的 scope，串行化生效）；② 经 `useWorkflowStore.setEdges` 同步全局 store（持久化 + Inspector 展示）。
+- **验证**：并查集分区算法用独立脚本断言通过；单元级确认 `dispatch.split` 在 `tasks` 入、`task1~4` 出边的 scope 写回链路（阶段 A 已验证）。**端到端真实串行行为需在桌面端 GUI 跑含冲突 scope 的工作流观察**（headless 走独立 `runWorkflowHeadless` 未接此调度，故不覆盖）。
+
+**框架边界（留给后续）**：
+- `runWorkflowHeadless` 未复用 `runWorkflow` 调度内核，B-full / 阶段 A 边写回在 headless 下不生效；若需 CLI 验证需收敛两路。
+- `coord.resolver` 从「入边 scope」读取（利用阶段 A 边写回）尚未接。
 - `isValidConnection` 加 `PortDef.flow` 一致性校验（步骤 1 收尾）仍未做。
 
 ---

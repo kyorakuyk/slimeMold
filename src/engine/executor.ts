@@ -300,33 +300,88 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       opts.onProgress?.(progress);
       useWorkflowStore.getState().setRunProgress({ active: true, ...progress });
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
-      // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测
+      // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测。
+      // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
+      // 说明它们会争用同一资源，强制把它们归到同一「串行簇」内按序执行，消解并发冲突；
+      // 互不冲突的节点仍保持并行（簇间并行、簇内串行），最大化并行度。
+      const scopesOf = (id: string): string[] => {
+        const set = new Set<string>();
+        for (const e of edges) {
+          if (e.target === id && Array.isArray(e.data?.scope)) {
+            for (const s of e.data.scope as string[]) set.add(s);
+          }
+        }
+        return [...set];
+      };
       const t0 = performance.now();
+      // 基于冲突关系（scope 相交）的并查集：冲突的节点强制并入同一串行簇，
+      // 不同连通分量之间仍并行，最大化并行度（替代朴素贪心，避免多对冲突时错误分组）。
+      const parent = new Map<string, string>();
+      const find = (x: string): string => {
+        let r = x;
+        while (parent.get(r) !== r) r = parent.get(r)!;
+        let c = x;
+        while (parent.get(c) !== r) {
+          const n = parent.get(c)!;
+          parent.set(c, r);
+          c = n;
+        }
+        return r;
+      };
+      const union = (a: string, b: string) => {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+      };
+      // 预先把本层所有节点初始化进并查集，避免内层访问未初始化节点导致 find 返回 undefined
+      for (const id of layer) parent.set(id, id);
+      for (const id of layer) {
+        const sc = scopesOf(id);
+        // 找本层内与当前节点 scope 相交的其他节点，标记冲突并合并
+        for (const other of layer) {
+          if (other === id) continue;
+          const os = scopesOf(other);
+          if (sc.some((s) => os.includes(s))) union(id, other);
+        }
+      }
+      const groupOf = new Map<string, string[]>();
+      for (const id of layer) {
+        const root = find(id);
+        if (!groupOf.has(root)) groupOf.set(root, []);
+        groupOf.get(root)!.push(id);
+      }
+      const clusters = [...groupOf.values()];
+      // 簇间并行；每个簇内按列表顺序串行执行（冲突节点被挤进同一簇）
       await Promise.all(
-        layer.map((id) =>
-          executeNode(
-            id,
-            nodeById,
-            edges,
-            outputsMap,
-            branchState,
-            failed,
-            cutSet,
-            stopAfter,
-            signal,
-            limiter,
-            MAX_RETRIES,
-            RETRY_BASE_MS,
-            dirtySet.has(id),
-            force.has(id),
-            costLog,
-            costByNode,
-            { ...loopVarsState }, // 本轮循环变量（仅注入，不污染用户全局变量）
-            (gid, handles) => gateTaken.set(gid, handles),
-            opts.skipFailed,
-            !!opts.incremental,
-            myRun,
-          ),
+        clusters.map((cluster) =>
+          (async () => {
+            for (const id of cluster) {
+              if (signal.aborted || myRun !== currentRunId) break;
+              await executeNode(
+                id,
+                nodeById,
+                edges,
+                outputsMap,
+                branchState,
+                failed,
+                cutSet,
+                stopAfter,
+                signal,
+                limiter,
+                MAX_RETRIES,
+                RETRY_BASE_MS,
+                dirtySet.has(id),
+                force.has(id),
+                costLog,
+                costByNode,
+                { ...loopVarsState }, // 本轮循环变量（仅注入，不污染用户全局变量）
+                (gid, handles) => gateTaken.set(gid, handles),
+                opts.skipFailed,
+                !!opts.incremental,
+                myRun,
+              );
+            }
+          })(),
         ),
       );
       if (failFast && failed.size > 0) {
@@ -802,8 +857,15 @@ async function executeNode(
       return [...byId.values()] as never;
     })(),
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
-    // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）
+    // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）。
+    // 双写：① 直接 mutate 执行器局部 edges 数组（保证本次调度的 scope 串行化立刻生效）；
+    //       ② 经 setEdges 同步全局 store（用于持久化与右侧 Inspector 展示）。
     writeOutEdgeScope: (handle, scope) => {
+      for (const e of edges) {
+        if (e.source === id && (e.sourceHandle ?? null) === (handle ?? null)) {
+          e.data = { ...e.data, kind: e.data?.kind ?? 'task', scope };
+        }
+      }
       useWorkflowStore.getState().setEdges((prev) =>
         prev.map((e) =>
           e.source === id && (e.sourceHandle ?? null) === (handle ?? null)
