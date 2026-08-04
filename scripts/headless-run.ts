@@ -67,6 +67,8 @@ async function main() {
     target: e.target,
     sourceHandle: e.sourceHandle,
     targetHandle: e.targetHandle,
+    // 保留边类型（data/task/control），否则 control 回流边会被误判成环
+    data: { kind: e.data?.kind ?? e.kind ?? 'data' },
   }));
 
   console.log(`▶ 运行工作流 ${file}（${nodes.length} 节点 / ${edges.length} 边，通道=${channel}）`);
@@ -94,7 +96,8 @@ async function main() {
   const final = [...finalById.values()];
   const failed = final.filter((r) => r.status === 'error');
   console.log(`\n完成：${final.length} 节点，成功 ${final.filter((r) => r.status === 'success').length}，缓存 ${final.filter((r) => r.status === 'cached').length}，跳过 ${final.filter((r) => r.status === 'skipped').length}，失败 ${failed.length}`);
-  if (failed.length > 0) process.exit(2);
+  // 显式退出：simulate 节点的 setTimeout / 运行器内部句柄可能让事件循环不空，导致进程挂起不退出
+  process.exit(failed.length > 0 ? 2 : 0);
 }
 
 main().catch((e) => {

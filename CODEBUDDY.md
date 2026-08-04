@@ -98,6 +98,20 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - 修改节点/连线/参数必须走 `workflowStore` 的方法（不能直接 mutate），否则 `projectDirty` 自动检测与持久化都不生效；新增需持久化字段要加进 `partialize` 白名单。
 - 改动后 Tauri dev 经 HMR 生效；若 UI 异常按 `Ctrl+R` 刷新。残留 `slime-mold` 进程与无用 cmd 窗口需手动清理。
 
+### 自定义节点开发（src/nodes/sdk.ts）
+`src/nodes/sdk.ts` 提供**类式三层节点抽象**（人类 `Node` → 职业 `ComputeNode`/`IoNode`/`SandboxWriteNode`/`CoordinatorNode`/`SystemNode`/`GitNode` → 个人具体节点），作为 `manifest.executors` 函数式路径之外的并行入口。权限边界靠**继承职业父类**体现（高权限类的 `commitAll`/`runGit` 等方法在未达等级时是「拒绝型占位」，未达权限调用即抛错，不存在配置后门）。自定义节点要提权必须主动 `import` 并继承对应父类，而非在 manifest 声明越权字段——`loader.ts` 会忽略越权声明。
+
+### custom_nodes 目录与 bundle.resources（易错）
+- 程序级源文件在 `src-tauri/custom_nodes/`，由 `tauri.conf.json` 的 `bundle.resources`（`"custom_nodes": "./custom_nodes"`）在 dev/打包时**拷贝**到 `resourceDir()`。
+- **dev 陷阱**：`tauri dev` 下 `resourceDir()` = `src-tauri/target/debug/`，扫描实际读的是 `target/debug/custom_nodes`，**不是** `src-tauri/custom_nodes`。改了 `src-tauri/custom_nodes` 下的样例/节点后**必须重启 `npm run tauri dev`** 才会重新拷贝生效；直接编辑 `target/debug/custom_nodes` 会在下次重启被覆盖。
+- 样例入口 `index.js` **必须是纯 JS**（不支持 `as`/`interface` 等 TS 语法），`loader.ts` 对 TS 语法错误有友好提示。
+
+### Tauri 权限添加流程（capabilities）
+新增用到 Tauri 命令的 UI 能力时，在 `src-tauri/capabilities/default.json` 加对应 `identifier`；若命令带 scope（如 `opener:allow-open-path` 需 `allow: [{ path: "**" }]`），必须把 scope 写进该权限项对象内，否则报 `Not allowed to open path`。改完 capabilities 需重启 `tauri dev`。
+
+### .gitignore 维护
+根 `tauri_dev.log`（无后缀分隔）已被误提交过，当前 `.gitignore` 只覆盖 `tauri_dev.local.log`/`tauri-dev*.log`。若再出现该文件，应在 `.gitignore` 补 `tauri_dev.log` 并从跟踪中移除。`.devlog/`、`.codebuddy/`、`GAP_ANALYSIS.md` 已是本地产物不入库。
+
 ## 开发期日志目录 `.devlog/`
 仓库根下的 `.devlog/`（含 `log.md` 只写日志、`arch_index.md` 物理架构索引、`summary.md` 运行摘要、`archive/`）由 `feasibility-exploration` 技能在开发期生成，属**项目内本地产物**：
 - **只写不删**：`log.md` 仅可追加，不可修改/删除，作为可审计的开发轨迹。

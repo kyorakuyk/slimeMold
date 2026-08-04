@@ -101,7 +101,10 @@ export function topoStages(
     return { stages: layers, cyclic };
   }
 
-  // Pass B：沿 control 边把下游抬高到更高 stage
+  // Pass B：沿 control 边把下游抬高到更高 stage。
+  // 注意：回流边（control 的 target 已在 source 之前，如 council.backflow → architect.goal）
+  // 不抬高——否则与 data 边 architect→council 互相追逐导致死循环。回流边语义是「断点」，
+  // architect 先跑、council 后跑，backflow 回流 architect 属异步重派，不应把 architect 重排到最后。
   const stageOf = new Map<string, number>();
   layers.forEach((layer, i) => layer.forEach((id) => stageOf.set(id, i)));
 
@@ -113,7 +116,9 @@ export function topoStages(
     adjacency.set(e.source, list);
   }
 
-  // 迭代至稳定：每条 control 边都要求 target 严格晚于 source
+  // 迭代至稳定：仅当 control 边为「正向」（target 已在 source 之后，需进一步保证严格晚于）时抬高。
+  // 回流边（target 已在 source 之前，如 council.backflow → architect.goal）跳过——否则与 data 边
+  // a→b→c 互相追逐导致死循环；回流边语义是「断点」，architect 先跑、council 后跑，backflow 属异步重派。
   let changed = true;
   while (changed) {
     changed = false;
@@ -121,21 +126,20 @@ export function topoStages(
       const fs = stageOf.get(e.source);
       const ts = stageOf.get(e.target);
       if (fs == null || ts == null) continue;
-      if (ts <= fs) {
-        const need = fs + 1;
-        const stack = [e.target];
-        const seen = new Set<string>();
-        while (stack.length > 0) {
-          const cur = stack.pop()!;
-          if (seen.has(cur)) continue;
-          seen.add(cur);
-          const curS = stageOf.get(cur) ?? 0;
-          if (curS < need) {
-            stageOf.set(cur, need);
-            changed = true;
-          }
-          for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
+      if (ts <= fs) continue; // 回流边（target 已在 source 之前）跳过，避免互相抬高死循环
+      const need = fs + 1;
+      const stack = [e.target];
+      const seen = new Set<string>();
+      while (stack.length > 0) {
+        const cur = stack.pop()!;
+        if (seen.has(cur)) continue;
+        seen.add(cur);
+        const curS = stageOf.get(cur) ?? 0;
+        if (curS < need) {
+          stageOf.set(cur, need);
+          changed = true;
         }
+        for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
       }
     }
   }

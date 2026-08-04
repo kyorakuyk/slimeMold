@@ -196,6 +196,10 @@ interface WorkflowState {
   subgraphs: Record<string, SubgraphDef>;
   /** 当前工作流的节点组（纯视觉编组） */
   groups: NodeGroup[];
+  /** 步骤 14.A：项目级交付物表（跨工作流三方协作的 Artifact 存储），随 .slimemold 持久化 */
+  artifacts: import('../engine/pipeline').ProjectArtifacts;
+  /** 步骤 14.7：项目级「模块类别 → 智能体」路由表（Builder 生成施工方工作流时绑定 agent 用），随 .slimemold 持久化 */
+  agentRouteTable: import('../types').AgentRouteTable;
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
@@ -272,6 +276,12 @@ interface WorkflowState {
   switchWorkflow: (id: string) => void;
   /** 在项目内新建一个工作流并激活；workspaceDir 为用户指定的工作区文件夹（null=不创建，产物随工作流销毁） */
   newWorkflowInProject: (workspaceDir?: string | null) => void;
+  /**
+   * 步骤 14.F：把一份「现成」WorkflowFile（如 Builder 节点生成的施工/物业工作流）
+   * 直接注册进项目工作流集合并激活。与 newWorkflowInProject（建空白）互补——
+   * Builder 只需拼 JSON，不必操作画布。
+   */
+  registerWorkflow: (wf: WorkflowFile, opts?: { activate?: boolean; name?: string }) => string;
   /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
   addAsset: (meta: AssetMeta) => void;
   /** 删除一条资产元数据 */
@@ -294,6 +304,11 @@ interface WorkflowState {
   saveProjectAs: () => Promise<string | null>;
   /** 将指定工作流的图（节点/连线）写回 workflows 字典，保留其余字段（用于拆分视图分栏编辑） */
   updateWorkflowGraph: (id: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
+
+  /** 步骤 14.A：写入一份跨工作流交付物（Artifact）到项目级存储，走 store 方法以触发脏标记与持久化 */
+  setArtifact: (stage: string, kind: string, artifact: import('../engine/pipeline').Artifact) => void;
+  /** 步骤 14.7：覆盖项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
+  setAgentRouteTable: (table: import('../types').AgentRouteTable) => void;
 
   /* ---- 子图（方案 A：引用节点 + 执行期扁平化） ---- */
   /** 把选中的一批节点打包成子图，并用一个 subgraph.ref 节点替换它们。返回新子图 id */
@@ -481,6 +496,8 @@ function buildProjectFile(s: {
   projectCreatedAt: string | null;
   subgraphs: Record<string, SubgraphDef>;
   runHistory: RunRecord[];
+  artifacts: import('../engine/pipeline').ProjectArtifacts;
+  agentRouteTable: import('../types').AgentRouteTable;
 }): ProjectFile {
   const current: WorkflowFile = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
   const workflows = { ...s.workflows };
@@ -502,6 +519,8 @@ function buildProjectFile(s: {
     variables: s.projectVariables,
     assets: s.projectAssets,
     subgraphs: s.subgraphs,
+    artifacts: s.artifacts,
+    agentRouteTable: s.agentRouteTable,
     runs: { history: s.runHistory },
   };
 }
@@ -552,6 +571,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       activeWfId: '',
       subgraphs: {},
       groups: [],
+      artifacts: {},
+      agentRouteTable: {},
 
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
@@ -1402,6 +1423,50 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
+      /**
+       * 步骤 14.F：把现成 WorkflowFile 注册进项目。复用 newWorkflowInProject 的同款激活逻辑，
+       * 但内容来自 wf（非空白）。id 自动生成；若 wf 已带 belongsToProject 则保留，否则归属当前项目。
+       */
+      registerWorkflow: (wf, opts) => {
+        const s = get();
+        const workflows = { ...s.workflows };
+        const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const inProject = !!s.projectId;
+        const merged: WorkflowFile = {
+          ...wf,
+          name: opts?.name ?? wf.name ?? '生成的工作流',
+          savedAt: new Date().toISOString(),
+          belongsToProject: wf.belongsToProject ?? (inProject ? s.projectId! : undefined),
+          standalonePath: wf.standalonePath ?? (inProject ? undefined : s.workflows[s.activeWfId]?.standalonePath),
+          agents: wf.agents && wf.agents.length ? wf.agents : (s.workflows[s.activeWfId]?.agents ?? [createAgent('ollama')]),
+          roles: wf.roles && wf.roles.length ? wf.roles : (s.workflows[s.activeWfId]?.roles ?? builtinRoles.map((r) => ({ ...r }))),
+          variables: wf.variables ?? {},
+          assets: wf.assets ?? [],
+          groups: wf.groups ?? [],
+        };
+        workflows[id] = merged;
+        if (opts?.activate === false) {
+          // 仅注册、不切换当前画布（避免打断正在跑的承建方工作流）
+          set({ workflows });
+          return id;
+        }
+        set({
+          workflows,
+          activeWfId: id,
+          workflowName: merged.name,
+          nodes: flowNodesFrom(merged),
+          edges: flowEdgesFrom(merged),
+          agents: merged.agents,
+          defaultAgentId: merged.defaultAgentId ?? null,
+          roles: merged.roles!,
+          variables: merged.variables!,
+          groups: merged.groups!,
+          selectedNodeId: null,
+          logs: [],
+        });
+        return id;
+      },
+
       /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
       addAsset: (meta) => {
         const s = get();
@@ -1633,6 +1698,23 @@ export const useWorkflowStore = create<WorkflowState>()(
             },
           },
         });
+      },
+
+      /* ---------- 步骤 14.A：跨工作流交付物（Artifact） ---------- */
+
+      setArtifact: (stage, kind, artifact) => {
+        const s = get();
+        const stageMap = s.artifacts[stage] ?? {};
+        set({
+          artifacts: {
+            ...s.artifacts,
+            [stage]: { ...stageMap, [kind]: artifact },
+          },
+        });
+      },
+
+      setAgentRouteTable: (table) => {
+        set({ agentRouteTable: table });
       },
 
       /* ---------- 子图 ---------- */
@@ -2040,6 +2122,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         runHistory: s.runHistory,
         subgraphs: s.subgraphs,
         groups: s.groups,
+        artifacts: s.artifacts,
+        agentRouteTable: s.agentRouteTable,
       }),
     },
   ),
@@ -2070,6 +2154,8 @@ const DIRTY_KEYS = [
   'groups',
   'subgraphs',
   'workflows',
+  'artifacts',
+  'agentRouteTable',
   'projectName',
   'activeWfId',
   'workflowName',

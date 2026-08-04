@@ -7,6 +7,7 @@ import {
   Boxes,
   Cpu,
   Workflow,
+  Route,
   Globe,
   KeyRound,
   Eye,
@@ -32,9 +33,10 @@ import { isTauri } from '../platform/env';
 import type { ApiEndpoint, Protocol } from '../types';
 import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
+import { RouteTableEditor } from './RouteTableEditor';
 import type { ThemeMode } from '../store/viewStore';
 
-type SectionId = 'general' | 'agent' | 'model' | 'mcp' | 'flow' | 'apikeys';
+type SectionId = 'general' | 'agent' | 'model' | 'mcp' | 'flow' | 'routing' | 'apikeys';
 
 const SECTIONS: { id: SectionId; label: string; icon: JSX.Element; desc: string }[] = [
   { id: 'general', label: '通用', icon: <Monitor size={15} />, desc: '画布、LLM 通道、全局代理' },
@@ -42,6 +44,7 @@ const SECTIONS: { id: SectionId; label: string; icon: JSX.Element; desc: string 
   { id: 'model', label: '模型', icon: <Cpu size={15} />, desc: '供应商预设库与全局默认模型' },
   { id: 'mcp', label: 'MCP', icon: <Boxes size={15} />, desc: '插件 / MCP server 管理' },
   { id: 'flow', label: '对话流', icon: <Workflow size={15} />, desc: '执行引擎：并发、失败策略' },
+  { id: 'routing', label: '路由表', icon: <Route size={15} />, desc: '类别→智能体路由（Builder 生成时绑定 worker）' },
   { id: 'apikeys', label: 'APIKEYS', icon: <KeyRound size={15} />, desc: '集中管理系统密钥库中的 API Key' },
 ];
 
@@ -118,6 +121,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
             {section === 'model' && <ModelSection />}
             {section === 'mcp' && <McpSection />}
             {section === 'flow' && <FlowSection />}
+            {section === 'routing' && <RoutingSection />}
             {section === 'apikeys' && <ApiKeysSection />}
           </div>
         </section>
@@ -483,6 +487,22 @@ function ApiKeysSection() {
             })}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- 路由表（类别 → 智能体） ---------------- */
+function RoutingSection() {
+  return (
+    <div className="space-y-3">
+      <div className="rounded border border-line p-3">
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>类别 → 智能体路由</h3>
+        <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
+          Builder（工作流生成器）依据架构设计里每个模块的类别，查此表为其生成的 worker 节点绑定对应智能体；
+          路由表为空时回退到默认智能体。该表为项目级配置，随项目持久化。
+        </p>
+        <RouteTableEditor />
       </div>
     </div>
   );

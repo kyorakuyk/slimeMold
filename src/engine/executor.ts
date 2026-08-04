@@ -190,6 +190,11 @@ let currentRunId = 0;
 /** 当前真正在跑的代次；等于 currentRunId 表示有运行有效，stopWorkflow 会使二者不等 */
 let activeRunId = 0;
 
+/** 步骤 14：暴露当前运行代次（字符串快照），供节点发布 Artifact 时填写 runId（新鲜度判断）。 */
+export function getActiveRunId(): number {
+  return activeRunId;
+}
+
 /** 把运行代次同步到 store 供状态栏诊断显示 */
 function syncDebugRun(): void {
   useWorkflowStore.getState().setDebugRun({ current: currentRunId, active: activeRunId });

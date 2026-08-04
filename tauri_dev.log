@@ -1,22 +1,0 @@
-     Running BeforeDevCommand (`npm run dev`)
-
-> slime-mold@0.1.0 dev
-> vite
-
-
-  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m698[22m[2m[0m ms[22m
-
-  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m1420[22m/[39m
-  [32m➜[39m  [1mNetwork[22m: [36mhttp://169.254.1.224:[1m1420[22m/[39m
-  [32m➜[39m  [1mNetwork[22m: [36mhttp://169.254.201.125:[1m1420[22m/[39m
-  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.9:[1m1420[22m/[39m
-     Running DevCommand (`cargo  run --no-default-features --color always --`)
-        Info Watching D:\Agent proj\slimeMold\slimeMold\src-tauri for changes...
-[1m[92m   Compiling[0m slime-mold v0.1.0 (D:\Agent proj\slimeMold\slimeMold\src-tauri)
-[1m[96m    Building[0m [=======================> ] 455/457: slime-m…                                                            [1m[93mwarning[0m[1m[97m: linker stdout: 正在创建库 D:\Agent proj\slimeMold\slimeMold\src-tauri\target\debug\deps\slime_mold_lib.dll.lib 和对象 D:\Agent proj\slimeMold\slimeMold\src-tauri\target\debug\deps\slime_mold_lib.dll.exp[0m
-  [1m[96m|[0m
-  [1m[96m= [0m[1m[97mnote[0m: `#[warn(linker_messages)]` on by default
-
-[1m[96m    Building[0m [=======================> ] 455/457: slime-m…                                                            [1m[93mwarning[0m: `slime-mold` (lib) generated 1 warning
-[1m[96m    Building[0m [=======================> ] 456/457: slime-m…                                                            [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 20.25s
-[1m[92m     Running[0m `target\debug\slime-mold.exe`

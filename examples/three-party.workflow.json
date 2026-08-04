@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "name": "示例-三方协作(承建→施工→物业)",
+  "savedAt": "2026-08-05T00:00:00.000Z",
+  "description": "步骤14 跨工作流三方协作蓝图：承建方(规划→架构→生成器)产出设计书并自动注册「施工方/物业」两张工作流；施工方末端 pipeline.handoff 交付，物业经 pipeline.receive 接收。coord.council 的 backflow 控制流可回流 architect 重派。所有 AI 节点 simulate(离线)模式，无需 API Key 即可跑通端口流通。Builder 会自动把双工作流注册进项目（标签页可见可改）。",
+  "nodes": [
+    {
+      "id": "n-goal",
+      "typeId": "input.text",
+      "label": "项目目标",
+      "position": { "x": 40, "y": 240 },
+      "params": { "text": "做一个 Markdown 笔记应用：可编辑、可搜索、本地存储" }
+    },
+    {
+      "id": "n-plan",
+      "typeId": "dispatch.plan",
+      "label": "规划/编排",
+      "position": { "x": 320, "y": 220 },
+      "params": { "agentId": "", "format": "tasks", "simulate": "on" }
+    },
+    {
+      "id": "n-arch",
+      "typeId": "architect.design",
+      "label": "架构师(吐category)",
+      "position": { "x": 640, "y": 200 },
+      "params": { "agentId": "", "format": "modules", "simulate": "on", "pipelineStage": "design" }
+    },
+    {
+      "id": "n-council",
+      "typeId": "coord.council",
+      "label": "仲裁委员会(回流)",
+      "position": { "x": 660, "y": 420 },
+      "params": { "councillorAgentIds": "", "synthesizerAgentId": "", "simulate": "on", "pipelineStage": "design" }
+    },
+    {
+      "id": "n-builder",
+      "typeId": "builder.generate",
+      "label": "工作流生成器",
+      "position": { "x": 1000, "y": 200 },
+      "params": { "autoRegister": "on", "constructionName": "施工方-笔记应用", "opsName": "物业-笔记应用" }
+    },
+    {
+      "id": "n-handoff",
+      "typeId": "pipeline.handoff",
+      "label": "交付设计书",
+      "position": { "x": 1320, "y": 200 },
+      "params": { "stage": "design", "kind": "design", "kindCustom": "", "meta": "" }
+    }
+  ],
+  "edges": [
+    { "id": "e-goal-plan", "source": "n-goal", "sourceHandle": "text", "target": "n-plan", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-goal-arch", "source": "n-goal", "sourceHandle": "text", "target": "n-arch", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-plan-arch", "source": "n-plan", "sourceHandle": "plan", "target": "n-arch", "targetHandle": "constraints", "data": { "kind": "data" } },
+    { "id": "e-arch-builder", "source": "n-arch", "sourceHandle": "modules", "target": "n-builder", "targetHandle": "modules", "data": { "kind": "data" } },
+    { "id": "e-arch-council", "source": "n-arch", "sourceHandle": "design", "target": "n-council", "targetHandle": "context", "data": { "kind": "data" } },
+    { "id": "e-council-arch", "source": "n-council", "sourceHandle": "backflow", "target": "n-arch", "targetHandle": "goal", "data": { "kind": "control" } },
+    { "id": "e-arch-handoff", "source": "n-arch", "sourceHandle": "design", "target": "n-handoff", "targetHandle": "payload", "data": { "kind": "data" } }
+  ],
+  "agents": []
+}

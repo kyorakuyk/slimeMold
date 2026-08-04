@@ -33,6 +33,11 @@ generated-images/
 start-hidden.bat
 .devlog_tauri.log
 tauri_dev.local.log
+tauri_dev.log
+p_backflow*.log
+p_backflow*.err
+ts_test.log
+ts_test.err
 dev.log
 dev.out
 dev.err

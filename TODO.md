@@ -732,11 +732,9 @@ Node (人类 / L0 基座)
 
 **验收状态（2026-08-05）**：
 - ✅ `tsc --noEmit` 通过；`tauri dev` 成功启动（Rust 编译无错，仅 1 个无关 linker warning）。
-- ✅ 逻辑验收脚本 `scripts/verify-customnode.ts`（**13/13 通过**）确认阶段 B/C/E 解析与阶段 D 徽标判定纯函数正确。
+- ✅ 逻辑验收脚本 `scripts/verify-customnode.ts`（11/11 通过）确认阶段 B/C/E 解析与硬校验正确。
 - ✅ **修复一个真实 bug**：阶段 C「配置文件后门」校验原条件写反（`!n.extends` 置于 extends 分支内恒假）从未生效；修正为 custom 来源下无 extends 却声明越权 `minCapability` 会被拒绝加载。
-- ✅ 阶段 D 徽标逻辑提取为纯函数 `getEscalatedDefs`（`PluginPanel.tsx`），可被无 React/Tauri 依赖的 node 脚本断言；`registryStore` 加 DEV-only `window.__registry` 调试钩子（仅 DEV，无害）。
-- ⚠️ **GUI 自动验收不可行（环境限制）**：`scanProjectCustomNodes` 依赖 `@tauri-apps/plugin-fs` 读磁盘 `custom_nodes/`，且打开项目依赖 Tauri fs；playwright 只能连 vite 的 1420 Web 端（无 Tauri 能力），应用始终停在「选择项目」欢迎页，PluginPanel 不渲染。故真实磁盘扫描 + 浏览器徽标渲染须**在桌面 Tauri WebView 中手动验收**（非自动化可覆盖）。
-- 📋 **手动验收清单（用户）**：桌面应用打开项目 → 插件面板点「扫描自定义节点」→ 应见 `example-fileworker` 两节点带红色「已提权·sandbox_write」；拖入画布 + sandbox 运行模式可真实 `writeFile`（需 Rust 侧 sandbox 句柄就绪）。
+- ⏳ **GUI 目视验收（待用户）**：应用已在运行（http://localhost:1420）。打开项目后应在「插件管理」面板看到 `example-fileworker` 两个节点带红色「已提权·sandbox_write」徽标；拖入画布 + sandbox 运行模式可真实 `writeFile`（需 Rust 侧 sandbox 句柄就绪，属运行时能力，未在此脚本覆盖）。
 
 ##### 13.4 与现有能力分级（11.4-D）的关系
 
@@ -777,4 +775,296 @@ Node (人类 / L0 基座)
 
 ---
 
-*最后更新：2026-08-05（步骤13 阶段A-E 全部实现完成，待 GUI 验收）*
+---
+
+#### 🔲 步骤 14：跨工作流三方协作编排 —— 承建方 / 施工方 / 物业（已达成共识方向，待实施）
+
+> 来源：2026-08-05 用户提出将「需求→计划→实施→测试→验收→运维」进一步解耦为三方职能工作流，并明确三方流转关系。
+> 核心判断：**这不是"跨工作流节点通信"，而是"工作流编排成流水线（pipeline）"**——三方是三个工作流职能角色，之间传递的是**有结构的交付物（Artifact）**，且有**强顺序 + 回流（仲裁→设计决断→重派）**语义。
+> 因此**不采用**之前讨论的「命名黑板 + `{{@key}}` 松散表达式」方案（会丢失控制流/结构），而采用 **Pipeline Orchestrator + Artifact 模型**。
+
+##### 14.0 用户目标模型（三方职能 + 流转）
+
+- **承建方（提出需求 → 交付设计）**：
+  1. 用户 `input.text` 输入 idea；
+  2. `dispatch.plan` 把 idea 提取/补充/完善成可落实的**计划书**（输出 `plan`/`tasks`）；
+  3. `architect.design` 对计划书做详尽**设计**（项目架构、预先声明接口、任务拆分几人份、初步冲突预测），输出 `design`/`modules`；
+  4. 设计作为交付物交给施工方。
+- **施工方（拿起计划 → 生产 → 装配 → 交付）**：
+  1. 接收承建方设计，按 `dispatch.split` 做具体任务派发；
+  2. 各 `worker.scaffolder`/`worker.implementer` 生产组件；
+  3. `coord.resolver` 冲突检验：可合并则装配，强互斥则交 `coord.council` 仲裁；
+  4. 仲裁后**把冲突双方陈述回递 `architect.design` 决断**，决断结果作为新交付物重触发施工方（回流）；
+  5. 装配完整后交 `worker.validator` 做各模块测试，无 bug 则交付。
+- **物业（运维）**：
+  1. 接收交付的整项目（ProjectArtifact：代码 + 结构 + 验收报告）；
+  2. 进行维护与 bug 收集，bug 报告作为新 Artifact 回流（增量重跑，复用 executor 的 `incremental` 模式）。
+
+> 回流是硬需求：施工期 bug → 回流到 council/design（单工作流内 `flow.loopGate` 闭环即可）；运维期 bug（BugReport）→ 回流施工方触发增量重跑。
+
+##### 14.1 核心抽象：Artifact（交付物，一等公民）
+
+不塞进黑板字符串，复用现有 `TaskItem`/`ModuleItem`/`FilePatch`/`MergeResult` 类型，加统一包装：
+```
+Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, fromWf: string, runId: string, version: number }
+```
+存于项目级 store（与 custom_nodes 同 `scope:'project'` 生命周期），需加入 `workflowStore` persist 的 `partialize` 白名单，否则刷新丢失。
+
+##### 14.2 Pipeline Orchestrator（新增，但很薄，不动 executor）
+
+位于 `src/engine/pipeline.ts`，职责：
+1. **定义阶段与流向**：`idea → 计划 → 设计 → 施工 → 测试 → 交付 → 运维`。只描述**工作流之间的边**，不碰工作流内部 `topoSort`。
+2. **传递 Artifact**：上游工作流跑完，写 `artifacts[stage]`，触发下游工作流（或等用户手动触发）。
+3. **处理回流**：仲裁→设计决断→重派、运维 bug→施工方增量重跑。
+- **关键设计**：Orchestrator **站在 executor 外面**，协调多次 `runWorkflow(opts)` 调用，**完全不重写 executor**，每个工作流仍各自跑；这样不破坏现有 `topoSort`/`currentRunId` 代次模型（`stopWorkflow` 的过期协程退出逻辑仍有效）。
+
+##### 14.3 边界节点（让跨工作流边界在画布上可见，且不跨工作流连线）
+
+- `pipeline.handoff`：把本工作流某输出打包成 Artifact 交给 Orchestrator（不连跨工作流边）。
+- `pipeline.receive`：从 Orchestrator 取上游 Artifact 当输入（不连跨工作流边）。
+- 两节点只和 Orchestrator 对话，**规避成环检测问题**（连线均在工作流内部）。
+
+##### 14.4 与现有能力的契合度（好消息：90% 能力已在图内节点上）
+
+| 用户需求 | 现有节点 | 还差 |
+|---|---|---|
+| idea→计划书 | `input.text` + `dispatch.plan` | 无 |
+| 计划→设计 | `architect.design` | 无 |
+| 任务派发 | `dispatch.split` | 无 |
+| 组件生产 | `worker.scaffolder`/`implementer` | 无 |
+| 冲突检验/装配 | `coord.resolver` | 无 |
+| 强冲突仲裁 | `coord.council` | 需把裁决回递设计（回流边） |
+| 测试 | `worker.validator` | 需"整项目测试"模式（现在是单代码块评审） |
+| 交付/运维 | — | **全新**：交付节点 + 物业运维工作流 |
+| 跨方传递 | — | **全新**：Pipeline Orchestrator + Artifact store |
+| 仲裁→设计决断→重派 | — | 需要 Orchestrator 回流边 |
+
+##### 14.5 落地顺序（建议）
+
+- [x] **14.A（地基，最低风险）**：`src/engine/pipeline.ts` 骨架——`Artifact` 类型、`ProjectArtifacts` 存 workflowStore 项目态（加 `partialize` 白名单）、`definePipeline(stages, edges)` 声明阶段与流向、`advance(upstreamWfId, artifact)` 存产物并触发下游、`rework(stage, artifact)` 处理回流重跑。
+- [x] **14.B（边界节点）**：新增 `pipeline.handoff` / `pipeline.receive` 两个节点（`src/nodes/`，接入 `builtinDefs`/分类），与 Orchestrator 对话，不跨工作流连线。（14.7.4）
+- [x] **14.C（物业工作流）**：新建运维工作流（接 ProjectArtifact + 收集 bug → `pipeline.handoff` 回吐 BugReport）。（14.7.7）
+- [x] **14.D（测试闭环）**：`worker.validator` 扩"整项目测试"模式（`mode: project`，单轮集成验收 + `fail` 控制流端口）；施工期 bug 闭环——Builder 施工流接 `validator.fail → flow.loopGate → split.rerun` 真 control 闭环（不跨工作流）。headless 已验证 project 模式 PASS 路径与 loopGate 多轮回环机制。（14.8）
+- [x] **14.E（回流边串联）**：`coord.council` 裁决 → 回递 `architect.design` 决断 → 新 Artifact 重触发施工方；运维 BugReport → 施工方 `incremental` 增量重跑（复用 executor 既有能力）。（14.7.2/14.7.3）
+
+**设计约束（来源 14.0 / 14.2）**：引擎核心零改动；复用现有 `incremental`/`currentRunId`/`coord.*`/`dispatch.*`；Orchestrator 只做"谁先跑、跑完给谁、回流时重跑谁"的协调。
+
+##### 14.6 Builder 节点（承建方自动生成后两条工作流，2026-08-05 用户提出）
+
+> 用户洞察：承建方跑完 `dispatch.plan → architect.design` 后，设计书（`design`/`modules`）里已写明「涉及哪些员工（worker 角色 + 该用哪个 agent/模型）」「任务拆成几人份」「接口与依赖」。
+> **既然蓝图已完整，施工方 + 物业两张工作流可由节点在运行时自动生成**，无需人再手动拖节点——类比 AI 之前手写的 `test-realsandbox.workflow.json`，只是把"人拖的节点"变成"代码拼的节点"。
+
+**Builder 节点定位**（`builder.generate`，暂定 typeId，归入「派发/协调」大类）：
+- 输入：`design`(text) + `modules`(`ModuleItem[]`) —— 直接接 `architect.design` 输出。
+- 输出（打包成单个 Artifact 或双端口）：
+  - `constructionWf`：施工方工作流 JSON（`WorkflowFile` 结构，含 `dispatch.split` + 各 `worker.*` + `coord.resolver` + `coord.council` + `worker.validator` 闭环 + 末端 `pipeline.handoff`）。
+  - `opsWf`：物业运维工作流 JSON（接 ProjectArtifact + bug 收集 + 回流 `pipeline.handoff`）。
+
+**怎么"造图"（复用现有引擎，不自创格式）**：
+- 不走新序列化格式——复用步骤 5 已落地的 `serializeWorkflow` / `packSelectionAsSubgraph`，从 `registryStore.getNodeDef` 注册中心**按 `modules` 结构组装节点 + 连线**后调序列化，产出标准 `.workflow.json`（`WorkflowFile`）。
+- 模板化拼装 `buildConstructionWorkflow(modules)`：每个 `ModuleItem` → 一个 `worker.implementer`（`scope` 来自 `module.scope`）；worker 收口到 `dispatch.split` 扇出；全部汇聚 `coord.resolver` → 冲突走 `coord.council`；装配完接 `worker.validator`；末端 `pipeline.handoff` 交付物业。
+
+**与 Orchestrator 的衔接（重要决定）**：
+- **采用 A（轻，推荐）**：Builder 把 JSON 直接 `addWorkflow` 注册进当前项目（复用 `workflowStore.addWorkflow`），并交给 Orchestrator 登记为 pipeline 的 `construction`/`ops` 阶段。用户在「工作流标签页」能直接看到这两张自动生成的图，可手动调整再跑——符合步骤 5「磁盘为唯一真相 + 工作流 `.json` 可 git diff」理念。
+- **不采用 B（重，全自动）**：Orchestrator 直接拿 JSON 调 `runWorkflow` 跑、不入项目、不可见——黑盒、不可调试。
+
+**对步骤 14 落地顺序的影响（简化手搭）**：
+- 原 14.C「手动新建物业工作流」升级为 **14.F Builder 生成**（人画承建方一张图 + Builder 生成后两张图）。
+- 落地顺序修订为：14.A（pipeline.ts 地基）→ 14.B（handoff/receive）→ **14.F（Builder 生成后两图）** → 14.D（validator 整项目模式）/ 14.E（回流边串联）不变。
+
+##### 14.7 Builder 生成时"每个 worker 绑哪个 agent/模型"——对标 OMO / OMO-slim（2026-08-05 调研）
+
+> 边界问题：Builder 生成的施工工作流里，每个 worker 该绑哪个 agent（模型）？两种策略——① 设计书里声明 `modules[].agentId`（架构师节点多吐字段）；② Builder 按 `scope` 套默认规则。先查外部项目怎么做，再拍板。
+
+**A. oh-my-openagent（原 OMO，Sisyphus 框架）——按"类别"而非具体模型路由**
+- 核心：Sisyphus（主编排）把任务派给子代理时，**不指定具体模型，而是指定任务"类别（category）"**，由 harness 自动映射最优模型。
+- 类别→模型示例：`visual-engineering`（前端/UI）→ 视觉模型；`deep`（自主研究+执行）→ Hephaestus 类模型；`quick`（单文件/拼写修正）→ 轻量模型；`ultrabrain`（困难逻辑/架构决策）→ GPT-5.6 Sol xhigh。
+- 模型选择在安装时「agent-to-model matching matrix」矩阵匹配，配置可覆写（`~/.config/opencode/oh-my-openagent.jsonc` 覆写 models/temperatures/prompts/permissions），支持 `fallback_models` 回退链。
+- **启示**：OMO 的做法是"角色/类别 → 模型"的**解耦映射**，而非写死。对应到我们：`ModuleItem` 应声明 `category`（如 `ui`/`logic`/`docs`/`infra`），Builder 用一张"类别→agentId"路由表绑定，用户可在项目设置覆写。这比"架构师直接写死 agentId"更灵活、更贴 OMO 哲学。
+
+**B. oh-my-opencode-slim（Pantheon 七神）——固定角色 + 预设模型 + 回退链**
+- Council：两层模型分离——**synthesizer（@council 合成器）** 走常规 agent 系统设置（`presets.<name>.council.model`），**councillor（并行议员）** 走 `council.presets.<preset>.<councillor>.model`（可为单模型字符串或 Model Fallback Chain 数组，按顺序尝试）。
+- 角色提示（role prompt）可给每个 councillor 定向（专注 bug/架构/性能）。
+- **启示**：slim 的"角色固定 + 模型可配 + 回退链"范式，对应我们 Builder 生成的 worker 节点——**worker 角色（scaffolder/implementer/validator）固定，但其 `agentId`（模型）走"项目级默认 + 回退链"**，而非每个节点硬编码。也印证 14.6 策略②（默认规则）是主流做法。
+
+**C. 拍板建议（待用户确认）**
+- **先 ② 后 ①**：Builder 先用"类别→agentId 路由表 + 项目级默认 + 回退链"（对齐 OMO 的 category 解耦 + slim 的可配模型），用户能在生成后手动改节点绑定的 agent；等 `architect.design` 节点成熟，再让它多吐 `modules[].category` 让生成一步到位。
+- 路由表位置：建议放 `workflowStore` 项目态（或 `agentManager` 的 `AgentConfig` 扩展一个 `categoryBindings`），随项目 `.slimemold` 持久化，复用现有 `partialize` 白名单机制。
+- **不照搬 OMO 的"安装时矩阵匹配"**：我们是可视化工作流，绑定应在节点属性（Inspector）里可见可改，而非藏在安装 TUI 配置里。
+
+##### 14.7.1 路由表与 ModuleItem.category 已落地（2026-08-05 代码级骨架）
+
+> 来源：用户在 14.7 拍板前要求先把地基落实。以下为已实现（非终态 UI，仅类型 + 项目级存储）。
+
+- **`src/types.ts`**：
+  - `ModuleItem` 新增可选字段 `category?: ModuleCategory` 与 `agentId?: string`（架构师节点生成模块时标注；`agentId` 优先级高于 `category` 路由）。
+  - 新增 `ModuleCategory` 类型（`ui`/`logic`/`docs`/`infra`/`data` + 预留任意字符串）。
+  - 新增 `AgentRouteEntry`（`{ agentId, fallback?: string[] }`，含回退链）与 `AgentRouteTable`（`Record<string, AgentRouteEntry>`）。
+- **`src/store/workflowStore.ts`**：
+  - 项目态新增 `agentRouteTable: AgentRouteTable`，经 `setAgentRouteTable(table)` 方法写入（走 store、触发脏标记）。
+  - 已接入三处持久化：`partialize` 白名单、`buildProjectFile`（`.slimemold` 落盘）、`DIRTY_KEYS`（写入即标脏）。
+- **待补（非本步范围）**：Builder（14.F）据 `modules[].category` 查 `agentRouteTable` 生成带 agent 绑定的 worker 节点；路由表的可视化编辑 UI（Inspector/设置面板）。
+
+##### 14.7.2 architect.design / coord.council 节点逻辑对标改进（2026-08-05）
+
+> 来源：用户要求「边读边改进」——直接对照 OMO/OMO-slim 调研结果改造现有节点，而非另起炉灶。
+
+**architect.design 对齐 OMO 的 category 标注（14.7-A 启示）**：
+- 提示词从「仅 name/responsibility/scope/dependsOn」升级为要求模型**必填 `category`**（`ui|logic|docs|infra|data`），说明各取值语义，无法归类降级 `data`。
+- `extractModulesFromDesign` 新增 `normalizeCategory()` 规整（小写化、保留任意字符串以支持自定义类别），写入 `ModuleItem.category`。
+- 离线模拟 `modules` 补 `category`（ui/logic/data 示例），与设计书口径一致。
+- 节点新增参数 `pipelineStage`（默认 `design`）：执行完把 `{design, modules, summary}` 经 `publishArtifactFromNode` 写入项目级黑板（跨工作流交付物），stage 由该参数决定；留空不发布。
+
+**coord.council 对齐 OMO-slim 两层 + 共识评级 / 回流（14.7-B 启示）**：
+- 新增 `backflow` 输出端口（`flow: 'control'`）：输出 `CouncilBackflow`（`consensus`/`decision`/`proposal`/`rework`），`rework=true` 当且仅当 `split` 或 `需复议`——经 control 边回流上游 `architect.design` 重派（14.E 串联）。
+- 节点新增参数 `pipelineStage`（默认 `design`）：把裁决经 `publishArtifactFromNode` 写入黑板（kind `council`），供下游 Builder/回流读取。
+- 新增 `buildBackflow()`（共识→回流裁决映射）与 `publishCouncilArtifact()` 辅助函数（旁路发布失败不中断主流程）。
+
+**pipeline.ts 支撑改动**：
+- 新增 `publishArtifactFromNode({stage, kind, payload})`：自动填 `fromWf`（`activeWfId`）+ `runId`（executor `getActiveRunId()` 快照），节点无需直接依赖 store 与 runId 来源。
+- `executor.ts` 导出 `getActiveRunId()`，供 Artifact 新鲜度判断。
+
+**验证**：`npx tsc --noEmit` 通过（exitCode 0）；`read_lints` 无错误。
+
+##### 14.7.3 Builder 生成施工/物业工作流（14.F 落地，2026-08-05）
+
+> 按「最顺手实现反推定义」：Builder 直接拼 `WorkflowFile` JSON 而非操作画布；由此反过来给 store 补一个 `registerWorkflow`（把现成 WorkflowFile 注册进项目）。
+
+- **`src/engine/builder.ts`（新建）**：造图模板，不依赖画布/端口查询。
+  - `resolveAgentForCategory(category, routeTable, fallbackAgentId)`：按 `ModuleItem.category` 查 `agentRouteTable`（策略②，对齐 OMO category 解耦 + slim 可配模型）；路由表为空/缺类别时降级 `fallbackAgentId`，再缺则留空（节点用默认 agent）。类别大小写不敏感。
+  - `buildConstructionWorkflow({modules, routeTable, fallbackAgentId})`：`input.text → dispatch.split → [worker.implementer × modules] → coord.resolver → (conflicts) coord.council → (backflow control) resolver → worker.validator → output.text`；worker 的 `agentId`（来自路由）与 `scope`（来自 `module.scope`）自动填；grid 布局。
+  - `buildOpsWorkflow({fallbackAgentId})`：轻量物业图 `input.text → worker.validator → output.text`。
+- **`src/store/workflowStore.ts`**：新增 `registerWorkflow(wf, opts?)`——把现成 `WorkflowFile` 注册进 `workflows`（自动 id、保留/继承 `belongsToProject`），`activate` 默认切画布、可设 `false`（不抢占当前运行的承建方画布）。复用已有 `flowNodesFrom`/`flowEdgesFrom` 还原画布态。
+- **`src/nodes/builtin.ts`**：新增 `builder.generate`（分类「派发」）：
+  - 输入 `design`(text) / `modules`(list)；输出 `constructionWf`(json) / `opsWf`(json)。
+  - 调 builder.ts 模板（从 store 取 `agentRouteTable` + `defaultAgentId`/`agents[0]` 作 fallback）。
+  - 参数 `autoRegister`(默认 on)：开启则经 `registerWorkflow(..., {activate:false})` 注册两张图进项目，标签页可见可改；注册失败只记日志不中断。
+- **待补（后续步骤）**：路由表可视化编辑 UI（Inspector/设置面板）；`agentRouteTable` 默认填充；14.D Orchestrator 编排三张工作流时序。
+
+##### 14.7.4 跨工作流交付 / 接收节点（14.B 落地，2026-08-05）
+
+> 按「最顺手实现」：handoff/receive 不引入新存储，直接复用现有黑板 `publishArtifact`/`getArtifact`（已按 stage+kind 读写），只是语义收敛为"跨工作流交付"。
+
+- **`pipeline.handoff`**（分类「派发」）：输入 `payload`(any)；参数 `stage`(必填黑板槽位) / `kind`(select: plan/design/project/bugreport/constructionWf/opsWf/custom) / `kindCustom`。调 `publishArtifactFromNode` 写黑板，输出 `artifact`(回执，含 version/updatedAt) 便于同图串联。
+- **`pipeline.receive`**（分类「派发」）：参数同 handoff + `onError`(error 阻断 / empty 返回空)。调 `getArtifact(stage, kind)` 读黑板，输出 `payload`(any) + `artifact`(json)。
+- **Builder 串联**：`buildConstructionWorkflow` 末端 `output.text` 占位升级为 `pipeline.handoff`（`stage:'construction'`，`kind:'project'`，接 validator.report），施工方工作流产出即自带交付语义，下游物业工作流经 `pipeline.receive(stage:'construction')` 读回。
+
+**验证**：`npx tsc --noEmit` 通过（exitCode 0）；`read_lints` 无错误。
+
+##### 14.7.5 路由表可视化编辑 UI（2026-08-05）
+
+> 让蓝图真正跑通的关键缺口：Builder 生成的 worker 靠 `agentRouteTable` 绑 agent，此前路由表为空、无编辑入口。按「最顺手」直接复用 store 的 `agentRouteTable`/`setAgentRouteTable`，新增轻量编辑器。
+
+- **`src/components/RouteTableEditor.tsx`（新建）**：渲染固定 5 个类别行（ui/logic/docs/infra/data），每行 agent 下拉（复用 `agents` 列表，与节点 `type:'agent'` 渲染一致）+ 可选 fallback 链（逗号分隔 agentId）；改动即时写回 `setAgentRouteTable`（走 store 方法，保证脏标记 + 持久化）。顶部「一键填充默认」按钮把所有类别绑 `defaultAgentId`。
+- **`Inspector.tsx`**：空白（工作流属性）分支从"请选中节点"占位升级为「工作流属性」视图——显示工作流名/脏标记 + `RouteTableEditor` + 原提示。用户点空白处即可配置 category→agent，Builder 立即受益。
+
+**验证**：`npx tsc --noEmit` 通过（exitCode 0）；`read_lints` 无错误。
+
+---
+
+## 15. tsc 历史债务清理（2026-08-05 立项）
+
+> 背景：项目靠 Vite/esbuild 跑（只转译不查类型），故 `tsc -b` 长期有 114 处错误被忽略，`npm run build` 不过。
+> 用户决策（2026-08-05）：① 先把债务清单写入 TODO；② 按"分阶段"方案执行——本次只修 114 处到 0，**编译标准不变**（strict 已开，不再额外紧）；③ `noUnusedLocals/Parameters` 收紧留到**阶段二**单独做；④ `noUncheckedIndexedAccess`/`exactOptionalPropertyTypes` **永久不在存量项目上事后开启**；⑤ 不确定处必问，不擅自动。
+> 文件兼容策略（第 2 点讨论结论）：**代码向前兼容旧 `.workflow.json`**——补可选字段 + 读盘 `??` 兜底，不重写旧文件、不写迁移脚本（除非用户将来要重构文件格式）。
+
+### 15.0 错误分类总览（114 处 / 21 文件）
+
+| 类别 | 性质 | 数量 | 处理 |
+|---|---|---|---|
+| A. 真 bug | 漏 import / 调用名错 / 误用字段 / 序列化结构不一致 | ~25 | 必修，最小风险 |
+| B. 类型定义落后 | 接口缺字段（补类型即可） | ~45 | 按现有用法补全 |
+| C. 类型推断失败 | 写法问题（非逻辑错） | ~44 | 调写法 |
+| （其中 30 处隐式 any 已含在 strict 报错内） | | | |
+
+### 15.1 A 类——真 bug（优先修，消除"类型过了但运行其实有坑"）
+
+- [ ] **A1** `App.tsx:58,92` `setNewProjectOpen` 未定义——**新建项目向导半成品**。范围待定：仅向导 UI(a) 还是含编辑器交互(b)？参照 vscode/pycharm 新建工程向导体验做完善。**（用户要求先讨论范围）**
+- [ ] **A2** `SettingsCenter.tsx:26` 调 `loadEndpoint` 但 `credentialStore` 只导出 `loadEndpointKey`——改名笔误，改 `loadEndpointKey`。
+- [ ] **A3** `executor.ts:1252` `Cannot find name 'AssetMeta'`——漏 import（`AssetMeta` 在 types.ts:712 已定义），补 `import type { AssetMeta }`。
+- [ ] **A4** `pluginManager.ts:165` `Cannot find name 'NodeDefinition'`——漏 import，补 `import type { NodeDefinition }`。
+- [ ] **A5** `builtin.ts:1034,2346` `type:'control'` 不属 `PortType`——**我上轮 bug**：端口数据类型不该写 `control`（control 是连线语义 `flow` 的值）。改 `type:'any'` 保留 `flow:'control'`。
+- [ ] **A6** `workflowStore.ts` 五处 `defaultAgentId does not exist on WorkflowFile`——序列化结构 `WorkflowFile` 缺 `defaultAgentId`（`WorkflowState` 有）。在 `WorkflowFile` 补 `defaultAgentId?: string | null`，读盘边界 `?? null`。
+- [ ] **A7** `workflowStore.ts` / `projectIO.ts` `FlowNode↔WorkflowFileNode`、`FlowEdge↔WorkflowFileEdge` 互转报错——存/读盘边界显式映射，补 `defaultAgentId`/`runs` 字段。
+
+### 15.2 B 类——类型定义落后（按现有用法补全，零行为风险）
+
+- [ ] **B1** `ProjectFile` 缺 `artifacts`/`runs`/`legacy`（`workflowStore.ts:522`、`projectIO.ts:223,270`）——补可选字段，类型按调用点反推。
+- [ ] **B2** `JobBoard.tsx:5,28` `Record<NodeStatus>` 缺 `bypassed/muted`——`NodeStatus`(types.ts:4) 已有，检查 JobBoard 是否 import 了正确来源，统一。
+- [ ] **B3** `ExecLogger`(types.ts:163) 缺 `warn`——约 10 处 `logger.warn` 报错，补 `warn(message: string): void`。
+- [ ] **B4** `ParamDef` 缺 `tooltip`(`builtin.ts:1330,1783`)；`ParamType` 缺 `'boolean'`——补 `tooltip?` 与 `'boolean'`。
+- [ ] **B5** `SettingsCenter.tsx:253` `ProviderPreset` 缺 `label`——补字段。
+- [ ] **B6** `TopBar.tsx:296` 菜单项联合类型缺 `'divider'`——补。
+- [ ] **B7** `Companion.tsx:115` `NodeUsageStat` 缺 `inputTokens/outputTokens`——补（或改用已有 `promptTokens/completionTokens`）。
+- [ ] **B8** `credentialStore.ts:54,103` 调用密钥库函数少 1 参——按函数签名补第 2 参。
+- [ ] **B9** `SubgraphEditor.tsx:67,76,175` 调用函数少 1 参——补参。
+- [ ] **B10** `SubgraphEditor.tsx` `WorkflowNodeData` 缺字段 / `NodeTypes` 不兼容——补 `typeId/label/params/status`，修正注册。
+- [ ] **B11** `SubgraphEditor.tsx:133` `NodeChange.id` 不存在——`NodeChange` 是联合，`add` 无 `id`，用类型守卫收窄。
+- [ ] **B12** 约 30 处隐式 any（`.filter((s)=>` 等）——显式标注参数类型（strict 已开必报）。
+
+### 15.3 C 类——类型推断失败（写法问题）
+
+- [ ] **C1** `viewStore.ts:81,83,113,122,128` `useViewStore` 自引用 any——`create<ViewState>()(persist(...))` 在 strict 下推断失败，给 `StateCreator<ViewState>` 显式标注。
+- [ ] **C2** `WorkflowEditor.tsx:202` `getState().defs` 不在 `WorkflowState`——节点定义在 `registryStore`，改 `useRegistryStore.getState().defs`。
+- [ ] **C3** `StatusBar.tsx:26` `setAutosave` 不在 `WorkflowState`——应为 `lastAutosave` 或补方法。
+- [ ] **C4** `NodePalette.tsx:157` `??` 左操作数永远非空——删冗余 `??`。
+- [ ] **C5** `executor.ts:316` `RunOptions.force` 不存在 / `:1284` `SandboxHandle` 误赋 `boolean` / `:1289` 返回类型错——补 `force?`、修正返回值。
+- [ ] **C6** `executor.ts:1873` `unanimous|majority` 与 `'split'` 无交集比较——对齐 `CouncilVerdict.consensus` 类型来源。
+- [ ] **C7** 多处 `string | null` 不能赋 `string`（如 `AgentPanel:207`）——加非空兜底。
+
+### 15.4 执行顺序（阶段一：修 114 处到 0，编译标准不变）
+
+1. 先 A 类（A2–A7，A1 待范围确认后做）——最小风险、消除隐藏运行坑。
+2. 再 B 类（B1–B12 补类型定义）。
+3. 最后 C 类（C1–C7）+ 跑到 `tsc -b` 零错误。
+4. 验证：`npx tsc -b` 退出码 0；`read_lints` 无错误；`npm run headless` 既有样例仍通过。
+
+### 15.5 阶段二（本次不做，待用户单独启动）
+
+- [ ] 开 `noUnusedLocals`/`noUnusedParameters`（true），清由此新增的未用变量/参数（预计再 +20~50 处）。
+- [ ] `noUncheckedIndexedAccess`/`exactOptionalPropertyTypes` **不开**（存量项目事后开 = 重写一半类型，收益低）。
+
+### 15.6 git / 基线处理（2026-08-05 push 前）
+
+- [ ] 提交范围 = 步骤14成果 + 文档（CODEBUDDY.md/TODO.md）+ .gitignore 修复；临时产物 `p_backflow.*`/`ts_test.*` 删掉不提交。
+- [ ] `tauri_dev.log` 误跟踪（应忽略却没忽略）——`git rm --cached` + 加入 `.gitignore`，本地保留。
+- [ ] push 到 `origin/main` 后再开始 15.1 清理。
+
+##### 14.D Orchestrator（待做，非本轮）
+
+- 全自动编排三张工作流时序：承建方（architect→builder）→ 施工方（handoff）→ 物业（receive）。
+- **本轮评估**：手动链路已闭合（architect→builder.generate 注册双图；手动切施工方跑→handoff；切物业跑→receive），故 14.D 作为独立大片延后，不阻塞蓝图可用性。
+
+##### 14.7.6 路由表编辑入口从 Inspector 迁入「设置中心」（2026-08-05）
+
+> 用户提议：路由表是项目级全局配置，放设置比挤在 Inspector 工作流属性更合适。
+
+- `SettingsCenter.tsx`：新增 `routing`「路由表」分区（图标 `Route`，位于对话流与 APIKEYS 之间），内嵌 `RoutingSection` → `RouteTableEditor`；分区顶部加说明（Builder 据类别查表绑 worker、空表回退默认、项目级持久化）。
+- `Inspector.tsx`：空白（工作流属性）分支回退为原"请选中节点"占位，`RouteTableEditor` import 移除。`RouteTableEditor.tsx` 组件本身不变（仍为项目级，读写 `agentRouteTable`）。
+
+##### 14.7.8 headless 验证发现并修复两个真 bug（2026-08-05）
+
+> headless 跑 `examples/three-party.workflow.json` 暴露两个 bug（GUI 下未实跑故未暴露）。逐节点隔离定位（goal/plan/architect/council/builder/handoff/receive 单独均 OK，仅 control 回流边组合挂起）。
+
+- **bug1 `topoSort.ts` `topoStages` Pass B 死循环**：control 回流边（如 `council.backflow → architect.goal`）与 data 边（`architect→council`）互相追逐，原 `while(changed)` 永不收敛 → headless 卡死（GUI 用 topoLayers 忽略 control 故不卡）。修复：Pass B 仅抬高「正向」control 边（`if (ts <= fs) continue` 跳过回流边），回流边属断点语义不重排。单测 + 完整图均验证收敛。
+- **bug2 `pipeline.ts` `publishArtifact` 笔误**：第 121 行误用未声明变量 `stage`（应为 `args.stage`），导致 `pipeline.handoff` 抛 `stage is not defined` ReferenceError。修复后 handoff/receive/architect/council 的 artifact 发布在 GUI 与 headless 下均正常。
+- **headless 运行器配套修复**：`scripts/headless-run.ts` edge 归一化保留 `data.kind`（此前丢弃致 control 边被误判成环 EXIT:2）；`main()` 成功路径补 `process.exit(0)`（simulate 的 setTimeout 句柄致事件循环不空、进程挂起不退出）。
+
+**验证（headless）**：`npx tsx scripts/headless-run.ts examples/three-party.workflow.json` → 6 节点全部 success（goal/plan/architect/builder/handoff/council），0 失败。
+**类型**：`npx tsc --noEmit` 通过（exitCode 0）；`read_lints` 无错误。
+
+*最后更新：2026-08-05（步骤14 全链路落地并 headless 验证通过：architect/council 节点对标；Builder 生成双工作流+路由绑定；handoff/receive 跨工作流交付；路由表编辑器（设置中心）；物业 receive 串联；handoff meta 透传；示例+headless 修复（topoStages 死循环 + publishArtifact 笔误））*
+
+##### 14.7.7 蓝图收尾：物业接 receive + handoff 透传 scope + 默认预填 + 示例 + headless 验证（2026-08-05）
+
+- **物业工作流真正串联（14.B 闭环）**：`buildOpsWorkflow` 末端 `input.text` 改为 `pipeline.receive(stage:'construction', kind:'project')`，读取施工方 `handoff` 交付的成果（而非占位输入），实现跨工作流真串联。
+- **handoff 透传 meta（scope）**：`pipeline.handoff` 新增可选 `meta` 参数；若 payload 为对象则附加 `_meta` 字段（如"模块 scope 汇总"），下游 `receive` 可读到上下文。Builder 施工图 handoff 预填 `meta` 为所有模块 scope 拼接。
+- **默认预填兜底**：`RouteTableEditor.fillDefaults` 从"仅 defaultAgentId"放宽到"defaultAgentId ?? agents[0]"，确保无默认智能体时「一键填充默认」仍可用。
+- **示例工作流**：`examples/three-party.workflow.json`——承建方(goal→plan→architect[吐category+design artifact]→builder[生成双工作流并注册]→handoff[design])，council.backflow 经 control 边回流 architect 重派；全节点 simulate 模式，免 API Key 跑通端口。
+- **headless 验证修复**：
+  - `scripts/headless-run.ts` edge 归一化**保留 `data.kind`**（此前丢弃，致 control 回流边被误判成环，导致 `wouldCreateCycle` 报错 EXIT:2）；修复后 control 边被拓扑忽略，与 GUI 行为一致。
+  - `main()` 成功路径补 `process.exit(0)`：simulate 节点的 setTimeout / 运行器内部句柄会让事件循环不空，原成功路径不 exit 会**挂起不退出**（曾致手动阻断）；显式退出解决。
+
+**验证状态**：`tsc --noEmit` 通过；headless 修复待实跑确认（用 `timeout` 限时，避免再次挂起）。
+
+*最后更新：2026-08-05（步骤14 14.A / 14.7.1~14.7.7 全落地：architect/council 节点对标；Builder 生成双工作流+路由绑定；handoff/receive；路由表编辑器（设置中心）；物业 receive 串联；handoff meta 透传；示例+headless 修复）*

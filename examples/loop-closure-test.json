@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "测试-loopGate 真·control 闭环多轮（验证施工期重派机制）",
+  "savedAt": "2026-08-05T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "cond",
+      "typeId": "input.text",
+      "label": "触发条件(恒真)",
+      "position": { "x": 40, "y": 200 },
+      "params": { "text": "go" }
+    },
+    {
+      "id": "split",
+      "typeId": "dispatch.split",
+      "label": "任务派发(可重派)",
+      "position": { "x": 300, "y": 80 },
+      "params": { "label1": "施工任务A" }
+    },
+    {
+      "id": "sink",
+      "typeId": "input.text",
+      "label": "派发终点",
+      "position": { "x": 620, "y": 80 },
+      "params": { "text": "received" }
+    },
+    {
+      "id": "loop",
+      "typeId": "flow.loopGate",
+      "label": "迭代闸门",
+      "position": { "x": 300, "y": 320 },
+      "params": { "expression": "i < 3", "maxLoops": 3, "loopVar": "i" }
+    },
+    {
+      "id": "end",
+      "typeId": "output.text",
+      "label": "终止",
+      "position": { "x": 620, "y": 320 },
+      "params": { "text": "" }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "cond", "sourceHandle": "text", "target": "loop", "targetHandle": "cond", "data": { "kind": "control" } },
+    { "id": "e2", "source": "split", "sourceHandle": "task1", "target": "sink", "targetHandle": "text", "data": { "kind": "data" } },
+    { "id": "e3", "source": "loop", "sourceHandle": "pass", "target": "split", "targetHandle": "rerun", "data": { "kind": "control" } },
+    { "id": "e4", "source": "loop", "sourceHandle": "stop", "target": "end", "targetHandle": "text", "data": { "kind": "control" } }
+  ],
+  "agents": []
+}

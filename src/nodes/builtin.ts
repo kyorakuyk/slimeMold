@@ -7,6 +7,8 @@ import { evalExpr } from '../engine/expr';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';
 import { creativeNodes } from './creative';
+import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../engine/pipeline';
+import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
 function inferAssetKind(filename: string): string {
@@ -1027,7 +1029,10 @@ export const nodeDispatch: NodeDefinition = {
   whenToUse: '将任务列表扇出到多条 task 连线并行派发，配合「冲突协调者」做并发冲突检测。',
   description:
     '将任务列表（TaskItem[]）扇出到多条任务连线并行派发。每个输出端口携带一个任务（含 scope 影响域声明）。未分配完的余数走「其余」端口。配合「task」语义连线（橙色）使用。',
-  inputs: [{ id: 'tasks', label: '任务列表', type: 'list' }],
+  inputs: [
+    { id: 'tasks', label: '任务列表', type: 'list' },
+    { id: 'rerun', label: '重派信号(控制流)', type: 'control', flow: 'control' },
+  ],
   outputs: [
     { id: 'task1', label: '任务1', type: 'any', flow: 'task' },
     { id: 'task2', label: '任务2', type: 'any', flow: 'task' },
@@ -1316,6 +1321,14 @@ export const nodeArchitect: NodeDefinition = {
         { value: 'on', label: '开启（离线回显）' },
       ],
     },
+    {
+      key: 'pipelineStage',
+      label: 'Pipeline 阶段标识（跨工作流交付物落盘用）',
+      type: 'text',
+      default: 'design',
+      placeholder: '如 design / plan；留空不发布 Artifact',
+      tooltip: '将该节点产出的 design 交付物写入项目级黑板对应阶段，供 Builder/施工方工作流读取。',
+    },
   ],
   async execute(inputs, params, ctx) {
     const goal = String(inputs.goal ?? '').trim();
@@ -1347,10 +1360,11 @@ export const nodeArchitect: NodeDefinition = {
 — 目标 —
 ${goal}${constraintHint}
 
-请输出架构设计书，并在最后用如下围栏块给出结构化模块数组（每项：{name, responsibility?, scope?（影响的文件/模块列表）, dependsOn?（依赖的其它模块名）, payload?}），以便下游并行派发施工：
+请输出架构设计书，并在最后用如下围栏块给出结构化模块数组（每项：{name, category, responsibility?, scope?（影响的文件/模块列表）, dependsOn?（依赖的其它模块名）, payload?}），以便下游 Builder 经「类别→智能体」路由表绑定 agent 并行施工：
 \`\`\`json
-[{"name":"模块名","responsibility":"职责说明","scope":["文件/模块"],"dependsOn":["其它模块名"],"payload":"可选附加内容"}]
+[{"name":"模块名","category":"ui|logic|docs|infra|data","responsibility":"职责说明","scope":["文件/模块"],"dependsOn":["其它模块名"],"payload":"可选附加内容"}]
 \`\`\`
+category 必填，从 ui(前端/界面) / logic(核心逻辑/算法) / docs(文档/说明) / infra(构建/部署/配置) / data(数据/存储/接口契约) 中择一，无法归类可填 data。
 若确实无法切分，也请给出至少一个模块。`;
     };
 
@@ -1379,9 +1393,9 @@ ${JSON.stringify(
   2,
 )}`;
       const modules: ModuleItem[] = [
-        { name: 'api', responsibility: '对外接口层', scope: ['src/api'], dependsOn: [], payload: goal, index: 0 },
-        { name: 'core', responsibility: '核心业务逻辑', scope: ['src/core'], dependsOn: ['api'], payload: goal, index: 1 },
-        { name: 'store', responsibility: '状态与持久化', scope: ['src/store'], dependsOn: ['core'], payload: goal, index: 2 },
+        { name: 'api', responsibility: '对外接口层', category: 'ui', scope: ['src/api'], dependsOn: [], payload: goal, index: 0 },
+        { name: 'core', responsibility: '核心业务逻辑', category: 'logic', scope: ['src/core'], dependsOn: ['api'], payload: goal, index: 1 },
+        { name: 'store', responsibility: '状态与持久化', category: 'data', scope: ['src/store'], dependsOn: ['core'], payload: goal, index: 2 },
       ];
       ctx.logger.info(`架构(模拟)完成 智能体=${agent?.name ?? '未绑定'} 模型=${modelTag} 目标 ${goal.length} 字`);
       let acc = '';
@@ -1390,6 +1404,7 @@ ${JSON.stringify(
         ctx.setPartial('design', acc);
         await new Promise((r) => setTimeout(r, 4));
       }
+      publishDesignArtifact(params, { design, modules, summary: goal.slice(0, 40) });
       return { design, modules, summary: goal.slice(0, 40) };
     }
 
@@ -1417,9 +1432,33 @@ ${JSON.stringify(
     const modules = extractModulesFromDesign(text, goal);
     const firstLine = text.split('\n').find((l) => l.trim().length > 0);
     const summary = (firstLine ? firstLine.replace(/^[#*\s-]+/, '').trim() : goal.slice(0, 40)).slice(0, 60);
-    return { design: text, modules, summary };
+    const out = { design: text, modules, summary };
+    publishDesignArtifact(params, out);
+    return out;
   },
 };
+
+/** architect.design 执行完后，把 design 交付物写入项目级黑板（跨工作流协作）。stage 由节点参数 pipelineStage 决定（默认 'design'）。 */
+function publishDesignArtifact(params: Record<string, unknown>, payload: { design: string; modules: ModuleItem[]; summary: string }): void {
+  const stage = String(params.pipelineStage ?? '').trim();
+  if (!stage) return; // 留空表示不参与跨工作流协作，不发布
+  try {
+    publishArtifactFromNode({ stage, kind: 'design', payload });
+  } catch (e) {
+    // 发布失败不应中断节点主流程（artifact 是旁路交付物）
+    console.warn('[architect.design] 发布 design artifact 失败：', e);
+  }
+}
+
+/** 合法的模块类别集合（步骤 14.7，对标 OMO category 解耦路由）。非约定值会被规整为 'data'。 */
+const KNOWN_CATEGORIES = new Set(['ui', 'logic', 'docs', 'infra', 'data']);
+
+/** 从模块原始对象中规整出合法 ModuleCategory（非约定值降级为 'data'，但保留任意字符串以允许自定义类别）。 */
+function normalizeCategory(raw: unknown): ModuleItem['category'] {
+  const c = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (!c) return 'data';
+  return c; // 保留任意字符串（路由表键可自定义），仅做小写规整
+}
 
 /** 从模型架构设计文本中提取模块清单；解析失败降级为「整个目标作为一个模块」。 */
 function extractModulesFromDesign(text: string, fallbackGoal: string): ModuleItem[] {
@@ -1443,6 +1482,7 @@ function extractModulesFromDesign(text: string, fallbackGoal: string): ModuleIte
           return {
             name,
             responsibility,
+            category: normalizeCategory(t?.category),
             scope: scope && scope.length > 0 ? scope : undefined,
             dependsOn: dependsOn && dependsOn.length > 0 ? dependsOn : undefined,
             payload: t?.payload,
@@ -1454,7 +1494,7 @@ function extractModulesFromDesign(text: string, fallbackGoal: string): ModuleIte
       /* 落入降级分支 */
     }
   }
-  return [{ name: fallbackGoal, responsibility: fallbackGoal, payload: fallbackGoal, index: 0 }];
+  return [{ name: fallbackGoal, responsibility: fallbackGoal, category: 'data', payload: fallbackGoal, index: 0 }];
 }
 
 /** 从模型计划文本中提取任务清单；解析失败降级为「整个目标作为一个任务」。 */
@@ -1707,6 +1747,7 @@ export const nodeCouncil: NodeDefinition = {
     { id: 'verdict', label: '裁决', type: 'json' },
     { id: 'councillors', label: '议员意见', type: 'list' },
     { id: 'consensus', label: '共识评级', type: 'text' },
+    { id: 'backflow', label: '回流裁决', type: 'json', flow: 'control' },
   ],
   params: [
     {
@@ -1732,6 +1773,14 @@ export const nodeCouncil: NodeDefinition = {
         { value: 'off', label: '关闭（真实调用 LLM）' },
         { value: 'on', label: '开启（回显角色链路，不调 LLM）' },
       ],
+    },
+    {
+      key: 'pipelineStage',
+      label: 'Pipeline 阶段标识（回流裁决落盘用）',
+      type: 'text',
+      default: 'design',
+      placeholder: '如 design；留空不发布回流 Artifact',
+      tooltip: '把裁决写入项目级黑板对应阶段，经 backflow 控制流端口回流上游重派。',
     },
   ],
   async execute(inputs, params, ctx) {
@@ -1821,10 +1870,44 @@ export const nodeCouncil: NodeDefinition = {
     const result: CouncilVerdict = { verdict, councillors, consensus, partialFailure };
     ctx.logger.info(`仲裁完成：共识=${consensus}${partialFailure ? '（部分议员失败，已用成功者合成）' : ''}`);
 
-    // 声明下游可用分支（供控制流回流上游重派）
-    return { verdict: result, councillors: succeeded.map((c) => ({ name: c.name, reply: c.reply })), consensus };
+    const decision = consensus === 'split' ? '需复议' : '采纳';
+    const backflowPayload = buildBackflow({ consensus, decision, proposal: question });
+    publishCouncilArtifact(params, result);
+
+    // 声明下游可用分支（verdict 数据 + backflow 控制流端口，供回流上游重派）
+    return {
+      verdict: result,
+      councillors: succeeded.map((c) => ({ name: c.name, reply: c.reply })),
+      consensus,
+      backflow: backflowPayload,
+    };
   },
 };
+
+/** coord.council 回流裁决的形状（经 backflow 控制流端口回流上游重派）；参考 OMO 两层 + consensus 评级。 */
+interface CouncilBackflow {
+  consensus: CouncilVerdict['consensus'];
+  decision: '采纳' | '需复议';
+  proposal: string;
+  rework: boolean; // true 表示建议上游重派（仅当 split/majority 且非采纳）
+}
+
+/** 依据共识评级构造回流裁决；对标 OMO「两层 + 共识评级」：unanimous/majority 视为可采纳，split 触发回流重派。 */
+function buildBackflow(args: { consensus: CouncilVerdict['consensus']; decision: string; proposal: string }): CouncilBackflow {
+  const rework = args.consensus === 'split' || args.decision === '需复议';
+  return { consensus: args.consensus, decision: args.decision as '采纳' | '需复议', proposal: args.proposal, rework };
+}
+
+/** coord.council 执行完后，把裁决写入项目级黑板（跨工作流协作）。stage 由节点参数 pipelineStage 决定（默认 'design'）。 */
+function publishCouncilArtifact(params: Record<string, unknown>, payload: CouncilVerdict): void {
+  const stage = String(params.pipelineStage ?? '').trim();
+  if (!stage) return;
+  try {
+    publishArtifactFromNode({ stage, kind: 'council', payload });
+  } catch (e) {
+    console.warn('[coord.council] 发布 council artifact 失败：', e);
+  }
+}
 
 /**
  * 条件/循环断点（Loop Gate / Condition Break）：
@@ -2260,11 +2343,22 @@ const workerValidator: NodeDefinition = {
     { id: 'verdict', label: '结论(pass/fail)', type: 'text' },
     { id: 'report', label: '评审报告', type: 'text' },
     { id: 'iterations', label: '迭代轮数', type: 'text' },
+    { id: 'fail', label: '验收失败(控制流)', type: 'control', flow: 'control' },
   ],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
     { key: 'modelOverride', label: '节点级模型（留空用默认）', type: 'text', default: '' },
+    {
+      key: 'mode',
+      label: '验收模式',
+      type: 'select',
+      default: 'block',
+      options: [
+        { value: 'block', label: '单块评审（逐代码块 PASS/FAIL + 修订闭环）' },
+        { value: 'project', label: '整项目验收（把输入当完整交付物做集成测试）' },
+      ],
+    },
     { key: 'maxIter', label: '最大迭代轮数', type: 'number', default: 3 },
     { key: 'system', label: '系统提示词（覆盖默认）', type: 'textarea', default: '' },
     {
@@ -2281,8 +2375,9 @@ const workerValidator: NodeDefinition = {
   async execute(inputs, params, ctx) {
     const code = String(inputs.code ?? '');
     if (!code) throw new Error('校验工缺少代码输入（code 端口）');
-    const criteria = inputs.criteria != null ? String(inputs.criteria) : '代码应正确、可运行、符合要求。';
+    const criteria = inputs.criteria != null ? String(inputs.criteria) : '交付物应正确、可运行、符合要求。';
     const maxIter = Math.max(1, Number(params.maxIter ?? 3) || 1);
+    const mode = String(params.mode ?? 'block');
     const { system, simulate, modelOverride } = await resolveWorkerCtx(
       params,
       ctx,
@@ -2290,6 +2385,41 @@ const workerValidator: NodeDefinition = {
       '校验工',
     );
 
+    // —— 整项目验收模式（14.D）：把输入当完整交付物做集成测试，单轮判定，不回贴修订代码 ——
+    if (mode === 'project') {
+      if (simulate) {
+        const ok = code.trim().length > 0;
+        const sim = await simulateWorker(ctx, '校验工（整项目验收·模拟）', system, [
+          `— 整项目交付物 —`,
+          code.slice(0, 500),
+          `— 验收标准 —`,
+          criteria,
+          `— 模拟产出：${ok ? '判定 PASS（输入非空）' : '判定 FAIL（输入为空）'} —`,
+        ]);
+        if (!ok) ctx.setBranches?.(['fail']);
+        return { verdict: ok ? 'pass(sim)' : 'fail(sim)', report: sim, iterations: '1' };
+      }
+      const messages: ChatMessage[] = [];
+      if (system) messages.push({ role: 'system', content: system });
+      messages.push({
+        role: 'user',
+        content:
+          `【整项目验收 / 集成测试】你正在验收整个项目交付物，而不是单文件代码块。\n` +
+          `验收标准：\n${criteria}\n\n` +
+          `项目交付物（可能含多个模块/文件，已合并）：\n${code}\n\n` +
+          `请检查模块间接口对接、依赖完整性、能否组装运行。先给 PASS/FAIL 判定，再给验收报告（列出通过项与遗留问题）。`,
+      });
+      let acc = '';
+      const out = await ctx.llm(String(params.agentId ?? ''), messages, (d) => {
+        acc += d;
+        ctx.setPartial('report', acc);
+      }, modelOverride || undefined);
+      const verdict = /^\s*PASS\b/i.test(out) || /\bPASS\b/i.test(out.split('\n')[0] ?? '') ? 'pass' : 'fail';
+      if (verdict === 'fail') ctx.setBranches?.(['fail']);
+      return { verdict, report: out, iterations: '1' };
+    }
+
+    // —— 单块评审模式（默认，保持原有逐块 PASS/FAIL + 修订闭环）——
     if (simulate) {
       const sim = await simulateWorker(ctx, '校验工（自主·模拟）', system, [
         `— 代码 —`,
@@ -2338,6 +2468,198 @@ function extractRevisedCode(out: string, fallback: string): string {
   return m ? m[1].trim() : fallback;
 }
 
+/* ===================== 步骤 14.F：Builder 生成施工/物业工作流 ===================== */
+
+/**
+ * `builder.generate`：读取 architect.design 的 `design` + `modules`，生成「施工方 / 物业」
+ * 两张工作流 JSON（复用 builder.ts 模板），并按参数 `autoRegister` 注册进项目（方案 A：
+ * 可见可改）。每个 worker 的 agent 绑定由 `module.category` 经项目级 `agentRouteTable` 路由。
+ */
+export const nodeBuilder: NodeDefinition = {
+  typeId: 'builder.generate',
+  name: '工作流生成器',
+  category: '派发',
+  description: '依据架构设计自动生成「施工方 + 物业」两张工作流，并注册进项目。',
+  inputs: [
+    { id: 'design', label: '设计书', type: 'text' },
+    { id: 'modules', label: '模块清单', type: 'list' },
+  ],
+  outputs: [
+    { id: 'constructionWf', label: '施工方工作流', type: 'json' },
+    { id: 'opsWf', label: '物业运维工作流', type: 'json' },
+  ],
+  params: [
+    {
+      key: 'autoRegister',
+      label: '自动注册进项目（标签页可见可改）',
+      type: 'select',
+      default: 'on',
+      options: [
+        { value: 'on', label: '开启（生成即注册）' },
+        { value: 'off', label: '关闭（仅输出 JSON）' },
+      ],
+    },
+    {
+      key: 'constructionName',
+      label: '施工方工作流名称',
+      type: 'text',
+      default: '施工方工作流',
+    },
+    {
+      key: 'opsName',
+      label: '物业运维工作流名称',
+      type: 'text',
+      default: '物业运维工作流',
+    },
+  ],
+  async execute(inputs, params, ctx) {
+    const modulesRaw = inputs.modules;
+    const modules: ModuleItem[] = Array.isArray(modulesRaw)
+      ? modulesRaw.filter((m): m is ModuleItem => !!m && typeof m === 'object')
+      : [];
+    if (modules.length === 0) {
+      // design 可能是唯一输入：尝试从 design 文本无法结构化解析，要求 modules 端口接入
+      throw new Error('builder.generate 缺少模块清单（modules 端口需接 architect.design 的 modules）');
+    }
+
+    const st = useWorkflowStore.getState();
+    const routeTable = st.agentRouteTable ?? {};
+    const fallbackAgentId = st.defaultAgentId || (st.agents[0]?.id ?? null);
+
+    const constructionWf = buildConstructionWorkflow({
+      modules,
+      routeTable,
+      fallbackAgentId,
+      name: String(params.constructionName || '施工方工作流'),
+    });
+    const opsWf = buildOpsWorkflow({
+      fallbackAgentId,
+      name: String(params.opsName || '物业运维工作流'),
+    });
+
+    const autoRegister = String(params.autoRegister ?? 'on') === 'on';
+    if (autoRegister) {
+      try {
+        const cId = st.registerWorkflow(constructionWf, { activate: false });
+        const oId = st.registerWorkflow(opsWf, { activate: false });
+        ctx.logger.info(`Builder 已注册工作流：施工=${cId} 物业=${oId}`);
+        // 不抢占当前画布（承建方可能还在跑），仅写入项目；用户从标签页切换查看
+      } catch (e) {
+        ctx.logger.error(`Builder 注册工作流失败：${(e as Error).message}`);
+      }
+    }
+
+    return { constructionWf, opsWf };
+  },
+};
+
+/* ===================== 步骤 14.B：跨工作流交付 / 接收 ===================== */
+
+const HANDOFF_KINDS: { value: string; label: string }[] = [
+  { value: 'plan', label: '计划书 plan' },
+  { value: 'design', label: '设计书 design' },
+  { value: 'project', label: '项目交付 project' },
+  { value: 'bugreport', label: 'Bug 报告 bugreport' },
+  { value: 'constructionWf', label: '施工工作流 constructionWf' },
+  { value: 'opsWf', label: '运维工作流 opsWf' },
+  { value: 'custom', label: '自定义（填 kind 文本）' },
+];
+
+/**
+ * `pipeline.handoff`：把本工作流的产物交付到项目级黑板（跨工作流传递）。
+ * 参数 `stage` 决定落到哪个阶段槽位；`kind` 决定产物类型。下游工作流经
+ * `pipeline.receive` 同 stage+kind 读回。本质复用 pipeline.publishArtifact。
+ */
+export const nodeHandoff: NodeDefinition = {
+  typeId: 'pipeline.handoff',
+  name: '交付（跨工作流）',
+  category: '派发',
+  description: '把产物写入项目级黑板指定阶段，供其他工作流接收。',
+  inputs: [{ id: 'payload', label: '交付物', type: 'any' }],
+  outputs: [{ id: 'artifact', label: '交付回执', type: 'json' }],
+  params: [
+    { key: 'stage', label: '目标阶段（黑板槽位）', type: 'text', default: 'construction', placeholder: '如 plan/design/construction/ops' },
+    {
+      key: 'kind',
+      label: '交付物类型',
+      type: 'select',
+      default: 'project',
+      options: HANDOFF_KINDS,
+    },
+    { key: 'kindCustom', label: '自定义 kind（kind=自定义时生效）', type: 'text', default: '' },
+    { key: 'meta', label: '附带元信息（任意文本，如模块 scope 汇总）', type: 'text', default: '', placeholder: '可选，随交付物透传给下游' },
+  ],
+  async execute(inputs, params, ctx) {
+    const stage = String(params.stage ?? '').trim();
+    if (!stage) throw new Error('pipeline.handoff 缺少目标阶段（stage 参数）');
+    const kindSel = String(params.kind ?? 'project');
+    const kind: ArtifactKind = kindSel === 'custom' ? String(params.kindCustom ?? '').trim() || 'custom' : kindSel;
+    const payload = inputs.payload;
+    if (payload === undefined) throw new Error('pipeline.handoff 缺少交付物（payload 端口）');
+    // meta 可选：对象型 payload 时附加 _meta 字段，便于下游 receive 拿到 scope 等上下文（步骤 14 跨工作流透传）
+    const meta = String(params.meta ?? '').trim();
+    const finalPayload =
+      meta && payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? { ...(payload as Record<string, unknown>), _meta: meta }
+        : payload;
+    const artifact = publishArtifactFromNode({ stage, kind, payload: finalPayload });
+    ctx.logger.info(`交付完成 stage=${stage} kind=${kind} version=${artifact.version}`);
+    return { artifact };
+  },
+};
+
+/**
+ * `pipeline.receive`：从项目级黑板读取上游工作流交付的产物（同 stage+kind）。
+ * 黑板为内存态，读取同步；上游须先 handoff。读不到时按 `onError` 决定报错或返回空。
+ */
+export const nodeReceive: NodeDefinition = {
+  typeId: 'pipeline.receive',
+  name: '接收（跨工作流）',
+  category: '派发',
+  description: '从项目级黑板读取指定阶段的产物。',
+  inputs: [],
+  outputs: [
+    { id: 'payload', label: '交付物', type: 'any' },
+    { id: 'artifact', label: '回执', type: 'json' },
+  ],
+  params: [
+    { key: 'stage', label: '来源阶段（黑板槽位）', type: 'text', default: 'construction', placeholder: '如 plan/design/construction/ops' },
+    {
+      key: 'kind',
+      label: '交付物类型',
+      type: 'select',
+      default: 'project',
+      options: HANDOFF_KINDS,
+    },
+    { key: 'kindCustom', label: '自定义 kind（kind=自定义时生效）', type: 'text', default: '' },
+    {
+      key: 'onError',
+      label: '读不到时',
+      type: 'select',
+      default: 'error',
+      options: [
+        { value: 'error', label: '报错（阻断）' },
+        { value: 'empty', label: '返回空 payload' },
+      ],
+    },
+  ],
+  async execute(_inputs, params, ctx) {
+    const stage = String(params.stage ?? '').trim();
+    if (!stage) throw new Error('pipeline.receive 缺少来源阶段（stage 参数）');
+    const kindSel = String(params.kind ?? 'project');
+    const kind: ArtifactKind = kindSel === 'custom' ? String(params.kindCustom ?? '').trim() || 'custom' : kindSel;
+    const artifact = getArtifact(stage, kind);
+    if (!artifact) {
+      if (String(params.onError ?? 'error') === 'empty') {
+        return { payload: null, artifact: null };
+      }
+      throw new Error(`pipeline.receive 读不到交付物（stage=${stage} kind=${kind}）`);
+    }
+    ctx.logger.info(`接收完成 stage=${stage} kind=${kind} version=${artifact.version}`);
+    return { payload: artifact.payload, artifact };
+  },
+};
+
 export const builtinDefs: NodeDefinition[] = [
   textInput,
   template,
@@ -2370,6 +2692,9 @@ export const builtinDefs: NodeDefinition[] = [
   workerScaffolder,
   workerImplementer,
   workerValidator,
+  nodeBuilder,
+  nodeHandoff,
+  nodeReceive,
   ...creativeNodes,
 ].map(createNodeDef);
 

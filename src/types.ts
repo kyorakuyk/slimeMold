@@ -240,7 +240,35 @@ export interface ModuleItem {
   dependsOn?: string[];
   payload?: unknown;
   index?: number;
+  /** 步骤 14.7：模块类别（如 ui/logic/docs/infra），供 Builder 经路由表绑定 agent/模型。
+   * 架构师节点（architect.design）生成模块时标注；Builder（14.F）据此从路由表查 agentId。 */
+  category?: ModuleCategory;
+  /** 步骤 14.7：显式指定该模块使用的智能体 id（优先级高于 category 路由）。
+   * 为空时 Builder 按 category 走项目级路由表。 */
+  agentId?: string;
 }
+
+/** 模块类别枚举（步骤 14.7，对标 oh-my-openagent 的 category 解耦路由）。
+ * 仅作约定值，路由表键可扩展为任意字符串。 */
+export type ModuleCategory =
+  | 'ui' //      前端/视觉/界面
+  | 'logic' //   核心逻辑/算法/架构
+  | 'docs' //    文档/文本/说明
+  | 'infra' //   构建/部署/配置/工程化
+  | 'data' //    数据/存储/接口契约
+  | string; //   预留：自定义类别
+
+/** 步骤 14.7：模块类别 → 智能体 id 的路由表项（单条）。 */
+export interface AgentRouteEntry {
+  /** 该类别默认绑定的智能体 id（对应 AgentConfig.id）。 */
+  agentId: string;
+  /** 回退链：主 agent 不可用时依次尝试的 agent id 列表（对标 oh-my-opencode-slim 的 Model Fallback Chain）。 */
+  fallback?: string[];
+}
+
+/** 步骤 14.7：项目级「类别 → agent」路由表。键为 ModuleCategory（小写），值为路由项。
+ * 随项目 .slimemold 持久化，用户可在设置/Inspector 中覆写（对齐 OMO 的「配置可覆写」哲学）。 */
+export type AgentRouteTable = Record<string, AgentRouteEntry>;
 
 /* ---------- 文件补丁与冲突协调（步骤 11 沙箱式并行） ---------- */
 /** 单条文件改动补丁（逻辑层模拟沙箱，无需真实文件系统隔离）。
