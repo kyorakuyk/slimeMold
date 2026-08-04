@@ -293,7 +293,7 @@ export default function TopBar({
         { label: 'Git Worktree 强隔离运行（独立 git 工作树）', icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree' }), disabled: running },
         { label: '从断点续跑（失败节点 + 下游）', icon: <RotateCcw size={14} />, onClick: () => resumeRun(), disabled: running },
         { label: '强制重跑（清空缓存，全量）', icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(), disabled: running },
-        { type: 'divider' as const },
+        'separator',
         {
           label: failFast ? '失败即停：开' : '失败即停：关',
           icon: <Zap size={14} />,

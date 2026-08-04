@@ -205,7 +205,7 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
           const wfText = await readTextTauri(joinPath(wfDir, e.name));
           const wf = JSON.parse(wfText) as WorkflowFile;
           const id = e.name.replace(/\.json$/, '');
-          workflows[id] = { id, ...wf };
+          workflows[id] = { ...wf };
         }
       }
     }

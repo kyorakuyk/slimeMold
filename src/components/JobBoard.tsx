@@ -9,6 +9,8 @@ const statusMeta: Record<NodeStatus, { label: string; icon: JSX.Element; color: 
   error: { label: '失败', icon: <XCircle size={11} />, color: '#e0524d' },
   cached: { label: '缓存', icon: <Zap size={11} />, color: '#b07cff' },
   skipped: { label: '跳过', icon: <SkipForward size={11} />, color: '#9aa0a6' },
+  bypassed: { label: '旁路', icon: <SkipForward size={11} />, color: '#9aa0a6' },
+  muted: { label: '静音', icon: <Circle size={11} />, color: '#9aa0a6' },
 };
 
 /**
@@ -26,7 +28,7 @@ export default function JobBoard() {
   if (!running && !runProgress.active) return null;
 
   const counts: Record<NodeStatus, number> = {
-    idle: 0, running: 0, success: 0, error: 0, cached: 0, skipped: 0,
+    idle: 0, running: 0, success: 0, error: 0, cached: 0, skipped: 0, bypassed: 0, muted: 0,
   };
   for (const n of nodes) {
     const st = n.data.status ?? 'idle';

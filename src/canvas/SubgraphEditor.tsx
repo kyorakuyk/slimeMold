@@ -28,10 +28,11 @@ import { useRegistryStore } from '../store/registryStore';
 import BaseNode from './nodes/BaseNode';
 import ProxyPortNode from './nodes/ProxyPortNode';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
-import type { FlowNode, FlowEdge, NodeStatus, SubgraphDef, SubgraphPort, PortType } from '../types';
+import type { NodeTypes } from '@xyflow/react';
+import type { FlowNode, FlowEdge, NodeStatus, SubgraphDef, SubgraphPort, PortType, WorkflowNodeData } from '../types';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 
-const nodeTypes = { base: BaseNode, proxyIn: ProxyPortNode, proxyOut: ProxyPortNode };
+const nodeTypes = { base: BaseNode, proxyIn: ProxyPortNode, proxyOut: ProxyPortNode } as unknown as NodeTypes;
 
 export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
   const sg = useWorkflowStore((s) => s.subgraphs[subgraphId]);
@@ -39,6 +40,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
   const syncGroupProxies = useWorkflowStore((s) => s.syncGroupProxies);
   const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
   const defs = useRegistryStore((s) => s.defs);
+  const subgraphs = useWorkflowStore((s) => s.subgraphs);
 
   const [innerNodes, setInnerNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -64,7 +66,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
   const liveInPorts = useMemo(() => {
     const m = new Map<string, { type: PortType; label: string }>();
     for (const n of innerNodes) {
-      const rp = resolvePorts(n.data?.typeId, n.data?.params ?? {}, defs);
+      const rp = resolvePorts(n.data?.typeId, n.data?.params ?? {}, defs, subgraphs);
       for (const p of rp.inputs) if (!m.has(p.type ?? 'any')) m.set(p.type ?? 'any', { type: p.type ?? 'any', label: p.label });
     }
     return [...m.values()];
@@ -73,7 +75,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
   const liveOutPorts = useMemo(() => {
     const m = new Map<string, { type: PortType; label: string }>();
     for (const n of innerNodes) {
-      const rp = resolvePorts(n.data?.typeId, n.data?.params ?? {}, defs);
+      const rp = resolvePorts(n.data?.typeId, n.data?.params ?? {}, defs, subgraphs);
       for (const p of rp.outputs) if (!m.has(p.type ?? 'any')) m.set(p.type ?? 'any', { type: p.type ?? 'any', label: p.label });
     }
     return [...m.values()];
@@ -89,7 +91,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
       data: {
         side: 'in' as const,
         ports: liveInPorts.map((p) => ({ id: `in:${p.type}`, type: p.type, label: p.label })),
-      },
+      } as unknown as WorkflowNodeData,
     },
     {
       id: PROXY_OUT_ID,
@@ -99,7 +101,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
       data: {
         side: 'out' as const,
         ports: liveOutPorts.map((p) => ({ id: `out:${p.type}`, type: p.type, label: p.label })),
-      },
+      } as unknown as WorkflowNodeData,
     },
   ];
 
@@ -130,7 +132,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
   const onNodesChange = (changes: NodeChange<FlowNode>[]) =>
     setInnerNodes((ns) =>
       applyNodeChanges(
-        changes.filter((c) => c.id !== PROXY_IN_ID && c.id !== PROXY_OUT_ID),
+        changes.filter((c) => c.type === 'add' || (c.id !== PROXY_IN_ID && c.id !== PROXY_OUT_ID)),
         ns,
       ),
     );
@@ -172,7 +174,7 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
     const portInfo = (nodeId: string, handleId: string | null) => {
       const nd = nodeMap.get(nodeId);
       if (!nd) return { type: 'any' as PortType, label: handleId ?? 'port' };
-      const rp = resolvePorts(nd.typeId, nd.params, defs);
+      const rp = resolvePorts(nd.typeId, nd.params, defs, subgraphs);
       const port = [...rp.inputs, ...rp.outputs].find((p) => p.id === handleId);
       return { type: (port?.type ?? 'any') as PortType, label: port?.label ?? handleId ?? 'port' };
     };
@@ -329,7 +331,7 @@ function InnerFlow({
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        nodeTypes={nodeTypes}
+        nodeTypes={nodeTypes as NodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

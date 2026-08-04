@@ -1031,7 +1031,7 @@ export const nodeDispatch: NodeDefinition = {
     '将任务列表（TaskItem[]）扇出到多条任务连线并行派发。每个输出端口携带一个任务（含 scope 影响域声明）。未分配完的余数走「其余」端口。配合「task」语义连线（橙色）使用。',
   inputs: [
     { id: 'tasks', label: '任务列表', type: 'list' },
-    { id: 'rerun', label: '重派信号(控制流)', type: 'control', flow: 'control' },
+    { id: 'rerun', label: '重派信号(控制流)', type: 'any', flow: 'control' },
   ],
   outputs: [
     { id: 'task1', label: '任务1', type: 'any', flow: 'task' },
@@ -1605,9 +1605,10 @@ export const nodeResolver: NodeDefinition = {
     // ---- 旧逻辑：纯 scope 交集检测（作为 content 模式的 fallback） ----
     const entries = present.map((v, i) => {
       const { scope, source } = collectScopes(v);
+      const vv = v as { label?: unknown; name?: unknown };
       const label =
-        (v && typeof v.label === 'string') ? v.label
-        : (v && typeof v.name === 'string') ? v.name
+        (vv.label && typeof vv.label === 'string') ? vv.label
+        : (vv.name && typeof vv.name === 'string') ? vv.name
         : `任务线${i + 1}`;
       return { label, scope, source, value: v };
     });
@@ -1870,7 +1871,7 @@ export const nodeCouncil: NodeDefinition = {
     const result: CouncilVerdict = { verdict, councillors, consensus, partialFailure };
     ctx.logger.info(`仲裁完成：共识=${consensus}${partialFailure ? '（部分议员失败，已用成功者合成）' : ''}`);
 
-    const decision = consensus === 'split' ? '需复议' : '采纳';
+    const decision = (consensus as CouncilVerdict['consensus']) === 'split' ? '需复议' : '采纳';
     const backflowPayload = buildBackflow({ consensus, decision, proposal: question });
     publishCouncilArtifact(params, result);
 
@@ -2343,7 +2344,7 @@ const workerValidator: NodeDefinition = {
     { id: 'verdict', label: '结论(pass/fail)', type: 'text' },
     { id: 'report', label: '评审报告', type: 'text' },
     { id: 'iterations', label: '迭代轮数', type: 'text' },
-    { id: 'fail', label: '验收失败(控制流)', type: 'control', flow: 'control' },
+    { id: 'fail', label: '验收失败(控制流)', type: 'any', flow: 'control' },
   ],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },

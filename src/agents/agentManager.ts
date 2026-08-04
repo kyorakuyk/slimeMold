@@ -133,6 +133,8 @@ export const protocolDefaults: Record<
 export interface ProviderPreset {
   id: string;
   name: string;
+  /** 显示名（面板下拉可选，缺省回退 name） */
+  label?: string;
   protocol: Protocol;
   baseUrl: string;
   defaultModel: string;

@@ -28,9 +28,11 @@ registerBuiltins();
 function SplitCanvas({
   splitWfId,
   setSplitWfId,
+  onNewProject,
 }: {
   splitWfId: string;
   setSplitWfId: (id: string) => void;
+  onNewProject?: () => void;
 }) {
   const workflows = useWorkflowStore((s) => s.workflows);
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
@@ -55,7 +57,7 @@ function SplitCanvas({
           </span>
         </div>
         <div className="h-[calc(100%-1.75rem)]">
-          <WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />
+          <WorkflowEditor onNewProject={onNewProject} />
         </div>
       </div>
 
@@ -89,7 +91,7 @@ function SplitCanvas({
               项目中只有一个工作流。新建一个工作流即可在拆分视图中并排查看/编辑不同工作流。
             </div>
           ) : (
-            <WorkflowEditor wfId={targetId} onNewProject={() => setNewProjectOpen(true)} />
+            <WorkflowEditor wfId={targetId} onNewProject={onNewProject} />
           )}
         </div>
       </div>
@@ -363,6 +365,7 @@ export default function App() {
                 <SplitCanvas
                   splitWfId={splitWfId}
                   setSplitWfId={setSplitWfId}
+                  onNewProject={() => setNewProjectOpen(true)}
                 />
               ) : (
                 <div className="min-w-0 flex-1">

@@ -48,6 +48,7 @@ export interface HeadlessRunOptions {
 const noopLogger = {
   info: (_m: string) => {},
   error: (_m: string) => {},
+  warn: (_m: string) => {},
 };
 
 /** 汇集上游输出：edge.targetHandle <- outputs[edge.source][edge.sourceHandle] */

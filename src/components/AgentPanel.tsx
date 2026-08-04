@@ -192,7 +192,7 @@ function AgentsTab() {
       const key =
         editing.protocol === 'ollama'
           ? undefined
-          : pendingKey ?? (await loadCredential(editing.credentialKey ?? defaultCredentialKey(editing.protocol)));
+          : pendingKey ?? (await loadCredential(editing.credentialKey ?? defaultCredentialKey(editing.protocol))) ?? undefined;
       if (editing.protocol !== 'ollama' && !key) {
         setProbe({
           ok: false,
@@ -201,7 +201,11 @@ function AgentsTab() {
         });
         return;
       }
-      const proxyUrl = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
+      const proxyUrl: string | undefined = editing.proxyUrl
+        ? editing.proxyUrl.trim()
+        : useViewStore.getState().globalProxyUrl
+          ? useViewStore.getState().globalProxyUrl.trim()
+          : undefined;
       const r = await probeAgent(
         { protocol: editing.protocol, baseUrl: editing.baseUrl, model: editing.model },
         key,
@@ -232,7 +236,7 @@ function AgentsTab() {
           setModelHint('请先保存 API Key 再拉取模型列表');
           return;
         }
-        const proxyUrl = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
+        const proxyUrl: string | undefined = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
         list = await fetchOpenAIModels(editing.baseUrl, key, proxyUrl);
         if (list.length === 0) {
           setModelHint(

@@ -61,3 +61,5 @@ _diag.ps1
 # Local analysis / reference docs (not committed)
 GAP_ANALYSIS.md
 
+
+tsc_tmp.log

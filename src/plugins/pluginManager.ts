@@ -2,6 +2,7 @@ import { isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { loadPluginFromSource } from './loader';
+import type { NodeDefinition } from '../types';
 
 export const PLUGIN_DIR = 'plugins';
 /** 自定义节点目录名（位于程序安装目录下：<程序根>/custom_nodes） */

@@ -51,7 +51,7 @@ export async function removeCredential(key: CredentialKey): Promise<void> {
 /** 枚举已登记的凭据键（来自系统密钥库）；非 Tauri 环境返回空数组。 */
 export async function listCredentials(): Promise<CredentialKey[]> {
   if (!isTauri) return [];
-  return (await invokeRaw<string[]>('list_credentials')) ?? [];
+  return (await invokeRaw<string[]>('list_credentials', {})) ?? [];
 }
 
 /* ---------------- API 接入点（独立 endpoints service，Rust 端枚举） ---------------- */
@@ -100,7 +100,7 @@ export async function removeEndpoint(name: string): Promise<void> {
 /** 枚举全部 API 接入点（来自 endpoints service，Rust 端直接枚举）。 */
 export async function listEndpoints(): Promise<ApiEndpoint[]> {
   if (!isTauri) return [];
-  const raws = (await invokeRaw<string[]>('list_endpoints_raw')) ?? [];
+  const raws = (await invokeRaw<string[]>('list_endpoints_raw', {})) ?? [];
   const out: ApiEndpoint[] = [];
   for (const r of raws) {
     try {

@@ -112,7 +112,7 @@ export default function Companion() {
       const u = n.data.usage as NodeUsageStat | undefined;
       if (u) {
         calls += u.calls ?? 0;
-        tokens += (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+        tokens += (u.promptTokens ?? 0) + (u.completionTokens ?? 0);
       }
     }
     return { calls, tokens };

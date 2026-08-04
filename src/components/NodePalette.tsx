@@ -154,7 +154,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                 ? meta?.color ?? 'var(--sm-accent)'
                 : 'var(--sm-line)',
               color: active ? (meta?.color ?? 'var(--sm-accent)') : 'var(--sm-ink-faint)',
-              background: active ? `${meta?.color}14` ?? 'var(--sm-accent-soft)' : 'transparent',
+              background: active ? (meta ? `${meta.color}14` : 'var(--sm-accent-soft)') : 'transparent',
             }}
           >
             {meta && (

@@ -103,7 +103,7 @@ function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
     ...n,
     data: {
       ...n.data,
-      status: undefined,
+      status: 'idle' as NodeStatus,
       error: undefined,
       durationMs: undefined,
       cached: undefined,
@@ -174,6 +174,8 @@ interface WorkflowState {
    * 因为 zustand persist 已在每次变更后同步写入 localStorage）。
    */
   lastAutosave: number | null;
+  /** 记录一次「自动保存」发生（仅 UI 提示，不写磁盘；persist 已同步落盘） */
+  setAutosave: () => void;
 
   /* ---- 项目层（多工作流） ---- */
   /** 当前项目名（无项目时为 null，表示游离单工作流） */
@@ -200,6 +202,8 @@ interface WorkflowState {
   artifacts: import('../engine/pipeline').ProjectArtifacts;
   /** 步骤 14.7：项目级「模块类别 → 智能体」路由表（Builder 生成施工方工作流时绑定 agent 用），随 .slimemold 持久化 */
   agentRouteTable: import('../types').AgentRouteTable;
+  /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
+  workspaceDir: string | null;
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
@@ -538,6 +542,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       edges: [],
       agents: [createAgent('ollama')],
       defaultAgentId: null,
+      workspaceDir: null,
       roles: builtinRoles.map((r) => ({ ...r })),
       selectedNodeId: null,
       focusWfId: '',
@@ -577,7 +582,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
         // 否则会被当成真实节点（「分组被判定为节点」），并污染编组/计数等逻辑。
-        const realChanges = changes.filter((c) => !String(c.id).startsWith('grpnode_'));
+        const realChanges = changes.filter((c) => c.type === 'add' || !String(c.id).startsWith('grpnode_'));
         if (realChanges.length === 0) return;
         set({ nodes: applyNodeChanges(realChanges, get().nodes) });
         // 删除节点会改变其下游输入：标记下游为脏
@@ -699,7 +704,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           const wf = get().workflows[wfId];
           if (!wf) return;
           const delNodes = new Set((wf.nodes ?? []).filter((n) => n.selected).map((n) => n.id));
-          if (get().selectedNodeId) delNodes.add(get().selectedNodeId);
+          const selNode = get().selectedNodeId;
+          if (selNode) delNodes.add(selNode);
           if (delNodes.size === 0) return;
           const nodes = (wf.nodes ?? []).filter((n) => !delNodes.has(n.id));
           const edges = (wf.edges ?? []).filter(
@@ -715,7 +721,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         const delNodes = new Set(
           get().nodes.filter((n) => n.selected).map((n) => n.id),
         );
-        if (get().selectedNodeId) delNodes.add(get().selectedNodeId);
+        const selNode = get().selectedNodeId;
+        if (selNode) delNodes.add(selNode);
         if (delNodes.size === 0 && !get().edges.some((e) => e.selected)) return;
         set({
           nodes: get().nodes.filter((n) => !delNodes.has(n.id)),
@@ -764,8 +771,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        const nodes = (wf.nodes ?? []).map((n) => (n.id === id ? { ...n, label } : n));
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
+        const nodes = (wf.nodes as unknown as FlowNode[]).map((n) =>
+          n.id === id ? { ...n, data: { ...n.data, label } } : n,
+        );
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: nodes as unknown as WorkflowFileNode[] } } });
       },
 
       toggleNodeBypass: (id, wfId) => {
@@ -777,7 +786,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes ?? []).map(flip) } } });
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes as unknown as FlowNode[]).map(flip) as unknown as WorkflowFileNode[] } } });
       },
 
       toggleNodeMute: (id, wfId) => {
@@ -789,7 +798,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes ?? []).map(flip) } } });
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes as unknown as FlowNode[]).map(flip) as unknown as WorkflowFileNode[] } } });
       },
 
       /** 对齐 / 分布：对当前选中的多个节点生效（少于 2 个不操作），支持拆分视图 */
@@ -825,7 +834,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           const wf = get().workflows[wfId];
           if (!wf) return;
           get().pushHistory();
-          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes ?? []) } } });
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes as unknown as FlowNode[]) as unknown as WorkflowFileNode[] } } });
           return;
         }
         get().pushHistory();
@@ -854,7 +863,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           const wf = get().workflows[wfId];
           if (!wf) return;
           get().pushHistory();
-          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes ?? []) } } });
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes as unknown as FlowNode[]) as unknown as WorkflowFileNode[] } } });
           return;
         }
         get().pushHistory();
@@ -1077,7 +1086,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const { nodes, edges } = get();
         const selIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
         if (selIds.size === 0) return;
-        const selNodes = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n, data: { ...n.data, status: undefined, error: undefined, durationMs: undefined, cached: undefined } }));
+        const selNodes = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n, data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, durationMs: undefined, cached: undefined } }));
         const selEdges = edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
         set({ clipboard: { nodes: selNodes, edges: [...selEdges] } });
         get().addLog('info', `已复制 ${selIds.size} 个节点到剪贴板`);
@@ -1192,8 +1201,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           version: 1,
           name: tpl?.name ?? '未命名工作流',
           savedAt: now,
-          nodes: tplNodes,
-          edges: tplEdges,
+          nodes: tplNodes.map(storedNodeOf),
+          edges: tplEdges.map(storedEdgeOf),
           agents: baseAgents,
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
@@ -1228,7 +1237,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         suppressDirty = false;
         if (saveRoot) {
           try {
-            const root = await get().saveProject(saveRoot);
+            const root = await get().saveProject();
             saveLastSession({ path: root, activeId: id });
           } catch (e) {
             // 落盘失败：保留在内存态（projectPath=null），用户可稍后保存
@@ -2061,7 +2070,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           }),
         })),
 
-      recomputeGroupProxy: (groupId) =>
+      recomputeGroupProxy: (groupId: string) =>
         set((st) => {
           const g = st.groups.find((x) => x.id === groupId);
           if (!g || !g.subgraphId) return {};

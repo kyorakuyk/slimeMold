@@ -146,6 +146,7 @@ export type ParamType =
   | 'text'
   | 'textarea'
   | 'number'
+  | 'boolean'
   | 'select'
   | 'agent'
   | 'role'
@@ -158,11 +159,14 @@ export interface ParamDef {
   options?: { label: string; value: string }[];
   default?: unknown;
   placeholder?: string;
+  /** 面板/Inspector 中的使用提示（悬停 tooltip） */
+  tooltip?: string;
 }
 
 export interface ExecLogger {
   info(message: string): void;
   error(message: string): void;
+  warn(message: string): void;
 }
 
 /* ---------- 成本遥测（Auditor / 自优化闭环） ---------- */
@@ -573,6 +577,8 @@ export interface WorkflowFileNode {
   label: string;
   position: { x: number; y: number };
   params: Record<string, unknown>;
+  /** 画布选中态（运行时态，存盘忽略，仅类型兼容） */
+  selected?: boolean;
 }
 
 export interface WorkflowFileEdge {
@@ -585,6 +591,8 @@ export interface WorkflowFileEdge {
   kind?: EdgeKind;
   /** task 连线的派发影响域声明（与 FlowEdgeData.scope 对应），供「冲突协调者」检测并发冲突 */
   scope?: string[];
+  /** 画布选中态（运行时态，存盘忽略，仅类型兼容） */
+  selected?: boolean;
 }
 
 export interface WorkflowFile {
@@ -616,6 +624,8 @@ export interface WorkflowFile {
    */
   belongsToProject?: string;
   standalonePath?: string;
+  /** 工作流默认智能体（节点未指定 roleId 时使用；null 表示未设置） */
+  defaultAgentId?: string | null;
   /** 人类可读的配置/使用说明（示例文件常见；运行时忽略，仅供阅读与导入后展示） */
   notes?: string;
   /** 运行历史（P2 成本跟项目：落盘到 .slimemold/runs/history.json） */
@@ -748,6 +758,14 @@ export interface ProjectFile {
   assets?: AssetMeta[];
   /** 项目级子图库（可复用节点组合），key 为子图 id */
   subgraphs?: Record<string, SubgraphDef>;
+  /** 项目级资产/产物库（构建产物、导出物等元数据），供后续步骤/报告引用 */
+  artifacts?: import('./engine/pipeline').ProjectArtifacts;
+  /** 旧版单文件 .smproj 兼容标记（由单文件迁移到目录形态后置 true） */
+  legacy?: boolean;
+  /** 项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
+  agentRouteTable?: AgentRouteTable;
+  /** 项目级运行历史（持久化） */
+  runs?: { history: RunRecord[] };
 }
 
 /** 最近项目记录（持久化在 localStorage，不随项目文件本身） */
@@ -870,7 +888,7 @@ export interface LoadedPlugin {
 /* ---------- 日志 ---------- */
 export interface LogEntry {
   time: string;
-  level: 'info' | 'error';
+  level: 'info' | 'error' | 'warn';
   message: string;
   /** 可选：单次运行的摘要说明与成败标记（运行历史行使用） */
   note?: string;

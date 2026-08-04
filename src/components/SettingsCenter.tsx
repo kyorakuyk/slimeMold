@@ -23,7 +23,6 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { providerPresets } from '../agents/agentManager';
 import {
   listEndpoints,
-  loadEndpoint,
   loadEndpointKey,
   removeEndpoint,
   saveEndpoint,
@@ -250,7 +249,7 @@ function ModelSection() {
         <div className="space-y-1.5">
           {providerPresets.map((p) => (
             <div key={p.id} className="rounded border border-line px-3 py-2">
-              <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{p.label}</span>
+              <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{p.label ?? p.name}</span>
               {p.baseUrl ? (
                 <code className="ml-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{p.baseUrl}</code>
               ) : (

@@ -199,7 +199,7 @@ export default function WorkflowEditor({
       const srcNode = nodes.find((n) => n.id === newSource);
       const tgtNode = nodes.find((n) => n.id === newTarget);
       const sgs = st.subgraphs;
-      const defs = st.defs;
+      const defs = useRegistryStore.getState().defs;
       const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, sgs);
       const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, sgs);
       const srcPort = srcDef.outputs.find((o) => o.id === newSH);
@@ -573,8 +573,8 @@ export default function WorkflowEditor({
         : { x: ev.clientX, y: ev.clientY };
       pendingConn.current = {
         fromNodeId: from.nodeId,
-        fromHandleId: from.id,
-        fromType: from.type as 'source' | 'target',
+        fromHandleId: from.id ?? '',
+        fromType: (from.type ?? 'source') as 'source' | 'target',
         screen,
       };
       setPickerPos(screen);

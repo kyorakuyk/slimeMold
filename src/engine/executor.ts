@@ -1,4 +1,5 @@
 import type {
+  AssetMeta,
   CapabilityLevel,
   CostRecord,
   ExecContext,
@@ -265,6 +266,8 @@ export interface RunOptions {
    * 下游不执行。用于孤立调试单个节点。
    */
   isolated?: boolean;
+  /** 强制重启（忽略并发拦截，用于 Play 按钮检测到运行态卡死时的透传） */
+  force?: boolean;
   /**
    * 失败续跑（L1 可靠执行）：仅重跑上一轮处于 error 状态的节点及其下游；
    * 其余 success/cached 节点复用既有结果不动。需配合 incremental 使用。
@@ -1154,6 +1157,7 @@ async function executeNode(
     logger: {
       info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
       error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
+      warn: (m) => store.addLog('warn', `[${node.data.label}] ${m}`),
     },
     llm: async (agentId, messages, onToken, modelOverride) => {
       const agent = useWorkflowStore
@@ -1281,12 +1285,12 @@ async function executeNode(
   };
 
   // 步骤 11 阶段 D：按节点能力等级裁剪 ctx——越权字段替换为「拒绝型」实现（保持类型完整、运行时受控）
-  applyCapability(ctx, def, { sandbox, sandboxMode });
+  applyCapability(ctx, def, { sandbox: !!sandbox, sandboxMode });
 
   // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，
   // 避免旧协程在节点返回后仍去调 def.execute / 改 store 状态。
   if (myRun !== currentRunId) {
-    return { id, outputs: undefined as never, error: new DOMException('Run superseded', 'AbortError') };
+    return;
   }
 
   setStatus(id, 'running');

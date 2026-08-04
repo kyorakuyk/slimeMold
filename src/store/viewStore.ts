@@ -46,6 +46,8 @@ interface ViewState {
   interactionMode: 'move' | 'select' | 'click';
   /** 全局默认代理（本地代理转发）：留空则各 agent 用自己的 proxyUrl，非空则作为默认出口 */
   globalProxyUrl: string;
+  /** 设置全局默认代理出口 */
+  setGlobalProxyUrl: (url: string) => void;
   /** 拆分视图：画布右侧并排显示辅助面板 */
   splitView: boolean;
   /** 底侧边栏（底部面板）开关状态，持久化以记住上次选择 */
@@ -80,7 +82,7 @@ interface ViewState {
 
 export const useViewStore = create<ViewState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       showGrid: true,
       showMinimap: false,
       theme: 'dark',
@@ -110,7 +112,7 @@ export const useViewStore = create<ViewState>()(
         applyTheme(t);
         set({ theme: t });
       },
-      effectiveTheme: () => resolveTheme(useViewStore.getState().theme),
+      effectiveTheme: () => resolveTheme(get().theme),
     }),
     {
       name: 'slime-mold-view',
