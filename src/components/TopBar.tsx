@@ -44,6 +44,7 @@ import {
   Redo2,
   Wand2,
   Bug,
+  Boxes,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
@@ -288,6 +289,8 @@ export default function TopBar({
       items: [
         { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow({ skipFailed: skipFailed }) },
         { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed }), disabled: running },
+        { label: '沙箱隔离运行（并行 Worker 独立副本）', icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true }), disabled: running },
+        { label: 'Git Worktree 强隔离运行（独立 git 工作树）', icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree' }), disabled: running },
         { label: '从断点续跑（失败节点 + 下游）', icon: <RotateCcw size={14} />, onClick: () => resumeRun(), disabled: running },
         { label: '强制重跑（清空缓存，全量）', icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(), disabled: running },
         { type: 'divider' as const },

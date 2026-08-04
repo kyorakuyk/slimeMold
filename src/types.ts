@@ -242,6 +242,48 @@ export interface ModuleItem {
   index?: number;
 }
 
+/* ---------- 文件补丁与冲突协调（步骤 11 沙箱式并行） ---------- */
+/** 单条文件改动补丁（逻辑层模拟沙箱，无需真实文件系统隔离）。
+ * - path：受影响文件相对路径
+ * - before：读取时的原始内容（null 表示新建文件）
+ * - after：任务线写入后的内容
+ * - readSnapshot：读取时的快照哈希/行区间（借鉴 OMO Hashline，用于合并前精准识别陈旧编辑）
+ *   - hash：before 内容的哈希；若别人已动同一处（after 基于旧版本），合并时标记需仲裁
+ *   - lineRange：[start,end] 行区间，缺省视为整文件
+ *   - source：scope 来源（对应步骤 11.1 并存/剪枝预留）：'object' | 'edge' | 'both' */
+export interface FilePatch {
+  path: string;
+  before: string | null;
+  after: string;
+  readSnapshot?: {
+    hash?: string;
+    lineRange?: [number, number];
+    source?: 'object' | 'edge' | 'both';
+  };
+}
+
+/** 协调者合并产物：无逻辑冲突时把多方改动汇总为「同一文件」的最终补丁集。 */
+export interface MergeResult {
+  /** 可直接合并（文本区间不重叠）的补丁，按 path 汇总 */
+  patches: FilePatch[];
+  /** 需要人工/council 仲裁的补丁（同一 path 的 after 互相覆盖、或 readSnapshot 提示陈旧编辑） */
+  needsArbitration: Array<{ path: string; candidates: FilePatch[] }>;
+  /** scope 来源标注（对应步骤 11.1） */
+  sources: Array<'object' | 'edge' | 'both'>;
+}
+
+/** Council 仲裁裁决结果（对应 OMO-slim Council 合成 single verdict 范式）。 */
+export interface CouncilVerdict {
+  /** 最终合成裁决（文本） */
+  verdict: string;
+  /** 各议员（并行评估子节点）独立回复 */
+  councillors: Array<{ name: string; reply: string; failed?: boolean }>;
+  /** 共识评级（对应 OMO-slim 的 unanimous/majority/split） */
+  consensus: 'unanimous' | 'majority' | 'split';
+  /** 是否部分议员失败但成功合成 */
+  partialFailure: boolean;
+}
+
 export interface ExecContext {
   logger: ExecLogger;
   /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
@@ -276,6 +318,47 @@ export interface ExecContext {
   /** 执行时把当前节点某输出端口的影响域(scope)写回对应的 task 连线，
    * 供下游「冲突协调者」与执行引擎读取。仅对 flow:'task' 端口有意义，未提供则不写回。 */
   writeOutEdgeScope?(handle: string, scope: string[]): void;
+  /**
+   * 真沙箱句柄（步骤 11 阶段 C）：运行期启用 `sandbox: true` 时注入。
+   * 每个写文件的节点拿到独立隔离目录（workspaceDir/.sandbox/<nodeId>/），并行 Worker
+   * 互不踩踏；协调者（coord.resolver / coord.council）拿到聚合句柄，可读取各 Worker
+   * 沙箱并 commitAll() 汇总进主工作区。未启用沙箱时为 undefined，节点应退回共享工作区直写。
+   */
+  sandbox?: SandboxHandle;
+  /**
+   * 协调者（coord.resolver / coord.council）在沙箱模式下的「上游车道」节点 id 列表，
+   * 即直接连入本节点的源节点。供 commitLanes 汇总这些 Worker 的沙箱产物到主工作区。
+   */
+  sandboxLanes?: string[];
+}
+
+/**
+ * 沙箱句柄：把"并行改同一份文件"的竞态收敛为"各自改副本、协调者合并"。
+ * - 普通 Worker 节点：用 writeFile 落到自己的隔离目录；
+ * - 协调者节点：用 readFrom / list 汇聚各 Worker 产物，commitAll 把结果落地主工作区。
+ * 浏览器环境无真实文件系统，baseDir 为 null，所有读写为内存态（仅登记资产预览）。
+ */
+export interface SandboxHandle {
+  /** 当前节点 id */
+  nodeId: string;
+  /** 沙箱根目录绝对路径；浏览器为 null */
+  baseDir: string | null;
+  /** 是否浏览器环境（无真实文件系统） */
+  inBrowser: boolean;
+  /** 在「当前节点」的沙箱内写文件，返回沙箱内路径（Tauri）或标识串（浏览器） */
+  writeFile(filename: string, content: string): Promise<string>;
+  /** 读取「另一节点」沙箱内的文件内容（协调者汇总用）；不存在返回 null */
+  readFrom(otherNodeId: string, filename: string): Promise<string | null>;
+  /** 列出「另一节点」沙箱内的文件名列表（协调者汇总用） */
+  list(otherNodeId: string): Promise<string[]>;
+  /** 把「当前节点沙箱」的全部内容提交（复制）到主工作区目录；返回已落盘的路径列表 */
+  commitAll(): Promise<string[]>;
+  /**
+   * 协调者专用：把若干「上游车道（worker 节点）」的沙箱内容汇总提交到主工作区。
+   * 用于并行 Worker 各自写沙箱副本后，由 coord.resolver / coord.council 统一落地。
+   * laneIds 通常为协调者节点的直接上游节点 id 列表。
+   */
+  commitLanes(laneIds: string[]): Promise<string[]>;
 }
 
 export type NodeExecuteFn = (
@@ -308,6 +391,21 @@ export const NODE_ROLE_META: Record<
   io: { label: '端点', color: '#9ca3af', hint: '工作流的输入与输出边界' },
 };
 
+/**
+ * 步骤 11 阶段 D：节点权限能力分级（capability model）。
+ * 执行引擎在 executeNode 时按节点声明的 minCapability（或按 typeId 推断的默认等级）
+ * 裁剪注入的 ExecContext：越权字段被替换为「拒绝型」实现，而非缺失（保持类型完整、运行时受控）。
+ *
+ * - `compute`       L0 纯计算只读：仅 logger/vars/signal/costLog。禁止任何 I/O（无 llm/storage/sandbox/addAsset）。
+ * - `io`            L1 受限 I/O：+ storage/addAsset/llm/assets。不直接碰工作区文件系统。
+ * - `sandbox_write` L2 隔离写：+ sandbox 句柄，但剥离 commitAll/commitLanes（落地权只给协调者）。
+ * - `coordinator`   L3 协调者：+ sandboxLanes + 完整 commit 汇总权（唯一能把沙箱产物落地主工作区的角色）。
+ * - `system`        L4 系统级：可经 Rust command 调用系统能力（git worktree 等）。当前前端节点自主 invoke，引擎仅放开签名。
+ *
+ * 等级单调递增：未显式声明 minCapability 时，引擎按 typeId 前缀推断默认等级（见 executor.resolveCapability）。
+ */
+export type CapabilityLevel = 'compute' | 'io' | 'sandbox_write' | 'coordinator' | 'system';
+
 export interface NodeDefinition {
   typeId: string;
   name: string;
@@ -325,6 +423,76 @@ export interface NodeDefinition {
   role?: NodeRole;
   /** 使用建议：何时该用这个节点（显示在面板 tooltip / 角色筛选说明） */
   whenToUse?: string;
+  /**
+   * 步骤 11 阶段 D：节点权限能力等级下限。执行引擎据此裁剪注入的 ExecContext。
+   * 未声明时按 typeId 前缀推断默认等级（见 executor.resolveCapability）。
+   * 显式声明可用于收紧（如把内置写文件节点降为 io 以禁止落盘）或放开（插件节点声明 coordinator）。
+   */
+  minCapability?: CapabilityLevel;
+}
+
+/** 自定义节点的宽松入参：必填最小集合，其余字段由 createNodeDef 兜底。 */
+export type NodeDefInput = {
+  typeId: string;
+  name: string;
+  inputs: PortDef[];
+  outputs: PortDef[];
+  execute: NodeExecuteFn;
+} & Partial<Omit<NodeDefinition, 'typeId' | 'name' | 'inputs' | 'outputs' | 'execute'>>;
+
+/**
+ * 步骤 11 阶段 D：自定义节点工厂。降低手写 NodeDefinition 的门槛——
+ * 补齐缺省字段（category 默认「自定义」、params 默认 []、role 按 typeId 前缀推断），
+ * 并在开发期（DEV）做端口 id 唯一性等轻量校验（warn 不抛错，不打断运行）。
+ *
+ * - minCapability 缺省不在此处理：交给引擎 resolveCapability 的权威推断（单一真相源）；
+ *   显式传入则透传采用（同文件 NodeDefinition.minCapability 注释）。
+ * - role 缺省按 typeId 前缀推断（coord./dispatch./flow.→orchestrator，architect.→architect，
+ *   agent./tool./http→worker，verify./auditor.→verifier，output./image.preview→observer，input.→io，其余→worker）。
+ */
+export function createNodeDef(input: NodeDefInput): NodeDefinition {
+  const role = input.role ?? inferRole(input.typeId);
+  const def: NodeDefinition = {
+    typeId: input.typeId,
+    name: input.name,
+    category: input.category ?? '自定义',
+    description: input.description,
+    inputs: input.inputs,
+    outputs: input.outputs,
+    params: input.params ?? [],
+    execute: input.execute,
+    pluginId: input.pluginId,
+    missing: input.missing,
+    role,
+    whenToUse: input.whenToUse,
+    minCapability: input.minCapability,
+  };
+
+  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
+    const inIds = new Set<string>();
+    for (const p of def.inputs) {
+      if (inIds.has(p.id)) console.warn(`[createNodeDef] 节点 ${def.typeId} 输入端口 id 重复: ${p.id}`);
+      inIds.add(p.id);
+    }
+    const outIds = new Set<string>();
+    for (const p of def.outputs) {
+      if (outIds.has(p.id)) console.warn(`[createNodeDef] 节点 ${def.typeId} 输出端口 id 重复: ${p.id}`);
+      outIds.add(p.id);
+    }
+  }
+  return def;
+}
+
+function inferRole(typeId: string): NodeRole {
+  if (typeId.startsWith('coord.') || typeId.startsWith('dispatch.') || typeId.startsWith('flow.'))
+    return 'orchestrator';
+  if (typeId.startsWith('architect.')) return 'architect';
+  if (typeId.startsWith('agent.') || typeId.startsWith('tool.') || typeId.startsWith('http'))
+    return 'worker';
+  if (typeId.startsWith('verify.') || typeId.startsWith('auditor.')) return 'verifier';
+  if (typeId.startsWith('output.') || typeId.startsWith('image.preview')) return 'observer';
+  if (typeId.startsWith('input.')) return 'io';
+  return 'worker';
 }
 
 /* ---------- 画布数据 ---------- */
@@ -613,6 +781,20 @@ export interface RunRecord {
 }
 
 /* ---------- 插件 ---------- */
+/**
+ * 步骤 13（人类-职业-个人抽象）· 自定义职业声明。
+ * 允许 custom node 包定义「一类节点」（新职业），而非只能定义单个具体节点。
+ * 职业类须继承某个框架职业（见 src/nodes/sdk.ts 的 OCCUPATION_CAPABILITY），
+ * 其下具体节点通过 PluginNodeMeta.extends 指向该职业类名，从而获得对应能力等级。
+ */
+export interface PluginOccupation {
+  /** 职业类名（在 index.js 中 export，节点 extends 引用此名） */
+  name: string;
+  /** 继承的框架职业类名（ComputeNode/IoNode/SandboxWriteNode/CoordinatorNode/SystemNode/GitNode） */
+  extends: string;
+  description?: string;
+}
+
 export interface PluginNodeMeta {
   typeId: string;
   name: string;
@@ -621,6 +803,16 @@ export interface PluginNodeMeta {
   inputs: PortDef[];
   outputs: PortDef[];
   params?: ParamDef[];
+  /** 插件节点显式声明的最小能力等级；省略时 loader 默认按 'io' 受限边界注入。 */
+  minCapability?: CapabilityLevel;
+  /**
+   * 步骤 13：声明该节点继承的「职业类」名（框架职业或本包 occupations 中定义的新职业）。
+   * 这是继承式提权的唯一入口——不写 extends 的纯 executors 函数节点永远封顶 io。
+   * loader 据此把职业类名翻译成 CapabilityLevel（见 sdk.capabilityOfClass），
+   * 因此写代码时 `class extends SandboxWriteNode` 与 manifest 里 `extends: "SandboxWriteNode"`
+   * 必须一致（DEV 下校验）。
+   */
+  extends?: string;
 }
 
 export interface PluginManifest {
@@ -631,12 +823,20 @@ export interface PluginManifest {
   /** 入口脚本文件名，如 index.js */
   entry: string;
   nodes: PluginNodeMeta[];
+  /**
+   * 步骤 13 阶段 E：本包自定义的职业类清单（创造「新职业」）。
+   * 节点 extends 可指向其中 name；loader 沿「自定义职业 → 其 extends 的框架职业」解析最终能力。
+   */
+  occupations?: PluginOccupation[];
 }
 
 export interface LoadedPlugin {
   manifest: PluginManifest;
-  source: 'dir' | 'files';
+  // 'dir' = AppData 正式插件；'files' = 浏览器/手动导入；'custom' = custom_nodes/ 用户节点（能力封顶 io）
+  source: 'dir' | 'files' | 'custom';
   path?: string;
+  // custom 来源的生效范围：'program' = 程序安装目录（全局生效，跨项目）；'project' = 当前项目目录（仅本项目内生效）
+  scope?: 'program' | 'project';
 }
 
 /* ---------- 日志 ---------- */

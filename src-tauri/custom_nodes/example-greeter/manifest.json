@@ -1,0 +1,20 @@
+{
+  "id": "custom.example-greeter",
+  "name": "示例·问候节点",
+  "version": "0.1.0",
+  "description": "项目级自定义节点示例（custom_nodes）：把输入文本加上前缀输出。能力封顶 io，仅演示自定义节点机制。",
+  "entry": "index.js",
+  "nodes": [
+    {
+      "typeId": "custom.greeter",
+      "name": "问候",
+      "category": "自定义",
+      "description": "给文本加一个问候前缀后输出",
+      "inputs": [{ "id": "text", "label": "文本", "type": "text" }],
+      "outputs": [{ "id": "out", "label": "结果", "type": "text" }],
+      "params": [
+        { "id": "prefix", "label": "前缀", "type": "text", "default": "你好，" }
+      ]
+    }
+  ]
+}

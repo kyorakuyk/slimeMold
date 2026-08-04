@@ -66,8 +66,14 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 
 ### 插件系统（src/plugins/）
 - 插件 = 文件夹含 `manifest.json`（声明 `id/name/entry/nodes`） + `index.js`（ESM：`export default { executors: { [typeId]: async (inputs, params, ctx) => outputs } }`）。
-- `loader.ts`：`loadPluginFromSource` 把入口源码经 `Blob URL` 动态 `import()`，`execute` 包装为统一 `NodeDefinition` 并注入受限 `ctx`（`logger`/`llm(agentId,messages)`/`storage`/`signal`）。异常被捕获并标记节点失败，不影响主应用。
-- 桌面端从 `AppData/com.slimemold.app/plugins/` 扫描；浏览器「从文件导入」同时选 manifest 与 index.js。加载结果经 `registryStore.registerPlugin` 注册，与内置节点同等待遇。
+- `loader.ts`：`loadPluginFromSource` 把入口源码经 `Blob URL` 动态 `import()`，`execute` 包装为统一 `NodeDefinition`（经 `createNodeDef` 工厂兜底）并注入受限 `ctx`（`logger`/`llm(agentId,messages)`/`storage`/`signal`）。异常被捕获并标记节点失败，不影响主应用。
+- **两类插件来源（`LoadedPlugin.source`）**：
+  - `dir`：桌面端从 `AppData/com.slimemold/plugins/`（注意非 `.app` 子级）扫描，共享安装、跨项目可用；默认 `minCapability: io`，引擎 `applyCapability` 实际裁剪其落地权。
+  - `custom`：**双层级自定义节点**，能力封顶 io（`loader` 忽略越权声明，仅尊重更低 `compute`）。
+    - *程序级*（全局）：`<程序根>/custom_nodes/<node-pack>/`（开发态 `src-tauri/custom_nodes`，打包后 `SlimeMold/custom_nodes`），经 Tauri `resourceDir()` 定位，跨项目可用，不经 git 走。`scope:'program'`。
+    - *项目级*（仅本项目）：`<当前项目>/custom_nodes/<node-pack>/`，随项目 git 走，切换/关闭项目时由 `unloadProjectCustomNodes()` 自动卸载，避免污染其它项目。`scope:'project'`。
+    - 启动时扫程序级（`scanProgramCustomNodes`）+ 恢复项目时扫项目级（`scanProjectCustomNodes`）；面板「扫描自定义节点」一次扫两处。导入含未注册 custom node 的工作流时，`workflowIO.applyWorkflowFile` 会生成「缺失类型」占位节点并提示去插件面板扫描。
+- 浏览器端：无目录扫描，仅「从文件导入」同时选 manifest 与 index.js。加载结果经 `registryStore.registerPlugin` 注册，与内置节点同等待遇。
 
 ### 序列化与 IO（src/io/）
 - `projectIO.ts`/`workflowIO.ts`：工作流存为 `.workflow.json`（含节点、连线、参数、智能体配置，带 `version` 与缺失类型校验）；项目可为目录形态（含 `.slimemold`）或旧版单文件 `.smproj`。导入时校验缺失 `NodeDefinition` 并提示。

@@ -57,3 +57,8 @@ export function getNodeDef(typeId: string): NodeDefinition | undefined {
   const hit = Object.values(defs).find((d) => d.typeId.toLowerCase() === lower);
   return hit;
 }
+
+// 开发期调试钩子：暴露 store 便于 playwright/控制台验收（仅 DEV，不影响生产构建）
+if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
+  (window as unknown as { __registry?: typeof useRegistryStore }).__registry = useRegistryStore;
+}

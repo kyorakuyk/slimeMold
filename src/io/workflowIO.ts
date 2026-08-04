@@ -56,28 +56,41 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
   // 缺失节点类型 -> 注册占位定义，保证图可打开
   const registry = useRegistryStore.getState();
   const missingDefs: NodeDefinition[] = [];
+  const missingTypeIds: string[] = [];
+  // 约定：custom node 的 typeId 通常含 '/'（命名空间，如 myPack/myNode）或带驼峰/下划线组合，
+  // 这类最可能是「用户自定义节点未加载」，给出针对性提示而非笼统「未注册」。
+  const looksLikeCustom = (t: string) => /[/]/.test(t) || /[A-Z]/.test(t) || /_/.test(t);
   for (const n of raw.nodes) {
     const known = !!registry.defs[n.typeId] ||
       Object.keys(registry.defs).some((k) => k.toLowerCase() === n.typeId.toLowerCase());
     if (!known && !missingDefs.some((d) => d.typeId === n.typeId)) {
+      missingTypeIds.push(n.typeId);
+      const isCustom = looksLikeCustom(n.typeId);
+      const hint = isCustom
+        ? '疑似自定义节点（custom node）：请到「插件面板」点「扫描自定义节点」，或将对应节点包放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后重新打开。'
+        : '该类型不属于内置节点，可能来自尚未加载的插件。';
       missingDefs.push({
         typeId: n.typeId,
         name: `缺失: ${n.typeId}`,
         category: '缺失类型',
-        description: '该节点类型未注册，可能来自未加载的插件',
+        description: `节点类型未注册。${hint}`,
         inputs: [],
         outputs: [],
         params: [],
         missing: true,
         async execute() {
-          throw new Error(`节点类型 ${n.typeId} 缺失`);
+          throw new Error(`节点类型 ${n.typeId} 缺失，无法执行。${hint}`);
         },
       });
     }
   }
   if (missingDefs.length > 0) {
     registry.register(missingDefs);
-    log('error', `有 ${missingDefs.length} 种节点类型缺失，已用占位节点显示`);
+    const customCount = missingTypeIds.filter(looksLikeCustom).length;
+    const detail = missingTypeIds.join('、');
+    log('error',
+      `有 ${missingDefs.length} 种节点类型缺失（其中 ${customCount} 个疑似自定义节点），已用占位节点显示。缺失类型：${detail}。` +
+      `修复：在「插件面板」点「扫描自定义节点」并确保节点包已放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后，重新打开本工作流。`);
   }
 
   // 将大小写写错但可命中的 typeId 规范化回注册表里的正确写法

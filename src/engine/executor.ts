@@ -1,17 +1,20 @@
 import type {
+  CapabilityLevel,
   CostRecord,
   ExecContext,
   FlowEdge,
   FlowNode,
+  NodeDefinition,
   NodeStatus,
   NodeUsageStat,
   RunRecord,
+  SandboxHandle,
 } from '../types';
 import { topoStages } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { getChannel } from '../agents/llmChannel';
-import { scopedStorage } from '../platform/env';
+import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { flattenSubgraphs, ownerRefId } from './subgraph';
 import {
@@ -24,6 +27,156 @@ import {
   skippedCount,
   strike,
 } from './nodeCache';
+
+/** 步骤 11 阶段 C：本次运行实际用到的沙箱根目录集合（workspaceDir 或 appData 内部目录）。
+ * 惰性填充：节点首次写文件时由沙箱句柄把解析出的真实根登记进来；
+ * runWorkflow 结束（含被中止）时统一清理其下 `.sandbox/` 残留。 */
+const sandboxRootsUsed = new Set<string>();
+
+/** 步骤 11 阶段 C：本次运行创建的 Git Worktree 记录（强隔离模式）。
+ * 登记后由 cleanupSandbox 一并 `git worktree remove --force` 清理，避免磁盘残留。 */
+const gitWorktrees: Array<{ cwd: string; path: string; branch: string }> = [];
+
+/** 步骤 11 阶段 C：本次运行若启用 gitworktree 且创建成功，则所有节点的沙箱根指向该 worktree。
+ * 为 null 表示未启用或降级到 copy 沙箱。runWorkflow 开始时按 sandboxMode 探测写入。 */
+let runWorktree: { cwd: string; path: string; branch: string } | null = null;
+
+/**
+ * 删除所有已登记沙箱根下的 `.sandbox/` 目录，释放并行 Worker 的临时副本。
+ * 同时移除本次运行的 Git Worktree（若有）。Tauri 下用 plugin-fs / git command，
+ * 浏览器无残留目录，直接跳过。任何单根删除失败仅告警、不影响其余清理（幂等）。 */
+async function cleanupSandbox(): Promise<void> {
+  if (!isTauri) return;
+  // 1) 清理 Git Worktree（强隔离产物）
+  if (gitWorktrees.length > 0) {
+    try {
+      const { removeWorktree } = await import('../platform/git');
+      for (const wt of gitWorktrees) {
+        try {
+          await removeWorktree(wt.cwd, wt.path, wt.branch);
+        } catch {
+          /* 忽略单条失败 */
+        }
+      }
+    } catch {
+      /* git 封装不可用：跳过 */
+    }
+    gitWorktrees.length = 0;
+  }
+  // 2) 清理普通 copy 沙箱残留目录
+  if (sandboxRootsUsed.size === 0) return;
+  try {
+    const fs = await import('@tauri-apps/plugin-fs');
+    for (const base of sandboxRootsUsed) {
+      const dir = `${base}/.sandbox`;
+      try {
+        await fs.remove(dir, { recursive: true });
+      } catch {
+        // 目录不存在或已删：忽略
+      }
+    }
+    sandboxRootsUsed.clear();
+  } catch {
+    // 整体清理失败（如插件不可用）：静默放弃，下次运行会重新登记
+  }
+}
+
+/**
+ * 步骤 11 阶段 D：解析节点的能力等级。
+ * 显式声明 `minCapability` 优先；否则按 typeId 前缀推断默认等级：
+ * - `coord.` / `flow.council` → coordinator（唯一落地权）
+ * - `tool.writeFile` / `tool.file` / `tool.fs` / `fs.` → sandbox_write（隔离写）
+ * - `agent.` / `ai.` / `llm` / `http` / `io.` / `tool.` → io（受限 I/O）
+ * - 其余（flow/expr/if/loop/assert/merge 等）→ compute（纯计算只读）
+ */
+export function resolveCapability(def: NodeDefinition): CapabilityLevel {
+  if (def.minCapability) return def.minCapability;
+  const t = def.typeId;
+  if (t.startsWith('coord.') || t === 'flow.council') return 'coordinator';
+  if (t === 'tool.writeFile' || t.startsWith('tool.file') || t.startsWith('fs.') || t.startsWith('tool.fs'))
+    return 'sandbox_write';
+  if (
+    t.startsWith('agent.') ||
+    t.startsWith('ai.') ||
+    t.startsWith('llm') ||
+    t.startsWith('http') ||
+    t.startsWith('io.') ||
+    t.startsWith('tool.') ||
+    t.startsWith('worker.') ||
+    t.startsWith('architect.') ||
+    t === 'dispatch.plan' ||
+    t === 'flow.map' ||
+    t.startsWith('image.') // 图像节点涉及文件读取/生成，按受限 I/O 处理
+  )
+    return 'io';
+  return 'compute';
+}
+
+/**
+ * 步骤 11 阶段 D：按能力等级裁剪注入的 ExecContext。
+ * 不删除字段（保持类型完整），而是把越权字段替换为「拒绝型」实现：
+ * - compute：禁用 llm/storage/addAsset/sandbox（纯计算只读）
+ * - io：禁用 sandbox 句柄（不直接碰文件系统）
+ * - sandbox_write：保留 sandbox 写副本能力，但剥离 commitAll/commitLanes（落地权只给协调者）
+ * - coordinator / system：全权限（含 commit 汇总与系统级调用）
+ * 沙箱模式下，非 coordinator 节点的 addAsset 收口为「仅预览、不回写主工作流库」，避免越权落盘。
+ */
+export function applyCapability(
+  ctx: ExecContext,
+  def: NodeDefinition,
+  opts: { sandbox?: boolean; sandboxMode?: 'copy' | 'gitworktree' },
+): void {
+  const level = resolveCapability(def);
+  const hasSandbox = !!opts.sandbox && !!ctx.sandbox;
+  const deny = (what: string) =>
+    ctx.logger.error(`节点「${def.typeId}」权限不足（${level} 级），拒绝 ${what}`);
+
+  if (level === 'compute') {
+    ctx.llm = async () => {
+      deny('调用 LLM');
+      throw new Error(`权限不足：${def.typeId} 为 compute 级，不可调用 LLM`);
+    };
+    ctx.storage = { get: async () => null, set: async () => {} };
+    ctx.addAsset = () => {};
+    ctx.sandbox = undefined;
+    ctx.sandboxLanes = undefined;
+    return;
+  }
+
+  if (level === 'io') {
+    ctx.sandbox = undefined;
+    ctx.sandboxLanes = undefined;
+    return;
+  }
+
+  if (level === 'sandbox_write') {
+    ctx.sandboxLanes = undefined; // 无 commit 汇总权
+    if (hasSandbox && ctx.sandbox) {
+      const inner = ctx.sandbox;
+      ctx.sandbox = {
+        ...inner,
+        async commitAll() {
+          deny('commitAll（落地主工作区）');
+          throw new Error(`权限不足：${def.typeId} 为 sandbox_write 级，仅协调者可 commit`);
+        },
+        async commitLanes() {
+          deny('commitLanes（落地主工作区）');
+          throw new Error(`权限不足：${def.typeId} 为 sandbox_write 级，仅协调者可 commit`);
+        },
+      };
+    }
+    // 沙箱模式下收口 addAsset：仅预览、不回写主工作流库（避免越权落盘）
+    if (opts.sandbox) {
+      const orig = ctx.addAsset;
+      ctx.addAsset = (meta) => {
+        orig({ ...meta, inWorkspace: false });
+      };
+    }
+    return;
+  }
+
+  // coordinator / system：全权限，但沙箱模式下仍收口非主工作区资产标记由节点自身决定，这里不干预
+}
 
 let currentAbort: AbortController | null = null;
 /**
@@ -129,6 +282,21 @@ export interface RunOptions {
    * 调度进度回调（供 Job Board 等可视化）：每一层开始前上报当前层索引、总层数、轮次。
    */
   onProgress?: (p: { layer: number; totalLayers: number; round: number; totalRounds: number }) => void;
+  /**
+   * 真沙箱（步骤 11 阶段 C）：为 true 时，每个写文件的节点获得独立隔离目录
+   * （workspaceDir/.sandbox/<nodeId>/），并行 Worker 互不踩踏；协调者节点
+   * （coord.resolver / coord.council）拿到聚合沙箱句柄，可读取各 Worker 沙箱并 commitAll 汇总。
+   * 默认 false，保持旧行为（共享工作区直写）。
+   */
+  sandbox?: boolean;
+  /**
+   * 步骤 11 阶段 C：沙箱隔离强度。
+   * - `copy`（默认）：基于目录副本 `.sandbox/<runId>/<nodeId>/` 做磁盘隔离。
+   * - `gitworktree`：Git Worktree 真隔离——为本次运行创建 detached worktree，Worker 在独立 git 工作树内写文件，
+   *   结束统一 `git worktree remove` 清理（比 .sandbox 残留更干净、可 git 级合并）。
+   *   仅在 Tauri 桌面端且当前 workspaceDir 是 git 仓库时启用；否则自动降级为 `copy` 并记日志。
+   */
+  sandboxMode?: 'copy' | 'gitworktree';
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
@@ -150,6 +318,35 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const myRun = ++currentRunId; // 本次运行代次
   activeRunId = myRun;
   syncDebugRun();
+  // 步骤 11 阶段 C：每次运行开始清空上次登记的沙箱根，避免跨运行累积误删
+  if (opts.sandbox) {
+    sandboxRootsUsed.clear();
+    gitWorktrees.length = 0;
+    runWorktree = null;
+    // Git Worktree 真隔离探测：仅 Tauri + workspaceDir 已知 + 显式请求 gitworktree 时尝试
+    const runWorkspaceDir = wf.workspaceDir ?? null;
+    if (opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir) {
+      try {
+        const { isGitRepo, addWorktree } = await import('../platform/git');
+        if (await isGitRepo(runWorkspaceDir)) {
+          const branch = `slime-sandbox-${myRun}-${Date.now().toString(36)}`;
+          const wtPath = `${runWorkspaceDir}/.slime-wt/${branch}`;
+          const created = await addWorktree(runWorkspaceDir, wtPath, branch);
+          if (created) {
+            runWorktree = { cwd: runWorkspaceDir, path: wtPath, branch };
+            gitWorktrees.push(runWorktree);
+            wf.addLog('info', `已创建 Git Worktree 强隔离沙箱：${wtPath}`);
+          } else {
+            wf.addLog('warn', 'Git Worktree 创建失败，降级为 copy 沙箱');
+          }
+        } else {
+          wf.addLog('warn', '当前工作目录非 git 仓库，Git Worktree 模式降级为 copy 沙箱');
+        }
+      } catch (e) {
+        wf.addLog('warn', `Git Worktree 探测异常，降级为 copy 沙箱：${String(e)}`);
+      }
+    }
+  }
   const { failFast } = wf;
   if (wf.nodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
@@ -417,6 +614,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
                 !!opts.incremental,
                 myRun,
                 isolatedIds,
+                !!opts.sandbox,
+                opts.sandboxMode,
               );
             }
           })(),
@@ -558,6 +757,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   }
   useWorkflowStore.getState().setRunProgress({ active: false });
   currentAbort = null;
+  // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
+  if (opts.sandbox) await cleanupSandbox();
   syncDebugRun();
 }
 
@@ -672,6 +873,8 @@ async function executeNode(
   isIncremental?: boolean,
   myRun?: number,
   isolatedIds?: Set<string>,
+  sandboxEnabled?: boolean,
+  sandboxMode?: 'copy' | 'gitworktree',
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
@@ -727,6 +930,129 @@ async function executeNode(
       error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
     });
     return;
+  }
+
+  // ---- 步骤 11 阶段 C：真沙箱句柄 ----
+  // 每个节点一份独立隔离目录（workspaceDir/.sandbox/<nodeId>），并行 Worker 互不踩踏。
+  // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
+  let sandbox: SandboxHandle | undefined;
+  if (sandboxEnabled) {
+    const wfId = useWorkflowStore.getState().activeWfId;
+    const wf = useWorkflowStore.getState().workflows[wfId];
+    const workspaceDir = wf?.workspaceDir ?? null;
+    const inBrowser = !isTauri;
+
+    // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
+    const rootDir = async (): Promise<string | null> => {
+      if (inBrowser) return null;
+      // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree
+      if (runWorktree) return runWorktree.path;
+      if (workspaceDir) return workspaceDir;
+      try {
+        const { appDataDir } = await import('@tauri-apps/api/path');
+        return `${await appDataDir()}/slime-mold/${wfId}`;
+      } catch {
+        return null;
+      }
+    };
+    // 解析 + 登记：任何节点触达的真实根目录都登记到 sandboxRootsUsed，
+    // 供 runWorkflow 结束统一清理其下 `.sandbox/` 残留（步骤 11 阶段 C 收尾）。
+    const rootDirAndTrack = async (): Promise<string | null> => {
+      const base = await rootDir();
+      if (base) sandboxRootsUsed.add(base);
+      return base;
+    };
+
+    const sandboxRoot = (nid: string, base: string): string => `${base}/.sandbox/${nid}`;
+
+    sandbox = {
+      nodeId: id,
+      baseDir: null, // 真实路径惰性确定，构造期未知
+      inBrowser,
+      async writeFile(filename, content) {
+        const base = await rootDirAndTrack();
+        if (!base) return `[sandbox:${id}] ${filename}`; // 浏览器/无根：内存态
+        const fs = await import('@tauri-apps/plugin-fs');
+        const dir = sandboxRoot(id, base);
+        await fs.mkdir(dir, { recursive: true });
+        const p = `${dir}/${filename}`;
+        await fs.writeTextFile(p, content);
+        return p;
+      },
+      async readFrom(otherNodeId, filename) {
+        const base = await rootDirAndTrack();
+        if (!base) return null;
+        const fs = await import('@tauri-apps/plugin-fs');
+        const p = `${sandboxRoot(otherNodeId, base)}/${filename}`;
+        try {
+          return await fs.readTextFile(p);
+        } catch {
+          return null;
+        }
+      },
+      async list(otherNodeId) {
+        const base = await rootDirAndTrack();
+        if (!base) return [];
+        const fs = await import('@tauri-apps/plugin-fs');
+        const dir = sandboxRoot(otherNodeId, base);
+        try {
+          return (await fs.readDir(dir)).map((e) => e.name).filter(Boolean) as string[];
+        } catch {
+          return [];
+        }
+      },
+      async commitAll() {
+        const base = await rootDirAndTrack();
+        if (!base) return [];
+        const fs = await import('@tauri-apps/plugin-fs');
+        const src = sandboxRoot(id, base);
+        const dst = base;
+        await fs.mkdir(dst, { recursive: true });
+        const committed: string[] = [];
+        let entries: Awaited<ReturnType<typeof fs.readDir>> = [];
+        try {
+          entries = await fs.readDir(src);
+        } catch {
+          return committed;
+        }
+        for (const e of entries) {
+          if (e.isFile) {
+            const name = e.name;
+            const content = await fs.readTextFile(`${src}/${name}`);
+            const target = `${dst}/${name}`;
+            await fs.writeTextFile(target, content);
+            committed.push(target);
+          }
+        }
+        return committed;
+      },
+      async commitLanes(laneIds) {
+        const base = await rootDirAndTrack();
+        if (!base) return [];
+        const fs = await import('@tauri-apps/plugin-fs');
+        await fs.mkdir(base, { recursive: true });
+        const committed: string[] = [];
+        for (const lane of laneIds) {
+          const laneDir = sandboxRoot(lane, base);
+          let files: Awaited<ReturnType<typeof fs.readDir>> = [];
+          try {
+            files = await fs.readDir(laneDir);
+          } catch {
+            continue; // 该车道无沙箱产出（例如未写文件），跳过
+          }
+          for (const e of files) {
+            if (e.isFile) {
+              const name = e.name;
+              const content = await fs.readTextFile(`${laneDir}/${name}`);
+              const target = `${base}/${name}`;
+              await fs.writeTextFile(target, content);
+              committed.push(target);
+            }
+          }
+        }
+        return committed;
+      },
+    };
   }
 
   // bypass / mute 调试开关（仿 ComfyUI 的 Ctrl+B / Ctrl+M）
@@ -906,7 +1232,8 @@ async function executeNode(
       // 把分支结果回报给执行引擎（loopGate 迭代判断用）
       if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
     },
-    storage: scopedStorage(def.pluginId ?? 'core'),
+    // 存储按节点实例隔离（scope = 插件 + 类型 + 实例 id），避免同插件不同节点/同类型不同实例互相读写。
+    storage: scopedStorage(`${def.pluginId ?? 'core'}:${def.typeId}:${id}`),
     // 变量：基础(extraVars) < 项目级 < 工作流级（后者覆盖前者同名项）
     vars: {
       ...(extraVars ?? {}),
@@ -923,6 +1250,12 @@ async function executeNode(
       return [...byId.values()] as never;
     })(),
     addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
+    // 步骤 11 阶段 C：真沙箱句柄（仅 sandbox 运行模式注入，普通模式为 undefined）
+    sandbox,
+    // 协调者节点的上游车道 id（供 commitLanes 汇总 Worker 沙箱）
+    sandboxLanes: sandbox
+      ? incoming.filter((e) => e.target === id).map((e) => e.source)
+      : undefined,
     // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）。
     // 双写：① 直接 mutate 执行器局部 edges 数组（保证本次调度的 scope 串行化立刻生效）；
     //       ② 经 setEdges 同步全局 store（用于持久化与右侧 Inspector 展示）。
@@ -941,6 +1274,9 @@ async function executeNode(
       );
     },
   };
+
+  // 步骤 11 阶段 D：按节点能力等级裁剪 ctx——越权字段替换为「拒绝型」实现（保持类型完整、运行时受控）
+  applyCapability(ctx, def, { sandbox, sandboxMode });
 
   // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，
   // 避免旧协程在节点返回后仍去调 def.execute / 改 store 状态。

@@ -1,0 +1,22 @@
+{
+  "id": "example.math-sum",
+  "name": "数学求和",
+  "version": "0.1.0",
+  "description": "示例插件：演示用 createNodeDef 工厂声明自定义节点（含显式 minCapability）",
+  "entry": "index.js",
+  "nodes": [
+    {
+      "typeId": "example.math-sum.add",
+      "name": "求和",
+      "category": "插件·示例",
+      "description": "将两个数字相加并输出结果（纯计算节点，声明为 compute 级）",
+      "minCapability": "compute",
+      "inputs": [
+        { "id": "a", "label": "A", "type": "number" },
+        { "id": "b", "label": "B", "type": "number" }
+      ],
+      "outputs": [{ "id": "out", "label": "和", "type": "number" }],
+      "params": []
+    }
+  ]
+}

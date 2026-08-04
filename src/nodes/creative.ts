@@ -1,4 +1,5 @@
 import type { NodeDefinition, ChatMessage, ContentPart } from '../types';
+import { createNodeDef } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';
 
@@ -94,6 +95,7 @@ const ideaBoard: NodeDefinition = {
   category: '文本',
   description:
     '给定主题/约束，让绑定的创意角色发散出若干条独立创意点子，输出 list 便于下游筛选或循环。',
+  minCapability: 'io',
   inputs: [{ id: 'topic', label: '主题', type: 'text' }],
   outputs: [{ id: 'ideas', label: '点子', type: 'list' }],
   params: [
@@ -169,6 +171,7 @@ const ideaRefine: NodeDefinition = {
   typeId: 'idea.refine',
   name: '构思精炼',
   category: '文本',
+  minCapability: 'io',
   description: '将多条创意点子（list）筛选、合并、深化，输出一份连贯的可执行概念文案。',
   inputs: [
     { id: 'ideas', label: '点子', type: 'list' },
@@ -233,6 +236,7 @@ const designerGenerate: NodeDefinition = {
   typeId: 'designer.generate',
   name: '设计师',
   category: 'AI',
+  minCapability: 'io',
   description:
     '绑定"设计师"角色，把概念方案转化为具体设计稿规范（布局、视觉、交互要点），输出可供评审的 spec 文本。',
   inputs: [
@@ -344,6 +348,7 @@ const designReview: NodeDefinition = {
   typeId: 'design.review',
   name: '设计评审',
   category: 'AI',
+  minCapability: 'io',
   description: '对设计稿规范做批判性评审，输出评审意见文本与 0-10 评分，便于迭代闭环。',
   inputs: [
     { id: 'spec', label: '设计稿', type: 'text' },
@@ -412,4 +417,4 @@ export const creativeNodes: NodeDefinition[] = [
   ideaRefine,
   designerGenerate,
   designReview,
-];
+].map(createNodeDef);

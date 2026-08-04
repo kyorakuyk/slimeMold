@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::{AppHandle, Manager};
 
 /// 密钥库 service 名（同机多 app 隔离用）。
@@ -217,6 +218,36 @@ fn list_endpoints_raw(app: AppHandle) -> Result<Vec<String>, String> {
     Ok(list.into_iter().map(|(_, v)| decrypt_api_key_in_json(&v)).collect())
 }
 
+/// 步骤 11 阶段 C：Git Worktree 真隔离。在 Rust 侧直接调用系统 `git`（不受 Tauri 沙箱限制），
+/// 返回 stdout / stderr / 退出码，供前端的 git worktree 沙箱模式使用。
+///
+/// 调用示例：`invoke('run_git', { args: ['worktree', 'add', '-q', dir, '-b', branch, 'HEAD'], cwd })`
+#[tauri::command]
+fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
+    let mut cmd = Command::new("git");
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    for a in &args {
+        cmd.arg(a);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("git 执行失败（是否未安装 git 或 PATH 未包含？）：{e}"))?;
+    Ok(GitResult {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code().unwrap_or(-1),
+    })
+}
+
+#[derive(serde::Serialize)]
+struct GitResult {
+    stdout: String,
+    stderr: String,
+    code: i32,
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -233,7 +264,8 @@ pub fn run() {
             save_endpoint,
             load_endpoint,
             delete_endpoint,
-            list_endpoints_raw
+            list_endpoints_raw,
+            run_git
         ])
         // 窗口默认可见（tauri.conf.json visible:true）。保留 on_page_load 作为兜底，
         // 万一某些环境初始未显示，页面加载完成后再确保 show 一次。

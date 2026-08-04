@@ -485,4 +485,296 @@
 
 ---
 
-*最后更新：2026-08-04*
+#### 🔲 步骤 11：协调者逻辑升级 —— 沙箱式并行 + 合并/仲裁/回流（已达成共识，待实施）
+
+> 来源：2026-08-04 用户与 AI 关于「coord.resolver 工作逻辑」的三轮讨论。
+> 核心判断：**当前项目内部没有沙箱运行逻辑**（见下「现状确认」），本步骤要把用户设想的「并行改副本 → 协调者合并 → 冲突仲裁 → 回流上游」落地。
+
+##### 11.0 用户目标模型（最终拍板）
+1. **针对同一文件的修改允许并行操作**：多条任务线在各自隔离环境里改同一文件的副本，互不踩踏。
+2. **协调者做逻辑冲突检查**：各线跑完后交给 `coord.resolver` 比对。
+   - 无逻辑冲突 ⇒ **合并为同一个文件**（汇总各副本的合法改动）。
+   - 运行逻辑本身冲突 ⇒ 把**双方观点交给 `council` 节点仲裁**；仲裁结论/冲突原因**回流给上游 `dispatch.split` 或更上游决断**（重派任务 / 改方案）。
+3. **scope 方案先按「并存」**：对象自带 scope（现有 `TaskItem.scope`）与连线 scope（`FlowEdgeData.scope`，步骤 8 已写回）同时生效；但**预留好之后剪枝的空间**（见 11.1）。
+
+##### 11.1 scope 并存 + 剪枝预留抽象层（先做，零风险）
+- 新增 `collectScopes(entry, edgeScope)` 归一函数：先 `object.scope` 与 `edge.scope` 取并集（并存），输出统一 `string[]`。现在只有 `object.scope`，将来把连线 scope 直接并进来即可。
+- `conflicts` / `serialOrder` 输出结构增 `source: 'object' | 'edge' | 'both'` 字段——剪枝阶段（未来）据此后可实施「只信连线 scope」「对象 scope 仅作提示」等策略，不动检测主逻辑。
+- **检测主逻辑（两两交集）保持不变**，变的是「scope 从哪来」这一层，把它抽象出来即剪枝接入点。
+
+##### 11.2 方向①（自动串行化）与 ⑤（边级协调）的启用/阻断关系（已澄清，作为设计约束）
+| 项 | 启用方式 | 是否阻断 | 与谁耦合 |
+|---|---|---|---|
+| ① 自动串行化 | 新增 `autoSerialize` 开关（false=只输出建议，true=引擎按 `serialOrder` 强制改串行） | 否（只改顺序） | 与⑤互补：①管「冲突后怎么排」，⑤管「谁算冲突」 |
+| ⑤ 边级协调 | 接通 `FlowEdge` → `execute` 的 edge.scope 通路（步骤 8 已写回，待 resolver 读取） | 否（只细化判定粒度） | 依赖 11.1 并存/剪枝抽象层 |
+| `mode=block` | 现有 `params.mode` | **是**（throw 阻断下游） | 阻断触发面受①⑤影响——⑤越细，误阻断越少 |
+
+> 一句话：`block` 是唯一真正「阻断」开关；①⑤都不阻断，①决定冲突后如何串行化消解，⑤决定哪些算冲突（更细粒度），二者通过 11.1 抽象层协同，都不影响 `block` 裁决权。
+
+##### 11.3 现状确认：项目内部无沙箱运行逻辑
+- 执行引擎（executor.ts:339-392）按 stage 并发跑同层节点（真并行），但**所有节点共享同一 `ctx`**：无 per-branch 私有工作区、无文件副本、无状态快照。`branchState` 只是端口激活/剪枝状态表，非文件/状态隔离。
+- 唯一「隔离」是 LLM 上下文隔离（`contextScope==='isolated'`，builtin.ts:176），仅影响 prompt，与运行期文件/状态沙箱无关。
+- 当前节点**无真实文件写副作用**（节点输出都是内存对象，经 `ctx.llm` 返回文本；`writeFile`/`fs.write` 命中均在 IO 序列化层，非节点执行副作用）。即「对同一文件并行修改」尚未真实发生，协调者拿到的是文本/对象而非文件版本。
+
+##### 11.4 落地路线（建议分阶段，先逻辑层模拟、再接真沙箱）
+- ✅ **阶段 A（低成本，逻辑层模拟）**：已落地。`coord.resolver` 新增 `mergeMode='content'` 模式，接收 `FilePatch`（`{path, before, after, readSnapshot}`），做内容级合并/冲突检查（同 path 行区间不重叠直接拼合；区间重叠或 `readSnapshot.hash` 不一致归入 `needsArbitration`）；无冲突输出 `MergeResult`（建议下游接 Validator，对应 11.6 方案①）。`FilePatch`/`MergeResult` 类型见 types.ts。
+- ✅ **阶段 B（council 仲裁节点 + 回流回路）**：已落地。`coord.council` 节点（nodeCouncil）实现：并行层多议员 `ctx.llm` 评估 + 独立合成智能体提炼 single verdict + `consensus` 评级（`unanimous`/`majority`/`split`）+ 部分失败容错（对应 11.7.1 映射）。回流回路仍可经 `control` 边回指 `dispatch.split`（control 边语义已支持，见 builtin.ts loopGate 说明）。
+- ✅ **阶段 C（真沙箱，已落地 2026-08-04，2026-08-04 二次增强）**：`RunOptions.sandbox` 开关 + `ExecContext.sandbox`（SandboxHandle）注入。`executeNode` 在 `sandbox:true` 时为每个节点构造隔离目录 `workspaceDir/.sandbox/<nodeId>/`，并行 Worker 写文件互不踩踏；协调者（coord.resolver / coord.council）经 `commitLanes(laneIds)` 把各上游车道沙箱汇总落地主工作区。`tool.writeFile` 检测到 `ctx.sandbox` 即写沙箱副本（标记 `inWorkspace:false`）；浏览器环境退化为内存态。运行菜单新增「沙箱隔离运行」入口；示例 `examples/test-realsandbox.workflow.json`（双 Worker 并行写同一 result.txt → resolver 汇总落盘）可演示。
+  - **自动清理（本轮新增）**：`sandboxRootsUsed` 集合登记本次运行真实根，`runWorkflow` 结束（含被中止）经 `cleanupSandbox()` 统一递归删除 `.sandbox/` 残留，避免磁盘堆积；模块级幂等、可重复调用。
+  - **FilePatch 打通（本轮新增）**：`tool.writeFile` 在沙箱模式下额外产出 `FilePatch` 端口（`{path, before(写前快照), after, readSnapshot}`），`before` 为空表示新建、非空表示覆盖；协调者 `resolveByContent` 消费该 patch 做内容级合并（阶段 A↔C 打通），`commitLanes` 仍负责落盘。
+  - **Git Worktree 强隔离（本轮新增）**：`RunOptions.sandboxMode: 'copy' | 'gitworktree'`；为 `gitworktree` 时经 Rust `run_git` command（std::process::Command 调系统 git）创建 detached worktree（`.slime-wt/<branch>`），所有节点沙箱根指向该 worktree，结束统一 `git worktree remove --force` 清理。仅在 Tauri 桌面端 + 当前 workspaceDir 为 git 仓库时启用，否则自动降级 `copy` 并记日志。TopBar 新增「Git Worktree 强隔离运行」菜单项；`src/platform/git.ts` 封装 `isGitRepo/addWorktree/removeWorktree`。
+  - **阶段 D（节点能力分级 Capability，本轮新增 2026-08-04）**：`NodeDefinition.minCapability`（`CapabilityLevel`：`compute | io | sandbox_write | coordinator | system`）。`executor.applyCapability(ctx, def, opts)` 在 ctx 构造后按等级裁剪注入（compute 禁 llm/storage/sandbox；io 禁 sandbox；sandbox_write 剥离 commitAll/commitLanes 且收口 addAsset 为 `inWorkspace:false`；coordinator/system 全权限）。`resolveCapability` 在未显式声明时按 `typeId` 前缀推断默认等级（coord.→coordinator、tool.writeFile/fs.→sandbox_write、agent./ai./llm/http/io./tool./worker./architect./dispatch.plan/flow.map/image.→io、其余→compute）。**插件节点默认 `io` 级**（loader 注入，避免第三方越权拿落地权）。`ctx.storage` 进一步细化到节点实例级 scope（`pluginId:typeId:nodeId`），同插件不同实例存储隔离。
+
+##### 11.5 与现有步骤的衔接点
+- `coord.resolver` 现为「检测 + 输出建议」，需升级为「接收 FilePatch / 内容级合并 + 冲突出口接 council」（不破坏现有 `merged/conflicts/serialOrder` 出口，新增合并产物与 council 出口）。
+- 步骤 8 阶段 A 已把 task 边 scope 写回，11.1 的并存抽象层直接消费；步骤 9 的并查集自动串行化（`autoSerialize` 一旦实现）与 11.2① 一致。
+- `council` 节点分类可归入「协调」；回流控制流复用现有 `control` 边 + `topoStages` stage 边界语义。
+
+**✅ 已落地（2026-08-04）**：A、B 并行实现完成，tsc 通过。`coord.resolver` 支持 FilePatch 内容级合并（mergeMode 参数切换旧 scope 逻辑）；新增 `coord.council` 仲裁节点（并行议员 + 独立合成 + 共识评级 + 容错）。回流回路（control 边 → dispatch.split）链路已就绪，待实际工作流编排时串联。
+
+##### 11.6 对标 oh-my-opencode（Sisyphus）的经验教训与两种方案（2026-08-04 补充）
+> 调研对象：oh-my-opencode / 现名 oh-my-openagent（GitHub: code-yeongyu/oh-my-openagent），核心 Sisyphus 多智能体框架。
+> 结论：**OMO 没有真沙箱、没有合并/仲裁引擎**，其并行改文件走的是另一条路，对我们有反向启示。
+
+**OMO 的实际做法（与我们不同）**：
+- **无沙箱 / 无 per-agent 副本**：所有 agent 直接读写同一真实工作区（同一 git 仓库），无文件系统隔离；仅 skill 级临时 MCP 服务器（上下文干净，非文件隔离）。
+- **冲突靠「写入前 CAS 拒绝」而非「事后合并」**：Hash-Anchored Edit Tool（Hashline）——每行读取带内容哈希（`11#VK| function hello()`），agent 用 `LINE#ID` 引用编辑；若文件自读取后被改过、哈希不匹配 ⇒ **编辑被拒绝**（非覆盖）。本质乐观锁 / 行级 CAS。
+- **无仲裁节点**：预防优先（Hashline 拒绝陈旧编辑）+ LSP 工作区重命名/引用分析发现符号冲突 + Git 原子提交/rebase 兜底合并；编排器靠串行调度规避混乱，不在汇聚点仲裁。
+- **实测教训**：纯文本/行级 diff 易漏「语义冲突」（两人改同一函数不同行，逐行不冲突但逻辑矛盾）→ 靠 **LSP + 编译/测试** 兜底。
+
+**对我们的启示**：我们的「并行改副本 → 协调者合并 → council 仲裁 → 回流上游」范式比 OMO 更超前、更契合节点工作流；但需规避其踩过的语义冲突坑。落地两种方案：
+
+- **方案 ①：合并后必接 Validator/Tester 兜底（推荐，低成本）**
+  - FilePatch 文本级合并（11.4-A）只能解「文本不重叠」的浅冲突；真正的逻辑冲突要靠 **Validator / Tester 节点在合并后跑一遍**（编译/运行/单测）才能放心。
+  - 复用已有资产：`validator` 自主节点（步骤 5，内部 think→评估→带批评重跑）+ 步骤 4 的 loopGate 循环语义（不合格自动重跑）。
+  - 即：协调者 `merged` 产物不直接当终态，而是喂给下游 Validator；Validator 失败 ⇒ 回流 council / dispatch.split 重派（与 11.0-2 回流链路打通）。
+
+- **方案 ②：Hashline 式快照哈希折中（不强制真沙箱，更稳）**
+  - 借鉴 OMO：不建文件系统沙箱，但给每条任务线输出带「它读了哪些文件、哪些行、哪个版本快照哈希」的元数据（`FilePatch` 扩展 `{path, before, after, readSnapshot: {lineRange, hash}}`）。
+  - 合并时若发现「别人已动了同一处（哈希区间重叠且 after 基于旧版本）」⇒ **不盲目自动合并，而是标记「需人工 / council 仲裁」** 并交 11.4-B 的 council 节点。
+  - 比纯 FilePatch 更稳，且无需文件系统隔离即可实现；与 11.1 的 `source` 标记、11.2 的 `block` 阻断可联动（快照冲突直接走 `block` 或 council）。
+
+> 两种方案不互斥：方案 ① 是「合并后的质量闸门」，方案 ② 是「合并前的精准冲突识别」，建议 11.4-A 实现时一并带上 `readSnapshot` 字段（方案②）并把 merged 出口默认接 Validator（方案①）。
+
+##### 11.7 三项目比对结论（2026-08-04 补充：oh-my-opencode / oh-my-opencode-slim / ComfyUI）
+> 调研来源：GitHub README（alvinunreal/oh-my-opencode-slim，1.5k+ commits / 7.7k stars）+ 原版 oh-my-openagent 仓库 + ComfyUI 范式。
+> 网络状态：**已补全**。`ohmyopencodeslim.com/docs/*` 子页 404（不存在），但经 `github.com/.../blob/master/docs/worktrees.md` 与 `council.md` 抓取成功（raw 亦通，先前超时系偶发）。正文细节见 11.7.1。
+
+| 维度 | 原版 OMO（openagent） | **OMO-slim** | ComfyUI | SlimeMold（我们） |
+|---|---|---|---|---|
+| 隔离机制 | 无沙箱；Hashline 行级 CAS 拒绝 | **Git Worktrees（`.slim/worktrees/` lanes，共享同一 git db）** | 无 | 暂无；11.4 规划 FilePatch→真沙箱按需 |
+| 并行模型 | Team 并行+后台 | **后台任务默认并行**（Tmux/Zellij 可视） | 节点 DAG 并行（非多 agent） | executor 按 stage 真并发（11.3） |
+| 冲突时机 | 写入前哈希校验 | 隔离避免 + **集成前 diff 展示 + 显式批准（非自动合并）** | 无 | 协调者事后比对（规划） |
+| 仲裁/合并 | 无仲裁；LSP+Git 兜底 | **Council：多模型并行→合成 single verdict** | 无 | 规划 `council` 节点+协调者合并 |
+| 成本约束 | — | Council 高成本、**手动触发** | — | 借鉴：council 仅冲突时启用 |
+
+**关键结论：OMO-slim 几乎印证了 11.0 设计**：
+1. Worktree = 我们的「并行改副本」：slim 用 `.slim/worktrees/` 隔离车道，对应我们 11.0 各路隔离改副本（它是 git 分支隔离，我们是逻辑层 FilePatch→真沙箱可选）。
+2. Orchestrator reconcile = 我们的「协调者合并」：slim 的「派发后台→跟踪→调和结果再继续」正对应 `coord.resolver` 的 `merged` 出口。
+3. Council = 我们的「council 节点仲裁」：slim 的「多模型并行→收集竞争判断→Council agent 提炼单一裁决」即我们 11.0「双方观点交 council 仲裁」的现实版。
+4. 回流上游：slim 的 Orchestrator 本身是重派决策点，等价于我们「冲突回流 dispatch.split/更上游」。
+
+**对 SlimeMold 的修正建议**：
+- OMO-slim 比原版 OMO **更值得对标**：原版靠 Hashline 拒绝（对应 11.6 方案②），slim 靠 worktree+Council 合成（对应 11.0+11.4-B）。两条路我们都要。
+- **Council「多模型合成 single verdict」范式**比单纯表决更适合做我们的 council 节点实现参考（而非逐条投票）。
+- **重要教训**：slim 的 Council 是高成本路径、默认**不自动调用**——提醒我们 council 节点必须**仅在 resolver 判冲突后触发**，不能每条线都跑（对应 11.4-B 触发条件设计）。
+
+##### 11.7.1 OMO-slim 文档正文细节（2026-08-04 抓取补全）
+> 来源：`github.com/alvinunreal/oh-my-opencode-slim/blob/master/docs/worktrees.md`、`/docs/council.md`（经 raw 成功）。
+
+**A. Worktrees / Lanes（worktrees.md）**
+- **它是「安全协议」而非 git 教学**：技能本身不解释 worktree 原理，而是提供一套隔离编码安全流程——规划 lanes、分配 agent、校验 diff、集成变更、清理且不丢用户工作。
+- **创建**：Orchestrator 在 `.slim/worktrees/<slug>/` 建本地 worktree（共享同一底层 git db，但独立于主 checkout）；登记 `.slim/worktrees.json`（活动 lanes、branches、base refs、purpose、owner、area、status）。
+- **门控（确认门槛）**：建/删 worktree、建/删 branch、merge/rebase/cherry-pick/prune 等破坏性命令**全部需显式批准**；拒绝移除 dirty worktree 或未合并分支；**禁止自动执行 `reset --hard`/`clean`/force-push/删分支**。
+- **使用**：Specialist（`@fixer`/`@designer`）被限定在指定 lane 内写代码+跑测试；Orchestrator 拥有协调权，Specialist 不应自行跑 lane 管理 git 命令。
+- **⚠️ 关键修正**：文档**未描述 worktree 间冲突的自动解决**。每 lane 基于 base 分支独立工作，集成前仅「在 lane 内跑检查 → 展示相对 base 的 diff → 显式批准集成」。即：**omo-slim 没有自动合并算法**，合并靠"隔离避免 + 人工批准 diff"，所有 mutating git 操作须人确认。
+  - 这对我们的启示：**自动合并比想象中更难**，slim 选择"不自动合并、只做隔离+门控+人工批准"。我们的 11.0「无冲突则合并为同一文件」若要做成全自动，需比 slim 更激进——应考虑在协调者 `merged` 出口**保留人工/准自动批准闸**（对应 11.6 方案①Validator 兜底），而非盲目自动写回。
+
+**B. Council agent（council.md）**
+- **机制**：Council agent 并行跑多个 **councillors（议员）**，再合成为单一答案。价值：跨模型交叉验证、多样视角、部分失败优雅降级、可配成本/速度预设。
+- **并行派发**：每个 preset 内的议员注册为动态子代理 `councillor-<name>`（各自独立模型），Orchestrator 经 OpenCode 原生 `task()` 在 depth 1 **并行派发**，每个议员独立 TUI 面板。议员模型在 `council.presets.<preset>.<councillor>.model` 定义，可为单 `provider/model` 字符串或含备用链的数组（Model Fallback Chain，按顺序尝试至响应）。
+- **收集**：Council agent **等待所有议员响应或失败**再处理。容错：部分失败→用成功者合成；全部失败→返回错误；零议员→返回错误。
+- **合成（两层模型分离，关键）**：
+  - **synthesizer 模型**（做最终综合，即 `@council` 背后模型）：**不**在 `council.presets` 内，而经常规 agent 系统设置（`presets.<name>.council.model`）。
+  - **councillor 模型**（实际并行扇形展开）：始终来自 `council.presets...model`，与 `agents.councillor` 无关。
+- **输出三件套**：① Council Response（合成最终答案）② Per-Councillor Details（各议员独立回复）③ Council Summary（一致性、分歧解决、剩余不确定性 + 共识置信评级 `unanimous` / `majority` / `split`）。
+- **对我们的实现映射**：做 `council` 节点时——
+  1. 并行层 = 多个并行的「评估子节点/LLM 调用」（对应 councillors），各自独立 agent/model；
+  2. 合成层 = council 节点本身（对应 synthesizer），**必须由独立的、不同于并行层的模型/角色承担**；
+  3. 输出须带 `consensus: unanimous|majority|split` 评级，供下游（dispatch.split / 用户）判断是否需要重派；
+  4. 须支持「部分议员失败→用成功者合成」的容错（对应我们 executor 的 `skipFailed` 语义）。
+
+---
+
+#### 🔲 步骤 12：画布编辑体验统一（删除 / 对齐分布 / 边重连，待实施）
+
+> 来源：2026-08-04 用户指出三项画布交互待做，确认不在现有 TODO 内，故新增本步骤。
+> 目标：补齐基础编辑体验，消除「单删 vs 批量删」路径分歧，提供节点对齐分布与边端点重连能力。
+
+##### 12.1 统一 `deleteSelected` 语义
+- 现状：`deleteSelected` 在 `src/store/workflowStore.ts` 与 `src/components/TopBar.tsx` 均有出现，疑似**只删单个**；而多选/框选后的批量删除走的是另一条路径（React Flow 的 `onNodesDelete` / `onEdgesDelete` 或键盘 `Backspace`/`Delete` 默认行为），两条路径状态更新可能不一致（脏标记、缓存、连线清理等）。
+- 任务：把「删除」收敛为**单一入口** `deleteElements({nodes, edges})`，单删与批量删都调用它，保证：
+  - 节点删除时一并清理其相关边（`getConnectedEdges`）；
+  - 走 `workflowStore` 方法（不可直接 mutate），保证 `projectDirty` 自动检测与持久化生效；
+  - 清理被删节点的执行缓存（`nodeCache`）、变量/子图引用等副作用；
+  - `TopBar` 的删除按钮与画布键盘删除调用同一逻辑。
+- 验收：选中 1 个 / 选中 N 个删除，行为一致、无残留边、脏标记正确。
+
+##### 12.2 对齐 / 分布工具栏
+- 新增画布工具栏按钮组（可置于 `TopBar` 或画布浮层）：
+  - **对齐**：左对齐 / 水平居中 / 右对齐 / 顶对齐 / 垂直居中 / 底对齐（基于选中节点 `position` + `width/height` 计算基准）。
+  - **分布**：水平等距分布 / 垂直等距分布（按选中节点中心点均匀排布）。
+- 实现：工具栏调用 `workflowStore` 的 `updateNodePositions`（走 store 方法，触发脏标记）；仅在选中 ≥2 个节点时启用。
+- 验收：多选节点后点击对齐/分布，节点实时重排且可撤销（若 store 支持 undo，则一并接入）。
+
+##### 12.3 边的 reconnect（拖拽换端口）
+- 接入 React Flow 的 `onReconnect` + `reconnectEdge`：拖动已有边的一个端点改连到其他兼容端口。
+- 需配合：
+  - `isValidConnection` 做类型 / `PortDef.flow` 一致性校验（步骤 1 收尾点名的 `isValidConnection` 一致性校验顺带补强）；
+  - `wouldCreateCycle` 即时拦截成环（复用 `topoSort.ts` 现有逻辑，reconnect 时也须检查）；
+  - 更新 `FlowEdge` 的 `source/target` 与 `sourceHandle/targetHandle`，走 store 方法保证脏标记。
+- 验收：拖动边端点可改连、非法连接被拒、成环被拒、脏标记正确。
+
+---
+
+#### 🔲 步骤 13：节点三层抽象（人类-职业-个人）+ 继承式提权后门（已达成共识，待实施）
+
+> 来源：2026-08-04 ~ 08-05 用户与 AI 关于「custom node 提权后门」「ComfyUI 对比」「basemod 类比」的多轮讨论。
+> 核心判断：当前 `custom_nodes/` 的安全边界是 loader 在加载期**硬编码封顶 io**（`capFor` 对 `source='custom'` 一律裁剪）。这虽安全，但"提权"只能改源码，门槛=会改 TS/Rust，太硬。
+> 用户提出更优雅的模型——**把权限边界对齐到节点的抽象层级**，而非做成配置文件开关。
+
+##### 13.0 用户目标模型（最终拍板）
+
+**节点系统应是分层鲜明的抽象，类比「人类 — 职业 — 个人」：**
+
+1. **第一层 · 人类（所有节点的元抽象）** = 基类 `Node`（或 `BaseNode`）。
+   - 定义"什么是节点"：输入、输出、参数、执行、报错、中止。
+   - **权限天花板由这一层决定**：框架把多少能力放进基类，决定了继承者能到多高。
+2. **第二层 · 职业（分工的抽象）** = `ComputeNode` / `IoNode` / `SandboxWriteNode` / `CoordinatorNode` / `SystemNode` 等"职业类"。
+   - 一个职业**不是单个节点，而是一类节点的模板**：预置固定的输入/输出形态、默认行为、共享逻辑。
+   - **custom node 不止能造"一个具体节点"，还能定义"一类节点"——即创造出一种新的职业**（如"文件读写工"职业，天生带路径输入+内容输出+落地能力），他人/自己再基于该职业快速派生多个具体节点。
+3. **第三层 · 个人（各方法的微调实现）** = 具体节点的 `execute` 或重载 `onInput`/`validate`/`serialize` 等。
+   - 只是对职业默认行为的局部替换；其余全部复用职业的预设。
+
+**继承式提权（取代"配置文件后门"）**：
+- 写 `executors` 函数的用户 = 只在第一层之下活动（系统给的 `ctx` 是"裸人"），自然只有基础能力，**不需要后门、也不可能越权**。
+- 继承"职业类"的用户 = 站在第二层，**自动获得该职业的全部预设能力（含高权限）**——提权是继承的自然结果，不是漏洞。
+- **门槛天然成立**：想拿高权限，就得 `import` 并继承对应的"职业父类"。职业父类是框架暴露的、有文档、有命名的公共 API；普通用户写个 `executors` 函数根本够不着。
+
+##### 13.1 对标 basemod（游戏 mod 框架）的映射（用户原话意向）
+
+- **简单 mod = 一个声明文件**（basemod 的 xml）：只能按约定语法"调用"框架已暴露的原生函数，调不到没暴露的能力 → 天然安全。对应现在的 `manifest.json` 声明 + 简单 `executors`。
+- **复杂 mod = 一个项目文件夹**：能写自己的函数实现，也能**继承原生父类、重载原函数方法**来提权。门槛 = "懂框架 SDK 继承结构并主动 import 受限类"。
+- 结论：提权不该是"开关"，而是"你愿意写多复杂的代码"。简单声明永远安全；写代码继承原生类就自己承担那段能力。
+
+##### 13.2 当前 custom node 形态与此模型的差距
+
+- 现状：`custom_nodes/<pack>/` 下 `manifest.json`（平铺 nodes 数组，每个 node 自顾自声明端口）+ `index.js`（`export default { executors: { [typeId]: fn } }`）。这等于"每个人单独出生，没有职业"。
+- 缺：①节点只能平铺、不能"定义职业"；②`index.js` 只能写 `executors` 函数、不能 `extends` 职业父类；③`capFor` 硬编码封顶 io，继承提权路径未开。
+
+##### 13.3a 职业类暴露方法清单（已与用户确认 · 2026-08-05）
+
+> 对齐现有 `ExecContext`（`src/types.ts:287`）字段与 `applyCapability`（`src/engine/executor.ts:124`）裁剪逻辑。
+> 两项已拍板决策：
+> - **(1) 职业类用继承链**：高等级 `extends` 低等级，方法自然累积；用户造的新职业可 `extends` 任意框架职业（阶段 E）。
+> - **(3) `SystemNode` 必须细分**：不直接暴露任意 shell，只给受限封装（`GitNode` 仅暴露 git 相关命令），避免后门变真后门。
+
+**继承链（方法逐级累积）：**
+
+```
+Node (人类 / L0 基座)
+ ├─ 始终可用：logger / vars / signal / costLog / reportCost / setPartial / setBranches?
+ │
+ ├── ComputeNode (compute 职业)        → 无新增（纯计算只读）
+ │
+ ├── IoNode (io 职业)                  → + llm() / storage.get·set / addAsset() / assets(读) / writeOutEdgeScope?
+ │
+ ├── SandboxWriteNode (sandbox_write)  → 继承 IoNode + sandbox.writeFile / sandbox.readFrom / sandbox.list
+ │                                     （commitAll / commitLanes 在基类里是「拒绝型」默认实现，本层不可落地主工作区）
+ │
+ ├── CoordinatorNode (coordinator)     → 继承 SandboxWriteNode + sandbox.commitAll / sandbox.commitLanes（真落地权）
+ │
+ └── SystemNode (system)               → 继承 CoordinatorNode + 受限系统封装（见下，不直接给 shell）
+       └── GitNode (细分)              → 仅暴露 runGit(...) 受限 git 命令封装（如 worktree 操作），不暴露任意 command
+```
+
+**各层暴露的原生方法（按 ExecContext 字段映射）：**
+
+| 职业类 | 新增暴露方法（ctx 字段） | 备注 |
+|---|---|---|
+| `Node` L0 | `logger` `vars` `signal` `costLog` `reportCost` `setPartial` `setBranches?` | 人类基座，compute 级实际被 `applyCapability` 裁为 no-op 的部分在此层声明但受限 |
+| `ComputeNode` | （无新增） | 纯计算，只读不写 |
+| `IoNode` | `llm()` `storage.get/set` `addAsset()` `assets`(只读) `writeOutEdgeScope?` | 协作/IO 级；`writeOutEdgeScope` 放此层（纯 compute 节点无需声明 scope） |
+| `SandboxWriteNode` | `sandbox.writeFile()` `sandbox.readFrom()` `sandbox.list()` | `commitAll/commitLanes` 保留为「拒绝型」默认实现，本层不能落地主工作区 |
+| `CoordinatorNode` | `sandbox.commitAll()` `sandbox.commitLanes()` | 唯一能把沙箱产物写入主工作区的职业 |
+| `SystemNode` | 受限系统封装（非任意 shell） | 见下细分 |
+| `GitNode`（SystemNode 细分） | `runGit(args: string[]): Promise<GitResult>` | 仅 git 相关；如 `runGit(['worktree','add',...])`。不暴露 `exec`/任意命令 |
+
+**待定（按建议默认，未异议即采纳）：**
+- **(2) `writeOutEdgeScope` 放 IoNode（L1）**：纯 compute 节点无需声明 scope。若用户改主意可全层开放。
+- **(4) 跨包继承需显式导出声明**：包内继承自由，跨包继承新职业须在 manifest 显式 `exports` 该职业类，避免依赖混乱。
+
+##### 13.3 落地路线（✅ 全部完成于 2026-08-05）
+
+- [x] **阶段 A（抽象骨架，零风险）**：按 13.3a 继承链定义三层基类 `Node`（人类）/ 各 `职业类`（职业，含 `GitNode` 细分）/ 具体实现（个人）；在 `src/nodes/sdk.ts` 集中导出这些类作为公共 API + `OCCUPATION_CAPABILITY`/`capabilityOfClass` 工具。明确每层暴露的原生方法（见 13.3a 表）。
+- [x] **阶段 B（继承式提权）**：`loader.ts` 的 `capFor` 从"硬编码 io"改为 `resolveExtendsCapability`——按 manifest 节点 `extends` 声明的职业类名（沿 occupations → 框架职业）解析 CapabilityLevel；继承 `SandboxWriteNode` 给 sandbox_write，未继承（纯 `executors` 函数）仍 io。普通 `executors` 函数用户完全不受影响。
+- [x] **阶段 C（硬校验拦截）**：`validateManifest` 强制——`extends` 只可引用框架职业或本包 `occupations` 登记的职业；仅靠 `minCapability` 声明越权等级但缺 `extends` 会被拒绝加载（杜绝"配置文件后门"）。DEV 下校验 `index.js` 实际导出的同名类其原型链与 manifest 声明一致（warn 不抛错）。
+- [x] **阶段 D（透明可审计）**：`PluginPanel.tsx` 对 `minCapability > io` 的节点显示红色「已提权·<等级>」徽标，可卸载收回。`scanProjectCustomNodes` 日志改为「能力由 extends 声明决定」。
+- [x] **阶段 E（"造新职业"支持）**：`manifest.occupations` 定义新职业（须 `extends` 框架职业），节点 `extends` 可指向该职业名；`resolveExtendsCapability` 沿「自定义职业 → 其框架职业」解析最终能力。同包内自由派生；跨包继承需显式导出职业类（loader 已支持识别 occupations）。`loader` 同时支持「类式节点」（导出同名类取其 execute）与「函数式 executors」，向后兼容。
+
+**关键实现文件**：
+- `src/nodes/sdk.ts`（新增）：三层基类 + `OCCUPATION_CAPABILITY` + `capabilityOfClass`。
+- `src/types.ts`：`PluginNodeMeta.extends?` / `PluginOccupation` / `PluginManifest.occupations?` 新增字段。
+- `src/plugins/loader.ts`：`validateManifest` 硬校验 + `resolveExtendsCapability` + 类式/函数式 execute 解析。
+- `src/components/PluginPanel.tsx`：提权红色徽标。
+- `custom_nodes/example-fileworker/`（新增）：定义 `FileWorker` 职业并派生 `custom.textWriter`/`custom.jsonAppender` 两个 sandbox_write 节点，端到端验证阶段 E。
+- `custom_nodes/README.md`（新增）：三层抽象 + 三种写法 + 能力对照表。
+
+**验收状态（2026-08-05）**：
+- ✅ `tsc --noEmit` 通过；`tauri dev` 成功启动（Rust 编译无错，仅 1 个无关 linker warning）。
+- ✅ 逻辑验收脚本 `scripts/verify-customnode.ts`（**13/13 通过**）确认阶段 B/C/E 解析与阶段 D 徽标判定纯函数正确。
+- ✅ **修复一个真实 bug**：阶段 C「配置文件后门」校验原条件写反（`!n.extends` 置于 extends 分支内恒假）从未生效；修正为 custom 来源下无 extends 却声明越权 `minCapability` 会被拒绝加载。
+- ✅ 阶段 D 徽标逻辑提取为纯函数 `getEscalatedDefs`（`PluginPanel.tsx`），可被无 React/Tauri 依赖的 node 脚本断言；`registryStore` 加 DEV-only `window.__registry` 调试钩子（仅 DEV，无害）。
+- ⚠️ **GUI 自动验收不可行（环境限制）**：`scanProjectCustomNodes` 依赖 `@tauri-apps/plugin-fs` 读磁盘 `custom_nodes/`，且打开项目依赖 Tauri fs；playwright 只能连 vite 的 1420 Web 端（无 Tauri 能力），应用始终停在「选择项目」欢迎页，PluginPanel 不渲染。故真实磁盘扫描 + 浏览器徽标渲染须**在桌面 Tauri WebView 中手动验收**（非自动化可覆盖）。
+- 📋 **手动验收清单（用户）**：桌面应用打开项目 → 插件面板点「扫描自定义节点」→ 应见 `example-fileworker` 两节点带红色「已提权·sandbox_write」；拖入画布 + sandbox 运行模式可真实 `writeFile`（需 Rust 侧 sandbox 句柄就绪）。
+
+##### 13.4 与现有能力分级（11.4-D）的关系
+
+- 11.4-D 的 `CapabilityLevel`（compute/io/sandbox_write/coordinator/system）+ `applyCapability` 裁剪逻辑**保留**，它就是"职业类"背后的能力量化层。
+- 本步骤把"用户怎么获得某等级"从"改源码/manifest 字段"升级为"继承对应职业父类"——语义更清晰、门槛更自然、且天然防误用。
+- 用户对"单纯放一张 override 名单提权"的方案**未采纳**，明确偏好"继承原生父类重载方法"的 basemod 式模型。
+
+**✅ 共识已记录，待实施**：下一步若开工，建议从 **13.3 阶段 A（抽象骨架）** 起步，先不动提权，把"人类-职业-个人"三层基类与 `createNodeDef`/`loader` 的类式声明适配立起来。
+
+---
+
+## 六、参考项目索引（防遗忘 · 对标对象）
+
+> 本节集中记录本项目（SlimeMold）在设计「多 agent 并行 / 沙箱 / 冲突协调」时可对照的外部项目，避免遗忘与重复调研。
+> 详细比对结论见步骤 11（11.6 及后续补充）。
+
+### 6.1 oh-my-opencode（现名 oh-my-openagent）
+- 仓库：https://github.com/code-yeongyu/oh-my-openagent （原 https://github.com/code-yeongyu/oh-my-opencode）
+- 核心：Sisyphus 多智能体框架（规划/检索/编辑/验证四阶段），Team Mode 并行 + Background Agents。
+- **关键结论**：无真沙箱、无合并/仲裁引擎；并行改文件靠 **Hashline 行级 CAS 拒绝陈旧编辑**（写入前哈希校验），靠 LSP + Git 兜底；无 council 节点。
+- 教训：纯行级 diff 漏语义冲突 → 需编译/测试兜底。
+
+### 6.2 oh-my-opencode-slim（alvinunreal 精简版）
+- 仓库：https://github.com/alvinunreal/oh-my-opencode-slim
+- 文档站：https://ohmyopencodeslim.com
+- 核心：OpenCode 插件式多智能体套件「Pantheon 七神」（Orchestrator/Explorer/Oracle/Council/Librarian/Designer/Fixer + 可选 Observer），后台任务并行 + Tmux/Zellij 窗格实时可视化。
+- **关键结论（已确认）**：
+  - **沙箱/隔离**：用 **Git Worktrees**（`.slim/worktrees/` 作为隔离「车道 lanes」）做工作区隔离，并行/高风险编码各占一树，避免主分支直接冲突；非容器级沙箱。
+  - **冲突处理**：Orchestrator 在后台任务完成后**调和（reconcile）结果**再继续；争议用 **@Council 多模型并行共识**出单一裁决；Oracle 作最后调试者。
+  - **文件补丁**：Fixer 接收计划做实现；具体 patch 合并算法文档未展开，但 worktree 隔离 + Orchestrator 调和构成「隔离避免 + 汇聚仲裁」基础。
+  - ⚠️ 文档子页（`ohmyopencodeslim.com/docs/worktrees`、`/docs/council`、`/docs/background-orchestration`）实测 **404 不存在**；README 指引的正确路径为 GitHub `/blob/master/docs/*.md`。正文细节待换 URL 重试。
+- 与本项目的对应：其 Council 仲裁、Orchestrator 调和、worktree 车道，分别与我们 11.0 的 `council` 节点、协调者合并、并行改副本思路高度吻合（见 11.7 比对）。
+
+### 6.3 ComfyUI（节点式工作流范式参考）
+- 仓库：https://github.com/comfrey-art/comfrey （注：官方为 comfyanonymous/ComfyUI，此处以用户提及为准待核实）
+- 参考点：可视化节点 DAG 编排范式（本项目 SlimeMold 即"类 ComfyUI 的节点式 Agent 工作流"，见 CODEBUDDY.md 项目简介）。
+- 与本项目的关联：SlimeMold 的画布/连线/端口/子图抽象继承自 ComfyUI 思路；但 ComfyUI 本身**无多 agent 协作、无沙箱、无冲突协调**（纯推理流水线），故在「并行文件编辑 + 冲突仲裁」维度参考价值有限，主要作为**节点交互范式**基准。
+
+---
+
+*最后更新：2026-08-05（步骤13 阶段A-E 全部实现完成，待 GUI 验收）*

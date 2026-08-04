@@ -1,0 +1,37 @@
+{
+  "id": "custom.example-fileworker",
+  "name": "示例·文件操作职业",
+  "version": "0.1.0",
+  "description": "步骤13阶段E样例：定义新职业 FileWorker（继承 SandboxWriteNode），并派两个具体节点",
+  "entry": "index.js",
+  "occupations": [
+    { "name": "FileWorker", "extends": "SandboxWriteNode", "description": "带落地写文件能力的文件工职业" }
+  ],
+  "nodes": [
+    {
+      "typeId": "custom.textWriter",
+      "name": "文本写入",
+      "category": "自定义·文件",
+      "description": "把文本写入沙箱路径（继承 FileWorker 职业，自动获得 sandbox_write 能力）",
+      "extends": "FileWorker",
+      "inputs": [
+        { "id": "path", "label": "路径", "type": "text" },
+        { "id": "content", "label": "内容", "type": "text" }
+      ],
+      "outputs": [{ "id": "ok", "label": "结果", "type": "text" }],
+      "params": [{ "id": "prefix", "label": "前缀", "type": "text", "default": "" }]
+    },
+    {
+      "typeId": "custom.jsonAppender",
+      "name": "JSON 追加",
+      "category": "自定义·文件",
+      "description": "把 JSON 内容追加写入沙箱路径（同样继承 FileWorker 职业）",
+      "extends": "FileWorker",
+      "inputs": [
+        { "id": "path", "label": "路径", "type": "text" },
+        { "id": "content", "label": "JSON内容", "type": "json" }
+      ],
+      "outputs": [{ "id": "ok", "label": "结果", "type": "text" }]
+    }
+  ]
+}

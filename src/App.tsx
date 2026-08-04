@@ -14,7 +14,7 @@ import NewProjectModal from './components/NewProjectModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
-import { scanPluginsDir } from './plugins/pluginManager';
+import { scanPluginsDir, scanProgramCustomNodes, scanProjectCustomNodes, unloadProjectCustomNodes } from './plugins/pluginManager';
 import { isTauri } from './platform/env';
 import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
@@ -199,6 +199,8 @@ export default function App() {
           file.activeId = sess.activeId;
         }
         useWorkflowStore.getState().openProject(file, sess.path);
+        // 项目恢复成功后：扫描程序级（全局）自定义节点；项目级（仅本项目）由下方 projectId 订阅统一触发
+        void scanProgramCustomNodes();
       } catch {
         /* 恢复失败不阻塞启动 */
       }
@@ -216,6 +218,9 @@ export default function App() {
     return useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
+      // 项目切换/关闭：先卸载旧项目级自定义节点（仅本项目生效），再扫描新项目级
+      unloadProjectCustomNodes();
+      if (s.projectId) void scanProjectCustomNodes();
     });
   }, []);
 

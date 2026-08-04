@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "name": "测试-冲突协调→仲裁→校验→回流",
+  "savedAt": "2026-08-04T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "n-w1",
+      "typeId": "input.text",
+      "label": "W1 改 app.ts(行1-10)",
+      "position": { "x": 40, "y": 80 },
+      "params": {
+        "text": "{\"path\":\"app.ts\",\"before\":\"export const a=1;\\nexport const b=2;\\nexport const c=3;\\nexport const d=4;\\n\",\"after\":\"export const a=1_RENAMED;\\nexport const b=2;\\nexport const c=3;\\nexport const d=4;\\n\",\"readSnapshot\":{\"hash\":\"h1\",\"lineRange\":[1,10],\"source\":\"object\"}}"
+      }
+    },
+    {
+      "id": "n-w2",
+      "typeId": "input.text",
+      "label": "W2 改 app.ts(行5-15)冲突",
+      "position": { "x": 40, "y": 320 },
+      "params": {
+        "text": "{\"path\":\"app.ts\",\"before\":\"export const a=1;\\nexport const b=2;\\nexport const c=3;\\nexport const d=4;\\n\",\"after\":\"export const a=1;\\nexport const b=2;\\nexport const c=3_CHANGED;\\nexport const d=4;\\n\",\"readSnapshot\":{\"hash\":\"h2\",\"lineRange\":[5,15],\"source\":\"object\"}}"
+      }
+    },
+    {
+      "id": "n-resolver",
+      "typeId": "coord.resolver",
+      "label": "冲突协调者",
+      "position": { "x": 420, "y": 180 },
+      "params": { "mode": "report", "mergeMode": "content" }
+    },
+    {
+      "id": "n-validator",
+      "typeId": "verify.assert",
+      "label": "合并校验闸门(方案①)",
+      "position": { "x": 820, "y": 60 },
+      "params": {
+        "mode": "truthy",
+        "failFast": false,
+        "message": "合并结果需非空方可落盘"
+      }
+    },
+    {
+      "id": "n-council",
+      "typeId": "coord.council",
+      "label": "仲裁委员会",
+      "position": { "x": 820, "y": 320 },
+      "params": {
+        "councillorAgentIds": "",
+        "synthesizerAgentId": "",
+        "simulate": "on"
+      }
+    },
+    {
+      "id": "n-loop",
+      "typeId": "flow.loopGate",
+      "label": "回流闸门(冲突→重派)",
+      "position": { "x": 1220, "y": 320 },
+      "params": { "expression": "i < 3", "maxLoops": 3, "loopVar": "i" }
+    },
+    {
+      "id": "n-merged",
+      "typeId": "input.text",
+      "label": "✔ 合并落盘",
+      "position": { "x": 1220, "y": 60 },
+      "params": { "text": "（merged 通过校验闸门后落盘）" }
+    },
+    {
+      "id": "n-replan",
+      "typeId": "input.text",
+      "label": "↺ 回流重派信号",
+      "position": { "x": 1500, "y": 320 },
+      "params": { "text": "（control 回流：交上游 dispatch.split / 规划节点重派，避免冲突副本写回）" }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-w1", "sourceHandle": "text", "target": "n-resolver", "targetHandle": "in1", "data": { "kind": "data" } },
+    { "id": "e2", "source": "n-w2", "sourceHandle": "text", "target": "n-resolver", "targetHandle": "in2", "data": { "kind": "data" } },
+    { "id": "e3", "source": "n-resolver", "sourceHandle": "merged", "target": "n-validator", "targetHandle": "value", "data": { "kind": "data" } },
+    { "id": "e4", "source": "n-validator", "sourceHandle": "pass", "target": "n-merged", "targetHandle": "text", "data": { "kind": "data" } },
+    { "id": "e5", "source": "n-resolver", "sourceHandle": "conflicts", "target": "n-council", "targetHandle": "dispute", "data": { "kind": "data" } },
+    { "id": "e6", "source": "n-council", "sourceHandle": "verdict", "target": "n-loop", "targetHandle": "cond", "data": { "kind": "control" } },
+    { "id": "e7", "source": "n-loop", "sourceHandle": "pass", "target": "n-replan", "targetHandle": "text", "data": { "kind": "control" } },
+    { "id": "e8", "source": "n-loop", "sourceHandle": "stop", "target": "n-replan", "targetHandle": "text", "data": { "kind": "control" } }
+  ],
+  "agents": []
+}

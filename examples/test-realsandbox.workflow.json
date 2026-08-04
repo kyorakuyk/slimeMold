@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "name": "测试-真沙箱隔离并行写文件",
+  "savedAt": "2026-08-04T00:00:00.000Z",
+  "nodes": [
+    {
+      "id": "n-w1",
+      "typeId": "input.text",
+      "label": "W1 内容（result.txt 版本A）",
+      "position": { "x": 40, "y": 80 },
+      "params": { "text": "Worker-1 生成的 result.txt 内容\n（沙箱内独立副本）" }
+    },
+    {
+      "id": "n-w2",
+      "typeId": "input.text",
+      "label": "W2 内容（result.txt 版本B）",
+      "position": { "x": 40, "y": 320 },
+      "params": { "text": "Worker-2 生成的 result.txt 内容\n（沙箱内独立副本）" }
+    },
+    {
+      "id": "n-w1w",
+      "typeId": "tool.writeFile",
+      "label": "W1 写 result.txt（沙箱）",
+      "position": { "x": 420, "y": 80 },
+      "params": { "filename": "result.txt", "overwrite": "true" }
+    },
+    {
+      "id": "n-w2w",
+      "typeId": "tool.writeFile",
+      "label": "W2 写 result.txt（沙箱）",
+      "position": { "x": 420, "y": 320 },
+      "params": { "filename": "result.txt", "overwrite": "true" }
+    },
+    {
+      "id": "n-resolver",
+      "typeId": "coord.resolver",
+      "label": "冲突协调者（沙箱汇总）",
+      "position": { "x": 820, "y": 180 },
+      "params": { "mode": "report", "mergeMode": "content" }
+    },
+    {
+      "id": "n-validator",
+      "typeId": "verify.assert",
+      "label": "合并校验闸门",
+      "position": { "x": 1240, "y": 180 },
+      "params": {
+        "mode": "truthy",
+        "failFast": false,
+        "message": "沙箱汇总产物需非空"
+      }
+    },
+    {
+      "id": "n-done",
+      "typeId": "input.text",
+      "label": "✔ 已落地主工作区",
+      "position": { "x": 1640, "y": 180 },
+      "params": { "text": "（resolver 经 commitLanes 把两 Worker 沙箱副本汇总写入工作区根目录）" }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-w1", "sourceHandle": "text", "target": "n-w1w", "targetHandle": "content", "data": { "kind": "data" } },
+    { "id": "e2", "source": "n-w2", "sourceHandle": "text", "target": "n-w2w", "targetHandle": "content", "data": { "kind": "data" } },
+    { "id": "e3", "source": "n-w1w", "sourceHandle": "path", "target": "n-resolver", "targetHandle": "in1", "data": { "kind": "data" } },
+    { "id": "e4", "source": "n-w2w", "sourceHandle": "path", "target": "n-resolver", "targetHandle": "in2", "data": { "kind": "data" } },
+    { "id": "e5", "source": "n-resolver", "sourceHandle": "merged", "target": "n-validator", "targetHandle": "value", "data": { "kind": "data" } },
+    { "id": "e6", "source": "n-validator", "sourceHandle": "pass", "target": "n-done", "targetHandle": "text", "data": { "kind": "data" } }
+  ],
+  "agents": []
+}
