@@ -577,6 +577,10 @@ export interface WorkflowFileNode {
   label: string;
   position: { x: number; y: number };
   params: Record<string, unknown>;
+  /** 节点旁路开关（对齐运行态 data.bypass，旧文件缺省视为 false） */
+  bypass?: boolean;
+  /** 节点静音开关（对齐运行态 data.mute，旧文件缺省视为 false） */
+  mute?: boolean;
   /** 画布选中态（运行时态，存盘忽略，仅类型兼容） */
   selected?: boolean;
 }

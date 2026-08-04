@@ -979,38 +979,38 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 
 ### 15.1 A 类——真 bug（优先修，消除"类型过了但运行其实有坑"）
 
-- [ ] **A1** `App.tsx:58,92` `setNewProjectOpen` 未定义——**新建项目向导半成品**。范围待定：仅向导 UI(a) 还是含编辑器交互(b)？参照 vscode/pycharm 新建工程向导体验做完善。**（用户要求先讨论范围）**
-- [ ] **A2** `SettingsCenter.tsx:26` 调 `loadEndpoint` 但 `credentialStore` 只导出 `loadEndpointKey`——改名笔误，改 `loadEndpointKey`。
-- [ ] **A3** `executor.ts:1252` `Cannot find name 'AssetMeta'`——漏 import（`AssetMeta` 在 types.ts:712 已定义），补 `import type { AssetMeta }`。
-- [ ] **A4** `pluginManager.ts:165` `Cannot find name 'NodeDefinition'`——漏 import，补 `import type { NodeDefinition }`。
-- [ ] **A5** `builtin.ts:1034,2346` `type:'control'` 不属 `PortType`——**我上轮 bug**：端口数据类型不该写 `control`（control 是连线语义 `flow` 的值）。改 `type:'any'` 保留 `flow:'control'`。
-- [ ] **A6** `workflowStore.ts` 五处 `defaultAgentId does not exist on WorkflowFile`——序列化结构 `WorkflowFile` 缺 `defaultAgentId`（`WorkflowState` 有）。在 `WorkflowFile` 补 `defaultAgentId?: string | null`，读盘边界 `?? null`。
-- [ ] **A7** `workflowStore.ts` / `projectIO.ts` `FlowNode↔WorkflowFileNode`、`FlowEdge↔WorkflowFileEdge` 互转报错——存/读盘边界显式映射，补 `defaultAgentId`/`runs` 字段。
+- [x] **A2** `SettingsCenter.tsx` 调 `loadEndpoint` 改为 `loadEndpointKey`（改名笔误）。
+- [x] **A3** `executor.ts` 补 `import type { AssetMeta }`。
+- [x] **A4** `pluginManager.ts` 补 `import type { NodeDefinition }`。
+- [x] **A5** `builtin.ts` 端口 `type:'control'` 改 `type:'any'`（保留 `flow:'control'`）。
+- [x] **A6** `WorkflowFile` 补 `defaultAgentId?: string | null`，读盘 `?? null`。
+- [x] **A7** `FlowNode↔WorkflowFileNode` / `FlowEdge↔WorkflowFileEdge` 边界显式映射，补 `defaultAgentId`/`runs`。
+- [ ] **A1** `App.tsx` `setNewProjectOpen` 未定义——**新建项目向导完整实现**：已把 `setNewProjectOpen` 改为 `SplitCanvas` 的 `onNewProject` prop 透传（消除作用域 bug）；但"向导 UI 完整体验（参照 vscode/pycharm）"仍待做，见步骤 16。
 
 ### 15.2 B 类——类型定义落后（按现有用法补全，零行为风险）
 
-- [ ] **B1** `ProjectFile` 缺 `artifacts`/`runs`/`legacy`（`workflowStore.ts:522`、`projectIO.ts:223,270`）——补可选字段，类型按调用点反推。
-- [ ] **B2** `JobBoard.tsx:5,28` `Record<NodeStatus>` 缺 `bypassed/muted`——`NodeStatus`(types.ts:4) 已有，检查 JobBoard 是否 import 了正确来源，统一。
-- [ ] **B3** `ExecLogger`(types.ts:163) 缺 `warn`——约 10 处 `logger.warn` 报错，补 `warn(message: string): void`。
-- [ ] **B4** `ParamDef` 缺 `tooltip`(`builtin.ts:1330,1783`)；`ParamType` 缺 `'boolean'`——补 `tooltip?` 与 `'boolean'`。
-- [ ] **B5** `SettingsCenter.tsx:253` `ProviderPreset` 缺 `label`——补字段。
-- [ ] **B6** `TopBar.tsx:296` 菜单项联合类型缺 `'divider'`——补。
-- [ ] **B7** `Companion.tsx:115` `NodeUsageStat` 缺 `inputTokens/outputTokens`——补（或改用已有 `promptTokens/completionTokens`）。
-- [ ] **B8** `credentialStore.ts:54,103` 调用密钥库函数少 1 参——按函数签名补第 2 参。
-- [ ] **B9** `SubgraphEditor.tsx:67,76,175` 调用函数少 1 参——补参。
-- [ ] **B10** `SubgraphEditor.tsx` `WorkflowNodeData` 缺字段 / `NodeTypes` 不兼容——补 `typeId/label/params/status`，修正注册。
-- [ ] **B11** `SubgraphEditor.tsx:133` `NodeChange.id` 不存在——`NodeChange` 是联合，`add` 无 `id`，用类型守卫收窄。
-- [ ] **B12** 约 30 处隐式 any（`.filter((s)=>` 等）——显式标注参数类型（strict 已开必报）。
+- [x] **B1** `ProjectFile` 补 `artifacts`/`runs`/`legacy`（路径修正为 `./engine/pipeline`）。
+- [x] **B2** `JobBoard.tsx` `statusMeta`/`counts` 补 `bypassed`/`muted`。
+- [x] **B3** `ExecLogger` 补 `warn`（types.ts + executor + headless noopLogger）。
+- [x] **B4** `ParamDef.tooltip?` + `ParamType.'boolean'`。
+- [x] **B5** `ProviderPreset.label?`（SettingsCenter `p.label ?? p.name`）。
+- [x] **B6** `TopBar` 菜单联合补 `'separator'`（原 `'divider'`）。
+- [x] **B7** `Companion.tsx` `inputTokens/outputTokens` → `promptTokens/completionTokens`。
+- [x] **B8** `credentialStore.ts` `invokeRaw` 补第 2 参。
+- [x] **B9** `SubgraphEditor.tsx` 函数补参（`resolvePorts` 第 4 参 `subgraphs`）。
+- [x] **B10** `SubgraphEditor.tsx` `WorkflowNodeData` 字段补全 + `NodeTypes` 从 `@xyflow/react` 导入并 cast。
+- [x] **B11** `SubgraphEditor.tsx` `NodeChange` 类型守卫（`add` 无 `id`）。
+- [x] **B12** 约 30 处隐式 any 显式标注（含 App/BaseNode/GroupProxyNode/SubgraphEditor/WorkflowEditor/AssetsPanel/Inspector 等）。
 
 ### 15.3 C 类——类型推断失败（写法问题）
 
-- [ ] **C1** `viewStore.ts:81,83,113,122,128` `useViewStore` 自引用 any——`create<ViewState>()(persist(...))` 在 strict 下推断失败，给 `StateCreator<ViewState>` 显式标注。
-- [ ] **C2** `WorkflowEditor.tsx:202` `getState().defs` 不在 `WorkflowState`——节点定义在 `registryStore`，改 `useRegistryStore.getState().defs`。
-- [ ] **C3** `StatusBar.tsx:26` `setAutosave` 不在 `WorkflowState`——应为 `lastAutosave` 或补方法。
-- [ ] **C4** `NodePalette.tsx:157` `??` 左操作数永远非空——删冗余 `??`。
-- [ ] **C5** `executor.ts:316` `RunOptions.force` 不存在 / `:1284` `SandboxHandle` 误赋 `boolean` / `:1289` 返回类型错——补 `force?`、修正返回值。
-- [ ] **C6** `executor.ts:1873` `unanimous|majority` 与 `'split'` 无交集比较——对齐 `CouncilVerdict.consensus` 类型来源。
-- [ ] **C7** 多处 `string | null` 不能赋 `string`（如 `AgentPanel:207`）——加非空兜底。
+- [x] **C1** `viewStore.ts` `create<ViewState>()(persist(...))` 显式 `StateCreator<ViewState>`；`effectiveTheme` 自引用修复。
+- [x] **C2** `WorkflowEditor.tsx` `getState().defs` → `useRegistryStore.getState().defs`。
+- [x] **C3** `StatusBar.tsx` `setAutosave` 修正（走 `WorkflowState` 方法）。
+- [x] **C4** `NodePalette.tsx` 删冗余 `??`。
+- [x] **C5** `executor.ts` 补 `RunOptions.force?`、修正 `SandboxHandle` 返回值。
+- [x] **C6** `executor.ts` `consensus === 'split'` 加 `as CouncilVerdict['consensus']`。
+- [x] **C7** 多处 `string | null` 兜底（AgentPanel `loadCredential` 返回 `?? undefined`）。
 
 ### 15.4 执行顺序（阶段一：修 114 处到 0，编译标准不变）
 
@@ -1019,16 +1019,26 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 3. 最后 C 类（C1–C7）+ 跑到 `tsc -b` 零错误。
 4. 验证：`npx tsc -b` 退出码 0；`read_lints` 无错误；`npm run headless` 既有样例仍通过。
 
-### 15.5 阶段二（本次不做，待用户单独启动）
+> **阶段一完成记录（2026-08-05）**：
+> - commit `a2ccde3` 推送 origin/main：114→0 全部清零。
+> - **后续补修（同日）**：发现「方案 Q 局部 cast」在非 active 工作流场景下是**语义错误**（cast 假设 `wf.nodes` 是 FlowNode，实际是 WorkflowFileNode），修正如下：
+>   - `types.ts`：`WorkflowFileNode` 加 `bypass?`/`mute?`（对齐 `data.bypass/mute`，旧文件 `??` 兜底，磁盘兼容）。
+>   - `workflowStore.ts`：5 处非 active 分支去掉假 cast，改操作拍平字段（`setNodeLabel` 写 `label`；`toggleNodeBypass/Mute` 写 `bypass/mute`；`align/distribute` 的 `apply` 改接受 `WorkflowFileNode[]`，active 分支用局部适配器桥接 `FlowNode[]`）。
+>   - 补全跨工作流还原：`flowNodesFrom` 读 `n.bypass/mute`→`data`；`storedNodeOf` 写 `data.bypass/mute`→`WorkflowFileNode`，避免切换工作流时 bypass/mute 状态丢失。
+>   - 验证：`tsc -b` EXIT:0、`read_lints` 0、`npm run headless` 3 成功/1（未绑定智能体，预期）无回归。
+
+### 15.5 阶段二（待用户单独启动）
 
 - [ ] 开 `noUnusedLocals`/`noUnusedParameters`（true），清由此新增的未用变量/参数（预计再 +20~50 处）。
 - [ ] `noUncheckedIndexedAccess`/`exactOptionalPropertyTypes` **不开**（存量项目事后开 = 重写一半类型，收益低）。
+- [ ] **方案 P（根治 workflows 类型矛盾）**：`workflowStore.workflows` 节点声明为 `FlowNode[]`（运行态同构），落盘时再拍平。会牵动 `serializeCurrent`/`buildProjectFile`/`loadProject` 等边界 + 约 27 处，工作量大，留待择机处理。当前用方案 Q（拍平字段 + 跨工作流还原）已无运行时隐患。
 
-### 15.6 git / 基线处理（2026-08-05 push 前）
+### 15.6 git / 基线处理（2026-08-05）
 
-- [ ] 提交范围 = 步骤14成果 + 文档（CODEBUDDY.md/TODO.md）+ .gitignore 修复；临时产物 `p_backflow.*`/`ts_test.*` 删掉不提交。
-- [ ] `tauri_dev.log` 误跟踪（应忽略却没忽略）——`git rm --cached` + 加入 `.gitignore`，本地保留。
-- [ ] push 到 `origin/main` 后再开始 15.1 清理。
+- [x] 提交范围 = 步骤14成果 + 文档（CODEBUDDY.md/TODO.md）+ .gitignore 修复；临时产物 `p_backflow.*`/`ts_test.*` 删掉不提交。
+- [x] `tauri_dev.log` 误跟踪——`git rm --cached` + 加入 `.gitignore`，本地保留。
+- [x] push 到 `origin/main`（commit `8a54ea6` 基线 + `a2ccde3` 步骤15主体）。
+- [x] `.gitignore` 补 `tsc_tmp.log`（调试诊断文件不入库）。
 
 ##### 14.D Orchestrator（待做，非本轮）
 

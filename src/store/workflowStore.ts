@@ -397,6 +397,8 @@ function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
       params: n.params ?? {},
       status: 'idle' as NodeStatus,
       dirty: true,
+      bypass: n.bypass ?? false,
+      mute: n.mute ?? false,
     },
   }));
 }
@@ -420,6 +422,8 @@ function storedNodeOf(n: FlowNode): WorkflowFileNode {
     label: n.data.label,
     position: { x: n.position.x, y: n.position.y },
     params: n.data.params ?? {},
+    bypass: n.data.bypass ?? false,
+    mute: n.data.mute ?? false,
   };
 }
 /** 画布 FlowEdge → 存储轻量连线 */
@@ -771,10 +775,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        const nodes = (wf.nodes as unknown as FlowNode[]).map((n) =>
-          n.id === id ? { ...n, data: { ...n.data, label } } : n,
-        );
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: nodes as unknown as WorkflowFileNode[] } } });
+        const nodes = wf.nodes.map((n) => (n.id === id ? { ...n, label } : n));
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
       },
 
       toggleNodeBypass: (id, wfId) => {
@@ -786,7 +788,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes as unknown as FlowNode[]).map(flip) as unknown as WorkflowFileNode[] } } });
+        const flipWf = (n: WorkflowFileNode) =>
+          n.id === id ? { ...n, bypass: !n.bypass, mute: false } : n;
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flipWf) } } });
       },
 
       toggleNodeMute: (id, wfId) => {
@@ -798,12 +802,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const wf = get().workflows[wfId];
         if (!wf) return;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: (wf.nodes as unknown as FlowNode[]).map(flip) as unknown as WorkflowFileNode[] } } });
+        const flipWf = (n: WorkflowFileNode) =>
+          n.id === id ? { ...n, mute: !n.mute, bypass: false } : n;
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flipWf) } } });
       },
 
       /** 对齐 / 分布：对当前选中的多个节点生效（少于 2 个不操作），支持拆分视图 */
       alignSelected: (mode) => {
-        const apply = (nodes: FlowNode[]): FlowNode[] => {
+        const apply = (nodes: WorkflowFileNode[]): WorkflowFileNode[] => {
           const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
           if (sel.length < 2) return nodes;
           const minX = Math.min(...sel.map((n) => n.position.x));
@@ -812,7 +818,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           const maxY = Math.max(...sel.map((n) => n.position.y));
           const cx = (minX + maxX) / 2;
           const cy = (minY + maxY) / 2;
-          const mapBy = (n: FlowNode): [number, number] => {
+          const mapBy = (n: WorkflowFileNode): [number, number] => {
             switch (mode) {
               case 'left': return [minX, n.position.y];
               case 'right': return [maxX, n.position.y];
@@ -834,15 +840,19 @@ export const useWorkflowStore = create<WorkflowState>()(
           const wf = get().workflows[wfId];
           if (!wf) return;
           get().pushHistory();
-          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes as unknown as FlowNode[]) as unknown as WorkflowFileNode[] } } });
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes) } } });
           return;
         }
         get().pushHistory();
-        set({ nodes: apply(get().nodes) });
+        const activeApply = (nodes: FlowNode[]): FlowNode[] => {
+          const pf = apply as unknown as (ns: WorkflowFileNode[]) => WorkflowFileNode[];
+          return pf(nodes as unknown as WorkflowFileNode[]) as unknown as FlowNode[];
+        };
+        set({ nodes: activeApply(get().nodes) });
       },
 
       distributeSelected: (axis) => {
-        const apply = (nodes: FlowNode[]): FlowNode[] => {
+        const apply = (nodes: WorkflowFileNode[]): WorkflowFileNode[] => {
           const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
           if (sel.length < 3) return nodes;
           const sorted = [...sel].sort((a, b) =>
@@ -863,11 +873,15 @@ export const useWorkflowStore = create<WorkflowState>()(
           const wf = get().workflows[wfId];
           if (!wf) return;
           get().pushHistory();
-          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes as unknown as FlowNode[]) as unknown as WorkflowFileNode[] } } });
+          set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: apply(wf.nodes) } } });
           return;
         }
         get().pushHistory();
-        set({ nodes: apply(get().nodes) });
+        const activeApply = (nodes: FlowNode[]): FlowNode[] => {
+          const pf = apply as unknown as (ns: WorkflowFileNode[]) => WorkflowFileNode[];
+          return pf(nodes as unknown as WorkflowFileNode[]) as unknown as FlowNode[];
+        };
+        set({ nodes: activeApply(get().nodes) });
       },
 
       setNodeStatus: (id, status, patch) =>
