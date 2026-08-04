@@ -6,6 +6,7 @@ import { isTauri, showSaveDirDialog } from '../platform/env';
 
 export default function NewProjectModal({ onClose }: { onClose: () => void }) {
   const createProject = useWorkflowStore((s) => s.createProject);
+  const addLog = useWorkflowStore((s) => s.addLog);
 
   const [name, setName] = useState('未命名项目');
   const [templateId, setTemplateId] = useState<string>(''); // '' = 空白画布
@@ -15,6 +16,8 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
 
   const nameValid = name.trim().length > 0;
   const tpl = templateId ? STARTER_TEMPLATES.find((t) => t.id === templateId) : undefined;
+  const preview = tpl?.build();
+  const agentCount = preview ? preview.nodes.filter((n) => n.data.typeId.startsWith('agent.')).length : 0;
 
   const chooseLocation = async () => {
     if (!isTauri) return;
@@ -27,10 +30,14 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
+      const tplName = tpl?.name;
       await createProject({ name: name.trim(), templateId: templateId || undefined, location: location ?? undefined });
+      addLog('info', `已创建项目「${name.trim()}」${tplName ? `（模板：${tplName}）` : '（空白画布）'}`);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      addLog('error', `创建项目失败：${msg}`);
       setBusy(false);
     }
   };
@@ -101,6 +108,43 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
           ))}
         </div>
 
+        {/* 2.5 模板详情预览 */}
+        {tpl && preview && (
+          <div
+            className="mt-3 rounded-xl border p-3"
+            style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg-soft)' }}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+                {tpl.emoji} {tpl.name}
+              </span>
+              <span className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                {preview.nodes.length} 个节点 · {preview.edges.length} 条连线
+              </span>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
+              {tpl.desc}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {preview.nodes.map((n) => (
+                <span
+                  key={n.id}
+                  className="rounded-md px-2 py-0.5 text-[10px]"
+                  style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink-soft)', border: '1px solid var(--sm-line)' }}
+                  title={n.data.typeId}
+                >
+                  {n.data.label}
+                </span>
+              ))}
+            </div>
+            {agentCount > 0 && (
+              <p className="mt-2 rounded-md px-2 py-1.5 text-[10px]" style={{ background: 'var(--sm-accent-soft)', color: 'var(--sm-accent)' }}>
+                含 {agentCount} 个智能体节点：未绑定模型时将自动以「模拟模式」运行，可在设置中配置后切换真实调用。
+              </p>
+            )}
+          </div>
+        )}
+
         {/* 3. 保存位置（桌面端） */}
         {isTauri && (
           <div className="mt-4">
@@ -131,9 +175,9 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
 
         {/* 底部操作 */}
         <div className="mt-5 flex items-center justify-end gap-2">
-          {tpl && (
+          {tpl && preview && (
             <span className="mr-auto text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              将载入模板「{tpl.name}」（{tpl.build().nodes.length} 个节点）
+              将载入「{tpl.name}」· {preview.nodes.length} 节点 / {preview.edges.length} 连线
             </span>
           )}
           <button

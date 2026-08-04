@@ -985,7 +985,7 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 - [x] **A5** `builtin.ts` 端口 `type:'control'` 改 `type:'any'`（保留 `flow:'control'`）。
 - [x] **A6** `WorkflowFile` 补 `defaultAgentId?: string | null`，读盘 `?? null`。
 - [x] **A7** `FlowNode↔WorkflowFileNode` / `FlowEdge↔WorkflowFileEdge` 边界显式映射，补 `defaultAgentId`/`runs`。
-- [ ] **A1** `App.tsx` `setNewProjectOpen` 未定义——**新建项目向导完整实现**：已把 `setNewProjectOpen` 改为 `SplitCanvas` 的 `onNewProject` prop 透传（消除作用域 bug）；但"向导 UI 完整体验（参照 vscode/pycharm）"仍待做，见步骤 16。
+- [x] **A1** `App.tsx` 新建项目向导：已完成 `setNewProjectOpen`→`onNewProject` prop 透传（消除作用域 bug）；`NewProjectModal.tsx` 实现完整向导（项目名 + 起始模板卡片 + 模板详情预览含节点清单/连线数/agent 模拟模式提示 + 桌面端保存位置选择 + 创建后 `addLog` 反馈）。2026-08-05 增强：模板详情预览面板、创建成功/失败日志、底部预览文案。
 
 ### 15.2 B 类——类型定义落后（按现有用法补全，零行为风险）
 
