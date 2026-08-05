@@ -33,21 +33,25 @@ import type { ApiEndpoint, Protocol } from '../types';
 import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
 import { RouteTableEditor } from './RouteTableEditor';
+import { useT } from '../i18n/useT';
 
 type SectionId = 'general' | 'agent' | 'model' | 'mcp' | 'flow' | 'routing' | 'apikeys';
 
-const SECTIONS: { id: SectionId; label: string; icon: JSX.Element; desc: string }[] = [
-  { id: 'general', label: '通用', icon: <Monitor size={15} />, desc: '画布、LLM 通道、全局代理' },
-  { id: 'agent', label: '智能体', icon: <Bot size={15} />, desc: '凭据、预设、默认切换、检测' },
-  { id: 'model', label: '模型', icon: <Cpu size={15} />, desc: '供应商预设库与全局默认模型' },
-  { id: 'mcp', label: 'MCP', icon: <Boxes size={15} />, desc: '插件 / MCP server 管理' },
-  { id: 'flow', label: '对话流', icon: <Workflow size={15} />, desc: '执行引擎：并发、失败策略' },
-  { id: 'routing', label: '路由表', icon: <Route size={15} />, desc: '类别→智能体路由（Builder 生成时绑定 worker）' },
-  { id: 'apikeys', label: 'APIKEYS', icon: <KeyRound size={15} />, desc: '集中管理系统密钥库中的 API Key' },
-];
+const SECTION_IDS: SectionId[] = ['general', 'agent', 'model', 'mcp', 'flow', 'routing', 'apikeys'];
+
+const SECTION_ICONS: Record<SectionId, JSX.Element> = {
+  general: <Monitor size={15} />,
+  agent: <Bot size={15} />,
+  model: <Cpu size={15} />,
+  mcp: <Boxes size={15} />,
+  flow: <Workflow size={15} />,
+  routing: <Route size={15} />,
+  apikeys: <KeyRound size={15} />,
+};
 
 /** 仿 Trae 的设置中心：左侧分区导航 + 右侧内容 */
 export default function SettingsCenter({ onClose }: { onClose: () => void }) {
+  const t = useT('settings');
   const [section, setSection] = useState<SectionId>('general');
 
   useEffect(() => {
@@ -75,23 +79,23 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
           style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg-deep)' }}
         >
           <h2 className="mb-3 flex items-center gap-2 px-1 text-[15px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-            <SettingsIcon size={16} /> 设置
+            <SettingsIcon size={16} /> {t('settings.title')}
           </h2>
           <div className="space-y-1">
-            {SECTIONS.map((s) => (
+            {SECTION_IDS.map((id) => (
               <button
-                key={s.id}
+                key={id}
                 type="button"
-                onClick={() => setSection(s.id)}
+                onClick={() => setSection(id)}
                 className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-[13px] transition-colors"
                 style={{
-                  background: section === s.id ? 'var(--sm-accent-soft)' : 'transparent',
-                  color: section === s.id ? 'var(--sm-accent)' : 'var(--sm-ink-faint)',
+                  background: section === id ? 'var(--sm-accent-soft)' : 'transparent',
+                  color: section === id ? 'var(--sm-accent)' : 'var(--sm-ink-faint)',
                 }}
-                title={s.desc}
+                title={t(`settings.sec.${id}.desc`)}
               >
-                {s.icon}
-                <span>{s.label}</span>
+                {SECTION_ICONS[id]}
+                <span>{t(`settings.sec.${id}.label`)}</span>
               </button>
             ))}
           </div>
@@ -102,14 +106,14 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
           <div className="flex items-center justify-between border-b px-4 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
             <div>
               <span className="text-[14px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-                {SECTIONS.find((s) => s.id === section)?.label}
+                {t(`settings.sec.${section}.label`)}
               </span>
               <span className="ml-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                {SECTIONS.find((s) => s.id === section)?.desc}
+                {t(`settings.sec.${section}.desc`)}
               </span>
             </div>
-            <button className="sm-btn px-2 py-0.5" onClick={onClose}>
-              <X size={14} /> 关闭
+            <button className="sm-btn px-2 py-0.5" onClick={onClose} title={t('settings.close')}>
+              <X size={14} /> {t('settings.close')}
             </button>
           </div>
 
@@ -130,6 +134,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
 
 /* ---------------- 通用 ---------------- */
 function GeneralSection() {
+  const t = useT('settings');
   const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme } = useViewStore();
   const llmChannel = useWorkflowStore((s) => s.llmChannel);
   const setLlmChannel = useWorkflowStore((s) => s.setLlmChannel);
@@ -137,14 +142,14 @@ function GeneralSection() {
   return (
     <div className="space-y-4">
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>外观</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.appearance')}</h3>
         <div className="flex items-center justify-between rounded border border-line px-3 py-2.5">
           <span>
-            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>颜色主题</span>
-            <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>切换后即时生效并持久化保存</span>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.colorTheme')}</span>
+            <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{t('settings.general.themeHint')}</span>
           </span>
           <div className="flex gap-2">
-            {([{ v: 'dark', t: '暗色' }, { v: 'light', t: '亮色' }, { v: 'system', t: '跟随系统' }] as const).map((opt) => (
+            {([{ v: 'dark', key: 'settings.theme.dark' }, { v: 'light', key: 'settings.theme.light' }, { v: 'system', key: 'settings.theme.system' }] as const).map((opt) => (
               <button
                 key={opt.v}
                 type="button"
@@ -156,7 +161,7 @@ function GeneralSection() {
                   color: theme === opt.v ? 'var(--sm-accent)' : 'var(--sm-ink-faint)',
                 }}
               >
-                {opt.t}
+                {t(opt.key)}
               </button>
             ))}
           </div>
@@ -164,33 +169,33 @@ function GeneralSection() {
       </div>
 
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>画布</h3>
-        <ToggleRow label="显示网格" desc="画布背景网格点阵" checked={showGrid} onChange={toggleGrid} />
-        <ToggleRow label="显示小地图" desc="右下角导航小地图" checked={showMinimap} onChange={toggleMinimap} />
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.canvas')}</h3>
+        <ToggleRow label={t('settings.general.showGrid')} desc={t('settings.general.showGridDesc')} checked={showGrid} onChange={toggleGrid} />
+        <ToggleRow label={t('settings.general.showMinimap')} desc={t('settings.general.showMinimapDesc')} checked={showMinimap} onChange={toggleMinimap} />
         <div className="mt-2 flex items-center justify-between rounded border border-line px-3 py-2.5">
           <span>
-            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>鼠标模式</span>
-            <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>拖动画布 / 框选 / 点击选中</span>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.mouseMode')}</span>
+            <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{t('settings.general.mouseModeDesc')}</span>
           </span>
           <select
             className="sm-input max-w-[140px]"
             value={interactionMode}
             onChange={(e) => setInteractionMode(e.target.value as 'move' | 'select' | 'click')}
           >
-            <option value="move">拖动</option>
-            <option value="select">框选</option>
-            <option value="click">点击</option>
+            <option value="move">{t('settings.option.move')}</option>
+            <option value="select">{t('settings.option.select')}</option>
+            <option value="click">{t('settings.option.click')}</option>
           </select>
         </div>
       </div>
 
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>LLM 调用通道</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.llmChannel')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          后端：经 Rust 命令发起，密钥不出渲染层（推荐）；前端：WebView 直接请求
+          {t('settings.general.llmChannelDesc')}
         </p>
         <div className="flex gap-2">
-          {([{ v: 'backend', t: '后端（推荐）' }, { v: 'frontend', t: '前端' }] as const).map((opt) => (
+          {([{ v: 'backend', key: 'settings.channel.backend' }, { v: 'frontend', key: 'settings.channel.frontend' }] as const).map((opt) => (
             <button
               key={opt.v}
               type="button"
@@ -202,7 +207,7 @@ function GeneralSection() {
                 color: llmChannel === opt.v ? 'var(--sm-accent)' : 'var(--sm-ink-faint)',
               }}
             >
-              {opt.t}
+              {t(opt.key)}
             </button>
           ))}
         </div>
@@ -210,17 +215,16 @@ function GeneralSection() {
 
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>
-          <Globe size={14} /> 全局代理（本地代理转发）
+          <Globe size={14} /> {t('settings.general.proxy')}
         </h3>
         <input
           className="sm-input w-full"
-          placeholder="http://127.0.0.1:7890（留空=各智能体用自己的代理或直连）"
+          placeholder={t('settings.general.proxyPlaceholder')}
           value={globalProxyUrl}
           onChange={(e) => setGlobalProxyUrl(e.target.value)}
         />
         <p className="mt-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          全局默认出口。智能体自身的 proxyUrl 优先于此项；均留空则直连目标 Base URL。
-          适配中转 / OpenAI 格式统一出口，backend 与 frontend 通道均已生效。
+          {t('settings.general.proxyHint')}
         </p>
       </div>
     </div>
@@ -234,6 +238,7 @@ function AgentSection() {
 
 /* ---------------- 模型 ---------------- */
 function ModelSection() {
+  const t = useT('settings');
   const agents = useWorkflowStore((s) => s.agents);
   const defaultAgentId = useWorkflowStore((s) => s.defaultAgentId);
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
@@ -241,9 +246,9 @@ function ModelSection() {
   return (
     <div className="space-y-4">
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>供应商预设库</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.model.presetLib')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          在「智能体」分区新建智能体时，可按下方预设一键填充 Base URL 与默认模型。
+          {t('settings.model.presetLibDesc')}
         </p>
         <div className="space-y-1.5">
           {providerPresets.map((p) => (
@@ -252,7 +257,7 @@ function ModelSection() {
               {p.baseUrl ? (
                 <code className="ml-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{p.baseUrl}</code>
               ) : (
-                <span className="ml-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>自定义（手动填写）</span>
+                <span className="ml-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{t('settings.model.custom')}</span>
               )}
             </div>
           ))}
@@ -260,16 +265,16 @@ function ModelSection() {
       </div>
 
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>全局默认模型 / 智能体</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.model.defaultModel')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          设为默认后，新建对话流节点会优先套用该智能体（含其模型与凭据）。
+          {t('settings.model.defaultModelDesc')}
         </p>
         <select
           className="sm-input w-full"
           value={defaultAgentId ?? ''}
           onChange={(e) => setDefaultAgent(e.target.value || null)}
         >
-          <option value="">（未设置）</option>
+          <option value="">{t('settings.model.unset')}</option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name || a.id} · {a.model}
@@ -290,6 +295,7 @@ function McpSection() {
 const PROTOCOLS: Protocol[] = ['openai', 'anthropic', 'ollama'];
 
 function ApiKeysSection() {
+  const t = useT('settings');
   const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
   const [reveal, setReveal] = useState<Record<string, string>>({});
   // 新增表单
@@ -306,7 +312,7 @@ function ApiKeysSection() {
 
   useEffect(() => {
     if (isTauri) refresh();
-    else setMsg({ type: 'err', text: '当前为 Web 预览环境，系统密钥库不可用，请使用桌面版。' });
+    else setMsg({ type: 'err', text: t('settings.apikeys.webOnly') });
   }, []);
 
   /** 校验一个接入点：网址可达 + 密钥有效 + 能拉到模型。 */
@@ -327,11 +333,11 @@ function ApiKeysSection() {
 
   const handleAdd = async () => {
     const n = name.trim();
-    if (!n) return setMsg({ type: 'err', text: '请填写接入点名称（如 apinebula）。' });
-    if (n === '__ep_store__' || n.startsWith('ep::')) return setMsg({ type: 'err', text: '该名称被系统保留。' });
+    if (!n) return setMsg({ type: 'err', text: t('settings.apikeys.nameRequired') });
+    if (n === '__ep_store__' || n.startsWith('ep::')) return setMsg({ type: 'err', text: t('settings.apikeys.reservedName') });
     const bu = baseUrl.trim().replace(/\/+$/, '');
-    if (!bu) return setMsg({ type: 'err', text: '请填写 API 网址（Base URL）。' });
-    if (protocol !== 'ollama' && !apiKey.trim()) return setMsg({ type: 'err', text: '请填写 API Key。' });
+    if (!bu) return setMsg({ type: 'err', text: t('settings.apikeys.urlRequired') });
+    if (protocol !== 'ollama' && !apiKey.trim()) return setMsg({ type: 'err', text: t('settings.apikeys.keyRequired') });
     const ep: ApiEndpoint = { name: n, protocol, baseUrl: bu, credentialKey: n };
     try {
       await saveEndpoint(ep, apiKey.trim());
@@ -345,15 +351,15 @@ function ApiKeysSection() {
         setName('');
         setBaseUrl('');
         setApiKey('');
-        setMsg({ type: 'ok', text: `已保存并通过校验：${n}（可用模型 ${res.count} 个）` });
+        setMsg({ type: 'ok', text: t('settings.apikeys.savedVerified', { name: n, count: res.count }) });
         await refresh();
       } else {
         // 校验未通过：保留已填内容，便于修改后重试
-        setMsg({ type: 'err', text: `已保存，但校验未通过：${res.error ?? '未知错误'}（输入已保留，修改后重试）` });
+        setMsg({ type: 'err', text: t('settings.apikeys.saveVerifyFail', { error: res.error ?? t('settings.apikeys.unknownError') }) });
       }
     } catch (e) {
       setChecking(null);
-      setMsg({ type: 'err', text: `保存失败：${(e as Error).message}（输入已保留）` });
+      setMsg({ type: 'err', text: t('settings.apikeys.saveFail', { error: (e as Error).message }) });
     }
   };
 
@@ -370,10 +376,10 @@ function ApiKeysSection() {
         delete x[n];
         return x;
       });
-      setMsg({ type: 'ok', text: `已删除：${n}` });
+      setMsg({ type: 'ok', text: t('settings.apikeys.deleted', { name: n }) });
       await refresh();
     } catch (e) {
-      setMsg({ type: 'err', text: `删除失败：${(e as Error).message}` });
+      setMsg({ type: 'err', text: t('settings.apikeys.deleteFail', { error: (e as Error).message }) });
     }
   };
 
@@ -401,13 +407,12 @@ function ApiKeysSection() {
   return (
     <div className="space-y-4">
       <div className="rounded border border-line p-3">
-        <h3 className="mb-1 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>新增 API 接入点</h3>
+        <h3 className="mb-1 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.apikeys.title')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-          把「API 网址 + 密钥」绑定为一个可复用配置（类似 cc-switch 的 API 路由）。保存后自动校验网址与密钥，
-          并拉取可用模型列表。明文仅存系统密钥库，智能体可下拉引用，无需重复填写。
+          {t('settings.apikeys.desc')}
         </p>
         <div className="grid grid-cols-2 gap-2">
-          <input className="sm-input" placeholder="名称（如 apinebula）" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="sm-input" placeholder={t('settings.apikeys.namePlaceholder')} value={name} onChange={(e) => setName(e.target.value)} />
           <select className="sm-input" value={protocol} onChange={(e) => setProtocol(e.target.value as Protocol)}>
             {PROTOCOLS.map((p) => (
               <option key={p} value={p}>{p}</option>
@@ -415,13 +420,13 @@ function ApiKeysSection() {
           </select>
           <input
             className="sm-input col-span-2"
-            placeholder="API 网址（Base URL，如 https://apinebula.ai/v1）"
+            placeholder={t('settings.apikeys.urlPlaceholder')}
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
           />
           <input
             className="sm-input col-span-2"
-            placeholder={protocol === 'ollama' ? 'Ollama 本地无需密钥' : 'API Key（sk-...）'}
+            placeholder={protocol === 'ollama' ? t('settings.apikeys.keyPlaceholderOllama') : t('settings.apikeys.keyPlaceholder')}
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -429,7 +434,7 @@ function ApiKeysSection() {
           />
         </div>
         <button type="button" className="sm-btn mt-2 flex items-center gap-1 px-3 py-1.5" onClick={handleAdd}>
-          <Plus size={13} /> 保存并校验
+          <Plus size={13} /> {t('settings.apikeys.save')}
         </button>
       </div>
 
@@ -441,11 +446,11 @@ function ApiKeysSection() {
 
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>
-          已配置的接入点（{endpoints.length}）
+          {t('settings.apikeys.configured', { count: endpoints.length })}
         </h3>
         {endpoints.length === 0 ? (
           <p className="text-[12px]" style={{ color: 'var(--sm-ink-faint)' }}>
-            暂无接入点。在上方保存后会显示在这里；「智能体」界面可下拉引用这些接入点快速生成智能体。
+            {t('settings.apikeys.empty')}
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -462,13 +467,13 @@ function ApiKeysSection() {
                     </div>
                     <div className="flex items-center gap-1">
                       {chk && (chk.ok ? <CheckCircle2 size={14} className="text-emerald-500" /> : <XCircle size={14} className="text-rose-500" />)}
-                      <button type="button" className="text-ink-faint hover:text-accent" title="重新校验" onClick={() => recheck(ep)} disabled={checking === ep.name}>
+                      <button type="button" className="text-ink-faint hover:text-accent" title={t('settings.apikeys.recheck')} onClick={() => recheck(ep)} disabled={checking === ep.name}>
                         <RefreshCw size={13} className={checking === ep.name ? 'animate-spin' : ''} />
                       </button>
-                      <button type="button" className="text-ink-faint hover:text-accent" title="显示 / 隐藏密钥" onClick={() => toggleReveal(ep.name)}>
+                      <button type="button" className="text-ink-faint hover:text-accent" title={t('settings.apikeys.reveal')} onClick={() => toggleReveal(ep.name)}>
                         {reveal[ep.name] !== undefined ? <EyeOff size={13} /> : <Eye size={13} />}
                       </button>
-                      <button type="button" className="text-ink-faint hover:text-err" title="删除" onClick={() => handleDelete(ep.name)}>
+                      <button type="button" className="text-ink-faint hover:text-err" title={t('settings.apikeys.delete')} onClick={() => handleDelete(ep.name)}>
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -492,13 +497,13 @@ function ApiKeysSection() {
 
 /* ---------------- 路由表（类别 → 智能体） ---------------- */
 function RoutingSection() {
+  const t = useT('settings');
   return (
     <div className="space-y-3">
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>类别 → 智能体路由</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.routing.title')}</h3>
         <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-          Builder（工作流生成器）依据架构设计里每个模块的类别，查此表为其生成的 worker 节点绑定对应智能体；
-          路由表为空时回退到默认智能体。该表为项目级配置，随项目持久化。
+          {t('settings.routing.desc')}
         </p>
         <RouteTableEditor />
       </div>
@@ -508,6 +513,7 @@ function RoutingSection() {
 
 /* ---------------- 对话流 ---------------- */
 function FlowSection() {
+  const t = useT('settings');
   const failFast = useWorkflowStore((s) => s.failFast);
   const setFailFast = useWorkflowStore((s) => s.setFailFast);
   const maxConcurrency = useWorkflowStore((s) => s.maxConcurrency);
@@ -516,18 +522,18 @@ function FlowSection() {
   return (
     <div className="space-y-4">
       <div className="rounded border border-line p-3">
-        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>执行引擎</h3>
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.flow.title')}</h3>
         <ToggleRow
-          label="快速失败（failFast）"
-          desc="任一节点出错立即停止整个对话流"
+          label={t('settings.flow.failFast')}
+          desc={t('settings.flow.failFastDesc')}
           checked={failFast}
           onChange={() => setFailFast(!failFast)}
         />
         <div className="mt-2 flex items-center justify-between rounded border border-line px-3 py-2.5">
           <span>
-            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>最大并发数</span>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.flow.maxConcurrency')}</span>
             <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              同时进行的 LLM 请求上限（1–20）
+              {t('settings.flow.maxConcurrencyDesc')}
             </span>
           </span>
           <input
@@ -556,6 +562,7 @@ function ToggleRow({
   checked: boolean;
   onChange: () => void;
 }) {
+  const t = useT('settings');
   return (
     <label className="flex items-center justify-between gap-4 rounded border border-line px-3 py-2.5">
       <span>
@@ -567,7 +574,7 @@ function ToggleRow({
         onClick={onChange}
         className="relative h-5 w-9 shrink-0 rounded-full transition-colors"
         style={{ background: checked ? 'var(--sm-accent)' : 'var(--sm-bg-deep)' }}
-        title={checked ? '已开启' : '已关闭'}
+        title={checked ? t('settings.toggle.on') : t('settings.toggle.off')}
       >
         <span
           className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"

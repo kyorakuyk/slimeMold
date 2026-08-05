@@ -16,6 +16,7 @@ import { saveCredential, removeCredential, loadCredential, defaultCredentialKey,
 import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
 import type { AgentConfig, ApiEndpoint, Protocol, RoleTemplate } from '../types';
+import { useT } from '../i18n/useT';
 
 interface AgentPanelProps {
   onClose?: () => void;
@@ -24,10 +25,11 @@ interface AgentPanelProps {
 
 /** 智能体管理弹层：多协议配置的增删改 + 角色库（角色模板）管理 */
 export default function AgentPanel({ onClose, embedded = false }: AgentPanelProps) {
+  const t = useT('agents');
   const [tab, setTab] = useState<'agents' | 'roles'>('agents');
 
   const inner = (
-    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center border-b border-line px-3">
         <button
           className={`px-3 py-3 text-[13px] font-medium transition-colors ${
@@ -37,7 +39,7 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
           }`}
           onClick={() => setTab('agents')}
         >
-          智能体
+          {t('agent.tab.agents')}
         </button>
         <button
           className={`px-3 py-3 text-[13px] font-medium transition-colors ${
@@ -47,7 +49,7 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
           }`}
           onClick={() => setTab('roles')}
         >
-          角色库
+          {t('agent.tab.roles')}
         </button>
       </div>
       {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
@@ -75,7 +77,7 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
               }`}
               onClick={() => setTab('agents')}
             >
-              智能体
+              {t('agent.tab.agents')}
             </button>
             <button
               className={`px-3 py-3 text-[13px] font-medium transition-colors ${
@@ -85,12 +87,13 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
               }`}
               onClick={() => setTab('roles')}
             >
-              角色库
+              {t('agent.tab.roles')}
             </button>
           </div>
           <button
             className="cursor-pointer text-ink-faint hover:text-ink"
             onClick={onClose}
+            title={t('agent.close')}
           >
             <X size={16} />
           </button>
@@ -102,6 +105,7 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
 }
 
 function AgentsTab() {
+  const t = useT('agents');
   const agents = useWorkflowStore((s) => s.agents);
   const upsertAgent = useWorkflowStore((s) => s.upsertAgent);
   const removeAgent = useWorkflowStore((s) => s.removeAgent);
@@ -133,7 +137,7 @@ function AgentsTab() {
     const agent = createAgent(ep.protocol);
     agent.baseUrl = ep.baseUrl;
     agent.credentialKey = ep.credentialKey;
-    agent.name = `${ep.name} 智能体`;
+    agent.name = t('agent.list.importedName', { name: ep.name });
     agent.providerId = 'custom';
     upsertAgent(agent);
     setEditingId(agent.id);
@@ -197,7 +201,7 @@ function AgentsTab() {
         setProbe({
           ok: false,
           stage: 'auth',
-          message: isTauri ? '请先保存 API Key 再检测' : '请使用桌面版保存 Key 后再检测',
+          message: isTauri ? t('agent.probe.saveKeyFirst') : t('agent.probe.saveKeyFirstWeb'),
         });
         return;
       }
@@ -233,7 +237,7 @@ function AgentsTab() {
       } else {
         const key = pendingKey ?? (await loadCredential(editing.credentialKey ?? defaultCredentialKey(editing.protocol)));
         if (!key) {
-          setModelHint('请先保存 API Key 再拉取模型列表');
+          setModelHint(t('agent.model.noKey'));
           return;
         }
         const proxyUrl: string | undefined = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
@@ -241,8 +245,8 @@ function AgentsTab() {
         if (list.length === 0) {
           setModelHint(
             editing.protocol === 'anthropic'
-              ? '未获取到模型。Anthropic 原生无 /models 端点，中转站请改用「OpenAI 兼容」协议'
-              : '未获取到模型，请检查 Base URL 与 Key 是否正确',
+              ? t('agent.model.noAnthropicModels')
+              : t('agent.model.noModels'),
           );
         }
       }
@@ -274,8 +278,8 @@ function AgentsTab() {
       {/* 左列：智能体列表 */}
       <div className="flex w-56 shrink-0 flex-col border-r border-line bg-paper-soft">
         <div className="border-b border-line px-3 py-2.5">
-          <h2 className="text-[13px] font-semibold text-ink">智能体</h2>
-          <p className="mt-0.5 text-[11px] text-ink-faint">多协议 LLM 配置</p>
+          <h2 className="text-[13px] font-semibold text-ink">{t('agent.title')}</h2>
+          <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2">
           {agents.map((a) => {
@@ -298,10 +302,10 @@ function AgentsTab() {
                       <span
                         title={
                           dot.ok
-                            ? '连接正常'
+                            ? t('agent.list.dotOk')
                             : dot.stage === 'auth'
-                              ? 'Key 异常'
-                              : '地址/模型异常'
+                              ? t('agent.list.dotAuth')
+                              : t('agent.list.dotOther')
                         }
                         className={`inline-block h-2 w-2 rounded-full ${
                           dot.ok
@@ -314,7 +318,7 @@ function AgentsTab() {
                     )}
                     <button
                       type="button"
-                      title={isDefault ? '当前默认智能体' : '设为默认'}
+                      title={isDefault ? t('agent.list.default') : t('agent.list.setDefault')}
                       onClick={(e) => {
                         e.stopPropagation();
                         setDefaultAgent(isDefault ? null : a.id);
@@ -349,11 +353,11 @@ function AgentsTab() {
               setEditingId(agent.id);
             }}
           >
-            <option value="">+ 按供应商预设新建…</option>
+            <option value="">{t('agent.list.newByPreset')}</option>
             {providerPresets.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
-                {p.id === 'custom' ? '（自定义中转）' : ''}
+                {p.id === 'custom' ? t('agent.list.customProxy') : ''}
               </option>
             ))}
           </select>
@@ -363,7 +367,7 @@ function AgentsTab() {
                 key={p}
                 className="sm-btn flex-1 justify-center px-1 text-[11px]"
                 onClick={() => addAgent(p)}
-                title={`新建${protocolDefaults[p].label}智能体`}
+                title={t('agent.list.addTitle', { label: protocolDefaults[p].label })}
               >
                 <Plus size={12} /> {protocolDefaults[p].label.slice(0, 3)}
               </button>
@@ -376,9 +380,9 @@ function AgentsTab() {
               importFromEndpoint(e.target.value);
               e.currentTarget.value = '';
             }}
-            title="从 APIKEYS 库导入已配置的接入点"
+            title={t('agent.list.importTitle')}
           >
-            <option value="">⇩ 从 API 库导入已配置的接入点…</option>
+            <option value="">{t('agent.list.importOption')}</option>
             {endpoints.map((ep) => (
               <option key={ep.name} value={ep.name}>
                 {ep.name}（{ep.protocol} · {ep.baseUrl}）
@@ -392,13 +396,13 @@ function AgentsTab() {
       <div className="flex flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
-            {editing ? '编辑配置' : '未选择'}
+            {editing ? t('agent.edit.title') : t('agent.edit.none')}
           </h3>
         </div>
         {editing ? (
           <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">名称</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.name')}</label>
               <input
                 className="sm-input"
                 value={editing.name}
@@ -406,7 +410,7 @@ function AgentsTab() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">协议</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.protocol')}</label>
               <select
                 className="sm-input cursor-pointer"
                 value={editing.protocol}
@@ -420,7 +424,7 @@ function AgentsTab() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">Base URL</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
               <input
                 className="sm-input"
                 value={editing.baseUrl}
@@ -430,7 +434,7 @@ function AgentsTab() {
             {editing.protocol === 'ollama' ? (
               <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
                 <p className="text-[11px] text-ink-faint">
-                  本地 Ollama 模型无需 API Key，凭据留空即可。
+                  {t('agent.ollamaHint')}
                 </p>
               </div>
             ) : (
@@ -443,8 +447,8 @@ function AgentsTab() {
             )}
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
-                模型
-                {editing.protocol === 'ollama' ? '（本地 Ollama）' : '（API 可拉取）'}
+                {t('agent.field.model')}
+                {editing.protocol === 'ollama' ? t('agent.field.modelLocal') : t('agent.field.modelApi')}
               </label>
               <div className="space-y-1.5">
                 <div className="flex gap-1.5">
@@ -458,7 +462,7 @@ function AgentsTab() {
                     }
                     onChange={(e) => patch({ model: e.target.value })}
                   >
-                    <option value="">— 选择模型 —</option>
+                    <option value="">{t('agent.model.select')}</option>
                     {ollamaModels.map((m) => (
                       <option key={m.id} value={m.id} title={m.note}>
                         {m.id}
@@ -475,8 +479,8 @@ function AgentsTab() {
                     className="sm-btn shrink-0 px-2"
                     title={
                       editing.protocol === 'ollama'
-                        ? '拉取本机已安装模型'
-                        : '从 API 地址拉取可用模型'
+                        ? t('agent.model.pullLocal')
+                        : t('agent.model.pullApi')
                     }
                     disabled={loadingModels}
                     onClick={pullModels}
@@ -486,7 +490,7 @@ function AgentsTab() {
                   <button
                     type="button"
                     className="sm-btn shrink-0 px-2.5"
-                    title="发一个最小请求，检测地址 / Key / 模型是否可用"
+                    title={t('agent.model.probe')}
                     disabled={probing || !editing.model}
                     onClick={runProbe}
                   >
@@ -517,13 +521,13 @@ function AgentsTab() {
                     </span>
                     {probe.message}
                     {probe.proxied && (
-                      <span className="ml-1 rounded bg-white/10 px-1 py-0.5 text-[10px]">经代理</span>
+                      <span className="ml-1 rounded bg-white/10 px-1 py-0.5 text-[10px]">{t('agent.probe.proxied')}</span>
                     )}
                   </div>
                 )}
-                {editing.protocol !== 'ollama' && remoteModels.length === 0 && !loadingModels && !editing.credentialKey && (
+                    {editing.protocol !== 'ollama' && remoteModels.length === 0 && !loadingModels && !editing.credentialKey && (
                   <p className="text-[11px] text-ink-faint">
-                    先保存 API Key，再点右侧按钮从「{editing.baseUrl}」拉取可用模型。
+                    {t('agent.model.tipSaveFirst', { url: editing.baseUrl })}
                   </p>
                 )}
                 {editing.protocol !== 'ollama' && remoteModels.length === 0 && !loadingModels && editing.credentialKey && !modelHint && (
@@ -532,7 +536,7 @@ function AgentsTab() {
                     className="text-[11px] text-accent hover:underline"
                     onClick={pullModels}
                   >
-                    点击从「{editing.baseUrl}」拉取可用模型列表
+                    {t('agent.model.clickToPull', { url: editing.baseUrl })}
                   </button>
                 )}
                 <input
@@ -540,8 +544,8 @@ function AgentsTab() {
                   value={editing.model}
                   placeholder={
                     editing.protocol === 'ollama'
-                      ? '或直接输入模型名，如 qwen2.5:3b'
-                      : '或直接输入模型名，如 deepseek-chat'
+                      ? t('agent.model.placeholderLocal')
+                      : t('agent.model.placeholderApi')
                   }
                   onChange={(e) => patch({ model: e.target.value })}
                 />
@@ -549,7 +553,7 @@ function AgentsTab() {
             </div>
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
-                温度（{editing.temperature ?? 0.7}）
+                {t('agent.field.temperature', { temp: editing.temperature ?? 0.7 })}
               </label>
               <input
                 type="range"
@@ -563,17 +567,15 @@ function AgentsTab() {
             </div>
             <details className="rounded border border-line bg-paper-soft px-3 py-2.5">
               <summary className="cursor-pointer text-[12px] text-ink-soft">
-                高级：本地代理转发（参考 cc-switch 路由）
+                {t('agent.advanced.title')}
               </summary>
               <p className="mt-2 text-[11px] text-ink-faint">
-                填入本地代理地址（如 http://127.0.0.1:7890）后，经该代理访问 Base URL，
-                适合统一适配中转 / OpenAI 格式。backend 与 frontend 通道均已生效；
-                backend 模式需在设置中切换为「经 Rust 后端」。留空则直连。
+                {t('agent.advanced.desc')}
               </p>
               <input
                 className="sm-input mt-2"
                 value={editing.proxyUrl ?? ''}
-                placeholder="http://127.0.0.1:7890（留空则直连）"
+                placeholder={t('agent.advanced.placeholder')}
                 onChange={(e) => patch({ proxyUrl: e.target.value.trim() || undefined })}
               />
             </details>
@@ -584,12 +586,12 @@ function AgentsTab() {
                 setEditingId(null);
               }}
             >
-              <Trash2 size={13} /> 删除此智能体
+              <Trash2 size={13} /> {t('agent.delete')}
             </button>
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center">
-            <p className="text-[13px] text-ink-faint">从左侧选择或新建智能体</p>
+            <p className="text-[13px] text-ink-faint">{t('agent.empty')}</p>
           </div>
         )}
       </div>
@@ -613,6 +615,7 @@ function ApiKeyField({
   onSaved: (ck: string, value: string) => void;
   onCleared: () => void;
 }) {
+  const t = useT('agents');
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<'' | 'ok' | 'err'>('');
 
@@ -646,13 +649,13 @@ function ApiKeyField({
 
   return (
     <div>
-      <label className="mb-1 block text-xs text-ink-soft">API Key（存于系统密钥库）</label>
+      <label className="mb-1 block text-xs text-ink-soft">{t('agent.apikey.label')}</label>
       <div className="flex gap-1.5">
         <input
           type="password"
           className="sm-input flex-1"
           value={draft}
-          placeholder={isTauri ? '输入后点击右侧保存' : '仅桌面版支持密钥库'}
+          placeholder={isTauri ? t('agent.apikey.placeholder') : t('agent.apikey.placeholderWeb')}
           disabled={!isTauri}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -663,20 +666,20 @@ function ApiKeyField({
           type="button"
           className="sm-btn shrink-0 px-3"
           disabled={!draft.trim()}
-          title={isTauri ? '保存到系统密钥库' : '请使用桌面版保存密钥'}
+          title={isTauri ? t('agent.apikey.saveTitle') : t('agent.apikey.saveTitleWeb')}
           onClick={handleSave}
         >
-          <KeyRound size={13} /> 保存
+          <KeyRound size={13} /> {t('agent.apikey.save')}
         </button>
       </div>
       <div className="mt-1 flex items-center justify-between">
         <p className="text-[11px] text-ink-faint">
           {credentialKey ? (
             <span className="inline-flex items-center gap-1 text-ok">
-              <Check size={11} /> 已保存（凭据键：{ck}）
+              <Check size={11} /> {t('agent.apikey.saved', { key: ck })}
             </span>
           ) : (
-            '尚未保存，运行时将无法取回密钥'
+            t('agent.apikey.unsaved')
           )}
         </p>
         {credentialKey && (
@@ -685,18 +688,19 @@ function ApiKeyField({
             className="text-[11px] text-ink-faint hover:text-err"
             onClick={handleClear}
           >
-            清除
+            {t('agent.apikey.clear')}
           </button>
         )}
       </div>
       {status === 'err' && (
-        <p className="mt-1 text-[11px] text-err">保存失败（请使用桌面版，或检查系统密钥库权限）</p>
+        <p className="mt-1 text-[11px] text-err">{t('agent.apikey.failed')}</p>
       )}
     </div>
   );
 }
 
 function RolesTab() {
+  const t = useT('agents');
   const roles = useWorkflowStore((s) => s.roles);
   const upsertRole = useWorkflowStore((s) => s.upsertRole);
   const removeRole = useWorkflowStore((s) => s.removeRole);
@@ -726,9 +730,9 @@ function RolesTab() {
       {/* 左列：角色列表 */}
       <div className="flex w-56 shrink-0 flex-col border-r border-line bg-paper-soft">
         <div className="border-b border-line px-3 py-2.5">
-          <h2 className="text-[13px] font-semibold text-ink">角色库</h2>
+          <h2 className="text-[13px] font-semibold text-ink">{t('roles.title')}</h2>
           <p className="mt-0.5 text-[11px] text-ink-faint">
-            为智能体设定"职业"与上下文策略
+            {t('roles.subtitle')}
           </p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2">
@@ -746,11 +750,11 @@ function RolesTab() {
                 {r.icon ? `${r.icon} ` : ''}
                 {r.name}
                 {r.builtin ? (
-                  <span className="ml-1 text-[10px] text-ink-faint">内置</span>
+                  <span className="ml-1 text-[10px] text-ink-faint">{t('roles.builtin')}</span>
                 ) : null}
               </p>
               <p className="text-[11px] text-ink-faint">
-                {r.contextScope === 'isolated' ? '隔离上下文' : '共享上下文'}
+                {r.contextScope === 'isolated' ? t('roles.scope.isolated') : t('roles.scope.shared')}
                 {r.model ? ` · ${r.model}` : ''}
               </p>
             </li>
@@ -758,7 +762,7 @@ function RolesTab() {
         </ul>
         <div className="border-t border-line p-2">
           <button className="sm-btn w-full justify-center" onClick={addRole}>
-            <Plus size={12} /> 新建角色
+            <Plus size={12} /> {t('roles.add')}
           </button>
         </div>
       </div>
@@ -767,13 +771,13 @@ function RolesTab() {
       <div className="flex flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
-            {editing ? (editing.builtin ? '查看内置角色' : '编辑角色') : '未选择'}
+            {editing ? (editing.builtin ? t('roles.viewBuiltinTitle') : t('roles.editTitle')) : t('roles.none')}
           </h3>
         </div>
         {editing ? (
           <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">名称</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.name')}</label>
               <input
                 className="sm-input"
                 value={editing.name}
@@ -783,7 +787,7 @@ function RolesTab() {
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
-                <label className="mb-1 block text-xs text-ink-soft">图标（emoji）</label>
+                <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.icon')}</label>
                 <input
                   className="sm-input"
                   value={editing.icon ?? ''}
@@ -793,18 +797,18 @@ function RolesTab() {
                 />
               </div>
               <div className="flex-1">
-                <label className="mb-1 block text-xs text-ink-soft">默认模型</label>
+                <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.model')}</label>
                 <input
                   className="sm-input"
                   value={editing.model ?? ''}
                   disabled={editing.builtin}
-                  placeholder="留空则用节点智能体模型"
+                  placeholder={t('roles.field.modelPlaceholder')}
                   onChange={(e) => patch({ model: e.target.value })}
                 />
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">描述</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.description')}</label>
               <input
                 className="sm-input"
                 value={editing.description ?? ''}
@@ -813,7 +817,7 @@ function RolesTab() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">上下文隔离</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.contextScope')}</label>
               <select
                 className="sm-input cursor-pointer"
                 value={editing.contextScope ?? 'shared'}
@@ -822,17 +826,17 @@ function RolesTab() {
                   patch({ contextScope: e.target.value as 'shared' | 'isolated' })
                 }
               >
-                <option value="shared">共享（与其它节点共用全局上下文）</option>
-                <option value="isolated">隔离（独立上下文，不污染共享）</option>
+                <option value="shared">{t('roles.scope.sharedOpt')}</option>
+                <option value="isolated">{t('roles.scope.isolatedOpt')}</option>
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-ink-soft">系统提示词（角色设定）</label>
+              <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.system')}</label>
               <textarea
                 className="sm-input min-h-[120px]"
                 value={editing.system}
                 disabled={editing.builtin}
-                placeholder="设定该角色的本职、职责与输出规范…"
+                placeholder={t('roles.field.systemPlaceholder')}
                 onChange={(e) => patch({ system: e.target.value })}
               />
             </div>
@@ -844,18 +848,18 @@ function RolesTab() {
                   setEditingId(roles.find((r) => !r.builtin && r.id !== editing.id)?.id ?? null);
                 }}
               >
-                <Trash2 size={13} /> 删除此角色
+                <Trash2 size={13} /> {t('roles.delete')}
               </button>
             )}
             {editing.builtin && (
               <p className="text-[11px] text-ink-faint">
-                内置角色不可编辑/删除。如需自定义，请在左侧「新建角色」并参考其设定。
+                {t('roles.builtinNote')}
               </p>
             )}
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center">
-            <p className="text-[13px] text-ink-faint">从左侧选择或新建角色</p>
+            <p className="text-[13px] text-ink-faint">{t('roles.empty')}</p>
           </div>
         )}
       </div>

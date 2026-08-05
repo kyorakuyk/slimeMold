@@ -14,6 +14,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { downloadBlob, isTauri } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
+import { useT } from '../i18n/useT';
 import type { AssetMeta } from '../types';
 
 function kindIcon(kind: string) {
@@ -54,6 +55,7 @@ export default function AssetsPanel({
   onClose?: () => void;
   embedded?: boolean;
 }) {
+  const t = useT('panels');
   const activeWfId = useWorkflowStore((s) => s.activeWfId);
   const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets);
   const projectAssets = useWorkflowStore((s) => s.projectAssets);
@@ -88,7 +90,7 @@ export default function AssetsPanel({
       const refs = removeProjectAsset(id);
       if (refs.length > 0) {
         window.alert(
-          `已删除项目资产。注意以下工作流仍引用它（引用将失效）：\n${refs.join('、')}`,
+          t('assets.deleteRefs', { refs: refs.join('、') }),
         );
       }
     } else {
@@ -177,7 +179,7 @@ export default function AssetsPanel({
         await openPath(dir);
       } catch (err2) {
         console.error('openPath 失败', err2);
-        window.alert(`无法打开文件夹：\n${winPath}\n\n请手动复制路径到文件资源管理器打开。`);
+        window.alert(t('assets.openFolderFailed', { path: winPath }));
       }
     }
   };
@@ -191,12 +193,12 @@ export default function AssetsPanel({
     if (selectedIds.size === 0) return;
     const list = visibleAssets.filter((a) => selectedIds.has(a.id));
     const names = list.map((a) => a.name).join('、');
-    if (!window.confirm(`确定删除选中的 ${selectedIds.size} 个资产？\n${names}`)) return;
+    if (!window.confirm(t('assets.deleteConfirm', { count: selectedIds.size, names }))) return;
     list.forEach((a) => doRemove(a.id));
     setSelectedIds(new Set());
     setSelectAll(false);
     if (inspectAssetId && selectedIds.has(inspectAssetId)) setInspectAsset(null);
-    addLog('info', `已批量删除 ${list.length} 个资产`);
+    addLog('info', t('assets.bulkDeleted', { count: list.length }));
   };
 
   const handleImportFiles = async (fileList: FileList | null) => {
@@ -228,7 +230,7 @@ export default function AssetsPanel({
       }
       setTab('files');
       setSelectedIds(new Set(importedIds));
-      addLog('info', `已导入 ${importedIds.length} 个资产`);
+      addLog('info', t('assets.imported', { count: importedIds.length }));
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -240,11 +242,11 @@ export default function AssetsPanel({
     const ids = multiMode ? selectedIds : inspectAssetId ? new Set([inspectAssetId]) : new Set();
     const list = visibleAssets.filter((a) => ids.has(a.id));
     if (list.length === 0) {
-      window.alert('没有可导出的资产。请在多选模式下选择文件，或先点击查看某个资产。');
+      window.alert(t('assets.exportEmpty'));
       return;
     }
     list.forEach((a) => downloadBlob(a.name, a.content, mimeOf(a.name)));
-    addLog('info', `已导出 ${list.length} 个资产`);
+    addLog('info', t('assets.bulkExported', { count: list.length }));
   };
 
   const checkbox = (checked: boolean, onChange: () => void, stop = true) => (
@@ -256,7 +258,7 @@ export default function AssetsPanel({
       }}
       className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-line text-accent transition-colors hover:border-accent"
       style={{ background: checked ? 'var(--sm-accent)' : 'transparent' }}
-      title={checked ? '取消选择' : '选择'}
+      title={checked ? t('assets.checkboxUnselect') : t('assets.checkboxSelect')}
     >
       {checked && <CheckSquare size={12} className="text-white" />}
     </button>
@@ -267,9 +269,9 @@ export default function AssetsPanel({
       {/* 顶部：导入 / 导出 / 文件列表 切换 */}
       <div className="flex shrink-0 border-b border-line">
         {([
-          ['files', '文件列表'],
-          ['import', '导入'],
-          ['export', '导出'],
+          ['files', t('assets.tabFiles')],
+          ['import', t('assets.tabImport')],
+          ['export', t('assets.tabExport')],
         ] as const).map(([k, label]) => (
           <button
             key={k}
@@ -291,23 +293,23 @@ export default function AssetsPanel({
 
       {/* 作用域切换：项目级（跨工作流共享）/ 工作流级 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
-        <span className="text-[11px] text-ink-faint">作用域</span>
+        <span className="text-[11px] text-ink-faint">{t('assets.scope')}</span>
         <div className="flex overflow-hidden rounded border border-line text-[11px]">
           <button
             onClick={() => setScope('workflow')}
             className={`px-2 py-1 ${scope === 'workflow' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
           >
-            工作流
+            {t('assets.scopeWorkflow')}
           </button>
           <button
             onClick={() => setScope('project')}
             className={`px-2 py-1 ${scope === 'project' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
           >
-            项目
+            {t('assets.scopeProject')}
           </button>
         </div>
         <span className="ml-auto text-[11px] text-ink-faint">
-          {scope === 'project' ? '跨工作流共享' : '仅当前工作流'}
+          {scope === 'project' ? t('assets.scopeProjectHint') : t('assets.scopeWorkflowHint')}
         </span>
       </div>
 
@@ -318,24 +320,24 @@ export default function AssetsPanel({
           className={`sm-btn shrink-0 ${multiMode ? 'border-accent text-accent' : ''}`}
           title={
             !multiMode
-              ? '进入多选模式'
+              ? t('assets.multiEnter')
               : !selectAll
-                ? '再次点击：全选'
-                : '再次点击：取消全选'
+                ? t('assets.multiThenAll')
+                : t('assets.multiThenCancel')
           }
         >
           {!multiMode ? <ListChecks size={13} /> : selectAll ? <CheckSquare size={13} /> : <Square size={13} />}
-          {multiMode ? (selectAll ? '全选' : '多选') : '多选'}
+          {multiMode ? (selectAll ? t('assets.multiSelectAll') : t('assets.multiMode')) : t('assets.multiMode')}
         </button>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索文件名或内容哈希…"
+          placeholder={t('assets.searchPlaceholder')}
           className="min-w-0 flex-1 rounded-md border border-line bg-white px-2 py-1 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-accent"
         />
         {query && (
           <button className="sm-btn shrink-0" onClick={() => setQuery('')}>
-            清除
+            {t('assets.clear')}
           </button>
         )}
       </div>
@@ -349,14 +351,14 @@ export default function AssetsPanel({
         }}
       >
         {!activeWfId ? (
-          <p className="px-3 py-4 text-xs text-ink-faint">请先创建或打开工作流</p>
+          <p className="px-3 py-4 text-xs text-ink-faint">{t('assets.needWorkflow')}</p>
         ) : assetList.length === 0 ? (
           <div className="px-3 py-4 text-xs text-ink-faint">
-            <p>还没有资产。</p>
-            <p className="mt-1">点击上方「导入」上传文件，或用「写文件」节点生成文件。</p>
+            <p>{t('assets.empty')}</p>
+            <p className="mt-1">{t('assets.emptyHint')}</p>
           </div>
         ) : visibleAssets.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-ink-faint">没有匹配「{query}」的资产</p>
+          <p className="px-3 py-4 text-xs text-ink-faint">{t('assets.noMatch', { query })}</p>
         ) : (
           visibleAssets.map((a) => (
             <div
@@ -373,13 +375,13 @@ export default function AssetsPanel({
                   {a.name}
                 </span>
                 <span className="block text-[10px] text-ink-faint">
-                  {a.inWorkspace ? '工作区' : '工作流内'} · {formatBytes(a.content)}
+                  {a.inWorkspace ? t('assets.inWorkspace') : t('assets.inWorkflow')} · {formatBytes(a.content)}
                 </span>
               </span>
               {a.path && isTauri && (
                 <button
                   className="sm-btn shrink-0 border-transparent px-1 text-ink-faint opacity-0 hover:text-ink group-hover:opacity-100"
-                  title="在文件管理器中打开"
+                  title={t('assets.openInExplorer')}
                   onClick={(e) => {
                     e.stopPropagation();
                     openInExplorer(a);
@@ -401,7 +403,7 @@ export default function AssetsPanel({
           onClick={handleExport}
         >
           <Download size={13} />
-          导出{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          {t('assets.exportBtn')}{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
         <button
           className={`sm-btn flex-1 justify-center ${multiMode && selectedIds.size > 0 ? 'text-err hover:border-err' : ''}`}
@@ -409,7 +411,7 @@ export default function AssetsPanel({
           onClick={handleBulkRemove}
         >
           <Trash2 size={13} />
-          删除{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          {t('assets.deleteBtn')}{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
       </div>
 

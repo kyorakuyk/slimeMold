@@ -1,13 +1,8 @@
 import { useState } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useT } from '../i18n/useT';
 
-const statusLabel: Record<string, string> = {
-  success: '成功',
-  partial: '部分成功',
-  failed: '失败',
-  running: '运行中',
-};
 const statusCls: Record<string, string> = {
   success: 'text-grn',
   partial: 'text-yel',
@@ -36,6 +31,7 @@ function summarize(v: unknown): string {
 }
 
 export default function RunHistoryPanel({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
+  const t = useT('panels');
   const runHistory = useWorkflowStore((s) => s.runHistory);
   const clearRunHistory = useWorkflowStore((s) => s.clearRunHistory);
   const [selectedId, setSelectedId] = useState<string | null>(runHistory[0]?.id ?? null);
@@ -47,7 +43,7 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
       {/* 左侧：运行列表 */}
       <div className="w-[210px] shrink-0 overflow-y-auto border-r border-line bg-paper-soft">
         {runHistory.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-ink-faint">还没有运行记录</p>
+          <p className="px-3 py-4 text-xs text-ink-faint">{t('runHistory.empty')}</p>
         ) : (
           runHistory.map((r) => (
             <button
@@ -59,9 +55,9 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
             >
               <div className="flex items-center justify-between">
                 <span className={`text-xs font-medium ${statusCls[r.status]}`}>
-                  {statusLabel[r.status]}
+                  {t(`runHistory.status.${r.status}`)}
                 </span>
-                <span className="text-[10px] text-ink-faint">{r.nodeCount} 节点</span>
+                <span className="text-[10px] text-ink-faint">{r.nodeCount} {t('runHistory.nodes')}</span>
               </div>
               <div className="truncate text-xs text-ink" title={r.name}>
                 {r.name}
@@ -77,48 +73,47 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
       {/* 右侧：详情 */}
       <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3">
         {!selected ? (
-          <p className="text-xs text-ink-faint">选择一次运行以查看节点结果</p>
+          <p className="text-xs text-ink-faint">{t('runHistory.selectHint')}</p>
         ) : (
           <div className="space-y-3">
             <div className="rounded border border-line p-2 text-xs text-ink-soft">
               <div>
-                状态：<span className={statusCls[selected.status]}>{statusLabel[selected.status]}</span>
+                {t('runHistory.status.label')}：<span className={statusCls[selected.status]}>{t(`runHistory.status.${selected.status}`)}</span>
               </div>
-              <div>耗时：{(selected.durationMs / 1000).toFixed(1)} 秒</div>
-              <div>开始：{new Date(selected.startedAt).toLocaleString()}</div>
+              <div>{t('runHistory.duration', { sec: (selected.durationMs / 1000).toFixed(1) })}</div>
+              <div>{t('runHistory.start', { time: new Date(selected.startedAt).toLocaleString() })}</div>
               {selected.cost ? (
                 <div className="mt-1 border-t border-line pt-1 text-ink">
                   <div>
-                    总 Token：
+                    {t('runHistory.totalToken')}
                     <span className="font-semibold tabular-nums">
                       {selected.cost.totalTokens.toLocaleString()}
                     </span>
                     <span className="text-ink-faint">
-                      {' '}（in {selected.cost.totalPromptTokens.toLocaleString()} / out{' '}
-                      {selected.cost.totalCompletionTokens.toLocaleString()}）
+                      {t('runHistory.tokenInOut', {
+                        in: selected.cost.totalPromptTokens.toLocaleString(),
+                        out: selected.cost.totalCompletionTokens.toLocaleString(),
+                      })}
                     </span>
                   </div>
                   <div>
-                    LLM 调用：<span className="font-semibold tabular-nums">{selected.cost.records.length}</span>
-                    {' · '}模型{' '}
-                    <span className="font-semibold tabular-nums">{Object.keys(selected.cost.byModel).length}</span> 种
+                    {t('runHistory.llmCalls', {
+                      count: selected.cost.records.length,
+                      models: Object.keys(selected.cost.byModel).length,
+                    })}
                   </div>
                   <div>
-                    Token 耗时：
-                    <span className="font-semibold tabular-nums">
-                      {(selected.cost.totalDurationMs / 1000).toFixed(1)}
-                    </span>{' '}
-                    秒
+                    {t('runHistory.tokenTime', { sec: (selected.cost.totalDurationMs / 1000).toFixed(1) })}
                   </div>
                 </div>
               ) : (
-                <div className="mt-1 border-t border-line pt-1 text-ink-faint">本次运行无 LLM 成本记录</div>
+                <div className="mt-1 border-t border-line pt-1 text-ink-faint">{t('runHistory.noCost')}</div>
               )}
             </div>
 
             {selected.cost && Object.keys(selected.cost.byModel).length > 0 && (
               <div className="rounded border border-line p-2 text-xs">
-                <div className="mb-1 font-medium text-ink">按模型拆解（性价比）</div>
+                <div className="mb-1 font-medium text-ink">{t('runHistory.byModel')}</div>
                 <div className="space-y-1">
                   {Object.entries(selected.cost.byModel).map(([model, m]) => (
                     <div key={model} className="flex items-center justify-between gap-2">
@@ -163,12 +158,12 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
                         </span>
                       ) : null}
                       {n.durationMs != null ? null : n.status === 'cached' ? (
-                        <span className="rounded bg-paper px-1 text-[10px] text-accent" title="结果来自缓存（未实际执行）">
-                          缓存
+                        <span className="rounded bg-paper px-1 text-[10px] text-accent" title={t('runHistory.cachedTitle')}>
+                          {t('runHistory.cached')}
                         </span>
                       ) : n.status === 'skipped' ? (
-                        <span className="rounded bg-paper px-1 text-[10px] text-ink-faint" title="因分支条件未命中而跳过">
-                          跳过
+                        <span className="rounded bg-paper px-1 text-[10px] text-ink-faint" title={t('runHistory.skippedTitle')}>
+                          {t('runHistory.skipped')}
                         </span>
                       ) : null}
                       <span className={`h-2 w-2 shrink-0 rounded-full ${nodeStatusCls[n.status]}`} />
@@ -191,7 +186,7 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-1 text-[11px] text-ink-faint">无输出</p>
+                    <p className="mt-1 text-[11px] text-ink-faint">{t('runHistory.noOutput')}</p>
                   )}
                 </div>
               ))}
@@ -215,20 +210,20 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-ink">运行历史</h2>
-            <span className="text-xs text-ink-faint">（最近 {runHistory.length} 次）</span>
+            <h2 className="text-sm font-semibold text-ink">{t('runHistory.title')}</h2>
+            <span className="text-xs text-ink-faint">{t('runHistory.recent', { count: runHistory.length })}</span>
           </div>
           <div className="flex items-center gap-1">
             {runHistory.length > 0 && (
               <button
                 className="sm-btn text-err hover:border-err"
                 onClick={clearRunHistory}
-                title="清空历史"
+                title={t('runHistory.clearTitle')}
               >
-                <Trash2 size={14} /> 清空
+                <Trash2 size={14} /> {t('runHistory.clear')}
               </button>
             )}
-            <button className="sm-btn border-transparent px-1.5" onClick={onClose} title="关闭">
+            <button className="sm-btn border-transparent px-1.5" onClick={onClose} title={t('common.close')}>
               <X size={16} />
             </button>
           </div>

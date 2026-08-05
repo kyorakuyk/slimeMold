@@ -16,8 +16,10 @@ import {
   saveLastSession,
 } from '../io/projectIO';
 import type { ProjectFile } from '../types';
+import { useT } from '../i18n/useT';
 
 export default function WelcomeModal({ onClose, onNewProject }: { onClose: () => void; onNewProject: () => void }) {
+  const t = useT('modals');
   const [recents, setRecents] = useState(() => getRecentProjects());
   const [loading, setLoading] = useState<string | null>(null);
 
@@ -74,7 +76,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
         <button
           className="absolute right-3 top-3 rounded-md p-1.5 transition-colors hover:bg-[var(--sm-bg-soft)]"
           style={{ color: 'var(--sm-ink-faint)' }}
-          title="关闭"
+          title={t('common.close')}
           onClick={onClose}
         >
           <X size={16} />
@@ -87,7 +89,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
           </h2>
         </div>
         <p className="mt-1.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-          把节点连成一条工作流，就能自动运行。选择一个项目开始，或新建一个。
+          {t('welcome.subtitle')}
         </p>
 
         {/* 主操作 */}
@@ -99,7 +101,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
             style={{ color: 'var(--sm-ink)' }}
           >
             <FolderPlus size={16} style={{ color: 'var(--sm-accent)' }} />
-            新建项目
+            {t('welcome.newProject')}
           </button>
           <button
             onClick={handleOpen}
@@ -108,7 +110,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
             style={{ color: 'var(--sm-ink)' }}
           >
             <FolderOpen size={16} style={{ color: 'var(--sm-accent)' }} />
-            打开项目…
+            {t('welcome.openProject')}
           </button>
         </div>
 
@@ -117,7 +119,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
           <div className="mb-2 flex items-center gap-1.5">
             <Clock size={13} style={{ color: 'var(--sm-ink-faint)' }} />
             <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sm-ink-faint)' }}>
-              最近项目
+              {t('welcome.recent')}
             </span>
             {recents.length > 0 && (
               <button
@@ -127,14 +129,14 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
                   setRecents([]);
                 }}
               >
-                清除
+                {t('welcome.clear')}
               </button>
             )}
           </div>
 
           {recents.length === 0 ? (
             <p className="flex items-center gap-2 px-1 py-2 text-[12px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              <FileStack size={14} /> 暂无最近项目
+              <FileStack size={14} /> {t('welcome.noRecent')}
             </p>
           ) : (
             <div className="flex max-h-56 flex-col gap-1 overflow-y-auto">
@@ -163,7 +165,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
                   </span>
                   {loading === r.path && (
                     <span className="ml-auto text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                      打开中…
+                      {t('welcome.opening')}
                     </span>
                   )}
                 </button>
@@ -173,7 +175,7 @@ export default function WelcomeModal({ onClose, onNewProject }: { onClose: () =>
         </div>
 
         <p className="mt-5 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-          已打开过的项目会在下次启动时自动恢复；此页面仅在无项目加载时出现。
+          {t('welcome.restoreNote')}
         </p>
       </div>
     </div>

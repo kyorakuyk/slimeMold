@@ -1,8 +1,10 @@
 import { X } from 'lucide-react';
 import { useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useT } from '../i18n/useT';
 
 export default function VariablesPanel({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
+  const t = useT('panels');
   const projectVariables = useWorkflowStore((s) => s.projectVariables);
   const workflowVariables = useWorkflowStore((s) => s.variables);
   const setProjectVariable = useWorkflowStore((s) => s.setProjectVariable);
@@ -34,8 +36,7 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex-1 overflow-y-auto px-4 py-3">
         <p className="mb-3 text-xs leading-relaxed text-ink-faint">
-          变量可在节点模板中用 <code className="rounded bg-paper-soft px-1">{'{{name}}'}</code> 引用，
-          也可在「表达式」节点里直接使用。求值顺序：<b>项目级</b> 被 <b>工作流级</b> 同名覆盖。
+          {t('variables.intro')}
         </p>
 
         {/* 作用域切换 */}
@@ -44,26 +45,26 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
             onClick={() => setScope('project')}
             className={`flex-1 px-2 py-1 ${scope === 'project' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
           >
-            项目级（跨工作流）
+            {t('variables.scopeProject')}
           </button>
           <button
             onClick={() => setScope('workflow')}
             className={`flex-1 px-2 py-1 ${scope === 'workflow' ? 'bg-accent text-white' : 'text-ink-soft hover:bg-panel-2'}`}
           >
-            工作流级
+            {t('variables.scopeWorkflow')}
           </button>
         </div>
 
         <div className="space-y-2 rounded border border-line p-2">
           <input
             className="sm-input"
-            placeholder="变量名"
+            placeholder={t('variables.namePlaceholder')}
             value={newKey}
             onChange={(e) => setNewKey(e.target.value)}
           />
           <input
             className="sm-input"
-            placeholder="值"
+            placeholder={t('variables.valuePlaceholder')}
             value={newVal}
             onChange={(e) => setNewVal(e.target.value)}
             onKeyDown={(e) => {
@@ -75,13 +76,13 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
             onClick={addVar}
             disabled={!newKey.trim()}
           >
-            添加{scope === 'project' ? '项目级' : '工作流级'}变量
+            {t('variables.addBtn', { scope: scope === 'project' ? t('variables.scopeProject') : t('variables.scopeWorkflow') })}
           </button>
         </div>
 
         <div className="mt-3 space-y-2">
           {Object.keys(curVars).length === 0 && (
-            <p className="text-xs text-ink-faint">暂无变量</p>
+            <p className="text-xs text-ink-faint">{t('variables.empty')}</p>
           )}
           {Object.entries(curVars).map(([k, v]) => (
             <div
@@ -103,9 +104,9 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
               {overrideMap.includes(k) && (
                 <span
                   className="shrink-0 rounded bg-amber-50 px-1 text-[10px] text-amber-600"
-                  title={scope === 'project' ? '被工作流级同名变量覆盖' : '覆盖项目级同名变量'}
+                  title={scope === 'project' ? t('variables.overrideTitleProject') : t('variables.overrideTitleWorkflow')}
                 >
-                  {scope === 'project' ? '被覆盖' : '覆盖项目'}
+                  {scope === 'project' ? t('variables.overridden') : t('variables.overrides')}
                 </span>
               )}
               <button
@@ -113,7 +114,7 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
                 onClick={() =>
                   scope === 'project' ? removeProjectVariable(k) : removeVariable(k)
                 }
-                title="删除"
+                title={t('common.delete')}
               >
                 <X size={14} />
               </button>
@@ -136,8 +137,8 @@ export default function VariablesPanel({ onClose, embedded = false }: { onClose?
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">全局变量</h2>
-          <button className="sm-btn border-transparent px-1.5" onClick={onClose} title="关闭">
+          <h2 className="text-sm font-semibold text-ink">{t('variables.title')}</h2>
+          <button className="sm-btn border-transparent px-1.5" onClick={onClose} title={t('common.close')}>
             <X size={16} />
           </button>
         </div>

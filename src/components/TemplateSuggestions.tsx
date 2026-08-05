@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { History, Lightbulb, Sparkles, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getNodeDef } from '../store/registryStore';
+import { useT } from '../i18n/useT';
 import type { FlowNode, FlowEdge } from '../types';
 
 /** 一条历史推荐模板：从多次成功运行中挖掘出的高频节点链 */
@@ -22,6 +23,7 @@ interface SuggestTemplate {
  * - 点击「生成草稿」按该模式的节点顺序用内置定义重建最小图并载入画布。
  */
 export default function TemplateSuggestions() {
+  const t = useT('panels');
   const runHistory = useWorkflowStore((s) => s.runHistory);
   const loadGraph = useWorkflowStore((s) => s.loadGraph);
   const [open, setOpen] = useState(true);
@@ -76,10 +78,10 @@ export default function TemplateSuggestions() {
       <div className="mt-3 rounded-lg border px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
         <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
           <Lightbulb size={13} style={{ color: 'var(--sm-accent)' }} />
-          历史模板推荐
+          {t('templates.title')}
         </div>
         <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-          运行过的工作流会在此沉淀为可复用模板。先跑通一个工作流试试吧。
+          {t('templates.empty')}
         </p>
       </div>
     );
@@ -113,8 +115,8 @@ export default function TemplateSuggestions() {
         } as FlowEdge);
       }
     });
-    loadGraph(`推荐：${tpl.names.join(' → ')}`, nodes, edges, []);
-    setToast('已生成草稿，可在画布中调整');
+    loadGraph(`${t('templates.prefix')}${tpl.names.join(' → ')}`, nodes, edges, []);
+    setToast(t('templates.genToast'));
     setTimeout(() => setToast(null), 2200);
   };
 
@@ -127,9 +129,9 @@ export default function TemplateSuggestions() {
       >
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         <Lightbulb size={13} style={{ color: 'var(--sm-accent)' }} />
-        历史模板推荐
+        {t('templates.title')}
         <span className="ml-auto text-[10px] normal-case" style={{ color: 'var(--sm-ink-faint)' }}>
-          高频模式
+          {t('templates.freqTag')}
         </span>
       </button>
 
@@ -137,7 +139,7 @@ export default function TemplateSuggestions() {
         <div className="mt-2 space-y-2">
           {suggestions.length === 0 && (
             <p className="text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-              暂无重复出现的高频模式（需 ≥2 次成功运行且结构相似）。
+              {t('templates.noPattern')}
             </p>
           )}
           {suggestions.map((tpl) => (
@@ -168,14 +170,14 @@ export default function TemplateSuggestions() {
                 style={{ background: 'var(--sm-accent)', color: '#fff' }}
               >
                 <Plus size={11} />
-                生成草稿
+                {t('templates.genDraft')}
               </button>
             </div>
           ))}
           {suggestions.length > 0 && (
             <p className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
               <Sparkles size={10} />
-              从你的成功运行中提炼，越用越懂你
+              {t('templates.genHint')}
             </p>
           )}
         </div>

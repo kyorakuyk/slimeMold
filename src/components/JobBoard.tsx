@@ -1,16 +1,28 @@
 import { useWorkflowStore } from '../store/workflowStore';
 import type { NodeStatus } from '../types';
 import { CheckCircle2, XCircle, Loader2, Circle, Zap, SkipForward } from 'lucide-react';
+import { useT } from '../i18n/useT';
 
-const statusMeta: Record<NodeStatus, { label: string; icon: JSX.Element; color: string }> = {
-  idle: { label: '等待', icon: <Circle size={11} />, color: '#9aa0a6' },
-  running: { label: '执行中', icon: <Loader2 size={11} className="animate-spin" />, color: '#3b82f6' },
-  success: { label: '完成', icon: <CheckCircle2 size={11} />, color: '#2e9e5b' },
-  error: { label: '失败', icon: <XCircle size={11} />, color: '#e0524d' },
-  cached: { label: '缓存', icon: <Zap size={11} />, color: '#b07cff' },
-  skipped: { label: '跳过', icon: <SkipForward size={11} />, color: '#9aa0a6' },
-  bypassed: { label: '旁路', icon: <SkipForward size={11} />, color: '#9aa0a6' },
-  muted: { label: '静音', icon: <Circle size={11} />, color: '#9aa0a6' },
+const statusIcon: Record<NodeStatus, JSX.Element> = {
+  idle: <Circle size={11} />,
+  running: <Loader2 size={11} className="animate-spin" />,
+  success: <CheckCircle2 size={11} />,
+  error: <XCircle size={11} />,
+  cached: <Zap size={11} />,
+  skipped: <SkipForward size={11} />,
+  bypassed: <SkipForward size={11} />,
+  muted: <Circle size={11} />,
+};
+
+const statusColor: Record<NodeStatus, string> = {
+  idle: '#9aa0a6',
+  running: '#3b82f6',
+  success: '#2e9e5b',
+  error: '#e0524d',
+  cached: '#b07cff',
+  skipped: '#9aa0a6',
+  bypassed: '#9aa0a6',
+  muted: '#9aa0a6',
 };
 
 /**
@@ -22,8 +34,18 @@ const statusMeta: Record<NodeStatus, { label: string; icon: JSX.Element; color: 
  */
 export default function JobBoard({ wfId }: { wfId?: string }) {
   const s = useWorkflowStore();
+  const t = useT('panels');
+  const statusLabel: Record<NodeStatus, string> = {
+    idle: t('jobboard.status.idle'),
+    running: t('jobboard.status.running'),
+    success: t('jobboard.status.success'),
+    error: t('jobboard.status.error'),
+    cached: t('jobboard.status.cached'),
+    skipped: t('jobboard.status.skipped'),
+    bypassed: t('jobboard.status.bypassed'),
+    muted: t('jobboard.status.muted'),
+  };
   // 方案 A：按 wfId 隔离运行态；未传则用激活工作流
-  const targetId = wfId ?? s.activeWfId;
   const running = wfId ? (s.runStates[wfId]?.running ?? false) : s.running;
   const runProgress = wfId ? (s.runStates[wfId]?.progress ?? s.runProgress) : s.runProgress;
   const nodes = wfId ? (s.workflows[wfId]?.nodes ?? []) : s.nodes;
@@ -50,10 +72,10 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
   return (
     <div className="sm-jobboard nowheel">
       <div className="sm-jobboard__head">
-        <span className="sm-jobboard__title">调度看板</span>
+        <span className="sm-jobboard__title">{t('jobboard.title')}</span>
         {runProgress.totalRounds > 1 && (
           <span className="sm-jobboard__round">
-            轮次 {runProgress.round}/{runProgress.totalRounds}
+            {t('jobboard.round', { round: runProgress.round, total: runProgress.totalRounds })}
           </span>
         )}
       </div>
@@ -62,19 +84,19 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
         <div className="sm-jobboard__bar" style={{ width: `${pct}%` }} />
       </div>
       <div className="sm-jobboard__meta">
-        拓扑层 {runProgress.layer}/{runProgress.totalLayers} · 完成 {done}/{nodes.length}
+        {t('jobboard.meta', { layer: runProgress.layer, totalLayers: runProgress.totalLayers, done, nodes: nodes.length })}
       </div>
 
       <div className="sm-jobboard__stats">
-        {(Object.keys(statusMeta) as NodeStatus[]).map((st) =>
+        {(Object.keys(statusLabel) as NodeStatus[]).map((st) =>
           counts[st] > 0 ? (
             <span
               key={st}
               className="sm-jobboard__chip"
-              style={{ color: statusMeta[st].color }}
-              title={statusMeta[st].label}
+              style={{ color: statusColor[st] }}
+              title={statusLabel[st]}
             >
-              {statusMeta[st].icon}
+              {statusIcon[st]}
               {counts[st]}
             </span>
           ) : null,
@@ -87,8 +109,8 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
             const st = (n.data.status ?? 'idle') as NodeStatus;
             return (
               <div key={n.id} className="sm-jobboard__row">
-                <span style={{ color: statusMeta[st].color }}>
-                  {statusMeta[st].icon}
+                <span style={{ color: statusColor[st] }}>
+                  {statusIcon[st]}
                 </span>
                 <span className="sm-jobboard__rowlabel" title={n.data.label}>
                   {n.data.label || n.data.typeId}

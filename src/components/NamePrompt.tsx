@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useT } from '../i18n/useT';
 
 interface NamePromptProps {
   title: string;
@@ -9,6 +10,7 @@ interface NamePromptProps {
 
 /** 轻量内联命名弹窗，替代 window.prompt（Tauri webview 不支持 prompt）。 */
 export function NamePrompt({ title, initial, onConfirm, onCancel }: NamePromptProps) {
+  const t = useT('modals');
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -41,13 +43,13 @@ export function NamePrompt({ title, initial, onConfirm, onCancel }: NamePromptPr
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-600"
             onClick={onCancel}
           >
-            取消
+            {t('namePrompt.cancel')}
           </button>
           <button
             className="rounded bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500"
             onClick={() => onConfirm(value.trim() || initial.trim())}
           >
-            确定
+            {t('namePrompt.ok')}
           </button>
         </div>
       </div>

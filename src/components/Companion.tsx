@@ -12,6 +12,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react';
+import { useT } from '../i18n/useT';
 
 const POS_KEY = 'sm.companion.pos';
 const OPEN_KEY = 'sm.companion.open';
@@ -57,6 +58,7 @@ function summarizeLedger(costLog: CostRecord[]) {
  * - 运行结束后仍保留最近一次统计，可手动收起/重置。
  */
 export default function Companion() {
+  const t = useT('panels');
   const running = useWorkflowStore((s) => s.running);
   const runProgress = useWorkflowStore((s) => s.runProgress);
   const costLog = useWorkflowStore((s) => s.costLog);
@@ -124,7 +126,7 @@ export default function Companion() {
       <button
         className="sm-companion__bubble"
         style={{ left: pos.x, top: pos.y }}
-        title="Companion：运行态 / token 消耗"
+        title={t('companion.bubbleTitle')}
         onClick={() => setOpen(true)}
         onPointerDown={(e) => startDrag(e)}
       >
@@ -165,17 +167,17 @@ export default function Companion() {
       <div className="sm-companion__titlebar">
         <span className="sm-companion__title">
           <Activity size={13} color={running ? '#2e9e5b' : '#9aa0a6'} />
-          Companion
-          {running && <span className="sm-companion__live">● LIVE</span>}
+          {t('companion.title')}
+          {running && <span className="sm-companion__live"> {t('companion.live')}</span>}
         </span>
         <span className="sm-companion__actions">
-          <button title={collapsed ? '展开' : '收起'} onClick={() => setCollapsed((c) => !c)}>
+          <button title={collapsed ? t('companion.expand') : t('companion.collapse')} onClick={() => setCollapsed((c) => !c)}>
             {collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
-          <button title="重置统计" onClick={() => resetUsage()}>
+          <button title={t('companion.reset')} onClick={() => resetUsage()}>
             <RotateCcw size={13} />
           </button>
-          <button title="收起" onClick={() => setOpen(false)}>
+          <button title={t('companion.hide')} onClick={() => setOpen(false)}>
             <X size={13} />
           </button>
         </span>
@@ -186,17 +188,17 @@ export default function Companion() {
           <div className="sm-companion__metrics">
             <Metric
               icon={<Coins size={12} />}
-              label="Tokens"
+              label={t('companion.metricTokens')}
               value={totalTokens.toLocaleString()}
             />
             <Metric
               icon={<Gauge size={12} />}
-              label="调用"
+              label={t('companion.metricCalls')}
               value={String(summary.calls + nodeUsageTotal.calls)}
             />
             <Metric
               icon={<Activity size={12} />}
-              label="层"
+              label={t('companion.metricLayer')}
               value={`${runProgress.layer}/${runProgress.totalLayers || '-'}`}
             />
           </div>
@@ -218,12 +220,12 @@ export default function Companion() {
           )}
 
           {summary.errors > 0 && (
-            <div className="sm-companion__warn">⚠ {summary.errors} 次调用失败</div>
+            <div className="sm-companion__warn">⚠ {summary.errors} {t('companion.errors')}</div>
           )}
 
-          <div className="sm-companion__sec">Token 消耗 Top 节点</div>
+          <div className="sm-companion__sec">{t('companion.topTitle')}</div>
           {summary.top.length === 0 ? (
-            <div className="sm-companion__empty">暂无 LLM 调用记录</div>
+            <div className="sm-companion__empty">{t('companion.empty')}</div>
           ) : (
             <div className="sm-companion__list">
               {summary.top.map((t) => (
@@ -239,7 +241,7 @@ export default function Companion() {
 
           {running && (
             <button className="sm-companion__stop" onClick={() => stopWorkflow()}>
-              停止运行
+              {t('companion.stop')}
             </button>
           )}
         </div>

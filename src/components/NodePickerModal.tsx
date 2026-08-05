@@ -3,6 +3,7 @@ import { Search, X, Boxes } from 'lucide-react';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
+import { useT } from '../i18n/useT';
 
 export interface PickPayload {
   kind: 'node' | 'subgraph';
@@ -17,6 +18,7 @@ interface Props {
 
 /** 节点选择窗：仿「示例库」居中弹窗样式，右上角关闭按钮，点遮罩关闭 */
 export function NodePickerModal({ onSelect, onClose }: Props) {
+  const t = useT('modals');
   const defs = useRegistryStore((s) => s.defs);
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
   const [query, setQuery] = useState('');
@@ -40,8 +42,8 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
       kind: 'subgraph' as const,
       id: sg.id,
       label: sg.name,
-      category: '我的子图',
-      desc: `${sg.nodes.length} 个步骤`,
+      category: t('nodePicker.mySubgraph'),
+      desc: t('nodePicker.steps', { count: sg.nodes.length }),
     }));
     const all = [...nodeItems, ...sgItems];
     if (!q) return all;
@@ -112,17 +114,17 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
         >
           <div>
             <p className="text-[14px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-              添加节点
+              {t('nodePicker.title')}
             </p>
             <p className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              搜索并选择节点 · 双击 / 回车 / 点击均可添加 · Ctrl+K 随时唤起 · Esc 关闭
+              {t('nodePicker.subtitle')}
             </p>
           </div>
           <button
             className="cursor-pointer rounded-md p-1 transition-colors"
             style={{ color: 'var(--sm-ink-faint)' }}
             onClick={onClose}
-            title="关闭 (Esc)"
+            title={t('common.close')}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sm-bg-deep)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
@@ -141,7 +143,7 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="搜索节点或子图…"
+            placeholder={t('nodePicker.searchPlaceholder')}
             className="w-full bg-transparent text-[13px] outline-none"
             style={{ color: 'var(--sm-ink)' }}
           />
@@ -151,7 +153,7 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {items.length === 0 ? (
             <p className="px-1 py-6 text-center text-[12px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              无匹配节点
+              {t('nodePicker.noMatch')}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">

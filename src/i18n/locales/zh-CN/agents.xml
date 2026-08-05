@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- AgentPanel tabs -->
+  <string name="agent.tab.agents">智能体</string>
+  <string name="agent.tab.roles">角色库</string>
+  <string name="agent.close">关闭</string>
+
+  <!-- AgentsTab -->
+  <string name="agent.title">智能体</string>
+  <string name="agent.subtitle">多协议 LLM 配置</string>
+  <string name="agent.list.dotOk">连接正常</string>
+  <string name="agent.list.dotAuth">Key 异常</string>
+  <string name="agent.list.dotOther">地址/模型异常</string>
+  <string name="agent.list.default">当前默认智能体</string>
+  <string name="agent.list.setDefault">设为默认</string>
+  <string name="agent.list.newByPreset">+ 按供应商预设新建…</string>
+  <string name="agent.list.customProxy">（自定义中转）</string>
+  <string name="agent.list.addTitle">新建{{label}}智能体</string>
+  <string name="agent.list.importTitle">从 APIKEYS 库导入已配置的接入点</string>
+  <string name="agent.list.importOption">⇩ 从 API 库导入已配置的接入点…</string>
+  <string name="agent.list.importedName">{{name}} 智能体</string>
+  <string name="agent.edit.title">编辑配置</string>
+  <string name="agent.edit.none">未选择</string>
+  <string name="agent.field.name">名称</string>
+  <string name="agent.field.protocol">协议</string>
+  <string name="agent.field.baseUrl">Base URL</string>
+  <string name="agent.ollamaHint">本地 Ollama 模型无需 API Key，凭据留空即可。</string>
+  <string name="agent.field.model">模型</string>
+  <string name="agent.field.modelLocal">（本地 Ollama）</string>
+  <string name="agent.field.modelApi">（API 可拉取）</string>
+  <string name="agent.model.select">— 选择模型 —</string>
+  <string name="agent.model.pullLocal">拉取本机已安装模型</string>
+  <string name="agent.model.pullApi">从 API 地址拉取可用模型</string>
+  <string name="agent.model.probe">发一个最小请求，检测地址 / Key / 模型是否可用</string>
+  <string name="agent.model.tipSaveFirst">先保存 API Key，再点右侧按钮从「{{url}}」拉取可用模型。</string>
+  <string name="agent.model.clickToPull">点击从「{{url}}」拉取可用模型列表</string>
+  <string name="agent.model.placeholderLocal">或直接输入模型名，如 qwen2.5:3b</string>
+  <string name="agent.model.placeholderApi">或直接输入模型名，如 deepseek-chat</string>
+  <string name="agent.field.temperature">温度（{{temp}}）</string>
+  <string name="agent.advanced.title">高级：本地代理转发（参考 cc-switch 路由）</string>
+  <string name="agent.advanced.desc">填入本地代理地址（如 http://127.0.0.1:7890）后，经该代理访问 Base URL，适合统一适配中转 / OpenAI 格式。backend 与 frontend 通道均已生效；backend 模式需在设置中切换为「经 Rust 后端」。留空则直连。</string>
+  <string name="agent.advanced.placeholder">http://127.0.0.1:7890（留空则直连）</string>
+  <string name="agent.delete">删除此智能体</string>
+  <string name="agent.empty">从左侧选择或新建智能体</string>
+  <string name="agent.probe.saveKeyFirst">请先保存 API Key 再检测</string>
+  <string name="agent.probe.saveKeyFirstWeb">请使用桌面版保存 Key 后再检测</string>
+  <string name="agent.model.noKey">请先保存 API Key 再拉取模型列表</string>
+  <string name="agent.model.noAnthropicModels">未获取到模型。Anthropic 原生无 /models 端点，中转站请改用「OpenAI 兼容」协议</string>
+  <string name="agent.model.noModels">未获取到模型，请检查 Base URL 与 Key 是否正确</string>
+  <string name="agent.probe.proxied">经代理</string>
+
+  <!-- ApiKeyField -->
+  <string name="agent.apikey.label">API Key（存于系统密钥库）</string>
+  <string name="agent.apikey.placeholder">输入后点击右侧保存</string>
+  <string name="agent.apikey.placeholderWeb">仅桌面版支持密钥库</string>
+  <string name="agent.apikey.saveTitle">保存到系统密钥库</string>
+  <string name="agent.apikey.saveTitleWeb">请使用桌面版保存密钥</string>
+  <string name="agent.apikey.save">保存</string>
+  <string name="agent.apikey.saved">已保存（凭据键：{{key}}）</string>
+  <string name="agent.apikey.unsaved">尚未保存，运行时将无法取回密钥</string>
+  <string name="agent.apikey.clear">清除</string>
+  <string name="agent.apikey.failed">保存失败（请使用桌面版，或检查系统密钥库权限）</string>
+
+  <!-- RolesTab -->
+  <string name="roles.title">角色库</string>
+  <string name="roles.subtitle">为智能体设定"职业"与上下文策略</string>
+  <string name="roles.builtin">内置</string>
+  <string name="roles.scope.isolated">隔离上下文</string>
+  <string name="roles.scope.shared">共享上下文</string>
+  <string name="roles.add">新建角色</string>
+  <string name="roles.editTitle">编辑角色</string>
+  <string name="roles.viewBuiltinTitle">查看内置角色</string>
+  <string name="roles.none">未选择</string>
+  <string name="roles.field.name">名称</string>
+  <string name="roles.field.icon">图标（emoji）</string>
+  <string name="roles.field.model">默认模型</string>
+  <string name="roles.field.modelPlaceholder">留空则用节点智能体模型</string>
+  <string name="roles.field.description">描述</string>
+  <string name="roles.field.contextScope">上下文隔离</string>
+  <string name="roles.scope.sharedOpt">共享（与其它节点共用全局上下文）</string>
+  <string name="roles.scope.isolatedOpt">隔离（独立上下文，不污染共享）</string>
+  <string name="roles.field.system">系统提示词（角色设定）</string>
+  <string name="roles.field.systemPlaceholder">设定该角色的本职、职责与输出规范…</string>
+  <string name="roles.delete">删除此角色</string>
+  <string name="roles.builtinNote">内置角色不可编辑/删除。如需自定义，请在左侧「新建角色」并参考其设定。</string>
+  <string name="roles.empty">从左侧选择或新建角色</string>
+</resources>

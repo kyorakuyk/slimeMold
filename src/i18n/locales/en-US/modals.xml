@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- common -->
+  <string name="common.close">Close</string>
+  <string name="common.cancel">Cancel</string>
+  <string name="common.confirm">OK</string>
+
+  <!-- WelcomeModal -->
+  <string name="welcome.subtitle">Connect nodes into a workflow and it runs automatically. Pick a project to start, or create a new one.</string>
+  <string name="welcome.newProject">New project</string>
+  <string name="welcome.openProject">Open project…</string>
+  <string name="welcome.recent">Recent projects</string>
+  <string name="welcome.clear">Clear</string>
+  <string name="welcome.noRecent">No recent projects</string>
+  <string name="welcome.opening">Opening…</string>
+  <string name="welcome.restoreNote">Projects you've opened are restored automatically on next launch; this page only appears when no project is loaded.</string>
+
+  <!-- NewProjectModal -->
+  <string name="newProject.title">New project</string>
+  <string name="newProject.nameLabel">Project name</string>
+  <string name="newProject.untitled">Untitled project</string>
+  <string name="newProject.namePlaceholder">Name your automation</string>
+  <string name="newProject.tplLabel">Starting template</string>
+  <string name="newProject.tplOptional">(optional — pick "Blank canvas" to start from scratch)</string>
+  <string name="newProject.blank">Blank canvas</string>
+  <string name="newProject.blankDesc">Start from an empty workflow and build freely.</string>
+  <string name="newProject.nodeCount">{{count}} nodes</string>
+  <string name="newProject.blankWorkflow">Empty workflow</string>
+  <string name="newProject.nodesEdges">{{nodes}} nodes · {{edges}} edges</string>
+  <string name="newProject.agentNote">Contains {{count}} agent nodes: runs in "simulation mode" automatically when no model is bound; configure in Settings to switch to real calls.</string>
+  <string name="newProject.locationLabel">Save location</string>
+  <string name="newProject.chooseLocation">Choose location…</string>
+  <string name="newProject.changeLocation">Change location</string>
+  <string name="newProject.locationDefault">Not chosen: auto-saved to "Documents/SlimeMold/&lt;project&gt;" with a .slimemold file</string>
+  <string name="newProject.willLoad">Will load "{{name}}" · {{nodes}} nodes / {{edges}} edges</string>
+  <string name="newProject.create">Create project</string>
+  <string name="newProject.createDisk">Create and save to disk</string>
+  <string name="newProject.creating">Creating…</string>
+  <string name="newProject.created">Created project "{{name}}"{{tpl}}</string>
+  <string name="newProject.createdBlank"> (blank canvas)</string>
+  <string name="newProject.createdTpl"> (template: {{name}})</string>
+  <string name="newProject.failed">Failed to create project: {{msg}}</string>
+
+  <!-- ExamplesModal -->
+  <string name="examplesModal.title">Examples</string>
+  <string name="examplesModal.subtitle">Pick a scenario template and click the card to load · all AI templates enable offline simulation by default</string>
+  <string name="examplesModal.use">Use this template →</string>
+  <string name="examplesModal.prefix">Example · </string>
+
+  <!-- NodePickerModal -->
+  <string name="nodePicker.title">Add node</string>
+  <string name="nodePicker.subtitle">Search and select a node · double-click / Enter / click to add · Ctrl+K to summon · Esc to close</string>
+  <string name="nodePicker.searchPlaceholder">Search nodes or subgraphs…</string>
+  <string name="nodePicker.noMatch">No matching nodes</string>
+  <string name="nodePicker.mySubgraph">My subgraphs</string>
+  <string name="nodePicker.steps">{{count}} steps</string>
+
+  <!-- ShortcutsModal -->
+  <string name="shortcuts.title">Keyboard shortcuts</string>
+  <string name="shortcuts.close">Close</string>
+  <string name="shortcuts.newProject">New project</string>
+  <string name="shortcuts.newWorkflow">New workflow</string>
+  <string name="shortcuts.saveProject">Save project</string>
+  <string name="shortcuts.zoomIn">Zoom in</string>
+  <string name="shortcuts.zoomOut">Zoom out</string>
+  <string name="shortcuts.fit">Fit to window</string>
+  <string name="shortcuts.group">Group selected nodes</string>
+  <string name="shortcuts.subgraph">Pack selected nodes into a subgraph</string>
+  <string name="shortcuts.delete">Delete selected node</string>
+  <string name="shortcuts.esc">Close menu / dialog</string>
+
+  <!-- NamePrompt -->
+  <string name="namePrompt.cancel">Cancel</string>
+  <string name="namePrompt.ok">OK</string>
+</resources>

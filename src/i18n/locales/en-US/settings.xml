@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="settings.title">Settings</string>
+  <string name="settings.close">Close</string>
+
+  <!-- 左侧分区导航 -->
+  <string name="settings.sec.general.label">General</string>
+  <string name="settings.sec.general.desc">Canvas, LLM channel, global proxy</string>
+  <string name="settings.sec.agent.label">Agents</string>
+  <string name="settings.sec.agent.desc">Credentials, presets, default switch, probe</string>
+  <string name="settings.sec.model.label">Models</string>
+  <string name="settings.sec.model.desc">Provider presets &amp; global default model</string>
+  <string name="settings.sec.mcp.label">MCP</string>
+  <string name="settings.sec.mcp.desc">Plugin / MCP server management</string>
+  <string name="settings.sec.flow.label">Conversation flow</string>
+  <string name="settings.sec.flow.desc">Engine: concurrency, failure policy</string>
+  <string name="settings.sec.routing.label">Routing</string>
+  <string name="settings.sec.routing.desc">Category → agent routing (bound at build time)</string>
+  <string name="settings.sec.apikeys.label">APIKEYS</string>
+  <string name="settings.sec.apikeys.desc">Manage API Keys in the OS keychain centrally</string>
+
+  <!-- 通用 -->
+  <string name="settings.general.appearance">Appearance</string>
+  <string name="settings.general.colorTheme">Color theme</string>
+  <string name="settings.general.themeHint">Applies instantly and persists</string>
+  <string name="settings.theme.dark">Dark</string>
+  <string name="settings.theme.light">Light</string>
+  <string name="settings.theme.system">System</string>
+  <string name="settings.general.canvas">Canvas</string>
+  <string name="settings.general.showGrid">Show grid</string>
+  <string name="settings.general.showGridDesc">Background dot grid on canvas</string>
+  <string name="settings.general.showMinimap">Show minimap</string>
+  <string name="settings.general.showMinimapDesc">Navigation minimap at bottom-right</string>
+  <string name="settings.general.mouseMode">Mouse mode</string>
+  <string name="settings.general.mouseModeDesc">Pan canvas / box-select / click to select</string>
+  <string name="settings.option.move">Pan</string>
+  <string name="settings.option.select">Box-select</string>
+  <string name="settings.option.click">Click</string>
+  <string name="settings.general.llmChannel">LLM call channel</string>
+  <string name="settings.general.llmChannelDesc">Backend: via Rust command, keys stay in the render layer (recommended); Frontend: WebView direct request</string>
+  <string name="settings.channel.backend">Backend (recommended)</string>
+  <string name="settings.channel.frontend">Frontend</string>
+  <string name="settings.general.proxy">Global proxy (local proxy relay)</string>
+  <string name="settings.general.proxyPlaceholder">http://127.0.0.1:7890 (empty = per-agent proxy or direct)</string>
+  <string name="settings.general.proxyHint">Global default egress. An agent's own proxyUrl takes precedence; if both empty, connect directly to the target Base URL. Unified relay / OpenAI-format egress; works on both backend and frontend channels.</string>
+
+  <!-- 模型 -->
+  <string name="settings.model.presetLib">Provider preset library</string>
+  <string name="settings.model.presetLibDesc">When creating an agent in the "Agents" section, presets below can fill Base URL and default model in one click.</string>
+  <string name="settings.model.custom">Custom (manual)</string>
+  <string name="settings.model.defaultModel">Global default model / agent</string>
+  <string name="settings.model.defaultModelDesc">Once set as default, new conversation-flow nodes prefer this agent (with its model and credentials).</string>
+  <string name="settings.model.unset">(not set)</string>
+
+  <!-- 路由表 -->
+  <string name="settings.routing.title">Category → agent routing</string>
+  <string name="settings.routing.desc">The Builder (workflow generator) looks up this table by each module's category in the architecture design to bind the matching agent to the worker node it generates; when the table is empty it falls back to the default agent. This table is project-scoped and persists with the project.</string>
+
+  <!-- 对话流 -->
+  <string name="settings.flow.title">Execution engine</string>
+  <string name="settings.flow.failFast">Fail fast (failFast)</string>
+  <string name="settings.flow.failFastDesc">Stop the whole flow immediately if any node errors</string>
+  <string name="settings.flow.maxConcurrency">Max concurrency</string>
+  <string name="settings.flow.maxConcurrencyDesc">Upper limit of simultaneous LLM requests (1–20)</string>
+
+  <!-- APIKEYS -->
+  <string name="settings.apikeys.title">Add API endpoint</string>
+  <string name="settings.apikeys.desc">Bind "API URL + key" into a reusable config (like cc-switch's API routing). On save it auto-verifies the URL and key and pulls the available model list. The plaintext is only stored in the OS keychain; agents can reference it from a dropdown without re-typing.</string>
+  <string name="settings.apikeys.namePlaceholder">Name (e.g. apinebula)</string>
+  <string name="settings.apikeys.urlPlaceholder">API URL (Base URL, e.g. https://apinebula.ai/v1)</string>
+  <string name="settings.apikeys.keyPlaceholder">API Key (sk-...)</string>
+  <string name="settings.apikeys.keyPlaceholderOllama">Ollama local needs no key</string>
+  <string name="settings.apikeys.save">Save &amp; verify</string>
+  <string name="settings.apikeys.configured">Configured endpoints ({{count}})</string>
+  <string name="settings.apikeys.empty">No endpoints yet. Saved ones appear here; the "Agents" UI can reference them from a dropdown to spawn agents quickly.</string>
+  <string name="settings.apikeys.recheck">Re-verify</string>
+  <string name="settings.apikeys.reveal">Show / hide key</string>
+  <string name="settings.apikeys.delete">Delete</string>
+  <string name="settings.apikeys.webOnly">Current environment is Web preview; the OS keychain is unavailable — please use the desktop build.</string>
+  <string name="settings.apikeys.nameRequired">Please fill the endpoint name (e.g. apinebula).</string>
+  <string name="settings.apikeys.reservedName">That name is reserved by the system.</string>
+  <string name="settings.apikeys.urlRequired">Please fill the API URL (Base URL).</string>
+  <string name="settings.apikeys.keyRequired">Please fill the API Key.</string>
+  <string name="settings.apikeys.savedVerified">Saved and verified: {{name}} ({{count}} models available)</string>
+  <string name="settings.apikeys.saveVerifyFail">Saved, but verification failed: {{error}} (input kept — edit and retry)</string>
+  <string name="settings.apikeys.saveFail">Save failed: {{error}} (input kept)</string>
+  <string name="settings.apikeys.unknownError">unknown error</string>
+  <string name="settings.apikeys.deleted">Deleted: {{name}}</string>
+  <string name="settings.apikeys.deleteFail">Delete failed: {{error}}</string>
+
+  <!-- ToggleRow -->
+  <string name="settings.toggle.on">On</string>
+  <string name="settings.toggle.off">Off</string>
+</resources>

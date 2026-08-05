@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- AgentPanel tabs -->
+  <string name="agent.tab.agents">Agents</string>
+  <string name="agent.tab.roles">Roles</string>
+  <string name="agent.close">Close</string>
+
+  <!-- AgentsTab -->
+  <string name="agent.title">Agents</string>
+  <string name="agent.subtitle">Multi-protocol LLM configuration</string>
+  <string name="agent.list.dotOk">Connection OK</string>
+  <string name="agent.list.dotAuth">Key error</string>
+  <string name="agent.list.dotOther">URL/model error</string>
+  <string name="agent.list.default">Current default agent</string>
+  <string name="agent.list.setDefault">Set as default</string>
+  <string name="agent.list.newByPreset">+ New by provider preset…</string>
+  <string name="agent.list.customProxy">(custom relay)</string>
+  <string name="agent.list.addTitle">New {{label}} agent</string>
+  <string name="agent.list.importTitle">Import a configured endpoint from the APIKEYS library</string>
+  <string name="agent.list.importOption">⇩ Import a configured endpoint from the API library…</string>
+  <string name="agent.list.importedName">{{name}} agent</string>
+  <string name="agent.edit.title">Edit config</string>
+  <string name="agent.edit.none">None selected</string>
+  <string name="agent.field.name">Name</string>
+  <string name="agent.field.protocol">Protocol</string>
+  <string name="agent.field.baseUrl">Base URL</string>
+  <string name="agent.ollamaHint">Local Ollama models need no API Key — leave credentials empty.</string>
+  <string name="agent.field.model">Model</string>
+  <string name="agent.field.modelLocal">(local Ollama)</string>
+  <string name="agent.field.modelApi">(pullable from API)</string>
+  <string name="agent.model.select">— Select model —</string>
+  <string name="agent.model.pullLocal">Pull locally installed models</string>
+  <string name="agent.model.pullApi">Pull available models from the API URL</string>
+  <string name="agent.model.probe">Send a minimal request to test URL / Key / model availability</string>
+  <string name="agent.model.tipSaveFirst">Save the API Key first, then click the button to pull models from "{{url}}".</string>
+  <string name="agent.model.clickToPull">Click to pull the available model list from "{{url}}"</string>
+  <string name="agent.model.placeholderLocal">Or type a model name, e.g. qwen2.5:3b</string>
+  <string name="agent.model.placeholderApi">Or type a model name, e.g. deepseek-chat</string>
+  <string name="agent.field.temperature">Temperature ({{temp}})</string>
+  <string name="agent.advanced.title">Advanced: local proxy forwarding (see cc-switch routing)</string>
+  <string name="agent.advanced.desc">Enter a local proxy address (e.g. http://127.0.0.1:7890) to reach Base URL through it — handy for unified relays / OpenAI format. Both backend and frontend channels apply; backend mode requires switching to "via Rust backend" in Settings. Leave empty to connect directly.</string>
+  <string name="agent.advanced.placeholder">http://127.0.0.1:7890 (empty = direct)</string>
+  <string name="agent.delete">Delete this agent</string>
+  <string name="agent.empty">Select or create an agent on the left</string>
+  <string name="agent.probe.saveKeyFirst">Save the API Key first before probing</string>
+  <string name="agent.probe.saveKeyFirstWeb">Use the desktop build to save the Key before probing</string>
+  <string name="agent.model.noKey">Save the API Key first before pulling the model list</string>
+  <string name="agent.model.noAnthropicModels">No models fetched. Native Anthropic has no /models endpoint — use "OpenAI compatible" protocol on the relay</string>
+  <string name="agent.model.noModels">No models fetched — check Base URL and Key</string>
+  <string name="agent.probe.proxied">via proxy</string>
+
+  <!-- ApiKeyField -->
+  <string name="agent.apikey.label">API Key (stored in OS keychain)</string>
+  <string name="agent.apikey.placeholder">Type then click Save on the right</string>
+  <string name="agent.apikey.placeholderWeb">Keychain only on desktop build</string>
+  <string name="agent.apikey.saveTitle">Save to OS keychain</string>
+  <string name="agent.apikey.saveTitleWeb">Use the desktop build to save the key</string>
+  <string name="agent.apikey.save">Save</string>
+  <string name="agent.apikey.saved">Saved (credential key: {{key}})</string>
+  <string name="agent.apikey.unsaved">Not saved — the key cannot be retrieved at runtime</string>
+  <string name="agent.apikey.clear">Clear</string>
+  <string name="agent.apikey.failed">Save failed (use the desktop build, or check OS keychain permissions)</string>
+
+  <!-- RolesTab -->
+  <string name="roles.title">Roles</string>
+  <string name="roles.subtitle">Give agents a "profession" and context strategy</string>
+  <string name="roles.builtin">built-in</string>
+  <string name="roles.scope.isolated">isolated context</string>
+  <string name="roles.scope.shared">shared context</string>
+  <string name="roles.add">New role</string>
+  <string name="roles.editTitle">Edit role</string>
+  <string name="roles.viewBuiltinTitle">View built-in role</string>
+  <string name="roles.none">None selected</string>
+  <string name="roles.field.name">Name</string>
+  <string name="roles.field.icon">Icon (emoji)</string>
+  <string name="roles.field.model">Default model</string>
+  <string name="roles.field.modelPlaceholder">Empty = use the node agent's model</string>
+  <string name="roles.field.description">Description</string>
+  <string name="roles.field.contextScope">Context isolation</string>
+  <string name="roles.scope.sharedOpt">Shared (with other nodes' global context)</string>
+  <string name="roles.scope.isolatedOpt">Isolated (own context, no cross-contamination)</string>
+  <string name="roles.field.system">System prompt (role definition)</string>
+  <string name="roles.field.systemPlaceholder">Define this role's duties and output norms…</string>
+  <string name="roles.delete">Delete this role</string>
+  <string name="roles.builtinNote">Built-in roles cannot be edited/deleted. To customize, click "New role" on the left and reference this setup.</string>
+  <string name="roles.empty">Select or create a role on the left</string>
+</resources>

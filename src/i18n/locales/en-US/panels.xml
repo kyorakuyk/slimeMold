@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- VariablesPanel -->
+  <string name="variables.title">Global Variables</string>
+  <string name="variables.intro">Reference variables in node templates via {'{{name}}'}, or directly inside "Expression" nodes. Resolution: workflow-level overrides project-level with the same name.</string>
+  <string name="variables.scopeProject">Project (shared across workflows)</string>
+  <string name="variables.scopeWorkflow">Workflow</string>
+  <string name="variables.namePlaceholder">Variable name</string>
+  <string name="variables.valuePlaceholder">Value</string>
+  <string name="variables.addBtn">Add {{scope}} variable</string>
+  <string name="variables.empty">No variables yet</string>
+  <string name="variables.overridden">Overridden</string>
+  <string name="variables.overrides">Overrides project</string>
+  <string name="variables.overrideTitleProject">Overridden by a workflow-level variable of the same name</string>
+  <string name="variables.overrideTitleWorkflow">Overrides a project-level variable of the same name</string>
+  <string name="common.delete">Delete</string>
+  <string name="common.close">Close</string>
+
+  <!-- RunHistoryPanel -->
+  <string name="runHistory.title">Run History</string>
+  <string name="runHistory.recent">(last {{count}} runs)</string>
+  <string name="runHistory.empty">No run history yet</string>
+  <string name="runHistory.selectHint">Select a run to view node results</string>
+  <string name="runHistory.status.label">Status</string>
+  <string name="runHistory.status.success">Success</string>
+  <string name="runHistory.status.partial">Partial</string>
+  <string name="runHistory.status.failed">Failed</string>
+  <string name="runHistory.status.running">Running</string>
+  <string name="runHistory.nodes">nodes</string>
+  <string name="runHistory.duration">Duration: {{sec}}s</string>
+  <string name="runHistory.start">Start: {{time}}</string>
+  <string name="runHistory.totalToken">Total tokens: </string>
+  <string name="runHistory.tokenInOut">(in {{in}} / out {{out}})</string>
+  <string name="runHistory.llmCalls">LLM calls: {{count}} · {{models}} models</string>
+  <string name="runHistory.tokenTime">Token time: {{sec}}s</string>
+  <string name="runHistory.noCost">No LLM cost recorded for this run</string>
+  <string name="runHistory.byModel">Breakdown by model (cost efficiency)</string>
+  <string name="runHistory.cachedTitle">Result from cache (not actually executed)</string>
+  <string name="runHistory.cached">Cached</string>
+  <string name="runHistory.skippedTitle">Skipped because branch condition was not met</string>
+  <string name="runHistory.skipped">Skipped</string>
+  <string name="runHistory.noOutput">No output</string>
+  <string name="runHistory.clear">Clear</string>
+  <string name="runHistory.clearTitle">Clear history</string>
+
+  <!-- PluginPanel -->
+  <string name="plugins.title">Plugins</string>
+  <string name="plugins.subtitle">Extend custom tool nodes via JS/TS plugin packages</string>
+  <string name="plugins.scanDir">Scan plugin dir</string>
+  <string name="plugins.scanDirTitle">Scan AppData/plugins directory</string>
+  <string name="plugins.scanDirTitleBrowser">Desktop only</string>
+  <string name="plugins.scanCustom">Scan custom nodes</string>
+  <string name="plugins.scanCustomTitle">Scan program-level (global) + project-level custom_nodes/</string>
+  <string name="plugins.openCustom">Open custom_nodes</string>
+  <string name="plugins.openCustomTitle">Open custom_nodes/ under the program install dir in Explorer</string>
+  <string name="plugins.importFile">Import from file</string>
+  <string name="plugins.dirHint">Plugin dir: AppData/plugins · Custom nodes: program/custom_nodes (global) + project/custom_nodes (project only)</string>
+  <string name="plugins.dirHintBrowser">Browser mode: choose manifest.json + index.js</string>
+  <string name="plugins.empty">No plugins loaded yet</string>
+  <string name="plugins.emptyHint">A plugin package = a folder with manifest.json (node declarations) and index.js (ESM, exports executors). See plugin-examples/ in the project.</string>
+  <string name="plugins.nodeCount">{{count}} nodes</string>
+  <string name="plugins.customBadge">Custom · class-based privilege</string>
+  <string name="plugins.dirBadge">Plugin</string>
+  <string name="plugins.unloadTitle">Unload plugin</string>
+  <string name="plugins.escalatedTitle">This node escalates to level {{cap}} via an inherited occupation class</string>
+  <string name="plugins.escalated">Escalated·{{cap}} · {{name}}</string>
+  <string name="plugins.openFailed">Failed to open custom_nodes: {{err}}</string>
+
+  <!-- AssetsPanel -->
+  <string name="assets.tabFiles">Files</string>
+  <string name="assets.tabImport">Import</string>
+  <string name="assets.tabExport">Export</string>
+  <string name="assets.scope">Scope</string>
+  <string name="assets.scopeWorkflow">Workflow</string>
+  <string name="assets.scopeProject">Project</string>
+  <string name="assets.scopeWorkflowHint">Current workflow only</string>
+  <string name="assets.scopeProjectHint">Shared across workflows</string>
+  <string name="assets.multiMode">Multi-select</string>
+  <string name="assets.multiSelectAll">Select all</string>
+  <string name="assets.multiEnter">Enter multi-select mode</string>
+  <string name="assets.multiThenAll">Click again: select all</string>
+  <string name="assets.multiThenCancel">Click again: cancel selection</string>
+  <string name="assets.searchPlaceholder">Search file name or content hash…</string>
+  <string name="assets.clear">Clear</string>
+  <string name="assets.needWorkflow">Create or open a workflow first</string>
+  <string name="assets.empty">No assets yet.</string>
+  <string name="assets.emptyHint">Click "Import" above to upload files, or generate files with a "Write File" node.</string>
+  <string name="assets.noMatch">No assets match "{{query}}"</string>
+  <string name="assets.inWorkspace">Workspace</string>
+  <string name="assets.inWorkflow">In workflow</string>
+  <string name="assets.openInExplorer">Open in file manager</string>
+  <string name="assets.checkboxSelect">Select</string>
+  <string name="assets.checkboxUnselect">Unselect</string>
+  <string name="assets.exportBtn">Export</string>
+  <string name="assets.deleteBtn">Delete</string>
+  <string name="assets.deleteRefs">Deleted project asset. Note these workflows still reference it (the reference will break):\n{{refs}}</string>
+  <string name="assets.deleteConfirm">Delete the selected {{count}} asset(s)?\n{{names}}</string>
+  <string name="assets.exportEmpty">No assets to export. Select files in multi-select mode, or view an asset first.</string>
+  <string name="assets.openFolderFailed">Cannot open folder:\n{{path}}\n\nCopy the path to File Explorer manually.</string>
+  <string name="assets.imported">Imported {{count}} asset(s)</string>
+  <string name="assets.bulkDeleted">Bulk-deleted {{count}} asset(s)</string>
+  <string name="assets.bulkExported">Exported {{count}} asset(s)</string>
+
+  <!-- GroupsPanel -->
+  <string name="groups.title">Groups</string>
+  <string name="groups.subtitle">Folder view of all canvas groups</string>
+  <string name="groups.empty">No groups on the canvas yet. Box-select some nodes → right-click → "Group" to create one.</string>
+  <string name="groups.emptyGroup">(empty group)</string>
+  <string name="groups.focus">Focus this group</string>
+  <string name="groups.remove">Remove this group (nodes stay)</string>
+  <string name="groups.ungrouped">(ungrouped)</string>
+
+  <!-- ExamplesPanel -->
+  <string name="examples.intro">Pick a scenario template and click the card to load it. All AI templates enable offline simulation by default — no model config needed to try.</string>
+  <string name="examples.use">Use this template →</string>
+  <string name="examples.loadPrefix">Example · </string>
+
+  <!-- TokenUsagePanel -->
+  <string name="token.empty">No token usage recorded yet</string>
+  <string name="token.emptyHint">Run a workflow and the breakdown will appear here.</string>
+  <string name="token.detail">Token usage breakdown</string>
+  <string name="token.input">Input</string>
+  <string name="token.inputLabel">Input</string>
+  <string name="token.cacheHit">Cache hit</string>
+  <string name="token.cacheMiss">Cache miss</string>
+  <string name="token.cacheWrite">Cache write</string>
+  <string name="token.output">Output</string>
+  <string name="token.outputLabel">Output</string>
+  <string name="token.reasoning">Reasoning</string>
+  <string name="token.reply">Reply</string>
+  <string name="token.hitRate">Cache hit rate</string>
+  <string name="token.legendHit">Hit</string>
+  <string name="token.legendWrite">Write</string>
+  <string name="token.legendMiss">Miss</string>
+  <string name="token.byModel">By model</string>
+
+  <!-- Companion -->
+  <string name="companion.title">Companion</string>
+  <string name="companion.bubbleTitle">Companion: run state / token usage</string>
+  <string name="companion.live">● LIVE</string>
+  <string name="companion.expand">Expand</string>
+  <string name="companion.collapse">Collapse</string>
+  <string name="companion.reset">Reset stats</string>
+  <string name="companion.hide">Hide</string>
+  <string name="companion.metricTokens">Tokens</string>
+  <string name="companion.metricCalls">Calls</string>
+  <string name="companion.metricLayer">Layer</string>
+  <string name="companion.errors">calls failed</string>
+  <string name="companion.topTitle">Top token-consuming nodes</string>
+  <string name="companion.empty">No LLM calls recorded</string>
+  <string name="companion.stop">Stop running</string>
+
+  <!-- TemplateSuggestions -->
+  <string name="templates.title">Template suggestions from history</string>
+  <string name="templates.prefix">Suggestion: </string>
+  <string name="templates.empty">Workflows you run will crystallize into reusable templates here. Run one to get started.</string>
+  <string name="templates.freqTag">Frequent pattern</string>
+  <string name="templates.noPattern">No repeated high-frequency pattern yet (needs ≥2 successful runs with similar structure).</string>
+  <string name="templates.genDraft">Generate draft</string>
+  <string name="templates.genHint">Distilled from your successful runs — learns you over time</string>
+  <string name="templates.genToast">Draft generated — adjust on the canvas</string>
+
+  <!-- RouteTableEditor -->
+  <string name="route.title">Category → Agent routing (bound to workers at build time)</string>
+  <string name="route.fillDefaults">Fill defaults</string>
+  <string name="route.fillDefaultsTitle">Bind all categories to the default agent</string>
+  <string name="route.unbound">— Default / unbound —</string>
+  <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId)</string>
+  <string name="route.noAgents">No agents in this workflow yet. Add one in the Agent panel first.</string>
+  <string name="route.cat.ui">UI / Frontend</string>
+  <string name="route.cat.uiHint">Interface, interaction, styling</string>
+  <string name="route.cat.logic">Logic</string>
+  <string name="route.cat.logicHint">Core business, algorithms</string>
+  <string name="route.cat.docs">Docs</string>
+  <string name="route.cat.docsHint">Docs, comments, documentation</string>
+  <string name="route.cat.infra">Infra</string>
+  <string name="route.cat.infraHint">Build, deploy, config</string>
+  <string name="route.cat.data">Data</string>
+  <string name="route.cat.dataHint">Storage, API contracts</string>
+
+  <!-- JobBoard -->
+  <string name="jobboard.title">Run Board</string>
+  <string name="jobboard.round">Round {{round}}/{{total}}</string>
+  <string name="jobboard.meta">Topo layer {{layer}}/{{totalLayers}} · Done {{done}}/{{nodes}}</string>
+  <string name="jobboard.status.idle">Waiting</string>
+  <string name="jobboard.status.running">Running</string>
+  <string name="jobboard.status.success">Done</string>
+  <string name="jobboard.status.error">Failed</string>
+  <string name="jobboard.status.cached">Cached</string>
+  <string name="jobboard.status.skipped">Skipped</string>
+  <string name="jobboard.status.bypassed">Bypassed</string>
+  <string name="jobboard.status.muted">Muted</string>
+
+  <!-- WorkflowWizard -->
+  <string name="wizard.title">Workflow Wizard</string>
+  <string name="wizard.close">Close</string>
+  <string name="wizard.step.goal">Goal</string>
+  <string name="wizard.step.input">Input</string>
+  <string name="wizard.step.output">Output</string>
+  <string name="wizard.question">Step {{step}} · What do you want to do?</string>
+  <string name="wizard.prev">Back</string>
+  <string name="wizard.next">Next</string>
+  <string name="wizard.generate">Generate workflow</string>
+  <string name="wizard.prefix">Wizard: </string>
+  <string name="wizard.goal.chat">Single Q&amp;A / polish</string>
+  <string name="wizard.goal.chatDesc">Hand one input to an agent</string>
+  <string name="wizard.goal.translate">Translate</string>
+  <string name="wizard.goal.translateDesc">Translate text into a target language</string>
+  <string name="wizard.goal.summarize">Summarize</string>
+  <string name="wizard.goal.summarizeDesc">Compress long text into key points</string>
+  <string name="wizard.goal.fetch">Fetch web page</string>
+  <string name="wizard.goal.fetchDesc">HTTP request then parse with an agent</string>
+  <string name="wizard.goal.image">Image gen / process</string>
+  <string name="wizard.goal.imageDesc">Text-to-image or image preview</string>
+  <string name="wizard.goal.batch">Batch list</string>
+  <string name="wizard.goal.batchDesc">Run each item in a list (map)</string>
+  <string name="wizard.src.manual">Manual input</string>
+  <string name="wizard.src.manualDesc">I'll write content directly in nodes</string>
+  <string name="wizard.src.http">Fetch from URL</string>
+  <string name="wizard.src.httpDesc">Request a URL at runtime</string>
+  <string name="wizard.src.none">No input needed</string>
+  <string name="wizard.src.noneDesc">Workflow generates data itself</string>
+  <string name="wizard.out.preview">Canvas preview</string>
+  <string name="wizard.out.previewDesc">Show result in a preview node</string>
+  <string name="wizard.out.file">Write to file</string>
+  <string name="wizard.out.fileDesc">Save result to a workspace file</string>
+  <string name="wizard.out.text">Plain text output</string>
+  <string name="wizard.out.textDesc">As a text output node</string>
+  <string name="wizard.node.textInput">Text input</string>
+  <string name="wizard.node.fetch">Web fetch</string>
+  <string name="wizard.node.agent">Agent</string>
+  <string name="wizard.node.list">List input</string>
+  <string name="wizard.node.map">Process each</string>
+  <string name="wizard.node.writeFile">Write file</string>
+  <string name="wizard.node.textOutput">Text output</string>
+  <string name="wizard.node.resultPreview">Result preview</string>
+</resources>

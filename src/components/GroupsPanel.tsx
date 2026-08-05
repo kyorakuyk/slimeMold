@@ -2,9 +2,11 @@ import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { Folder, FolderOpen, Trash2, Crosshair, ChevronRight, ChevronDown, Box } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useT } from '../i18n/useT';
 
 /** 左侧「组」面板：以文件夹形式列出画布上所有分组，展开可查看成员节点 */
 export default function GroupsPanel({ embedded = false }: { embedded?: boolean }) {
+  const t = useT('panels');
   const groups = useWorkflowStore((s) => s.groups ?? []);
   const nodes = useWorkflowStore((s) => s.nodes);
   const removeGroup = useWorkflowStore((s) => s.removeGroup);
@@ -54,17 +56,17 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
       {!embedded && (
         <div className="border-b px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
           <h2 className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-            组
+            {t('groups.title')}
           </h2>
           <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-            画布上所有分组的文件夹视图
+            {t('groups.subtitle')}
           </p>
         </div>
       )}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
           <p className="px-1 py-3 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-            画布上还没有分组。框选若干节点 → 右键 →「编组」即可创建。
+            {t('groups.empty')}
           </p>
         )}
 
@@ -105,7 +107,7 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
                 <button
                   className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/g:opacity-100"
                   style={{ color: 'var(--sm-ink-faint)' }}
-                  title="聚焦到该组"
+                  title={t('groups.focus')}
                   onClick={() => focusGroup(g.nodeIds)}
                 >
                   <Crosshair size={13} />
@@ -113,7 +115,7 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
                 <button
                   className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/g:opacity-100"
                   style={{ color: 'var(--sm-ink-faint)' }}
-                  title="删除这个分组（不影响组内节点）"
+                  title={t('groups.remove')}
                   onClick={() => removeGroup(g.id)}
                 >
                   <Trash2 size={13} />
@@ -125,7 +127,7 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
                 <ul className="ml-5 mt-0.5 space-y-0.5 border-l pl-2" style={{ borderColor: 'var(--sm-line)' }}>
                   {members.length === 0 && (
                     <li className="px-1 py-1 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                      （空组）
+                      {t('groups.emptyGroup')}
                     </li>
                   )}
                   {members.map((m) => (

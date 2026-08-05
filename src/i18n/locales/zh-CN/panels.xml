@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- VariablesPanel -->
+  <string name="variables.title">全局变量</string>
+  <string name="variables.intro">变量可在节点模板中用 {'{{name}}'} 引用，也可在「表达式」节点里直接使用。求值顺序：项目级 被 工作流级 同名覆盖。</string>
+  <string name="variables.scopeProject">项目级（跨工作流）</string>
+  <string name="variables.scopeWorkflow">工作流级</string>
+  <string name="variables.namePlaceholder">变量名</string>
+  <string name="variables.valuePlaceholder">值</string>
+  <string name="variables.addBtn">添加{{scope}}变量</string>
+  <string name="variables.empty">暂无变量</string>
+  <string name="variables.overridden">被覆盖</string>
+  <string name="variables.overrides">覆盖项目</string>
+  <string name="variables.overrideTitleProject">被工作流级同名变量覆盖</string>
+  <string name="variables.overrideTitleWorkflow">覆盖项目级同名变量</string>
+  <string name="common.delete">删除</string>
+  <string name="common.close">关闭</string>
+
+  <!-- RunHistoryPanel -->
+  <string name="runHistory.title">运行历史</string>
+  <string name="runHistory.recent">（最近 {{count}} 次）</string>
+  <string name="runHistory.empty">还没有运行记录</string>
+  <string name="runHistory.selectHint">选择一次运行以查看节点结果</string>
+  <string name="runHistory.status.label">状态</string>
+  <string name="runHistory.status.success">成功</string>
+  <string name="runHistory.status.partial">部分成功</string>
+  <string name="runHistory.status.failed">失败</string>
+  <string name="runHistory.status.running">运行中</string>
+  <string name="runHistory.nodes">节点</string>
+  <string name="runHistory.duration">耗时：{{sec}} 秒</string>
+  <string name="runHistory.start">开始：{{time}}</string>
+  <string name="runHistory.totalToken">总 Token：</string>
+  <string name="runHistory.tokenInOut">（in {{in}} / out {{out}}）</string>
+  <string name="runHistory.llmCalls">LLM 调用：{{count}} · 模型 {{models}} 种</string>
+  <string name="runHistory.tokenTime">Token 耗时：{{sec}} 秒</string>
+  <string name="runHistory.noCost">本次运行无 LLM 成本记录</string>
+  <string name="runHistory.byModel">按模型拆解（性价比）</string>
+  <string name="runHistory.cachedTitle">结果来自缓存（未实际执行）</string>
+  <string name="runHistory.cached">缓存</string>
+  <string name="runHistory.skippedTitle">因分支条件未命中而跳过</string>
+  <string name="runHistory.skipped">跳过</string>
+  <string name="runHistory.noOutput">无输出</string>
+  <string name="runHistory.clear">清空</string>
+  <string name="runHistory.clearTitle">清空历史</string>
+
+  <!-- PluginPanel -->
+  <string name="plugins.title">插件管理</string>
+  <string name="plugins.subtitle">以 JS/TS 插件包扩展自定义工具节点</string>
+  <string name="plugins.scanDir">扫描插件目录</string>
+  <string name="plugins.scanDirTitle">扫描 AppData/plugins 目录</string>
+  <string name="plugins.scanDirTitleBrowser">仅桌面端可用</string>
+  <string name="plugins.scanCustom">扫描自定义节点</string>
+  <string name="plugins.scanCustomTitle">扫描程序级（全局）+ 项目级 custom_nodes/</string>
+  <string name="plugins.openCustom">打开 custom_nodes</string>
+  <string name="plugins.openCustomTitle">在资源管理器打开程序安装目录下的 custom_nodes/</string>
+  <string name="plugins.importFile">从文件导入</string>
+  <string name="plugins.dirHint">插件目录：AppData/plugins · 自定义节点：程序目录/custom_nodes（全局）+ 项目/custom_nodes（仅本项目）</string>
+  <string name="plugins.dirHintBrowser">浏览器模式：选择 manifest.json + index.js</string>
+  <string name="plugins.empty">尚未加载任何插件</string>
+  <string name="plugins.emptyHint">插件包 = 一个文件夹，内含 manifest.json（节点声明）与 index.js（ESM，导出 executors）。参考项目内 plugin-examples/ 示例。</string>
+  <string name="plugins.nodeCount">{{count}} 个节点</string>
+  <string name="plugins.customBadge">自定义·继承式提权</string>
+  <string name="plugins.dirBadge">插件</string>
+  <string name="plugins.unloadTitle">卸载插件</string>
+  <string name="plugins.escalatedTitle">该节点通过继承职业类提权至 {{cap}} 级</string>
+  <string name="plugins.escalated">已提权·{{cap}} · {{name}}</string>
+  <string name="plugins.openFailed">打开 custom_nodes 失败：{{err}}</string>
+
+  <!-- AssetsPanel -->
+  <string name="assets.tabFiles">文件列表</string>
+  <string name="assets.tabImport">导入</string>
+  <string name="assets.tabExport">导出</string>
+  <string name="assets.scope">作用域</string>
+  <string name="assets.scopeWorkflow">工作流</string>
+  <string name="assets.scopeProject">项目</string>
+  <string name="assets.scopeWorkflowHint">仅当前工作流</string>
+  <string name="assets.scopeProjectHint">跨工作流共享</string>
+  <string name="assets.multiMode">多选</string>
+  <string name="assets.multiSelectAll">全选</string>
+  <string name="assets.multiEnter">进入多选模式</string>
+  <string name="assets.multiThenAll">再次点击：全选</string>
+  <string name="assets.multiThenCancel">再次点击：取消全选</string>
+  <string name="assets.searchPlaceholder">搜索文件名或内容哈希…</string>
+  <string name="assets.clear">清除</string>
+  <string name="assets.needWorkflow">请先创建或打开工作流</string>
+  <string name="assets.empty">还没有资产。</string>
+  <string name="assets.emptyHint">点击上方「导入」上传文件，或用「写文件」节点生成文件。</string>
+  <string name="assets.noMatch">没有匹配「{{query}}」的资产</string>
+  <string name="assets.inWorkspace">工作区</string>
+  <string name="assets.inWorkflow">工作流内</string>
+  <string name="assets.openInExplorer">在文件管理器中打开</string>
+  <string name="assets.checkboxSelect">选择</string>
+  <string name="assets.checkboxUnselect">取消选择</string>
+  <string name="assets.exportBtn">导出</string>
+  <string name="assets.deleteBtn">删除</string>
+  <string name="assets.deleteRefs">已删除项目资产。注意以下工作流仍引用它（引用将失效）：\n{{refs}}</string>
+  <string name="assets.deleteConfirm">确定删除选中的 {{count}} 个资产？\n{{names}}</string>
+  <string name="assets.exportEmpty">没有可导出的资产。请在多选模式下选择文件，或先点击查看某个资产。</string>
+  <string name="assets.openFolderFailed">无法打开文件夹：\n{{path}}\n\n请手动复制路径到文件资源管理器打开。</string>
+  <string name="assets.imported">已导入 {{count}} 个资产</string>
+  <string name="assets.bulkDeleted">已批量删除 {{count}} 个资产</string>
+  <string name="assets.bulkExported">已导出 {{count}} 个资产</string>
+
+  <!-- GroupsPanel -->
+  <string name="groups.title">组</string>
+  <string name="groups.subtitle">画布上所有分组的文件夹视图</string>
+  <string name="groups.empty">画布上还没有分组。框选若干节点 → 右键 →「编组」即可创建。</string>
+  <string name="groups.emptyGroup">（空组）</string>
+  <string name="groups.focus">聚焦到该组</string>
+  <string name="groups.remove">删除这个分组（不影响组内节点）</string>
+  <string name="groups.ungrouped">（未分组）</string>
+
+  <!-- ExamplesPanel -->
+  <string name="examples.intro">挑一个场景模板，点击卡片即可载入。所有 AI 模板默认开启离线模拟，无需配置模型也能试跑。</string>
+  <string name="examples.use">使用此模板 →</string>
+  <string name="examples.loadPrefix">示例 · </string>
+
+  <!-- TokenUsagePanel -->
+  <string name="token.empty">还没有 Token 消耗记录</string>
+  <string name="token.emptyHint">运行一次工作流后，这里会显示明细。</string>
+  <string name="token.detail">Token 消耗明细</string>
+  <string name="token.input">输入</string>
+  <string name="token.inputLabel">输入</string>
+  <string name="token.cacheHit">缓存命中</string>
+  <string name="token.cacheMiss">缓存未命中</string>
+  <string name="token.cacheWrite">缓存写入</string>
+  <string name="token.output">输出</string>
+  <string name="token.outputLabel">输出</string>
+  <string name="token.reasoning">思考过程</string>
+  <string name="token.reply">回复内容</string>
+  <string name="token.hitRate">缓存命中率</string>
+  <string name="token.legendHit">命中</string>
+  <string name="token.legendWrite">写入</string>
+  <string name="token.legendMiss">未命中</string>
+  <string name="token.byModel">按模型</string>
+
+  <!-- Companion -->
+  <string name="companion.title">Companion</string>
+  <string name="companion.bubbleTitle">Companion：运行态 / token 消耗</string>
+  <string name="companion.live">● LIVE</string>
+  <string name="companion.expand">展开</string>
+  <string name="companion.collapse">收起</string>
+  <string name="companion.reset">重置统计</string>
+  <string name="companion.hide">收起</string>
+  <string name="companion.metricTokens">Tokens</string>
+  <string name="companion.metricCalls">调用</string>
+  <string name="companion.metricLayer">层</string>
+  <string name="companion.errors">次调用失败</string>
+  <string name="companion.topTitle">Token 消耗 Top 节点</string>
+  <string name="companion.empty">暂无 LLM 调用记录</string>
+  <string name="companion.stop">停止运行</string>
+
+  <!-- TemplateSuggestions -->
+  <string name="templates.title">历史模板推荐</string>
+  <string name="templates.prefix">推荐：</string>
+  <string name="templates.empty">运行过的工作流会在此沉淀为可复用模板。先跑通一个工作流试试吧。</string>
+  <string name="templates.freqTag">高频模式</string>
+  <string name="templates.noPattern">暂无重复出现的高频模式（需 ≥2 次成功运行且结构相似）。</string>
+  <string name="templates.genDraft">生成草稿</string>
+  <string name="templates.genHint">从你的成功运行中提炼，越用越懂你</string>
+  <string name="templates.genToast">已生成草稿，可在画布中调整</string>
+
+  <!-- RouteTableEditor -->
+  <string name="route.title">类别 → 智能体路由（Builder 生成时绑定 worker）</string>
+  <string name="route.fillDefaults">一键填充默认</string>
+  <string name="route.fillDefaultsTitle">所有类别绑定到默认智能体</string>
+  <string name="route.unbound">— 默认/未绑定 —</string>
+  <string name="route.fallbackPlaceholder">回退链（可选，逗号分隔 agentId）</string>
+  <string name="route.noAgents">当前工作流暂无智能体，请先在智能体面板添加。</string>
+  <string name="route.cat.ui">UI / 前端</string>
+  <string name="route.cat.uiHint">界面、交互、样式</string>
+  <string name="route.cat.logic">Logic / 逻辑</string>
+  <string name="route.cat.logicHint">核心业务、算法</string>
+  <string name="route.cat.docs">Docs / 文档</string>
+  <string name="route.cat.docsHint">说明、注释、文档</string>
+  <string name="route.cat.infra">Infra / 基建</string>
+  <string name="route.cat.infraHint">构建、部署、配置</string>
+  <string name="route.cat.data">Data / 数据</string>
+  <string name="route.cat.dataHint">存储、接口契约</string>
+
+  <!-- JobBoard -->
+  <string name="jobboard.title">调度看板</string>
+  <string name="jobboard.round">轮次 {{round}}/{{total}}</string>
+  <string name="jobboard.meta">拓扑层 {{layer}}/{{totalLayers}} · 完成 {{done}}/{{nodes}}</string>
+  <string name="jobboard.status.idle">等待</string>
+  <string name="jobboard.status.running">执行中</string>
+  <string name="jobboard.status.success">完成</string>
+  <string name="jobboard.status.error">失败</string>
+  <string name="jobboard.status.cached">缓存</string>
+  <string name="jobboard.status.skipped">跳过</string>
+  <string name="jobboard.status.bypassed">旁路</string>
+  <string name="jobboard.status.muted">静音</string>
+
+  <!-- WorkflowWizard -->
+  <string name="wizard.title">工作流向导</string>
+  <string name="wizard.close">关闭</string>
+  <string name="wizard.step.goal">目标</string>
+  <string name="wizard.step.input">输入</string>
+  <string name="wizard.step.output">输出</string>
+  <string name="wizard.question">第 {{step}} 步 · 你想做什么？</string>
+  <string name="wizard.prev">上一步</string>
+  <string name="wizard.next">下一步</string>
+  <string name="wizard.generate">生成工作流</string>
+  <string name="wizard.prefix">向导：</string>
+  <string name="wizard.goal.chat">单次问答 / 润色</string>
+  <string name="wizard.goal.chatDesc">把一句输入交给智能体处理</string>
+  <string name="wizard.goal.translate">翻译</string>
+  <string name="wizard.goal.translateDesc">把文本译为目标语言</string>
+  <string name="wizard.goal.summarize">总结 / 摘要</string>
+  <string name="wizard.goal.summarizeDesc">长文本压缩为要点</string>
+  <string name="wizard.goal.fetch">抓取网页</string>
+  <string name="wizard.goal.fetchDesc">HTTP 请求并交给智能体解析</string>
+  <string name="wizard.goal.image">图像生成 / 处理</string>
+  <string name="wizard.goal.imageDesc">文生图或图片预览</string>
+  <string name="wizard.goal.batch">批量处理清单</string>
+  <string name="wizard.goal.batchDesc">对列表逐项执行（map）</string>
+  <string name="wizard.src.manual">手动输入</string>
+  <string name="wizard.src.manualDesc">我直接在节点里写内容</string>
+  <string name="wizard.src.http">从网址抓取</string>
+  <string name="wizard.src.httpDesc">运行时请求一个 URL</string>
+  <string name="wizard.src.none">暂不需要输入</string>
+  <string name="wizard.src.noneDesc">工作流自行产生数据</string>
+  <string name="wizard.out.preview">画布内预览</string>
+  <string name="wizard.out.previewDesc">结果直接显示在结果预览节点</string>
+  <string name="wizard.out.file">写入文件</string>
+  <string name="wizard.out.fileDesc">把结果保存到工作区文件</string>
+  <string name="wizard.out.text">纯文本输出</string>
+  <string name="wizard.out.textDesc">作为文本输出节点</string>
+  <string name="wizard.node.textInput">文本输入</string>
+  <string name="wizard.node.fetch">网页抓取</string>
+  <string name="wizard.node.agent">智能体</string>
+  <string name="wizard.node.list">清单输入</string>
+  <string name="wizard.node.map">逐项处理</string>
+  <string name="wizard.node.writeFile">写入文件</string>
+  <string name="wizard.node.textOutput">文本输出</string>
+  <string name="wizard.node.resultPreview">结果预览</string>
+</resources>

@@ -1,5 +1,6 @@
 import { Zap, Cpu, ArrowUpRight } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useT } from '../i18n/useT';
 
 function num(n: number): string {
   return n.toLocaleString();
@@ -64,21 +65,22 @@ export default function TokenUsagePanel({
   const runHistory = useWorkflowStore((s) => s.runHistory);
   const last = runHistory[0] ?? null;
   const cost = last?.cost;
+  const t = useT('panels');
 
   const body = (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
       {!cost ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-ink-faint">
           <Cpu size={32} />
-          <p className="text-xs">还没有 Token 消耗记录</p>
-          <p className="text-center text-[11px]">运行一次工作流后，这里会显示明细。</p>
+          <p className="text-xs">{t('token.empty')}</p>
+          <p className="text-center text-[11px]">{t('token.emptyHint')}</p>
         </div>
       ) : (
         <>
           {/* 总计 */}
           <div className="rounded-lg border border-line bg-paper-deep p-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-soft">Token 消耗明细</span>
+              <span className="text-xs text-ink-soft">{t('token.detail')}</span>
               <span className="text-[10px] text-ink-faint">{new Date(last.startedAt).toLocaleString()}</span>
             </div>
             <div className="mt-1 flex items-baseline gap-2">
@@ -88,18 +90,18 @@ export default function TokenUsagePanel({
           </div>
 
           {/* 输入 */}
-          <Section title="输入" titleColor="text-blue-500">
-            <Line label="输入" value={cost.totalPromptTokens} color="blue" />
-            <Line label="缓存命中" value={cost.cache.hitTokens} color="green" />
-            <Line label="缓存未命中" value={cost.cache.missTokens} color="red" />
-            <Line label="缓存写入" value={cost.cache.writeTokens} color="yellow" />
+          <Section title={t('token.input')} titleColor="text-blue-500">
+            <Line label={t('token.inputLabel')} value={cost.totalPromptTokens} color="blue" />
+            <Line label={t('token.cacheHit')} value={cost.cache.hitTokens} color="green" />
+            <Line label={t('token.cacheMiss')} value={cost.cache.missTokens} color="red" />
+            <Line label={t('token.cacheWrite')} value={cost.cache.writeTokens} color="yellow" />
           </Section>
 
           {/* 输出 */}
-          <Section title="输出" titleColor="text-violet-500">
-            <Line label="输出" value={cost.totalCompletionTokens} color="purple" />
-            <Line label="思考过程" value={cost.output.reasoningTokens} color="cyan" />
-            <Line label="回复内容" value={cost.output.replyTokens} color="purple" />
+          <Section title={t('token.output')} titleColor="text-violet-500">
+            <Line label={t('token.outputLabel')} value={cost.totalCompletionTokens} color="purple" />
+            <Line label={t('token.reasoning')} value={cost.output.reasoningTokens} color="cyan" />
+            <Line label={t('token.reply')} value={cost.output.replyTokens} color="purple" />
           </Section>
 
           {/* 缓存命中率 */}
@@ -107,7 +109,7 @@ export default function TokenUsagePanel({
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Zap size={13} className="text-amber-400" />
-                <span className="text-[13px] font-medium text-ink">缓存命中率</span>
+                <span className="text-[13px] font-medium text-ink">{t('token.hitRate')}</span>
               </div>
               <span className="text-sm font-semibold tabular-nums text-emerald-500">
                 {cost.totalPromptTokens > 0
@@ -128,13 +130,13 @@ export default function TokenUsagePanel({
             </div>
             <div className="mt-2 flex items-center gap-3 text-[10px] text-ink-faint">
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-emerald-500" /> 命中
+                <span className="h-2 w-2 rounded-sm bg-emerald-500" /> {t('token.legendHit')}
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-amber-400" /> 写入
+                <span className="h-2 w-2 rounded-sm bg-amber-400" /> {t('token.legendWrite')}
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-rose-500" /> 未命中
+                <span className="h-2 w-2 rounded-sm bg-rose-500" /> {t('token.legendMiss')}
               </span>
             </div>
           </div>
@@ -144,7 +146,7 @@ export default function TokenUsagePanel({
             <div className="rounded-lg border border-line bg-paper-deep p-3">
               <div className="mb-2 flex items-center gap-2">
                 <ArrowUpRight size={13} className="text-accent" />
-                <span className="text-[13px] font-medium text-ink">按模型</span>
+                <span className="text-[13px] font-medium text-ink">{t('token.byModel')}</span>
               </div>
               <div className="space-y-1.5">
                 {Object.entries(cost.byModel).map(([model, m]) => (
