@@ -16,7 +16,7 @@ interface Props {
 }
 
 /** 节点选择窗：仿「示例库」居中弹窗样式，右上角关闭按钮，点遮罩关闭 */
-export function NodePickerModal({ screenPos, onSelect, onClose }: Props) {
+export function NodePickerModal({ onSelect, onClose }: Props) {
   const defs = useRegistryStore((s) => s.defs);
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
   const [query, setQuery] = useState('');

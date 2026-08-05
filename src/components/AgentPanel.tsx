@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2, Pencil } from 'lucide-react';
+import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import {
   createAgent,

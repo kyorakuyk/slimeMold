@@ -33,7 +33,6 @@ import type { ApiEndpoint, Protocol } from '../types';
 import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
 import { RouteTableEditor } from './RouteTableEditor';
-import type { ThemeMode } from '../store/viewStore';
 
 type SectionId = 'general' | 'agent' | 'model' | 'mcp' | 'flow' | 'routing' | 'apikeys';
 

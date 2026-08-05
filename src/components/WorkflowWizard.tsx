@@ -37,7 +37,6 @@ function mk(
   x: number,
   y: number,
 ): FlowNode {
-  const def = getNodeDef(typeId);
   return {
     id,
     type: 'base',

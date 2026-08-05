@@ -5,7 +5,7 @@
  */
 import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { ChevronRight, Palette, X } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 import type { NodeGroup, ProxyPort } from '../../types';
 import { useViewStore } from '../../store/viewStore';
 import { useWorkflowStore } from '../../store/workflowStore';

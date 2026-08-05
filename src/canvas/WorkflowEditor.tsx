@@ -512,7 +512,6 @@ export default function WorkflowEditor({
 
       if (pending) {
         // 从端口拖到空白：新建节点后自动连边（ComfyUI 风格）
-        const pendingPos = pickerPos; // 落点即拖拽结束处
         const newNodeId = addNode(payload.id, { x: pos.x - 112, y: pos.y - 20 });
         if (newNodeId) {
           const defs = useRegistryStore.getState().defs;

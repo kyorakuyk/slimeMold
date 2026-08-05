@@ -10,7 +10,7 @@
  * - 暂不依赖 14.B 的 `pipeline.handoff`/`receive`（尚未实现），末端用 `output.text` 占位交付。
  */
 
-import type { AgentRouteTable, ModuleCategory, ModuleItem, WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types';
+import type { AgentRouteTable, ModuleItem, WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types';
 
 let _seq = 0;
 function uid(prefix: string): string {

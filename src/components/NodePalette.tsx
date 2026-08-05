@@ -4,7 +4,6 @@ import { ChevronRight, ChevronDown, Search, Boxes, Trash2, Pencil } from 'lucide
 import { NamePrompt } from './NamePrompt';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
-import { DND_MIME } from '../canvas/WorkflowEditor';
 import { CATEGORY_ORDER } from '../nodes/builtin';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import type { NodeDefinition, NodeRole } from '../types';

@@ -278,7 +278,6 @@ const designerGenerate: NodeDefinition = {
     if (!concept) throw new Error('缺少概念输入（concept 端口未接入数据）');
     const ref = inputs.ref != null ? String(inputs.ref) : '';
     let prompt = `概念方案：\n${concept}\n\n请产出设计稿规范。`;
-    const messages: ChatMessage[] = [];
     // 复用 runCreativeLLM 时无法传图片，故 ref 仅在模拟/真实提示里体现
     if (ref) prompt += `\n（附参考素材：${ref.slice(0, 80)}…）`;
 

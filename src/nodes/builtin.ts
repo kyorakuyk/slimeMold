@@ -1450,9 +1450,6 @@ function publishDesignArtifact(params: Record<string, unknown>, payload: { desig
   }
 }
 
-/** 合法的模块类别集合（步骤 14.7，对标 OMO category 解耦路由）。非约定值会被规整为 'data'。 */
-const KNOWN_CATEGORIES = new Set(['ui', 'logic', 'docs', 'infra', 'data']);
-
 /** 从模块原始对象中规整出合法 ModuleCategory（非约定值降级为 'data'，但保留任意字符串以允许自定义类别）。 */
 function normalizeCategory(raw: unknown): ModuleItem['category'] {
   const c = typeof raw === 'string' ? raw.trim().toLowerCase() : '';

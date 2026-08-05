@@ -1,6 +1,5 @@
 import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
 import { chatWithAgent } from './agentManager';
-import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
 
 /** 解析生效的代理：agent 级 proxyUrl 优先，其次全局代理；均空则直连 */

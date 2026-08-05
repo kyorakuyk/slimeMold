@@ -1,5 +1,5 @@
 import { Boxes, Trash2, Ungroup, Download, FolderOpen } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { useViewStore } from '../store/viewStore';
@@ -184,7 +184,6 @@ export default function Inspector({ width = 288 }: { width?: number }) {
   const inspectAssetId = useViewStore((s) => s.inspectAssetId);
   const setInspectAsset = useViewStore((s) => s.setInspectAsset);
   const removeAsset = useWorkflowStore((s) => s.removeAsset);
-  const addLog = useWorkflowStore((s) => s.addLog);
   const isTauri = typeof (window as any).__TAURI__ !== 'undefined';
   // 焦点节点可能在激活工作流，也可能在拆分视图所显示的其他工作流中
   const focusIsActive = !focusWfId || focusWfId === activeWfId;

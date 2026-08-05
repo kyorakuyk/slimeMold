@@ -10,8 +10,6 @@ import {
   cacheKey,
   countSkip,
   getCached,
-  setCached,
-  strike,
 } from './nodeCache';
 import { builtinDefs } from '../nodes/builtin';
 

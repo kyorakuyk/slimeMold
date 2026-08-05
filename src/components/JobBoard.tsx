@@ -38,9 +38,6 @@ export default function JobBoard() {
   const total = nodes.length || 1;
   const done = counts.success + counts.cached + counts.skipped + counts.error;
   const pct = Math.round((done / total) * 100);
-  const layerPct = runProgress.totalLayers > 0
-    ? Math.round((runProgress.layer / runProgress.totalLayers) * 100)
-    : 0;
 
   // 仅展示「非 idle」或「运行中」的节点，避免列表过长
   const activeNodes = nodes.filter(

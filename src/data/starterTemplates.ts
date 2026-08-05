@@ -1,4 +1,3 @@
-import type { Edge, Node } from '@xyflow/react';
 import type { FlowNode, FlowEdge } from '../types';
 
 export interface StarterTemplate {

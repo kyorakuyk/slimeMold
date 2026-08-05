@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore, useReactFlow } from '@xyflow/react';
-import { ChevronDown, ChevronRight, Palette, X, GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronRight, Palette, X } from 'lucide-react';
 import type { FlowNode, NodeGroup } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 

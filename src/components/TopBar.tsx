@@ -13,24 +13,17 @@ import {
   PanelRight,
   Variable,
   History,
-  Sun,
-  Moon,
   Trash2,
   Eraser,
   ZoomIn,
   ZoomOut,
   Maximize,
   Grid3x3,
-  Map,
   Keyboard,
   Info,
-  FilePlus,
   FileDown,
   FolderPlus,
   FileStack,
-  Wrench,
-  HelpCircle,
-  ChevronDown,
   FileBox,
   Columns2,
   Plus,
@@ -63,8 +56,6 @@ import {
 } from '../io/projectIO';
 
 interface TopBarProps {
-  theme: 'dark' | 'light' | 'system';
-  onToggleTheme: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   panelOpen: boolean;
@@ -91,8 +82,6 @@ interface MenuDef {
 }
 
 export default function TopBar({
-  theme,
-  onToggleTheme,
   sidebarOpen,
   onToggleSidebar,
   panelOpen,
@@ -104,8 +93,6 @@ export default function TopBar({
   onNewProject,
   onOpenWizard,
 }: TopBarProps) {
-  const workflowName = useWorkflowStore((s) => s.workflowName);
-  const setWorkflowName = useWorkflowStore((s) => s.setWorkflowName);
   const running = useWorkflowStore((s) => s.running);
   const resetStatuses = useWorkflowStore((s) => s.resetStatuses);
   const failFast = useWorkflowStore((s) => s.failFast);

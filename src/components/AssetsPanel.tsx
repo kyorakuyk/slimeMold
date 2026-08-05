@@ -6,7 +6,6 @@ import {
   FileText,
   Image as ImageIcon,
   FolderOpen,
-  Upload,
   ListChecks,
   CheckSquare,
   Square,
@@ -73,7 +72,7 @@ export default function AssetsPanel({
   const [multiMode, setMultiMode] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [importing, setImporting] = useState(false);
+  const [, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [hashMap, setHashMap] = useState<Record<string, string>>({});
@@ -133,8 +132,6 @@ export default function AssetsPanel({
         (a) => a.name.toLowerCase().includes(q) || (hashMap[a.id] ?? '').includes(q),
       )
     : assetList;
-
-  const allSelected = visibleAssets.length > 0 && selectedIds.size === visibleAssets.length;
 
   const toggleMulti = () => {
     if (!multiMode) {

@@ -6,7 +6,6 @@ import type {
   FlowEdge,
   FlowNode,
   NodeDefinition,
-  NodeStatus,
   NodeUsageStat,
   RunRecord,
   SandboxHandle,
@@ -474,7 +473,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
-  const skipFailed = !!opts.skipFailed;
 
   const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';
   wf.addLog('info', `开始运行（${modeLabel}），一共 ${nodes.length} 个节点`);
@@ -555,7 +553,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         }
         return [...set];
       };
-      const t0 = performance.now();
       // 基于冲突关系（scope 相交）的并查集：冲突的节点强制并入同一串行簇，
       // 不同连通分量之间仍并行，最大化并行度（替代朴素贪心，避免多对冲突时错误分组）。
       const parent = new Map<string, string>();
@@ -1170,9 +1167,8 @@ async function executeNode(
       const channel = getChannel(useWorkflowStore.getState().llmChannel);
       // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
       const release = await limiter.acquire(signal);
-      const callStart = performance.now();
-      let ok = true;
-      let errMsg: string | undefined;
+  const callStart = performance.now();
+  let errMsg: string | undefined;
       try {
         const resp = await withRetry(
           () =>
@@ -1186,7 +1182,7 @@ async function executeNode(
             retries: MAX_RETRIES,
             baseDelay: RETRY_BASE_MS,
             signal,
-            onRetry: (msg, delay, attempt) =>
+            onRetry: (_msg, delay, attempt) =>
               store.addLog(
                 'info',
                 `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
@@ -1207,7 +1203,6 @@ async function executeNode(
         trackCost(rec);
         return resp.text;
       } catch (err) {
-        ok = false;
         errMsg = err instanceof Error ? err.message : String(err);
         const rec: CostRecord = {
           nodeId: id,

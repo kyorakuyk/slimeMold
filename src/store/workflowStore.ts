@@ -49,9 +49,9 @@ import { STARTER_TEMPLATES } from '../data/starterTemplates';
  */
 export function recomputeProxyPorts(
   group: NodeGroup,
-  sg: SubgraphDef,
+  _sg: SubgraphDef,
   nodes: FlowNode[],
-  edges: FlowEdge[],
+  _edges: FlowEdge[],
 ): NodeGroup {
   const defs = useRegistryStore.getState().defs;
   const memberSet = new Set(group.nodeIds);
@@ -1301,32 +1301,6 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       saveProject: async () => {
         const s = get();
-        // 同步当前工作流
-        const current: WorkflowFile = {
-          version: 1,
-          name: s.workflowName,
-          savedAt: new Date().toISOString(),
-          nodes: s.nodes.map((n) => ({
-            id: n.id,
-            typeId: n.data.typeId,
-            label: n.data.label,
-            position: { x: n.position.x, y: n.position.y },
-            params: n.data.params,
-          })),
-          edges: s.edges.map((e) => ({
-            id: e.id,
-            source: e.source,
-            sourceHandle: e.sourceHandle ?? null,
-            target: e.target,
-            targetHandle: e.targetHandle ?? null,
-            kind: e.data?.kind ?? 'data',
-            scope: e.data?.scope,
-          })),
-          agents: s.agents,
-          roles: s.roles,
-          variables: s.variables,
-          groups: s.groups,
-        };
         const file = buildProjectFile(s);
         const { saveProjectFile } = await import('../io/projectIO');
         // P0：已存盘则直接覆盖原路径，不再弹另存为

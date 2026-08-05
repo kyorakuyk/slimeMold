@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Boxes,
   Puzzle,
@@ -14,27 +13,18 @@ import {
   LayoutTemplate,
   Archive,
   FolderTree,
-  Folder,
-  FolderOpen,
-  Trash2,
-  Crosshair,
-  ChevronRight,
-  ChevronDown,
   BarChart3,
   type LucideIcon,
 } from 'lucide-react';
-import { useReactFlow } from '@xyflow/react';
 import NodePalette from './NodePalette';
 import TemplateSuggestions from './TemplateSuggestions';
 import PluginPanel from './PluginPanel';
 import AgentPanel from './AgentPanel';
 import VariablesPanel from './VariablesPanel';
 import RunHistoryPanel from './RunHistoryPanel';
-import ExamplesPanel from './ExamplesPanel';
 import AssetsPanel from './AssetsPanel';
 import GroupsPanel from './GroupsPanel';
 import TokenUsagePanel from './TokenUsagePanel';
-import ShortcutsModal from './ShortcutsModal';
 
 export type SidePanelKey =
   | 'nodes'

@@ -128,7 +128,7 @@ export default function App() {
   // 面板尺寸（可拖拽调节）
   const [leftW, setLeftW] = useState(248);
   const [rightW, setRightW] = useState(288);
-  const [shortcutsH, setShortcutsH] = useState(208);
+  const [shortcutsH] = useState(208);
 
   const openPanel = (key: SidePanelKey) => setActivePanel(key);
   const closePanel = () => setActivePanel(null);
@@ -311,8 +311,6 @@ export default function App() {
         onDrop={onDrop}
       >
         <TopBar
-          theme={viewTheme}
-          onToggleTheme={toggleTheme}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           panelOpen={panelOpen}

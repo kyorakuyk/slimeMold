@@ -15,8 +15,6 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
-  type Node,
-  type Edge,
   type Connection,
   type NodeChange,
   type EdgeChange,
@@ -30,7 +28,7 @@ import ProxyPortNode from './nodes/ProxyPortNode';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
 import type { NodeTypes } from '@xyflow/react';
 import type { FlowNode, FlowEdge, NodeStatus, SubgraphDef, SubgraphPort, PortType, WorkflowNodeData } from '../types';
-import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
+import { resolvePorts } from '../engine/subgraph';
 
 const nodeTypes = { base: BaseNode, proxyIn: ProxyPortNode, proxyOut: ProxyPortNode } as unknown as NodeTypes;
 
@@ -182,8 +180,6 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
     // 代理端口的 Handle id 形如 `${portId}__in`(target) / `${portId}__out`(source)
     const proxyHandleKey = (handleId: string | null | undefined) =>
       handleId ? handleId.replace(/__(in|out)$/, '') : null;
-    const isProxyHandle = (handleId: string | null | undefined, kind: 'in' | 'out') =>
-      !!handleId && handleId.endsWith(`__${kind}`);
 
     const manualInputs: SubgraphPort[] = [];
     const manualOutputs: SubgraphPort[] = [];
