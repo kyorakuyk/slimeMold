@@ -79,23 +79,9 @@ export default function WorkflowEditor({
   const [splitEdges, setSplitEdges] = useState<FlowEdge[]>([]);
   useEffect(() => {
     if (!isSplit || !splitWf) return;
-    setSplitNodes(
-      (splitWf.nodes ?? []).map((n) => ({
-        id: n.id,
-        type: 'base',
-        position: n.position,
-        data: { typeId: n.typeId, label: n.label, params: n.params ?? {}, status: 'idle' as NodeStatus, dirty: true },
-      })),
-    );
-    setSplitEdges(
-      (splitWf.edges ?? []).map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? undefined,
-        targetHandle: e.targetHandle ?? undefined,
-      })),
-    );
+    // 方案 P：splitWf.nodes 已是运行态 FlowNode，直接复用
+    setSplitNodes((splitWf.nodes ?? []).map((n) => ({ ...n, data: { ...n.data, dirty: true } })));
+    setSplitEdges((splitWf.edges ?? []).map((e) => ({ ...e })));
   }, [isSplit, splitWf]);
 
   const groups = useWorkflowStore((s) => s.groups);

@@ -28,6 +28,7 @@ import type {
   WorkflowFile,
   WorkflowFileNode,
   WorkflowFileEdge,
+  WorkflowFileInMemory,
   WorkflowNodeData,
 } from '../types';
 import { arePortsCompatible } from '../types';
@@ -190,8 +191,8 @@ interface WorkflowState {
   projectDirty: boolean;
   /** 最近一次成功落盘的完整项目快照（JSON），用于派生 dirty 比对；null 表示从未保存 */
   lastSavedSnapshot: string | null;
-  /** 项目内工作流集合 */
-  workflows: Record<string, WorkflowFile>;
+  /** 项目内工作流集合（方案 P：内存态持有运行态 FlowNode，落盘时由 toDisk 拍平） */
+  workflows: Record<string, WorkflowFileInMemory>;
   /** 当前激活的工作流 id */
   activeWfId: string;
   /** 项目级子图库（可复用节点组合） */
@@ -386,6 +387,7 @@ function defaultParams(typeId: string): Record<string, unknown> {
 }
 
 /** 把 WorkflowFile 的轻量节点还原为画布 FlowNode（载入时标记为脏，首次运行必执行） */
+/** 把磁盘态 WorkflowFile 的拍平节点还原为画布运行态 FlowNode（方案 P 内核） */
 function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
   return (wf.nodes ?? []).map((n) => ({
     id: n.id,
@@ -414,7 +416,7 @@ function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
   }));
 }
 
-/** 画布 FlowNode → 存储轻量节点（拆分视图分栏写回用） */
+/** 画布 FlowNode → 存储轻量节点（落盘拍平用） */
 function storedNodeOf(n: FlowNode): WorkflowFileNode {
   return {
     id: n.id,
@@ -439,6 +441,27 @@ function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
   };
 }
 
+/**
+ * 磁盘态 WorkflowFile → 内存态 WorkflowFileInMemory（nodes: FlowNode[]）。
+ * 用于读取 .slimemold / localStorage / builder / .workflow.json 等所有拍平来源后统一收口。
+ */
+function fromDisk(wf: WorkflowFile): WorkflowFileInMemory {
+  return {
+    ...wf,
+    nodes: flowNodesFrom(wf),
+    edges: flowEdgesFrom(wf),
+  };
+}
+
+/** 内存态 WorkflowFileInMemory → 磁盘态 WorkflowFile（拍平，剥离 React Flow 瞬态字段） */
+function toDisk(wf: WorkflowFileInMemory): WorkflowFile {
+  return {
+    ...wf,
+    nodes: (wf.nodes ?? []).map(storedNodeOf),
+    edges: (wf.edges ?? []).map(storedEdgeOf),
+  };
+}
+
 /** 把当前编辑态序列化为一个 WorkflowFile（用于收纳游离态/写回） */
 function serializeCurrent(
   s: {
@@ -455,27 +478,14 @@ function serializeCurrent(
   identity?: { belongsToProject?: string; standalonePath?: string },
   /** 现有工作流的资产库（写回时保留，避免 addAsset/removeAsset 的改动丢失） */
   keepAssets?: AssetMeta[],
-): WorkflowFile {
+): WorkflowFileInMemory {
   return {
     version: 1,
     name: s.workflowName || '未命名工作流',
     savedAt: new Date().toISOString(),
-    nodes: s.nodes.map((n) => ({
-      id: n.id,
-      typeId: n.data.typeId,
-      label: n.data.label,
-      position: { x: n.position.x, y: n.position.y },
-      params: n.data.params ?? {},
-    })),
-    edges: s.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      sourceHandle: e.sourceHandle ?? null,
-      target: e.target,
-      targetHandle: e.targetHandle ?? null,
-      kind: e.data?.kind ?? 'data',
-      scope: e.data?.scope,
-    })),
+    // 方案 P：内存态直接持有运行态 FlowNode，无需再拍平/还原
+    nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
+    edges: s.edges,
     agents: s.agents,
     roles: s.roles,
     variables: s.variables,
@@ -498,7 +508,7 @@ function buildProjectFile(s: {
   projectAssets: AssetMeta[];
   groups: NodeGroup[];
   activeWfId: string;
-  workflows: Record<string, WorkflowFile>;
+  workflows: Record<string, WorkflowFileInMemory>;
   projectName: string | null;
   projectId: string | null;
   projectCreatedAt: string | null;
@@ -507,13 +517,17 @@ function buildProjectFile(s: {
   artifacts: import('../engine/pipeline').ProjectArtifacts;
   agentRouteTable: import('../types').AgentRouteTable;
 }): ProjectFile {
-  const current: WorkflowFile = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
-  const workflows = { ...s.workflows };
-  if (s.activeWfId) workflows[s.activeWfId] = current;
+  const current: WorkflowFileInMemory = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
+  const workflowsInMemory = { ...s.workflows };
+  if (s.activeWfId) workflowsInMemory[s.activeWfId] = current;
   else {
     const id = `wf-${Date.now()}`;
-    workflows[id] = current;
+    workflowsInMemory[id] = current;
   }
+  // 方案 P：落盘前把内存态 FlowNode 拍平回磁盘态 WorkflowFile（剥离瞬态字段）
+  const workflows: Record<string, WorkflowFile> = Object.fromEntries(
+    Object.entries(workflowsInMemory).map(([k, wf]) => [k, toDisk(wf)]),
+  );
   return {
     version: 1,
     kind: 'project',
@@ -759,7 +773,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const wf = get().workflows[wfId];
         if (!wf) return;
         const nodes = (wf.nodes ?? []).map((n) =>
-          n.id === id ? { ...n, params: { ...(n.params ?? {}), ...patch } } : n,
+          n.id === id ? { ...n, data: { ...n.data, params: { ...n.data.params, ...patch } } } : n,
         );
         set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
       },
@@ -773,9 +787,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           });
           return;
         }
+        // 方案 P：非激活工作流节点已是运行态 FlowNode，统一改 data.label
         const wf = get().workflows[wfId];
         if (!wf) return;
-        const nodes = wf.nodes.map((n) => (n.id === id ? { ...n, label } : n));
+        const nodes = wf.nodes.map((n) =>
+          n.id === id ? { ...n, data: { ...n.data, label } } : n,
+        );
         set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes } } });
       },
 
@@ -786,11 +803,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           set({ nodes: get().nodes.map(flip) });
           return;
         }
+        // 方案 P：非激活工作流节点已是运行态 FlowNode，统一改 data.bypass/mute
         const wf = get().workflows[wfId];
         if (!wf) return;
-        const flipWf = (n: WorkflowFileNode) =>
-          n.id === id ? { ...n, bypass: !n.bypass, mute: false } : n;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flipWf) } } });
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flip) } } });
       },
 
       toggleNodeMute: (id, wfId) => {
@@ -800,16 +816,16 @@ export const useWorkflowStore = create<WorkflowState>()(
           set({ nodes: get().nodes.map(flip) });
           return;
         }
+        // 方案 P：非激活工作流节点已是运行态 FlowNode，统一改 data.mute/bypass
         const wf = get().workflows[wfId];
         if (!wf) return;
-        const flipWf = (n: WorkflowFileNode) =>
-          n.id === id ? { ...n, mute: !n.mute, bypass: false } : n;
-        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flipWf) } } });
+        set({ workflows: { ...get().workflows, [wfId]: { ...wf, nodes: wf.nodes.map(flip) } } });
       },
 
       /** 对齐 / 分布：对当前选中的多个节点生效（少于 2 个不操作），支持拆分视图 */
       alignSelected: (mode) => {
-        const apply = (nodes: WorkflowFileNode[]): WorkflowFileNode[] => {
+        // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
+        const apply = (nodes: FlowNode[]): FlowNode[] => {
           const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
           if (sel.length < 2) return nodes;
           const minX = Math.min(...sel.map((n) => n.position.x));
@@ -818,7 +834,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           const maxY = Math.max(...sel.map((n) => n.position.y));
           const cx = (minX + maxX) / 2;
           const cy = (minY + maxY) / 2;
-          const mapBy = (n: WorkflowFileNode): [number, number] => {
+          const mapBy = (n: FlowNode): [number, number] => {
             switch (mode) {
               case 'left': return [minX, n.position.y];
               case 'right': return [maxX, n.position.y];
@@ -844,15 +860,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
         get().pushHistory();
-        const activeApply = (nodes: FlowNode[]): FlowNode[] => {
-          const pf = apply as unknown as (ns: WorkflowFileNode[]) => WorkflowFileNode[];
-          return pf(nodes as unknown as WorkflowFileNode[]) as unknown as FlowNode[];
-        };
-        set({ nodes: activeApply(get().nodes) });
+        set({ nodes: apply(get().nodes) });
       },
 
       distributeSelected: (axis) => {
-        const apply = (nodes: WorkflowFileNode[]): WorkflowFileNode[] => {
+        // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
+        const apply = (nodes: FlowNode[]): FlowNode[] => {
           const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
           if (sel.length < 3) return nodes;
           const sorted = [...sel].sort((a, b) =>
@@ -877,11 +890,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
         get().pushHistory();
-        const activeApply = (nodes: FlowNode[]): FlowNode[] => {
-          const pf = apply as unknown as (ns: WorkflowFileNode[]) => WorkflowFileNode[];
-          return pf(nodes as unknown as WorkflowFileNode[]) as unknown as FlowNode[];
-        };
-        set({ nodes: activeApply(get().nodes) });
+        set({ nodes: apply(get().nodes) });
       },
 
       setNodeStatus: (id, status, patch) =>
@@ -1151,7 +1160,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const id = `wf-${Date.now()}`;
         const projId = `proj-${Date.now()}`;
         const now = new Date().toISOString();
-        const wf: WorkflowFile = {
+        const wf: WorkflowFileInMemory = {
           version: 1,
           name: '未命名工作流',
           savedAt: now,
@@ -1211,12 +1220,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
         }
         const baseAgents = [createAgent('ollama')];
-        const wf: WorkflowFile = {
+        const wf: WorkflowFileInMemory = {
           version: 1,
           name: tpl?.name ?? '未命名工作流',
           savedAt: now,
-          nodes: tplNodes.map(storedNodeOf),
-          edges: tplEdges.map(storedEdgeOf),
+          // 方案 P：模板节点已是运行态 FlowNode，直接持有（createProject 走内存态）
+          nodes: tplNodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
+          edges: tplEdges,
           agents: baseAgents,
           roles: builtinRoles.map((r) => ({ ...r })),
           variables: {},
@@ -1270,11 +1280,15 @@ export const useWorkflowStore = create<WorkflowState>()(
         const id = file.activeId ?? Object.keys(file.workflows)[0];
         const wf = file.workflows[id];
         if (!wf) return;
+        // 方案 P：磁盘态拍平 workflows 统一收口为内存态 FlowNode
+        const workflowsInMemory = Object.fromEntries(
+          Object.entries(file.workflows).map(([k, w]) => [k, fromDisk(w)]),
+        );
         suppressDirty = true;
         set({
           projectName: file.name,
           projectPath: path ?? file.name, // 实际磁盘路径由调用方传入
-          workflows: file.workflows,
+          workflows: workflowsInMemory,
           activeWfId: id,
           workflowName: wf.name,
           // P1：打开即把活动工作流还原到画布，保证落盘内容完整
@@ -1326,7 +1340,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const s = get();
         if (id === s.activeWfId) return;
         // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
-        const synced: Record<string, WorkflowFile> = { ...s.workflows };
+        const synced: Record<string, WorkflowFileInMemory> = { ...s.workflows };
         const curId = s.activeWfId || `wf-${Date.now()}`;
         const prev = s.workflows[curId];
         synced[curId] = serializeCurrent(
@@ -1345,8 +1359,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           workflows: synced,
           activeWfId: id,
           workflowName: target.name,
-          nodes: flowNodesFrom(target),
-          edges: flowEdgesFrom(target),
+          // 方案 P：workflows 已是运行态 FlowNode，直接复用
+          nodes: target.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
+          edges: target.edges,
           agents: target.agents?.length ? target.agents : s.agents,
           roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
           variables: target.variables ?? {},
@@ -1388,7 +1403,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const id = `wf-${Date.now() + 1}`;
         const index = Object.keys(workflows).length + 1;
-        const wf: WorkflowFile = {
+        const wf: WorkflowFileInMemory = {
           version: 1,
           name: `工作流 ${index}`,
           savedAt: new Date().toISOString(),
@@ -1429,8 +1444,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         const workflows = { ...s.workflows };
         const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const inProject = !!s.projectId;
-        const merged: WorkflowFile = {
-          ...wf,
+        // 入参 wf 为磁盘态拍平 WorkflowFile（builder/导入来源），统一收口为内存态
+        const merged: WorkflowFileInMemory = {
+          ...fromDisk(wf),
           name: opts?.name ?? wf.name ?? '生成的工作流',
           savedAt: new Date().toISOString(),
           belongsToProject: wf.belongsToProject ?? (inProject ? s.projectId! : undefined),
@@ -1451,8 +1467,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           workflows,
           activeWfId: id,
           workflowName: merged.name,
-          nodes: flowNodesFrom(merged),
-          edges: flowEdgesFrom(merged),
+          // 方案 P：merged 已是运行态 FlowNode
+          nodes: merged.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
+          edges: merged.edges,
           agents: merged.agents,
           defaultAgentId: merged.defaultAgentId ?? null,
           roles: merged.roles!,
@@ -1534,7 +1551,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         for (const id of Object.keys(s.workflows)) {
           const wf = s.workflows[id];
           const hit = (wf.nodes ?? []).some((n) =>
-            Object.values(n.params ?? {}).some((v) => {
+            Object.values(n.data.params ?? {}).some((v) => {
               const sv = typeof v === 'string' ? v : JSON.stringify(v);
               return sv.includes(idToken) || (typeof v === 'object' && v !== null && (v as any).assetId === assetId);
             }),
@@ -1618,8 +1635,9 @@ export const useWorkflowStore = create<WorkflowState>()(
             workflows: next,
             activeWfId: newId,
             workflowName: wf.name,
-            nodes: flowNodesFrom(wf),
-            edges: flowEdgesFrom(wf),
+            // 方案 P：wf.nodes 已是运行态 FlowNode
+            nodes: wf.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
+            edges: wf.edges,
             agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
             defaultAgentId: wf.defaultAgentId ?? null,
             roles: [...builtinRoles.map((r) => ({ ...r })), ...(wf.roles ?? []).filter((r) => !r.builtin)],
@@ -1690,8 +1708,9 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...s.workflows,
             [id]: {
               ...wf,
-              nodes: nodes.map((n) => storedNodeOf(n)),
-              edges: edges.map((e) => storedEdgeOf(e)),
+              // 方案 P：直接持有运行态 FlowNode（拆分视图分栏写回）
+              nodes,
+              edges,
             },
           },
         });
@@ -2096,7 +2115,10 @@ export const useWorkflowStore = create<WorkflowState>()(
     {
       name: 'slime-mold-workflow',
       partialize: (s) => ({
-        workflows: s.workflows,
+        // 方案 P：workflows 在内存态是 FlowNode[]，落盘前拍平剥离 React Flow 瞬态字段
+        workflows: Object.fromEntries(
+          Object.entries(s.workflows).map(([k, wf]) => [k, toDisk(wf)]),
+        ),
         activeWfId: s.activeWfId,
         projectName: s.projectName,
         projectId: s.projectId,
@@ -2105,7 +2127,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         projectDirty: s.projectDirty,
         lastSavedSnapshot: s.lastSavedSnapshot,
         workflowName: s.workflowName,
-        nodes: s.nodes,
+        nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
         edges: s.edges,
         agents: s.agents,
         roles: s.roles,
@@ -2122,6 +2144,22 @@ export const useWorkflowStore = create<WorkflowState>()(
         artifacts: s.artifacts,
         agentRouteTable: s.agentRouteTable,
       }),
+      // 恢复持久化状态时，把拍平的 workflows 重新收口为内存态 FlowNode
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<WorkflowState>;
+        const restoredWorkflows = p.workflows
+          ? Object.fromEntries(
+              Object.entries(p.workflows).map(([k, wf]) =>
+                [k, fromDisk(wf as unknown as WorkflowFile)],
+              ),
+            )
+          : current.workflows;
+        return {
+          ...current,
+          ...p,
+          workflows: restoredWorkflows,
+        } as WorkflowState;
+      },
     },
   ),
 );
@@ -2197,7 +2235,7 @@ useWorkflowStore.subscribe((state, prev) => {
       ? { ...a, model: 'qwen2.5:3b' }
       : a,
   );
-  const migratedWorkflows: Record<string, WorkflowFile> = {};
+  const migratedWorkflows: Record<string, WorkflowFileInMemory> = {};
   for (const [id, wf] of Object.entries(st.workflows)) {
     const ma = (wf.agents ?? []).map((a) =>
       a.protocol === 'ollama' && a.model === 'qwen2.5:7b'

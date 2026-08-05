@@ -636,6 +636,16 @@ export interface WorkflowFile {
   runs?: { history: RunRecord[] };
 }
 
+/**
+ * 内存态工作流：节点/边与画布运行态同构（FlowNode/FlowEdge），
+ * 便于所有 store 方法（含非激活工作流）直接读写 data.* 字段。
+ * 落盘时由 toDisk() 拍平回 WorkflowFile（剥离 measured/dragging 等瞬态）。
+ */
+export interface WorkflowFileInMemory extends Omit<WorkflowFile, 'nodes' | 'edges'> {
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
 /* ---------- 子图（可复用节点组合） ---------- */
 
 /** 子图对外暴露的一个端口。

@@ -1027,11 +1027,19 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 >   - 补全跨工作流还原：`flowNodesFrom` 读 `n.bypass/mute`→`data`；`storedNodeOf` 写 `data.bypass/mute`→`WorkflowFileNode`，避免切换工作流时 bypass/mute 状态丢失。
 >   - 验证：`tsc -b` EXIT:0、`read_lints` 0、`npm run headless` 3 成功/1（未绑定智能体，预期）无回归。
 
-### 15.5 阶段二（待用户单独启动）
+### 15.5 阶段二（已完成 A：noUnused 收紧；B：方案 P 尝试中）
 
-- [ ] 开 `noUnusedLocals`/`noUnusedParameters`（true），清由此新增的未用变量/参数（预计再 +20~50 处）。
+- [x] **A. `noUnusedLocals`/`noUnusedParameters` 收紧**（2026-08-05，commit `1ac4531`）：清理 53 处未用 import/变量/参数（25 文件），`tsconfig.app.json` 两 flag 由 false 改 true。
+- [x] **B. 方案 P 初次尝试**（2026-08-05，分支 `refactor/plan-P-workflows-flownode`）：把 `workflowStore.workflows` 内核改为运行态同构 `FlowNode[]`（类型 `WorkflowFileInMemory`）。
+  - **关键约束**：`persist` 直接持久化 `workflows`，React Flow 的 `measured`/`dragging`/`positionAbsolute` 等瞬态字段不能落 localStorage（否则污染 + 拖拽误判脏）。因此磁盘态 `WorkflowFile` 保持拍平，内存态用新类型 `WorkflowFileInMemory`（`nodes: FlowNode[]`），落盘/读盘经统一 `toDisk()`/`fromDisk()`。
+  - **改动面**：
+    - `types.ts`：新增 `WorkflowFileInMemory`（extends Omit<WorkflowFile,'nodes'|'edges'>，节点/边为 FlowNode/FlowEdge）。
+    - `workflowStore.ts`：`workflows: Record<string, WorkflowFileInMemory>`；非 active 的 6 处方法（setNodeLabel/toggleBypass/Mute/align/distribute/updateNodeParams）统一改读 `data.*`（原拍平字段是方案 Q 残留 bug，此处一并根治）；`serializeCurrent` 直接持 FlowNode；`buildProjectFile` 落盘前 `toDisk` 拍平；`registerWorkflow` 入参 `WorkflowFile` 经 `fromDisk`；`openProject`/`switchWorkflow`/`removeWorkflow` 统一 `fromDisk`；persist `partialize` 用 `toDisk` 拍平 + `merge` 恢复时 `fromDisk`；迁移块类型标注更新。
+    - `WorkflowEditor.tsx` / `Inspector.tsx`：拆分视图/属性面板直接复用 `splitWf.nodes`（已是 FlowNode），去掉冗余重映射。
+    - 顺手修复方案 Q 残留 bug：`updateNodeParams` 非 active 分支原本写拍平 `n.params`，实为语义错误，方案 P 下统一为 `n.data.params`。
+  - **验证**：`tsc -b` EXIT:0、`read_lints` 0、`vite build` 出 dist；`npm run headless examples/loop-closure-test.json` 5/5 成功（执行引擎读 FlowNode 链路正常）。
+  - **待用户桌面端 GUI 目视验收**：拆分视图双工作流切换、bypass/mute 跨工作流还原、刷新后 localStorage 恢复无瞬态污染。
 - [ ] `noUncheckedIndexedAccess`/`exactOptionalPropertyTypes` **不开**（存量项目事后开 = 重写一半类型，收益低）。
-- [ ] **方案 P（根治 workflows 类型矛盾）**：`workflowStore.workflows` 节点声明为 `FlowNode[]`（运行态同构），落盘时再拍平。会牵动 `serializeCurrent`/`buildProjectFile`/`loadProject` 等边界 + 约 27 处，工作量大，留待择机处理。当前用方案 Q（拍平字段 + 跨工作流还原）已无运行时隐患。
 
 ### 15.6 git / 基线处理（2026-08-05）
 

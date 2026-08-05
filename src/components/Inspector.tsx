@@ -6,7 +6,7 @@ import { useViewStore } from '../store/viewStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
-import type { ParamDef, FlowNode } from '../types';
+import type { ParamDef } from '../types';
 
 function ParamField({
   def,
@@ -190,16 +190,9 @@ export default function Inspector({ width = 288 }: { width?: number }) {
   const node = useWorkflowStore((s) =>
     s.nodes.find((n) => n.id === s.selectedNodeId),
   );
-  const splitNodeDef = !focusIsActive && selectedId
-    ? workflows[focusWfId]?.nodes?.find((n) => n.id === selectedId)
-    : undefined;
-  const splitNode = splitNodeDef
-    ? ({
-        id: splitNodeDef.id,
-        type: 'base',
-        position: splitNodeDef.position,
-        data: { typeId: splitNodeDef.typeId, label: splitNodeDef.label, params: splitNodeDef.params ?? {} },
-      } as FlowNode)
+  // 方案 P：workflows[focusWfId].nodes 已是运行态 FlowNode，直接复用
+  const splitNode = !focusIsActive && selectedId
+    ? (workflows[focusWfId]?.nodes?.find((n) => n.id === selectedId) ?? null)
     : null;
   const resolvedNode = node ?? splitNode;
   const updateNodeParams = useWorkflowStore((s) => s.updateNodeParams);
