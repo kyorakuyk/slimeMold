@@ -2541,7 +2541,18 @@ export const nodeBuilder: NodeDefinition = {
         const cId = st.registerWorkflow(constructionWf, { activate: false });
         const oId = st.registerWorkflow(opsWf, { activate: false });
         ctx.logger.info(`Builder 已注册工作流：施工=${cId} 物业=${oId}`);
-        // 不抢占当前画布（承建方可能还在跑），仅写入项目；用户从标签页切换查看
+        // 注册后落盘：项目已保存过（有 projectPath）则增量写盘到 .slimemold/workflows/<id>.json；
+        // 否则只留在内存态，提示用户先保存项目（避免 Tauri 下弹出另存为打断自动化）
+        if (st.projectPath) {
+          try {
+            await st.saveProject();
+            ctx.logger.info(`Builder 已将生成的工作流落盘到 ${st.projectPath}/.slimemold/workflows/`);
+          } catch (e) {
+            ctx.logger.warn(`Builder 落盘失败（已保留在内存）：${(e as Error).message}`);
+          }
+        } else {
+          ctx.logger.warn('当前项目尚未保存，生成的工作流仅驻留内存；请先保存项目以落盘到 .slimemold/workflows/');
+        }
       } catch (e) {
         ctx.logger.error(`Builder 注册工作流失败：${(e as Error).message}`);
       }

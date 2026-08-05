@@ -34,6 +34,7 @@ import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
 import { RouteTableEditor } from './RouteTableEditor';
 import { useT } from '../i18n/useT';
+import { SUPPORTED_LANGS, langLabel } from '../i18n';
 
 type SectionId = 'general' | 'agent' | 'model' | 'mcp' | 'flow' | 'routing' | 'apikeys';
 
@@ -135,7 +136,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
 /* ---------------- 通用 ---------------- */
 function GeneralSection() {
   const t = useT('settings');
-  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme } = useViewStore();
+  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme, locale, setLocale } = useViewStore();
   const llmChannel = useWorkflowStore((s) => s.llmChannel);
   const setLlmChannel = useWorkflowStore((s) => s.setLlmChannel);
 
@@ -165,6 +166,23 @@ function GeneralSection() {
               </button>
             ))}
           </div>
+        </div>
+        <div className="mt-2 flex items-center justify-between rounded border border-line px-3 py-2.5">
+          <span>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.language')}</span>
+            <span className="block text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{t('settings.general.languageHint')}</span>
+          </span>
+          <select
+            className="sm-input max-w-[160px]"
+            value={locale}
+            onChange={(e) => setLocale(e.target.value)}
+          >
+            {SUPPORTED_LANGS.map((lng) => (
+              <option key={lng} value={lng}>
+                {langLabel(lng)}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

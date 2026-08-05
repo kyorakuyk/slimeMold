@@ -72,12 +72,16 @@ export interface RoleTemplate {
  * - image：图片段，url 为 data URL（data:image/png;base64,…）或 https 链接 */
 export type ContentPart =
   | { type: 'text'; text: string }
-  | { type: 'image'; url: string; mediaType?: string };
+  | { type: 'image'; url: string; mediaType?: string }
+  /** 助手消息中的工具调用片段（OpenAI 格式：assistant 消息携带） */
+  | { type: 'tool_call'; name: string; args: Record<string, unknown>; id?: string };
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   /** 文本消息为 string；多模态（图生文）消息为内容片段数组 */
   content: string | ContentPart[];
+  /** role='tool' 时必填：对应的 tool_call id（OpenAI 协议回写工具结果用） */
+  tool_call_id?: string;
 }
 
 /* ---------- 节点定义 ---------- */
@@ -186,9 +190,29 @@ export interface TokenUsage {
 }
 
 /** 一次 LLM 调用的统一返回（文本 + 可选用量） */
+/** 工具调用（由 provider 回传，harness 据此驱动多轮 tool_call 循环） */
+export interface ToolCall {
+  /** 工具名（与 ToolRegistry 中注册名一致） */
+  name: string;
+  /** 调用参数（已解析为对象；provider 层负责把模型给出的 JSON string 解析好） */
+  args: Record<string, unknown>;
+  /** 模型原样给出的调用 id（用于回写 tool 结果消息的 tool_call_id） */
+  id?: string;
+}
+
 export interface LLMResponse {
   text: string;
   usage?: TokenUsage;
+  /** 模型请求的工具调用；非空时 harness 进入 tool 执行轮次，否则结束 loop */
+  toolCalls?: ToolCall[];
+}
+
+/** 传给 provider 的工具规格（JSON schema 风格），由 ToolRegistry 提供 */
+export interface LLMToolSpec {
+  name: string;
+  description: string;
+  /** JSON Schema 对象，描述参数 */
+  parameters: Record<string, unknown>;
 }
 
 /** 一条成本记录：可供 Coordinator/Stenographer/Auditor 复用 */

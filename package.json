@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "headless": "tsx scripts/headless-run.ts"
+    "headless": "tsx scripts/headless-run.ts",
+    "i18n:check": "tsx scripts/check-i18n.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

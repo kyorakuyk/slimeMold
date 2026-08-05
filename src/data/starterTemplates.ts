@@ -26,7 +26,13 @@ function node(
   } as FlowNode;
 }
 
-function edge(source: string, sourceHandle: string, target: string, targetHandle: string): FlowEdge {
+function edge(
+  source: string,
+  sourceHandle: string,
+  target: string,
+  targetHandle: string,
+  kind?: 'data' | 'task' | 'control',
+): FlowEdge {
   return {
     id: `e-${source}-${sourceHandle}-${target}-${targetHandle}`,
     source,
@@ -34,6 +40,7 @@ function edge(source: string, sourceHandle: string, target: string, targetHandle
     sourceHandle,
     targetHandle,
     animated: false,
+    data: kind ? { kind } : undefined,
   } as FlowEdge;
 }
 
@@ -228,6 +235,59 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
         edge('langs', 'items', 'gen', 'items'),
         edge('gen', 'results', 'join', 'items'),
         edge('join', 'text', 'out', 'value'),
+      ],
+    }),
+  },
+  {
+    id: 'game-2048-three-party',
+    name: '2048 小游戏（三方协作）',
+    emoji: '🎮',
+    desc: '承建方规划→架构师拆解功能模块→仲裁委员会可回流重派→生成器自动注册「施工方/物业」两张工作流。预置 2048 的 7 个功能模块清单，全程 simulate 离线模式，无需 API Key 即可跑通端口流通，作为开发参照骨架。',
+    build: () => ({
+      nodes: [
+        node('goal', 'input.text', '项目目标(2048)', {
+          text: [
+            '目标：做一个网页版 2048 小游戏（纯前端，HTML+CSS+JS 或框架任选）。',
+            '预置功能模块（承建方据此规划，架构师细化）：',
+            '1. board — 4×4 棋盘状态与数据模型（二维数组、初始化、随机生成 2/4 瓦片）[logic]',
+            '2. slide-merge — 上下左右滑动与相同合并算法（核心；含一次滑动后是否变化的判定）[logic]',
+            '3. render — 网格渲染与瓦片动画/样式 [ui]',
+            '4. input — 键盘方向键 / 触摸滑动输入控制 [ui]',
+            '5. score — 计分与最高分（localStorage 持久化）[data]',
+            '6. win-lose — 胜利(出现 2048)与失败(无可移动)判定 [logic]',
+            '7. index — 入口组装、页面布局与样式、启动流程 [infra]',
+            '说明：以上为开发参照骨架，欠缺的功能与调整后续逐步补充。',
+          ].join('\n'),
+        }, 40, 260),
+        node('plan', 'dispatch.plan', '承建方·规划编排', {
+          agentId: '', roleId: '', modelOverride: '',
+          format: 'tasks', simulate: 'on',
+        }, 360, 240),
+        node('arch', 'architect.design', '承建方·架构师', {
+          agentId: '', roleId: '', modelOverride: '',
+          format: 'modules', simulate: 'on', pipelineStage: 'design',
+        }, 700, 220),
+        node('council', 'coord.council', '物业方·仲裁委员会(回流)', {
+          councillorAgentIds: '', synthesizerAgentId: '',
+          simulate: 'on', pipelineStage: 'design',
+        }, 720, 460),
+        node('builder', 'builder.generate', '承建方·工作流生成器', {
+          autoRegister: 'on',
+          constructionName: '施工方-2048',
+          opsName: '物业-2048',
+        }, 1080, 220),
+        node('handoff', 'pipeline.handoff', '承建方·交付设计书', {
+          stage: 'design', kind: 'design', kindCustom: '', meta: '',
+        }, 1420, 220),
+      ],
+      edges: [
+        edge('goal', 'text', 'plan', 'goal'),
+        edge('goal', 'text', 'arch', 'goal'),
+        edge('plan', 'plan', 'arch', 'constraints'),
+        edge('arch', 'modules', 'builder', 'modules'),
+        edge('arch', 'design', 'council', 'context'),
+        edge('council', 'backflow', 'arch', 'goal', 'control'),
+        edge('arch', 'design', 'handoff', 'payload'),
       ],
     }),
   },

@@ -23,6 +23,8 @@
   <string name="settings.general.appearance">外观</string>
   <string name="settings.general.colorTheme">颜色主题</string>
   <string name="settings.general.themeHint">切换后即时生效并持久化保存</string>
+  <string name="settings.general.language">界面语言</string>
+  <string name="settings.general.languageHint">切换后即时生效并随账户持久化</string>
   <string name="settings.theme.dark">暗色</string>
   <string name="settings.theme.light">亮色</string>
   <string name="settings.theme.system">跟随系统</string>

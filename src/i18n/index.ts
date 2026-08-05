@@ -40,11 +40,34 @@ function buildResources(): Record<string, Record<string, Record<string, string>>
 const resources = buildResources();
 const fallbackLng = 'zh-CN';
 
+// 自动从已加载的 locale 目录推导支持的语言（新增语言只需在 src/i18n/locales/<lang>/ 下放 XML，无需改此文件）
+export const SUPPORTED_LANGS: string[] = Object.keys(resources).sort((a, b) => {
+  if (a === fallbackLng) return -1;
+  if (b === fallbackLng) return 1;
+  return a.localeCompare(b);
+});
+
+// 语言下拉的显示名（优先此处，未知语言回退到语言代码本身，保证新增语言立即可选）
+const LANG_LABELS: Record<string, string> = {
+  'zh-CN': '简体中文',
+  'en-US': 'English',
+  'zh-TW': '繁體中文',
+  'ja-JP': '日本語',
+  'ko-KR': '한국어',
+  'fr-FR': 'Français',
+  'de-DE': 'Deutsch',
+  'es-ES': 'Español',
+  'ru-RU': 'Русский',
+};
+export function langLabel(lang: string): string {
+  return LANG_LABELS[lang] ?? lang;
+}
+
 i18n.use(initReactI18next).init({
   resources,
   fallbackLng,
-  // 初始语言：持久化的 locale（viewStore 会调用 changeLanguage）；无则从浏览器取
-  lng: (typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en-US' : fallbackLng),
+  // 初始语言：持久化的 locale（viewStore 会调用 changeLanguage）；无则从浏览器取，再回退到 fallbackLng
+  lng: fallbackLng,
   interpolation: { escapeValue: false },
   returnNull: false,
 });

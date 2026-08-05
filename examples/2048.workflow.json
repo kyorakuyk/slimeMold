@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "name": "示例-2048三方协作(承建→施工→物业)",
+  "savedAt": "2026-08-06T00:00:00.000Z",
+  "description": "2048 小游戏开发参照骨架：承建方(规划→架构→生成器)产出设计书并自动注册「施工方/物业」两张工作流；物业方经 coord.council 的 control 回流可重派架构。goal 节点预置 2048 的 7 个功能模块清单(board/slide-merge/render/input/score/win-lose/index)，作为开发参照。所有 AI 节点 simulate(离线)模式，无需 API Key 即可跑通端口流通。Builder 会自动把双工作流注册进项目（标签页可见可改）。",
+  "nodes": [
+    {
+      "id": "goal",
+      "typeId": "input.text",
+      "label": "项目目标(2048)",
+      "position": { "x": 40, "y": 260 },
+      "params": {
+        "text": "目标：做一个网页版 2048 小游戏（纯前端，HTML+CSS+JS 或框架任选）。\n预置功能模块（承建方据此规划，架构师细化）：\n1. board — 4×4 棋盘状态与数据模型（二维数组、初始化、随机生成 2/4 瓦片）[logic]\n2. slide-merge — 上下左右滑动与相同合并算法（核心；含一次滑动后是否变化的判定）[logic]\n3. render — 网格渲染与瓦片动画/样式 [ui]\n4. input — 键盘方向键 / 触摸滑动输入控制 [ui]\n5. score — 计分与最高分（localStorage 持久化）[data]\n6. win-lose — 胜利(出现 2048)与失败(无可移动)判定 [logic]\n7. index — 入口组装、页面布局与样式、启动流程 [infra]\n说明：以上为开发参照骨架，欠缺的功能与调整后续逐步补充。"
+      }
+    },
+    {
+      "id": "plan",
+      "typeId": "dispatch.plan",
+      "label": "承建方·规划编排",
+      "position": { "x": 360, "y": 240 },
+      "params": { "agentId": "", "roleId": "", "modelOverride": "", "format": "tasks", "simulate": "on" }
+    },
+    {
+      "id": "arch",
+      "typeId": "architect.design",
+      "label": "承建方·架构师",
+      "position": { "x": 700, "y": 220 },
+      "params": { "agentId": "", "roleId": "", "modelOverride": "", "format": "modules", "simulate": "on", "pipelineStage": "design" }
+    },
+    {
+      "id": "council",
+      "typeId": "coord.council",
+      "label": "物业方·仲裁委员会(回流)",
+      "position": { "x": 720, "y": 460 },
+      "params": { "councillorAgentIds": "", "synthesizerAgentId": "", "simulate": "on", "pipelineStage": "design" }
+    },
+    {
+      "id": "builder",
+      "typeId": "builder.generate",
+      "label": "承建方·工作流生成器",
+      "position": { "x": 1080, "y": 220 },
+      "params": { "autoRegister": "on", "constructionName": "施工方-2048", "opsName": "物业-2048" }
+    },
+    {
+      "id": "handoff",
+      "typeId": "pipeline.handoff",
+      "label": "承建方·交付设计书",
+      "position": { "x": 1420, "y": 220 },
+      "params": { "stage": "design", "kind": "design", "kindCustom": "", "meta": "" }
+    }
+  ],
+  "edges": [
+    { "id": "e-goal-text-plan-goal", "source": "goal", "sourceHandle": "text", "target": "plan", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-goal-text-arch-goal", "source": "goal", "sourceHandle": "text", "target": "arch", "targetHandle": "goal", "data": { "kind": "data" } },
+    { "id": "e-plan-plan-arch-constraints", "source": "plan", "sourceHandle": "plan", "target": "arch", "targetHandle": "constraints", "data": { "kind": "data" } },
+    { "id": "e-arch-modules-builder-modules", "source": "arch", "sourceHandle": "modules", "target": "builder", "targetHandle": "modules", "data": { "kind": "data" } },
+    { "id": "e-arch-design-council-context", "source": "arch", "sourceHandle": "design", "target": "council", "targetHandle": "context", "data": { "kind": "data" } },
+    { "id": "e-council-backflow-arch-goal", "source": "council", "sourceHandle": "backflow", "target": "arch", "targetHandle": "goal", "data": { "kind": "control" } },
+    { "id": "e-arch-design-handoff-payload", "source": "arch", "sourceHandle": "design", "target": "handoff", "targetHandle": "payload", "data": { "kind": "data" } }
+  ],
+  "agents": []
+}

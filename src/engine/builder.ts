@@ -75,6 +75,7 @@ export function buildConstructionWorkflow(args: {
   wfEdges.push(edge(input.id, 'text', split.id, 'tasks'));
 
   const workers: WorkflowFileNode[] = [];
+  const SPLIT_TASK_PORTS = ['task1', 'task2', 'task3', 'task4'];
   modules.forEach((m, i) => {
     const agentId = resolveAgentForCategory(m.category, routeTable, fallbackAgentId);
     const w = node(
@@ -89,17 +90,23 @@ export function buildConstructionWorkflow(args: {
     );
     wfNodes.push(w);
     workers.push(w);
-    wfEdges.push(edge(split.id, 'task', w.id, 'task', 'task', m.scope));
+    // dispatch.split 输出端口为 task1~task4；超出 4 个的模块并入 rest 端口（list，下游仍可收）
+    const splitPort = i < SPLIT_TASK_PORTS.length ? SPLIT_TASK_PORTS[i] : 'rest';
+    wfEdges.push(edge(split.id, splitPort, w.id, 'plan', 'task', m.scope));
   });
 
   const resolver = node('coord.resolver', '冲突协调者', { x: COL * 3, y: 0 });
   wfNodes.push(resolver);
-  workers.forEach((w) => wfEdges.push(edge(w.id, 'result', resolver.id, 'patch', 'data', w.params.scope as string[])));
+  workers.forEach((w, i) => {
+    // coord.resolver 输入端口为 in1~in4（any 类型，可接 worker 的 code 输出）
+    const resolverPort = `in${(i % 4) + 1}`;
+    wfEdges.push(edge(w.id, 'code', resolver.id, resolverPort, 'data', w.params.scope as string[]));
+  });
 
   const council = node('coord.council', '仲裁委员会', { x: COL * 4, y: ROW });
   wfNodes.push(council);
   wfEdges.push(edge(resolver.id, 'conflicts', council.id, 'dispute', 'control'));
-  wfEdges.push(edge(council.id, 'backflow', resolver.id, 'patch', 'control'));
+  wfEdges.push(edge(council.id, 'backflow', resolver.id, 'in1', 'control'));
 
   const validator = node('worker.validator', '校验工', { x: COL * 4, y: -ROW }, { mode: 'project' });
   wfNodes.push(validator);

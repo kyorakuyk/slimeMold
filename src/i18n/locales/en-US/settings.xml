@@ -23,6 +23,8 @@
   <string name="settings.general.appearance">Appearance</string>
   <string name="settings.general.colorTheme">Color theme</string>
   <string name="settings.general.themeHint">Applies instantly and persists</string>
+  <string name="settings.general.language">Interface language</string>
+  <string name="settings.general.languageHint">Applies instantly and persists with your profile</string>
   <string name="settings.theme.dark">Dark</string>
   <string name="settings.theme.light">Light</string>
   <string name="settings.theme.system">System</string>

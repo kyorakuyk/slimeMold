@@ -113,8 +113,6 @@ export default function TopBar({
   const toggleSplit = useViewStore((s) => s.toggleSplit);
   const debugMode = useViewStore((s) => s.debugMode);
   const toggleDebug = useViewStore((s) => s.toggleDebug);
-  const locale = useViewStore((s) => s.locale);
-  const setLocale = useViewStore((s) => s.setLocale);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const t = useT();
 
@@ -504,15 +502,6 @@ export default function TopBar({
             }
           >
             <PanelRight size={14} />
-          </button>
-          {/* 语言切换：中 / EN */}
-          <button
-            className="flex h-6 min-w-[28px] items-center justify-center rounded px-1 text-[11px] font-medium transition-colors hover:bg-black/10"
-            title="Language / 语言"
-            onClick={() => setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}
-            style={{ color: 'var(--sm-ink-faint)' }}
-          >
-            {locale === 'zh-CN' ? 'EN' : '中'}
           </button>
         </div>
       </div>

@@ -93,18 +93,20 @@ const providers: Record<
 };
 
 /** 多协议路由：按 agent.protocol 分发到对应 provider。
- * 传入 onToken 回调即启用流式输出（逐 token 回传）。 */
+ * 传入 onToken 回调即启用流式输出（逐 token 回传）。
+ * tools 非空时启用 tool_call 能力（AgentHarness 驱动多轮循环）。 */
 export async function chatWithAgent(
   agent: AgentConfig,
   messages: ChatMessage[],
   signal: AbortSignal,
   onToken?: (text: string) => void,
+  tools?: LLMToolSpec[],
 ): Promise<LLMResponse> {
   const provider = providers[agent.protocol];
   if (!provider) {
     throw new Error(`未知协议: ${agent.protocol}`);
   }
-  return provider(agent, messages, signal, onToken);
+  return provider(agent, messages, signal, onToken, tools);
 }
 
 export const protocolDefaults: Record<
