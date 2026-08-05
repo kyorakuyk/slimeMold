@@ -14,6 +14,7 @@ import { topoStages } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { getChannel } from '../agents/llmChannel';
+import { runAgentLoop } from '../agents/harness';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { flattenSubgraphs, ownerRefId } from './subgraph';
@@ -1178,7 +1179,7 @@ async function executeNode(
       error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
       warn: (m) => store.addLog('warn', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages, onToken, modelOverride) => {
+    llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
       const agent = useWorkflowStore
         .getState()
         .agents.find((a) => a.id === agentId);
@@ -1186,12 +1187,48 @@ async function executeNode(
       const effective = modelOverride
         ? { ...agent, model: modelOverride }
         : agent;
-      const channel = getChannel(useWorkflowStore.getState().llmChannel);
-      // 并发限流 + 限流重试（指数退避），仅对 LLM 调用生效
+      // 并发限流：包裹整个 LLM 调用（含 harness 的 tool_call 多轮）
       const release = await limiter.acquire(signal);
-  const callStart = performance.now();
-  let errMsg: string | undefined;
+      const callStart = performance.now();
+      const recordCost = (usage: CostRecord['usage'], ok: boolean, errMsg?: string) => {
+        trackCost({
+          nodeId: id,
+          nodeLabel: node.data.label,
+          agentId,
+          model: effective.model,
+          usage,
+          durationMs: Math.round(performance.now() - callStart),
+          at: new Date().toISOString(),
+          ok,
+          error: errMsg,
+        });
+      };
       try {
+        // —— 工具多轮：走 AgentHarness（tool_call 循环由 harness 内部驱动）——
+        if (toolNames && toolNames.length) {
+          // 拆分 system（首条）与其余消息
+          const sys = messages.find((m) => m.role === 'system');
+          const userMsgs = messages.filter((m) => m.role !== 'system');
+          const result = await runAgentLoop({
+            agent: effective,
+            userMessages: userMsgs,
+            systemParts: sys ? { role: sys.content as string } : undefined,
+            toolNames,
+            signal,
+            modelOverride: modelOverride || undefined,
+            events: {
+              onOutput: (text, done) => {
+                if (!done && onToken) onToken(text);
+              },
+              onLog: (lv, m) => store.addLog(lv, m),
+            },
+            toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
+          });
+          recordCost(undefined, true);
+          return result.text;
+        }
+        // —— 普通调用：保持原 channel.chat 行为（限流 + 重试 + 遥测）——
+        const channel = getChannel(useWorkflowStore.getState().llmChannel);
         const resp = await withRetry(
           () =>
             channel.chat({
@@ -1211,32 +1248,11 @@ async function executeNode(
               ),
           },
         );
-        // 成本遥测：记录本次调用的 token 用量与耗时
-        const rec: CostRecord = {
-          nodeId: id,
-          nodeLabel: node.data.label,
-          agentId,
-          model: effective.model,
-          usage: resp.usage,
-          durationMs: Math.round(performance.now() - callStart),
-          at: new Date().toISOString(),
-          ok: true,
-        };
-        trackCost(rec);
+        recordCost(resp.usage, true);
         return resp.text;
       } catch (err) {
-        errMsg = err instanceof Error ? err.message : String(err);
-        const rec: CostRecord = {
-          nodeId: id,
-          nodeLabel: node.data.label,
-          agentId,
-          model: effective.model,
-          durationMs: Math.round(performance.now() - callStart),
-          at: new Date().toISOString(),
-          ok: false,
-          error: errMsg,
-        };
-        trackCost(rec);
+        const em = err instanceof Error ? err.message : String(err);
+        recordCost(undefined, false, em);
         throw err;
       } finally {
         release();

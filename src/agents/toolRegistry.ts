@@ -25,6 +25,13 @@ export interface ToolContext {
   workspaceDir?: string;
 }
 
+/**
+ * 注意：为避免循环依赖（builtin.ts → harness.ts → toolRegistry.ts），
+ * 内置工具的注册不在此处 import，而由 builtin.ts 在其末尾调用
+ * toolRegistry.register(builtinTools) 完成。本文件只定义工具字典 API，
+ * 不反向依赖任何节点模块。
+ */
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -80,15 +87,9 @@ export const toolRegistry = {
 };
 
 /* ------------------------------------------------------------------ */
-/* 内置工具：委托现有 tool.* 节点的 execute，避免逻辑重复。               */
-/* builtinTools 把节点定义对象的 execute 包装为 ToolDefinition，并补上     */
-/* parameters（JSON Schema）。节点层仍是图上可见单元；工具是 LLM 可调用   */
-/* 的能力原语，二者共用同一 ctx 契约。                                    */
+/* 内置工具注册见 builtin.ts 末尾：toolRegistry.register(builtinTools)。  */
+/* 此处不 import builtinTools，以避免 builtin → harness → toolRegistry   */
+/* → builtin 的循环依赖。                                                */
 /* ------------------------------------------------------------------ */
-
-import { builtinTools } from '../nodes/builtinTools';
-
-// 启动时注册内置工具
-toolRegistry.register(builtinTools);
 
 export type { ToolRegistryState };

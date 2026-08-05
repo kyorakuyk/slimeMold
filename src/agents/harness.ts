@@ -16,6 +16,7 @@ import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, NodeContext } fro
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';
+import type { ExperienceSink } from './experienceSink';
 
 /* ----------------------------- 错误边界（#5） ----------------------------- */
 
@@ -59,6 +60,8 @@ export interface HarnessEvents {
   onOutput?: (text: string, done: boolean) => void;
   /** 日志（供 StatusBar / 文件日志） */
   onLog?: (level: 'info' | 'warn' | 'error', msg: string) => void;
+  /** nudge：连续多轮未产生沉淀（无工具调用 / 未达成有效输出）时提示复盘（#6） */
+  onNudge?: (info: { rounds: number; reason: string }) => void;
 }
 
 /* ----------------------------- loop 配置 ----------------------------- */
@@ -88,6 +91,8 @@ export interface HarnessOptions {
   signal?: AbortSignal;
   /** 工具执行所需的精简上下文（sandbox / workspaceDir 等） */
   toolCtx?: Partial<ToolContext>;
+  /** 轨迹采集器（#9）：传入即自动收集本轮 harness 事件，供 RunHistory / reviewer 使用 */
+  sink?: ExperienceSink;
 }
 
 export interface HarnessResult {
@@ -137,9 +142,21 @@ export async function runAgentLoop(opts: HarnessOptions): Promise<HarnessResult>
     modelOverride,
   } = opts;
 
-  const events = opts.events ?? {};
+  let events: HarnessEvents = opts.events ?? {};
   const signal = opts.signal ?? new AbortController().signal;
   const log = (lv: 'info' | 'warn' | 'error', m: string) => events.onLog?.(lv, m);
+  // 桥接轨迹采集器：sink 的事件与用户 events 叠加（#9）
+  if (opts.sink) {
+    const se = opts.sink.events();
+    const o = events;
+    events = {
+      onThinking: (i) => { se.onThinking?.(i); o.onThinking?.(i); },
+      onToolCall: (i) => { se.onToolCall?.(i); o.onToolCall?.(i); },
+      onOutput: (t, d) => { se.onOutput?.(t, d); o.onOutput?.(t, d); },
+      onLog: (l, m) => { se.onLog?.(l, m); o.onLog?.(l, m); },
+      onNudge: (i) => { se.onNudge?.(i); o.onNudge?.(i); },
+    };
+  }
 
   // 1) 拼装 system
   const tools: LLMToolSpec[] = toolRegistry.toSpecs(toolNames);
@@ -225,6 +242,12 @@ export async function runAgentLoop(opts: HarnessOptions): Promise<HarnessResult>
     log('warn', `达到最大轮次 ${maxRounds}，强制结束（可能存在未完成的工具链）`);
   }
 
+  // nudge 计数器（#6）：连续多轮未产生沉淀（无工具调用且最终输出为空）则提示复盘
+  const NUDGE_ROUNDS = 4;
+  if (rounds >= NUDGE_ROUNDS && usedTools.length === 0 && !finalText.trim()) {
+    events.onNudge?.({ rounds, reason: '连续多轮无工具调用且无有效输出，建议复盘/注入上下文' });
+  }
+
   return { text: finalText, messages, rounds, usedTools };
 }
 
@@ -281,15 +304,24 @@ const memStorage = {
 export function buildHarnessOptions(args: {
   ctx: NodeContext;
   agent: AgentConfig;
-  prompt: string;
+  /** 用户文本提示词（与 userContent 二选一，userContent 优先用于多模态） */
+  prompt?: string;
+  /** 多模态用户消息内容（图文混合）；传此字段则覆盖 prompt */
+  userContent?: string | ContentPart[];
   systemParts?: SystemPromptParts;
   toolNames?: string[];
   modelOverride?: string;
 }): HarnessOptions {
-  const { ctx, agent, prompt, systemParts, toolNames, modelOverride } = args;
+  const { ctx, agent, prompt, userContent, systemParts, toolNames, modelOverride } = args;
+  const userMessages: ChatMessage[] = [
+    {
+      role: 'user',
+      content: userContent !== undefined ? userContent : (prompt ?? ''),
+    },
+  ];
   return {
     agent,
-    userMessages: [{ role: 'user', content: prompt }],
+    userMessages,
     systemParts,
     toolNames,
     modelOverride,

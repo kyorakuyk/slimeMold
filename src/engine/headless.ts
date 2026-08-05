@@ -3,6 +3,7 @@
 import type { ExecContext, FlowEdge, FlowNode } from '../types';
 import { topoStages } from './topoSort';
 import { getChannel } from '../agents/llmChannel';
+import { runAgentLoop } from '../agents/harness';
 import { scopedStorage } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import {
@@ -187,7 +188,7 @@ export async function runWorkflowHeadless(
         const ctx: ExecContext = {
           signal,
           logger: noopLogger,
-          llm: async (agentId, messages, onToken, modelOverride) => {
+          llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
             const agent =
               agents.find((a) => a.id === agentId) ?? {
                 id: agentId || 'default',
@@ -198,6 +199,21 @@ export async function runWorkflowHeadless(
             const effective = modelOverride ? { ...agent, model: modelOverride } : agent;
             const release = await limiter.acquire();
             try {
+              // 工具多轮：headless 下也走 AgentHarness
+              if (toolNames && toolNames.length) {
+                const sys = messages.find((m) => m.role === 'system');
+                const userMsgs = messages.filter((m) => m.role !== 'system');
+                const result = await runAgentLoop({
+                  agent: effective as any,
+                  userMessages: userMsgs,
+                  systemParts: sys ? { role: sys.content as string } : undefined,
+                  toolNames,
+                  signal,
+                  modelOverride: modelOverride || undefined,
+                  toolCtx: { logger: noopLogger as any, storage: scopedStorage('core') },
+                });
+                return result.text;
+              }
               const resp = await withRetry(
                 () =>
                   channel.chat({

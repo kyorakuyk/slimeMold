@@ -9,6 +9,8 @@ import { findRole, resolveRoleSystem } from '../agents/agentManager';
 import { creativeNodes } from './creative';
 import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../engine/pipeline';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
+import { toolRegistry } from '../agents/toolRegistry';
+import { builtinTools } from './builtinTools';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
 function inferAssetKind(filename: string): string {
@@ -163,6 +165,13 @@ const agentChat: NodeDefinition = {
         { value: 'on', label: '开启（离线回显）' },
       ],
     },
+    {
+      key: 'toolNames',
+      label: '可用工具（按名引用 ToolRegistry）',
+      type: 'text',
+      default: '',
+      placeholder: '逗号分隔，如 tool.writeFile,tool.http；留空则无工具',
+    },
   ],
   async execute(inputs, params, ctx) {
     const agentId = String(params.agentId ?? '');
@@ -219,40 +228,55 @@ const agentChat: NodeDefinition = {
 
     // —— 真实调用 ——
     if (!agentId) throw new Error('未绑定智能体，请在右侧面板选择（或开启离线模拟模式）');
-    const messages: ChatMessage[] = [];
-    if (system) messages.push({ role: 'system' as const, content: system });
+    const agent = useWorkflowStore
+      .getState()
+      .agents.find((a) => a.id === agentId);
+    if (!agent) throw new Error(`找不到智能体 ${agentId}（可能已被删除）`);
 
     // 多模态：若接入了图片（data URL 或 https 链接），构造图生文 user 消息
     const image = inputs.image != null ? String(inputs.image) : '';
-    if (image) {
-      const parts: ContentPart[] = [{ type: 'text', text: prompt || '请描述这张图片' }];
-      const isDataUrl = image.startsWith('data:');
-      const mediaType = isDataUrl
-        ? image.slice(5, image.indexOf(';')) || 'image/png'
-        : undefined;
-      parts.push({ type: 'image', url: image, mediaType });
-      messages.push({ role: 'user' as const, content: parts });
-    } else {
-      messages.push({ role: 'user' as const, content: prompt });
-    }
+    const userContent: string | ContentPart[] = image
+      ? (() => {
+          const parts: ContentPart[] = [{ type: 'text', text: prompt || '请描述这张图片' }];
+          const isDataUrl = image.startsWith('data:');
+          const mediaType = isDataUrl
+            ? image.slice(5, image.indexOf(';')) || 'image/png'
+            : undefined;
+          parts.push({ type: 'image', url: image, mediaType });
+          return parts;
+        })()
+      : prompt;
+
+    // 解析工具名列表（按名引用 ToolRegistry）
+    const toolNames = String(params.toolNames ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     ctx.logger.info(
-      `智能体请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''}${isolated ? ' 上下文隔离' : ''} prompt ${prompt.length} 字`,
+      `智能体请求${role ? ` 角色=${role.name}` : ''}${modelOverride ? ` 模型=${modelOverride}` : ''}${isolated ? ' 上下文隔离' : ''} prompt ${prompt.length} 字${toolNames.length ? ` 工具=${toolNames.join(',')}` : ''}`,
     );
 
-    let acc = '';
-    const text = await ctx.llm(
-      agentId,
-      messages,
-      (delta) => {
-        acc += delta;
-        ctx.setPartial('text', acc);
-      },
-      modelOverride || undefined,
-    );
-    // 文件名由 Worker 本体自行推断：缺省时从提示词与内容猜测类型与文件名
-    const filename = inferFilename({ hint: prompt, content: text });
-    return { text, filename };
+    try {
+      // 统一走 ExecContext.llm（底层由 AgentHarness 承载 tool_call 多轮，复用 executor 限流/遥测）
+      const messages: ChatMessage[] = [];
+      if (system) messages.push({ role: 'system', content: system });
+      messages.push({ role: 'user', content: userContent });
+      const text = await ctx.llm(
+        agentId,
+        messages,
+        (delta) => ctx.setPartial('text', delta),
+        modelOverride || undefined,
+        toolNames.length ? toolNames : undefined,
+      );
+      // 文件名由 Worker 本体自行推断：缺省时从提示词与内容猜测类型与文件名
+      const filename = inferFilename({ hint: prompt, content: text });
+      return { text, filename };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ctx.logger.error(`agent.chat 调用失败：${msg}`);
+      return { text: `⚠️ 调用失败：${msg}`, filename: inferFilename({ hint: prompt, content: '' }) };
+    }
   },
 };
 
@@ -2709,4 +2733,7 @@ export const builtinDefs: NodeDefinition[] = [
 
 export function registerBuiltins(): void {
   useRegistryStore.getState().register(builtinDefs);
+  // 内置工具（writeFile/http）下沉为 ToolRegistry 一等公民，供 AgentHarness 按名调用
+  // 必须在 builtinDefs 就绪后注册（builtinTools 复用节点 execute）
+  toolRegistry.register(builtinTools);
 }

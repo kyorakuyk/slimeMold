@@ -344,12 +344,14 @@ export interface ExecContext {
   logger: ExecLogger;
   /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
    * 传入 onToken 回调即启用流式输出（逐 token 回传）。
-   * modelOverride 可用于节点级模型覆写（仅本次调用生效）。 */
+   * modelOverride 可用于节点级模型覆写（仅本次调用生效）。
+   * toolNames 传入则由底层 AgentHarness 启用 tool_call 多轮循环（按名引用 ToolRegistry）。 */
   llm(
     agentId: string,
     messages: ChatMessage[],
     onToken?: (text: string) => void,
     modelOverride?: string,
+    toolNames?: string[],
   ): Promise<string>;
   /** 成本遥测：每次 LLM 调用后由引擎回调，记录 token 用量与耗时。
    * Auditor 节点借此汇总全链路成本。 */
