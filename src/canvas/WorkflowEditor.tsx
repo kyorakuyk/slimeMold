@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   BackgroundVariant,
   Panel,
@@ -53,7 +54,27 @@ const CAT_COLORS: Record<string, string> = {
 
 export const DND_MIME = 'application/x-slime-node';
 
-export default function WorkflowEditor({
+/**
+ * 画布外壳：决定该实例使用哪个 ReactFlowProvider。
+ *
+ * 背景：ReactFlowProvider 内部维护单一 store（节点尺寸测量、视口 transform、选中态等）。
+ * 拆分视图会同时挂载两个 WorkflowEditor，若共用 App 层那一个 Provider，两个 ReactFlow
+ * 实例会互相覆写彼此的内部状态，表现为「左右两栏显示同一张图」。
+ *
+ * 取舍：主画布（无 wfId）**继续复用 App 层 Provider**，这样 TopBar 的缩放/适配窗口、
+ * NodePalette 的拖入坐标换算、GroupsPanel 的聚焦等外部面板的 useReactFlow() 仍作用于它；
+ * 分栏画布（有 wfId）套一层自己的 Provider 与主画布隔离。
+ */
+export default function WorkflowEditor(props: { wfId?: string; onNewProject?: () => void }) {
+  if (!props.wfId) return <WorkflowEditorInner {...props} />;
+  return (
+    <ReactFlowProvider>
+      <WorkflowEditorInner {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function WorkflowEditorInner({
   wfId,
   onNewProject,
 }: {
@@ -77,12 +98,33 @@ export default function WorkflowEditor({
   // 分栏工作流：以本地状态维护其图，编辑时写回 workflows 字典
   const [splitNodes, setSplitNodes] = useState<FlowNode[]>([]);
   const [splitEdges, setSplitEdges] = useState<FlowEdge[]>([]);
+  // 记录本组件最近一次写回 store 的图，用于区分「自己写回引发的回流」与「外部真实改动」，
+  // 否则 加载 effect ↔ 写回 effect 会形成无限循环（React Flow 反复 measure 直至 WebView2 崩溃）。
+  const lastPushedRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
+  // 标记「当前 wfId 的图是否已从 store 载入本地状态」。
+  // 未载入前禁止写回：挂载首帧 splitNodes 还是初始空数组，此时写回会把目标工作流清空。
+  const loadedWfIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isSplit || !splitWf) return;
+    if (!isSplit || !splitWf || !wfId) return;
+    const srcNodes = splitWf.nodes ?? [];
+    const srcEdges = splitWf.edges ?? [];
+    // 若来源恰是本组件刚写回去的内容，跳过回填，切断循环
+    const pushed = lastPushedRef.current;
+    if (loadedWfIdRef.current === wfId && pushed && pushed.nodes === srcNodes && pushed.edges === srcEdges) return;
     // 方案 P：splitWf.nodes 已是运行态 FlowNode，直接复用
-    setSplitNodes((splitWf.nodes ?? []).map((n) => ({ ...n, data: { ...n.data, dirty: true } })));
-    setSplitEdges((splitWf.edges ?? []).map((e) => ({ ...e })));
-  }, [isSplit, splitWf]);
+    const loadedNodes = srcNodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } }));
+    const loadedEdges = srcEdges.map((e) => ({ ...e }));
+    // 载入的内容视作「已同步」，避免紧接着的写回 effect 把它当成用户编辑再推一次
+    lastPushedRef.current = { nodes: loadedNodes, edges: loadedEdges };
+    loadedWfIdRef.current = wfId;
+    setSplitNodes(loadedNodes);
+    setSplitEdges(loadedEdges);
+  }, [isSplit, wfId, splitWf]);
+
+  // 切换分栏目标工作流时重置载入标记，防止用旧工作流的本地状态覆盖新目标
+  useEffect(() => {
+    if (loadedWfIdRef.current !== wfId) lastPushedRef.current = null;
+  }, [wfId]);
 
   const groups = useWorkflowStore((s) => s.groups);
   const focusedSubgraphId = useViewStore((s) => s.focusedSubgraphId);
@@ -214,9 +256,18 @@ export default function WorkflowEditor({
     [isSplit, nodes, setSplitEdges],
   );
 
-  // 分栏编辑时，把最新图写回 store
+  // 分栏编辑时，把最新图写回 store。
+  // 两道闸门：
+  // 1) loadedWfIdRef !== wfId —— 尚未从 store 载入，此时 splitNodes 是初始空数组，
+  //    写回会把目标工作流清空（曾导致分栏目标工作流节点全丢）。
+  // 2) 引用与上次写回/载入一致 —— 说明不是用户编辑，跳过以切断
+  //    「加载 effect ↔ 写回 effect」死循环（曾打爆 WebView2）。
   useEffect(() => {
     if (!isSplit || !wfId) return;
+    if (loadedWfIdRef.current !== wfId) return;
+    const pushed = lastPushedRef.current;
+    if (pushed && pushed.nodes === splitNodes && pushed.edges === splitEdges) return;
+    lastPushedRef.current = { nodes: splitNodes, edges: splitEdges };
     updateWorkflowGraph(wfId, splitNodes, splitEdges);
   }, [isSplit, wfId, splitNodes, splitEdges, updateWorkflowGraph]);
 

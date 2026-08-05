@@ -34,6 +34,7 @@ start-hidden.bat
 .devlog_tauri.log
 tauri_dev.local.log
 tauri_dev.log
+tauri_dev.err
 p_backflow*.log
 p_backflow*.err
 ts_test.log

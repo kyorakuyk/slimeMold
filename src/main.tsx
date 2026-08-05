@@ -18,8 +18,29 @@ function showFatal(msg: string) {
   }
   try { document.title = 'SM 错误: ' + msg.slice(0, 80); } catch { /* ignore */ }
 }
-window.addEventListener('error', (e) => showFatal(String(e.error?.stack || e.message || e)));
-window.addEventListener('unhandledrejection', (e) => showFatal('UnhandledRejection: ' + String(e.reason?.stack || e.reason)));
+/**
+ * 良性噪声过滤：ResizeObserver 的 loop 警告不是真错误。
+ * Chromium 在「一帧内布局被反复改动」时会把它当 ErrorEvent 抛到 window，
+ * React Flow（尤其拆分视图两个实例）+ 可拖拽面板必然触发。
+ * 若不过滤，会被 showFatal 当致命错误清空整个 #root，造成假死。
+ */
+function isBenignError(msg: string): boolean {
+  return /ResizeObserver loop (limit exceeded|completed with undelivered notifications)/i.test(msg);
+}
+
+window.addEventListener('error', (e) => {
+  const msg = String(e.error?.stack || e.message || e);
+  if (isBenignError(msg)) {
+    e.stopImmediatePropagation();
+    return;
+  }
+  showFatal(msg);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = String(e.reason?.stack || e.reason);
+  if (isBenignError(msg)) return;
+  showFatal('UnhandledRejection: ' + msg);
+});
 
 // 顶层错误边界：把启动期 / 渲染期的报错显示出来，避免只停在「加载中…」白屏
 class ErrorBoundary extends React.Component<
