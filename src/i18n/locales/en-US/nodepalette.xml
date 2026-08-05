@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="title">Node Library</string>
+  <string name="search.placeholder">Search nodes…</string>
+  <string name="search.empty">No matching nodes</string>
+  <string name="roleFilterHint">Filter nodes by role</string>
+  <string name="mySubgraphs">My Subgraphs</string>
+  <string name="sg.steps">{count} steps · {ins} in / {outs} out</string>
+  <string name="sg.stepsTitle">{count} steps · {ins} in / {outs} out\nDouble-click to rename</string>
+  <string name="sg.rename">Rename this subgraph</string>
+  <string name="sg.delete">Delete this subgraph (placed references on canvas become invalid)</string>
+  <string name="sg.renamePrompt">Rename Subgraph</string>
+  <string name="node.dragHint">Drag onto canvas to add (or double-click to add directly)</string>
+  <string name="node.dragHintWhen">{desc}\n\nWhen to use: {when}\nDrag onto canvas to add (or double-click to add directly)</string>
+  <string name="role.title">Role: {label} ({hint})</string>
+</resources>

@@ -2,9 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/typora.css';
+import i18n from './i18n';
+import { useViewStore } from './store/viewStore';
 
 // 默认深色主题（面向开发者），可通过顶栏按钮切换为浅色
 document.documentElement.setAttribute('data-theme', 'dark');
+
+// 用持久化的 locale 同步 i18n 初始语言（viewStore 的 onRehydrate 也会校正）
+i18n.changeLanguage(useViewStore.getState().locale);
 
 // 全局兜底：把任何同步/异步错误也写到屏幕与窗口标题，避免“卡加载却无任何提示”
 function showFatal(msg: string) {

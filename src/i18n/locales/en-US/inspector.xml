@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="asset.title">Asset · </string>
+  <string name="asset.download">Download / Export</string>
+  <string name="asset.openInExplorer">Open in File Manager</string>
+  <string name="asset.delete">Delete Asset</string>
+  <string name="asset.cannotOpen">Cannot open folder:
+</string>
+  <string name="asset.type">Type: </string>
+  <string name="asset.size">Size: </string>
+  <string name="asset.source">Source: </string>
+  <string name="asset.source.workspace">Workspace file</string>
+  <string name="asset.source.workflow">In-workflow asset</string>
+  <string name="asset.created">Created: </string>
+  <string name="asset.diskPath">Disk Path</string>
+  <string name="asset.preview">Preview</string>
+  <string name="asset.backToNode">Back to Node View</string>
+
+  <string name="empty.hint">Select a node to
+edit its params and view results</string>
+
+  <string name="node.defaultName">Node</string>
+  <string name="node.delete">Delete Node</string>
+  <string name="node.nameLabel">Node Name</string>
+
+  <string name="param.asset.placeholder">— Select Image Asset —</string>
+  <string name="param.asset.localLabel">Local image selected</string>
+  <string name="param.asset.pickTitle">Select Image</string>
+  <string name="param.asset.pickFilter">Image</string>
+  <string name="param.asset.pickBtn">Pick an image file from this device</string>
+  <string name="param.agent.placeholder">— Select Agent —</string>
+  <string name="param.role.placeholder">— No Role —</string>
+  <string name="param.role.builtin">(built-in)</string>
+
+  <string name="sg.stepsCount">Contains {count} steps; will be auto-expanded at runtime.</string>
+  <string name="sg.input">Input</string>
+  <string name="sg.output">Output</string>
+  <string name="sg.unpackTitle">Restore the subgraph's inner nodes onto the canvas</string>
+  <string name="sg.unpackBtn">Unpack into regular nodes</string>
+  <string name="sg.lost">This subgraph's definition is lost. Delete the node or re-pack a subgraph.</string>
+
+  <string name="err.label">Error</string>
+  <string name="output.label">Recent Output</string>
+</resources>

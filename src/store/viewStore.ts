@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
+export type LocaleCode = 'zh-CN' | 'en-US';
+
+import i18n from '../i18n';
 
 /** 读取系统配色偏好（prefers-color-scheme） */
 function systemPrefersDark(): boolean {
@@ -78,6 +81,10 @@ interface ViewState {
   setTheme: (t: ThemeMode) => void;
   /** 当前实际生效的主题（system 时按系统偏好解析为 dark/light） */
   effectiveTheme: () => 'dark' | 'light';
+  /** 界面语言：zh-CN / en-US，持久化，全局跟随 */
+  locale: LocaleCode;
+  /** 切换界面语言（同步 i18n.changeLanguage 并持久化） */
+  setLocale: (l: LocaleCode) => void;
 }
 
 export const useViewStore = create<ViewState>()(
@@ -96,6 +103,11 @@ export const useViewStore = create<ViewState>()(
       inspectAssetId: null,
       debugMode: false,
       globalProxyUrl: '',
+      locale: (typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en-US' : 'zh-CN'),
+      setLocale: (l) => {
+        i18n.changeLanguage(l);
+        set({ locale: l });
+      },
       toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
       toggleMinimap: () => set((s) => ({ showMinimap: !s.showMinimap })),
       setInteractionMode: (mode) => set({ interactionMode: mode }),

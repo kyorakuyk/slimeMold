@@ -20,10 +20,13 @@ const statusMeta: Record<NodeStatus, { label: string; icon: JSX.Element; color: 
  * - 各节点 task 状态汇总（按状态分组计数）
  * 数据来自 workflowStore.runProgress 与 nodes[].data.status。
  */
-export default function JobBoard() {
-  const running = useWorkflowStore((s) => s.running);
-  const runProgress = useWorkflowStore((s) => s.runProgress);
-  const nodes = useWorkflowStore((s) => s.nodes);
+export default function JobBoard({ wfId }: { wfId?: string }) {
+  const s = useWorkflowStore();
+  // 方案 A：按 wfId 隔离运行态；未传则用激活工作流
+  const targetId = wfId ?? s.activeWfId;
+  const running = wfId ? (s.runStates[wfId]?.running ?? false) : s.running;
+  const runProgress = wfId ? (s.runStates[wfId]?.progress ?? s.runProgress) : s.runProgress;
+  const nodes = wfId ? (s.workflows[wfId]?.nodes ?? []) : s.nodes;
 
   if (!running && !runProgress.active) return null;
 

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="tab.terminal">终端</string>
+  <string name="tab.history">历史 ({count})</string>
+  <string name="tab.variables">变量</string>
+
+  <string name="autosave.title">工作流已自动保存到本地，关闭后重新打开会自动恢复</string>
+  <string name="autosave.at">已自动保存 {time}</string>
+  <string name="autosave.done">已自动保存</string>
+
+  <string name="running">执行中…</string>
+  <string name="ready">就绪</string>
+
+  <string name="gen.stale">有「旧运行协程」已过期但仍未退出（卡在某节点），刷新键已生效但协程需等节点返回后退出</string>
+  <string name="gen.normal">运行代次：current=最新代次 active=当前有效运行；二者相等或 active=0 表示无残留协程</string>
+  <string name="gen.staleWarn"> ⚠残留</string>
+
+  <string name="forceReset.title">强制停止并复位运行状态（abort signal + 清 running + 重置所有节点状态）；旧协程将在节点返回后自动静默退出</string>
+  <string name="forceReset.label">强制复位</string>
+
+  <string name="nodes.stat">节点 {total} · 成功 {success} · 失败 {failed}</string>
+
+  <string name="log.clear.title">清空日志</string>
+  <string name="log.clear.label">清空</string>
+  <string name="panel.toggle">折叠/展开面板</string>
+
+  <string name="log.empty">暂无日志，运行工作流后将在此实时显示。</string>
+
+  <string name="history.empty">暂无运行历史。</string>
+  <string name="history.ok">成功</string>
+  <string name="history.fail">失败</string>
+  <string name="history.tokens.title">本次运行总 Token 用量</string>
+
+  <string name="var.empty">暂无全局变量，可在「变量」面板中添加。</string>
+</resources>

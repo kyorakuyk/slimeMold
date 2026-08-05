@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, Terminal, History, Variable, Eraser, Save, Power } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { stopWorkflow } from '../engine/executor';
+import { useT } from '../i18n/useT';
 
 type Tab = 'log' | 'history' | 'vars';
 
@@ -26,6 +27,7 @@ export default function StatusBar({
   const setAutosave = useWorkflowStore((s) => s.setAutosave);
   const [tab, setTab] = useState<Tab>('log');
   const logEndRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   const successCount = nodes.filter((n) => n.data.status === 'success').length;
   const errorCount = nodes.filter((n) => n.data.status === 'error').length;
@@ -61,40 +63,40 @@ export default function StatusBar({
           data-active={tab === 'log'}
           onClick={() => setTab('log')}
         >
-          <Terminal size={12} /> 终端
+          <Terminal size={12} /> {t('tab.terminal')}
         </button>
         <button
           className="sm-panel-tab"
           data-active={tab === 'history'}
           onClick={() => setTab('history')}
         >
-          <History size={12} /> 历史 ({runHistory.length})
+          <History size={12} /> {t('tab.history', { count: runHistory.length })}
         </button>
         <button
           className="sm-panel-tab"
           data-active={tab === 'vars'}
           onClick={() => setTab('vars')}
         >
-          <Variable size={12} /> 变量
+          <Variable size={12} /> {t('tab.variables')}
         </button>
 
         <div className="flex flex-1 items-center justify-end gap-3 px-3 text-[11px]">
           <span
             className="flex items-center gap-1"
             style={{ color: 'var(--sm-ink-faint)' }}
-            title="工作流已自动保存到本地，关闭后重新打开会自动恢复"
+            title={t('autosave.title')}
           >
             <Save size={12} />
             {lastAutosave
-              ? `已自动保存 ${new Date(lastAutosave).toLocaleTimeString()}`
-              : '已自动保存'}
+              ? t('autosave.at', { time: new Date(lastAutosave).toLocaleTimeString() })
+              : t('autosave.done')}
           </span>
           {running ? (
             <span className="flex items-center gap-1.5" style={{ color: 'var(--sm-accent)' }}>
-              <span className="sm-spinner" /> 执行中…
+              <span className="sm-spinner" /> {t('running')}
             </span>
           ) : (
-            <span>就绪</span>
+            <span>{t('ready')}</span>
           )}
           <span
             className="flex items-center gap-1 font-mono"
@@ -106,42 +108,40 @@ export default function StatusBar({
             }}
             title={
               debugRun.current > debugRun.active && debugRun.active !== 0
-                ? '有「旧运行协程」已过期但仍未退出（卡在某节点），刷新键已生效但协程需等节点返回后退出'
-                : '运行代次：current=最新代次 active=当前有效运行；二者相等或 active=0 表示无残留协程'
+                ? t('gen.stale')
+                : t('gen.normal')
             }
           >
             runId {debugRun.current}/{debugRun.active}
-            {debugRun.current > debugRun.active && debugRun.active !== 0 ? ' ⚠残留' : ''}
+            {debugRun.current > debugRun.active && debugRun.active !== 0 ? t('gen.staleWarn') : ''}
           </span>
           {debugRun.current > debugRun.active && debugRun.active !== 0 && (
             <button
               className="flex cursor-pointer items-center gap-0.5 rounded px-1.5 text-[10px] transition-colors hover:bg-red-500/15"
               style={{ color: 'var(--sm-err)' }}
-              title="强制停止并复位运行状态（abort signal + 清 running + 重置所有节点状态）；旧协程将在节点返回后自动静默退出"
+              title={t('forceReset.title')}
               onClick={handleForceReset}
             >
-              <Power size={11} /> 强制复位
+              <Power size={11} /> {t('forceReset.label')}
             </button>
           )}
           <span>
-            节点 {nodes.length} · 成功{' '}
-            <span style={{ color: 'var(--sm-ok)' }}>{successCount}</span> · 失败{' '}
-            <span style={{ color: errorCount > 0 ? 'var(--sm-err)' : undefined }}>{errorCount}</span>
+            {t('nodes.stat', { total: nodes.length, success: successCount, failed: errorCount })}
           </span>
         </div>
         <button
           className="flex cursor-pointer items-center gap-1 px-3 text-[11px] transition-colors hover:text-ink"
           style={{ color: 'var(--sm-ink-faint)' }}
-          title="清空日志"
+          title={t('log.clear.title')}
           onClick={clearLogs}
         >
-          <Eraser size={12} /> 清空
+          <Eraser size={12} /> {t('log.clear.label')}
         </button>
         <button
           className="flex cursor-pointer items-center gap-1 border-l px-3 text-[11px] transition-colors hover:text-ink"
           style={{ color: 'var(--sm-ink-faint)', borderColor: 'var(--sm-line)' }}
           onClick={onToggle}
-          title="折叠/展开面板"
+          title={t('panel.toggle')}
         >
           {open ? <ChevronDown size={13} /> : <ChevronDown size={13} style={{ transform: 'rotate(180deg)' }} />}
         </button>
@@ -152,7 +152,7 @@ export default function StatusBar({
           {tab === 'log' && (
             logs.length === 0 ? (
               <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>
-                暂无日志，运行工作流后将在此实时显示。
+                {t('log.empty')}
               </p>
             ) : (
               <div>
@@ -173,7 +173,7 @@ export default function StatusBar({
           )}
           {tab === 'history' && (
             runHistory.length === 0 ? (
-              <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>暂无运行历史。</p>
+              <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>{t('history.empty')}</p>
             ) : (
               <ul className="space-y-1 text-xs">
                 {runHistory.map((r) => (
@@ -181,10 +181,10 @@ export default function StatusBar({
                     <span style={{ color: 'var(--sm-ink-faint)' }}>{r.startedAt}</span>
                     <span>{r.note}</span>
                     <span style={{ color: r.ok ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
-                      {r.ok ? '成功' : '失败'}
+                      {r.ok ? t('history.ok') : t('history.fail')}
                     </span>
                     {r.cost ? (
-                      <span style={{ color: 'var(--sm-ink-faint)' }} title="本次运行总 Token 用量">
+                      <span style={{ color: 'var(--sm-ink-faint)' }} title={t('history.tokens.title')}>
                         · {r.cost.totalTokens.toLocaleString()} tok
                       </span>
                     ) : null}
@@ -196,7 +196,7 @@ export default function StatusBar({
           {tab === 'vars' && (
             Object.keys(variables).length === 0 ? (
               <p className="text-xs" style={{ color: 'var(--sm-ink-faint)' }}>
-                暂无全局变量，可在「变量」面板中添加。
+                {t('var.empty')}
               </p>
             ) : (
               <ul className="space-y-1 font-mono text-xs">

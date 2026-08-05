@@ -28,30 +28,26 @@ import {
   strike,
 } from './nodeCache';
 
-/** 步骤 11 阶段 C：本次运行实际用到的沙箱根目录集合（workspaceDir 或 appData 内部目录）。
+/** 步骤 11 阶段 C：每次运行实际用到的沙箱根目录集合（按 wfId 隔离，避免左右并行污染）。
  * 惰性填充：节点首次写文件时由沙箱句柄把解析出的真实根登记进来；
- * runWorkflow 结束（含被中止）时统一清理其下 `.sandbox/` 残留。 */
-const sandboxRootsUsed = new Set<string>();
-
-/** 步骤 11 阶段 C：本次运行创建的 Git Worktree 记录（强隔离模式）。
- * 登记后由 cleanupSandbox 一并 `git worktree remove --force` 清理，避免磁盘残留。 */
-const gitWorktrees: Array<{ cwd: string; path: string; branch: string }> = [];
-
-/** 步骤 11 阶段 C：本次运行若启用 gitworktree 且创建成功，则所有节点的沙箱根指向该 worktree。
- * 为 null 表示未启用或降级到 copy 沙箱。runWorkflow 开始时按 sandboxMode 探测写入。 */
-let runWorktree: { cwd: string; path: string; branch: string } | null = null;
+ * 对应 wfId 的运行结束后统一清理其下 `.sandbox/` 残留。 */
+const sandboxRootsUsed = new Map<string, Set<string>>();
+/** 步骤 11 阶段 C：每次运行创建的 Git Worktree 记录（按 wfId 隔离）。 */
+const gitWorktrees = new Map<string, Array<{ cwd: string; path: string; branch: string }>>();
+/** 步骤 11 阶段 C：本次运行若启用 gitworktree 且创建成功，则所有节点的沙箱根指向该 worktree（按 wfId）。 */
+const runWorktree = new Map<string, { cwd: string; path: string; branch: string } | null>();
 
 /**
  * 删除所有已登记沙箱根下的 `.sandbox/` 目录，释放并行 Worker 的临时副本。
  * 同时移除本次运行的 Git Worktree（若有）。Tauri 下用 plugin-fs / git command，
  * 浏览器无残留目录，直接跳过。任何单根删除失败仅告警、不影响其余清理（幂等）。 */
-async function cleanupSandbox(): Promise<void> {
+async function cleanupSandbox(wfId: string): Promise<void> {
   if (!isTauri) return;
-  // 1) 清理 Git Worktree（强隔离产物）
-  if (gitWorktrees.length > 0) {
+  const wts = gitWorktrees.get(wfId) ?? [];
+  if (wts.length > 0) {
     try {
       const { removeWorktree } = await import('../platform/git');
-      for (const wt of gitWorktrees) {
+      for (const wt of wts) {
         try {
           await removeWorktree(wt.cwd, wt.path, wt.branch);
         } catch {
@@ -61,13 +57,13 @@ async function cleanupSandbox(): Promise<void> {
     } catch {
       /* git 封装不可用：跳过 */
     }
-    gitWorktrees.length = 0;
+    gitWorktrees.set(wfId, []);
   }
-  // 2) 清理普通 copy 沙箱残留目录
-  if (sandboxRootsUsed.size === 0) return;
+  const roots = sandboxRootsUsed.get(wfId);
+  if (!roots || roots.size === 0) return;
   try {
     const fs = await import('@tauri-apps/plugin-fs');
-    for (const base of sandboxRootsUsed) {
+    for (const base of roots) {
       const dir = `${base}/.sandbox`;
       try {
         await fs.remove(dir, { recursive: true });
@@ -75,7 +71,7 @@ async function cleanupSandbox(): Promise<void> {
         // 目录不存在或已删：忽略
       }
     }
-    sandboxRootsUsed.clear();
+    roots.clear();
   } catch {
     // 整体清理失败（如插件不可用）：静默放弃，下次运行会重新登记
   }
@@ -178,26 +174,34 @@ export function applyCapability(
   // coordinator / system：全权限，但沙箱模式下仍收口非主工作区资产标记由节点自身决定，这里不干预
 }
 
-let currentAbort: AbortController | null = null;
+/** 每工作流独立的运行代次/中止器（拆分视图左右栏可同时运行互不打断） */
+const runGens = new Map<string, { currentRunId: number; activeRunId: number; abort: AbortController | null }>();
+
+function genFor(wfId: string): { currentRunId: number; activeRunId: number; abort: AbortController | null } {
+  let g = runGens.get(wfId);
+  if (!g) {
+    g = { currentRunId: 0, activeRunId: 0, abort: null };
+    runGens.set(wfId, g);
+  }
+  return g;
+}
+
 /**
  * 运行代次（run generation）：每次启动 runWorkflow 自增并取走当前代次号；
  * stopWorkflow 会自增它，使仍在后台的「旧协程」在下一层边界发现自己已过期，
- * 从而静默退出、不再触碰 store 状态（这是「刷新键失效」的根因：
- * 旧 runWorkflow 卡在某节点 await，resetStatuses 只清了 UI 标志却杀不掉协程，
- * 旧协程恢复后又把 running 复位、与新的运行互相干扰）。
+ * 从而静默退出、不再触碰 store 状态。
  */
-let currentRunId = 0;
-/** 当前真正在跑的代次；等于 currentRunId 表示有运行有效，stopWorkflow 会使二者不等 */
-let activeRunId = 0;
 
 /** 步骤 14：暴露当前运行代次（字符串快照），供节点发布 Artifact 时填写 runId（新鲜度判断）。 */
-export function getActiveRunId(): number {
-  return activeRunId;
+export function getActiveRunId(wfId?: string): number {
+  const id = wfId ?? useWorkflowStore.getState().activeWfId;
+  return genFor(id).activeRunId;
 }
 
 /** 把运行代次同步到 store 供状态栏诊断显示 */
-function syncDebugRun(): void {
-  useWorkflowStore.getState().setDebugRun({ current: currentRunId, active: activeRunId });
+function syncDebugRun(wfId: string): void {
+  const g = genFor(wfId);
+  useWorkflowStore.getState().setDebugRun({ current: g.currentRunId, active: g.activeRunId });
 }
 
 // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
@@ -205,24 +209,24 @@ function syncDebugRun(): void {
 const NODE_RETRIES = 2;
 const NODE_RETRY_BASE_MS = 1500;
 
-export function stopWorkflow(): void {
-  currentRunId += 1; // 让旧协程过期
-  activeRunId = 0; // 当前无有效运行
-  currentAbort?.abort();
-  currentAbort = null;
-  // 直接复位 running，不依赖旧协程退出（旧协程可能卡在无法被 abort 的 await 上）。
-  // 否则 running 永远为 true，启动键会渲染成"停止键"，点它又变成一次空 stop。
-  useWorkflowStore.getState().setRunning(false);
-  useWorkflowStore.getState().setRunProgress({ active: false });
-  syncDebugRun();
+export function stopWorkflow(wfId?: string): void {
+  const id = wfId ?? useWorkflowStore.getState().activeWfId;
+  const g = genFor(id);
+  g.currentRunId += 1; // 让旧协程过期
+  g.abort?.abort();
+  g.abort = null;
+  const wf = useWorkflowStore.getState();
+  wf.setRunning(false, id);
+  wf.resetStatuses(id);
+  wf.addLog('info', `已停止工作流运行：${id}`);
 }
 
 /**
  * 强制重跑：清空缓存后全量重新执行当前工作流。
  * 等价于在运行入口传入 forceRerun，供菜单/快捷键直接调用。
  */
-export async function rerunWorkflow(): Promise<void> {
-  return runWorkflow({ forceRerun: true });
+export async function rerunWorkflow(wfId?: string): Promise<void> {
+  return runWorkflow({ forceRerun: true, wfId });
 }
 
 /**
@@ -254,6 +258,8 @@ export function collectInputs(
 }
 
 export interface RunOptions {
+  /** 目标工作流 id（拆分视图可独立运行；缺省取当前激活工作流） */
+  wfId?: string;
   /** 增量模式：只执行脏节点及其下游（非脏节点复用已有/缓存结果） */
   incremental?: boolean;
   /** 强制重算的节点集合（重跑单节点时使用），会清除其缓存 */
@@ -307,14 +313,13 @@ export interface RunOptions {
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
+  const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
+  const gen = genFor(wfId);
   // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
   // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
-  // 注意：currentRunId/activeRunId 是模块级变量，HMR 热更新会将其归零；若此时
-  // running 残留为 true（旧协程未复位），会误判为「有效运行」而静默拦截导致
-  // 「点运行无反应也无日志」。这里在拦截时给出可见日志，便于排查；并允许 force
-  // 强制重启（Play 按钮在检测到卡死时透传），避免永久卡死。
-  if (wf.running && activeRunId === currentRunId) {
+  const running = wf.runStates[wfId]?.running ?? false;
+  if (running && gen.activeRunId === gen.currentRunId) {
     if (opts.force) {
       wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
     } else {
@@ -322,26 +327,27 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       return;
     }
   }
-  const myRun = ++currentRunId; // 本次运行代次
-  activeRunId = myRun;
-  syncDebugRun();
+  const myRun = ++gen.currentRunId; // 本次运行代次
+  gen.activeRunId = myRun;
+  syncDebugRun(wfId);
   // 步骤 11 阶段 C：每次运行开始清空上次登记的沙箱根，避免跨运行累积误删
   if (opts.sandbox) {
-    sandboxRootsUsed.clear();
-    gitWorktrees.length = 0;
-    runWorktree = null;
+    sandboxRootsUsed.set(wfId, new Set());
+    gitWorktrees.set(wfId, []);
+    runWorktree.set(wfId, null);
     // Git Worktree 真隔离探测：仅 Tauri + workspaceDir 已知 + 显式请求 gitworktree 时尝试
     const runWorkspaceDir = wf.workspaceDir ?? null;
     if (opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir) {
       try {
         const { isGitRepo, addWorktree } = await import('../platform/git');
         if (await isGitRepo(runWorkspaceDir)) {
-          const branch = `slime-sandbox-${myRun}-${Date.now().toString(36)}`;
+          const branch = `slime-sandbox-${wfId}-${myRun}-${Date.now().toString(36)}`;
           const wtPath = `${runWorkspaceDir}/.slime-wt/${branch}`;
           const created = await addWorktree(runWorkspaceDir, wtPath, branch);
           if (created) {
-            runWorktree = { cwd: runWorkspaceDir, path: wtPath, branch };
-            gitWorktrees.push(runWorktree);
+            const wt = { cwd: runWorkspaceDir, path: wtPath, branch };
+            runWorktree.set(wfId, wt);
+            gitWorktrees.set(wfId, [wt]);
             wf.addLog('info', `已创建 Git Worktree 强隔离沙箱：${wtPath}`);
           } else {
             wf.addLog('warn', 'Git Worktree 创建失败，降级为 copy 沙箱');
@@ -355,7 +361,10 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     }
   }
   const { failFast } = wf;
-  if (wf.nodes.length === 0) {
+  // 方案 A：运行态按 wfId 隔离。激活工作流复用 s.nodes/s.edges，非激活取 workflows[wfId]
+  const graphNodes = wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId]?.nodes ?? []);
+  const graphEdges = wfId === wf.activeWfId ? wf.edges : (wf.workflows[wfId]?.edges ?? []);
+  if (graphNodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
     return;
   }
@@ -365,14 +374,14 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   let nodes: FlowNode[];
   let edges: FlowEdge[];
   try {
-    const flat = flattenSubgraphs(wf.nodes, wf.edges, wf.subgraphs);
+    const flat = flattenSubgraphs(graphNodes, graphEdges, wf.subgraphs);
     nodes = flat.nodes;
     edges = flat.edges;
   } catch (err) {
     wf.addLog('error', err instanceof Error ? err.message : String(err));
     return;
   }
-  const expandedCount = nodes.length - wf.nodes.length;
+  const expandedCount = nodes.length - graphNodes.length;
   if (expandedCount > 0) {
     wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
   }
@@ -394,7 +403,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       .map((id) => nodes.find((n) => n.id === id)?.data.label ?? id)
       .join('、');
     for (const id of cyclic) {
-      wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' });
+      wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' }, wfId);
     }
     wf.addLog('error', `有节点连成了死循环（${labels}），请拆掉其中一条连线后再运行`);
     return;
@@ -416,9 +425,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 增量运行：保留脏标记，仅执行脏节点及其下游
   if (!opts.incremental && !opts.retryFailed) {
     wf.clearDirty();
-    for (const id of force) strike(wf.nodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
   } else {
-    for (const id of force) strike(wf.nodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
   }
   // 未显式 force 的增量运行：以当前 data.dirty 决定执行集
   const dirtySet = new Set(nodes.filter((n) => n.data.dirty).map((n) => n.id));
@@ -461,10 +470,10 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     wf.addLog('info', '已清空节点结果缓存，本轮将全量重新执行（强制重跑）');
   }
 
-  currentAbort = new AbortController();
-  const signal = currentAbort.signal;
-  wf.setRunning(true);
-  wf.resetStatuses();
+  gen.abort = new AbortController();
+  const signal = gen.abort.signal;
+  wf.setRunning(true, wfId);
+  wf.resetStatuses(wfId);
   // 清空运行期成本账本，供 Companion 浮窗实时展示
   useWorkflowStore.getState().resetUsage();
   beginRun();
@@ -529,7 +538,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       }
     }
     for (const layer of stages) {
-      if (signal.aborted || myRun !== currentRunId) break;
+      if (signal.aborted || myRun !== gen.currentRunId) break;
       // 上报调度进度（层索引 / 总层数 / 当前轮次 / 总轮次）
       const progress = {
         layer: stages.indexOf(layer) + 1,
@@ -538,7 +547,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         totalRounds: maxRounds,
       };
       opts.onProgress?.(progress);
-      useWorkflowStore.getState().setRunProgress({ active: true, ...progress });
+      useWorkflowStore.getState().setRunProgress({ active: true, ...progress }, wfId);
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
       // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测。
       // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
@@ -595,7 +604,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         clusters.map((cluster) =>
           (async () => {
             for (const id of cluster) {
-              if (signal.aborted || myRun !== currentRunId) break;
+              if (signal.aborted || myRun !== gen.currentRunId) break;
               await executeNode(
                 id,
                 nodeById,
@@ -621,19 +630,20 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
                 isolatedIds,
                 !!opts.sandbox,
                 opts.sandboxMode,
+                wfId,
               );
             }
           })(),
         ),
       );
       if (failFast && failed.size > 0) {
-        currentAbort.abort();
+        gen.abort?.abort();
         break;
       }
       // failFast=false 且开启「跳过失败继续」：不中断，继续下一 stage
       // （失败节点的下游会在 executeNode 内判定为「跳过失败」而非剪枝）
     }
-    if (signal.aborted || myRun !== currentRunId) break;
+    if (signal.aborted || myRun !== gen.currentRunId) break;
 
     // 判断是否需要继续迭代：任一 loopGate 本轮走了 pass 分支 ⇒ 循环体被激活 ⇒ 继续
     loopContinued = hasLoop && [...loopGateIds].some((gid) => {
@@ -655,7 +665,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
   const skipped = skippedCount();
   // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
-  const pruned = store.nodes.filter((n) => n.data.status === 'skipped').length;
+  const pruned = nodes.filter((n) => n.data.status === 'skipped').length;
   if (signal.aborted && failed.size === 0) {
     store.addLog('info', `已手动停止（用时 ${elapsed}s）`);
   } else if (failed.size > 0) {
@@ -670,7 +680,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   }
 
   // 记录运行历史（持久化到 localStorage）
-  const nodesNow = useWorkflowStore.getState().nodes;
+  const nodesNow = nodes;
   const status: RunRecord['status'] =
     failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
 
@@ -757,14 +767,14 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
 
   // 只有「最新且未被停止」的代次才允许复位 running / 清进度；
   // 过期协程（被 stopWorkflow 抢占）静默退出，绝不回写 store 干扰新运行。
-  if (myRun === activeRunId && myRun === currentRunId) {
-    store.setRunning(false);
+  if (myRun === gen.activeRunId && myRun === gen.currentRunId) {
+    store.setRunning(false, wfId);
   }
-  useWorkflowStore.getState().setRunProgress({ active: false });
-  currentAbort = null;
+  useWorkflowStore.getState().setRunProgress({ active: false }, wfId);
+  gen.abort = null;
   // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
-  if (opts.sandbox) await cleanupSandbox();
-  syncDebugRun();
+  if (opts.sandbox) await cleanupSandbox(wfId);
+  syncDebugRun(wfId);
 }
 
 /** 将 startId 的全部下游节点加入 cutSet（BFS） */
@@ -880,16 +890,18 @@ async function executeNode(
   isolatedIds?: Set<string>,
   sandboxEnabled?: boolean,
   sandboxMode?: 'copy' | 'gitworktree',
+  wfId?: string,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
+  const gen = genFor(wfId ?? store.activeWfId);
 
   // 子图展开出来的虚拟节点在画布上并不存在，把它的状态回写到承载它的 subgraph.ref 节点上，
   // 这样用户能在画布上看到子图整体的运行/失败状态。
   const owner = ownerRefId(id);
   const setStatus: typeof store.setNodeStatus = (nid, status, patch) =>
-    store.setNodeStatus(owner ?? nid, status, patch);
+    store.setNodeStatus(owner ?? nid, status, patch, wfId);
 
   /**
    * 记录一条成本，并把节点级 token 用量实时回写到画布节点上，
@@ -903,11 +915,11 @@ async function executeNode(
 
     const target = owner ?? rec.nodeId;
     const wf = useWorkflowStore.getState();
-    const cur = wf.nodes.find((n) => n.id === target);
+    const cur = (wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId ?? '']?.nodes ?? [])).find((n) => n.id === target);
     if (!cur) return;
     wf.setNodeStatus(target, cur.data.status, {
       usage: accumulateUsage(cur.data.usage, rec),
-    });
+    }, wfId);
     // 同步成本账本到 store，供 Companion 浮窗实时读取（共享同一数组引用）
     useWorkflowStore.getState().setCostLog(costLog);
   };
@@ -950,12 +962,14 @@ async function executeNode(
     // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
     const rootDir = async (): Promise<string | null> => {
       if (inBrowser) return null;
-      // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree
-      if (runWorktree) return runWorktree.path;
+      // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree（按 wfId）
+      const wid = wfId ?? store.activeWfId;
+      const wt = runWorktree.get(wid);
+      if (wt) return wt.path;
       if (workspaceDir) return workspaceDir;
       try {
         const { appDataDir } = await import('@tauri-apps/api/path');
-        return `${await appDataDir()}/slime-mold/${wfId}`;
+        return `${await appDataDir()}/slime-mold/${wid}`;
       } catch {
         return null;
       }
@@ -964,7 +978,15 @@ async function executeNode(
     // 供 runWorkflow 结束统一清理其下 `.sandbox/` 残留（步骤 11 阶段 C 收尾）。
     const rootDirAndTrack = async (): Promise<string | null> => {
       const base = await rootDir();
-      if (base) sandboxRootsUsed.add(base);
+      if (base) {
+        const wid = wfId ?? store.activeWfId;
+        let set = sandboxRootsUsed.get(wid);
+        if (!set) {
+          set = new Set();
+          sandboxRootsUsed.set(wid, set);
+        }
+        set.add(base);
+      }
       return base;
     };
 
@@ -1284,7 +1306,7 @@ async function executeNode(
 
   // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，
   // 避免旧协程在节点返回后仍去调 def.execute / 改 store 状态。
-  if (myRun !== currentRunId) {
+  if (myRun !== gen.currentRunId) {
     return;
   }
 
@@ -1354,24 +1376,28 @@ async function executeNode(
  * 再以增量模式运行——等价于 ComfyUI 的「重跑该子图」。
  * 上游结果直接复用，避免重复调用。
  */
-export async function retryNode(id: string): Promise<void> {
+export async function retryNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
-  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
-  if (store.running) return;
+  const wid = wfId ?? store.activeWfId;
+  const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
+  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.runStates[wid]?.running) return;
   store.markDirty(id);
-  await runWorkflow({ incremental: true, forceNodes: [id] });
+  await runWorkflow({ incremental: true, forceNodes: [id], wfId: wid });
 }
 
 /**
  * 重跑到指定节点为止：执行该节点及其上游链（上游脏则重算、否则复用缓存），
  * 但该节点完成之后其下游不再执行（标记 skipped）。用于「中断粒度」——只跑部分子图。
  */
-export async function runToNode(id: string): Promise<void> {
+export async function runToNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
-  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
-  if (store.running) return;
+  const wid = wfId ?? store.activeWfId;
+  const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
+  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.runStates[wid]?.running) return;
   store.markDirty(id);
-  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id] });
+  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], wfId: wid });
 }
 
 /**
@@ -1379,12 +1405,14 @@ export async function runToNode(id: string): Promise<void> {
  * 用于孤立调试单个节点（如单独重试一次 LLM 调用、查看其输出）。
  * 输入为空对象，节点需能处理无输入的情形。
  */
-export async function runSingleNode(id: string): Promise<void> {
+export async function runSingleNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
-  if (!store.nodes.some((n) => n.id === id)) throw new Error('节点不存在');
-  if (store.running) return;
+  const wid = wfId ?? store.activeWfId;
+  const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
+  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (store.runStates[wid]?.running) return;
   store.markDirty(id);
-  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], isolated: true });
+  await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], isolated: true, wfId: wid });
 }
 
 /**
@@ -1392,15 +1420,17 @@ export async function runSingleNode(id: string): Promise<void> {
  * 已成功的节点复用既有结果不动；仅失败节点及其下游被重算。
  * 用法：工作流跑挂后，修好问题节点 → 点「继续运行」即可断点续传。
  */
-export async function resumeRun(): Promise<void> {
+export async function resumeRun(wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
-  if (store.running) return;
-  const errored = store.nodes.filter((n) => n.data.status === 'error');
+  const wid = wfId ?? store.activeWfId;
+  const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
+  if (store.runStates[wid]?.running) return;
+  const errored = nodes.filter((n) => n.data.status === 'error');
   if (errored.length === 0) {
     store.addLog('info', '没有失败的节点，无需续跑');
     return;
   }
   store.addLog('info', `从断点续跑：重算 ${errored.length} 个失败节点及其下游`);
-  await runWorkflow({ incremental: true, retryFailed: true });
+  await runWorkflow({ incremental: true, retryFailed: true, wfId: wid });
 }
 

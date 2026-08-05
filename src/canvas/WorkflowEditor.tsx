@@ -20,7 +20,7 @@ import {
   type FinalConnectionState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2, AlignStartVertical, AlignEndVertical, AlignCenterVertical, AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal, AlignHorizontalSpaceBetween, AlignVerticalSpaceBetween } from 'lucide-react';
+import { LayoutTemplate, FolderPlus, FolderOpen, Sparkles, X, Hand, BoxSelect, Map as MapIcon, Minus, Plus, Maximize2, Boxes, Group, Ungroup, MousePointer2, AlignStartVertical, AlignEndVertical, AlignCenterVertical, AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal, AlignHorizontalSpaceBetween, AlignVerticalSpaceBetween, Square, Play } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import BaseNode from './nodes/BaseNode';
@@ -37,6 +37,8 @@ import { NamePrompt } from '../components/NamePrompt';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
 import JobBoard from '../components/JobBoard';
 import Companion from '../components/Companion';
+import { runWorkflow, stopWorkflow } from '../engine/executor';
+import { CanvasWfIdContext } from './canvasWfId';
 
 const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
 const edgeTypes = { kind: KindEdge };
@@ -92,15 +94,46 @@ function WorkflowEditorInner({
   const storeOnConnect = useWorkflowStore((s) => s.onConnect);
   const addNode = useWorkflowStore((s) => s.addNode);
   const setSelected = useWorkflowStore((s) => s.setSelected);
+  const setSelectedIds = useWorkflowStore((s) => s.setSelectedIds);
   const alignSelected = useWorkflowStore((s) => s.alignSelected);
   const distributeSelected = useWorkflowStore((s) => s.distributeSelected);
+  // 拆分视图右栏：独立运行态（按 wfId 隔离）
+  const splitRunning = useWorkflowStore((s) => (isSplit && wfId ? (s.runStates[wfId]?.running ?? false) : false));
+  const handleSplitRun = useCallback(() => {
+    if (!wfId) return;
+    void runWorkflow({ wfId });
+  }, [wfId]);
+  const handleSplitStop = useCallback(() => {
+    if (!wfId) return;
+    stopWorkflow(wfId);
+  }, [wfId]);
 
   // 分栏工作流：以本地状态维护其图，编辑时写回 workflows 字典
   const [splitNodes, setSplitNodes] = useState<FlowNode[]>([]);
   const [splitEdges, setSplitEdges] = useState<FlowEdge[]>([]);
-  // 记录本组件最近一次写回 store 的图，用于区分「自己写回引发的回流」与「外部真实改动」，
-  // 否则 加载 effect ↔ 写回 effect 会形成无限循环（React Flow 反复 measure 直至 WebView2 崩溃）。
-  const lastPushedRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
+  // 把 React Flow 当前选中的节点 id 集合写入 store，供对齐/分布使用
+  // （原实现依赖节点瞬态 selected 字段，拆分视图右栏的运行态节点不会被同步，导致全图误选堆叠）
+  const onSelectionChange = useCallback(
+    ({ nodes: selNodes }: { nodes: FlowNode[] }) => {
+      // 右键框选期间不写入，避免覆盖框选结果
+      if (suppressSelectionSync.current) return;
+      // 仅维护 selectedIds 供对齐/分布使用；不回写节点 selected，避免与受控渲染形成无限循环
+      setSelectedIds(selNodes.map((n) => n.id));
+    },
+    [setSelectedIds],
+  );
+  // ---- 拆分视图右栏：载入 effect ↔ 写回 effect 双向同步 ----
+  // 采用「内容指纹」而非引用比较来切断循环：
+  // 载入 effect 依赖 splitWf，写回 effect 依赖 splitNodes，二者在同一 commit 中按声明顺序执行，
+  // 若用「引用是否相等」判断回流，载入 effect 先跑时会看到旧 splitWf 而误判外部变化，反复重载导致
+  // 「写回 → splitWf 变 → 重载 → 又写回」无限循环（曾导致拆分视图拖拽即卡死）。
+  // 指纹是「节点/连线的关键字段序列化」，内容级比较与执行顺序无关，能精准区分「自身回流」与「外部真修改」。
+  const splitSigRef = useRef<string | null>(null);
+  const splitSig = (ns: FlowNode[], es: FlowEdge[]) =>
+    JSON.stringify([
+      ns.map((n) => [n.id, n.position.x, n.position.y, n.data?.typeId, n.data?.params ?? null]),
+      es.map((e) => [e.id, e.source, e.sourceHandle ?? null, e.target, e.targetHandle ?? null]),
+    ]);
   // 标记「当前 wfId 的图是否已从 store 载入本地状态」。
   // 未载入前禁止写回：挂载首帧 splitNodes 还是初始空数组，此时写回会把目标工作流清空。
   const loadedWfIdRef = useRef<string | null>(null);
@@ -108,14 +141,13 @@ function WorkflowEditorInner({
     if (!isSplit || !splitWf || !wfId) return;
     const srcNodes = splitWf.nodes ?? [];
     const srcEdges = splitWf.edges ?? [];
-    // 若来源恰是本组件刚写回去的内容，跳过回填，切断循环
-    const pushed = lastPushedRef.current;
-    if (loadedWfIdRef.current === wfId && pushed && pushed.nodes === srcNodes && pushed.edges === srcEdges) return;
+    const sig = splitSig(srcNodes, srcEdges);
+    // 内容与本地已同步（含自身写回回流、重复载入）→ 跳过
+    if (splitSigRef.current === sig) return;
     // 方案 P：splitWf.nodes 已是运行态 FlowNode，直接复用
     const loadedNodes = srcNodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } }));
     const loadedEdges = srcEdges.map((e) => ({ ...e }));
-    // 载入的内容视作「已同步」，避免紧接着的写回 effect 把它当成用户编辑再推一次
-    lastPushedRef.current = { nodes: loadedNodes, edges: loadedEdges };
+    splitSigRef.current = sig;
     loadedWfIdRef.current = wfId;
     setSplitNodes(loadedNodes);
     setSplitEdges(loadedEdges);
@@ -123,7 +155,7 @@ function WorkflowEditorInner({
 
   // 切换分栏目标工作流时重置载入标记，防止用旧工作流的本地状态覆盖新目标
   useEffect(() => {
-    if (loadedWfIdRef.current !== wfId) lastPushedRef.current = null;
+    if (loadedWfIdRef.current !== wfId) splitSigRef.current = null;
   }, [wfId]);
 
   const groups = useWorkflowStore((s) => s.groups);
@@ -133,7 +165,12 @@ function WorkflowEditorInner({
   const toggleInspector = useViewStore((s) => s.toggleInspector);
   // grpnode_* 是折叠组的派生代理节点，只由本组件生成，不应出现在 store.nodes 里。
   // 兜底过滤一层，防止历史数据（早期版本误写入）把组当成普通节点。
-  const rawNodes = isSplit ? splitNodes : activeNodes.filter((n) => !n.id.startsWith('grpnode_'));
+  // 注意：用 useMemo 缓存，避免每帧都新建 filter 数组（拖拽时 activeNodes 引用变，
+  // 但 grpnode 成员极少变化，缓存可保持 rawNodes 引用稳定，减少下游重算）。
+  const rawNodes = useMemo(
+    () => (isSplit ? splitNodes : activeNodes.filter((n) => !n.id.startsWith('grpnode_'))),
+    [isSplit, splitNodes, activeNodes],
+  );
   const edges = isSplit ? splitEdges : activeEdges;
 
   // 折叠的节点组：其成员节点在画布上隐藏（仅保留组代理节点）
@@ -260,14 +297,14 @@ function WorkflowEditorInner({
   // 两道闸门：
   // 1) loadedWfIdRef !== wfId —— 尚未从 store 载入，此时 splitNodes 是初始空数组，
   //    写回会把目标工作流清空（曾导致分栏目标工作流节点全丢）。
-  // 2) 引用与上次写回/载入一致 —— 说明不是用户编辑，跳过以切断
+  // 2) 内容指纹与上次写回/载入一致 —— 说明没有用户编辑，跳过以切断
   //    「加载 effect ↔ 写回 effect」死循环（曾打爆 WebView2）。
   useEffect(() => {
     if (!isSplit || !wfId) return;
     if (loadedWfIdRef.current !== wfId) return;
-    const pushed = lastPushedRef.current;
-    if (pushed && pushed.nodes === splitNodes && pushed.edges === splitEdges) return;
-    lastPushedRef.current = { nodes: splitNodes, edges: splitEdges };
+    const sig = splitSig(splitNodes, splitEdges);
+    if (splitSigRef.current === sig) return;
+    splitSigRef.current = sig;
     updateWorkflowGraph(wfId, splitNodes, splitEdges);
   }, [isSplit, wfId, splitNodes, splitEdges, updateWorkflowGraph]);
 
@@ -289,12 +326,25 @@ function WorkflowEditorInner({
     image: 'var(--pt-image)',
     any: 'var(--sm-edge)',
   };
+  // 端口解析信号：仅当节点的「类型 + 参数」变化时才变。
+  // 拖拽只改 position，此 key 不变 -> outsByNode/styledEdges 在拖拽时不重算，
+  // 否则每帧全量 resolvePorts + 生成全新 edges 数组会让 React Flow 反复重测，多次拖拽后卡死。
+  const portSig = useMemo(
+    () =>
+      nodes
+        .map((n) => n.id + ':' + n.data.typeId + ':' + (n.data.params ? JSON.stringify(n.data.params) : ''))
+        .join('|'),
+    [nodes],
+  );
+  const outsByNode = useMemo(() => {
+    const map: Record<string, PortDef[]> = {};
+    for (const n of nodes) {
+      map[n.id] = resolvePorts(n.data.typeId, n.data.params, allDefs, subgraphs).outputs;
+    }
+    return map;
+  }, [portSig, nodes, allDefs, subgraphs]);
   const styledEdges = useMemo(() => {
     // 按节点实例解析端口（子图节点的端口是动态的）
-    const outsByNode: Record<string, PortDef[]> = {};
-    for (const n of nodes) {
-      outsByNode[n.id] = resolvePorts(n.data.typeId, n.data.params, allDefs, subgraphs).outputs;
-    }
     return edges.map((e): Edge => {
       // 折叠组成员端点重定向到分组代理节点（外部多对一）
       let src = e.source;
@@ -317,7 +367,7 @@ function WorkflowEditorInner({
       const colorVar = PORT_COLOR_VAR[pt] ?? 'var(--sm-edge)';
       return { ...e, source: src, sourceHandle: srcH, target: tgt, targetHandle: tgtH, style: { ...(e.style ?? {}), ['--edge-color']: colorVar } } as Edge;
     });
-  }, [nodes, edges, allDefs, subgraphs, memberToProxy]);
+  }, [edges, outsByNode, memberToProxy]);
 
   const showGrid = useViewStore((s) => s.showGrid);
   const showMinimap = useViewStore((s) => s.showMinimap);
@@ -329,24 +379,47 @@ function WorkflowEditorInner({
   // 右键长按框选：按住右键拖动在画布上画矩形，命中节点高亮；短按则弹右键菜单
   const [rightBox, setRightBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const rightStart = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  // 右键框选是否发生移动：在 mouseup 时落定，供紧随其后的 contextmenu 判断（避免 mouseup 清 rightStart 导致误弹菜单）
+  const rightMovedRef = useRef(false);
+  // 右键框选 drag 期间抑制 React Flow 的 onSelectionChange 写入，避免把框选刚设的 selectedIds 清空
+  const suppressSelectionSync = useRef(false);
+  // 框选上一帧命中集合（join 后的 key），仅当命中真正变化时才写回 store，
+  // 避免每帧 mousemove 都重写整个 nodes 数组（曾导致多次交互后卡死）
+  const lastHitRef = useRef<string | null>(null);
   const onPaneMouseDownCapture = useCallback((e: React.MouseEvent) => {
     if (e.button !== 2) return; // 仅右键
     e.preventDefault();
     rightStart.current = { x: e.clientX, y: e.clientY, moved: false };
+    suppressSelectionSync.current = true; // 框选期间抑制 React Flow 选区回写，避免清空 selectedIds
     setRightBox({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
   }, []);
+  // 供框选 effect 读取的最新值（避免 effect 依赖频繁重建导致监听器叠加）
+  const latestRef = useRef({ screenToFlowPosition, getNodes, isSplit, wfId });
+  latestRef.current = { screenToFlowPosition, getNodes, isSplit, wfId };
+
   useEffect(() => {
-    if (!rightStart.current) return;
     const onMove = (ev: MouseEvent) => {
-      if (!rightStart.current) return;
-      if (Math.abs(ev.clientX - rightStart.current.x) + Math.abs(ev.clientY - rightStart.current.y) > 4) {
-        rightStart.current.moved = true;
+      const rs = rightStart.current;
+      if (!rs) return;
+      // 自愈：右键已松开却未收到 mouseup（如拖出窗口外松手、菜单拦截、焦点切换），
+      // 主动清理，避免 残留的 rightStart 让后续任意 mousemove（含左键拖节点）持续重写 nodes 数组而致卡死。
+      if (!(ev.buttons & 2)) {
+        rightStart.current = null;
+        suppressSelectionSync.current = false;
+        rightMovedRef.current = false;
+        setRightBox(null);
+        lastHitRef.current = null;
+        return;
+      }
+      if (Math.abs(ev.clientX - rs.x) + Math.abs(ev.clientY - rs.y) > 4) {
+        rs.moved = true;
       }
       setRightBox((b) => (b ? { ...b, x1: ev.clientX, y1: ev.clientY } : b));
-      const sx = Math.min(rightStart.current.x, ev.clientX);
-      const sy = Math.min(rightStart.current.y, ev.clientY);
-      const ex = Math.max(rightStart.current.x, ev.clientX);
-      const ey = Math.max(rightStart.current.y, ev.clientY);
+      const { screenToFlowPosition, getNodes, isSplit, wfId } = latestRef.current;
+      const sx = Math.min(rs.x, ev.clientX);
+      const sy = Math.min(rs.y, ev.clientY);
+      const ex = Math.max(rs.x, ev.clientX);
+      const ey = Math.max(rs.y, ev.clientY);
       const tl = screenToFlowPosition({ x: sx, y: sy });
       const br = screenToFlowPosition({ x: ex, y: ey });
       const hit = getNodes()
@@ -356,16 +429,60 @@ function WorkflowEditorInner({
           return n.position.x < br.x && n.position.x + w > tl.x && n.position.y < br.y && n.position.y + h > tl.y;
         })
         .map((n) => n.id);
-      useWorkflowStore.setState((st) => ({ nodes: st.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })) }));
+      // 命中集合未变化则跳过整段 store 写入，避免每帧重写整个 nodes 数组（卡死根因之一）
+      const hitKey = hit.join(',');
+      if (hitKey === lastHitRef.current) return;
+      lastHitRef.current = hitKey;
+      // 框选命中后：同步选中态到正确的节点列表（拆分视图写右栏运行态副本，否则写主工作区），
+      // 并写入 selectedIds / selectedNodeId / focusWfId，供对齐、分布、Inspector 等消费。
+      const st = useWorkflowStore.getState();
+      if (isSplit && wfId) {
+        const wf = st.workflows[wfId];
+        if (wf) {
+          useWorkflowStore.setState({
+            workflows: {
+              ...st.workflows,
+              [wfId]: { ...wf, nodes: wf.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })) },
+            },
+            selectedIds: hit,
+            selectedNodeId: hit[0] ?? null,
+            focusWfId: wfId,
+          });
+        }
+      } else {
+        useWorkflowStore.setState({
+          nodes: st.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })),
+          selectedIds: hit,
+          selectedNodeId: hit[0] ?? null,
+          focusWfId: st.activeWfId,
+        });
+      }
     };
-    const onUp = () => setRightBox(null);
+    const onUp = () => {
+      setRightBox(null);
+      // mouseup 先于 contextmenu：落定 moved 标记并清理 rightStart，避免残留导致 window mousemove 常驻重渲染（卡死）
+      rightMovedRef.current = rightStart.current?.moved ?? false;
+      rightStart.current = null;
+      suppressSelectionSync.current = false;
+      lastHitRef.current = null;
+    };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    // 鼠标移出窗口/失焦时（mouseup 可能不触发）强制清理框选标记，避免残留导致常驻重渲染
+    const onBlur = () => {
+      rightStart.current = null;
+      rightMovedRef.current = false;
+      suppressSelectionSync.current = false;
+      setRightBox(null);
+      lastHitRef.current = null;
+    };
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [rightBox, screenToFlowPosition]);
+  }, []);
 
   // 连线时的友好预校验：环路或端口类型不兼容时，手柄直接显示不可连接
   const isValidConnection = useCallback(
@@ -623,6 +740,7 @@ function WorkflowEditorInner({
   const panOnDrag: number[] = interactionMode === 'move' ? [0, 1] : [1];
 
   return (
+    <CanvasWfIdContext.Provider value={isSplit ? wfId : undefined}>
     <div
       className="sm-canvas-dot relative h-full w-full"
       onDrop={onDrop}
@@ -645,6 +763,7 @@ function WorkflowEditorInner({
         onReconnect={onReconnect}
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
+        onSelectionChange={onSelectionChange}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={(_, node) => {
           if (node.type === 'groupProxy') {
@@ -662,29 +781,60 @@ function WorkflowEditorInner({
           setSelected(node.id);
           if (!inspectorOpen) toggleInspector();
         }}
-        onPaneClick={() => setSelected(null, wfId)}
+        onPaneClick={() => {
+          setSelected(null, wfId);
+          // 清理可能残留的右键框选标记，避免 window mousemove 监听常驻导致持续重渲染（卡死）
+          rightStart.current = null;
+          rightMovedRef.current = false;
+          suppressSelectionSync.current = false;
+          // 点击空白处取消选区：清空当前工作区节点高亮与 selectedIds
+          const st = useWorkflowStore.getState();
+          if (isSplit && wfId) {
+            const wf = st.workflows[wfId];
+            if (wf) {
+              useWorkflowStore.setState({
+                workflows: { ...st.workflows, [wfId]: { ...wf, nodes: wf.nodes.map((nd) => ({ ...nd, selected: false })) } },
+                selectedIds: [],
+              });
+            }
+          } else {
+            useWorkflowStore.setState({
+              nodes: st.nodes.map((nd) => ({ ...nd, selected: false })),
+              selectedIds: [],
+            });
+          }
+        }}
         zoomOnDoubleClick={false}
         onNodeContextMenu={(e, node) => {
-          if (isSplit) return;
-          // 右键拖动框选（已移动）不弹菜单，仅清除标记
-          if (rightStart.current?.moved) {
+          // 右键拖动框选（已移动）不弹菜单
+          if (rightMovedRef.current) {
             e.preventDefault();
-            rightStart.current = null;
+            rightMovedRef.current = false;
+            return;
+          }
+          // 拆分视图右栏不弹节点右键菜单，但需清理标记，避免残留导致下次误判
+          if (isSplit) {
+            rightMovedRef.current = false;
             return;
           }
           e.preventDefault();
-          rightStart.current = null;
+          rightMovedRef.current = false;
           setMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
         }}
         onPaneContextMenu={(e) => {
-          if (isSplit) return;
-          if (rightStart.current?.moved) {
+          // 右键拖动框选（已移动）不弹菜单，仅清除标记
+          if (rightMovedRef.current) {
             e.preventDefault();
-            rightStart.current = null;
+            rightMovedRef.current = false;
+            return;
+          }
+          // 拆分视图右栏不弹画布右键菜单，但需清理标记
+          if (isSplit) {
+            rightMovedRef.current = false;
             return;
           }
           e.preventDefault();
-          rightStart.current = null;
+          rightMovedRef.current = false;
           const ev = e as React.MouseEvent;
           setMenu({ x: ev.clientX, y: ev.clientY });
         }}
@@ -715,6 +865,35 @@ function WorkflowEditorInner({
         minZoom={0.2}
         maxZoom={2.5}
       >
+        {isSplit && (
+          <Panel position="top-right" className="!m-2">
+            <div
+              className="pointer-events-auto flex items-center gap-1.5 rounded-lg border px-1.5 py-1 shadow-sm"
+              style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
+            >
+              {splitRunning ? (
+                <button
+                  className="flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-err transition hover:bg-[var(--sm-bg-soft)]"
+                  title="停止运行（右栏）"
+                  onClick={handleSplitStop}
+                >
+                  <Square size={13} /> 停止
+                </button>
+              ) : (
+                <button
+                  className="flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium sm-btn-primary transition"
+                  title="运行工作流（右栏）"
+                  onClick={handleSplitRun}
+                >
+                  <Play size={13} /> 运行
+                </button>
+              )}
+              <span className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                {wfId}
+              </span>
+            </div>
+          </Panel>
+        )}
         {showGrid && (
           <Background
             variant={BackgroundVariant.Dots}
@@ -1023,9 +1202,10 @@ function WorkflowEditorInner({
       )}
 
       {/* 运行期调度看板（Job Board）：浮于画布右上角 */}
-      <JobBoard />
-      {/* Companion 浮窗：常驻状态球，展示运行态与 token 消耗（经 portal 渲染到 body） */}
-      <Companion />
+      <JobBoard wfId={wfId} />
+      {/* Companion 浮窗：常驻状态球，仅主画布渲染（全局浮窗），避免与右栏重复；右栏运行态由 JobBoard 体现 */}
+      {!wfId && <Companion />}
     </div>
+    </CanvasWfIdContext.Provider>
   );
 }

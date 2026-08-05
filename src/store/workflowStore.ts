@@ -33,6 +33,20 @@ import type {
 } from '../types';
 import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
+
+/** 运行期调度进度（供 Job Board 可视化） */
+export interface RunProgressShape {
+  active: boolean;
+  layer: number;
+  totalLayers: number;
+  round: number;
+  totalRounds: number;
+}
+/** 单工作流运行态（拆分视图左右栏各自独立一份） */
+export interface RunState {
+  running: boolean;
+  progress: RunProgressShape;
+}
 import { useRegistryStore, getNodeDef } from './registryStore';
 import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
@@ -122,27 +136,21 @@ interface WorkflowState {
   /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
   roles: RoleTemplate[];
   selectedNodeId: string | null;
+  /** React Flow 当前实例选中的节点 id 集合（由 onSelectionChange 写入，拆分视图下左右栏各自维护同一份） */
+  selectedIds: string[];
   /** 焦点节点所属工作流 id（拆分视图下，焦点节点可能在非激活工作流中） */
   focusWfId: string;
   /** 示例库次级窗口是否打开（UI 状态，不持久化） */
   examplesOpen: boolean;
   running: boolean;
-  /** 运行期调度进度（供 Job Board 可视化）：当前 stage 索引、总 stage 数、循环轮次 */
-  runProgress: {
-    active: boolean;
-    layer: number;
-    totalLayers: number;
-    round: number;
-    totalRounds: number;
-  };
-  /** 更新运行期调度进度（executor 在每一层开始前上报） */
-  setRunProgress: (p: Partial<{
-    active: boolean;
-    layer: number;
-    totalLayers: number;
-    round: number;
-    totalRounds: number;
-  }>) => void;
+  /** 运行期调度进度（供 Job Board 可视化）：当前 stage 索引、总 stage 数、循环轮次。
+   * 该字段为「当前激活工作流(activeWfId)」的运行态视图，拆分视图右栏请改用 runStates[wfId]。 */
+  runProgress: RunProgressShape;
+  /** 各工作流独立的运行态（拆分视图左右栏可同时运行，互不打扰）。key = wfId */
+  runStates: Record<string, RunState>;
+  /** 更新运行期调度进度（executor 在每一层开始前上报）。wfId 缺省取 activeWfId；
+   * 若该 wfId 即激活工作流，同步回 running/runProgress 兼容旧 UI。 */
+  setRunProgress: (p: Partial<RunProgressShape>, wfId?: string) => void;
   /** 运行期成本账本（实时累积 LLM token 用量，供 Companion 浮窗展示，不持久化） */
   costLog: CostRecord[];
   /** 运行结束后保留可读快照，供结束后回顾（setRunning(false) 后不清空，仅下次运行前重置） */
@@ -228,8 +236,9 @@ interface WorkflowState {
     id: string,
     status: NodeStatus,
     patch?: Partial<WorkflowNodeData>,
+    wfId?: string,
   ) => void;
-  resetStatuses: () => void;
+  resetStatuses: (wfId?: string) => void;
   /** 标记节点及其下游为脏（需重新执行），用于增量执行 */
   markDirty: (id: string) => void;
   /** 清除全部脏标记（全量运行前调用） */
@@ -243,7 +252,9 @@ interface WorkflowState {
   removeRole: (id: string) => void;
 
   setSelected: (id: string | null, wfId?: string) => void;
-  setRunning: (running: boolean) => void;
+  /** 写入 React Flow 当前选中节点集合（供对齐/分布使用，避免依赖节点瞬态 selected 字段） */
+  setSelectedIds: (ids: string[]) => void;
+  setRunning: (running: boolean, wfId?: string) => void;
   setFailFast: (v: boolean) => void;
   setSkipFailed: (v: boolean) => void;
   setMaxConcurrency: (v: number) => void;
@@ -563,6 +574,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       workspaceDir: null,
       roles: builtinRoles.map((r) => ({ ...r })),
       selectedNodeId: null,
+      selectedIds: [],
       focusWfId: '',
       examplesOpen: false,
       maxHistory: 100,
@@ -571,6 +583,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       clipboard: null,
       running: false,
       runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
+      runStates: {},
       costLog: [],
       debugRun: { current: 0, active: 0 },
       failFast: true,
@@ -613,8 +626,11 @@ export const useWorkflowStore = create<WorkflowState>()(
           for (const t of targets) get().markDirty(t);
         }
       },
-      onEdgesChange: (changes) =>
-        set({ edges: applyEdgeChanges(changes, get().edges) }),
+      onEdgesChange: (changes) => {
+        // 空 changes 不写回，避免无谓的 store 刷新（受控模式下 React Flow 会频繁回传空变化）
+        if (changes.length === 0) return;
+        set({ edges: applyEdgeChanges(changes, get().edges) });
+      },
 
       setEdges: (updater) => set({ edges: updater(get().edges) }),
 
@@ -826,7 +842,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       alignSelected: (mode) => {
         // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
         const apply = (nodes: FlowNode[]): FlowNode[] => {
-          const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
+          const selIds = new Set(get().selectedIds);
+          const sel = nodes.filter((n) => selIds.has(n.id));
           if (sel.length < 2) return nodes;
           const minX = Math.min(...sel.map((n) => n.position.x));
           const maxX = Math.max(...sel.map((n) => n.position.x));
@@ -866,7 +883,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       distributeSelected: (axis) => {
         // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
         const apply = (nodes: FlowNode[]): FlowNode[] => {
-          const sel = nodes.filter((n) => n.selected || n.id === get().selectedNodeId);
+          const selIds = new Set(get().selectedIds);
+          const sel = nodes.filter((n) => selIds.has(n.id));
           if (sel.length < 3) return nodes;
           const sorted = [...sel].sort((a, b) =>
             axis === 'x' ? a.position.x - b.position.x : a.position.y - b.position.y,
@@ -893,48 +911,71 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ nodes: apply(get().nodes) });
       },
 
-      setNodeStatus: (id, status, patch) =>
+      setNodeStatus: (id, status, patch, wfId) => {
+        const target = wfId ?? get().activeWfId;
         set((state) => {
-          const nodes = state.nodes.map((n) =>
-            n.id === id ? { ...n, data: { ...n.data, ...patch, status } } : n,
-          );
-          // 运行中：让指向该节点的入边显示流动动画；否则清除
-          const edges = state.edges.map((e) => {
-            if (e.target !== id) return e;
-            const isRunning = status === 'running';
-            const has = (e.className ?? '').split(' ').includes('sm-edge-running');
-            if (isRunning && !has) {
-              return { ...e, className: (e.className ? e.className + ' ' : '') + 'sm-edge-running' };
-            }
-            if (!isRunning && has) {
-              return { ...e, className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' ') };
-            }
-            return e;
-          });
-          return { nodes, edges };
-        }),
+          const apply = (nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[]; edges: FlowEdge[] } => {
+            const nodes2 = nodes.map((n) =>
+              n.id === id ? { ...n, data: { ...n.data, ...patch, status } } : n,
+            );
+            const edges2 = edges.map((e) => {
+              if (e.target !== id) return e;
+              const isRunning = status === 'running';
+              const has = (e.className ?? '').split(' ').includes('sm-edge-running');
+              if (isRunning && !has) {
+                return { ...e, className: (e.className ? e.className + ' ' : '') + 'sm-edge-running' };
+              }
+              if (!isRunning && has) {
+                return { ...e, className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' ') };
+              }
+              return e;
+            });
+            return { nodes: nodes2, edges: edges2 };
+          };
+          // 非激活工作流：直接改 workflows[target]
+          if (target !== state.activeWfId) {
+            const wf = state.workflows[target];
+            if (!wf) return {};
+            const res = apply(wf.nodes, wf.edges ?? []);
+            return { workflows: { ...state.workflows, [target]: { ...wf, nodes: res.nodes, edges: res.edges } } };
+          }
+          // 激活工作流：同步 s.nodes/s.edges
+          const res = apply(state.nodes, state.edges);
+          return { nodes: res.nodes, edges: res.edges };
+        });
+      },
 
-      resetStatuses: () =>
-        set({
-          // 同时复位运行态，避免「卡在 running==true」时刷新键失效
-          running: false,
-          runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
-          costLog: [],
-          nodes: get().nodes.map((n) => ({
-            ...n,
-            data: {
-              ...n.data,
-              status: 'idle' as NodeStatus,
-              error: undefined,
-              outputs: undefined,
-              usage: undefined,
-            },
-          })),
-          edges: get().edges.map((e) => ({
-            ...e,
-            className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' '),
-          })),
-        }),
+      resetStatuses: (wfId) => {
+        const target = wfId ?? get().activeWfId;
+        set((state) => {
+          const resetNodes = (nodes: FlowNode[]): FlowNode[] =>
+            nodes.map((n) => ({
+              ...n,
+              data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined, usage: undefined },
+            }));
+          const resetEdges = (edges: FlowEdge[]): FlowEdge[] =>
+            edges.map((e) => ({
+              ...e,
+              className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' '),
+            }));
+          const patch: Partial<WorkflowState> = {
+            // 复位该工作流运行态，避免「卡在 running==true」时刷新键失效
+            runStates: { ...state.runStates, [target]: { running: false, progress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 } } },
+          };
+          if (target === state.activeWfId) {
+            patch.running = false;
+            patch.runProgress = { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 };
+            patch.costLog = [];
+            patch.nodes = resetNodes(state.nodes);
+            patch.edges = resetEdges(state.edges);
+          } else {
+            const wf = state.workflows[target];
+            if (!wf) return patch;
+            patch.workflows = { ...state.workflows, [target]: { ...wf, nodes: resetNodes(wf.nodes), edges: resetEdges(wf.edges ?? []) } };
+          }
+          return patch;
+        });
+      },
 
       /** 计算从某节点出发、沿边可到达的所有下游节点 id（含自身） */
       markDirty: (startId: string) => {
@@ -1002,9 +1043,31 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
-      setRunning: (running) => set({ running }),
-      setRunProgress: (p) =>
-        set((s) => ({ runProgress: { ...s.runProgress, ...p } })),
+      setSelectedIds: (ids) => set({ selectedIds: ids }),
+      setRunning: (running, wfId) => {
+        const id = wfId ?? get().activeWfId;
+        set((s) => {
+          const runStates = {
+            ...s.runStates,
+            [id]: { running, progress: s.runStates[id]?.progress ?? { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 } },
+          };
+          // 激活工作流同步回兼容字段
+          const patch: Partial<WorkflowState> = { runStates };
+          if (id === s.activeWfId) patch.running = running;
+          return patch;
+        });
+      },
+      setRunProgress: (p, wfId) => {
+        const id = wfId ?? get().activeWfId;
+        set((s) => {
+          const prev = s.runStates[id]?.progress ?? { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 };
+          const progress = { ...prev, ...p };
+          const runStates = { ...s.runStates, [id]: { running: s.runStates[id]?.running ?? false, progress } };
+          const patch: Partial<WorkflowState> = { runStates };
+          if (id === s.activeWfId) patch.runProgress = progress;
+          return patch;
+        });
+      },
       setCostLog: (log) => set({ costLog: log }),
       resetUsage: () => set({ costLog: [] }),
       setDebugRun: (v) => set({ debugRun: v }),

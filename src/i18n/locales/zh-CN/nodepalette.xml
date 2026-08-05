@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="title">节点库</string>
+  <string name="search.placeholder">搜索节点…</string>
+  <string name="search.empty">无匹配节点</string>
+  <string name="roleFilterHint">按角色筛选节点</string>
+  <string name="mySubgraphs">我的子图</string>
+  <string name="sg.steps">{count} 个步骤 · {ins} 入 / {outs} 出</string>
+  <string name="sg.stepsTitle">{count} 个步骤 · {ins} 入 / {outs} 出\n双击可重命名</string>
+  <string name="sg.rename">重命名这个子图</string>
+  <string name="sg.delete">删除这个子图（画布上已放置的引用会失效）</string>
+  <string name="sg.renamePrompt">重命名子图</string>
+  <string name="node.dragHint">拖入画布以添加节点（或双击直接添加）</string>
+  <string name="node.dragHintWhen">{desc}\n\n何时使用：{when}\n拖入画布以添加节点（或双击直接添加）</string>
+  <string name="role.title">角色：{label}（{hint}）</string>
+</resources>

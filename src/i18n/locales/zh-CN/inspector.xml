@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="asset.title">资产 · </string>
+  <string name="asset.download">下载 / 导出</string>
+  <string name="asset.openInExplorer">在文件管理器中打开</string>
+  <string name="asset.delete">删除资产</string>
+  <string name="asset.cannotOpen">无法打开文件夹：</string>
+  <string name="asset.type">类型：</string>
+  <string name="asset.size">大小：</string>
+  <string name="asset.source">来源：</string>
+  <string name="asset.source.workspace">工作区文件</string>
+  <string name="asset.source.workflow">工作流内资产</string>
+  <string name="asset.created">创建：</string>
+  <string name="asset.diskPath">磁盘路径</string>
+  <string name="asset.preview">内容预览</string>
+  <string name="asset.backToNode">返回节点视图</string>
+
+  <string name="empty.hint">选中一个节点后
+在此编辑参数与查看结果</string>
+
+  <string name="node.defaultName">节点</string>
+  <string name="node.delete">删除节点</string>
+  <string name="node.nameLabel">节点名称</string>
+
+  <string name="param.asset.placeholder">— 选择图片资产 —</string>
+  <string name="param.asset.localLabel">已选本地图片</string>
+  <string name="param.asset.pickTitle">选择图片</string>
+  <string name="param.asset.pickFilter">图片</string>
+  <string name="param.asset.pickBtn">从本机选择图片文件</string>
+  <string name="param.agent.placeholder">— 选择智能体 —</string>
+  <string name="param.role.placeholder">— 不使用角色 —</string>
+  <string name="param.role.builtin">（内置）</string>
+
+  <string name="sg.stepsCount">内含 {count} 个步骤，运行时会自动展开执行。</string>
+  <string name="sg.input">输入</string>
+  <string name="sg.output">输出</string>
+  <string name="sg.unpackTitle">把子图内部的节点还原到画布上</string>
+  <string name="sg.unpackBtn">展开为普通节点</string>
+  <string name="sg.lost">这个子图的定义已丢失，请删除该节点或重新打包一个子图。</string>
+
+  <string name="err.label">错误信息</string>
+  <string name="output.label">最近输出</string>
+</resources>

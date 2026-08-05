@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- TopBar: 菜单 -->
+  <string name="topbar.file">文件</string>
+  <string name="topbar.edit">编辑</string>
+  <string name="topbar.view">视图</string>
+  <string name="topbar.run">运行</string>
+  <string name="topbar.tools">工具</string>
+  <string name="topbar.help">帮助</string>
+
+  <string name="menu.newProject">新建项目</string>
+  <string name="menu.openProject">打开项目…</string>
+  <string name="menu.openRecent">打开最近项目</string>
+  <string name="menu.noRecent">（无最近项目）</string>
+  <string name="menu.clearRecent">清除最近记录</string>
+  <string name="menu.newWorkflow">打开工作流…</string>
+  <string name="menu.workflowWizard">工作流向导…</string>
+  <string name="menu.importWorkflow">导入工作流…</string>
+  <string name="menu.saveProject">保存项目</string>
+  <string name="menu.saveProjectAs">将项目另存为</string>
+  <string name="menu.exportWorkflow">导出工作流…</string>
+  <string name="menu.copyWorkflowText">复制工作流文本</string>
+  <string name="menu.closeProject">关闭项目</string>
+
+  <string name="menu.deleteSelected">删除选中节点</string>
+  <string name="menu.clearCanvas">清空画布</string>
+
+  <string name="menu.zoomIn">放大</string>
+  <string name="menu.zoomOut">缩小</string>
+  <string name="menu.fitView">适配窗口</string>
+  <string name="menu.hideGrid">隐藏网格</string>
+  <string name="menu.showGrid">显示网格</string>
+
+  <string name="menu.stopRun">停止运行</string>
+  <string name="menu.runFull">运行工作流（全量）</string>
+  <string name="menu.runIncremental">增量运行（仅改动 + 下游）</string>
+  <string name="menu.runSandbox">沙箱隔离运行（并行 Worker 独立副本）</string>
+  <string name="menu.runGitworktree">Git Worktree 强隔离运行（独立 git 工作树）</string>
+  <string name="menu.resumeRun">从断点续跑（失败节点 + 下游）</string>
+  <string name="menu.rerun">强制重跑（清空缓存，全量）</string>
+  <string name="menu.failFastOn">失败即停：开</string>
+  <string name="menu.failFastOff">失败即停：关</string>
+  <string name="menu.skipFailedOn">失败时继续：开</string>
+  <string name="menu.skipFailedOff">失败时继续：关</string>
+
+  <string name="menu.agents">智能体 / 角色库</string>
+  <string name="menu.plugins">插件管理</string>
+  <string name="menu.variables">全局变量</string>
+  <string name="menu.history">运行历史</string>
+
+  <string name="menu.shortcuts">快捷键速查</string>
+  <string name="menu.about">关于 SlimeMold</string>
+  <string name="about.text">SlimeMold — Agent 工作流编辑器\n版本 0.1.0</string>
+
+  <!-- TopBar: 工具条 -->
+  <string name="topbar.untitledProject">未命名项目</string>
+  <string name="topbar.dirtyMark">有未保存的改动</string>
+  <string name="topbar.toggleLeft">显示/隐藏左侧栏</string>
+  <string name="topbar.toggleBottom">显示/隐藏底部面板</string>
+  <string name="topbar.toggleInspector">显示/隐藏右侧属性面板</string>
+  <string name="topbar.newWorkflowHint">新建工作流（加入当前项目）</string>
+  <string name="topbar.newWorkflowHintFree">新建游离工作流（可指定存放位置，缺省落默认位置）</string>
+  <string name="topbar.splitView">拆分视图</string>
+  <string name="topbar.resetStatus">重置工作流工作状态（运行中点击会先停止再重置）</string>
+  <string name="topbar.debugOn">调试模式：开（节点卡片显示重跑子图 / 重跑到此节点）</string>
+  <string name="topbar.debugOff">调试模式：关</string>
+  <string name="topbar.undo">撤销 (Ctrl+Z)</string>
+  <string name="topbar.redo">重做 (Ctrl+Shift+Z / Ctrl+Y)</string>
+  <string name="topbar.stop">停止运行</string>
+  <string name="topbar.run">运行工作流</string>
+  <string name="topbar.closeWorkflow">关闭工作流</string>
+
+  <!-- TopBar: 提示与弹窗 -->
+  <string name="dialog.openFailed">打开项目失败：</string>
+  <string name="dialog.saveFailed">保存项目失败：</string>
+  <string name="dialog.saveAsNeedTauri">「将项目另存为」需要桌面端（Tauri）环境</string>
+  <string name="dialog.saveAsFailed">项目另存为失败：</string>
+  <string name="dialog.closeConfirmTitle">关闭项目</string>
+  <string name="dialog.closeConfirm">当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？</string>
+  <string name="log.legacyProject">检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构</string>
+</resources>

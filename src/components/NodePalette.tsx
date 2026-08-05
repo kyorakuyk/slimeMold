@@ -8,6 +8,7 @@ import { CATEGORY_ORDER } from '../nodes/builtin';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import type { NodeDefinition, NodeRole } from '../types';
 import { NODE_ROLE_META } from '../types';
+import { useT } from '../i18n/useT';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
 export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
@@ -105,6 +106,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
   const removeSubgraph = useWorkflowStore((s) => s.removeSubgraph);
   const renameSubgraph = useWorkflowStore((s) => s.renameSubgraph);
   const [sgCollapsed, setSgCollapsed] = useState(false);
+  const t = useT();
 
   const subgraphList = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -123,7 +125,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       <input
         className="sm-palette-search w-full pl-7"
         value={query}
-        placeholder="搜索节点…"
+        placeholder={t('search.placeholder')}
         onChange={(e) => setQuery(e.target.value)}
       />
     </div>
@@ -146,7 +148,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
           <button
             key={opt.value}
             onClick={() => setRoleFilter(opt.value)}
-            title={meta ? meta.hint : '按角色筛选节点'}
+            title={meta ? meta.hint : t('roleFilterHint')}
             className="rounded-full border px-2 py-0.5 text-[10.5px] transition-colors"
             style={{
               borderColor: active
@@ -177,7 +179,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       {!embedded && (
         <div className="border-b px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
           <h2 className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-            节点库
+            {t('title')}
           </h2>
           {searchBox}
           {roleFilterBar}
@@ -187,7 +189,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {groups.length === 0 && subgraphList.length === 0 && (
           <p className="px-1 py-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-            无匹配节点
+            {t('search.empty')}
           </p>
         )}
         {groups.map(([category, list]) => {
@@ -219,8 +221,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       onDoubleClick={() => addAtCenter(def.typeId)}
                       title={
                         def.whenToUse
-                          ? `${def.description || def.name}\n\n何时使用：${def.whenToUse}\n拖入画布以添加节点（或双击直接添加）`
-                          : `${def.description || def.name}\n拖入画布以添加节点（或双击直接添加）`
+                          ? t('node.dragHintWhen', { desc: def.description || def.name, when: def.whenToUse })
+                          : `${def.description || def.name}\n${t('node.dragHint')}`
                       }
                       className="sm-palette-item cursor-grab select-none"
                     >
@@ -229,7 +231,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full"
                             style={{ background: roleMeta.color }}
-                            title={`角色：${roleMeta.label}（${roleMeta.hint}）`}
+                            title={t('role.title', { label: roleMeta.label, hint: roleMeta.hint })}
                           />
                         )}
                         <span className="truncate">{def.name}</span>
@@ -253,7 +255,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
           <section className="mb-2">
             <button className="sm-palette-cat" onClick={() => setSgCollapsed((v) => !v)}>
               {sgCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-              我的子图
+              {t('mySubgraphs')}
               <span className="ml-auto text-[10px] normal-case">{subgraphList.length}</span>
             </button>
             {!sgCollapsed && (
@@ -269,7 +271,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       if ((e.target as HTMLElement).closest('button')) return;
                       addSubgraphAtCenter(sg.id);
                     }}
-                    title={`${sg.nodes.length} 个步骤 · ${sg.inputs.length} 入 / ${sg.outputs.length} 出\n双击可重命名`}
+                    title={t('sg.stepsTitle', { count: sg.nodes.length, ins: sg.inputs.length, outs: sg.outputs.length })}
                     className="sm-palette-item group/sg relative select-none"
                   >
                     <p
@@ -280,12 +282,12 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       <span className="truncate">{sg.name}</span>
                     </p>
                     <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                      {sg.nodes.length} 个步骤 · {sg.inputs.length} 入 / {sg.outputs.length} 出
+                      {t('sg.steps', { count: sg.nodes.length, ins: sg.inputs.length, outs: sg.outputs.length })}
                     </p>
                     <button
                       className="absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
                       style={{ color: 'var(--sm-ink-faint)' }}
-                      title="重命名这个子图"
+                      title={t('sg.rename')}
                       onClick={(e) => {
                         e.stopPropagation();
                         setRenaming({ id: sg.id, name: sg.name });
@@ -296,7 +298,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                     <button
                       className="absolute right-8 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
                       style={{ color: 'var(--sm-ink-faint)' }}
-                      title="删除这个子图（画布上已放置的引用会失效）"
+                      title={t('sg.delete')}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeSubgraph(sg.id);
@@ -312,7 +314,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
         )}
       {renaming && (
         <NamePrompt
-          title="重命名子图"
+          title={t('sg.renamePrompt')}
           initial={renaming.name}
           onConfirm={(name) => {
             renameSubgraph(renaming.id, name);

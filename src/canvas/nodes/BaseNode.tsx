@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useContext } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, ChevronDown, ChevronRight, ArrowRightLeft, VolumeX, Play, type LucideIcon } from 'lucide-react';
 import type { FlowNode, NodeStatus } from '../../types';
@@ -6,6 +6,7 @@ import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { useViewStore } from '../../store/viewStore';
 import { retryNode, runToNode, runSingleNode } from '../../engine/executor';
+import { CanvasWfIdContext } from '../canvasWfId';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 import NodeUsageBadge from './NodeUsageBadge';
 
@@ -92,7 +93,11 @@ function PortBadge({ type }: { type?: string }) {
 
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
-  const running = useWorkflowStore((s) => s.running);
+  // 方案 A：节点运行类操作需定位到所属工作流（拆分视图右栏）
+  const canvasWfId = useContext(CanvasWfIdContext);
+  const running = useWorkflowStore((s) =>
+    canvasWfId ? (s.runStates[canvasWfId]?.running ?? false) : s.running,
+  );
   // 折叠模式（默认）：仅显示标题栏与端口区，不渲染下方文本框（预览/参数/错误），避免撑大节点边界。双击节点切换展开/收起。
   const [expanded, setExpanded] = useState(false);
   const isSubgraph = data.typeId === SUBGRAPH_REF_TYPE;
@@ -322,7 +327,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (!running) void retryNode(id);
+              if (!running) void retryNode(id, canvasWfId);
             }}
             disabled={running}
             title="重新执行此节点及其下游（复用上游已有输出，并清除该节点缓存）"
@@ -333,7 +338,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (!running) void runToNode(id);
+              if (!running) void runToNode(id, canvasWfId);
             }}
             disabled={running}
             title="只重跑到此节点为止，其下游不再执行（标记 skipped）"
@@ -344,7 +349,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (!running) void runSingleNode(id);
+              if (!running) void runSingleNode(id, canvasWfId);
             }}
             disabled={running}
             title="单独运行此节点（不执行上游/下游，用于孤立调试）"

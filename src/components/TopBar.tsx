@@ -43,6 +43,7 @@ import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
+import { useT } from '../i18n/useT';
 import { runWorkflow, stopWorkflow, resumeRun, rerunWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { openDirDialog, isTauri } from '../platform/env';
@@ -112,7 +113,10 @@ export default function TopBar({
   const toggleSplit = useViewStore((s) => s.toggleSplit);
   const debugMode = useViewStore((s) => s.debugMode);
   const toggleDebug = useViewStore((s) => s.toggleDebug);
+  const locale = useViewStore((s) => s.locale);
+  const setLocale = useViewStore((s) => s.setLocale);
   const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const t = useT();
 
   // 项目层状态
   const projectName = useWorkflowStore((s) => s.projectName);
@@ -166,7 +170,7 @@ export default function TopBar({
         addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
       }
     } catch (e) {
-      alert('打开项目失败：' + (e as Error).message);
+      alert(t('dialog.openFailed') + (e as Error).message);
     }
   };
 
@@ -176,13 +180,13 @@ export default function TopBar({
       persistSession(path);
       pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
     } catch (e) {
-      alert('保存项目失败：' + (e as Error).message);
+      alert(t('dialog.saveFailed') + (e as Error).message);
     }
   };
 
   const handleSaveProjectAs = async () => {
     if (!isTauri) {
-      alert('「将项目另存为」需要桌面端（Tauri）环境');
+      alert(t('dialog.saveAsNeedTauri'));
       return;
     }
     try {
@@ -192,18 +196,18 @@ export default function TopBar({
         pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
       }
     } catch (e) {
-      alert('项目另存为失败：' + (e as Error).message);
+      alert(t('dialog.saveAsFailed') + (e as Error).message);
     }
   };
 
   const handleCloseProject = async () => {
     if (projectDirty) {
       const ok = isTauri
-        ? await ask('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？', {
-            title: '关闭项目',
+        ? await ask(t('dialog.closeConfirm'), {
+            title: t('dialog.closeConfirmTitle'),
             kind: 'warning',
           })
-        : window.confirm('当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？');
+        : window.confirm(t('dialog.closeConfirm'));
       if (!ok) return;
     }
     closeProject();
@@ -211,17 +215,17 @@ export default function TopBar({
 
   const menus: MenuDef[] = [
     {
-      label: '文件',
+      label: t('topbar.file'),
       items: [
-        { label: '新建项目', icon: <FolderPlus size={14} />, shortcut: 'Ctrl+Shift+N', onClick: handleNewProject },
-        { label: '打开项目…', icon: <FolderOpen size={14} />, onClick: handleOpenProject },
+        { label: t('menu.newProject'), icon: <FolderPlus size={14} />, shortcut: 'Ctrl+Shift+N', onClick: handleNewProject },
+        { label: t('menu.openProject'), icon: <FolderOpen size={14} />, onClick: handleOpenProject },
         {
           type: 'submenu',
-          label: '打开最近项目',
+          label: t('menu.openRecent'),
           icon: <FileStack size={14} />,
           items: (() => {
             const recents = getRecentProjects();
-            if (recents.length === 0) return [{ label: '（无最近项目）', onClick: () => {} }];
+            if (recents.length === 0) return [{ label: t('menu.noRecent'), onClick: () => {} }];
             return [
               ...recents.map((r) => ({
                 label: r.name,
@@ -233,61 +237,61 @@ export default function TopBar({
                     persistSession(r.path);
                     pushRecentProject({ path: r.path, name: file.name, openedAt: new Date().toISOString() });
                     if ((file as ProjectFile & { legacy?: boolean }).legacy) {
-                      addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
+                      addLog('info', t('log.legacyProject'));
                     }
                   }
                 },
               })),
-              { label: '清除最近记录', danger: true, onClick: clearRecentProjects },
+              { label: t('menu.clearRecent'), danger: true, onClick: clearRecentProjects },
             ] as MenuAction[];
           })(),
         },
         'separator',
-        { label: '打开工作流…', icon: <FilePlus2 size={14} />, onClick: newWorkflow },
-        { label: '工作流向导…', icon: <Wand2 size={14} />, onClick: onOpenWizard },
-        { label: '导入工作流…', icon: <FileDown size={14} />, onClick: importWorkflow },
-        { label: '保存项目', icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
-        { label: '将项目另存为', icon: <FileBox size={14} />, onClick: handleSaveProjectAs, disabled: !projectName },
-        { label: '导出工作流…', icon: <Save size={14} />, onClick: () => exportWorkflow() },
-        { label: '复制工作流文本', icon: <FileStack size={14} />, onClick: () => copyWorkflowText() },
+        { label: t('menu.newWorkflow'), icon: <FilePlus2 size={14} />, onClick: newWorkflow },
+        { label: t('menu.workflowWizard'), icon: <Wand2 size={14} />, onClick: onOpenWizard },
+        { label: t('menu.importWorkflow'), icon: <FileDown size={14} />, onClick: importWorkflow },
+        { label: t('menu.saveProject'), icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
+        { label: t('menu.saveProjectAs'), icon: <FileBox size={14} />, onClick: handleSaveProjectAs, disabled: !projectName },
+        { label: t('menu.exportWorkflow'), icon: <Save size={14} />, onClick: () => exportWorkflow() },
+        { label: t('menu.copyWorkflowText'), icon: <FileStack size={14} />, onClick: () => copyWorkflowText() },
         'separator',
-        { label: '关闭项目', icon: <X size={14} />, danger: true, disabled: !projectName, onClick: handleCloseProject },
+        { label: t('menu.closeProject'), icon: <X size={14} />, danger: true, disabled: !projectName, onClick: handleCloseProject },
       ],
     },
     {
-      label: '编辑',
+      label: t('topbar.edit'),
       items: [
-        { label: '删除选中节点', icon: <Trash2 size={14} />, shortcut: 'Del', danger: true, disabled: !selectedNodeId, onClick: deleteSelected },
-        { label: '清空画布', icon: <Eraser size={14} />, danger: true, disabled: !hasNodes, onClick: clearGraph },
+        { label: t('menu.deleteSelected'), icon: <Trash2 size={14} />, shortcut: 'Del', danger: true, disabled: !selectedNodeId, onClick: deleteSelected },
+        { label: t('menu.clearCanvas'), icon: <Eraser size={14} />, danger: true, disabled: !hasNodes, onClick: clearGraph },
       ],
     },
     {
-      label: '视图',
+      label: t('topbar.view'),
       items: [
-        { label: '放大', icon: <ZoomIn size={14} />, shortcut: 'Ctrl+=', onClick: () => zoomIn() },
-        { label: '缩小', icon: <ZoomOut size={14} />, shortcut: 'Ctrl+-', onClick: () => zoomOut() },
-        { label: '适配窗口', icon: <Maximize size={14} />, shortcut: 'Shift+1', onClick: () => fitView({ padding: 0.2, duration: 200 }) },
+        { label: t('menu.zoomIn'), icon: <ZoomIn size={14} />, shortcut: 'Ctrl+=', onClick: () => zoomIn() },
+        { label: t('menu.zoomOut'), icon: <ZoomOut size={14} />, shortcut: 'Ctrl+-', onClick: () => zoomOut() },
+        { label: t('menu.fitView'), icon: <Maximize size={14} />, shortcut: 'Shift+1', onClick: () => fitView({ padding: 0.2, duration: 200 }) },
         'separator',
-        { label: showGrid ? '隐藏网格' : '显示网格', icon: <Grid3x3 size={14} />, onClick: toggleGrid },
+        { label: showGrid ? t('menu.hideGrid') : t('menu.showGrid'), icon: <Grid3x3 size={14} />, onClick: toggleGrid },
       ],
     },
     {
-      label: '运行',
+      label: t('topbar.run'),
       items: [
-        { label: running ? '停止运行' : '运行工作流（全量）', icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? stopWorkflow : () => runWorkflow({ skipFailed: skipFailed }) },
-        { label: '增量运行（仅改动 + 下游）', icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed }), disabled: running },
-        { label: '沙箱隔离运行（并行 Worker 独立副本）', icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true }), disabled: running },
-        { label: 'Git Worktree 强隔离运行（独立 git 工作树）', icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree' }), disabled: running },
-        { label: '从断点续跑（失败节点 + 下游）', icon: <RotateCcw size={14} />, onClick: () => resumeRun(), disabled: running },
-        { label: '强制重跑（清空缓存，全量）', icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(), disabled: running },
+        { label: running ? t('menu.stopRun') : t('menu.runFull'), icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? () => stopWorkflow(activeWfId) : () => runWorkflow({ skipFailed: skipFailed, wfId: activeWfId }) },
+        { label: t('menu.runIncremental'), icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed, wfId: activeWfId }), disabled: running },
+        { label: t('menu.runSandbox'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, wfId: activeWfId }), disabled: running },
+        { label: t('menu.runGitworktree'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree', wfId: activeWfId }), disabled: running },
+        { label: t('menu.resumeRun'), icon: <RotateCcw size={14} />, onClick: () => resumeRun(activeWfId), disabled: running },
+        { label: t('menu.rerun'), icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(activeWfId), disabled: running },
         'separator',
         {
-          label: failFast ? '失败即停：开' : '失败即停：关',
+          label: failFast ? t('menu.failFastOn') : t('menu.failFastOff'),
           icon: <Zap size={14} />,
           onClick: () => setFailFast(!failFast),
         },
         {
-          label: skipFailed ? '失败时继续：开' : '失败时继续：关',
+          label: skipFailed ? t('menu.skipFailedOn') : t('menu.skipFailedOff'),
           icon: <SkipForward size={14} />,
           onClick: () => setSkipFailed(!skipFailed),
           disabled: failFast,
@@ -295,19 +299,19 @@ export default function TopBar({
       ],
     },
     {
-      label: '工具',
+      label: t('topbar.tools'),
       items: [
-        { label: '智能体 / 角色库', icon: <Bot size={14} />, onClick: () => onOpenPanel('agents') },
-        { label: '插件管理', icon: <Puzzle size={14} />, onClick: () => onOpenPanel('plugins') },
-        { label: '全局变量', icon: <Variable size={14} />, onClick: () => onOpenPanel('variables') },
-        { label: '运行历史', icon: <History size={14} />, onClick: () => onOpenPanel('history') },
+        { label: t('menu.agents'), icon: <Bot size={14} />, onClick: () => onOpenPanel('agents') },
+        { label: t('menu.plugins'), icon: <Puzzle size={14} />, onClick: () => onOpenPanel('plugins') },
+        { label: t('menu.variables'), icon: <Variable size={14} />, onClick: () => onOpenPanel('variables') },
+        { label: t('menu.history'), icon: <History size={14} />, onClick: () => onOpenPanel('history') },
       ],
     },
     {
-      label: '帮助',
+      label: t('topbar.help'),
       items: [
-        { label: '快捷键速查', icon: <Keyboard size={14} />, onClick: onOpenShortcuts },
-        { label: '关于 SlimeMold', icon: <Info size={14} />, onClick: () => alert('SlimeMold — Agent 工作流编辑器\n版本 0.1.0') },
+        { label: t('menu.shortcuts'), icon: <Keyboard size={14} />, onClick: onOpenShortcuts },
+        { label: t('menu.about'), icon: <Info size={14} />, onClick: () => alert(t('about.text')) },
       ],
     },
   ];
@@ -467,7 +471,7 @@ export default function TopBar({
         <div className="ml-auto flex items-center gap-1">
           <button
             className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
-            title="显示/隐藏左侧栏"
+            title={t('topbar.toggleLeft')}
             onClick={onToggleSidebar}
             style={
               sidebarOpen
@@ -479,7 +483,7 @@ export default function TopBar({
           </button>
           <button
             className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
-            title="显示/隐藏底部面板"
+            title={t('topbar.toggleBottom')}
             onClick={onTogglePanel}
             style={
               panelOpen
@@ -491,7 +495,7 @@ export default function TopBar({
           </button>
           <button
             className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
-            title="显示/隐藏右侧属性面板"
+            title={t('topbar.toggleInspector')}
             onClick={onToggleInspector}
             style={
               inspectorOpen
@@ -501,6 +505,15 @@ export default function TopBar({
           >
             <PanelRight size={14} />
           </button>
+          {/* 语言切换：中 / EN */}
+          <button
+            className="flex h-6 min-w-[28px] items-center justify-center rounded px-1 text-[11px] font-medium transition-colors hover:bg-black/10"
+            title="Language / 语言"
+            onClick={() => setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}
+            style={{ color: 'var(--sm-ink-faint)' }}
+          >
+            {locale === 'zh-CN' ? 'EN' : '中'}
+          </button>
         </div>
       </div>
 
@@ -509,11 +522,11 @@ export default function TopBar({
         {/* 项目名 + 脏标记 */}
         <div className="flex shrink-0 items-center gap-1 pr-2" style={{ borderRight: '1px solid var(--sm-line)' }}>
           <FolderOpen size={13} className="text-ink-faint" />
-          <span className="max-w-[160px] truncate text-[12.5px] font-medium" title={projectName ?? '未命名项目'}>
-            {projectName ?? '未命名项目'}
+          <span className="max-w-[160px] truncate text-[12.5px] font-medium" title={projectName ?? t('topbar.untitledProject')}>
+            {projectName ?? t('topbar.untitledProject')}
           </span>
           {projectDirty && (
-            <span className="text-[13px] leading-none text-err" title="有未保存的改动">
+            <span className="text-[13px] leading-none text-err" title={t('topbar.dirtyMark')}>
               *
             </span>
           )}
@@ -569,7 +582,7 @@ export default function TopBar({
                 )}
                 <button
                   className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
-                  title="关闭工作流"
+                  title={t('topbar.closeWorkflow')}
                   onClick={(e) => {
                     e.stopPropagation();
                     removeWorkflow(id);
@@ -582,7 +595,7 @@ export default function TopBar({
           })}
           <button
             className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
-            title={projectName ? '新建工作流（加入当前项目）' : '新建游离工作流（可指定存放位置，缺省落默认位置）'}
+            title={projectName ? t('topbar.newWorkflowHint') : t('topbar.newWorkflowHintFree')}
             onClick={async () => {
               if (projectName) {
                 // 已在项目内：工作流归属项目，无需指定路径
@@ -602,7 +615,7 @@ export default function TopBar({
         {/* 拆分视图气泡 */}
         <button
           className="sm-btn px-1.5"
-          title="拆分视图"
+          title={t('topbar.splitView')}
           data-active={splitView}
           onClick={toggleSplit}
           style={splitView ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
@@ -612,10 +625,10 @@ export default function TopBar({
 
         <button
           className="sm-btn px-1.5"
-          title="重置工作流工作状态（运行中点击会先停止再重置）"
+          title={t('topbar.resetStatus')}
           onClick={() => {
-            stopWorkflow();
-            resetStatuses();
+            stopWorkflow(activeWfId);
+            resetStatuses(activeWfId);
           }}
         >
           <RotateCcw size={14} />
@@ -623,7 +636,7 @@ export default function TopBar({
 
         <button
           className="sm-btn px-1.5"
-          title={debugMode ? '调试模式：开（节点卡片显示重跑子图 / 重跑到此节点）' : '调试模式：关'}
+          title={debugMode ? t('topbar.debugOn') : t('topbar.debugOff')}
           data-active={debugMode}
           onClick={toggleDebug}
           style={debugMode ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
@@ -633,7 +646,7 @@ export default function TopBar({
 
         <button
           className="sm-btn px-1.5"
-          title="撤销 (Ctrl+Z)"
+          title={t('topbar.undo')}
           disabled={!canUndo}
           onClick={() => useWorkflowStore.getState().undo()}
         >
@@ -641,7 +654,7 @@ export default function TopBar({
         </button>
         <button
           className="sm-btn px-1.5"
-          title="重做 (Ctrl+Shift+Z / Ctrl+Y)"
+          title={t('topbar.redo')}
           disabled={!canRedo}
           onClick={() => useWorkflowStore.getState().redo()}
         >
@@ -649,11 +662,11 @@ export default function TopBar({
         </button>
 
         {running ? (
-          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title="停止运行" onClick={stopWorkflow}>
+          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} onClick={() => stopWorkflow(activeWfId)}>
             <Square size={14} />
           </button>
         ) : (
-          <button className="sm-btn sm-btn-primary px-1.5" title="运行工作流" onClick={() => runWorkflow()}>
+          <button className="sm-btn sm-btn-primary px-1.5" title={t('topbar.run')} onClick={() => runWorkflow({ wfId: activeWfId })}>
             <Play size={14} />
           </button>
         )}

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <!-- TopBar: menus -->
+  <string name="topbar.file">File</string>
+  <string name="topbar.edit">Edit</string>
+  <string name="topbar.view">View</string>
+  <string name="topbar.run">Run</string>
+  <string name="topbar.tools">Tools</string>
+  <string name="topbar.help">Help</string>
+
+  <string name="menu.newProject">New Project</string>
+  <string name="menu.openProject">Open Project…</string>
+  <string name="menu.openRecent">Open Recent</string>
+  <string name="menu.noRecent">(No recent projects)</string>
+  <string name="menu.clearRecent">Clear Recent</string>
+  <string name="menu.newWorkflow">Open Workflow…</string>
+  <string name="menu.workflowWizard">Workflow Wizard…</string>
+  <string name="menu.importWorkflow">Import Workflow…</string>
+  <string name="menu.saveProject">Save Project</string>
+  <string name="menu.saveProjectAs">Save Project As</string>
+  <string name="menu.exportWorkflow">Export Workflow…</string>
+  <string name="menu.copyWorkflowText">Copy Workflow Text</string>
+  <string name="menu.closeProject">Close Project</string>
+
+  <string name="menu.deleteSelected">Delete Selected Node</string>
+  <string name="menu.clearCanvas">Clear Canvas</string>
+
+  <string name="menu.zoomIn">Zoom In</string>
+  <string name="menu.zoomOut">Zoom Out</string>
+  <string name="menu.fitView">Fit View</string>
+  <string name="menu.hideGrid">Hide Grid</string>
+  <string name="menu.showGrid">Show Grid</string>
+
+  <string name="menu.stopRun">Stop</string>
+  <string name="menu.runFull">Run Workflow (Full)</string>
+  <string name="menu.runIncremental">Incremental Run (changed + downstream)</string>
+  <string name="menu.runSandbox">Sandbox Run (isolated Worker copy)</string>
+  <string name="menu.runGitworktree">Git Worktree Isolation Run (separate git worktree)</string>
+  <string name="menu.resumeRun">Resume from Breakpoint (failed node + downstream)</string>
+  <string name="menu.rerun">Force Rerun (clear cache, full)</string>
+  <string name="menu.failFastOn">Fail Fast: On</string>
+  <string name="menu.failFastOff">Fail Fast: Off</string>
+  <string name="menu.skipFailedOn">Continue on Failure: On</string>
+  <string name="menu.skipFailedOff">Continue on Failure: Off</string>
+
+  <string name="menu.agents">Agents / Roles</string>
+  <string name="menu.plugins">Plugin Manager</string>
+  <string name="menu.variables">Global Variables</string>
+  <string name="menu.history">Run History</string>
+
+  <string name="menu.shortcuts">Keyboard Shortcuts</string>
+  <string name="menu.about">About SlimeMold</string>
+  <string name="about.text">SlimeMold — Agent Workflow Editor\nVersion 0.1.0</string>
+
+  <!-- TopBar: toolbar -->
+  <string name="topbar.untitledProject">Untitled Project</string>
+  <string name="topbar.dirtyMark">Unsaved changes</string>
+  <string name="topbar.toggleLeft">Show/Hide Left Sidebar</string>
+  <string name="topbar.toggleBottom">Show/Hide Bottom Panel</string>
+  <string name="topbar.toggleInspector">Show/Hide Right Inspector</string>
+  <string name="topbar.newWorkflowHint">New Workflow (add to current project)</string>
+  <string name="topbar.newWorkflowHintFree">New Standalone Workflow (pick a location, or use default)</string>
+  <string name="topbar.splitView">Split View</string>
+  <string name="topbar.resetStatus">Reset workflow run state (stops first if running)</string>
+  <string name="topbar.debugOn">Debug Mode: On (node cards show rerun-subgraph / run-to-here)</string>
+  <string name="topbar.debugOff">Debug Mode: Off</string>
+  <string name="topbar.undo">Undo (Ctrl+Z)</string>
+  <string name="topbar.redo">Redo (Ctrl+Shift+Z / Ctrl+Y)</string>
+  <string name="topbar.stop">Stop</string>
+  <string name="topbar.run">Run Workflow</string>
+  <string name="topbar.closeWorkflow">Close Workflow</string>
+
+  <!-- TopBar: dialogs -->
+  <string name="dialog.openFailed">Failed to open project: </string>
+  <string name="dialog.saveFailed">Failed to save project: </string>
+  <string name="dialog.saveAsNeedTauri">"Save Project As" requires the desktop (Tauri) environment</string>
+  <string name="dialog.saveAsFailed">Failed to save project as: </string>
+  <string name="dialog.closeConfirmTitle">Close Project</string>
+  <string name="dialog.closeConfirm">The current project has unsaved changes that will be lost if you close it. Close anyway?</string>
+  <string name="log.legacyProject">Legacy .smproj project detected; it will be auto-converted to .slimemold/ on save</string>
+</resources>

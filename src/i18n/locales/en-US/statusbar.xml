@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+  <string name="tab.terminal">Terminal</string>
+  <string name="tab.history">History ({count})</string>
+  <string name="tab.variables">Variables</string>
+
+  <string name="autosave.title">Workflow auto-saved locally; reopening after close restores it automatically</string>
+  <string name="autosave.at">Auto-saved {time}</string>
+  <string name="autosave.done">Auto-saved</string>
+
+  <string name="running">Running…</string>
+  <string name="ready">Ready</string>
+
+  <string name="gen.stale">A stale run coroutine has expired but not exited yet (stuck on a node). The stop took effect, but the coroutine exits silently after the node returns.</string>
+  <string name="gen.normal">Run generation: current=latest, active=currently valid run. Equal, or active=0, means no leftover coroutine.</string>
+  <string name="gen.staleWarn"> ⚠stale</string>
+
+  <string name="forceReset.title">Force stop and reset run state (abort signal + clear running + reset all node states); stale coroutines exit silently after nodes return</string>
+  <string name="forceReset.label">Force Reset</string>
+
+  <string name="nodes.stat">Nodes {total} · OK {success} · Failed {failed}</string>
+
+  <string name="log.clear.title">Clear log</string>
+  <string name="log.clear.label">Clear</string>
+  <string name="panel.toggle">Collapse/Expand panel</string>
+
+  <string name="log.empty">No logs yet. Logs appear here in real time after you run a workflow.</string>
+
+  <string name="history.empty">No run history yet.</string>
+  <string name="history.ok">Success</string>
+  <string name="history.fail">Failed</string>
+  <string name="history.tokens.title">Total Token usage for this run</string>
+
+  <string name="var.empty">No global variables yet. Add them in the Variables panel.</string>
+</resources>
