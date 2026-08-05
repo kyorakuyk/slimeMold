@@ -10,7 +10,7 @@ import { creativeNodes } from './creative';
 import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../engine/pipeline';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import { toolRegistry } from '../agents/toolRegistry';
-import { builtinTools } from './builtinTools';
+import { makeBuiltinTools } from './builtinTools';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
 function inferAssetKind(filename: string): string {
@@ -2735,5 +2735,7 @@ export function registerBuiltins(): void {
   useRegistryStore.getState().register(builtinDefs);
   // 内置工具（writeFile/http）下沉为 ToolRegistry 一等公民，供 AgentHarness 按名调用
   // 必须在 builtinDefs 就绪后注册（builtinTools 复用节点 execute）
-  toolRegistry.register(builtinTools);
+  // 注意：通过 makeBuiltinTools(builtinDefs) 惰性构造，避免 builtinTools.ts 顶层
+  // import builtinDefs 形成循环依赖 → TDZ 崩溃（详见 builtinTools.ts 顶部注释）
+  toolRegistry.register(makeBuiltinTools(builtinDefs));
 }

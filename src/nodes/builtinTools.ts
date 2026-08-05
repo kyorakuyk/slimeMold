@@ -13,7 +13,15 @@
 
 import type { NodeDefinition, NodeContext } from '../types';
 import type { ToolDefinition, ToolContext } from '../agents/toolRegistry';
-import { builtinDefs } from './builtin';
+
+/**
+ * 注意：本文件刻意「不」在模块顶层 import builtin.ts 的 builtinDefs，
+ * 否则会形成 builtin.ts → builtinTools.ts → builtin.ts 的循环依赖，
+ * 导致 builtinTools 顶层求值时 builtinDefs 仍处 TDZ，抛
+ * ReferenceError: Cannot access 'builtinDefs' before initialization，
+ * 整张模块图加载失败、React 永不挂载、UI 一直转圈。
+ * 改为由 registerBuiltins 把已就绪的 builtinDefs 传进来（调用点已初始化完毕）。
+ */
 
 /** 节点 execute 的统一签名（与 NodeDefinition.execute 对齐） */
 type NodeExecute = (
@@ -77,10 +85,16 @@ const TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
   },
 };
 
-/** 内置工具列表（从节点下沉） */
-export const builtinTools: ToolDefinition[] = [
-  nodeByName('tool.writeFile'),
-  nodeByName('tool.http'),
-]
-  .filter((d): d is NodeDefinition => !!d)
-  .map(adapt);
+/**
+ * 由 builtinDefs 构造内置工具列表（惰性，不在模块顶层求值）。
+ * @param builtinDefs 已就绪的内置节点定义（由 registerBuiltins 传入，规避循环依赖 TDZ）
+ */
+export function makeBuiltinTools(builtinDefs: NodeDefinition[]): ToolDefinition[] {
+  return [nodeByName('tool.writeFile'), nodeByName('tool.http')]
+    .filter((d): d is NodeDefinition => !!d)
+    .map(adapt);
+
+  function nodeByName(typeId: string): NodeDefinition | undefined {
+    return builtinDefs.find((d) => d.typeId === typeId);
+  }
+}
