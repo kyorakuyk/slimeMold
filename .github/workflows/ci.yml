@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Unit tests + headless smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check (tsc -b)
+        run: npx tsc -b --noEmit
+
+      - name: Unit tests (Vitest)
+        run: npm run test
+
+      - name: Headless workflow smoke (pure-local nodes, no LLM)
+        # headless-demo.json 仅含本地节点（input/template/if/expr/output），无需 API Key。
+        # exit code 0 = 无失败节点；2 = 有失败节点（CI 会以此失败）。
+        run: npm run headless -- examples/headless-demo.json

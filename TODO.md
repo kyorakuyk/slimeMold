@@ -378,7 +378,7 @@
 - [ ] 插件系统（plugin-examples 已有示例）与运行时执行链路联调。
 - [ ] 节点执行引擎的流式输出与取消逻辑完善。
 - [ ] 移动端/小屏适配。
-- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline 共 84 项单测，`npm run test` 可回归（2026-08-07）。端到端 CI 待接入。
+- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline 共 84 项单测，`npm run test` 可回归（2026-08-07）。`npm run headless examples/headless-demo.json` 已接入 GitHub Actions CI（tsc + 单测 + 纯本地工作流冒烟），并修复了 headless 纯 Node 运行的两处缺陷（i18n 的 import.meta.glob 降级、tsconfig 别名）。
 
 ---
 

@@ -47,6 +47,16 @@ npm run test:watch  # 监听模式，开发时实时反馈
 
 > 测试环境为 jsdom（store 依赖 `window`/`localStorage`），由 `vitest.setup.ts` 补全 `matchMedia`/`ResizeObserver`/`structuredClone` 等 jsdom 缺失的 API 桩。新增纯逻辑改动时，请同步补充对应单测再提交。
 
+### CI（GitHub Actions）
+
+`.github/workflows/ci.yml` 在 push / PR 到 `main` 时自动运行：
+
+1. `npx tsc -b --noEmit` —— 类型检查
+2. `npm run test` —— Vitest 单测（84 项）
+3. `npm run headless examples/headless-demo.json` —— 纯本地节点工作流冒烟（input / template / if 分支 / expr / output，无需 API Key）
+
+> headless 在纯 Node 下运行需 `@/` 别名（根 `tsconfig.json` 已镜像）与 `import.meta.glob` 降级（见 `src/i18n/index.ts`），这两项已修复以使 CLI 脱离 Vite 也能跑通。
+
 ## 快速上手
 
 1. 顶栏「智能体」→ 配置协议 / Base URL / API Key / 模型

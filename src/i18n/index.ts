@@ -9,11 +9,13 @@ import { XMLParser } from 'fast-xml-parser';
  */
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
-// Vite 构建期批量收集所有语言的 XML 文件（含 namespace 目录结构）
-const xmlModules = import.meta.glob('./locales/*/*.xml', { query: '?raw', import: 'default', eager: true }) as Record<
-  string,
-  string
->;
+// Vite 构建期批量收集所有语言的 XML 文件（含 namespace 目录结构）。
+// 在非 Vite 环境（如 headless CLI / tsx 单文件运行）下 import.meta.glob 不存在，
+// 安全降级为空对象——i18n 资源留空，不影响引擎/节点执行逻辑。
+const globFn = (import.meta as unknown as { glob?: (pattern: string, opts: Record<string, unknown>) => Record<string, unknown> }).glob;
+const xmlModules = (globFn
+  ? globFn('./locales/*/*.xml', { query: '?raw', import: 'default', eager: true })
+  : {}) as Record<string, string>;
 
 function buildResources(): Record<string, Record<string, Record<string, string>>> {
   const resources: Record<string, Record<string, Record<string, string>>> = {};
