@@ -1086,3 +1086,34 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 **验证状态**：`tsc --noEmit` 通过；headless 修复待实跑确认（用 `timeout` 限时，避免再次挂起）。
 
 *最后更新：2026-08-05（步骤14 14.A / 14.7.1~14.7.7 全落地：architect/council 节点对标；Builder 生成双工作流+路由绑定；handoff/receive；路由表编辑器（设置中心）；物业 receive 串联；handoff meta 透传；示例+headless 修复）*
+
+---
+
+## 七、安全专项（SECURITY.md，2026-08-07 新增）
+
+> 来源：Codex 外部架构评审（2026-08-07）+ 项目代码核实。完整记录见 **`SECURITY.md`**（本仓库根目录）。
+> 信任模型定位：**插件 = 用户显式安装的本地可信代码**，非网络下载的不可信第三方。能力分级（步骤 13）已是 API 层防护，P0 为 Tauri 权限收窄。
+
+### 7.1 已核实的安全缺口（S1–S9，详见 SECURITY.md）
+| 编号 | 缺口 | 位置 |
+|---|---|---|
+| S1 | `csp: null` 未配置 CSP | `src-tauri/tauri.conf.json:24` |
+| S2 | capabilities `path: "**"` 偏宽 | `src-tauri/capabilities/default.json:32,38` |
+| S3 | HTTP 允许 `http://*` / `https://*` 全放开 | `src-tauri/capabilities/default.json:11-18` |
+| S4 | `run_git` 收任意 args + 任意 cwd | `src-tauri/src/lib.rs:226` |
+| S5 | 插件 Blob URL + dynamic import 跑主 WebView（非进程级沙箱） | `src/plugins/loader.ts` |
+| S6 | 凭据运行期在 WebView JS 内存 | `AgentConfig.apiKey` → provider |
+| S7 | pipeline 定义为模块级 Map，重启即丢 | `src/engine/pipeline.ts:138` |
+| S8 | 文档漂移：RUN_VERIFICATION.md 仍称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md:29,46` |
+| S9 | `llmChannel.ts` 保留 `BackendChannel` 死壳 | `src/agents/llmChannel.ts:56` |
+
+### 7.2 待实施（优先级）
+- [ ] **P0（低成本高收益，优先）**：S1 配基础 CSP；S2 capabilities 收窄到项目目录 + `$APPDATA`；S3 HTTP 收敛到具体 provider 域 + 本地 Ollama；S4 `run_git` 校验 cwd 在项目内 + 子命令白名单（拒 `push --force`/`reset --hard`/`clean -f`）。
+- [ ] **P1（信任模型 + 文档）**：S5 在 `loader.ts`/README 声明「插件=可信本地代码」，网络下载插件须升级进程级沙箱；S6 文档化凭据分层（桌面端只认 credentialKey / headless 走环境变量 / workflow 禁 apiKey）；S8 修文档漂移（删 Anthropic 缺口描述）；S9 清理 `BackendChannel` 死壳。
+- [ ] **P2（长期）**：S7 Pipeline 持久化纳入 `ProjectFile` + schema version；测试体系补 Vitest 单测 + headless CI；executor/builtin/workflowStore 上帝模块渐进拆分。
+
+### 7.3 设计权衡（已记录，不重复做）
+- 不重做进程级沙箱（对可信本地代码收益低）；真隔离靠 Git Worktree（`sandboxMode: 'gitworktree'`，已实现）。
+- key 进 WebView 内存属本地应用常态；Rust 代理转发（TODO §4.3 方案 Y）为长期演进，不阻塞。
+
+*新增：2026-08-07（基于 Codex 评审，未改代码，仅整理文档）*

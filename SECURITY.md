@@ -1,0 +1,88 @@
+# 安全模型与已知缺口（SECURITY）
+
+> 维护说明：本文件记录 SlimeMold 的安全边界设计、已落地的防护机制，以及经外部评审（Codex 架构评审，2026-08-07）确认、尚未实施的缺口。
+> 配套工程进度见 `TODO.md`（步骤 13 为插件能力分级主体，步骤 15 为编译债务清理）。
+
+---
+
+## 〇、信任模型（核心定位）
+
+SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite）。它的「用户自己安装的插件 / 自定义节点」与 ComfyUI 的 custom nodes 同一性质：
+
+- **插件 = 用户显式安装、本地运行的代码**，不是从网络下载的不可信第三方。
+- 因此当前架构**不把插件当敌人**，而是「可信本地代码」——但必须明确边界，避免后续误把不可信来源当可信加载。
+
+**铁律**：
+1. API Key 永不明文进工作流文件 / 永不入 git / 永不明文睡在 config。
+2. 桌面端只认 `credentialKey`，运行时由 Rust 从系统密钥库取回内存喂给 provider。
+3. 插件运行于主 WebView 进程，视为可信本地代码；一旦引入「从网络下载插件」能力，必须升级为进程级沙箱（见 §四 P1）。
+
+---
+
+## 一、已落地的防护机制
+
+### 1.1 凭据分层（已实现）
+- 工作流文件仅持久化 `credentialKey`（`src/io/workflowIO.ts:40` 导出时剥离 `apiKey`）。
+- 接入点（Endpoint，含 baseUrl + apiKey）落 `AppData/com.slimemold/endpoints.json`，其中 apiKey 用 **AES-GCM** 加密（主密钥存系统密钥库 `___sm_master_key___`），磁盘无明文。
+- 桌面端凭据经系统密钥库（Windows Credential Manager / macOS Keychain / Linux secret-service）。
+- headless 场景允许明文 `apiKey`（与桌面密钥库链路区分，用于无 UI 调试）。
+
+### 1.2 插件能力分级 + 继承式提权（已实现，见 TODO 步骤 13）
+- `CapabilityLevel = compute | io | sandbox_write | coordinator | system`（`src/types.ts`）。
+- `executor.applyCapability(ctx, def, opts)`（`src/engine/executor.ts:124`）按等级裁剪注入：`compute` 禁 llm/storage/sandbox；`io` 禁 sandbox；`sandbox_write` 剥离 `commitAll/commitLanes`；`coordinator/system` 全权限。
+- 提权走「继承职业父类」（`src/nodes/sdk.ts`）：写 `executors` 函数 = 裸 `Node`（基础能力，无法越权）；继承 `SandboxWriteNode`/`CoordinatorNode`/`SystemNode` 才获得对应能力。
+- `loader.validateManifest` 硬校验：`extends` 只可引用框架职业或本包 `occupations`；仅靠 `minCapability` 声明越权但缺 `extends` 会被拒绝加载（杜绝「配置文件后门」，阶段 C 修复过一处条件写反的真实 bug）。
+- 插件节点默认 `io` 级（`loader` 注入，避免第三方越权拿落地权）。
+
+> **结论**：插件能力裁剪是「API 层约束」，不是进程级沙箱。对可信本地代码足够；对不可信代码不够（见 §四）。
+
+---
+
+## 二、已核实的安全缺口（外部评审 2026-08-07）
+
+以下事实均已用 `grep` / 读文件核实，非推测：
+
+| # | 缺口 | 位置 | 风险 |
+|---|---|---|---|
+| S1 | `csp: null`（未配置内容安全策略） | `src-tauri/tauri.conf.json:24` | 动态插件 + 网络请求下，缺少基线 CSP 防护 |
+| S2 | capabilities `path: "**"` 偏宽 | `src-tauri/capabilities/default.json:32,38` | 插件/节点可读写任意路径 |
+| S3 | HTTP 允许 `http://*` / `https://*` 全放开 | `src-tauri/capabilities/default.json:11-18` | 任意外联，含非预期域名 |
+| S4 | `run_git(args: Vec<String>, cwd: Option<String>)` 收任意参数 + 任意 cwd | `src-tauri/src/lib.rs:226` | 缺 cwd 边界与子命令白名单，破坏性 git 命令可被调 |
+| S5 | 插件经 Blob URL + `dynamic import()` 跑在主 WebView | `src/plugins/loader.ts` | 非进程级沙箱，capability 仅为 API 层约束；恶意插件可触 WebView 全局对象 / 读 localStorage / 读运行时解密后的 key |
+| S6 | 凭据运行期仍出现在 WebView JS 内存 | `AgentConfig.apiKey` → provider | 普通本地应用可接受；但与插件同进程，须把插件当可信 |
+| S7 | pipeline 定义为模块级 `Map` | `src/engine/pipeline.ts:138` | 重启即丢，非持久化缺口（功能问题，列此备查） |
+| S8 | 文档漂移：RUN_VERIFICATION.md 仍称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md:29,46` | `providers/anthropic.ts` 已实现 `/v1/messages` + SSE，文档落后代码 |
+| S9 | `llmChannel.ts` 保留 `BackendChannel` 兼容壳 | `src/agents/llmChannel.ts:56` | 死代码，路线 B 已搁置，应清理或明确注释 |
+
+---
+
+## 三、待实施（优先级）
+
+### P0 —— 低成本、高收益，建议近期做
+- [ ] **S1 CSP**：`tauri.conf.json` 配基础 CSP（至少 `default-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:11434 https://api.openai.com https://api.anthropic.com ...`），替代 `null`。
+- [ ] **S2 capabilities 收窄**：`path: "**"` → 限定项目目录 + `$APPDATA/**`；fs 权限按实际所需最小集。
+- [ ] **S3 HTTP 收窄**：从 `http://*` / `https://*` 收敛到具体 provider 域名 + 本地 Ollama（`http://localhost:11434`）。
+- [ ] **S4 run_git 约束**：校验 `cwd` 必须在项目目录内；子命令白名单（`add/commit/status/diff/branch/worktree/checkout` 等），拒绝 `push --force` / `reset --hard` / `clean -f` 等破坏性命令。
+
+### P1 —— 信任模型与文档
+- [ ] **S5 信任声明**：在 `loader.ts` / README 明确「插件运行于主 WebView，视为可信本地代码」；若将来支持网络下载插件，必须升级进程级沙箱（Web Worker / 独立 Tauri WebView / Rust 侧执行）。
+- [ ] **S6 凭据分层文档化**：在 `docs/` 写明「桌面端只认 credentialKey；headless 走环境变量/外部凭据文件；workflow 文件禁止 apiKey 字段（schema 校验拒绝）」。
+- [ ] **S8 修文档漂移**：`RUN_VERIFICATION.md` 删 Anthropic 缺口描述；补 `anthropic.ts` 已实现的事实。
+- [ ] **S9 清理** `BackendChannel` 死壳（或加注释说明路线 B 已搁置）。
+
+### P2 —— 工程化（长期，不影响功能）
+- [ ] **S7 Pipeline 持久化**：`pipelineDefs` 纳入 `ProjectFile` + schema version，避免重启丢失。
+- [ ] 测试体系：优先补 `topoSort` / `wouldCreateCycle` / cacheKey 失效 / 分支剪枝 / 增量执行 Vitest 单测；`npm run headless` 包成 CI e2e。
+- [ ] 上帝模块拆分：`executor.ts` / `builtin.ts` / `workflowStore.ts` 过大，建议渐进拆子模块（高风险低收益，功能稳定后做）。
+
+---
+
+## 四、设计权衡（为什么不全做）
+
+- **不重做进程级沙箱**：对「用户自己装的本地插件」收益低于成本；正确做法是明确信任边界 + 收窄 Tauri 权限（P0）。仅当引入「网络下载插件」时才需升级。
+- **key 进 WebView 内存**：本地桌面应用常态可接受；Rust 代理转发（TODO §4.3 方案 Y）可彻底规避，但属长期演进，不阻塞当前。
+- **capability 仅为 API 层约束**：这是 OMO / ComfyUI 同类工具的共性取舍；真隔离靠 Git Worktree（已实现，`sandboxMode: 'gitworktree'`）在文件系统层做，而非在 JS 层做权限沙箱。
+
+---
+
+*创建：2026-08-07（基于 Codex 外部架构评审 + 项目代码核实）*
