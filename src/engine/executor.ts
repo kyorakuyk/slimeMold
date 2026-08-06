@@ -28,7 +28,7 @@ import {
   resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
-import { createStoreRuntime } from './runtime';
+import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
 import { readProjectText } from '../platform/env';
@@ -604,6 +604,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
                 !!opts.sandbox,
                 opts.sandboxMode,
                 wfId,
+                rt,
               );
             }
           })(),
@@ -643,16 +644,16 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
   const pruned = nodes.filter((n) => n.data.status === 'skipped').length;
   if (signal.aborted && failed.size === 0) {
-    store.addLog('info', `已手动停止（用时 ${elapsed}s）`);
+    rt.addLog('info', `已手动停止（用时 ${elapsed}s）`);
   } else if (failed.size > 0) {
-    store.addLog(
+    rt.addLog(
       'error',
       `有 ${failed.size} 个步骤没跑通，请检查标红的节点（用时 ${elapsed}s）`,
     );
   } else {
     const skipMsg = skipped > 0 ? `，${skipped} 步用了缓存结果` : '';
     const pruneMsg = pruned > 0 ? `，${pruned} 步因条件不成立而跳过` : '';
-    store.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
+    rt.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
   }
 
   // 记录运行历史（持久化到 localStorage）
@@ -748,7 +749,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
             projectRoot: root,
           });
         } catch (e) {
-          store.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+          rt.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
         }
       })();
     }
@@ -763,7 +764,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     if (firstId && firstId !== store.selectedNodeId) {
       store.setSelected(firstId, store.activeWfId);
     }
-    store.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+    rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
   }
 
   // 只有「最新且未被停止」的代次才允许复位 running / 清进度；
@@ -841,17 +842,21 @@ async function executeNode(
   sandboxEnabled?: boolean,
   sandboxMode?: 'copy' | 'gitworktree',
   wfId?: string,
+  rt?: ExecutionRuntime,
 ): Promise<void> {
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
   const gen = genFor(wfId ?? store.activeWfId);
+  // 解耦接缝：节点内的「只写」输出动作（状态/日志/成本/资产/边）经 rt 收口；
+  // 缺省退化为直接委托 store，保证接缝接入前行为不变。
+  const R = rt ?? createStoreRuntime(wfId ?? store.activeWfId);
 
   // 子图展开出来的虚拟节点在画布上并不存在，把它的状态回写到承载它的 subgraph.ref 节点上，
   // 这样用户能在画布上看到子图整体的运行/失败状态。
   const owner = ownerRefId(id);
-  const setStatus: typeof store.setNodeStatus = (nid, status, patch) =>
-    store.setNodeStatus(owner ?? nid, status, patch, wfId);
+  const setStatus: (nid: string, status: Parameters<typeof R.setNodeStatus>[1], patch?: Parameters<typeof R.setNodeStatus>[2]) => void =
+    (nid, status, patch) => R.setNodeStatus(owner ?? nid, status, patch, wfId);
 
   /**
    * 记录一条成本，并把节点级 token 用量实时回写到画布节点上，
@@ -867,11 +872,11 @@ async function executeNode(
     const wf = useWorkflowStore.getState();
     const cur = (wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId ?? '']?.nodes ?? [])).find((n) => n.id === target);
     if (!cur) return;
-    wf.setNodeStatus(target, cur.data.status, {
+    R.setNodeStatus(target, cur.data.status, {
       usage: accumulateUsage(cur.data.usage, rec),
     }, wfId);
     // 同步成本账本到 store，供 Companion 浮窗实时读取（共享同一数组引用）
-    useWorkflowStore.getState().setCostLog(costLog);
+    R.setCostLog(costLog);
   };
 
   const incoming = edges.filter((e) => e.target === id);
@@ -1113,9 +1118,9 @@ async function executeNode(
   const ctx: ExecContext = {
     signal,
     logger: {
-      info: (m) => store.addLog('info', `[${node.data.label}] ${m}`),
-      error: (m) => store.addLog('error', `[${node.data.label}] ${m}`),
-      warn: (m) => store.addLog('warn', `[${node.data.label}] ${m}`),
+      info: (m) => R.addLog('info', `[${node.data.label}] ${m}`),
+      error: (m) => R.addLog('error', `[${node.data.label}] ${m}`),
+      warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
     llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
       const agent = useWorkflowStore
@@ -1170,7 +1175,7 @@ async function executeNode(
                     onLog: (lv: string, m: string) => {
                       const level = lv as 'info' | 'warn' | 'error';
                       se.onLog?.(level, m);
-                      store.addLog(level, m);
+                      R.addLog(level, m);
                     },
                   };
                 })()
@@ -1178,7 +1183,7 @@ async function executeNode(
                   onOutput: (text: string, done: boolean) => {
                     if (!done && onToken) onToken(text);
                   },
-                  onLog: (lv: string, m: string) => store.addLog(lv as 'info' | 'warn' | 'error', m),
+                  onLog: (lv: string, m: string) => R.addLog(lv as 'info' | 'warn' | 'error', m),
                 },
             toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
           });
@@ -1200,7 +1205,7 @@ async function executeNode(
             baseDelay: RETRY_BASE_MS,
             signal,
             onRetry: (_msg, delay, attempt) =>
-              store.addLog(
+              R.addLog(
                 'info',
                 `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
               ),
@@ -1249,7 +1254,7 @@ async function executeNode(
       for (const a of wfAssets) byId.set(a.id, a);
       return [...byId.values()] as never;
     })(),
-    addAsset: (meta) => useWorkflowStore.getState().addAsset(meta),
+    addAsset: (meta) => R.addAsset(meta),
     // 步骤 11 阶段 C：真沙箱句柄（仅 sandbox 运行模式注入，普通模式为 undefined）
     sandbox,
     // 协调者节点的上游车道 id（供 commitLanes 汇总 Worker 沙箱）
@@ -1265,7 +1270,7 @@ async function executeNode(
           e.data = { ...e.data, kind: e.data?.kind ?? 'task', scope };
         }
       }
-      useWorkflowStore.getState().setEdges((prev) =>
+      R.setEdges((prev) =>
         prev.map((e) =>
           e.source === id && (e.sourceHandle ?? null) === (handle ?? null)
             ? { ...e, data: { ...e.data, kind: e.data?.kind ?? 'task', scope } }
@@ -1287,7 +1292,7 @@ async function executeNode(
   setStatus(id, 'running');
   const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');
   if (isAgent) {
-    store.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
+    R.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
   }
   const inputs = collectInputs(id, edges, outputsMap);
   const startedAt = Date.now();
@@ -1303,7 +1308,7 @@ async function executeNode(
         // 仅瞬时类错误重试；业务错误（解析/参数/逻辑）直接抛出
         shouldRetry: (err) => isTransient(err),
         onRetry: (msg, delay, attempt) =>
-          store.addLog(
+          R.addLog(
             'info',
             `「${node.data.label}」节点出错，正在第 ${attempt} 次重试（稍等约 ${(delay / 1000).toFixed(1)} 秒）：${msg}`,
           ),
@@ -1341,7 +1346,7 @@ async function executeNode(
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
     });
-    store.addLog('error', `「${node.data.label}」这一步出错了：${message}`);
+    R.addLog('error', `「${node.data.label}」这一步出错了：${message}`);
   }
 }
 

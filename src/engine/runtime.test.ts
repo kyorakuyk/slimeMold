@@ -7,6 +7,9 @@ const fakeStore = {
   pushRunHistory: vi.fn(),
   setCostLog: vi.fn(),
   resetUsage: vi.fn(),
+  setNodeStatus: vi.fn(),
+  addAsset: vi.fn(),
+  setEdges: vi.fn(),
 };
 vi.mock('../store/workflowStore', () => ({
   useWorkflowStore: {
@@ -53,6 +56,26 @@ describe('createStoreRuntime (执行引擎解耦接缝)', () => {
     expect(fakeStore.resetUsage).toHaveBeenCalledOnce();
   });
 
+  it('setNodeStatus 转发到 store.setNodeStatus（含 patch/wfId）', () => {
+    const rt = createStoreRuntime('wf1');
+    rt.setNodeStatus('n1', 'success', { outputs: { x: 1 } }, 'wf9');
+    expect(fakeStore.setNodeStatus).toHaveBeenCalledWith('n1', 'success', { outputs: { x: 1 } }, 'wf9');
+  });
+
+  it('addAsset 转发到 store.addAsset', () => {
+    const rt = createStoreRuntime('wf1');
+    const meta = { id: 'a1', name: 'f', mime: 'text/plain', path: 'p', scope: 'project' } as never;
+    rt.addAsset(meta);
+    expect(fakeStore.addAsset).toHaveBeenCalledWith(meta);
+  });
+
+  it('setEdges 转发到 store.setEdges', () => {
+    const rt = createStoreRuntime('wf1');
+    const updater = (e: unknown[]) => e;
+    rt.setEdges(updater as never);
+    expect(fakeStore.setEdges).toHaveBeenCalledWith(updater);
+  });
+
   it('每个 wfId 都返回完整接口（方法齐备）', () => {
     const rt = createStoreRuntime('any-wf');
     expect(typeof rt.addLog).toBe('function');
@@ -60,5 +83,8 @@ describe('createStoreRuntime (执行引擎解耦接缝)', () => {
     expect(typeof rt.pushRunHistory).toBe('function');
     expect(typeof rt.setCostLog).toBe('function');
     expect(typeof rt.resetUsage).toBe('function');
+    expect(typeof rt.setNodeStatus).toBe('function');
+    expect(typeof rt.addAsset).toBe('function');
+    expect(typeof rt.setEdges).toBe('function');
   });
 });
