@@ -11,8 +11,8 @@
  *   - params 固定用节点默认参数（工具场景下通常不需要用户调参）
  */
 
-import type { NodeDefinition, NodeContext } from '../types';
-import type { ToolDefinition, ToolContext } from '../agents/toolRegistry';
+import type { NodeDefinition, ExecContext } from '../types';
+import type { ToolDefinition } from '../agents/toolRegistry';
 
 /**
  * 注意：本文件刻意「不」在模块顶层 import builtin.ts 的 builtinDefs，
@@ -27,12 +27,8 @@ import type { ToolDefinition, ToolContext } from '../agents/toolRegistry';
 type NodeExecute = (
   inputs: Record<string, unknown>,
   params: Record<string, unknown>,
-  ctx: NodeContext,
+  ctx: ExecContext,
 ) => Promise<Record<string, unknown>>;
-
-function nodeByName(typeId: string): NodeDefinition | undefined {
-  return builtinDefs.find((d) => d.typeId === typeId);
-}
 
 /** 把节点默认 params 提取成 { key: default } 形态 */
 function defaultParams(def: NodeDefinition): Record<string, unknown> {
@@ -52,7 +48,7 @@ function adapt(def: NodeDefinition): ToolDefinition {
     source: 'builtin',
     async execute(input, ctx) {
       // 工具的 ctx 是精简版，需补全节点 execute 期望的字段
-      const nodeCtx = ctx as unknown as NodeContext;
+      const nodeCtx = ctx as unknown as ExecContext;
       nodeCtx.setPartial ??= () => {};
       nodeCtx.vars ??= {};
       const result = await execute(input, defaults, nodeCtx);

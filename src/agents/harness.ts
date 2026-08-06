@@ -12,7 +12,7 @@
  * 通过 opts.events 把事件推给调用方（节点接 ctx.setPartial + ctx.logger，审查 Agent 接日志）。
  */
 
-import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, NodeContext } from '../types';
+import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart, ExecContext } from '../types';
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';
@@ -93,6 +93,14 @@ export interface HarnessOptions {
   toolCtx?: Partial<ToolContext>;
   /** 轨迹采集器（#9）：传入即自动收集本轮 harness 事件，供 RunHistory / reviewer 使用 */
   sink?: ExperienceSink;
+  /**
+   * 作用域栈（#7）：由外层到内层排列的变量表（如 [项目级, 工作流级, 节点级]）。
+   * 内层同名项覆盖外层。若 systemParts.context 未显式给出，则自动把整栈变量
+   * 渲染为 system prompt 的「变量上下文」段，使模型可见当前可用变量。
+   * 调用方（executor）已把 projectVariables / variables / 节点 extraVars 合并为 ctx.vars，
+   * 直接以单层 [ctx.vars] 传入即可；多 agent 协作场景可显式传入多层栈。
+   */
+  scopeStack?: Record<string, unknown>[];
 }
 
 export interface HarnessResult {
@@ -123,6 +131,37 @@ function trimHistory(history: ChatMessage[], budget: number): ChatMessage[] {
     total += t;
   }
   return kept;
+}
+
+/* ----------------------------- 作用域变量上下文（#7） ----------------------------- */
+
+/**
+ * 把作用域栈渲染为 system prompt 可用的「变量上下文」文本。
+ * 栈由外层到内层排列，内层同名覆盖外层；此处逐层展开供模型读取。
+ */
+export function renderScopeContext(scopeStack: Record<string, unknown>[]): string {
+  if (!scopeStack.length) return '';
+  const layers = scopeStack
+    .map((scope, i) => {
+      const keys = Object.keys(scope);
+      if (!keys.length) return '';
+      const lines = keys.map((k) => {
+        const v = scope[k];
+        const s = typeof v === 'string' ? v : JSON.stringify(v);
+        return `- ${k} = ${s.length > 200 ? s.slice(0, 200) + '…' : s}`;
+      });
+      const tag = scopeStack.length > 1 ? `（第 ${i + 1} 层 / 共 ${scopeStack.length} 层）` : '';
+      return `### 作用域变量${tag}\n${lines.join('\n')}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+  if (!layers) return '';
+  return [
+    '## 当前可用变量（作用域上下文）',
+    '以下变量在当前执行作用域中可见，可在回复或工具参数中直接引用（内层覆盖外层同名项）：',
+    layers,
+    '如需引用变量，使用 {{变量名}} 或纯文本描述其值；不要凭空编造未列出的变量。',
+  ].join('\n');
 }
 
 /* ----------------------------- 主循环 ----------------------------- */
@@ -160,8 +199,15 @@ export async function runAgentLoop(opts: HarnessOptions): Promise<HarnessResult>
 
   // 1) 拼装 system
   const tools: LLMToolSpec[] = toolRegistry.toSpecs(toolNames);
-  const systemText = assembleSystemPrompt({
+  // 若调用方未显式提供 context，则根据作用域栈自动渲染变量上下文（#7）
+  const effectiveParts: SystemPromptParts = {
     ...systemParts,
+    context:
+      systemParts?.context ??
+      (opts.scopeStack && opts.scopeStack.length ? renderScopeContext(opts.scopeStack) : undefined),
+  };
+  const systemText = assembleSystemPrompt({
+    ...effectiveParts,
     tools: tools.map((t) => ({ name: t.name, description: t.description })),
   });
   const systemMsg: ChatMessage = { role: 'system', content: systemText };
@@ -302,7 +348,7 @@ const memStorage = {
  * 节点只需：const res = await runAgentLoop(buildHarnessOptions({ ctx, agent, prompt, toolNames }))
  */
 export function buildHarnessOptions(args: {
-  ctx: NodeContext;
+  ctx: ExecContext;
   agent: AgentConfig;
   /** 用户文本提示词（与 userContent 二选一，userContent 优先用于多模态） */
   prompt?: string;

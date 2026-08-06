@@ -126,3 +126,73 @@ export async function showSaveDirDialog(defaultName: string): Promise<string | n
     return null;
   }
 }
+
+/* ----------------------------- 项目级文件读写（#8 记忆/技能落盘） ----------------------------- */
+
+/** 把相对路径按 / 规范化（兼容 Windows 反斜杠） */
+export function normalizeRelPath(rel: string): string {
+  return rel.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/** 计算项目内绝对路径（Tauri 下 root 为磁盘根）；浏览器返回 null（无磁盘路径） */
+export function projectFilePath(root: string | null, rel: string): string | null {
+  if (!root) return null;
+  return `${root.replace(/[/\\]$/, '')}/${normalizeRelPath(rel)}`;
+}
+
+/**
+ * 写项目内文本文件。
+ * - Tauri：root 为磁盘根，自动建父目录后 writeTextFile（动态 import plugin-fs，避免非桌面环境硬依赖）。
+ * - 浏览器：退化为 localStorage（key = sm:proj:<rel>），并存一份用 downloadBlob 触发下载，方便用户留存。
+ * 失败（如 Tauri fs 权限不足）抛出，由调用方决定降级策略。
+ */
+export async function writeProjectText(
+  root: string | null | undefined,
+  rel: string,
+  text: string,
+  opts: { downloadOnWeb?: boolean } = {},
+): Promise<void> {
+  const relNorm = normalizeRelPath(rel);
+  if (isTauri && root) {
+    const abs = projectFilePath(root, relNorm)!;
+    const fs = await import('@tauri-apps/plugin-fs');
+    await fs.mkdir(dirOf(abs), { recursive: true });
+    await fs.writeTextFile(abs, text);
+    return;
+  }
+  // 浏览器退化：localStorage 草稿
+  localStorage.setItem(`sm:proj:${relNorm}`, text);
+  if (opts.downloadOnWeb) downloadBlob(relNorm.split('/').pop() ?? relNorm, text);
+}
+
+/** 读项目内文本文件；不存在返回 null */
+export async function readProjectText(root: string | null | undefined, rel: string): Promise<string | null> {
+  const relNorm = normalizeRelPath(rel);
+  if (isTauri && root) {
+    const abs = projectFilePath(root, relNorm)!;
+    const fs = await import('@tauri-apps/plugin-fs');
+    if (!(await fs.exists(abs))) return null;
+    return await fs.readTextFile(abs);
+  }
+  return localStorage.getItem(`sm:proj:${relNorm}`);
+}
+
+/**
+ * 追加项目内文本文件（memory.md 场景）：读旧内容 → 拼接 → 回写。
+ * 浏览器端用 localStorage 累积。
+ */
+export async function appendProjectText(
+  root: string | null | undefined,
+  rel: string,
+  text: string,
+): Promise<void> {
+  const prev = (await readProjectText(root, rel)) ?? '';
+  const next = prev ? `${prev}\n${text}` : text;
+  await writeProjectText(root, rel, next);
+}
+
+/** 取路径的父目录（不含末尾分隔符） */
+function dirOf(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return i <= 0 ? '.' : p.slice(0, i);
+}

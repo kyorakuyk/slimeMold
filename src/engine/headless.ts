@@ -208,6 +208,8 @@ export async function runWorkflowHeadless(
                   userMessages: userMsgs,
                   systemParts: sys ? { role: sys.content as string } : undefined,
                   toolNames,
+                  // #7：注入上下文作用域变量
+                  scopeStack: [ctx.vars ?? {}],
                   signal,
                   modelOverride: modelOverride || undefined,
                   toolCtx: { logger: noopLogger as any, storage: scopedStorage('core') },

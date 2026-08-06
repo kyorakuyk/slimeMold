@@ -73,7 +73,11 @@ export function memoryReviewPrompt(c: ReviewContext): string {
     '任务轨迹：',
     c.trace,
     '',
-    '输出要求：仅输出 Markdown 列表，每条以 `- ` 开头，简洁、去重、可执行。不输出解释。',
+    '输出要求：用 `## 提炼` 段包裹，段内仅输出 Markdown 列表，每条以 `- ` 开头，简洁、去重、可执行；不输出解释。',
+    '示例：',
+    '## 提炼',
+    '- 用户偏好：所有回复用中文',
+    '- 项目事实：前端用 React + Vite',
   ].join('\n');
 }
 
@@ -90,8 +94,9 @@ export function skillReviewPrompt(c: ReviewContext): string {
     '任务轨迹：',
     c.trace,
     '',
-    '输出要求：对每个提议的技能，给出：', '1) 技能名  2) 适用场景  3) 建议节点编排（一句话）',
-    '无合适模式时仅输出 `（无）`。',
+    '输出要求：仅输出一个 JSON 对象，不要代码块、不要解释。结构：',
+    '{"name": "技能名", "summary": "一句话用途", "whenToUse": "适用场景", "body": "该技能的实现要点/节点编排建议"}',
+    '无合适模式时仅输出 `{"name": "", "summary": "", "whenToUse": "", "body": ""}`。',
   ].join('\n');
 }
 
@@ -105,7 +110,10 @@ export function combinedReviewPrompt(c: ReviewContext): string {
     '',
     '请分两节输出：',
     '## 记忆', c.memory?.trim() ? `(已有：\n${c.memory})` : '（无）',
+    '用 `## 提炼` 段包裹记忆列表（每条 `- ` 开头）。',
+    '',
     '## 技能', c.skills?.length ? c.skills.join('\n') : '（无）',
+    '输出单个技能 JSON 对象（同 _SKILL 结构：name/summary/whenToUse/body），无则空对象。',
   ].join('\n');
 }
 

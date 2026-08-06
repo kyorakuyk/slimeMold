@@ -16,6 +16,8 @@
 import type { AgentConfig, ChatMessage } from '../types';
 import { runAgentLoop } from './harness';
 import { buildReviewPrompt, type ReviewContext, type ReviewKind } from './prompts';
+import { commitMemory, commitSkillDraft, extractMemoryList, extractSkillJson } from './memoryIo';
+import { useWorkflowStore } from '@/store/workflowStore';
 
 /** 全局 selfImprove 开关（默认关，避免意外费用/落盘）。由 UI / 配置入口翻转。 */
 let selfImproveEnabled = false;
@@ -39,14 +41,20 @@ export interface ReviewOptions {
   /** 仅当 selfImprove 开启时调用：把结果落盘（memory.md / subgraph 草稿） */
   onCommit?: (text: string) => void;
   signal?: AbortSignal;
+  /**
+   * 项目根磁盘路径（Tauri）；浏览器传 null。提供后 selfImprove 才真正落盘，
+   * 否则仅触发 onCommit 回调（不写文件）。
+   */
+  projectRoot?: string | null;
 }
 
 /**
  * 触发一次审查。自评模式下 fire-and-forget（async=true）。
- * 始终会调 onResult（文本），但仅当 selfImprove 开启才调 onCommit（落盘）。
+ * 始终会调 onResult（文本），但仅当 selfImprove 开启才落盘。
  */
 export async function runReview(opts: ReviewOptions): Promise<string> {
-  const { reviewerAgent, kind, context, async = true, onResult, onCommit, signal } = opts;
+  const { reviewerAgent, kind, context, async = true, onResult, onCommit, signal, projectRoot } =
+    opts;
   const prompt = buildReviewPrompt(kind, context);
   const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
 
@@ -62,7 +70,7 @@ export async function runReview(opts: ReviewOptions): Promise<string> {
       });
       onResult?.(result.text);
       // 仅 selfImprove 开启时落盘，避免意外写入与费用叠加
-      if (selfImproveEnabled) onCommit?.(result.text);
+      if (selfImproveEnabled) await commitReview(kind, result.text, projectRoot, onCommit);
       return result.text;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -77,4 +85,53 @@ export async function runReview(opts: ReviewOptions): Promise<string> {
     return '';
   }
   return task();
+}
+
+/**
+ * 按审查类型把结果落盘（#8 记忆/技能沉淀）。
+ * - _MEMORY ：提炼项追加到 <root>/.slimemold/memory.md
+ * - _SKILL  ：技能 JSON 落盘为 subgraph 草稿 + 注册进 store.subgraphs
+ * - _COMBINED：记忆节与技能节分别落盘
+ * 任何落盘/解析失败都不向上抛（仅 console.warn），保证审查不阻塞主流程。
+ */
+async function commitReview(
+  kind: ReviewKind,
+  text: string,
+  root: string | null | undefined,
+  onCommit?: (text: string) => void,
+): Promise<void> {
+  try {
+    if (kind === '_MEMORY') {
+      const list = extractMemoryList(text);
+      if (list && root != null) await commitMemory(root, list);
+      onCommit?.(text);
+      return;
+    }
+    if (kind === '_SKILL') {
+      const skill = root != null ? extractSkillJson(text) : null;
+      if (skill) {
+        const def = await commitSkillDraft(root, skill);
+        useWorkflowStore.getState().saveSubgraphDef(def);
+      }
+      onCommit?.(text);
+      return;
+    }
+    // _COMBINED：拆两节
+    const memMatch = text.match(/##\s*记忆\s*\n([\s\S]*?)(?:\n##\s*|$)/i);
+    const skillMatch = text.match(/##\s*技能\s*\n([\s\S]*?)(?:\n##\s*|$)/i);
+    if (memMatch && root != null) {
+      const list = extractMemoryList(memMatch[1]);
+      if (list) await commitMemory(root, list);
+    }
+    if (skillMatch && root != null) {
+      const skill = extractSkillJson(skillMatch[1]);
+      if (skill) {
+        const def = await commitSkillDraft(root, skill);
+        useWorkflowStore.getState().saveSubgraphDef(def);
+      }
+    }
+    onCommit?.(text);
+  } catch (e) {
+    console.warn('[reviewer] commitReview 失败（已跳过落盘）:', e);
+  }
 }

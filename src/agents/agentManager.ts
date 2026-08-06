@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLMToolSpec } from '../types';
 import { chatOpenAI } from './providers/openai';
 import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';
@@ -85,6 +85,7 @@ const providers: Record<
     m: ChatMessage[],
     s: AbortSignal,
     onToken?: (text: string) => void,
+    tools?: LLMToolSpec[],
   ) => Promise<LLMResponse>
 > = {
   openai: chatOpenAI,

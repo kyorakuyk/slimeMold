@@ -18,6 +18,10 @@ import { runAgentLoop } from '../agents/harness';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { flattenSubgraphs, ownerRefId } from './subgraph';
+import { ExperienceSink } from '../agents/experienceSink';
+import { isSelfImprove, runReview } from '../agents/reviewer';
+import { readProjectText } from '../platform/env';
+import { MEMORY_REL } from '../agents/memoryIo';
 import {
   beginRun,
   cacheKey,
@@ -483,6 +487,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
+  // #9/#8：轨迹采集器（供 reviewer 复盘沉淀记忆/技能），本轮运行共享一个实例
+  const sink = new ExperienceSink(wf.workflowName);
 
   const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';
   wf.addLog('info', `开始运行（${modeLabel}），一共 ${nodes.length} 个节点`);
@@ -615,6 +621,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
                 failed,
                 cutSet,
                 stopAfter,
+                sink,
                 signal,
                 limiter,
                 MAX_RETRIES,
@@ -754,6 +761,31 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   };
   useWorkflowStore.getState().pushRunHistory(rec);
 
+  // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
+  // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
+  if (isSelfImprove()) {
+    const reviewerAgent = useWorkflowStore.getState().agents.find((a) => a.id === 'role.reviewer');
+    if (reviewerAgent) {
+      sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
+      const root = useWorkflowStore.getState().projectPath ?? null;
+      void (async () => {
+        try {
+          const memory = root ? (await readProjectText(root, MEMORY_REL)) ?? undefined : undefined;
+          const skills = Object.values(useWorkflowStore.getState().subgraphs).map((s) => s.name);
+          runReview({
+            kind: '_COMBINED',
+            reviewerAgent,
+            context: { goal: wf.workflowName, trace: sink.toTraceText(), memory, skills },
+            async: true,
+            projectRoot: root,
+          });
+        } catch (e) {
+          store.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+        }
+      })();
+    }
+  }
+
   // 非循环工作流 + 正常跑完（无失败、未被手动停止）：将「运行指针」回退到第一个节点，
   // 使「开始」键可立刻跑下一个任务。循环工作流（hasLoop=true）依赖上一轮输出作为下一轮输入，
   // 指针不回退；失败 / 手动停止需用户介入，也不回退。
@@ -875,6 +907,7 @@ async function executeNode(
   failed: Set<string>,
   cutSet: Set<string>,
   stopAfter: Set<string>,
+  sink: ExperienceSink | null,
   signal: AbortSignal,
   limiter: Semaphore,
   MAX_RETRIES: number,
@@ -1214,14 +1247,34 @@ async function executeNode(
             userMessages: userMsgs,
             systemParts: sys ? { role: sys.content as string } : undefined,
             toolNames,
+            // #7：把已合并的 (项目级 < 工作流级 < 节点级) 变量作为作用域栈注入上下文
+            scopeStack: [ctx.vars],
             signal,
             modelOverride: modelOverride || undefined,
-            events: {
-              onOutput: (text, done) => {
-                if (!done && onToken) onToken(text);
-              },
-              onLog: (lv, m) => store.addLog(lv, m),
-            },
+            // #9/#8：把 harness 事件桥接到本运行共享的 ExperienceSink（供 reviewer 复盘）
+            events: sink
+              ? (() => {
+                  const se = sink.events();
+                  return {
+                    onThinking: se.onThinking,
+                    onToolCall: se.onToolCall,
+                    onOutput: (text: string, done: boolean) => {
+                      se.onOutput?.(text, done);
+                      if (!done && onToken) onToken(text);
+                    },
+                    onLog: (lv: string, m: string) => {
+                      const level = lv as 'info' | 'warn' | 'error';
+                      se.onLog?.(level, m);
+                      store.addLog(level, m);
+                    },
+                  };
+                })()
+              : {
+                  onOutput: (text: string, done: boolean) => {
+                    if (!done && onToken) onToken(text);
+                  },
+                  onLog: (lv: string, m: string) => store.addLog(lv as 'info' | 'warn' | 'error', m),
+                },
             toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
           });
           recordCost(undefined, true);
