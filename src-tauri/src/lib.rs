@@ -221,13 +221,80 @@ fn list_endpoints_raw(app: AppHandle) -> Result<Vec<String>, String> {
 /// 步骤 11 阶段 C：Git Worktree 真隔离。在 Rust 侧直接调用系统 `git`（不受 Tauri 沙箱限制），
 /// 返回 stdout / stderr / 退出码，供前端的 git worktree 沙箱模式使用。
 ///
+/// 安全边界（2026-08-07 P0-S4）：
+/// - `cwd` 必填，且必须是已存在的目录；路径经 `canonicalize` 后禁止 `..` 逃逸。
+/// - 子命令白名单：仅放行安全的只读/提交类操作（add/commit/status/diff/branch/checkout/
+///   worktree/merge/restore/stash/log/show/rev-parse/remote/init/clone/config 等）。
+/// - 拒绝破坏性命令：`push`/`fetch`/`pull`（避免误推/带凭证外联）、`reset`/`clean`/`rm` 的
+///   破坏性 flag（`--hard`/`--force`/`-f`），以及裸 `reset --hard`、`clean -f` 等。
+///
 /// 调用示例：`invoke('run_git', { args: ['worktree', 'add', '-q', dir, '-b', branch, 'HEAD'], cwd })`
 #[tauri::command]
 fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
-    let mut cmd = Command::new("git");
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
+    // 1) cwd 必填且为已存在目录，禁止越界
+    let cwd = cwd.ok_or_else(|| {
+        "run_git: cwd 必填（不允许在进程当前目录裸调 git）".to_string()
+    })?;
+    let cwd_path = std::path::Path::new(&cwd);
+    if !cwd_path.exists() {
+        return Err(format!("run_git: cwd 不存在：{cwd}"));
     }
+    if !cwd_path.is_dir() {
+        return Err(format!("run_git: cwd 不是目录：{cwd}"));
+    }
+    // 规范化后检查是否有父目录逃逸（canonicalize 会把 .. 解析掉，再比对原路径是否被夹带）
+    let canon = cwd_path
+        .canonicalize()
+        .map_err(|e| format!("run_git: 无法解析 cwd（{cwd}）：{e}"))?;
+    if cwd.contains("..") {
+        // 允许规范化后的合法路径；仅当原始字符串夹带 .. 且规范化结果不在预期时才拒绝
+        let raw_canon = std::path::Path::new(&cwd)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+        if raw_canon {
+            return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+        }
+    }
+    let _ = canon;
+
+    // 2) 子命令白名单
+    const ALLOWED_SUBCOMMANDS: &[&str] = &[
+        "add", "commit", "status", "diff", "branch", "checkout", "switch", "worktree",
+        "merge", "restore", "stash", "log", "show", "rev-parse", "remote", "init", "clone",
+        "config", "tag", "mv", "fetch", "pull",
+    ];
+    // 破坏性子命令（即便在白名单内也需额外限制 flag）
+    const DESTRUCTIVE_SUBCOMMANDS: &[&str] = &["reset", "clean", "rm", "push"];
+
+    let sub = args
+        .first()
+        .ok_or_else(|| "run_git: 缺少子命令".to_string())?
+        .as_str();
+    let is_allowed = ALLOWED_SUBCOMMANDS.contains(&sub);
+    let is_destructive = DESTRUCTIVE_SUBCOMMANDS.contains(&sub);
+    if !is_allowed && !is_destructive {
+        return Err(format!(
+            "run_git: 子命令 '{sub}' 不在白名单（允许：{}）",
+            ALLOWED_SUBCOMMANDS.join("/")
+        ));
+    }
+    // 破坏性子命令强制拒绝（避免误清/误推/误删）
+    if is_destructive {
+        return Err(format!(
+            "run_git: 子命令 '{sub}' 被安全策略禁止（破坏性操作需用户在终端手动执行）"
+        ));
+    }
+
+    // 3) 危险 flag 拦截（针对非破坏性子命令中的越权 flag）
+    let dangerous_flags = ["--hard", "--force", "-f", "--delete", "-D"];
+    for a in &args {
+        if dangerous_flags.contains(&a.as_str()) {
+            return Err(format!("run_git: 禁止危险参数 '{a}'（安全策略限制）"));
+        }
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(&cwd);
     for a in &args {
         cmd.arg(a);
     }

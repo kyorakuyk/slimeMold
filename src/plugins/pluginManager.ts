@@ -107,10 +107,21 @@ async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): P
     return 0;
   }
   const fs = await import('@tauri-apps/plugin-fs');
-  const dirExists = await fs.exists(base);
+  let dirExists = false;
+  try {
+    dirExists = await fs.exists(base);
+  } catch (e) {
+    // 权限范围外（如项目目录不在 capabilities 白名单）时静默降级，不抛 UnhandledRejection
+    log('info', `自定义节点目录不可访问（跳过扫描）：${base} —— ${e instanceof Error ? e.message : String(e)}`);
+    return 0;
+  }
   if (!dirExists) {
-    await fs.mkdir(base, { recursive: true });
-    log('info', `已创建自定义节点目录（${base}），放入节点包后可重新扫描`);
+    try {
+      await fs.mkdir(base, { recursive: true });
+      log('info', `已创建自定义节点目录（${base}），放入节点包后可重新扫描`);
+    } catch (e) {
+      log('info', `自定义节点目录无法创建（跳过）：${base} —— ${e instanceof Error ? e.message : String(e)}`);
+    }
     return 0;
   }
   const entries = await readDirSafe(base, fs);

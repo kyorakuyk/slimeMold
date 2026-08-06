@@ -51,6 +51,10 @@ vite_verify.log
 *.local.log
 tauri-dev*.log
 tauri-dev*.err
+build_stdout.log
+build_stderr.log
+dev_stdout.log
+dev_stderr.log
 dev-run.log
 dev-server.log
 dev-server.err
