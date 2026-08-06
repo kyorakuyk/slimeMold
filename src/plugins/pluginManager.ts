@@ -155,16 +155,28 @@ async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): P
 
 /** 程序安装目录下的 custom_nodes（全局生效，跨项目可用） */
 export async function scanProgramCustomNodes(): Promise<number> {
-  const { resourceDir } = await import('@tauri-apps/api/path');
-  const programRoot = (await resourceDir()).replace(/\\/g, '/');
-  return scanCustomNodesDir(`${programRoot}/${CUSTOM_NODES_DIR}`, 'program');
+  try {
+    const { resourceDir } = await import('@tauri-apps/api/path');
+    const programRoot = (await resourceDir()).replace(/\\/g, '/');
+    return await scanCustomNodesDir(`${programRoot}/${CUSTOM_NODES_DIR}`, 'program');
+  } catch (e) {
+    // 兜底：任何未预期错误（含 fs scope 之外）静默降级为「扫描 0 个」，避免 UnhandledRejection
+    log('info', `程序级自定义节点扫描跳过：${e instanceof Error ? e.message : String(e)}`);
+    return 0;
+  }
 }
 
 /** 当前项目目录下的 custom_nodes（仅本项目内生效；无打开项目则返回 0） */
 export async function scanProjectCustomNodes(): Promise<number> {
-  const projectPath = useWorkflowStore.getState().projectPath;
-  if (!projectPath) return 0;
-  return scanCustomNodesDir(`${projectPath.replace(/\\/g, '/')}/${CUSTOM_NODES_DIR}`, 'project');
+  try {
+    const projectPath = useWorkflowStore.getState().projectPath;
+    if (!projectPath) return 0;
+    return await scanCustomNodesDir(`${projectPath.replace(/\\/g, '/')}/${CUSTOM_NODES_DIR}`, 'project');
+  } catch (e) {
+    // 兜底：项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT 盘符），静默跳过
+    log('info', `项目级自定义节点扫描跳过（目录可能不在文件系统权限范围内）：${e instanceof Error ? e.message : String(e)}`);
+    return 0;
+  }
 }
 
 /** 卸载所有「项目级」自定义节点（切换/关闭项目时调用，避免污染下一个项目） */

@@ -202,7 +202,7 @@ export default function App() {
         }
         useWorkflowStore.getState().openProject(file, sess.path);
         // 项目恢复成功后：扫描程序级（全局）自定义节点；项目级（仅本项目）由下方 projectId 订阅统一触发
-        void scanProgramCustomNodes();
+        void scanProgramCustomNodes().catch(() => {});
       } catch {
         /* 恢复失败不阻塞启动 */
       }
@@ -222,7 +222,7 @@ export default function App() {
       setShowWelcome(!s.projectId);
       // 项目切换/关闭：先卸载旧项目级自定义节点（仅本项目生效），再扫描新项目级
       unloadProjectCustomNodes();
-      if (s.projectId) void scanProjectCustomNodes();
+      if (s.projectId) void scanProjectCustomNodes().catch(() => {});
     });
   }, []);
 
