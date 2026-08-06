@@ -378,7 +378,7 @@
 - [ ] 插件系统（plugin-examples 已有示例）与运行时执行链路联调。
 - [ ] 节点执行引擎的流式输出与取消逻辑完善。
 - [ ] 移动端/小屏适配。
-- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline / executor(纯逻辑) / graphAlgo(纯图算法内核) 共 142 项单测，`npm run test` 可回归（2026-08-07）。`npm run headless examples/headless-demo.json` 已接入 GitHub Actions CI（tsc + 单测 + 纯本地工作流冒烟），并修复了 headless 纯 Node 运行的两处缺陷（i18n 的 import.meta.glob 降级、tsconfig 别名）。executor 的 `runWorkflow` 调度内核已逐步拆为纯函数（graphAlgo.ts 已承载：下游 BFS / 可达性 / 循环体 / scope 串行化并查集 / 增量执行集 `computeExecutionSet` / 分支剪枝 `isBranchPruned` / 循环迭代决策 `shouldContinueLoop`，共 29 项单测，headless 冒烟一致）。下一步可拆 `runWorkflow` 主循环本身（代次检查/层循环/store 回写）或 builtin/workflowStore。
+- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline / executor(纯逻辑) / graphAlgo(纯图算法内核) 共 146 项单测，`npm run test` 可回归（2026-08-07）。`npm run headless examples/headless-demo.json` 已接入 GitHub Actions CI（tsc + 单测 + 纯本地工作流冒烟），并修复了 headless 纯 Node 运行的两处缺陷（i18n 的 import.meta.glob 降级、tsconfig 别名）。executor 的 `runWorkflow` 调度内核已逐步拆为纯函数（graphAlgo.ts 已承载 8 类：下游 BFS / 可达性 / 循环体 / scope 串行化并查集 / 每层簇预计算 `planClustersPerStage` / 增量执行集 `computeExecutionSet` / 分支剪枝 `isBranchPruned` / 循环迭代决策 `shouldContinueLoop`，共 33 项单测，headless 冒烟一致）。`runWorkflow` 主循环体已变薄（调度决策查表化），下一步可拆 `executeNode` 单体或 builtin/workflowStore。
 
 ---
 

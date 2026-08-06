@@ -7,6 +7,7 @@ import {
   computeScopeClusters,
   isBranchPruned,
   isReachable,
+  planClustersPerStage,
   scopesOfNode,
   shouldContinueLoop,
 } from './graphAlgo';
@@ -386,5 +387,58 @@ describe('shouldContinueLoop (循环迭代决策)', () => {
     expect(
       shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 1, maxRounds: 3 }),
     ).toEqual({ loopContinued: true, reachedMax: false });
+  });
+});
+
+describe('planClustersPerStage (层→簇预计算)', () => {
+  it('每层返回各自独立的簇列表，结构与 stages 一一对应', () => {
+    // 两层：L0=[a,b] 互不冲突；L1=[c,d] 经 scope 冲突归簇
+    const stages = [
+      ['a', 'b'],
+      ['c', 'd'],
+    ];
+    const edges = [
+      edge('x', 'c', { kind: 'task', scope: ['s'] }),
+      edge('y', 'd', { kind: 'task', scope: ['s'] }), // c,d 冲突
+    ];
+    const plan = planClustersPerStage(stages, edges);
+    expect(plan).toHaveLength(2);
+    // L0：a,b 无冲突 => 两个独立簇
+    expect(plan[0]).toHaveLength(2);
+    // L1：c,d 共享 s => 同一簇
+    expect(plan[1]).toHaveLength(1);
+    expect([...plan[1][0]].sort()).toEqual(['c', 'd']);
+  });
+
+  it('空 stages 返回空', () => {
+    expect(planClustersPerStage([], [])).toEqual([]);
+  });
+
+  it('单层多节点全冲突 => 单一簇且顺序保持', () => {
+    const stages = [['n1', 'n2', 'n3']];
+    const edges = [
+      edge('a', 'n1', { kind: 'task', scope: ['shared'] }),
+      edge('b', 'n2', { kind: 'task', scope: ['shared'] }),
+      edge('c', 'n3', { kind: 'task', scope: ['shared'] }),
+    ];
+    const plan = planClustersPerStage(stages, edges);
+    expect(plan[0]).toHaveLength(1);
+    expect(plan[0][0]).toEqual(['n1', 'n2', 'n3']);
+  });
+
+  it('预计算结果与逐层 computeScopeClusters 等价', () => {
+    const stages = [
+      ['a', 'b'],
+      ['c', 'd', 'e'],
+    ];
+    const edges = [
+      edge('w', 'c', { kind: 'task', scope: ['s1'] }),
+      edge('z', 'd', { kind: 'task', scope: ['s1', 's2'] }), // c,d 冲突
+      edge('v', 'e', { kind: 'task', scope: ['s3'] }),
+    ];
+    const plan = planClustersPerStage(stages, edges);
+    for (let i = 0; i < stages.length; i++) {
+      expect(plan[i]).toEqual(computeScopeClusters(stages[i], edges));
+    }
   });
 });

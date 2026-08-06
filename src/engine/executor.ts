@@ -22,9 +22,9 @@ import {
   collectReachable,
   computeDownstream,
   computeExecutionSet,
-  computeScopeClusters,
   isBranchPruned,
   isReachable,
+  planClustersPerStage,
   shouldContinueLoop,
 } from './graphAlgo';
 import { ExperienceSink } from '../agents/experienceSink';
@@ -529,6 +529,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const maxRounds = opts.maxLoopsOverride ?? Math.min(50, Math.max(1, ...maxLoopsOf.values()));
   let round = 0;
   let loopContinued = false;
+  // 预计算每层的 scope 串行化簇划分（层结构 stages 与边 edges 在轮间稳定，无需每轮重算）
+  const clusterPlan = planClustersPerStage(stages, edges);
   do {
     if (round > 0) {
       wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
@@ -563,7 +565,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
       // 说明它们会争用同一资源，强制把它们归到同一「串行簇」内按序执行，消解并发冲突；
       // 互不冲突的节点仍保持并行（簇间并行、簇内串行），最大化并行度。
-      const clusters = computeScopeClusters(layer, edges);
+      const clusters = clusterPlan[stages.indexOf(layer)];
       // 簇间并行；每个簇内按列表顺序串行执行（冲突节点被挤进同一簇）
       await Promise.all(
         clusters.map((cluster) =>

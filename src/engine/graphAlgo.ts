@@ -215,4 +215,18 @@ export function shouldContinueLoop(args: {
   return { loopContinued: continued, reachedMax: false };
 }
 
+/**
+ * 预计算每个拓扑层内的 scope 串行化簇划分（纯函数版）。
+ *
+ * 给定拓扑排序得到的 stages（每层节点 id 列表）与整体边集合，
+ * 对每层调用 `computeScopeClusters` 得到该层的串行簇（簇间并行、簇内串行）。
+ * 返回结构与 stages 一一对应：`result[layerIndex]` = 该层的簇列表。
+ *
+ * 主循环每轮调度的层结构（stages）与边（edges）在轮间稳定，
+ * 因此可预先一次性计算、循环内直接查表，避免每轮重复计算。
+ */
+export function planClustersPerStage(stages: string[][], edges: FlowEdge[]): string[][][] {
+  return stages.map((layer) => computeScopeClusters(layer, edges));
+}
+
 
