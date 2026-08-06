@@ -36,7 +36,7 @@ npm run test        # 一次性运行全部单测（CI 用）
 npm run test:watch  # 监听模式，开发时实时反馈
 ```
 
-测试覆盖（截至 2026-08-07，共 84 项）：
+测试覆盖（截至 2026-08-07，共 99 项）：
 
 - `src/engine/topoSort.test.ts` —— 分层拓扑排序、成环检测、`wouldCreateCycle` 的 control 边忽略与回流边语义
 - `src/engine/expr.test.ts` —— 参数模板表达式求值（字面量 / 运算 / 变量 / 成员访问 / 内置函数 / 三元 / 错误）
@@ -44,6 +44,7 @@ npm run test:watch  # 监听模式，开发时实时反馈
 - `src/engine/nodeCache.test.ts` —— 节点结果缓存（`cacheKey` 稳定序列化、读写、`strike` 清除、运行统计）
 - `src/engine/subgraph.test.ts` —— 子图展开（`expandedId`/`ownerRefId` 编解码、`inferPorts` 端口推断、`resolvePorts` 引用解析、`flattenSubgraphs` 展开与跨边界连线重定向、循环引用抛错）
 - `src/engine/pipeline.test.ts` —— 跨工作流编排（`definePipeline`/`getPipeline` 往返、`publishArtifact`/`getArtifact` 黑板写读 + version 自增、`advance` 正向传播、`rework` 回流写回）
+- `src/engine/executor.test.ts` —— 执行引擎核心逻辑（`collectInputs` 上游输出汇集、`resolveCapability` 能力分级映射、`applyCapability` 各等级裁剪注入、`getActiveRunId` 运行代次）
 
 > 测试环境为 jsdom（store 依赖 `window`/`localStorage`），由 `vitest.setup.ts` 补全 `matchMedia`/`ResizeObserver`/`structuredClone` 等 jsdom 缺失的 API 桩。新增纯逻辑改动时，请同步补充对应单测再提交。
 
@@ -52,7 +53,7 @@ npm run test:watch  # 监听模式，开发时实时反馈
 `.github/workflows/ci.yml` 在 push / PR 到 `main` 时自动运行：
 
 1. `npx tsc -b --noEmit` —— 类型检查
-2. `npm run test` —— Vitest 单测（84 项）
+2. `npm run test` —— Vitest 单测（99 项）
 3. `npm run headless examples/headless-demo.json` —— 纯本地节点工作流冒烟（input / template / if 分支 / expr / output，无需 API Key）
 
 > headless 在纯 Node 下运行需 `@/` 别名（根 `tsconfig.json` 已镜像）与 `import.meta.glob` 降级（见 `src/i18n/index.ts`），这两项已修复以使 CLI 脱离 Vite 也能跑通。
