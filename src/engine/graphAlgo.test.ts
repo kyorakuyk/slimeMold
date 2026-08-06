@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { FlowEdge } from '../types';
+import type { FlowEdge, FlowNode } from '../types';
 import {
   collectReachable,
   computeDownstream,
+  computeExecutionSet,
   computeScopeClusters,
+  isBranchPruned,
   isReachable,
   scopesOfNode,
 } from './graphAlgo';
@@ -15,6 +17,15 @@ function edge(source: string, target: string, extra?: Partial<FlowEdge['data']>)
     target,
     data: { kind: 'data', ...extra },
   } as FlowEdge;
+}
+
+function node(id: string, extra?: Partial<FlowNode['data']>): FlowNode {
+  return {
+    id,
+    type: 'base',
+    position: { x: 0, y: 0 },
+    data: { typeId: 'core.node', label: id, ...extra },
+  } as unknown as FlowNode;
 }
 
 describe('computeDownstream', () => {
@@ -180,5 +191,137 @@ describe('scopesOfNode + computeScopeClusters', () => {
     // layer 顺序 n1 在前
     const clusters = computeScopeClusters(['n1', 'n2'], edges);
     expect(clusters[0]).toEqual(['n1', 'n2']);
+  });
+});
+
+describe('computeExecutionSet (增量/全量执行集)', () => {
+  it('全量模式（incremental=false）：忽略 dirty，仅含 force + 子图虚拟节点', () => {
+    const nodes = [
+      node('a', { dirty: true }),
+      node('b', { dirty: false }),
+      node('sub@0::x'), // ownerRefId 编码：展开虚拟节点
+    ];
+    const { force, dirtySet } = computeExecutionSet(nodes, { incremental: false, forceNodes: ['a'] });
+    expect([...force]).toEqual(['a']);
+    // dirty 被忽略；force(a) + 虚拟节点 sub@0::x
+    expect([...dirtySet].sort()).toEqual(['a', 'sub@0::x']);
+    expect(dirtySet.has('b')).toBe(false);
+  });
+
+  it('增量模式：dirty 节点 + force + 虚拟节点', () => {
+    const nodes = [
+      node('a', { dirty: true }),
+      node('b', { dirty: false }),
+      node('c', { dirty: true }),
+      node('sub@1::y'),
+    ];
+    const { dirtySet } = computeExecutionSet(nodes, {
+      incremental: true,
+      forceNodes: ['b'],
+    });
+    expect([...dirtySet].sort()).toEqual(['a', 'b', 'c', 'sub@1::y']);
+  });
+
+  it('retryFailed 视作增量-like：读 dirty', () => {
+    const nodes = [node('a', { dirty: true }), node('b', { dirty: false })];
+    const { dirtySet } = computeExecutionSet(nodes, { retryFailed: true });
+    expect([...dirtySet]).toEqual(['a']);
+  });
+
+  it('force 覆盖非 dirty 节点', () => {
+    const nodes = [node('a', { dirty: false }), node('b', { dirty: true })];
+    const { dirtySet } = computeExecutionSet(nodes, { incremental: true, forceNodes: ['a'] });
+    expect(dirtySet.has('a')).toBe(true);
+    expect(dirtySet.has('b')).toBe(true);
+  });
+
+  it('无 dirty、无 force、无虚拟节点：空集', () => {
+    const nodes = [node('a'), node('b')];
+    const { force, dirtySet } = computeExecutionSet(nodes, { incremental: true });
+    expect([...force]).toEqual([]);
+    expect([...dirtySet]).toEqual([]);
+  });
+
+  it('返回新集合：多次调用不共享引用', () => {
+    const nodes = [node('a', { dirty: true })];
+    const r1 = computeExecutionSet(nodes, { incremental: true });
+    const r2 = computeExecutionSet(nodes, { incremental: true });
+    expect(r1.dirtySet).not.toBe(r2.dirtySet);
+    expect(r1.force).not.toBe(r2.force);
+  });
+});
+
+describe('isBranchPruned (分支剪枝判定)', () => {
+  function branchEdge(source: string, target: string, handle?: string): FlowEdge {
+    return {
+      id: `${source}->${target}:${handle ?? ''}`,
+      source,
+      target,
+      sourceHandle: handle,
+      data: { kind: 'control' },
+    } as FlowEdge;
+  }
+
+  it('无入边不剪枝（入口节点）', () => {
+    expect(isBranchPruned([], new Map(), false, new Set())).toBe(false);
+  });
+
+  it('普通上游（未登记分支状态=全激活）不剪枝', () => {
+    const incoming = [branchEdge('cond', 'x', 'out')];
+    // cond 未登记 => 视为全激活 => 不阻塞
+    expect(isBranchPruned(incoming, new Map(), false, new Set())).toBe(false);
+  });
+
+  it('所有入边均来自未激活分支 => 剪枝', () => {
+    const incoming = [branchEdge('cond', 'x', 'true')];
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['cond', new Set<string | undefined>(['false'])], // 仅激活 false，未激活 true
+    ]);
+    expect(isBranchPruned(incoming, branchState, false, new Set())).toBe(true);
+  });
+
+  it('至少一条入边激活 => 不剪枝', () => {
+    const incoming = [branchEdge('cond', 'x', 'true'), branchEdge('other', 'x', 'go')];
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['cond', new Set<string | undefined>(['false'])], // 阻塞
+      ['other', new Set<string | undefined>(['go'])], // 激活
+    ]);
+    expect(isBranchPruned(incoming, branchState, false, new Set())).toBe(false);
+  });
+
+  it('多入边全部未激活 => 剪枝', () => {
+    const incoming = [branchEdge('c1', 'x', 'a'), branchEdge('c2', 'x', 'b')];
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['c1', new Set<string | undefined>(['z'])],
+      ['c2', new Set<string | undefined>(['y'])],
+    ]);
+    expect(isBranchPruned(incoming, branchState, false, new Set())).toBe(true);
+  });
+
+  it('skipFailed 且所有上游失败 => 不剪枝（以空输入继续）', () => {
+    const incoming = [branchEdge('cond', 'x', 'true')];
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['cond', new Set<string | undefined>(['false'])],
+    ]);
+    const failed = new Set(['cond']);
+    expect(isBranchPruned(incoming, branchState, true, failed)).toBe(false);
+  });
+
+  it('skipFailed 但上游未全失败 => 仍剪枝', () => {
+    const incoming = [branchEdge('cond', 'x', 'true'), branchEdge('ok', 'x', 'go')];
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['cond', new Set<string | undefined>(['false'])],
+      ['ok', new Set<string | undefined>(['go'])], // ok 激活 => 不入 allBlocked，其实早就不剪枝
+    ]);
+    // 因 ok 激活，allBlocked=false，不论 failed 与否都不剪枝
+    expect(isBranchPruned(incoming, branchState, true, new Set(['cond']))).toBe(false);
+  });
+
+  it('sourceHandle 缺省与 undefined 匹配', () => {
+    const incoming = [branchEdge('cond', 'x')]; // 无 sourceHandle
+    const branchState = new Map<string, Set<string | undefined>>([
+      ['cond', new Set<string | undefined>([undefined])], // 激活缺省 handle
+    ]);
+    expect(isBranchPruned(incoming, branchState, false, new Set())).toBe(false);
   });
 });

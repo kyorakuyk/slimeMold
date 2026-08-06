@@ -5,7 +5,8 @@
  * 因此可被 Vitest 在 node 环境下直接单测覆盖，而无需启动整个运行态。
  * 它们从 executor.ts 抽取而来，源码行为保持零回归。
  */
-import type { FlowEdge } from '../types';
+import type { FlowEdge, FlowNode } from '../types';
+import { ownerRefId } from './subgraph';
 
 /** 将 startId 的全部下游节点收集进一个 Set（BFS），含 startId 自身。返回新集合，不改入参。 */
 export function computeDownstream(startId: string, edges: FlowEdge[]): Set<string> {
@@ -126,3 +127,60 @@ export function computeScopeClusters(layer: string[], edges: FlowEdge[]): string
   }
   return [...groupOf.values()];
 }
+
+/**
+ * 计算本轮运行的「执行集」：哪些节点必须执行（dirtySet），以及被显式 force 的节点集合。
+ *
+ * 纯计算版本，不含任何 store 副作用（clearDirty / strike 等由调用方在 runWorkflow 内处理）。
+ * 规则（与 executor.ts 历史行为一致）：
+ *  - force 节点恒在执行集中；
+ *  - 增量模式（incremental 或 retryFailed）：以节点自身 data.dirty 标记决定执行集；
+ *    全量模式：不读 dirty（调用方已先 clearDirty，意图是执行全部节点，命中缓存者由 nodeCache 跳过）；
+ *  - 子图展开出的虚拟节点不存在于画布、无独立脏标记，一律视为需执行（真实重复计算由 nodeCache 拦截）。
+ *
+ * @returns dirtySet 最终需执行节点集合；注意本函数返回的 dirtySet 已含 force（便于下游直接判断）。
+ */
+export function computeExecutionSet(
+  nodes: FlowNode[],
+  opts: { incremental?: boolean; retryFailed?: boolean; forceNodes?: string[] },
+): { force: Set<string>; dirtySet: Set<string> } {
+  const force = new Set(opts.forceNodes ?? []);
+  const isIncrementalLike = Boolean(opts.incremental) || Boolean(opts.retryFailed);
+  const dirtySet = new Set<string>();
+  if (isIncrementalLike) {
+    for (const n of nodes) if (n.data.dirty) dirtySet.add(n.id);
+  }
+  for (const id of force) dirtySet.add(id);
+  for (const n of nodes) if (ownerRefId(n.id)) dirtySet.add(n.id);
+  return { force, dirtySet };
+}
+
+/**
+ * 分支剪枝判定（纯函数版）：给定某节点的入边集合、全局分支激活状态、是否跳过失败模式、
+ * 以及失败节点集合，判定该节点是否应被「条件不成立」剪枝（整条子图跳过）。
+ *
+ * 规则（对应 executor.ts 历史实现）：
+ *  - 无入边：不剪枝（入口节点）；
+ *  - 所有入边都来自「已登记分支状态且未激活该入边 handle」的上游 => 全阻塞 => 剪枝；
+ *  - 未登记分支状态（普通节点缺省 = 全激活）不算阻塞；
+ *  - 若处于 skipFailed 模式且所有上游均失败，不剪枝（以空输入继续尝试执行）。
+ *
+ * 注意：本函数只返回「是否剪枝」的判定，不执行 branchState.set / setStatus 等副作用。
+ */
+export function isBranchPruned(
+  incoming: FlowEdge[],
+  branchState: Map<string, Set<string | undefined>>,
+  skipFailed: boolean,
+  failed: Set<string>,
+): boolean {
+  if (incoming.length === 0) return false;
+  const allBlocked = incoming.every((e) => {
+    const s = branchState.get(e.source);
+    return s !== undefined && !s.has(e.sourceHandle ?? undefined);
+  });
+  if (!allBlocked) return false;
+  const upstreamAllFailed =
+    skipFailed && incoming.length > 0 && incoming.every((e) => failed.has(e.source));
+  return !upstreamAllFailed;
+}
+

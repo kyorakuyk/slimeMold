@@ -21,7 +21,9 @@ import { flattenSubgraphs, ownerRefId } from './subgraph';
 import {
   collectReachable,
   computeDownstream,
+  computeExecutionSet,
   computeScopeClusters,
+  isBranchPruned,
   isReachable,
 } from './graphAlgo';
 import { ExperienceSink } from '../agents/experienceSink';
@@ -439,14 +441,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   } else {
     for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
   }
-  // 未显式 force 的增量运行：以当前 data.dirty 决定执行集
-  const dirtySet = new Set(nodes.filter((n) => n.data.dirty).map((n) => n.id));
-  for (const id of force) dirtySet.add(id);
-  // 子图展开出的虚拟节点不存在于画布，没有独立的脏标记与既有输出可复用，
-  // 一律视为「需执行」——真正的重复计算由 nodeCache 按 类型+参数+上游输出 拦截。
-  for (const n of nodes) {
-    if (ownerRefId(n.id)) dirtySet.add(n.id);
-  }
+  // 执行集（纯计算，来自 graphAlgo.computeExecutionSet）：
+  //  - force 节点恒在执行集；增量模式叠加 data.dirty；子图虚拟节点一律视为需执行。
+  const { dirtySet } = computeExecutionSet(nodes, { ...opts, forceNodes: [...force] });
 
   // 检测是否存在「循环迭代」结构：loopGate 的 pass(control) 分支指回其某个上游。
   // 若存在，执行引擎将重复跑整个 stage 序列（多轮）；否则单轮即可。
@@ -1059,29 +1056,10 @@ async function executeNode(
   }
 
   // 分支剪枝：若所有入边都来自「分支节点且未被激活」的分支，则整条子图跳过
-  if (incoming.length > 0) {
-    const allBlocked = incoming.every((e) => {
-      const s = branchState.get(e.source);
-      // 未登记（普通节点缺省）= 全激活；已登记且不含该 handle = 屏蔽
-      return s !== undefined && !s.has(e.sourceHandle ?? undefined);
-    });
-    if (allBlocked) {
-      // 区分「条件不成立剪枝」与「上游失败」：
-      // 失败模式下（skipFailed）若仅因上游失败而阻断，则不剪枝自身、以空输入继续尝试
-      const upstreamAllFailed =
-        skipFailed && incoming.length > 0 && incoming.every((e) => failed.has(e.source));
-      if (upstreamAllFailed) {
-        store.addLog(
-          'info',
-          `「${node.data.label}」上游有失败节点，按「跳过失败继续」策略仍尝试执行`,
-        );
-        // 不 return：继续执行（下方 collectInputs 会用空上游输出）
-      } else {
-        branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
-        setStatus(id, 'skipped', { startedAt: null, durationMs: null });
-        return;
-      }
-    }
+  if (incoming.length > 0 && isBranchPruned(incoming, branchState, skipFailed, failed)) {
+    branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
+    setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+    return;
   }
 
   // 裁剪：stopAfter 节点的下游不再执行（其本身已执行完毕）
