@@ -53,6 +53,13 @@ my-plugin/
 - **桌面端**：将插件文件夹放入 `AppData/com.slimemold.app/plugins/`，「插件」面板中点击「扫描插件目录」（应用启动时也会自动扫描）
 - **浏览器**：「插件」面板「从文件导入」，同时选中 `manifest.json` 与 `index.js`
 
+### 插件安全与信任模型
+
+- **插件在主 WebView 内运行，并非进程级沙箱**：插件代码（经 Blob URL 动态 `import()`）与宿主共享同一 JS 运行时与 DOM 权限。因此它被视作**可信本地代码**——即由你显式安装（拖入目录 / manifest 文件导入）的节点包，类比 ComfyUI 的 custom nodes。
+- **仅加载本机来源**：`loader.ts` 只接受来自本机文件系统的插件（程序级 `resourceDir`、项目级 `custom_nodes`、或手动文件导入）。**请勿从任意远端 URL 复制并执行未知插件源码**，除非你能完全信任其来源。
+- **权限边界是约定式的**：框架通过 `capability` / 职业父类（`ComputeNode`/`IoNode`/`SandboxWriteNode`/`CoordinatorNode`/`SystemNode`/`GitNode`）表达权限等级，越权的 manifest 声明会被忽略；但插件在 `execute` 内直接调用平台能力仍可越界。安装来源不可信的插件即等于授予其等同本应用的权限。
+- **未来若支持网络插件**：需升级为进程级隔离（独立 Tauri WebView / Web Worker / Rust 侧执行 + 显式能力授权），不能在主 WebView 内直接 `import()` 执行。
+
 ## 目录结构
 
 ```
@@ -107,4 +114,10 @@ ollama pull qwen2.5:3b
 - **拉取不到本机模型**：确认 Ollama 已启动（`ollama serve`），且 Base URL 端口正确。
 - **运行时 404**：模型名拼写需带标签，如 `qwen2.5:3b`，而不是 `qwen2.5`。
 - **桌面端请求失败**：确认 `src-tauri/tauri.conf.json` 的 `plugins.http` 允许访问 `http://127.0.0.1` 与 `http://localhost`（默认通常已允许本地地址）。
+
+## 相关文档
+
+- [凭据分层模型](docs/credentials.md)：桌面端密钥库 / headless 环境变量 / 工作流文件 `credentialKey` 的处理边界
+- [安全专项](SECURITY.md)：架构安全评审与 P0/P1/P2 修复追踪
+- [运行验证清单](docs/RUN_VERIFICATION.md)：协议兼容与功能验证检查项
 

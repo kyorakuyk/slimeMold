@@ -48,8 +48,8 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 | S2 | capabilities `path: "**"` 偏宽 | `src-tauri/capabilities/default.json:32,38` | 插件/节点可读写任意路径 |
 | S3 | HTTP 允许 `http://*` / `https://*` 全放开 | `src-tauri/capabilities/default.json:11-18` | 任意外联，含非预期域名 |
 | S4 | `run_git(args: Vec<String>, cwd: Option<String>)` 收任意参数 + 任意 cwd | `src-tauri/src/lib.rs:226` | 缺 cwd 边界与子命令白名单，破坏性 git 命令可被调 |
-| S5 | 插件经 Blob URL + `dynamic import()` 跑在主 WebView | `src/plugins/loader.ts` | 非进程级沙箱，capability 仅为 API 层约束；恶意插件可触 WebView 全局对象 / 读 localStorage / 读运行时解密后的 key |
-| S6 | 凭据运行期仍出现在 WebView JS 内存 | `AgentConfig.apiKey` → provider | 普通本地应用可接受；但与插件同进程，须把插件当可信 |
+| S5 | 插件经 Blob URL + `dynamic import()` 跑在主 WebView | `src/plugins/loader.ts` | 非进程级沙箱，capability 仅为 API 层约束；恶意插件可触 WebView 全局对象 / 读 localStorage / 读运行时解密后的 key。✅ 已声明信任模型（2026-08-07）：`loader.ts` 注释 + `README.md`「插件安全与信任模型」，明确仅加载本机来源、网络插件需隔离 |
+| S6 | 凭据运行期仍出现在 WebView JS 内存 | `AgentConfig.apiKey` → provider | 普通本地应用可接受；但与插件同进程，须把插件当可信。✅ 已文档化分层模型（2026-08-07）：`docs/credentials.md` 写明桌面端走密钥库+`endpoints.json`(AES-GCM)、headless 走环境变量、工作流文件仅存 `credentialKey` |
 | S7 | pipeline 定义为模块级 `Map` | `src/engine/pipeline.ts:138` | 重启即丢，非持久化缺口（功能问题，列此备查） |
 | S8 | 文档漂移：RUN_VERIFICATION.md 曾称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md` | ✅ 已修复（2026-08-07）：`providers/anthropic.ts` 实现 `/v1/messages`+SSE，`RUN_VERIFICATION.md` 已更正 |
 | S9 | `llmChannel.ts` 的 `BackendChannel` 误导注释 | `src/agents/llmChannel.ts` | ✅ 已清理（2026-08-07）：路线 A 下 backend/frontend 均走前端 provider，已合并实现并修正注释；路线 B 搁置 |
@@ -65,8 +65,8 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 - [x] **S4 run_git 约束**：校验 `cwd` 必填 + 存在性 + `..` 逃逸；子命令白名单；拒绝破坏性命令（reset/clean/rm/push）与危险 flag（--hard/--force/-f/--delete/-D）。
 
 ### P1 —— 信任模型与文档
-- [ ] **S5 信任声明**：在 `loader.ts` / README 明确「插件运行于主 WebView，视为可信本地代码」；若将来支持网络下载插件，必须升级进程级沙箱（Web Worker / 独立 Tauri WebView / Rust 侧执行）。
-- [ ] **S6 凭据分层文档化**：在 `docs/` 写明「桌面端只认 credentialKey；headless 走环境变量/外部凭据文件；workflow 文件禁止 apiKey 字段（schema 校验拒绝）」。
+- [x] **S5 信任声明**：✅ 已在 `loader.ts` 注释 + `README.md`「插件安全与信任模型」明确「插件运行于主 WebView，视为可信本地代码；仅加载本机来源；网络插件需升级进程级沙箱」（2026-08-07）。
+- [x] **S6 凭据分层文档化**：✅ 已创建 `docs/credentials.md`，写明「桌面端走系统密钥库+`endpoints.json`(AES-GCM 加密)；headless 走环境变量/明文（与桌面链路隔离）；工作流文件导出剥离明文 apiKey、仅存 `credentialKey`」（2026-08-07）。
 - [x] **S8 修文档漂移**：`RUN_VERIFICATION.md` 删 Anthropic 缺口描述，补 `anthropic.ts` 已实现 `/v1/messages`+SSE 的事实（2026-08-07）。
 - [x] **S9 清理** `BackendChannel`：路线 A 下 backend/frontend 均走前端 provider，已合并实现并修正注释；路线 B 搁置（2026-08-07）。
 

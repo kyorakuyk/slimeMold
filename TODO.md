@@ -1101,15 +1101,15 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 | S2 | capabilities `path: "**"` 偏宽 | `src-tauri/capabilities/default.json:32,38` |
 | S3 | HTTP 允许 `http://*` / `https://*` 全放开 | `src-tauri/capabilities/default.json:11-18` |
 | S4 | `run_git` 收任意 args + 任意 cwd | `src-tauri/src/lib.rs:226` |
-| S5 | 插件 Blob URL + dynamic import 跑主 WebView（非进程级沙箱） | `src/plugins/loader.ts` |
-| S6 | 凭据运行期在 WebView JS 内存 | `AgentConfig.apiKey` → provider |
+| S5 | 插件 Blob URL + dynamic import 跑主 WebView（非进程级沙箱） | `src/plugins/loader.ts` | ✅ 已声明信任模型 2026-08-07 |
+| S6 | 凭据运行期在 WebView JS 内存 | `AgentConfig.apiKey` → provider | ✅ 已文档化分层 2026-08-07 |
 | S7 | pipeline 定义为模块级 Map，重启即丢 | `src/engine/pipeline.ts:138` |
 | S8 | 文档漂移：RUN_VERIFICATION.md 曾称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md` | ✅ 已修复 2026-08-07 |
 | S9 | `llmChannel.ts` 的 `BackendChannel` 误导注释 | `src/agents/llmChannel.ts` | ✅ 已清理 2026-08-07 |
 
 ### 7.2 待实施（优先级）
 - [x] **P0（低成本高收益，优先）**：✅ 全部完成（commit d48401e）：S1 基础 CSP；S2 capabilities 收窄到 `$APPDATA/$HOME/$DOCUMENT/$RESOURCE`+项目目录；S3 HTTP 收敛到具体 provider 域 + 本地 Ollama；S4 `run_git` 校验 cwd + 子命令白名单（拒破坏性命令/危险 flag）。
-- [x] **P1（信任模型 + 文档）**：S8 修文档漂移（删 Anthropic 缺口，补已实现事实）✅；S9 清理 `BackendChannel`（合并实现 + 修正注释）✅；S5 信任声明、S6 凭据分层文档化待做（不阻塞功能）。
+- [x] **P1（信任模型 + 文档）**：S8 修文档漂移（删 Anthropic 缺口，补已实现事实）✅；S9 清理 `BackendChannel`（合并实现 + 修正注释）✅；S5 信任声明（`loader.ts`+README）✅；S6 凭据分层文档化（`docs/credentials.md`）✅。
 - [ ] **P2（长期）**：S7 Pipeline 持久化纳入 `ProjectFile` + schema version；测试体系补 Vitest 单测 + headless CI；executor/builtin/workflowStore 上帝模块渐进拆分。
 
 ### 7.3 设计权衡（已记录，不重复做）

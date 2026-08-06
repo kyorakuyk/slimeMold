@@ -17,6 +17,17 @@ import { OCCUPATION_CAPABILITY, capabilityOfClass } from '../nodes/sdk';
  *    ② 类式节点：export class Xxx extends SandboxWriteNode { typeId='...'; async execute(i,p,c){...} }
  *       —— 配合 manifest 节点 `extends: "SandboxWriteNode"` 声明继承式提权（见步骤 13）。
  * 加载方式：源码 -> Blob URL -> 动态 import()，并向 execute 注入受限 ctx。
+ *
+ * 信任模型（重要，S5）：
+ * - 当前插件在主 WebView 内通过 Blob URL 动态 import() 执行，与宿主共享同一个 JS
+ *   运行时与 DOM 权限，**不是进程级沙箱**。因此插件被视作「可信本地代码」——
+ *   即用户显式安装（拖入/扫码/manifest 导入）的节点包，类比 ComfyUI 的 custom nodes。
+ * - 框架通过 `capability` / 职业父类（ComputeNode/IoNode/SandboxWriteNode/...）做权限边界，
+ *   但这是「约定式」约束，越权声明会被忽略；插件若在 execute 内直接调用平台能力仍可越界。
+ * - 据此：**仅允许加载来自本机文件系统的插件**（程序级 resourceDir / 项目级 custom_nodes /
+ *   manifest 文件导入）。禁止运行时从任意远端 URL 拉取并执行插件源码。
+ * - 若未来需要支持「网络下载的第三方插件」，必须升级为进程级隔离（独立 Tauri WebView /
+ *   Web Worker / Rust 侧执行 + 显式能力授权），不能在主 WebView 内直接 import()。
  */
 export interface ParsedPlugin {
   plugin: LoadedPlugin;
