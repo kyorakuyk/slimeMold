@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode, NodeDefinition, NodeStatus } from '../types';
 import {
   collectReachable,
   computeDownstream,
@@ -8,6 +8,7 @@ import {
   isBranchPruned,
   isReachable,
   planClustersPerStage,
+  resolveNodeExecutionMode,
   scopesOfNode,
   shouldContinueLoop,
 } from './graphAlgo';
@@ -440,5 +441,94 @@ describe('planClustersPerStage (层→簇预计算)', () => {
     for (let i = 0; i < stages.length; i++) {
       expect(plan[i]).toEqual(computeScopeClusters(stages[i], edges));
     }
+  });
+});
+
+describe('resolveNodeExecutionMode (单节点执行路径判定)', () => {
+  const def = { typeId: 'core.node', inputs: [], outputs: [], execute: async () => ({}) } as unknown as NodeDefinition;
+  const noIncoming: FlowEdge[] = [];
+
+  function baseNode(extra?: Partial<FlowNode['data']>): FlowNode {
+    return {
+      id: 'n1',
+      type: 'base',
+      position: { x: 0, y: 0 },
+      data: { typeId: 'core.node', label: 'n1', ...extra },
+    } as unknown as FlowNode;
+  }
+
+  it('上游失败传染 => upstream-failed（优先级最高）', () => {
+    const incoming = [edge('a', 'n1')];
+    const failed = new Set(['a']);
+    const node = baseNode({ bypass: true }); // 即便 bypass，上游失败优先
+    expect(
+      resolveNodeExecutionMode({ node, def, incoming, failed, isIncremental: false, shouldRun: true, forced: true }),
+    ).toEqual({ kind: 'upstream-failed' });
+  });
+
+  it('类型缺失 => missing-def（即便 force/dirty）', () => {
+    const node = baseNode();
+    const res = resolveNodeExecutionMode({
+      node,
+      def: undefined,
+      incoming: noIncoming,
+      failed: new Set(),
+      isIncremental: false,
+      shouldRun: true,
+      forced: true,
+    });
+    expect(res).toEqual({ kind: 'missing-def' });
+  });
+
+  it('missing 标记的定义 => missing-def', () => {
+    const missingDef = { ...def, missing: true };
+    expect(
+      resolveNodeExecutionMode({ node: baseNode(), def: missingDef, incoming: noIncoming, failed: new Set(), isIncremental: false, shouldRun: true, forced: true }),
+    ).toEqual({ kind: 'missing-def' });
+  });
+
+  it('bypass 开关 => bypass', () => {
+    expect(
+      resolveNodeExecutionMode({ node: baseNode({ bypass: true }), def, incoming: noIncoming, failed: new Set(), isIncremental: false, shouldRun: true, forced: true }),
+    ).toEqual({ kind: 'bypass' });
+  });
+
+  it('mute 开关 => mute（优先级高于 bypass 之外的判定）', () => {
+    expect(
+      resolveNodeExecutionMode({ node: baseNode({ mute: true }), def, incoming: noIncoming, failed: new Set(), isIncremental: false, shouldRun: true, forced: true }),
+    ).toEqual({ kind: 'mute' });
+  });
+
+  it('增量模式且非 dirty 非 force => incremental-skip（携带原状态）', () => {
+    const node = baseNode({ status: 'cached' as NodeStatus });
+    expect(
+      resolveNodeExecutionMode({ node, def, incoming: noIncoming, failed: new Set(), isIncremental: true, shouldRun: false, forced: false }),
+    ).toEqual({ kind: 'incremental-skip', prevStatus: 'cached' });
+  });
+
+  it('增量模式但 force => execute（forced 覆盖跳过）', () => {
+    const node = baseNode({ status: 'idle' as NodeStatus });
+    expect(
+      resolveNodeExecutionMode({ node, def, incoming: noIncoming, failed: new Set(), isIncremental: true, shouldRun: false, forced: true }),
+    ).toEqual({ kind: 'execute' });
+  });
+
+  it('增量模式但 shouldRun（dirty）=> execute', () => {
+    expect(
+      resolveNodeExecutionMode({ node: baseNode(), def, incoming: noIncoming, failed: new Set(), isIncremental: true, shouldRun: true, forced: false }),
+    ).toEqual({ kind: 'execute' });
+  });
+
+  it('全量模式（非增量）即便非 dirty => execute', () => {
+    const node = baseNode({ status: 'idle' as NodeStatus });
+    expect(
+      resolveNodeExecutionMode({ node, def, incoming: noIncoming, failed: new Set(), isIncremental: false, shouldRun: false, forced: false }),
+    ).toEqual({ kind: 'execute' });
+  });
+
+  it('默认正常节点 => execute', () => {
+    expect(
+      resolveNodeExecutionMode({ node: baseNode(), def, incoming: noIncoming, failed: new Set(), isIncremental: false, shouldRun: true, forced: false }),
+    ).toEqual({ kind: 'execute' });
   });
 });

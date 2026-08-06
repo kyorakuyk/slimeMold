@@ -25,6 +25,7 @@ import {
   isBranchPruned,
   isReachable,
   planClustersPerStage,
+  resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
 import { ExperienceSink } from '../agents/experienceSink';
@@ -871,9 +872,19 @@ async function executeNode(
 
   const incoming = edges.filter((e) => e.target === id);
 
-  // 上游失败传染：直接标记失败，不执行（其下游会因 failed 集合被继续传染）
-  const upstreamFailed = incoming.some((e) => failed.has(e.source));
-  if (upstreamFailed) {
+  const def = useRegistryStore.getState().defs[node.data.typeId];
+
+  // 前置路径判定（纯函数版）：上游失败传染 / 类型缺失 / bypass / mute / 增量跳过 / 正常执行
+  const mode = resolveNodeExecutionMode({
+    node,
+    def,
+    incoming,
+    failed,
+    isIncremental: Boolean(isIncremental),
+    shouldRun,
+    forced,
+  });
+  if (mode.kind === 'upstream-failed') {
     failed.add(id);
     branchState.set(id, new Set());
     setStatus(id, 'error', {
@@ -883,9 +894,7 @@ async function executeNode(
     });
     return;
   }
-
-  const def = useRegistryStore.getState().defs[node.data.typeId];
-  if (!def || def.missing) {
+  if (mode.kind === 'missing-def') {
     failed.add(id);
     branchState.set(id, new Set());
     setStatus(id, 'error', {
@@ -1028,7 +1037,7 @@ async function executeNode(
   }
 
   // bypass / mute 调试开关（仿 ComfyUI 的 Ctrl+B / Ctrl+M）
-  if (node.data.bypass || node.data.mute) {
+  if (mode.kind === 'bypass' || mode.kind === 'mute') {
     const bypassIn = edges.filter((e) => e.target === id);
     const out: Record<string, unknown> = {};
     if (node.data.bypass) {
@@ -1056,8 +1065,8 @@ async function executeNode(
   // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
   // 注意：全量运行（!isIncremental）时 dirtySet 为空、shouldRun 全部为 false，
   // 但全量运行意图是执行所有节点，因此只在增量模式才走此跳过路径。
-  if (isIncremental && !shouldRun && !forced) {
-    setStatus(id, node.data.status === 'cached' ? 'cached' : (node.data.status ?? 'idle'));
+  if (mode.kind === 'incremental-skip') {
+    setStatus(id, mode.prevStatus === 'cached' ? 'cached' : mode.prevStatus);
     return;
   }
 

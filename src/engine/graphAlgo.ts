@@ -5,7 +5,7 @@
  * 因此可被 Vitest 在 node 环境下直接单测覆盖，而无需启动整个运行态。
  * 它们从 executor.ts 抽取而来，源码行为保持零回归。
  */
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode, NodeDefinition, NodeStatus } from '../types';
 import { ownerRefId } from './subgraph';
 
 /** 将 startId 的全部下游节点收集进一个 Set（BFS），含 startId 自身。返回新集合，不改入参。 */
@@ -227,6 +227,50 @@ export function shouldContinueLoop(args: {
  */
 export function planClustersPerStage(stages: string[][], edges: FlowEdge[]): string[][][] {
   return stages.map((layer) => computeScopeClusters(layer, edges));
+}
+
+/**
+ * 单个节点「应走哪条执行路径」的纯判定（对应 executor.executeNode 开头的前置分支）。
+ *
+ * 把"上游失败传染 / 类型缺失 / bypass 调试 / mute 调试 / 增量跳过 / 正常执行"这些
+ * 互斥的前置判定收敛成一个纯函数，调用方据返回的 mode 执行相应的副作用。
+ * 这样 executeNode 的副作用路径变清晰，且每种前置分支都可被单测覆盖。
+ *
+ * 判定顺序与原 executeNode 一致（优先级从高到低）：
+ *  1. 上游失败传染 => 'upstream-failed'
+ *  2. 节点类型缺失（未加载插件等）=> 'missing-def'
+ *  3. bypass 调试开关 => 'bypass'
+ *  4. mute 调试开关 => 'mute'
+ *  5. 增量模式且非 dirty 非 force => 'incremental-skip'（携带原状态用于回显）
+ *  6. 其余 => 'execute'
+ */
+export type NodeExecutionMode =
+  | { kind: 'upstream-failed' }
+  | { kind: 'missing-def' }
+  | { kind: 'bypass' }
+  | { kind: 'mute' }
+  | { kind: 'incremental-skip'; prevStatus: NodeStatus }
+  | { kind: 'execute' };
+
+export function resolveNodeExecutionMode(args: {
+  node: FlowNode;
+  def: NodeDefinition | undefined;
+  incoming: FlowEdge[];
+  failed: Set<string>;
+  isIncremental: boolean;
+  shouldRun: boolean;
+  forced: boolean;
+}): NodeExecutionMode {
+  const { node, def, incoming, failed, isIncremental, shouldRun, forced } = args;
+  const upstreamFailed = incoming.some((e) => failed.has(e.source));
+  if (upstreamFailed) return { kind: 'upstream-failed' };
+  if (!def || def.missing) return { kind: 'missing-def' };
+  if (node.data.bypass) return { kind: 'bypass' };
+  if (node.data.mute) return { kind: 'mute' };
+  if (isIncremental && !shouldRun && !forced) {
+    return { kind: 'incremental-skip', prevStatus: node.data.status ?? 'idle' };
+  }
+  return { kind: 'execute' };
 }
 
 
