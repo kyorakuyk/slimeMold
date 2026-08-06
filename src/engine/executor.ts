@@ -25,6 +25,7 @@ import {
   computeScopeClusters,
   isBranchPruned,
   isReachable,
+  shouldContinueLoop,
 } from './graphAlgo';
 import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
@@ -611,15 +612,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     if (signal.aborted || myRun !== gen.currentRunId) break;
 
     // 判断是否需要继续迭代：任一 loopGate 本轮走了 pass 分支 ⇒ 循环体被激活 ⇒ 继续
-    loopContinued = hasLoop && [...loopGateIds].some((gid) => {
-      const taken = gateTaken.get(gid);
-      return taken ? taken.includes('pass') : false;
+    const { loopContinued: cont, reachedMax } = shouldContinueLoop({
+      hasLoop,
+      loopGateIds,
+      gateTaken,
+      round,
+      maxRounds,
     });
+    loopContinued = cont;
     gateTaken.clear();
     round += 1;
-    if (loopContinued && round >= maxRounds) {
+    if (reachedMax) {
       wf.addLog('info', `已达到最大循环轮数 ${maxRounds}，强制结束循环`);
-      loopContinued = false;
     }
   } while (loopContinued);
   if (hasLoop && round > 1) {

@@ -8,6 +8,7 @@ import {
   isBranchPruned,
   isReachable,
   scopesOfNode,
+  shouldContinueLoop,
 } from './graphAlgo';
 
 function edge(source: string, target: string, extra?: Partial<FlowEdge['data']>): FlowEdge {
@@ -323,5 +324,67 @@ describe('isBranchPruned (分支剪枝判定)', () => {
       ['cond', new Set<string | undefined>([undefined])], // 激活缺省 handle
     ]);
     expect(isBranchPruned(incoming, branchState, false, new Set())).toBe(false);
+  });
+});
+
+describe('shouldContinueLoop (循环迭代决策)', () => {
+  const gateIds = ['g1'];
+
+  it('非 loop 工作流：永不继续', () => {
+    const gateTaken = new Map<string, string[]>([['g1', ['pass']]]);
+    expect(
+      shouldContinueLoop({ hasLoop: false, loopGateIds: gateIds, gateTaken, round: 0, maxRounds: 3 }),
+    ).toEqual({ loopContinued: false, reachedMax: false });
+  });
+
+  it('有 loop 且某 gate 走了 pass => 继续', () => {
+    const gateTaken = new Map<string, string[]>([['g1', ['pass']]]);
+    expect(
+      shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 0, maxRounds: 3 }),
+    ).toEqual({ loopContinued: true, reachedMax: false });
+  });
+
+  it('有 loop 但无 gate 走 pass（走了 stop）=> 不继续', () => {
+    const gateTaken = new Map<string, string[]>([['g1', ['stop']]]);
+    expect(
+      shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 0, maxRounds: 3 }),
+    ).toEqual({ loopContinued: false, reachedMax: false });
+  });
+
+  it('gate 未登记任何分支（首轮尚未触发）=> 不继续', () => {
+    const gateTaken = new Map<string, string[]>();
+    expect(
+      shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 0, maxRounds: 3 }),
+    ).toEqual({ loopContinued: false, reachedMax: false });
+  });
+
+  it('多 gate：任一走 pass 即继续', () => {
+    const gateTaken = new Map<string, string[]>([
+      ['g1', ['stop']],
+      ['g2', ['pass']],
+    ]);
+    expect(
+      shouldContinueLoop({
+        hasLoop: true,
+        loopGateIds: ['g1', 'g2'],
+        gateTaken,
+        round: 1,
+        maxRounds: 5,
+      }),
+    ).toEqual({ loopContinued: true, reachedMax: false });
+  });
+
+  it('达到最大轮数：本应继续但被截断 => loopContinued=false 且 reachedMax=true', () => {
+    const gateTaken = new Map<string, string[]>([['g1', ['pass']]]);
+    expect(
+      shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 3, maxRounds: 3 }),
+    ).toEqual({ loopContinued: false, reachedMax: true });
+  });
+
+  it('未达最大轮数且走 pass => 继续（reachedMax=false）', () => {
+    const gateTaken = new Map<string, string[]>([['g1', ['pass']]]);
+    expect(
+      shouldContinueLoop({ hasLoop: true, loopGateIds: gateIds, gateTaken, round: 1, maxRounds: 3 }),
+    ).toEqual({ loopContinued: true, reachedMax: false });
   });
 });

@@ -184,3 +184,35 @@ export function isBranchPruned(
   return !upstreamAllFailed;
 }
 
+/**
+ * 循环迭代决策（纯函数版）：给定本轮各 loopGate 实际走过的分支端口（gateTaken）、
+ * 当前轮次与最大轮数，判定主循环是否应继续迭代。
+ *
+ * 规则（对应 executor.ts 历史实现）：
+ *  - 非 loop 工作流（hasLoop=false）：永不继续（单轮）；
+ *  - 任一 loopGate 本轮走了 'pass' 分支 ⇒ 循环体被激活 ⇒ 继续；
+ *  - 已达到最大轮数（round >= maxRounds）：强制结束，不再继续（返回 reachedMax=true）。
+ *
+ * 注意：本函数不执行 `gateTaken.clear()` 与日志副作用，由调用方在循环内处理。
+ *
+ * @returns loopContinued 是否继续迭代；reachedMax 是否已触顶（仅当原本应继续却被轮数截断时为真）。
+ */
+export function shouldContinueLoop(args: {
+  hasLoop: boolean;
+  loopGateIds: Iterable<string>;
+  gateTaken: Map<string, string[]>;
+  round: number;
+  maxRounds: number;
+}): { loopContinued: boolean; reachedMax: boolean } {
+  const { hasLoop, loopGateIds, gateTaken, round, maxRounds } = args;
+  const continued = hasLoop && [...loopGateIds].some((gid) => {
+    const taken = gateTaken.get(gid);
+    return taken ? taken.includes('pass') : false;
+  });
+  if (continued && round >= maxRounds) {
+    return { loopContinued: false, reachedMax: true };
+  }
+  return { loopContinued: continued, reachedMax: false };
+}
+
+
