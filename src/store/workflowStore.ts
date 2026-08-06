@@ -211,6 +211,8 @@ interface WorkflowState {
   artifacts: import('../engine/pipeline').ProjectArtifacts;
   /** 步骤 14.7：项目级「模块类别 → 智能体」路由表（Builder 生成施工方工作流时绑定 agent 用），随 .slimemold 持久化 */
   agentRouteTable: import('../types').AgentRouteTable;
+  /** 步骤 14.A：项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
+  pipelines: import('../engine/pipeline').PipelineDef[];
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 
@@ -325,6 +327,10 @@ interface WorkflowState {
   setArtifact: (stage: string, kind: string, artifact: import('../engine/pipeline').Artifact) => void;
   /** 步骤 14.7：覆盖项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
   setAgentRouteTable: (table: import('../types').AgentRouteTable) => void;
+  /** 步骤 14.A：覆盖整个 Pipeline 定义集合（随项目持久化） */
+  setPipelines: (defs: import('../engine/pipeline').PipelineDef[]) => void;
+  /** 步骤 14.A：声明或更新单条 Pipeline 定义（随项目持久化，触发脏标记） */
+  upsertPipeline: (def: import('../engine/pipeline').PipelineDef) => void;
 
   /* ---- 子图（方案 A：引用节点 + 执行期扁平化） ---- */
   /** 把选中的一批节点打包成子图，并用一个 subgraph.ref 节点替换它们。返回新子图 id */
@@ -527,6 +533,7 @@ function buildProjectFile(s: {
   runHistory: RunRecord[];
   artifacts: import('../engine/pipeline').ProjectArtifacts;
   agentRouteTable: import('../types').AgentRouteTable;
+  pipelines: import('../engine/pipeline').PipelineDef[];
 }): ProjectFile {
   const current: WorkflowFileInMemory = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
   const workflowsInMemory = { ...s.workflows };
@@ -554,6 +561,7 @@ function buildProjectFile(s: {
     subgraphs: s.subgraphs,
     artifacts: s.artifacts,
     agentRouteTable: s.agentRouteTable,
+    pipelines: s.pipelines,
     runs: { history: s.runHistory },
   };
 }
@@ -609,6 +617,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       groups: [],
       artifacts: {},
       agentRouteTable: {},
+      pipelines: [],
 
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
@@ -1796,6 +1805,23 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ agentRouteTable: table });
       },
 
+      /* ---------- 步骤 14.A：Pipeline 编排定义（随项目持久化） ---------- */
+
+      /** 覆盖整个 pipeline 定义集合（Builder / Orchestrator 全量写入时调用） */
+      setPipelines: (defs: import('../engine/pipeline').PipelineDef[]) => {
+        set({ pipelines: defs });
+      },
+      /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
+      upsertPipeline: (def: import('../engine/pipeline').PipelineDef) => {
+        const s = get();
+        const exists = s.pipelines.some((p) => p.id === def.id);
+        set({
+          pipelines: exists
+            ? s.pipelines.map((p) => (p.id === def.id ? def : p))
+            : [...s.pipelines, def],
+        });
+      },
+
       /* ---------- 子图 ---------- */
 
       packSelectionAsSubgraph: (nodeIds, name) => {
@@ -2206,6 +2232,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         groups: s.groups,
         artifacts: s.artifacts,
         agentRouteTable: s.agentRouteTable,
+        pipelines: s.pipelines,
       }),
       // 恢复持久化状态时，把拍平的 workflows 重新收口为内存态 FlowNode
       merge: (persisted, current) => {
@@ -2254,6 +2281,7 @@ const DIRTY_KEYS = [
   'workflows',
   'artifacts',
   'agentRouteTable',
+  'pipelines',
   'projectName',
   'activeWfId',
   'workflowName',

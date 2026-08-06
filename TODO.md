@@ -1103,7 +1103,7 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 | S4 | `run_git` 收任意 args + 任意 cwd | `src-tauri/src/lib.rs:226` |
 | S5 | 插件 Blob URL + dynamic import 跑主 WebView（非进程级沙箱） | `src/plugins/loader.ts` | ✅ 已声明信任模型 2026-08-07 |
 | S6 | 凭据运行期在 WebView JS 内存 | `AgentConfig.apiKey` → provider | ✅ 已文档化分层 2026-08-07 |
-| S7 | pipeline 定义为模块级 Map，重启即丢 | `src/engine/pipeline.ts:138` |
+| S7 | pipeline 定义为模块级 Map，重启即丢 | `src/engine/pipeline.ts` | ✅ 已持久化 2026-08-07 |
 | S8 | 文档漂移：RUN_VERIFICATION.md 曾称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md` | ✅ 已修复 2026-08-07 |
 | S9 | `llmChannel.ts` 的 `BackendChannel` 误导注释 | `src/agents/llmChannel.ts` | ✅ 已清理 2026-08-07 |
 

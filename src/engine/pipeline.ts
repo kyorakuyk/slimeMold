@@ -133,26 +133,29 @@ export function publishArtifact(args: {
 
 /**
  * 声明/注册一条 pipeline（仅存储定义，不立即执行）。
- * 目前只做内存登记（pipelineDefs 暂存于模块级，待 14.B 接入 store 持久化）。
+ * 定义存入 workflowStore 项目态（pipelines 字段），随 .slimemold 持久化，
+ * 重启不丢；同时触发 projectDirty 与自动落盘。
  */
-const pipelineDefs = new Map<string, PipelineDef>();
-
 export function definePipeline(def: PipelineDef): PipelineDef {
-  pipelineDefs.set(def.id, def);
+  useWorkflowStore.getState().upsertPipeline(def);
   return def;
 }
 
 export function getPipeline(id: string): PipelineDef | undefined {
-  return pipelineDefs.get(id);
+  return useWorkflowStore.getState().pipelines.find((p) => p.id === id);
 }
 
 /**
  * 把某阶段绑定的工作流 id 回填（Builder 生成后调用）。
  */
 export function bindStageWorkflow(pipelineId: string, stageId: string, wfId: string): void {
-  const def = pipelineDefs.get(pipelineId);
+  const st = useWorkflowStore.getState();
+  const def = st.pipelines.find((p) => p.id === pipelineId);
   if (!def) return;
-  def.stages = def.stages.map((s) => (s.id === stageId ? { ...s, wfId } : s));
+  st.upsertPipeline({
+    ...def,
+    stages: def.stages.map((s) => (s.id === stageId ? { ...s, wfId } : s)),
+  });
 }
 
 /**
@@ -167,7 +170,7 @@ export function advance(
   upstreamStage: string,
   artifactKind: ArtifactKind,
 ): PipelineStage[] {
-  const def = pipelineDefs.get(pipelineId);
+  const def = getPipeline(pipelineId);
   if (!def) return [];
   const artifact = getArtifact(upstreamStage, artifactKind);
   if (!artifact) return [];
@@ -204,7 +207,7 @@ export function rework(
   fromWf: string,
   runId: string,
 ): PipelineStage | undefined {
-  const def = pipelineDefs.get(pipelineId);
+  const def = getPipeline(pipelineId);
   if (!def) return undefined;
   const target = def.stages.find((s) => s.id === targetStage);
   if (!target) return undefined;

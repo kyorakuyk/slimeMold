@@ -50,7 +50,7 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 | S4 | `run_git(args: Vec<String>, cwd: Option<String>)` 收任意参数 + 任意 cwd | `src-tauri/src/lib.rs:226` | 缺 cwd 边界与子命令白名单，破坏性 git 命令可被调 |
 | S5 | 插件经 Blob URL + `dynamic import()` 跑在主 WebView | `src/plugins/loader.ts` | 非进程级沙箱，capability 仅为 API 层约束；恶意插件可触 WebView 全局对象 / 读 localStorage / 读运行时解密后的 key。✅ 已声明信任模型（2026-08-07）：`loader.ts` 注释 + `README.md`「插件安全与信任模型」，明确仅加载本机来源、网络插件需隔离 |
 | S6 | 凭据运行期仍出现在 WebView JS 内存 | `AgentConfig.apiKey` → provider | 普通本地应用可接受；但与插件同进程，须把插件当可信。✅ 已文档化分层模型（2026-08-07）：`docs/credentials.md` 写明桌面端走密钥库+`endpoints.json`(AES-GCM)、headless 走环境变量、工作流文件仅存 `credentialKey` |
-| S7 | pipeline 定义为模块级 `Map` | `src/engine/pipeline.ts:138` | 重启即丢，非持久化缺口（功能问题，列此备查） |
+| S7 | pipeline 定义为模块级 `Map` | `src/engine/pipeline.ts` | ✅ 已持久化（2026-08-07）：`pipelineDefs` 模块级 Map 改为存于 `workflowStore.pipelines`（项目态），随 `.slimemold` 序列化进 `ProjectFile.pipelines` + partialize 白名单 + DIRTY_KEYS，重启不丢；`types.ts` 加 `ProjectFile.pipelines?: PipelineDef[]` |
 | S8 | 文档漂移：RUN_VERIFICATION.md 曾称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md` | ✅ 已修复（2026-08-07）：`providers/anthropic.ts` 实现 `/v1/messages`+SSE，`RUN_VERIFICATION.md` 已更正 |
 | S9 | `llmChannel.ts` 的 `BackendChannel` 误导注释 | `src/agents/llmChannel.ts` | ✅ 已清理（2026-08-07）：路线 A 下 backend/frontend 均走前端 provider，已合并实现并修正注释；路线 B 搁置 |
 

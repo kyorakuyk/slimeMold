@@ -804,6 +804,8 @@ export interface ProjectFile {
   legacy?: boolean;
   /** 项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
   agentRouteTable?: AgentRouteTable;
+  /** 项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
+  pipelines?: import('./engine/pipeline').PipelineDef[];
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };
 }
