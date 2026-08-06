@@ -48,22 +48,21 @@ class FrontendChannel implements LLMChannel {
 }
 
 /**
- * 后端通道（已废弃，路线 A 下不再使用）。
- * 原实现经 Tauri `chat_completion` 命令在 Rust 侧发起请求，该命令已移除。
- * 此处保留为兼容壳：直接委托前端通道，保证 getChannel('backend') 仍可工作，
- * 且不依赖已删除的 Rust 命令。路线 B 启用时将由 ExecutionBackend 取代。
+ * 通道实例。
+ *
+ * 路线 A（当前 main）下，Rust 侧已不再实现 LLM HTTP 客户端（原 `chat_completion`
+ * 命令已移除，见 SECURITY/S8）。因此无论用户选择「后端」还是「前端」通道，实际都由
+ * 前端 provider（plugin-http / window.fetch）在 WebView 内发起请求——区别仅在于
+ * `mode` 标识与日志/遥测语义（"经 Tauri 通道" vs "WebView 直连"），请求路径一致。
+ *
+ * 保留两个实例而非单一实现，是为了让 `LLMChannel.mode` 仍能反映用户在设置面板选择的
+ * 通道类型，便于运行历史与日志标注；两者共享同一 `chatWithAgent` 实现。
+ * 路线 B（feature/backend-engine）启用时，BackendChannel 将由 ExecutionBackend 接管，
+ * 真正在 Rust 侧执行，届时此处替换为后端实现即可。
  */
-class BackendChannel implements LLMChannel {
-  readonly mode = 'backend' as const;
-
-  async chat(req: LLMRequest): Promise<LLMResponse> {
-    // 委托前端 provider（plugin-http），带回 usage 统计。
-    return chatWithAgent(req.agent, req.messages, req.signal, req.onToken);
-  }
-}
-
 const frontend = new FrontendChannel();
-const backend = new BackendChannel();
+const backend = new FrontendChannel();
+(backend as { mode: LLMChannelMode }).mode = 'backend';
 
 export function getChannel(mode: LLMChannelMode): LLMChannel {
   return mode === 'backend' ? backend : frontend;

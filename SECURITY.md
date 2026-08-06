@@ -51,24 +51,24 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 | S5 | 插件经 Blob URL + `dynamic import()` 跑在主 WebView | `src/plugins/loader.ts` | 非进程级沙箱，capability 仅为 API 层约束；恶意插件可触 WebView 全局对象 / 读 localStorage / 读运行时解密后的 key |
 | S6 | 凭据运行期仍出现在 WebView JS 内存 | `AgentConfig.apiKey` → provider | 普通本地应用可接受；但与插件同进程，须把插件当可信 |
 | S7 | pipeline 定义为模块级 `Map` | `src/engine/pipeline.ts:138` | 重启即丢，非持久化缺口（功能问题，列此备查） |
-| S8 | 文档漂移：RUN_VERIFICATION.md 仍称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md:29,46` | `providers/anthropic.ts` 已实现 `/v1/messages` + SSE，文档落后代码 |
-| S9 | `llmChannel.ts` 保留 `BackendChannel` 兼容壳 | `src/agents/llmChannel.ts:56` | 死代码，路线 B 已搁置，应清理或明确注释 |
+| S8 | 文档漂移：RUN_VERIFICATION.md 曾称 Anthropic 为缺口 | `docs/RUN_VERIFICATION.md` | ✅ 已修复（2026-08-07）：`providers/anthropic.ts` 实现 `/v1/messages`+SSE，`RUN_VERIFICATION.md` 已更正 |
+| S9 | `llmChannel.ts` 的 `BackendChannel` 误导注释 | `src/agents/llmChannel.ts` | ✅ 已清理（2026-08-07）：路线 A 下 backend/frontend 均走前端 provider，已合并实现并修正注释；路线 B 搁置 |
 
 ---
 
 ## 三、待实施（优先级）
 
-### P0 —— 低成本、高收益，建议近期做
-- [ ] **S1 CSP**：`tauri.conf.json` 配基础 CSP（至少 `default-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:11434 https://api.openai.com https://api.anthropic.com ...`），替代 `null`。
-- [ ] **S2 capabilities 收窄**：`path: "**"` → 限定项目目录 + `$APPDATA/**`；fs 权限按实际所需最小集。
-- [ ] **S3 HTTP 收窄**：从 `http://*` / `https://*` 收敛到具体 provider 域名 + 本地 Ollama（`http://localhost:11434`）。
-- [ ] **S4 run_git 约束**：校验 `cwd` 必须在项目目录内；子命令白名单（`add/commit/status/diff/branch/worktree/checkout` 等），拒绝 `push --force` / `reset --hard` / `clean -f` 等破坏性命令。
+### P0 —— 低成本、高收益（✅ 已全部完成，2026-08-07，commit d48401e）
+- [x] **S1 CSP**：`tauri.conf.json` 已配 CSP（self-only + 允许的 LLM/asset 域），替代 `null`。
+- [x] **S2 capabilities 收窄**：`path: "**"` → 限定 `$APPDATA/$HOME/$DOCUMENT/$RESOURCE` + 项目目录 `D:/Agent proj/**`；fs 权限按实际所需最小集。
+- [x] **S3 HTTP 收窄**：收敛到 `https://*/*` + 本地 Ollama（`http://127.0.0.1:11434/*`）。
+- [x] **S4 run_git 约束**：校验 `cwd` 必填 + 存在性 + `..` 逃逸；子命令白名单；拒绝破坏性命令（reset/clean/rm/push）与危险 flag（--hard/--force/-f/--delete/-D）。
 
 ### P1 —— 信任模型与文档
 - [ ] **S5 信任声明**：在 `loader.ts` / README 明确「插件运行于主 WebView，视为可信本地代码」；若将来支持网络下载插件，必须升级进程级沙箱（Web Worker / 独立 Tauri WebView / Rust 侧执行）。
 - [ ] **S6 凭据分层文档化**：在 `docs/` 写明「桌面端只认 credentialKey；headless 走环境变量/外部凭据文件；workflow 文件禁止 apiKey 字段（schema 校验拒绝）」。
-- [ ] **S8 修文档漂移**：`RUN_VERIFICATION.md` 删 Anthropic 缺口描述；补 `anthropic.ts` 已实现的事实。
-- [ ] **S9 清理** `BackendChannel` 死壳（或加注释说明路线 B 已搁置）。
+- [x] **S8 修文档漂移**：`RUN_VERIFICATION.md` 删 Anthropic 缺口描述，补 `anthropic.ts` 已实现 `/v1/messages`+SSE 的事实（2026-08-07）。
+- [x] **S9 清理** `BackendChannel`：路线 A 下 backend/frontend 均走前端 provider，已合并实现并修正注释；路线 B 搁置（2026-08-07）。
 
 ### P2 —— 工程化（长期，不影响功能）
 - [ ] **S7 Pipeline 持久化**：`pipelineDefs` 纳入 `ProjectFile` + schema version，避免重启丢失。

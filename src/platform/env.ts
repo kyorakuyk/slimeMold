@@ -6,6 +6,17 @@
 export const isTauri =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+/**
+ * 平台层轻量日志：直接走 console，不反向依赖 store（避免 env→store 循环）。
+ * 用于降级/权限外的非致命提示；需要进 TerminalLog 面板的日志请走
+ * useWorkflowStore.getState().addLog。
+ */
+function log(level: 'info' | 'warn' | 'error', message: string): void {
+  if (level === 'error') console.error(`[env] ${message}`);
+  else if (level === 'warn') console.warn(`[env] ${message}`);
+  else console.info(`[env] ${message}`);
+}
+
 export async function httpFetch(
   url: string,
   init?: RequestInit,

@@ -24,9 +24,9 @@
 - [ ] 前端通道：直接走 WebView 请求正常（用于对比 / 降级验证）
 - [ ] 非 Tauri 环境（浏览器 `npm run dev`）自动降级到前端通道，不报错
 
-### 协议兼容（后端 SSE 解析）
+### 协议兼容（SSE 解析）
 - [ ] OpenAI 兼容 / Ollama：流式 `choices[].delta.content` 解析正确
-- [ ] Anthropic：当前按 OpenAI 兼容尝试；原生 `/v1/messages` 格式需补分支解析器（已知缺口）
+- [ ] Anthropic：原生 `/v1/messages` SSE 解析已实现（`providers/anthropic.ts`，解析 `input_tokens`/`output_tokens`），流式输出与 token 用量统计正常
 
 ### 执行引擎既有能力（回归）
 - [ ] 结果缓存命中：重复运行跳过已缓存节点（节点显示「缓存」徽标）
@@ -43,6 +43,5 @@
 
 ## 四、已知缺口（本次未覆盖，记录待办）
 
-- 后端 SSE 对 Anthropic 原生流式格式的支持（见上）
 - 路线 B（feature/backend-engine）：整图调度搬入 Rust，仅设计占位，未实现
 - Tauri 命令触发 headless（`run_workflow` 供外部进程/服务端调用）尚未接入，当前仅 CLI 入口
