@@ -12,7 +12,8 @@
     "moduleDetection": "force",
     "noEmit": true,
     "strict": true,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts"]
 }

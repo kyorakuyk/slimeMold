@@ -26,6 +26,25 @@ npm run tauri dev
 
 > 桌面端下 HTTP 请求经 Tauri plugin-http 由 Rust 侧转发，无 CORS 限制；插件目录扫描、文件对话框仅桌面端可用。
 
+## 测试
+
+项目用 [Vitest](https://vitest.dev/) 做单元测试（纯逻辑模块，无需 UI）。
+
+```bash
+npm install
+npm run test        # 一次性运行全部单测（CI 用）
+npm run test:watch  # 监听模式，开发时实时反馈
+```
+
+测试覆盖（截至 2026-08-07，共 59 项）：
+
+- `src/engine/topoSort.test.ts` —— 分层拓扑排序、成环检测、`wouldCreateCycle` 的 control 边忽略与回流边语义
+- `src/engine/expr.test.ts` —— 参数模板表达式求值（字面量 / 运算 / 变量 / 成员访问 / 内置函数 / 三元 / 错误）
+- `src/engine/rateLimiter.test.ts` —— `Semaphore` 并发控制、`sleep`、`withRetry` 重试与中止
+- `src/engine/nodeCache.test.ts` —— 节点结果缓存（`cacheKey` 稳定序列化、读写、`strike` 清除、运行统计）
+
+新增纯逻辑改动时，请同步补充对应单测再提交。
+
 ## 快速上手
 
 1. 顶栏「智能体」→ 配置协议 / Base URL / API Key / 模型

@@ -378,7 +378,7 @@
 - [ ] 插件系统（plugin-examples 已有示例）与运行时执行链路联调。
 - [ ] 节点执行引擎的流式输出与取消逻辑完善。
 - [ ] 移动端/小屏适配。
-- [ ] 单元测试与端到端测试补齐。
+- [x] 单元测试地基（Vitest）已立：覆盖 topoSort / expr / rateLimiter / nodeCache 共 59 项单测，`npm run test` 可回归（2026-08-07）。端到端 CI 待接入。
 
 ---
 

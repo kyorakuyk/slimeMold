@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "headless": "tsx scripts/headless-run.ts",
-    "i18n:check": "tsx scripts/check-i18n.ts"
+    "i18n:check": "tsx scripts/check-i18n.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -30,6 +32,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/react-i18next": "^7.8.3",
@@ -40,6 +43,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.23.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.0"
   }
 }
