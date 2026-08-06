@@ -36,14 +36,16 @@ npm run test        # 一次性运行全部单测（CI 用）
 npm run test:watch  # 监听模式，开发时实时反馈
 ```
 
-测试覆盖（截至 2026-08-07，共 59 项）：
+测试覆盖（截至 2026-08-07，共 84 项）：
 
 - `src/engine/topoSort.test.ts` —— 分层拓扑排序、成环检测、`wouldCreateCycle` 的 control 边忽略与回流边语义
 - `src/engine/expr.test.ts` —— 参数模板表达式求值（字面量 / 运算 / 变量 / 成员访问 / 内置函数 / 三元 / 错误）
 - `src/engine/rateLimiter.test.ts` —— `Semaphore` 并发控制、`sleep`、`withRetry` 重试与中止
 - `src/engine/nodeCache.test.ts` —— 节点结果缓存（`cacheKey` 稳定序列化、读写、`strike` 清除、运行统计）
+- `src/engine/subgraph.test.ts` —— 子图展开（`expandedId`/`ownerRefId` 编解码、`inferPorts` 端口推断、`resolvePorts` 引用解析、`flattenSubgraphs` 展开与跨边界连线重定向、循环引用抛错）
+- `src/engine/pipeline.test.ts` —— 跨工作流编排（`definePipeline`/`getPipeline` 往返、`publishArtifact`/`getArtifact` 黑板写读 + version 自增、`advance` 正向传播、`rework` 回流写回）
 
-新增纯逻辑改动时，请同步补充对应单测再提交。
+> 测试环境为 jsdom（store 依赖 `window`/`localStorage`），由 `vitest.setup.ts` 补全 `matchMedia`/`ResizeObserver`/`structuredClone` 等 jsdom 缺失的 API 桩。新增纯逻辑改动时，请同步补充对应单测再提交。
 
 ## 快速上手
 

@@ -13,7 +13,8 @@
     "noEmit": true,
     "strict": true,
     "verbatimModuleSyntax": false,
-    "types": ["node"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vitest/globals"]
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "vitest.setup.ts"]
 }

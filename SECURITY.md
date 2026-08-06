@@ -72,7 +72,7 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 
 ### P2 —— 工程化（长期，不影响功能）
 - [x] **S7 Pipeline 持久化**：✅ 已完成（2026-08-07，commit 5506b19）：`pipelineDefs` 模块级 Map 改为存 `workflowStore.pipelines`（项目态），随 `.slimemold` 序列化进 `ProjectFile.pipelines` + partialize 白名单 + DIRTY_KEYS，重启不丢。
-- [x] **测试体系（地基已立，2026-08-07）**：新增 `vitest.config.ts` + `@types/node` devDependency + `package.json` 的 `test`/`test:watch` 脚本。已覆盖纯模块单测 **59 项全通过**：`topoSort`(分层/成环/`wouldCreateCycle` 的 control 边忽略与回流边语义)、`expr`(字面量/运算/变量/成员访问/内置函数/三元/错误)、`rateLimiter`(Semaphore/`sleep`/`withRetry` 重试与中止)、`nodeCache`(cacheKey 稳定序列化/读写/strike/clear/运行统计)。`npm run test` 可回归运行。
+- [x] **测试体系（地基已立，2026-08-07）**：新增 `vitest.config.ts`(jsdom 环境) + `vitest.setup.ts`(polyfill matchMedia/ResizeObserver/structuredClone) + `@types/node`/`jsdom` devDependency + `package.json` 的 `test`/`test:watch` 脚本。已覆盖纯/近纯模块单测 **84 项全通过**：`topoSort`、`expr`、`rateLimiter`、`nodeCache`、`subgraph`(展开/端口推断/跨边界连线重定向/循环引用)、`pipeline`(定义/黑板/advance 正向传播/rework 回流)。`npm run test` 可回归运行。
 - [ ] 测试体系（扩面）：继续补 cacheKey 失效 / 分支剪枝 / 增量执行 / subgraph.flatten 等单测；`npm run headless` 包成 CI e2e（GitHub Actions）。
 - [ ] 上帝模块拆分：`executor.ts` / `builtin.ts` / `workflowStore.ts` 过大，建议渐进拆子模块（高风险低收益，功能稳定后做；拆分前先以测试网为安全网）。
 
