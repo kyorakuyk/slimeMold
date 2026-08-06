@@ -33,6 +33,18 @@ import type {
 } from '../types';
 import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
+// 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价
+import {
+  sanitizeNodes,
+  flowNodesFrom,
+  flowEdgesFrom,
+  storedNodeOf,
+  storedEdgeOf,
+  fromDisk,
+  toDisk,
+  serializeCurrent,
+  buildProjectFile,
+} from './workflowSerialize';
 
 /** 运行期调度进度（供 Job Board 可视化） */
 export interface RunProgressShape {
@@ -110,20 +122,6 @@ export function recomputeProxyPorts(
 interface GraphSnapshot {
   nodes: FlowNode[];
   edges: FlowEdge[];
-}
-
-/** 清洗节点，剔除运行期属性（status/error/durationMs/cached），使快照不携带运行态 */
-function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
-  return nodes.map((n) => ({
-    ...n,
-    data: {
-      ...n.data,
-      status: 'idle' as NodeStatus,
-      error: undefined,
-      durationMs: undefined,
-      cached: undefined,
-    } as WorkflowNodeData,
-  }));
 }
 
 interface WorkflowState {
@@ -401,169 +399,6 @@ function defaultParams(typeId: string): Record<string, unknown> {
     if (p.default !== undefined) params[p.key] = p.default;
   }
   return params;
-}
-
-/** 把 WorkflowFile 的轻量节点还原为画布 FlowNode（载入时标记为脏，首次运行必执行） */
-/** 把磁盘态 WorkflowFile 的拍平节点还原为画布运行态 FlowNode（方案 P 内核） */
-function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
-  return (wf.nodes ?? []).map((n) => ({
-    id: n.id,
-    type: 'base',
-    position: n.position,
-    data: {
-      typeId: n.typeId,
-      label: n.label,
-      params: n.params ?? {},
-      status: 'idle' as NodeStatus,
-      dirty: true,
-      bypass: n.bypass ?? false,
-      mute: n.mute ?? false,
-    },
-  }));
-}
-
-/** 把 WorkflowFile 的轻量连线还原为画布 FlowEdge */
-function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
-  return (wf.edges ?? []).map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
-  }));
-}
-
-/** 画布 FlowNode → 存储轻量节点（落盘拍平用） */
-function storedNodeOf(n: FlowNode): WorkflowFileNode {
-  return {
-    id: n.id,
-    typeId: n.data.typeId,
-    label: n.data.label,
-    position: { x: n.position.x, y: n.position.y },
-    params: n.data.params ?? {},
-    bypass: n.data.bypass ?? false,
-    mute: n.data.mute ?? false,
-  };
-}
-/** 画布 FlowEdge → 存储轻量连线 */
-function storedEdgeOf(e: FlowEdge): WorkflowFileEdge {
-  return {
-    id: e.id,
-    source: e.source,
-    sourceHandle: e.sourceHandle ?? null,
-    target: e.target,
-    targetHandle: e.targetHandle ?? null,
-    kind: e.data?.kind ?? 'data',
-    scope: e.data?.scope,
-  };
-}
-
-/**
- * 磁盘态 WorkflowFile → 内存态 WorkflowFileInMemory（nodes: FlowNode[]）。
- * 用于读取 .slimemold / localStorage / builder / .workflow.json 等所有拍平来源后统一收口。
- */
-function fromDisk(wf: WorkflowFile): WorkflowFileInMemory {
-  return {
-    ...wf,
-    nodes: flowNodesFrom(wf),
-    edges: flowEdgesFrom(wf),
-  };
-}
-
-/** 内存态 WorkflowFileInMemory → 磁盘态 WorkflowFile（拍平，剥离 React Flow 瞬态字段） */
-function toDisk(wf: WorkflowFileInMemory): WorkflowFile {
-  return {
-    ...wf,
-    nodes: (wf.nodes ?? []).map(storedNodeOf),
-    edges: (wf.edges ?? []).map(storedEdgeOf),
-  };
-}
-
-/** 把当前编辑态序列化为一个 WorkflowFile（用于收纳游离态/写回） */
-function serializeCurrent(
-  s: {
-    workflowName: string;
-    nodes: FlowNode[];
-    edges: FlowEdge[];
-    agents: AgentConfig[];
-    roles: RoleTemplate[];
-    variables: Record<string, unknown>;
-    groups?: NodeGroup[];
-    defaultAgentId?: string | null;
-  },
-  /** 归属声明：保留原工作流的文件身份（项目内 / 游离路径） */
-  identity?: { belongsToProject?: string; standalonePath?: string },
-  /** 现有工作流的资产库（写回时保留，避免 addAsset/removeAsset 的改动丢失） */
-  keepAssets?: AssetMeta[],
-): WorkflowFileInMemory {
-  return {
-    version: 1,
-    name: s.workflowName || '未命名工作流',
-    savedAt: new Date().toISOString(),
-    // 方案 P：内存态直接持有运行态 FlowNode，无需再拍平/还原
-    nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
-    edges: s.edges,
-    agents: s.agents,
-    roles: s.roles,
-    variables: s.variables,
-    groups: s.groups ?? [],
-    assets: keepAssets ?? [],
-    belongsToProject: identity?.belongsToProject,
-    standalonePath: identity?.standalonePath,
-  };
-}
-
-/** 把当前 store 态组装为完整 ProjectFile（供保存与 dirty 快照比对复用）。 */
-function buildProjectFile(s: {
-  workflowName: string;
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-  agents: AgentConfig[];
-  roles: RoleTemplate[];
-  variables: Record<string, unknown>;
-  projectVariables: Record<string, unknown>;
-  projectAssets: AssetMeta[];
-  groups: NodeGroup[];
-  activeWfId: string;
-  workflows: Record<string, WorkflowFileInMemory>;
-  projectName: string | null;
-  projectId: string | null;
-  projectCreatedAt: string | null;
-  subgraphs: Record<string, SubgraphDef>;
-  runHistory: RunRecord[];
-  artifacts: import('../engine/pipeline').ProjectArtifacts;
-  agentRouteTable: import('../types').AgentRouteTable;
-  pipelines: import('../engine/pipeline').PipelineDef[];
-}): ProjectFile {
-  const current: WorkflowFileInMemory = serializeCurrent(s, undefined, s.workflows[s.activeWfId]?.assets);
-  const workflowsInMemory = { ...s.workflows };
-  if (s.activeWfId) workflowsInMemory[s.activeWfId] = current;
-  else {
-    const id = `wf-${Date.now()}`;
-    workflowsInMemory[id] = current;
-  }
-  // 方案 P：落盘前把内存态 FlowNode 拍平回磁盘态 WorkflowFile（剥离瞬态字段）
-  const workflows: Record<string, WorkflowFile> = Object.fromEntries(
-    Object.entries(workflowsInMemory).map(([k, wf]) => [k, toDisk(wf)]),
-  );
-  return {
-    version: 1,
-    kind: 'project',
-    id: s.projectId ?? `proj-${Date.now()}`,
-    name: s.projectName ?? s.workflowName,
-    createdAt: s.projectCreatedAt ?? new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    workflows,
-    activeId: s.activeWfId || Object.keys(workflows)[0],
-    roles: s.roles,
-    variables: s.projectVariables,
-    assets: s.projectAssets,
-    subgraphs: s.subgraphs,
-    artifacts: s.artifacts,
-    agentRouteTable: s.agentRouteTable,
-    pipelines: s.pipelines,
-    runs: { history: s.runHistory },
-  };
 }
 
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等） */

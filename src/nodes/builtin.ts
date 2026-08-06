@@ -11,17 +11,18 @@ import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../engi
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import { toolRegistry } from '../agents/toolRegistry';
 import { makeBuiltinTools } from './builtinTools';
-
-/** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
-function inferAssetKind(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (['py', 'js', 'ts', 'jsx', 'tsx', 'java', 'go', 'rs', 'cpp', 'c', 'sh'].includes(ext))
-    return 'code';
-  if (ext === 'json') return 'json';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
-  if (['md', 'txt', 'log'].includes(ext)) return 'text';
-  return 'text';
-}
+// 与 store/registry 无关的纯函数已抽到 builtinHelpers，保持行为等价
+import {
+  inferAssetKind,
+  inferFilename,
+  langToExt,
+  renderTemplate,
+  isTruthy,
+  normalizeCategory,
+  extractModulesFromDesign,
+  extractTasksFromPlan,
+  checkJsonSchema,
+} from './builtinHelpers';
 
 /**
  * 自动推断文件名：让上游全能 worker 自行决定文件叫什么。
@@ -68,35 +69,6 @@ function inferFilename(opts: { hint: string; content: string }): string {
       .slice(0, 30) || 'output';
   }
   return `${stem}${ext ? '.' + ext : '.txt'}`;
-}
-
-/** 把代码语言标记映射到扩展名 */
-function langToExt(lang: string): string {
-  const map: Record<string, string> = {
-    python: 'py', py: 'py', javascript: 'js', js: 'js', jsx: 'jsx',
-    typescript: 'ts', ts: 'ts', tsx: 'tsx', java: 'java', go: 'go',
-    rust: 'rs', c: 'c', cpp: 'cpp', 'c++': 'cpp', csharp: 'cs', cs: 'cs',
-    html: 'html', xml: 'xml', css: 'css', scss: 'scss', json: 'json',
-    markdown: 'md', md: 'md', sql: 'sql', bash: 'sh', sh: 'sh', shell: 'sh',
-    yaml: 'yaml', yml: 'yml', toml: 'toml', php: 'php', ruby: 'rb', r: 'r',
-    swift: 'swift', kotlin: 'kt', dart: 'dart', lua: 'lua',
-  };
-  return map[lang.toLowerCase()] ?? '';
-}
-
-/** 将模板中的 {{key}} 替换为 scope 中的值（对象会 JSON 序列化） */
-function renderTemplate(
-  template: string,
-  scope: Record<string, unknown>,
-): string {
-  return template.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => {
-    const v = scope[key];
-    return v === undefined || v === null
-      ? ''
-      : typeof v === 'object'
-        ? JSON.stringify(v)
-        : String(v);
-  });
 }
 
 const textInput: NodeDefinition = {
@@ -937,17 +909,6 @@ const switchNode: NodeDefinition = {
   },
 };
 
-/** 真值判断：非空、非零、非空字符串/数组/对象 */
-function isTruthy(v: unknown): boolean {
-  if (v === null || v === undefined) return false;
-  if (typeof v === 'boolean') return v;
-  if (typeof v === 'number') return v !== 0;
-  if (typeof v === 'string') return v.trim() !== '' && v !== 'false' && v !== '0';
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === 'object') return Object.keys(v as object).length > 0;
-  return Boolean(v);
-}
-
 /**
  * 子图引用：把一组打包好的节点当作一个整体放到画布上。
  *
@@ -1474,72 +1435,6 @@ function publishDesignArtifact(params: Record<string, unknown>, payload: { desig
   }
 }
 
-/** 从模块原始对象中规整出合法 ModuleCategory（非约定值降级为 'data'，但保留任意字符串以允许自定义类别）。 */
-function normalizeCategory(raw: unknown): ModuleItem['category'] {
-  const c = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (!c) return 'data';
-  return c; // 保留任意字符串（路由表键可自定义），仅做小写规整
-}
-
-/** 从模型架构设计文本中提取模块清单；解析失败降级为「整个目标作为一个模块」。 */
-function extractModulesFromDesign(text: string, fallbackGoal: string): ModuleItem[] {
-  const fence = text.match(/```json\s*([\s\S]*?)```/i);
-  const raw = fence ? fence[1] : text;
-  const m = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (m) {
-    try {
-      const arr = JSON.parse(m[0]);
-      if (Array.isArray(arr) && arr.length > 0) {
-        return arr.map((t, i) => {
-          const name = typeof t?.name === 'string' && t.name.trim() ? t.name : `模块${i + 1}`;
-          const responsibility =
-            typeof t?.responsibility === 'string' && t.responsibility.trim()
-              ? t.responsibility
-              : name;
-          const scope = Array.isArray(t?.scope) ? t.scope.filter((s: unknown) => typeof s === 'string') : undefined;
-          const dependsOn = Array.isArray(t?.dependsOn)
-            ? t.dependsOn.filter((s: unknown) => typeof s === 'string')
-            : undefined;
-          return {
-            name,
-            responsibility,
-            category: normalizeCategory(t?.category),
-            scope: scope && scope.length > 0 ? scope : undefined,
-            dependsOn: dependsOn && dependsOn.length > 0 ? dependsOn : undefined,
-            payload: t?.payload,
-            index: i,
-          };
-        });
-      }
-    } catch {
-      /* 落入降级分支 */
-    }
-  }
-  return [{ name: fallbackGoal, responsibility: fallbackGoal, category: 'data', payload: fallbackGoal, index: 0 }];
-}
-
-/** 从模型计划文本中提取任务清单；解析失败降级为「整个目标作为一个任务」。 */
-function extractTasksFromPlan(text: string, fallbackGoal: string): TaskItem[] {
-  const fence = text.match(/```json\s*([\s\S]*?)```/i);
-  const raw = fence ? fence[1] : text;
-  const m = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (m) {
-    try {
-      const arr = JSON.parse(m[0]);
-      if (Array.isArray(arr) && arr.length > 0) {
-        return arr.map((t, i) => {
-          const label = typeof t?.label === 'string' && t.label.trim() ? t.label : `任务${i + 1}`;
-          const scope = Array.isArray(t?.scope) ? t.scope.filter((s: unknown) => typeof s === 'string') : undefined;
-          return { label, scope: scope && scope.length > 0 ? scope : undefined, payload: t?.payload, index: i };
-        });
-      }
-    } catch {
-      /* 落入降级分支 */
-    }
-  }
-  return [{ label: fallbackGoal, payload: fallbackGoal, index: 0 }];
-}
-
 /**
  * 冲突协调者（Conflict Resolver / Merge Coordinator）：
  * 接收来自多条并行任务线的输出（每个输出应携带 scope 影响域声明），
@@ -2005,30 +1900,6 @@ export const nodeLoopGate: NodeDefinition = {
  *   仅下游为 fail 分支时中止，不影响 pass 分支下游（gate 语义）。
  * - failFast 开启时直接抛错 ⇒ 该节点 error，下游按既有 failed 集合被跳过/传染。
  * ==========================================================================*/
-
-/** 极简 JSON Schema 校验（仅支持 type/required/properties 的子集，够用且零依赖） */
-function checkJsonSchema(value: unknown, schema: Record<string, any>): string[] {
-  const errs: string[] = [];
-  const type = schema.type;
-  if (type) {
-    if (type === 'object' && (typeof value !== 'object' || value === null || Array.isArray(value)))
-      errs.push(`期望 object，实际 ${Array.isArray(value) ? 'array' : typeof value}`);
-    else if (type === 'array' && !Array.isArray(value))
-      errs.push(`期望 array，实际 ${typeof value}`);
-    else if (
-      ['string', 'number', 'boolean'].includes(type) &&
-      typeof value !== type
-    )
-      errs.push(`期望 ${type}，实际 ${typeof value}`);
-  }
-  if (schema.required && Array.isArray(value) === false && value && typeof value === 'object') {
-    for (const k of schema.required as string[]) {
-      if (!(k in (value as Record<string, any>)))
-        errs.push(`缺少必填字段 "${k}"`);
-    }
-  }
-  return errs;
-}
 
 export const nodeAssert: NodeDefinition = {
   typeId: 'verify.assert',
