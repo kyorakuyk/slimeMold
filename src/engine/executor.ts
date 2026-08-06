@@ -18,6 +18,12 @@ import { runAgentLoop } from '../agents/harness';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { flattenSubgraphs, ownerRefId } from './subgraph';
+import {
+  collectReachable,
+  computeDownstream,
+  computeScopeClusters,
+  isReachable,
+} from './graphAlgo';
 import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
 import { readProjectText } from '../platform/env';
@@ -421,8 +427,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   if (opts.retryFailed) {
     const errored = nodes.filter((n) => n.data.status === 'error').map((n) => n.id);
     for (const id of errored) {
-      const downstream = new Set<string>();
-      addDownstreamToCut(id, edges, downstream); // 含 errored 自身
+      const downstream = computeDownstream(id, edges); // 含 errored 自身
       for (const d of downstream) force.add(d);
     }
   }
@@ -560,52 +565,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
       // 说明它们会争用同一资源，强制把它们归到同一「串行簇」内按序执行，消解并发冲突；
       // 互不冲突的节点仍保持并行（簇间并行、簇内串行），最大化并行度。
-      const scopesOf = (id: string): string[] => {
-        const set = new Set<string>();
-        for (const e of edges) {
-          if (e.target === id && Array.isArray(e.data?.scope)) {
-            for (const s of e.data.scope as string[]) set.add(s);
-          }
-        }
-        return [...set];
-      };
-      // 基于冲突关系（scope 相交）的并查集：冲突的节点强制并入同一串行簇，
-      // 不同连通分量之间仍并行，最大化并行度（替代朴素贪心，避免多对冲突时错误分组）。
-      const parent = new Map<string, string>();
-      const find = (x: string): string => {
-        let r = x;
-        while (parent.get(r) !== r) r = parent.get(r)!;
-        let c = x;
-        while (parent.get(c) !== r) {
-          const n = parent.get(c)!;
-          parent.set(c, r);
-          c = n;
-        }
-        return r;
-      };
-      const union = (a: string, b: string) => {
-        const ra = find(a);
-        const rb = find(b);
-        if (ra !== rb) parent.set(ra, rb);
-      };
-      // 预先把本层所有节点初始化进并查集，避免内层访问未初始化节点导致 find 返回 undefined
-      for (const id of layer) parent.set(id, id);
-      for (const id of layer) {
-        const sc = scopesOf(id);
-        // 找本层内与当前节点 scope 相交的其他节点，标记冲突并合并
-        for (const other of layer) {
-          if (other === id) continue;
-          const os = scopesOf(other);
-          if (sc.some((s) => os.includes(s))) union(id, other);
-        }
-      }
-      const groupOf = new Map<string, string[]>();
-      for (const id of layer) {
-        const root = find(id);
-        if (!groupOf.has(root)) groupOf.set(root, []);
-        groupOf.get(root)!.push(id);
-      }
-      const clusters = [...groupOf.values()];
+      const clusters = computeScopeClusters(layer, edges);
       // 簇间并行；每个簇内按列表顺序串行执行（冲突节点被挤进同一簇）
       await Promise.all(
         clusters.map((cluster) =>
@@ -808,58 +768,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
   if (opts.sandbox) await cleanupSandbox(wfId);
   syncDebugRun(wfId);
-}
-
-/** 将 startId 的全部下游节点加入 cutSet（BFS） */
-function addDownstreamToCut(startId: string, edges: FlowEdge[], cutSet: Set<string>): void {
-  const queue = [startId];
-  const seen = new Set([startId]);
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const e of edges) {
-      if (e.source === cur && !seen.has(e.target)) {
-        seen.add(e.target);
-        cutSet.add(e.target);
-        queue.push(e.target);
-      }
-    }
-  }
-}
-
-/** 沿任意边从 from 出发能否到达 target（用于检测 loopGate 的 control 回环） */
-function isReachable(from: string, target: string, edges: FlowEdge[]): boolean {
-  const queue = [from];
-  const seen = new Set([from]);
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    if (cur === target) return true;
-    for (const e of edges) {
-      if (e.source === cur && !seen.has(e.target)) {
-        seen.add(e.target);
-        queue.push(e.target);
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * 收集从 start 出发、能绕回 gateId（未经过 gateId 自身）的可达节点集合，
- * 即「循环体」——这些节点在每轮迭代中需强制重算。
- */
-function collectReachable(start: string, gateId: string, edges: FlowEdge[], out: Set<string>): void {
-  const queue = [start];
-  const seen = new Set<string>();
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    if (cur === gateId) continue; // 不把 gate 本身算进 body
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-    out.add(cur);
-    for (const e of edges) {
-      if (e.source === cur && e.target !== gateId) queue.push(e.target);
-    }
-  }
 }
 
 /** 把一条成本记录累加进节点级用量统计，返回新的统计对象（不改动入参） */
@@ -1199,7 +1107,7 @@ async function executeNode(
         startedAt: null,
         durationMs: null,
       });
-      if (stopAfter.has(id)) addDownstreamToCut(id, edges, cutSet);
+      if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
       return;
     }
   }
