@@ -28,6 +28,7 @@ import {
   resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
+import { createStoreRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
 import { readProjectText } from '../platform/env';
@@ -330,6 +331,9 @@ export interface RunOptions {
 export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
+  // 解耦接缝：执行引擎的输出动作（日志/进度/历史/成本）经 ExecutionRuntime 接口，
+  // 默认实现委托 store；后续可替换为测试桩或独立运行时，使 executor 不依赖具体 store。
+  const rt = createStoreRuntime(wfId);
   const gen = genFor(wfId);
   // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
   // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
@@ -484,7 +488,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   wf.setRunning(true, wfId);
   wf.resetStatuses(wfId);
   // 清空运行期成本账本，供 Companion 浮窗实时展示
-  useWorkflowStore.getState().resetUsage();
+  rt.resetUsage();
   beginRun();
 
   // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行
@@ -560,7 +564,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         totalRounds: maxRounds,
       };
       opts.onProgress?.(progress);
-      useWorkflowStore.getState().setRunProgress({ active: true, ...progress }, wfId);
+      rt.setRunProgress({ active: true, ...progress }, wfId);
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
       // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测。
       // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
@@ -723,7 +727,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         }
       : null,
   };
-  useWorkflowStore.getState().pushRunHistory(rec);
+  rt.pushRunHistory(rec);
 
   // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
   // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
@@ -767,7 +771,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   if (myRun === gen.activeRunId && myRun === gen.currentRunId) {
     store.setRunning(false, wfId);
   }
-  useWorkflowStore.getState().setRunProgress({ active: false }, wfId);
+  rt.setRunProgress({ active: false }, wfId);
   gen.abort = null;
   // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
   if (opts.sandbox) await cleanupSandbox(wfId);

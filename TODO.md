@@ -378,7 +378,7 @@
 - [ ] 插件系统（plugin-examples 已有示例）与运行时执行链路联调。
 - [ ] 节点执行引擎的流式输出与取消逻辑完善。
 - [ ] 移动端/小屏适配。
-- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline / executor(纯逻辑) / graphAlgo(纯图算法内核) 共 156 项单测，`npm run test` 可回归（2026-08-07）。`npm run headless examples/headless-demo.json` 已接入 GitHub Actions CI（tsc + 单测 + 纯本地工作流冒烟），并修复了 headless 纯 Node 运行的两处缺陷（i18n 的 import.meta.glob 降级、tsconfig 别名）。executor 的 `runWorkflow`/`executeNode` 内层已逐步拆为纯函数（graphAlgo.ts 已承载 9 类：下游 BFS / 可达性 / 循环体 / scope 串行化并查集 / 每层簇预计算 `planClustersPerStage` / 增量执行集 `computeExecutionSet` / 分支剪枝 `isBranchPruned` / 循环迭代决策 `shouldContinueLoop` / 单节点执行路径判定 `resolveNodeExecutionMode`，共 43 项单测，headless 冒烟一致）。这对应 Codex 分析「P1 执行器拆分 / 让核心调度器尽量变成纯逻辑」的方向；下一步可引入 `ExecutionRuntime` 接口把 store 耦合从 executeNode 收口，或拆 builtin/workflowStore。
+- [x] 单元测试地基（Vitest，jsdom 环境）已立：覆盖 topoSort / expr / rateLimiter / nodeCache / subgraph / pipeline / executor(纯逻辑) / graphAlgo(纯图算法内核) / runtime(解耦接缝) 共 162 项单测，`npm run test` 可回归（2026-08-07）。`npm run headless examples/headless-demo.json` 已接入 GitHub Actions CI（tsc + 单测 + 纯本地工作流冒烟），并修复了 headless 纯 Node 运行的两处缺陷（i18n 的 import.meta.glob 降级、tsconfig 别名）。executor 解耦推进：① 9 类纯函数抽到 graphAlgo.ts（43 单测）；② 新增 `runtime.ts` 定义 `ExecutionRuntime` 接口 + `createStoreRuntime` 默认实现（委托 store，行为等价），`runWorkflow` 主循环外层的 resetUsage/setRunProgress/pushRunHistory 已改走 `rt.*` 接缝（runtime.test.ts 6 单测验证转发）。这对应 Codex 分析「P1 执行器拆分 / 引入 ExecutionRuntime 接口解耦 store」方向。下一步可把 executeNode 内的 store 调用（setStatus/trackCost/addLog/setCostLog）也收口到 rt，或拆 builtin/workflowStore。
 
 ---
 
