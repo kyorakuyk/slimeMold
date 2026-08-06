@@ -154,10 +154,16 @@ export async function writeProjectText(
 ): Promise<void> {
   const relNorm = normalizeRelPath(rel);
   if (isTauri && root) {
-    const abs = projectFilePath(root, relNorm)!;
-    const fs = await import('@tauri-apps/plugin-fs');
-    await fs.mkdir(dirOf(abs), { recursive: true });
-    await fs.writeTextFile(abs, text);
+    try {
+      const abs = projectFilePath(root, relNorm)!;
+      const fs = await import('@tauri-apps/plugin-fs');
+      await fs.mkdir(dirOf(abs), { recursive: true });
+      await fs.writeTextFile(abs, text);
+    } catch (e) {
+      // 项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT/$APPDATA 盘符），
+      // 降级为不落盘并记 warn，避免上层未捕获 Promise rejection 导致应用崩溃。
+      log('warn', `项目文件写入跳过（目录可能不在文件系统权限范围内）：${relNorm} — ${e instanceof Error ? e.message : String(e)}`);
+    }
     return;
   }
   // 浏览器退化：localStorage 草稿
@@ -169,10 +175,16 @@ export async function writeProjectText(
 export async function readProjectText(root: string | null | undefined, rel: string): Promise<string | null> {
   const relNorm = normalizeRelPath(rel);
   if (isTauri && root) {
-    const abs = projectFilePath(root, relNorm)!;
-    const fs = await import('@tauri-apps/plugin-fs');
-    if (!(await fs.exists(abs))) return null;
-    return await fs.readTextFile(abs);
+    try {
+      const abs = projectFilePath(root, relNorm)!;
+      const fs = await import('@tauri-apps/plugin-fs');
+      if (!(await fs.exists(abs))) return null;
+      return await fs.readTextFile(abs);
+    } catch (e) {
+      // 同上：权限/IO 异常降级为「无文件」，不向上抛出
+      log('warn', `项目文件读取跳过（目录可能不在文件系统权限范围内）：${relNorm} — ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
   }
   return localStorage.getItem(`sm:proj:${relNorm}`);
 }
