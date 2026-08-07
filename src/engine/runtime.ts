@@ -14,11 +14,10 @@ import type {
   FlowEdge,
   LogEntry,
   NodeStatus,
-  RunProgressShape,
   RunRecord,
   WorkflowNodeData,
 } from '../types';
-import { useWorkflowStore } from '../store/workflowStore';
+import { useWorkflowStore, type RunProgressShape } from '../store/workflowStore';
 
 /**
  * 执行引擎对外输出的运行时动作（聚焦「输出」侧，便于解耦与测试替身）。

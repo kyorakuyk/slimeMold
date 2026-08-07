@@ -38,8 +38,6 @@ import {
   sanitizeNodes,
   flowNodesFrom,
   flowEdgesFrom,
-  storedNodeOf,
-  storedEdgeOf,
   fromDisk,
   toDisk,
   serializeCurrent,

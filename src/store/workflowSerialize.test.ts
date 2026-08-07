@@ -39,7 +39,7 @@ function mkEdge(id: string, source: string, target: string): FlowEdge {
     target,
     sourceHandle: 'out',
     targetHandle: 'in',
-    data: { kind: 'data', scope: 's1' },
+    data: { kind: 'data', scope: ['s1'] },
   } as FlowEdge;
 }
 
@@ -72,8 +72,8 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
         mute: false,
       });
       // 运行态不应进入磁盘态
-      expect((wf.nodes[0] as Record<string, unknown>).status).toBeUndefined();
-      expect((wf.nodes[0] as Record<string, unknown>).data).toBeUndefined();
+      expect((wf.nodes[0] as unknown as Record<string, unknown>).status).toBeUndefined();
+      expect((wf.nodes[0] as unknown as Record<string, unknown>).data).toBeUndefined();
       expect(wf.edges[0]).toEqual({
         id: 'e1',
         source: 'n1',
@@ -81,7 +81,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
         sourceHandle: 'out',
         targetHandle: 'in',
         kind: 'data',
-        scope: 's1',
+        scope: ['s1'],
       });
     });
 
@@ -117,7 +117,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
         target: 'n2',
         targetHandle: 'in',
         kind: 'data',
-        scope: 's1',
+        scope: ['s1'],
       });
       expect(flowEdgesFrom(toDisk({ name: 'wf', nodes, edges } as never))[0].source).toBe('n1');
     });
@@ -142,7 +142,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       const wf = serializeCurrent(
         { workflowName: 'x', nodes: [], edges: [], agents: [], roles: [], variables: {} },
         { belongsToProject: 'p1', standalonePath: '/a/b' },
-        [{ id: 'a1', name: 'f', mime: 'text/plain', path: 'p', scope: 'project' }],
+        [{ id: 'a1', name: 'f', path: 'p', kind: 'text', content: 'x', createdAt: '2026-01-01T00:00:00.000Z', inWorkspace: false }],
       );
       expect(wf.belongsToProject).toBe('p1');
       expect(wf.standalonePath).toBe('/a/b');
@@ -172,7 +172,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
         projectCreatedAt: '2026-01-01T00:00:00.000Z',
         subgraphs: {},
         runHistory: [],
-        artifacts: { handoffs: [], received: [] },
+        artifacts: { handoffs: {}, received: {} },
         agentRouteTable: {},
         pipelines: [],
       });
@@ -180,10 +180,10 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       expect(pf.name).toBe('项目');
       expect(Object.keys(pf.workflows)).toEqual(['wfA', 'wfB']);
       // 落盘态应是拍平节点（无 data 运行态）
-      expect((pf.workflows.wfA.nodes[0] as Record<string, unknown>).typeId).toBe('input.text');
-      expect((pf.workflows.wfA.nodes[0] as Record<string, unknown>).data).toBeUndefined();
+      expect((pf.workflows.wfA.nodes[0] as unknown as Record<string, unknown>).typeId).toBe('input.text');
+      expect((pf.workflows.wfA.nodes[0] as unknown as Record<string, unknown>).data).toBeUndefined();
       expect(pf.variables).toEqual({ pv: 2 });
-      expect(pf.runs.history).toEqual([]);
+      expect((pf.runs ?? { history: [] }).history).toEqual([]);
     });
   });
 });

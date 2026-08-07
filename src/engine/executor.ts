@@ -1080,7 +1080,7 @@ async function executeNode(
   }
 
   // 分支剪枝：若所有入边都来自「分支节点且未被激活」的分支，则整条子图跳过
-  if (incoming.length > 0 && isBranchPruned(incoming, branchState, skipFailed, failed)) {
+  if (incoming.length > 0 && isBranchPruned(incoming, branchState, skipFailed ?? false, failed)) {
     branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
     setStatus(id, 'skipped', { startedAt: null, durationMs: null });
     return;
@@ -1330,7 +1330,7 @@ async function executeNode(
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
     });
-    if (stopAfter.has(id)) addDownstreamToCut(id, edges, cutSet);
+    if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
   } catch (err) {
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
