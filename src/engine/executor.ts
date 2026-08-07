@@ -43,6 +43,7 @@ import {
   beginRun,
   cacheKey,
   clearCache,
+  composeCacheScope,
   countSkip,
   getCached,
   setCached,
@@ -799,15 +800,20 @@ async function executeNode(
   }
 
   // ---- 步骤 11 阶段 C：真沙箱句柄 ----
+  // 缓存隔离环境指纹（细粒度化）：目标工作流的 workspace 上下文。
+  // 文件读写类节点的产物依赖工作区内容，workspace 变化时旧缓存应失效。
+  const curStore = useWorkflowStore.getState();
+  const targetWorkflow =
+    targetWfId === curStore.activeWfId ? { workspaceDir: curStore.workspaceDir } : curStore.workflows[targetWfId];
+  const nodeWorkspaceDir = targetWorkflow?.workspaceDir ?? null;
+  // 细粒度缓存 scope：wfId → nodeId → workspaceDir（节点实例级隔离，杜绝同工作流内
+  // 相同配置的节点实例互相串产物；workspace 指纹使环境变化自动失效）。
+  const cacheScope = composeCacheScope(targetWfId, id, nodeWorkspaceDir);
+
   // 每个节点一份独立隔离目录（workspaceDir/.sandbox/<nodeId>），并行 Worker 互不踩踏。
   // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
   let sandbox: SandboxHandle | undefined;
   if (sandboxEnabled) {
-    const currentStore = useWorkflowStore.getState();
-    const targetWorkflow = targetWfId === currentStore.activeWfId
-      ? { workspaceDir: currentStore.workspaceDir }
-      : currentStore.workflows[targetWfId];
-    const workspaceDir = targetWorkflow?.workspaceDir ?? null;
     const inBrowser = !isTauri;
 
     // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
@@ -997,7 +1003,7 @@ async function executeNode(
     // 单节点运行（isolated）：不汇聚任何上游，强制以空输入参与缓存键计算
     const upstreamOutputs = isolatedIds && isolatedIds.has(id) ? {} : collectInputs(id, edges, outputsMap);
     // scope=targetWfId：跨工作流隔离缓存，避免文件/资产/workspace 上下文不同的工作流互相复用产物
-    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs, targetWfId);
+    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs, cacheScope);
     const cached = getCached(key);
     if (cached) {
       outputsMap.set(id, cached);
@@ -1298,7 +1304,7 @@ async function executeNode(
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
     outputsMap.set(id, outputs ?? {});
     // 写入缓存：以「类型+参数+上游输出+工作流scope」为 key，下游命中时自动复用
-    const key = cacheKey(node.data.typeId, node.data.params, inputs, targetWfId);
+    const key = cacheKey(node.data.typeId, node.data.params, inputs, cacheScope);
     setCached(key, outputs ?? {});
     // 登记分支状态：分支节点用其声明的激活 handle，普通节点视为全部输出端口激活
     branchState.set(

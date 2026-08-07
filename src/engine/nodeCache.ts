@@ -12,10 +12,16 @@
  * 因为 key 已包含「上游输出」，所以上游任一变化都会使下游 key 改变、自动失效，
  * 无需额外的显式失效逻辑（除非通过 strike 强制清除某节点自身缓存）。
  *
- * 作用域维度：跨工作流执行时，即使节点类型/参数/上游输出完全相同，不同工作流的
- * 文件路径、资产、workspace 上下文也可能不同。调用方应传入 `wfId` 作 scope，
- * 避免跨工作流复用错误产物；缺省不传则保持原行为（共享纯计算缓存）。
+ * 作用域维度：缓存隔离可逐级细化——调用方经 `composeCacheScope` 组合
+ * 「wfId（跨工作流）→ nodeId（跨节点实例）→ workspaceDir（环境指纹）」多维度，
+ * 避免不同工作流 / 同一工作流内不同节点实例 / 不同工作区上下文互相复用错误产物。
+ * 缺省不传则保持原行为（共享纯计算缓存）。
  */
+
+/** 组合缓存隔离作用域：过滤空段后用 `:` 连接。段顺序即隔离优先级。 */
+export function composeCacheScope(...parts: Array<string | null | undefined>): string {
+  return parts.filter((p) => p && p.trim()).join(':');
+}
 
 export interface CacheEntry {
   outputs: Record<string, unknown>;

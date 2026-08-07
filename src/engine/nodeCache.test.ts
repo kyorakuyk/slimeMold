@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   cacheKey,
+  composeCacheScope,
   getCached,
   setCached,
   strike,
@@ -61,6 +62,35 @@ describe('cacheKey', () => {
     expect(getCached(cacheKey('file.read', {}, {}, 'wf-B'))).toEqual({ path: '/B/out.txt' });
     // 无 scope 的读取不命中任何带 scope 的条目
     expect(getCached(cacheKey('file.read', {}, {}))).toBeNull();
+  });
+});
+
+describe('composeCacheScope 细粒度隔离（节点实例 + 环境指纹）', () => {
+  it('过滤空段，用 : 连接', () => {
+    expect(composeCacheScope('wf-A', 'n1', null)).toBe('wf-A:n1');
+    expect(composeCacheScope('wf-A', '', 'ws')).toBe('wf-A:ws');
+    expect(composeCacheScope('wf-A', 'n1', 'ws')).toBe('wf-A:n1:ws');
+    expect(composeCacheScope()).toBe('');
+  });
+
+  it('同工作流内不同节点实例：相同 typeId/params/upstream 不再互相串缓存', () => {
+    const a = cacheKey('ai.chat', { q: 'hi' }, { input: 'x' }, composeCacheScope('wf-A', 'node-a'));
+    const b = cacheKey('ai.chat', { q: 'hi' }, { input: 'x' }, composeCacheScope('wf-A', 'node-b'));
+    expect(a).not.toBe(b);
+  });
+
+  it('workspace 指纹：环境变化使同节点实例的 key 改变（旧缓存失效）', () => {
+    const before = cacheKey('file.read', { p: '/a.txt' }, {}, composeCacheScope('wf-A', 'n1', 'ws-old'));
+    const after = cacheKey('file.read', { p: '/a.txt' }, {}, composeCacheScope('wf-A', 'n1', 'ws-new'));
+    expect(before).not.toBe(after);
+  });
+
+  it('节点实例隔离的 set/get 互不串缓存', () => {
+    const k1 = cacheKey('ai.chat', { q: 'hi' }, {}, composeCacheScope('wf-A', 'a'));
+    const k2 = cacheKey('ai.chat', { q: 'hi' }, {}, composeCacheScope('wf-A', 'b'));
+    setCached(k1, { text: '来自 a' });
+    expect(getCached(k2)).toBeNull(); // b 不命中 a 的产物
+    expect(getCached(k1)).toEqual({ text: '来自 a' });
   });
 });
 
