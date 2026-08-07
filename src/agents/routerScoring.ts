@@ -33,6 +33,9 @@ export const MODEL_PRICE_PER_1M: Record<string, ModelPrice> = {
   'gpt-4.1-mini': { in: 0.4, out: 1.6 },
   'gpt-4.1': { in: 2, out: 8 },
   'gpt-4': { in: 30, out: 60 },
+  'gpt-5.6-sol': { in: 5, out: 30 }, // 旗舰（2026-06-27 发布；价格未调）
+  'gpt-5.6-terra': { in: 2, out: 12 }, // 中端（已降价 20%）
+  'gpt-5.6-luna': { in: 0.2, out: 1.2 }, // 快速轻量（已降价 80%）
   'gpt-5.5': { in: 5, out: 30 },
   'gpt-5': { in: 1.25, out: 10 },
   'o4-mini': { in: 1.1, out: 4.4 },
@@ -93,7 +96,7 @@ export function modelTier(model: string): 'light' | 'standard' | 'heavy' {
   // gpt-4.1-mini / o3-mini / gemini-*-flash 等带后缀的轻量变体先按 light 判定。
   // 注意 `mini` 必须是 `-mini` 词边界——"gemini" 本身含 "mini"，裸 mini 会误伤旗舰 gemini。
   if (
-    /(-mini|flash|3b|7b|8b|llama3|qwen2\.5|qwen3|mistral|haiku|0\.5b|grok-4\.1|grok-3-mini|gemini.*flash)/.test(m)
+    /(-mini|flash|3b|7b|8b|llama3|qwen2\.5|qwen3|mistral|haiku|0\.5b|grok-4\.1|grok-3-mini|gemini.*flash|gpt-5\.6-luna)/.test(m)
   ) return 'light';
   if (
     /(opus|fable|gpt-4\.1(?!-mini)|gpt-5|o1|o3(?!-mini)|deepseek-r1|deepseek-reasoner|claude-opus|claude-fable|grok-(4|4\.5)(?!\.1)|gemini-3\.1-pro)/.test(m)

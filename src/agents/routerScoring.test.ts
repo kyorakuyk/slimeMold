@@ -34,6 +34,12 @@ describe('modelPrice 价格表（2026-07 快照）', () => {
     expect(modelPrice('gpt-5.5')).toEqual({ in: 5, out: 30 });
   });
 
+  it('GPT-5.6 三档已收录（Sol/Terra/Luna，含最新调价）', () => {
+    expect(modelPrice('gpt-5.6-sol')).toEqual({ in: 5, out: 30 });
+    expect(modelPrice('gpt-5.6-terra')).toEqual({ in: 2, out: 12 }); // 降 20%
+    expect(modelPrice('gpt-5.6-luna')).toEqual({ in: 0.2, out: 1.2 }); // 降 80%
+  });
+
   it('子串匹配（带供应商前缀/后缀）', () => {
     expect(modelPrice('openai/gpt-4o-mini').in).toBe(0.15);
     expect(modelPrice('deepseek-ai/DeepSeek-V3').in).toBe(0.27);
@@ -59,6 +65,8 @@ describe('modelTier 模型档位', () => {
     expect(modelTier('gemini-3.1-pro')).toBe('heavy');
     expect(modelTier('claude-fable-5')).toBe('heavy');
     expect(modelTier('grok-4')).toBe('heavy'); // 旗舰（$3/$15）
+    expect(modelTier('gpt-5.6-sol')).toBe('heavy'); // 旗舰
+    expect(modelTier('gpt-5.6-terra')).toBe('heavy'); // 中端推理
   });
 
   it('light：轻量/本地模型（含带后缀轻量变体）', () => {
@@ -69,6 +77,7 @@ describe('modelTier 模型档位', () => {
     expect(modelTier('gemini-2.5-flash')).toBe('light');
     expect(modelTier('qwen2.5:3b')).toBe('light');
     expect(modelTier('llama3.1:8b')).toBe('light');
+    expect(modelTier('gpt-5.6-luna')).toBe('light'); // 快速轻量档
   });
 
   it('standard：默认档', () => {
