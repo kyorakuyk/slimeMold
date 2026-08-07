@@ -271,4 +271,70 @@ describe('runWorkflow 生命周期集成', () => {
     // getActiveRunId 已推进到新代次
     expect(getActiveRunId(wfId)).toBeGreaterThanOrEqual(1);
   });
+
+  it('两个工作流并行独立运行：互不干扰、各自写入自身状态与历史', async () => {
+    const wf1 = 'wf-para-1';
+    const wf2 = 'wf-para-2';
+    registerGateNode('gate.p1', { delayMs: 30 });
+    registerGateNode('gate.p2', { delayMs: 10 });
+    const nodes1 = [mkNode('p1-a', 'gate.p1')];
+    const nodes2 = [mkNode('p2-a', 'gate.p2')];
+    seedStore(wf1, nodes1, []);
+    useWorkflowStore.setState({
+      activeWfId: wf1, // 激活 wf1
+      nodes: nodes1,
+      edges: [],
+      workflows: {
+        [wf1]: { name: wf1, nodes: nodes1, edges: [], variables: {} } as never,
+        [wf2]: { name: wf2, nodes: nodes2, edges: [], variables: {} } as never,
+      },
+      runStates: {},
+      runHistory: [],
+      logs: [],
+    } as never);
+
+    // 并行启动两个工作流
+    const [r1, r2] = await Promise.all([runWorkflow({ wfId: wf1 }), runWorkflow({ wfId: wf2 })]);
+    await Promise.all([r1, r2]);
+
+    const st = useWorkflowStore.getState();
+    // 各自节点都 success
+    expect(st.nodes.find((n) => n.id === 'p1-a')?.data.status).toBe('success');
+    expect(st.workflows[wf2].nodes.find((n: FlowNode) => n.id === 'p2-a')?.data.status).toBe('success');
+    // 各自写各自历史（runHistory 是项目级，两轮成功至少 2 条）
+    expect(st.runHistory.length).toBeGreaterThanOrEqual(2);
+    // 各自运行态独立
+    expect(st.runStates[wf1]?.running).toBe(false);
+    expect(st.runStates[wf2]?.running).toBe(false);
+  });
+
+  it('旧运行不得关闭新运行的进度（stop 旧运行后，新运行完成并保留进度复位权）', async () => {
+    const wfId = 'wf-life-progress';
+    // 慢节点：stop 时仍在跑
+    registerGateNode('gate.slow3', { delayMs: 50 });
+    const nodes = [mkNode('a', 'gate.slow3')];
+    seedStore(wfId, nodes, []);
+
+    // 第一轮：慢运行，随后 stop
+    const firstRun = runWorkflow({ wfId });
+    await new Promise((r) => setTimeout(r, 10));
+    stopWorkflow(wfId); // 旧运行代次过期
+    await firstRun;
+
+    // 第二轮：新运行快速完成（不同节点，无延迟）
+    registerGateNode('gate.fast', {});
+    const nodes2 = [mkNode('b', 'gate.fast')];
+    useWorkflowStore.setState({
+      nodes: nodes2,
+      workflows: { [wfId]: { name: wfId, nodes: nodes2, edges: [], variables: {} } as never },
+    } as never);
+    await runWorkflow({ wfId });
+
+    const st = useWorkflowStore.getState();
+    // 新运行完成后运行态复位（旧运行的 finally 不能关掉新运行的进度）
+    expect(st.runStates[wfId]?.running).toBe(false);
+    // 新运行的节点 success，历史里至少有新运行的成功记录
+    expect(st.nodes.find((n) => n.id === 'b')?.data.status).toBe('success');
+    expect(st.runHistory.some((h) => h.status === 'success')).toBe(true);
+  });
 });
