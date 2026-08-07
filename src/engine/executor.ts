@@ -454,11 +454,18 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   }
 
   const store = useWorkflowStore.getState();
+  // 代次守卫：被 force/stop 淘汰且新运行已启动的旧协程（myRun !== currentRunId），
+  // 不再写终态日志 / 运行历史 / 触发 selfImprove，避免污染新运行的收尾。
+  // 若仅是用户 stop 且未开启新运行（myRun === currentRunId 仍成立），保留 aborted 历史。
+  const isCurrentRun = myRun === gen.currentRunId;
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
   const skipped = skippedCount();
   // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
   const pruned = nodes.filter((n) => n.data.status === 'skipped').length;
-  if (signal.aborted && failed.size === 0) {
+  if (!isCurrentRun) {
+    // 被淘汰的旧运行：只留一条最简日志，不写历史/复盘，避免污染新运行
+    rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
+  } else if (signal.aborted && failed.size === 0) {
     rt.addLog('info', `已手动停止（用时 ${elapsed}s）`);
   } else if (failed.size > 0) {
     rt.addLog(
@@ -471,115 +478,118 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     rt.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
   }
 
-  // 记录运行历史（持久化到 localStorage）
-  const nodesNow = nodes;
-  const status: RunRecord['status'] =
-    failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
+  // 记录运行历史（持久化到 localStorage）——仅当前代次运行才写历史/复盘/指针回退，
+  // 被 force/stop 淘汰的旧运行只保留最简日志，不污染新运行的收尾。
+  if (isCurrentRun) {
+    const nodesNow = nodes;
+    const status: RunRecord['status'] =
+      failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
 
-  // 成本聚合：按模型归类，便于「性价比」分析
-  const byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }> = {};
-  let totalPrompt = 0;
-  let totalCompletion = 0;
-  let totalDuration = 0;
-  let cacheHitTokens = 0;
-  let cacheWriteTokens = 0;
-  let reasoningTokens = 0;
-  let replyTokens = 0;
-  for (const r of costLog) {
-    totalDuration += r.durationMs;
-    if (!r.usage) continue;
-    const prompt = r.usage.promptTokens ?? 0;
-    const completion = r.usage.completionTokens ?? 0;
-    totalPrompt += prompt;
-    totalCompletion += completion;
-    cacheHitTokens += r.usage.cachedPromptTokens ?? 0;
-    cacheWriteTokens += r.usage.writtenPromptTokens ?? 0;
-    reasoningTokens += r.usage.reasoningTokens ?? 0;
-    replyTokens += r.usage.replyTokens ?? completion;
-    const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
-    m.promptTokens += prompt;
-    m.completionTokens += completion;
-    m.calls += 1;
-  }
-  const cacheMissTokens = Math.max(0, totalPrompt - cacheHitTokens - cacheWriteTokens);
-  const hasCost = costLog.length > 0;
-
-  const rec: RunRecord = {
-    id: `run_${Date.now()}`,
-    name: wf.workflowName,
-    startedAt: new Date(startedWall).toISOString(),
-    endedAt: new Date().toISOString(),
-    durationMs: Math.round(performance.now() - startAt),
-    status,
-    nodeCount: nodes.length,
-    nodes: nodesNow.map((n) => ({
-      id: n.id,
-      label: n.data.label,
-      typeId: n.data.typeId,
-      status: n.data.status ?? 'idle',
-      outputs: n.data.outputs ?? null,
-      error: n.data.error ?? null,
-      startedAt: n.data.startedAt ?? null,
-      durationMs: n.data.durationMs ?? null,
-      cost: costByNode.get(n.id) ?? null,
-    })),
-    cost: hasCost
-      ? {
-          totalPromptTokens: totalPrompt,
-          totalCompletionTokens: totalCompletion,
-          totalTokens: totalPrompt + totalCompletion,
-          totalDurationMs: totalDuration,
-          cache: {
-            hitTokens: cacheHitTokens,
-            missTokens: cacheMissTokens,
-            writeTokens: cacheWriteTokens,
-          },
-          output: {
-            reasoningTokens,
-            replyTokens,
-          },
-          byModel,
-          records: costLog,
-        }
-      : null,
-  };
-  rt.pushRunHistory(rec);
-
-  // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
-  // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
-  if (isSelfImprove()) {
-    const reviewerAgent = useWorkflowStore.getState().agents.find((a) => a.id === 'role.reviewer');
-    if (reviewerAgent) {
-      sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
-      const root = useWorkflowStore.getState().projectPath ?? null;
-      void (async () => {
-        try {
-          const memory = root ? (await readProjectText(root, MEMORY_REL)) ?? undefined : undefined;
-          const skills = Object.values(useWorkflowStore.getState().subgraphs).map((s) => s.name);
-          runReview({
-            kind: '_COMBINED',
-            reviewerAgent,
-            context: { goal: wf.workflowName, trace: sink.toTraceText(), memory, skills },
-            async: true,
-            projectRoot: root,
-          });
-        } catch (e) {
-          rt.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
-        }
-      })();
+    // 成本聚合：按模型归类，便于「性价比」分析
+    const byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }> = {};
+    let totalPrompt = 0;
+    let totalCompletion = 0;
+    let totalDuration = 0;
+    let cacheHitTokens = 0;
+    let cacheWriteTokens = 0;
+    let reasoningTokens = 0;
+    let replyTokens = 0;
+    for (const r of costLog) {
+      totalDuration += r.durationMs;
+      if (!r.usage) continue;
+      const prompt = r.usage.promptTokens ?? 0;
+      const completion = r.usage.completionTokens ?? 0;
+      totalPrompt += prompt;
+      totalCompletion += completion;
+      cacheHitTokens += r.usage.cachedPromptTokens ?? 0;
+      cacheWriteTokens += r.usage.writtenPromptTokens ?? 0;
+      reasoningTokens += r.usage.reasoningTokens ?? 0;
+      replyTokens += r.usage.replyTokens ?? completion;
+      const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
+      m.promptTokens += prompt;
+      m.completionTokens += completion;
+      m.calls += 1;
     }
-  }
+    const cacheMissTokens = Math.max(0, totalPrompt - cacheHitTokens - cacheWriteTokens);
+    const hasCost = costLog.length > 0;
 
-  // 非循环工作流 + 正常跑完（无失败、未被手动停止）：将「运行指针」回退到第一个节点，
-  // 使「开始」键可立刻跑下一个任务。循环工作流（hasLoop=true）依赖上一轮输出作为下一轮输入，
-  // 指针不回退；失败 / 手动停止需用户介入，也不回退。
-  const finishedClean = !hasLoop && failed.size === 0 && !signal.aborted;
-  if (finishedClean && myRun === gen.currentRunId) {
-    const firstId = stages[0]?.[0] ?? nodes[0]?.id;
-    if (firstId && firstId !== store.selectedNodeId) {
-      store.setSelected(firstId, wfId);
+    const rec: RunRecord = {
+      id: `run_${Date.now()}`,
+      name: wf.workflowName,
+      startedAt: new Date(startedWall).toISOString(),
+      endedAt: new Date().toISOString(),
+      durationMs: Math.round(performance.now() - startAt),
+      status,
+      nodeCount: nodes.length,
+      nodes: nodesNow.map((n) => ({
+        id: n.id,
+        label: n.data.label,
+        typeId: n.data.typeId,
+        status: n.data.status ?? 'idle',
+        outputs: n.data.outputs ?? null,
+        error: n.data.error ?? null,
+        startedAt: n.data.startedAt ?? null,
+        durationMs: n.data.durationMs ?? null,
+        cost: costByNode.get(n.id) ?? null,
+      })),
+      cost: hasCost
+        ? {
+            totalPromptTokens: totalPrompt,
+            totalCompletionTokens: totalCompletion,
+            totalTokens: totalPrompt + totalCompletion,
+            totalDurationMs: totalDuration,
+            cache: {
+              hitTokens: cacheHitTokens,
+              missTokens: cacheMissTokens,
+              writeTokens: cacheWriteTokens,
+            },
+            output: {
+              reasoningTokens,
+              replyTokens,
+            },
+            byModel,
+            records: costLog,
+          }
+        : null,
+    };
+    rt.pushRunHistory(rec);
+
+    // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
+    // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
+    if (isSelfImprove()) {
+      const reviewerAgent = useWorkflowStore.getState().agents.find((a) => a.id === 'role.reviewer');
+      if (reviewerAgent) {
+        sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
+        const root = useWorkflowStore.getState().projectPath ?? null;
+        void (async () => {
+          try {
+            const memory = root ? (await readProjectText(root, MEMORY_REL)) ?? undefined : undefined;
+            const skills = Object.values(useWorkflowStore.getState().subgraphs).map((s) => s.name);
+            runReview({
+              kind: '_COMBINED',
+              reviewerAgent,
+              context: { goal: wf.workflowName, trace: sink.toTraceText(), memory, skills },
+              async: true,
+              projectRoot: root,
+            });
+          } catch (e) {
+            rt.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+          }
+        })();
+      }
     }
-    rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+
+    // 非循环工作流 + 正常跑完（无失败、未被手动停止）：将「运行指针」回退到第一个节点，
+    // 使「开始」键可立刻跑下一个任务。循环工作流（hasLoop=true）依赖上一轮输出作为下一轮输入，
+    // 指针不回退；失败 / 手动停止需用户介入，也不回退。
+    const finishedClean = !hasLoop && failed.size === 0 && !signal.aborted;
+    if (finishedClean) {
+      const firstId = stages[0]?.[0] ?? nodes[0]?.id;
+      if (firstId && firstId !== store.selectedNodeId) {
+        store.setSelected(firstId, wfId);
+      }
+      rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+    }
   }
 
   } finally {
