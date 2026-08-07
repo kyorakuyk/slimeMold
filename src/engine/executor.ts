@@ -33,6 +33,7 @@ import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentForRunContext } from '../agents/agentRouter';
 import { buildCheckpoint } from './checkpoint';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
+import { addExperience, matchExperience, summarizeExperience } from '../agents/experienceStore';
 import {
   cleanupRun,
   createRunResources,
@@ -607,6 +608,34 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
     // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
     if (isSelfImprove()) {
+      // E 自我学习：运行结果归约为结构化经验入经验库（零 LLM 费用），
+      // 下次运行同类型节点决策时经 matchExperience 消费。
+      try {
+        const expList = summarizeExperience({
+          projectId: useWorkflowStore.getState().projectId ?? '',
+          wfId,
+          runId: myRun,
+          status,
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            typeId: n.data.typeId,
+            status: n.data.status ?? 'idle',
+            error: n.data.error ?? null,
+            durationMs: n.data.durationMs ?? null,
+            label: n.data.label,
+          })),
+        });
+        let learned = 0;
+        for (const exp of expList) {
+          if (addExperience(useWorkflowStore.getState().projectId ?? '', exp)) learned += 1;
+        }
+        if (learned > 0) {
+          rt.addLog('info', `自我学习：已沉淀 ${learned} 条运行经验（${status}）`);
+        }
+      } catch (e) {
+        rt.addLog('warn', `经验沉淀失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+      }
+
       const reviewerAgent = useWorkflowStore.getState().agents.find((a) => a.id === 'role.reviewer');
       if (reviewerAgent) {
         sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
@@ -1040,6 +1069,21 @@ async function executeNode(
       const effective = modelOverride
         ? { ...agent, model: modelOverride }
         : agent;
+      // E 自我学习消费：同类型节点的历史经验注入本次调用的日志与事件（供 UI/复盘展示），
+      // 未来可在 system prompt 组装时引用（保持现有调用路径不变，仅旁路记录）。
+      const expHits = matchExperience(useWorkflowStore.getState().projectId ?? '', node.data.typeId);
+      if (expHits.length > 0) {
+        emitNode(runBus, 'node.progress', nodeCtx, id, {
+          progressKind: 'experience',
+          typeId: node.data.typeId,
+          count: expHits.length,
+          insights: expHits.map((e) => e.insights[0] ?? e.summary),
+        });
+        R.addLog(
+          'info',
+          `「${node.data.label}」命中 ${expHits.length} 条历史经验（${node.data.typeId}）`,
+        );
+      }
       // 并发限流：包裹整个 LLM 调用（含 harness 的 tool_call 多轮）
       const release = await limiter.acquire(signal);
       const callStart = performance.now();
