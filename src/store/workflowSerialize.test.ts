@@ -269,6 +269,22 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       const withHistory = projectSnapshot({ ...base, runHistory: [{ id: 'x' }] as never });
       expect(withHistory).not.toBe(a);
     });
+
+    it('同一内容多次快照产出相同字节（时间戳/自增 id 不污染快照）', () => {
+      // P1 回归：此前 buildProjectFile 每次刷新 updatedAt/savedAt，导致
+      // projectSnapshot 逐次不同 → dirty 检测恒为 true（永远显示未保存）。
+      const a = projectSnapshot(base);
+      const b = projectSnapshot(base);
+      const c = projectSnapshot({ ...base, projectId: 'pid' }); // 已指定 id，不应 fallback 到 Date.now()
+      expect(b).toBe(a);
+      expect(c).toBe(a);
+
+      // 未指定 projectId 的游离态：稳定模式用确定性占位，也不逐次变化
+      const freeBase = { ...base, projectId: null, projectCreatedAt: null };
+      const f1 = projectSnapshot(freeBase);
+      const f2 = projectSnapshot(freeBase);
+      expect(f2).toBe(f1);
+    });
   });
 
   describe('DIRTY_KEYS', () => {

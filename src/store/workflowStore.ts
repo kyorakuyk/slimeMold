@@ -1141,7 +1141,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       isProjectDirty: () => {
         const s = get();
         if (!s.lastSavedSnapshot) return s.projectDirty; // 从未保存过：以标记为准
-        return s.lastSavedSnapshot !== JSON.stringify(buildProjectFile(s));
+        // 与 finalizeLoaded/subscribe 统一用稳定快照比对（排除时间戳/自增 id 噪声）
+        return s.lastSavedSnapshot !== projectSnapshot(s);
       },
 
       switchWorkflow: (id) => {
