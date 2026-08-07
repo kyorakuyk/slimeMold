@@ -40,6 +40,8 @@ import {
   toDisk,
   serializeCurrent,
   buildProjectFile,
+  projectSnapshot,
+  DIRTY_KEYS,
 } from './workflowSerialize';
 
 /** 运行期调度进度（供 Job Board 可视化） */
@@ -337,11 +339,7 @@ interface WorkflowState {
   selectAll: () => void;
 }
 
-/** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等） */
-function projectSnapshot(s: ReturnType<typeof useWorkflowStore.getState>): string {
-  return JSON.stringify(buildProjectFile(s));
-}
-
+/** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等）已抽到 workflowSerialize.projectSnapshot */
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => ({
@@ -2039,29 +2037,7 @@ function finalizeLoaded() {
 }
 
 // 仅当"落盘相关字段"变化时才比对快照，避免日志/运行态频繁触发 stringify
-const DIRTY_KEYS = [
-  'nodes',
-  'edges',
-  'agents',
-  'roles',
-  'variables',
-  'projectVariables',
-  'projectAssets',
-  'groups',
-  'subgraphs',
-  'workflows',
-  'artifacts',
-  'agentRouteTable',
-  'pipelines',
-  'projectName',
-  'activeWfId',
-  'workflowName',
-  'llmChannel',
-  'failFast',
-  'skipFailed',
-  'maxConcurrency',
-] as const;
-
+// DIRTY_KEYS 已抽到 workflowSerialize（共享常量）
 useWorkflowStore.subscribe((state, prev) => {
   if (suppressDirty) return;
   if (DIRTY_KEYS.every((k) => (state as any)[k] === (prev as any)[k])) return;

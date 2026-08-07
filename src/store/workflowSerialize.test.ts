@@ -10,6 +10,8 @@ import {
   toDisk,
   serializeCurrent,
   buildProjectFile,
+  projectSnapshot,
+  DIRTY_KEYS,
 } from './workflowSerialize';
 
 function mkNode(id: string, extra: Record<string, unknown> = {}): FlowNode {
@@ -184,6 +186,63 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       expect((pf.workflows.wfA.nodes[0] as unknown as Record<string, unknown>).data).toBeUndefined();
       expect(pf.variables).toEqual({ pv: 2 });
       expect((pf.runs ?? { history: [] }).history).toEqual([]);
+    });
+  });
+
+  describe('projectSnapshot', () => {
+    const base = {
+      workflowName: '主',
+      nodes: [mkNode('n1')],
+      edges: [mkEdge('e1', 'n1', 'n2')],
+      agents: [] as never[],
+      roles: [] as never[],
+      variables: { v: 1 },
+      projectVariables: { pv: 2 },
+      projectAssets: [] as never[],
+      groups: [] as never[],
+      activeWfId: 'wfA',
+      workflows: {
+        wfA: { name: 'A', nodes: [mkNode('n1')], edges: [] } as never,
+        wfB: { name: 'B', nodes: [], edges: [] } as never,
+      },
+      projectName: '项目',
+      projectId: 'pid',
+      projectCreatedAt: '2026-01-01T00:00:00.000Z',
+      subgraphs: {} as Record<string, never>,
+      runHistory: [] as never[],
+      artifacts: { handoffs: {}, received: {} },
+      agentRouteTable: {} as Record<string, never>,
+      pipelines: [] as never[],
+    };
+
+    it('是 buildProjectFile 的 JSON 字符串封装，同一时刻内容稳定', () => {
+      const snap1 = projectSnapshot(base);
+      const snap2 = projectSnapshot(base);
+      expect(typeof snap1).toBe('string');
+      expect(snap1).toBe(JSON.stringify(buildProjectFile(base)));
+      expect(snap1).toBe(snap2); // 同一时刻调用确定性一致（注：含时间戳，仅限同刻）
+    });
+
+    it('随落盘字段（如 nodes / runHistory）变化而改变（脏检测可用）', () => {
+      const a = projectSnapshot(base);
+      const moreNodes = projectSnapshot({ ...base, nodes: [mkNode('n1'), mkNode('n2')] });
+      expect(moreNodes).not.toBe(a);
+
+      // runHistory 经 buildProjectFile 写入 runs.history，属于落盘字段，会改变快照
+      const withHistory = projectSnapshot({ ...base, runHistory: [{ id: 'x' }] as never });
+      expect(withHistory).not.toBe(a);
+    });
+  });
+
+  describe('DIRTY_KEYS', () => {
+    it('覆盖核心落盘字段，且含运行态/日志白名单外的关键项', () => {
+      const keys = DIRTY_KEYS as readonly string[];
+      for (const k of ['nodes', 'edges', 'agents', 'groups', 'subgraphs', 'activeWfId', 'workflowName']) {
+        expect(keys).toContain(k);
+      }
+      // 运行态/日志不该进白名单（避免频繁触发脏标记）
+      expect(keys).not.toContain('running');
+      expect(keys).not.toContain('logs');
     });
   });
 });

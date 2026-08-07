@@ -203,3 +203,34 @@ export function buildProjectFile(s: {
     runs: { history: s.runHistory },
   };
 }
+
+/** 当前项目态的稳定快照字符串（仅含落盘相关字段，排除运行态/日志等）。
+ * 用于脏检测：与上次保存的快照比对即可判断是否偏离。 */
+export function projectSnapshot(s: Parameters<typeof buildProjectFile>[0]): string {
+  return JSON.stringify(buildProjectFile(s));
+}
+
+/** 脏检测白名单：仅当这些字段变化时才比对快照，避免日志/运行态频繁触发 stringify。
+ * 从 workflowStore 抽离为共享常量，供脏检测 subscribe 与测试复用。 */
+export const DIRTY_KEYS = [
+  'nodes',
+  'edges',
+  'agents',
+  'roles',
+  'variables',
+  'projectVariables',
+  'projectAssets',
+  'groups',
+  'subgraphs',
+  'workflows',
+  'artifacts',
+  'agentRouteTable',
+  'pipelines',
+  'projectName',
+  'activeWfId',
+  'workflowName',
+  'llmChannel',
+  'failFast',
+  'skipFailed',
+  'maxConcurrency',
+] as const;
