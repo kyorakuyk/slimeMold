@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, Check, UserRound } from 'lucide-react';
 import { getRunBus } from '../engine/runEvents';
 import {
+  compositeKey,
   getPendingInterventions,
   resolveIntervention,
   rejectIntervention,
@@ -40,15 +41,15 @@ export default function InterventionModal() {
 
   if (requests.length === 0) return null;
 
-  const submit = (nodeId: string) => {
-    const value = drafts[nodeId] ?? '';
-    if (resolveIntervention(nodeId, value)) {
+  const submit = (r: InterveneRequest) => {
+    const value = drafts[compositeKey(r.wfId, r.runId, r.nodeId)] ?? '';
+    if (resolveIntervention(r.wfId, r.runId, r.nodeId, value)) {
       setRequests(getPendingInterventions());
     }
   };
 
-  const cancel = (nodeId: string) => {
-    if (rejectIntervention(nodeId, '人工取消')) {
+  const cancel = (r: InterveneRequest) => {
+    if (rejectIntervention(r.wfId, r.runId, r.nodeId, '人工取消')) {
       setRequests(getPendingInterventions());
     }
   };
@@ -72,7 +73,10 @@ export default function InterventionModal() {
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto px-4 py-3">
           {requests.map((r) => (
-            <div key={r.nodeId} className="space-y-2 rounded-lg border border-line bg-paper-soft p-3">
+            <div
+              key={compositeKey(r.wfId, r.runId, r.nodeId)}
+              className="space-y-2 rounded-lg border border-line bg-paper-soft p-3"
+            >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-medium text-ink" title={r.nodeId}>
                   {r.label || r.nodeId}
@@ -85,22 +89,22 @@ export default function InterventionModal() {
               <textarea
                 className="sm-input min-h-[96px] w-full resize-y font-mono text-[12px]"
                 placeholder={t('intervention.placeholder')}
-                value={drafts[r.nodeId] ?? r.defaultResult ?? ''}
+                value={drafts[compositeKey(r.wfId, r.runId, r.nodeId)] ?? r.defaultResult ?? ''}
                 onChange={(e) => {
-                  setDrafts((d) => ({ ...d, [r.nodeId]: e.target.value }));
+                  setDrafts((d) => ({ ...d, [compositeKey(r.wfId, r.runId, r.nodeId)]: e.target.value }));
                 }}
                 autoFocus={requests.length === 1}
               />
               <div className="flex items-center justify-end gap-2">
                 <button
                   className="sm-btn text-ink-soft hover:border-err hover:text-err"
-                  onClick={() => cancel(r.nodeId)}
+                  onClick={() => cancel(r)}
                 >
                   <X size={14} /> {t('intervention.cancel')}
                 </button>
                 <button
                   className="sm-btn hover:border-accent hover:text-accent"
-                  onClick={() => submit(r.nodeId)}
+                  onClick={() => submit(r)}
                 >
                   <Check size={14} /> {t('intervention.submit')}
                 </button>

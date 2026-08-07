@@ -85,6 +85,8 @@ export function buildConstructionWorkflow(args: {
       {
         task: m.responsibility ?? m.name,
         scope: m.scope ?? [],
+        // F4：把模块类别写入 params.category，供运行时 AgentRouter 类别路由与失败 fallback 使用
+        ...(m.category ? { category: m.category } : {}),
         ...(agentId ? { agentId } : {}),
       },
     );

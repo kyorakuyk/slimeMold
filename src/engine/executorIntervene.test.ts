@@ -13,7 +13,13 @@ import { runWorkflow, stopWorkflow } from './executor';
 import { clearCache, beginRun } from './nodeCache';
 import { getRunBus, resetRunBus, type RunEvent } from './runEvents';
 import { resetInterventions, resolveIntervention, getPendingInterventions } from './intervention';
-import type { FlowNode, FlowEdge, NodeDefinition } from '../types';
+import type { FlowNode, FlowEdge, NodeDefinition, ExecContext } from '../types';
+
+type GateExec = (
+  inputs: Record<string, unknown>,
+  params: Record<string, unknown>,
+  ctx: ExecContext,
+) => Promise<Record<string, unknown>>;
 
 function mkNode(id: string, typeId: string, label?: string): FlowNode {
   return {
@@ -67,10 +73,10 @@ describe('实时接管 executor 集成', () => {
       inputs: [],
       outputs: [{ id: 'out', label: 'out', type: 'any' }],
       params: [],
-      execute: async (_i, _p, ctx) => {
+      execute: (async (_i: Record<string, unknown>, _p: Record<string, unknown>, ctx: ExecContext) => {
         const r = await ctx.intervene!({ message: '请提供结果' });
         return { out: r.kind === 'resolved' ? r.result : 'cancelled' };
-      },
+      }) as GateExec,
     } as unknown as NodeDefinition;
     useRegistryStore.getState().register([gate]);
 
@@ -83,8 +89,8 @@ describe('实时接管 executor 集成', () => {
     expect(req?.nodeId).toBe('a');
     expect(req?.message).toBe('请提供结果');
 
-    // 用户提交结果
-    resolveIntervention('a', 'user-answer');
+    // 用户提交结果（复合键：wfId/runId/nodeId）
+    resolveIntervention(req!.wfId, req!.runId, 'a', 'user-answer');
     await runPromise;
 
     const st = useWorkflowStore.getState();
@@ -105,11 +111,11 @@ describe('实时接管 executor 集成', () => {
       inputs: [],
       outputs: [{ id: 'out', label: 'out', type: 'any' }],
       params: [],
-      execute: async (_i, _p, ctx) => {
+      execute: (async (_i: Record<string, unknown>, _p: Record<string, unknown>, ctx: ExecContext) => {
         const r = await ctx.intervene!({ message: 'x' });
         saw = r.kind;
         return { out: r.kind };
-      },
+      }) as GateExec,
     } as unknown as NodeDefinition;
     useRegistryStore.getState().register([gate]);
 

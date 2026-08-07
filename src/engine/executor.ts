@@ -184,6 +184,8 @@ export interface RunOptions {
    * 默认 false，保持旧行为（共享工作区直写）。
    */
   sandbox?: boolean;
+  /** 本次运行的并发上限（覆盖全局 maxConcurrency；缺省取全局值）。 */
+  maxConcurrency?: number;
   /**
    * 步骤 11 阶段 C：沙箱隔离强度。
    * - `copy`（默认）：基于目录副本 `.sandbox/<runId>/<nodeId>/` 做磁盘隔离。
@@ -207,6 +209,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   if (running && gen.activeRunId === gen.currentRunId) {
     if (opts.force) {
       gen.abort?.abort();
+      // F5：force 重启同样取消旧运行残留的待接管请求（防旧协程挂在介入 Promise 上不进入收尾）
+      cancelInterventionsForRun(wfId, gen.currentRunId);
       wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
     } else {
       wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
@@ -493,8 +497,32 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const isCurrentRun = myRun === gen.currentRunId;
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
   const skipped = skippedCount();
-  // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'）
-  const pruned = nodes.filter((n) => n.data.status === 'skipped').length;
+  // F2：从目标工作流的最新 store 状态重建节点运行态视图。executeNode 的 setNodeStatus 以
+  // 不可变更新写入 store（store.nodes / workflows[wfId].nodes），局部 plan.nodes 不会自动同步，
+  // 若收尾仍读局部 nodes 会把 status/outputs/error 全读到旧 idle——历史、检查点、经验、pruned
+  // 统计全部失真。此处按 ownerRefId 归并（子图虚拟节点回写到承载的 ref 节点），从 store 取最新。
+  const latestState = useWorkflowStore.getState();
+  const latestNodes = wfId === latestState.activeWfId
+    ? latestState.nodes
+    : (latestState.workflows[wfId]?.nodes ?? []);
+  const freshById = new Map(latestNodes.map((n) => [n.id, n.data]));
+  const nodesNow = nodes.map((n) => {
+    const fresh = freshById.get(ownerRefId(n.id) ?? n.id);
+    if (!fresh) return n;
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        status: fresh.status,
+        outputs: fresh.outputs,
+        error: fresh.error,
+        startedAt: fresh.startedAt,
+        durationMs: fresh.durationMs,
+      },
+    };
+  });
+  // 分支剪枝 / 被上游失败跳过的节点数（结束态为 'skipped'；用最新状态统计）
+  const pruned = nodesNow.filter((n) => n.data.status === 'skipped').length;
   if (!isCurrentRun) {
     // 被淘汰的旧运行：只留一条最简日志，不写历史/复盘，避免污染新运行
     rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
@@ -514,7 +542,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 记录运行历史（持久化到 localStorage）——仅当前代次运行才写历史/复盘/指针回退，
   // 被 force/stop 淘汰的旧运行只保留最简日志，不污染新运行的收尾。
   if (isCurrentRun) {
-    const nodesNow = nodes;
     const status: RunRecord['status'] =
       failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
 
@@ -588,10 +615,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     rt.pushRunHistory(rec);
 
     // C：可恢复执行——把本次运行的节点级结果固化为检查点（覆盖式，按 wfId），
-    // 随项目落盘；下次打开项目可「从断点恢复」复用成功节点输出、续跑失败节点。
+    // 运行结束即独立落盘到 .slimemold/runs/checkpoints.json（F3：不等整体保存，
+    // 不标脏），下次打开项目可「从断点恢复」复用成功节点输出、续跑失败节点。
     useWorkflowStore
       .getState()
-      .setCheckpoint(buildCheckpoint(nodes, { wfId, runId: myRun, status, startedAt: startedWall }));
+      .persistCheckpoint(buildCheckpoint(nodesNow, { wfId, runId: myRun, status, startedAt: startedWall }));
 
     // A3：运行级终态事件（completed / failed / aborted）统一在此发出，与历史记录状态一致。
     const finalKind: 'run.completed' | 'run.failed' | 'run.aborted' =
@@ -617,7 +645,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           wfId,
           runId: myRun,
           status,
-          nodes: nodes.map((n) => ({
+          nodes: nodesNow.map((n) => ({
             id: n.id,
             typeId: n.data.typeId,
             status: n.data.status ?? 'idle',
@@ -823,7 +851,7 @@ async function executeNode(
       const resources = getRunResources(targetWfId, targetRunId);
       const wt = resources?.worktree;
       if (wt) return wt.path;
-      if (workspaceDir) return workspaceDir;
+      if (nodeWorkspaceDir) return nodeWorkspaceDir;
       try {
         const { appDataDir } = await import('@tauri-apps/api/path');
         return `${await appDataDir()}/slime-mold/${targetWfId}`;
@@ -1035,30 +1063,31 @@ async function executeNode(
       warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
     llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
-      // B：AgentRouter 运行时决策——显式 agentId 有效则直接用；
-      // 缺失/失效时查项目级路由表 → fallback 链 → 默认 agent → 首个可用，逐级兜底，
-      // 使节点「没绑 agent / 绑的 agent 被删」不再白白抛错，路由表运行时真正生效。
+      // B/F4：AgentRouter 运行时决策——**始终**经 Router 统一决策（不再只在缺失时兜底）：
+      // 显式 agent 有效 → reason=explicit 直接使用（保持原有行为不变）；
+      // 缺失/失效 → 类别路由表 → fallback 链 → 默认 → 首个可用，逐级兜底。
+      // category 取自节点参数（Builder 生成 worker 时写入 params.category），真正参与类别路由。
       const requestedAgentId = agentId;
-      let agent = useWorkflowStore
-        .getState()
-        .agents.find((a) => a.id === requestedAgentId);
-      if (!agent) {
-        const st = useWorkflowStore.getState();
-        const goal =
-          targetWfId === st.activeWfId
-            ? st.workflowName
-            : (st.workflows[targetWfId]?.name ?? '');
-        const decision = resolveAgentForRunContext(
-          { agentId: requestedAgentId, typeId: node.data.typeId },
-          {
-            agents: st.agents,
-            routeTable: st.agentRouteTable ?? {},
-            defaultAgentId: st.defaultAgentId ?? null,
-          },
-          goal ? { goal } : null,
-        );
-        agent = decision.agent;
-        // 路由决策进入事件流（JobBoard 忽略 node.progress，不污染看板；供历史/调试消费）
+      const st0 = useWorkflowStore.getState();
+      const goal =
+        targetWfId === st0.activeWfId
+          ? st0.workflowName
+          : (st0.workflows[targetWfId]?.name ?? '');
+      const category =
+        typeof node.data.params?.category === 'string' && node.data.params.category.trim()
+          ? node.data.params.category.trim()
+          : undefined;
+      const decision = resolveAgentForRunContext(
+        { agentId: requestedAgentId, typeId: node.data.typeId, category },
+        {
+          agents: st0.agents,
+          routeTable: st0.agentRouteTable ?? {},
+          defaultAgentId: st0.defaultAgentId ?? null,
+        },
+        goal ? { goal } : null,
+      );
+      // 经历路由（reason≠explicit）才 emit + 日志；显式绑定直接命中则保持安静
+      if (decision.routed) {
         emitNode(runBus, 'node.progress', nodeCtx, id, {
           progressKind: 'agent-route',
           requestedAgentId: requestedAgentId ?? '',
@@ -1066,18 +1095,18 @@ async function executeNode(
           reason: decision.reason,
           chain: decision.chain,
           tier: decision.tier,
+          category,
         });
         R.addLog(
           'info',
-          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}不可用，AgentRouter 已路由到「${decision.agent.name}」（${decision.reason}）`,
+          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}经 AgentRouter 路由到「${decision.agent.name}」（${decision.reason}${category ? `，类别 ${category}` : ''}）`,
         );
       }
-      const effective = modelOverride
-        ? { ...agent, model: modelOverride }
-        : agent;
-      // E 自我学习消费：同类型节点的历史经验注入本次调用的日志与事件（供 UI/复盘展示），
-      // 未来可在 system prompt 组装时引用（保持现有调用路径不变，仅旁路记录）。
+      const byId = (id0: string) => st0.agents.find((a) => a.id === id0);
+      // E/F7 自我学习消费：同类型节点的历史经验注入本次调用——
+      // ① 事件与日志（可观测）；② 注入 system prompt（真正影响本次 LLM 决策）。
       const expHits = matchExperience(useWorkflowStore.getState().projectId ?? '', node.data.typeId);
+      let effectiveMessages = messages;
       if (expHits.length > 0) {
         emitNode(runBus, 'node.progress', nodeCtx, id, {
           progressKind: 'experience',
@@ -1087,99 +1116,131 @@ async function executeNode(
         });
         R.addLog(
           'info',
-          `「${node.data.label}」命中 ${expHits.length} 条历史经验（${node.data.typeId}）`,
+          `「${node.data.label}」命中 ${expHits.length} 条历史经验（${node.data.typeId}），已注入提示词`,
         );
+        const expText = expHits.map((e) => `- ${e.insights[0] ?? e.summary}`).join('\n');
+        const expBlock = `\n\n【历史经验参考（本项目「${node.data.typeId}」节点往期运行沉淀）】\n${expText}\n请结合上述经验优化本次执行，但不要机械照搬。`;
+        // 有 system 消息则追加到末尾，否则前置一条 system
+        if (messages.length > 0 && messages[0]!.role === 'system') {
+          effectiveMessages = [
+            { ...messages[0], content: `${messages[0].content}\n${expBlock}` },
+            ...messages.slice(1),
+          ];
+        } else {
+          effectiveMessages = [{ role: 'system' as const, content: expBlock }, ...messages];
+        }
       }
-      // 并发限流：包裹整个 LLM 调用（含 harness 的 tool_call 多轮）
-      const release = await limiter.acquire(signal);
-      const callStart = performance.now();
-      const recordCost = (usage: CostRecord['usage'], ok: boolean, errMsg?: string) => {
-        trackCost({
-          nodeId: id,
-          nodeLabel: node.data.label,
-          agentId: agent.id,
-          model: effective.model,
-          usage,
-          durationMs: Math.round(performance.now() - callStart),
-          at: new Date().toISOString(),
-          ok,
-          error: errMsg,
-        });
-      };
-      try {
-        // —— 工具多轮：走 AgentHarness（tool_call 循环由 harness 内部驱动）——
-        if (toolNames && toolNames.length) {
-          // 拆分 system（首条）与其余消息
-          const sys = messages.find((m) => m.role === 'system');
-          const userMsgs = messages.filter((m) => m.role !== 'system');
-          const result = await runAgentLoop({
-            agent: effective,
-            userMessages: userMsgs,
-            systemParts: sys ? { role: sys.content as string } : undefined,
-            toolNames,
-            // #7：把已合并的 (项目级 < 工作流级 < 节点级) 变量作为作用域栈注入上下文
-            scopeStack: [ctx.vars],
-            signal,
-            modelOverride: modelOverride || undefined,
-            // #9/#8：把 harness 事件桥接到本运行共享的 ExperienceSink（供 reviewer 复盘）
-            events: sink
-              ? (() => {
-                  const se = sink.events();
-                  return {
-                    onThinking: se.onThinking,
-                    onToolCall: se.onToolCall,
+
+      // F4：调用失败 fallback——按 decision.chain 逐级尝试候选 agent；
+      // 候选各自限流、记录成本；全部失败抛最后一个错误（信号中止则立即抛）。
+      const chainIds = decision.chain;
+      let lastErr: unknown = null;
+      for (const cid of chainIds) {
+        const cand = byId(cid);
+        if (!cand) continue;
+        const effective = modelOverride ? { ...cand, model: modelOverride } : cand;
+        const release = await limiter.acquire(signal);
+        const callStart = performance.now();
+        const recordCost = (usage: CostRecord['usage'], ok: boolean, errMsg?: string) => {
+          trackCost({
+            nodeId: id,
+            nodeLabel: node.data.label,
+            agentId: cand.id,
+            model: effective.model,
+            usage,
+            durationMs: Math.round(performance.now() - callStart),
+            at: new Date().toISOString(),
+            ok,
+            error: errMsg,
+          });
+        };
+        try {
+          // —— 工具多轮：走 AgentHarness（tool_call 循环由 harness 内部驱动）——
+          if (toolNames && toolNames.length) {
+            // 拆分 system（首条）与其余消息
+            const sys = effectiveMessages.find((m) => m.role === 'system');
+            const userMsgs = effectiveMessages.filter((m) => m.role !== 'system');
+            const result = await runAgentLoop({
+              agent: effective,
+              userMessages: userMsgs,
+              systemParts: sys ? { role: sys.content as string } : undefined,
+              toolNames,
+              // #7：把已合并的 (项目级 < 工作流级 < 节点级) 变量作为作用域栈注入上下文
+              scopeStack: [ctx.vars],
+              signal,
+              modelOverride: modelOverride || undefined,
+              // #9/#8：把 harness 事件桥接到本运行共享的 ExperienceSink（供 reviewer 复盘）
+              events: sink
+                ? (() => {
+                    const se = sink.events();
+                    return {
+                      onThinking: se.onThinking,
+                      onToolCall: se.onToolCall,
+                      onOutput: (text: string, done: boolean) => {
+                        se.onOutput?.(text, done);
+                        if (!done && onToken) onToken(text);
+                      },
+                      onLog: (lv: string, m: string) => {
+                        const level = lv as 'info' | 'warn' | 'error';
+                        se.onLog?.(level, m);
+                        R.addLog(level, m);
+                      },
+                    };
+                  })()
+                : {
                     onOutput: (text: string, done: boolean) => {
-                      se.onOutput?.(text, done);
                       if (!done && onToken) onToken(text);
                     },
-                    onLog: (lv: string, m: string) => {
-                      const level = lv as 'info' | 'warn' | 'error';
-                      se.onLog?.(level, m);
-                      R.addLog(level, m);
-                    },
-                  };
-                })()
-              : {
-                  onOutput: (text: string, done: boolean) => {
-                    if (!done && onToken) onToken(text);
+                    onLog: (lv: string, m: string) => R.addLog(lv as 'info' | 'warn' | 'error', m),
                   },
-                  onLog: (lv: string, m: string) => R.addLog(lv as 'info' | 'warn' | 'error', m),
-                },
-            toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
-          });
-          recordCost(undefined, true);
-          return result.text;
-        }
-        // —— 普通调用：保持原 channel.chat 行为（限流 + 重试 + 遥测）——
-        const channel = getChannel(useWorkflowStore.getState().llmChannel);
-        const resp = await withRetry(
-          () =>
-            channel.chat({
-              agent: effective,
-              messages,
+              toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
+            });
+            recordCost(undefined, true);
+            release();
+            return result.text;
+          }
+          // —— 普通调用：保持原 channel.chat 行为（限流 + 重试 + 遥测）——
+          const channel = getChannel(useWorkflowStore.getState().llmChannel);
+          const resp = await withRetry(
+            () =>
+              channel.chat({
+                agent: effective,
+                messages: effectiveMessages,
+                signal,
+                onToken,
+              }),
+            {
+              retries: MAX_RETRIES,
+              baseDelay: RETRY_BASE_MS,
               signal,
-              onToken,
-            }),
-          {
-            retries: MAX_RETRIES,
-            baseDelay: RETRY_BASE_MS,
-            signal,
-            onRetry: (_msg, delay, attempt) =>
-              R.addLog(
-                'info',
-                `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
-              ),
-          },
-        );
-        recordCost(resp.usage, true);
-        return resp.text;
-      } catch (err) {
-        const em = err instanceof Error ? err.message : String(err);
-        recordCost(undefined, false, em);
-        throw err;
-      } finally {
-        release();
+              onRetry: (_msg, delay, attempt) =>
+                R.addLog(
+                  'info',
+                  `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
+                ),
+            },
+          );
+          recordCost(resp.usage, true);
+          release();
+          return resp.text;
+        } catch (err) {
+          const em = err instanceof Error ? err.message : String(err);
+          recordCost(undefined, false, em);
+          release();
+          if (signal.aborted || targetRunId !== gen.currentRunId) throw err;
+          lastErr = err;
+          if (cid !== chainIds[chainIds.length - 1]) {
+            R.addLog(
+              'warn',
+              `「${node.data.label}」智能体「${cand.name}」调用失败，尝试候选链下一项：${em}`,
+            );
+          }
+        }
       }
+      // 全部候选失败
+      const finalMsg = lastErr instanceof Error ? lastErr.message : String(lastErr ?? '未知错误');
+      R.addLog('error', `「${node.data.label}」所有候选智能体均调用失败：${finalMsg}`);
+      throw lastErr ?? new Error(`没有可用智能体候选：${node.data.typeId}`);
     },
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,

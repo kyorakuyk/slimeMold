@@ -101,7 +101,7 @@ export function candidateChain(
 ): string[] {
   const seen = new Set<string>();
   const chain: string[] = [];
-  const push = (id?: string) => {
+  const push = (id?: string | null) => {
     if (!id || seen.has(id)) return;
     if (!env.agents.some((a) => a.id === id)) return; // 过滤已不存在的 agent
     seen.add(id);
@@ -140,7 +140,7 @@ function makeDecision(
  */
 export function resolveAgent(request: RouterRequest, env: RouterEnv): RouterDecision {
   const tier = estimateTier(request);
-  const byId = (id?: string) => env.agents.find((a) => a.id === id);
+  const byId = (id?: string | null) => env.agents.find((a) => a.id === id);
 
   // ① 显式绑定：存在即用（保持既有行为）
   const explicit = byId(request.agentId);

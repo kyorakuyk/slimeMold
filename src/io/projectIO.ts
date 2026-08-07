@@ -1,5 +1,6 @@
 import type { ProjectFile, WorkflowFile } from '../types';
 import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
+import type { RunCheckpoint } from '../engine/checkpoint';
 
 // 项目配置统一收进项目根下的隐藏目录 .slimemold/（类 Unix 约定）
 export const SLIMEMOLD_DIR = '.slimemold';
@@ -188,6 +189,25 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
   return root;
 }
 
+/**
+ * 阶段 C 独立落盘：把运行检查点单独原子写入 `.slimemold/runs/checkpoints.json`。
+ * 运行收尾调用（不等项目整体保存），保证「运行结束即落盘」的跨会话断点续传闭环；
+ * 不写 project.json、不触发项目脏标记。浏览器端 no-op（localStorage 已由 persist 接管）。
+ */
+export async function saveCheckpoints(
+  root: string,
+  checkpoints: Record<string, RunCheckpoint>,
+): Promise<void> {
+  if (!isTauri) return;
+  const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
+  const runsDir = joinPath(root, SLIMEMOLD_DIR, RUNS_DIR);
+  await mkdir(runsDir, { recursive: true });
+  await writeTextFile(
+    joinPath(runsDir, CHECKPOINTS_JSON),
+    JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2),
+  );
+}
+
 // ---------- 读取 ----------
 
 async function readTextTauri(path: string): Promise<string> {
@@ -234,8 +254,8 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
     const ckptPath = joinPath(cfg, RUNS_DIR, CHECKPOINTS_JSON);
     if (await exists(ckptPath)) {
       try {
-        const raw = JSON.parse(await readTextTauri(ckptPath)) as { checkpoints?: Record<string, unknown> };
-        checkpoints = raw.checkpoints as Record<string, unknown>;
+        const raw = JSON.parse(await readTextTauri(ckptPath)) as { checkpoints?: unknown };
+        checkpoints = raw.checkpoints as ProjectFile['checkpoints'];
       } catch {
         /* ignore */
       }
@@ -279,9 +299,22 @@ export async function openProjectFile(): Promise<(ProjectFile & { path: string }
   return { ...data, path: data.name };
 }
 
-/** 按路径（项目根或 .slimemold 内任意文件）打开项目。 */
+/**
+ * 按路径（项目根或 .slimemold 内任意文件）打开项目。
+ * F6：统一在入口先授权（grant_project_access 动态注入 fs:scope）再读盘——
+ * 保证所有调用方（最近项目 / 欢迎页 / 会话恢复）在非默认目录时都能读到项目文件，
+ * 而非「先读盘成功、事后异步授权」的竞态。
+ */
 export async function openProjectByPath(path: string): Promise<(ProjectFile & { path: string }) | null> {
   const root = projectRootFromPath(path);
+  if (isTauri && root) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('grant_project_access', { path: root }).catch(() => {});
+    } catch {
+      /* 授权失败不阻塞读盘（可能已在 scope 内） */
+    }
+  }
   const dirFile = await loadFromDir(root);
   if (dirFile) return { ...dirFile, path: root };
 

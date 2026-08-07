@@ -134,6 +134,18 @@ describe('runWorkflow 生命周期集成', () => {
     // 运行历史应有一条成功记录
     expect(st.runHistory.length).toBeGreaterThanOrEqual(1);
     expect(st.runHistory[0].status).toBe('success');
+    // F2 回归：运行历史/检查点应读到「最新」节点状态（而非收尾时的旧 idle）
+    // Codex 指出：setNodeStatus 只更新 store，局部 plan.nodes 不会同步，收尾若读局部
+    // nodes 会把历史/检查点写成全 idle。此处断言节点级状态真实落到了历史与检查点。
+    const recNodes = st.runHistory[0].nodes;
+    expect(recNodes.length).toBeGreaterThan(0);
+    for (const n of recNodes) {
+      expect(n.status).toBe('success');
+    }
+    const ckpt = st.checkpoints[wfId];
+    expect(ckpt).toBeTruthy();
+    expect(Object.keys(ckpt!.nodes).length).toBeGreaterThan(0);
+    expect(Object.values(ckpt!.nodes).every((c) => c.status === 'success')).toBe(true);
   });
 
   it('节点执行完成后返回（含缓存命中），运行指针回退到首个节点', async () => {
@@ -237,7 +249,7 @@ describe('runWorkflow 生命周期集成', () => {
   it('旧运行在节点 await 返回后不再写缓存（代次守卫）', async () => {
     const wfId = 'wf-life-await';
     // 可控 resolve 的节点：手动控制何时完成
-    let release: (() => void) | null = null;
+    let releaseHold!: () => void;
     const gate: NodeDefinition = {
       typeId: 'gate.hold',
       name: 'gate.hold',
@@ -247,7 +259,9 @@ describe('runWorkflow 生命周期集成', () => {
       outputs: [{ id: 'out', label: 'out', type: 'any' }],
       params: [],
       execute: async () => {
-        await new Promise<void>((r) => (release = r));
+        await new Promise<void>((r) => {
+          releaseHold = () => r();
+        });
         return { out: 'late-result' };
       },
     } as unknown as NodeDefinition;
@@ -260,7 +274,7 @@ describe('runWorkflow 生命周期集成', () => {
     // 等节点挂起
     await new Promise((r) => setTimeout(r, 20));
     stopWorkflow(wfId); // 代次过期
-    release?.(); // 放行旧运行 → 应被代次守卫拦截，不写缓存/状态
+    releaseHold(); // 放行旧运行 → 应被代次守卫拦截，不写缓存/状态
     await runPromise;
 
     const st = useWorkflowStore.getState();
