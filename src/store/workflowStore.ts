@@ -67,6 +67,8 @@ import { STARTER_TEMPLATES } from '../data/starterTemplates';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
+// 节点几何布局（对齐/分布）纯计算已抽到 nodeLayout.ts
+import { alignNodes, distributeNodes } from './nodeLayout';
 
 /** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
 interface GraphSnapshot {
@@ -619,33 +621,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       /** 对齐 / 分布：对当前选中的多个节点生效（少于 2 个不操作），支持拆分视图 */
       alignSelected: (mode) => {
         // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
-        const apply = (nodes: FlowNode[]): FlowNode[] => {
-          const selIds = new Set(get().selectedIds);
-          const sel = nodes.filter((n) => selIds.has(n.id));
-          if (sel.length < 2) return nodes;
-          const minX = Math.min(...sel.map((n) => n.position.x));
-          const maxX = Math.max(...sel.map((n) => n.position.x));
-          const minY = Math.min(...sel.map((n) => n.position.y));
-          const maxY = Math.max(...sel.map((n) => n.position.y));
-          const cx = (minX + maxX) / 2;
-          const cy = (minY + maxY) / 2;
-          const mapBy = (n: FlowNode): [number, number] => {
-            switch (mode) {
-              case 'left': return [minX, n.position.y];
-              case 'right': return [maxX, n.position.y];
-              case 'top': return [n.position.x, minY];
-              case 'bottom': return [n.position.x, maxY];
-              case 'hcenter': return [cx, n.position.y];
-              case 'vcenter': return [n.position.x, cy];
-              default: return [n.position.x, n.position.y];
-            }
-          };
-          return nodes.map((n) => {
-            if (!sel.includes(n)) return n;
-            const [x, y] = mapBy(n);
-            return { ...n, position: { x, y } };
-          });
-        };
+        // 纯几何计算已抽到 nodeLayout.alignNodes（传入选中集合，避免依赖 store 单例）
+        const apply = (nodes: FlowNode[]): FlowNode[] => alignNodes(nodes, get().selectedIds, mode);
         const wfId = get().focusWfId;
         if (wfId && wfId !== get().activeWfId) {
           const wf = get().workflows[wfId];
@@ -660,23 +637,8 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       distributeSelected: (axis) => {
         // 方案 P：统一以运行态 FlowNode 处理（active 与非 active 同构）
-        const apply = (nodes: FlowNode[]): FlowNode[] => {
-          const selIds = new Set(get().selectedIds);
-          const sel = nodes.filter((n) => selIds.has(n.id));
-          if (sel.length < 3) return nodes;
-          const sorted = [...sel].sort((a, b) =>
-            axis === 'x' ? a.position.x - b.position.x : a.position.y - b.position.y,
-          );
-          const first = sorted[0].position[axis];
-          const last = sorted[sorted.length - 1].position[axis];
-          const step = (last - first) / (sorted.length - 1);
-          const targets = new Map(sorted.map((n, i) => [n.id, first + step * i]));
-          return nodes.map((n) => {
-            if (!targets.has(n.id)) return n;
-            const v = targets.get(n.id)!;
-            return { ...n, position: { ...n.position, [axis]: v } };
-          });
-        };
+        // 纯几何计算已抽到 nodeLayout.distributeNodes（传入选中集合，避免依赖 store 单例）
+        const apply = (nodes: FlowNode[]): FlowNode[] => distributeNodes(nodes, get().selectedIds, axis);
         const wfId = get().focusWfId;
         if (wfId && wfId !== get().activeWfId) {
           const wf = get().workflows[wfId];
