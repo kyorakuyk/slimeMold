@@ -394,9 +394,20 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     }
     let scope = serde_json::json!([{ "path": format!("{}/**", path.trim_end_matches('/')) }]);
     let allowed: Vec<serde_json::Value> = serde_json::from_value(scope).map_err(|e| e.to_string())?;
+    // 必须把项目路径注入「具体操作权限」的 scoped 版本——Tauri 2 的权限 scope 解析基于
+    // 授予该权限的 capability；只注入 fs:scope 而 fs:allow-exists/read-dir 等仍在静态
+    // default capability 里，运行时这些操作仍按静态 scope（$APPDATA/$HOME/...）校验，
+    // 非默认目录的项目目录会 forbidden（曾现「allow-exists forbidden path」）。
+    // 这里对自定义节点扫描用到的全部 fs 操作权限逐一注入 scoped 路径。
     let capability = tauri::ipc::CapabilityBuilder::new("slime-project-fs")
         .window("main")
-        .permission_scoped("fs:scope", allowed, Vec::<serde_json::Value>::new());
+        .permission_scoped("fs:scope", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-exists", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-read-dir", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-read-text-file", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-write-text-file", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-mkdir", allowed.clone(), Vec::<serde_json::Value>::new())
+        .permission_scoped("fs:allow-remove", allowed.clone(), Vec::<serde_json::Value>::new());
     app.add_capability(capability)
         .map_err(|e| format!("grant_project_access: 注入 capability 失败：{e}"))?;
     eprintln!("[cap] grant_project_access ok: {path}");

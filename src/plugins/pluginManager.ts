@@ -171,6 +171,15 @@ export async function scanProjectCustomNodes(): Promise<number> {
   try {
     const projectPath = useWorkflowStore.getState().projectPath;
     if (!projectPath) return 0;
+    // 自愈：确保项目根目录已注入 fs:scope 操作权限（openProjectByPath 已授权，此处兜底防竞态）
+    if (isTauri) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('grant_project_access', { path: projectPath.replace(/\\/g, '/') }).catch(() => {});
+      } catch {
+        /* 授权失败不阻断扫描（可能已在 scope 内） */
+      }
+    }
     return await scanCustomNodesDir(`${projectPath.replace(/\\/g, '/')}/${CUSTOM_NODES_DIR}`, 'project');
   } catch (e) {
     // 兜底：项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT 盘符），静默跳过
