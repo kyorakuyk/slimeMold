@@ -876,7 +876,8 @@ async function executeNode(
   if (!forced) {
     // 单节点运行（isolated）：不汇聚任何上游，强制以空输入参与缓存键计算
     const upstreamOutputs = isolatedIds && isolatedIds.has(id) ? {} : collectInputs(id, edges, outputsMap);
-    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs);
+    // scope=targetWfId：跨工作流隔离缓存，避免文件/资产/workspace 上下文不同的工作流互相复用产物
+    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs, targetWfId);
     const cached = getCached(key);
     if (cached) {
       outputsMap.set(id, cached);
@@ -1102,8 +1103,8 @@ async function executeNode(
     );
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
     outputsMap.set(id, outputs ?? {});
-    // 写入缓存：以「类型+参数+上游输出」为 key，下游命中时自动复用
-    const key = cacheKey(node.data.typeId, node.data.params, inputs);
+    // 写入缓存：以「类型+参数+上游输出+工作流scope」为 key，下游命中时自动复用
+    const key = cacheKey(node.data.typeId, node.data.params, inputs, targetWfId);
     setCached(key, outputs ?? {});
     // 登记分支状态：分支节点用其声明的激活 handle，普通节点视为全部输出端口激活
     branchState.set(

@@ -41,6 +41,27 @@ describe('cacheKey', () => {
     const b = cacheKey('n', { t: 0.7 }, {});
     expect(a).not.toBe(b);
   });
+
+  it('scope 维度隔离：同 typeId/params/upstream 不同 scope 产生不同 key', () => {
+    const a = cacheKey('file.read', { p: '/a' }, { x: 1 }, 'wf-A');
+    const b = cacheKey('file.read', { p: '/a' }, { x: 1 }, 'wf-B');
+    expect(a).not.toBe(b);
+  });
+
+  it('scope 缺省与显式空串行为一致（向后兼容）', () => {
+    const a = cacheKey('n', {}, {});
+    const b = cacheKey('n', {}, {}, '');
+    expect(a).toBe(b);
+  });
+
+  it('跨 scope 的 set/get 互不串缓存', () => {
+    setCached(cacheKey('file.read', {}, {}, 'wf-A'), { path: '/A/out.txt' });
+    setCached(cacheKey('file.read', {}, {}, 'wf-B'), { path: '/B/out.txt' });
+    expect(getCached(cacheKey('file.read', {}, {}, 'wf-A'))).toEqual({ path: '/A/out.txt' });
+    expect(getCached(cacheKey('file.read', {}, {}, 'wf-B'))).toEqual({ path: '/B/out.txt' });
+    // 无 scope 的读取不命中任何带 scope 的条目
+    expect(getCached(cacheKey('file.read', {}, {}))).toBeNull();
+  });
 });
 
 describe('set/get 缓存读写', () => {

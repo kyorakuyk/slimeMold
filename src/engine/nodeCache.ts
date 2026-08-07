@@ -4,12 +4,17 @@
  * 设计目标：与 ComfyUI 的子图缓存一致——相同「节点类型 + 参数 + 上游输出」
  * 组合命中缓存时直接复用结果，跳过昂贵的重新执行（尤其是 LLM 调用）。
  *
- * 缓存 key：  `${typeId}|${paramsHash}|${depsHash}`
+ * 缓存 key：  `${scope}|${typeId}|${paramsHash}|${depsHash}`
+ *  - scope：可选工作流/运行作用域（跨工作流隔离用，缺省空串保持向后兼容）
  *  - paramsHash：节点 params 的稳定序列化哈希
  *  - depsHash：所有上游节点 outputs 的稳定序列化哈希（拓扑序保证上游先就绪）
  *
  * 因为 key 已包含「上游输出」，所以上游任一变化都会使下游 key 改变、自动失效，
  * 无需额外的显式失效逻辑（除非通过 strike 强制清除某节点自身缓存）。
+ *
+ * 作用域维度：跨工作流执行时，即使节点类型/参数/上游输出完全相同，不同工作流的
+ * 文件路径、资产、workspace 上下文也可能不同。调用方应传入 `wfId` 作 scope，
+ * 避免跨工作流复用错误产物；缺省不传则保持原行为（共享纯计算缓存）。
  */
 
 export interface CacheEntry {
@@ -51,10 +56,11 @@ export function cacheKey(
   typeId: string,
   params: Record<string, unknown>,
   upstreamOutputs: Record<string, unknown>,
+  scope = '',
 ): string {
   const paramsHash = hash(stableStringify(params));
   const depsHash = hash(stableStringify(upstreamOutputs));
-  return `${typeId}|${paramsHash}|${depsHash}`;
+  return `${scope}|${typeId}|${paramsHash}|${depsHash}`;
 }
 
 export function getCached(key: string): Record<string, unknown> | null {
@@ -73,10 +79,11 @@ export function setCached(key: string, outputs: Record<string, unknown>): void {
   writeThisRun++;
 }
 
-/** 强制清除某节点的缓存（重跑前调用），使其下次执行不被复用 */
+/** 强制清除某节点的缓存（重跑前调用），使其下次执行不被复用。
+ * 兼容带 scope 前缀（`scope|typeId|...`）与不带 scope 两种 key 形态。 */
 export function strike(typeId: string): void {
   for (const k of Array.from(cache.keys())) {
-    if (k.startsWith(`${typeId}|`)) cache.delete(k);
+    if (k === `${typeId}|` || k.startsWith(`${typeId}|`) || k.includes(`|${typeId}|`)) cache.delete(k);
   }
 }
 
