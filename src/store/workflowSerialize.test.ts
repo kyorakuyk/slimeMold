@@ -215,12 +215,15 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       pipelines: [] as never[],
     };
 
-    it('是 buildProjectFile 的 JSON 字符串封装，同一时刻内容稳定', () => {
-      const snap1 = projectSnapshot(base);
-      const snap2 = projectSnapshot(base);
-      expect(typeof snap1).toBe('string');
-      expect(snap1).toBe(JSON.stringify(buildProjectFile(base)));
-      expect(snap1).toBe(snap2); // 同一时刻调用确定性一致（注：含时间戳，仅限同刻）
+    it('是 buildProjectFile 的 JSON 字符串封装（可解析为合法 ProjectFile）', () => {
+      const snap = projectSnapshot(base);
+      expect(typeof snap).toBe('string');
+      const parsed = JSON.parse(snap) as { kind: string; name: string; workflows: Record<string, unknown> };
+      // 与 buildProjectFile 同输入产出的 ProjectFile 结构一致（仅 updatedAt/savedAt 时间戳逐次刷新，故比结构不比字节）
+      const direct = buildProjectFile(base);
+      expect(parsed.kind).toBe(direct.kind);
+      expect(parsed.name).toBe(direct.name);
+      expect(Object.keys(parsed.workflows)).toEqual(Object.keys(direct.workflows));
     });
 
     it('随落盘字段（如 nodes / runHistory）变化而改变（脏检测可用）', () => {

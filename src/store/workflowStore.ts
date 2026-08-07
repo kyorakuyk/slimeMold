@@ -69,6 +69,8 @@ import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 // 节点几何布局（对齐/分布）纯计算已抽到 nodeLayout.ts
 import { alignNodes, distributeNodes } from './nodeLayout';
+// 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
+import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
 
 /** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
 interface GraphSnapshot {
@@ -688,16 +690,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       resetStatuses: (wfId) => {
         const target = wfId ?? get().activeWfId;
         set((state) => {
-          const resetNodes = (nodes: FlowNode[]): FlowNode[] =>
-            nodes.map((n) => ({
-              ...n,
-              data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined, usage: undefined },
-            }));
-          const resetEdges = (edges: FlowEdge[]): FlowEdge[] =>
-            edges.map((e) => ({
-              ...e,
-              className: (e.className ?? '').split(' ').filter((c) => c !== 'sm-edge-running').join(' '),
-            }));
+          // 运行态复位纯映射已抽到 nodeRuntime（resetNodeRuntime / resetEdgeRuntime）
+          const resetNodes = (nodes: FlowNode[]): FlowNode[] => resetNodeRuntime(nodes);
+          const resetEdges = (edges: FlowEdge[]): FlowEdge[] => resetEdgeRuntime(edges);
           const patch: Partial<WorkflowState> = {
             // 复位该工作流运行态，避免「卡在 running==true」时刷新键失效
             runStates: { ...state.runStates, [target]: { running: false, progress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 } } },
