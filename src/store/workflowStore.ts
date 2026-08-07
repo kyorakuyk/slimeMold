@@ -1085,6 +1085,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         suppressDirty = true;
         set({
           projectName: file.name,
+          projectId: file.id,
+          projectCreatedAt: file.createdAt,
           projectPath: path ?? file.name, // 实际磁盘路径由调用方传入
           workflows: workflowsInMemory,
           activeWfId: id,
@@ -1109,6 +1111,14 @@ export const useWorkflowStore = create<WorkflowState>()(
           logs: [],
         });
         finalizeLoaded();
+        // 工作区信任：Tauri 下把项目根目录动态注入 fs:scope（替代静态写死白名单）
+        if (isTauri && path) {
+          import('@tauri-apps/api/core')
+            .then(({ invoke }) => invoke('grant_project_access', { path }))
+            .catch((e) =>
+              console.warn('[openProject] 注入项目目录权限失败（自定义节点扫描可能受限）:', e),
+            );
+        }
       },
 
       saveProject: async () => {

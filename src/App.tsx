@@ -190,6 +190,9 @@ export default function App() {
       // 已有项目（如持久化恢复）则不抢占
       if (st.projectId) return;
       try {
+        // 工作区信任：在任何 fs 访问之前，先把项目根目录动态注入 fs:scope
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('grant_project_access', { path: sess.path }).catch(() => {});
         const fs = await import('@tauri-apps/plugin-fs');
         const ok = await fs.exists(sess.path);
         if (!ok || cancelled) return;

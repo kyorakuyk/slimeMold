@@ -367,6 +367,42 @@ struct GitResult {
     code: i32,
 }
 
+/// 步骤 11 阶段 D：工作区信任（Tauri 版「你打开=你授权」）。
+///
+/// 前端在 `openProject(path)` 时调用本命令，把 `<项目根>/**` 动态注入 `main` 窗口的
+/// `fs:scope`。这样无论项目放在哪个目录（D:/2048、E:/xxx），打开即授权，
+/// 不再需要在 `capabilities/default.json` 里为每台机器的绝对路径写死白名单。
+///
+/// 安全边界：
+/// - `path` 必填且已存在、为目录；拒绝含 `..` 的路径逃逸。
+/// - 注入的 scope 仅 `<path>/**` 一条，不开放父级或其它任意位置。
+/// - 依赖 `tauri` 的 `dynamic-acl` feature 提供的 `CapabilityBuilder` +
+///   `Manager::capability().insert()`。
+#[tauri::command]
+fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() || !p.is_dir() {
+        return Err(format!("grant_project_access: 路径不存在或不是目录：{path}"));
+    }
+    if p
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "grant_project_access: 路径禁止包含 '..' 逃逸：{path}"
+        ));
+    }
+    let scope = serde_json::json!([{ "path": format!("{}/**", path.trim_end_matches('/')) }]);
+    let allowed: Vec<serde_json::Value> = serde_json::from_value(scope).map_err(|e| e.to_string())?;
+    let capability = tauri::ipc::CapabilityBuilder::new("slime-project-fs")
+        .window("main")
+        .permission_scoped("fs:scope", allowed, Vec::<serde_json::Value>::new());
+    app.add_capability(capability)
+        .map_err(|e| format!("grant_project_access: 注入 capability 失败：{e}"))?;
+    eprintln!("[cap] grant_project_access ok: {path}");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -384,7 +420,8 @@ pub fn run() {
             load_endpoint,
             delete_endpoint,
             list_endpoints_raw,
-            run_git
+            run_git,
+            grant_project_access
         ])
         // 窗口默认可见（tauri.conf.json visible:true）。保留 on_page_load 作为兜底，
         // 万一某些环境初始未显示，页面加载完成后再确保 show 一次。
