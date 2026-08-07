@@ -59,7 +59,7 @@ export function flowNodesFrom(wf: WorkflowFile): FlowNode[] {
   }));
 }
 
-/** 把 WorkflowFile 的轻量连线还原为画布 FlowEdge */
+/** 把 WorkflowFile 的轻量连线还原为画布 FlowEdge（恢复 kind/scope 边语义） */
 export function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
   return (wf.edges ?? []).map((e) => ({
     id: e.id,
@@ -67,6 +67,7 @@ export function flowEdgesFrom(wf: WorkflowFile): FlowEdge[] {
     target: e.target,
     sourceHandle: e.sourceHandle ?? undefined,
     targetHandle: e.targetHandle ?? undefined,
+    data: { kind: e.kind ?? 'data', scope: e.scope },
   }));
 }
 

@@ -123,6 +123,40 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       });
       expect(flowEdgesFrom(toDisk({ name: 'wf', nodes, edges } as never))[0].source).toBe('n1');
     });
+
+    it('往返后保留边语义 kind/scope（data 边）', () => {
+      const wf = toDisk({ name: 'wf', nodes, edges } as never);
+      const back = flowEdgesFrom(wf);
+      expect(back[0].data).toEqual({ kind: 'data', scope: ['s1'] });
+    });
+
+    it('往返后保留 control/task 边语义 kind/scope', () => {
+      const controlEdge: FlowEdge = {
+        id: 'ec',
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'cond',
+        targetHandle: 'in',
+        data: { kind: 'control' },
+      } as FlowEdge;
+      const taskEdge: FlowEdge = {
+        id: 'et',
+        source: 'n1',
+        target: 'n2',
+        sourceHandle: 'dispatch',
+        targetHandle: 'in',
+        data: { kind: 'task', scope: ['src/*.ts', 'docs/**'] },
+      } as FlowEdge;
+      const wf = toDisk({ name: 'wf', nodes, edges: [controlEdge, taskEdge] } as never);
+      const back = flowEdgesFrom(wf);
+      expect(back[0].data).toEqual({ kind: 'control', scope: undefined });
+      expect(back[1].data).toEqual({ kind: 'task', scope: ['src/*.ts', 'docs/**'] });
+    });
+
+    it('旧文件无 kind 字段时缺省回退为 data 边（向后兼容）', () => {
+      const legacy = fromDisk({ name: 'wf', nodes: [], edges: [{ id: 'el', source: 'a', target: 'b' }] } as never);
+      expect(legacy.edges[0].data).toEqual({ kind: 'data', scope: undefined });
+    });
   });
 
   describe('serializeCurrent', () => {
