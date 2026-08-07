@@ -14,7 +14,7 @@
 | # | 命令 | 通过标准 |
 |---|---|---|
 | 0.1 | `npx.cmd tsc --noEmit` | 0 错误 |
-| 0.2 | `npx.cmd vitest run` | **306** tests passed（全量，含本清单各模块） |
+| 0.2 | `npx.cmd vitest run` | **307** tests passed（全量，含本清单各模块） |
 | 0.3 | `npx.cmd tsx scripts/check-i18n.ts` | 所有语言与 zh-CN 对齐 |
 
 ---

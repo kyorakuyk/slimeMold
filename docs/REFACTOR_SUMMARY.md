@@ -137,17 +137,27 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
   `<项目根>/**` 动态注入 `main` 窗口 `fs:scope`，替代静态写死绝对路径白名单。
 - **序列化往返修复**：`flowEdgesFrom` 恢复 `data.kind/scope`，补 round-trip 测试。
 
-当前验证基线（main @ `00194ec`）：`vitest` 231/231、`tsc` 0 错误、`cargo check` 通过。
+当前验证基线（main @ `8046674`）：`npm run build`（tsc -b + vite build）0 错误、
+`vitest` 307/307、`i18n:check` 568 keys 对齐、`headless` 冒烟通过。
+
+### 后续（2026-08-08）已落地
+
+- **执行内核六阶段（Codex 规划 A–E）+ 缓存隔离细粒度化**：见
+  `docs/EXECUTION_PHASES_VERIFICATION.md`，覆盖 RunContext/事件流（A1–A3）、
+  AgentRouter 决策（B）、检查点持久化（C）、实时接管（D）、结构化经验库（E）。
+- **Codex 二轮评审修复（`8046674`）**：构建恢复全绿、收尾读最新节点状态、
+  检查点独立原子落盘（tmp+rename）、Router 接通 category + 失败 fallback、
+  intervention 复合键、项目授权统一入口、经验注入 system prompt。
+- **下述「未了结课题」多数已收口**：生命周期集成测试已建（executorLifecycle/
+  executorEvents/executorIntervene 共 14 用例）、缓存已按 wfId+nodeId+workspace
+  隔离、旧运行收尾有代次守卫、RunContext 显式边界已建。
 
 ### 仍未了结的课题
 
-- **真实 `runWorkflow` 生命周期集成测试**仍不足（stop/force/restart 竞态、
-  非激活工作流并发等未见测试证明）。
-- **`nodeCache` 全局缓存未按 `wfId/run scope` 隔离**：跨工作流可能复用错误结果，
-  需确认是否刻意设计。
-- **旧运行退出后仍可能写日志/历史/self-improve**：生命周期语义未完全收口。
-- **`workflowStore` 与 `runWorkflow` 主循环**仍是大函数，建议先建
-  `RunContext` / `StoreCommandContext` 显式边界后再拆，暂缓物理拆分。
+- **成本感知路由**：AgentRouter 目前是「运行时路由 + 失败回退」，tier 仅作标注，
+  未按价格/成功率/订阅额度动态评分（需先建立价格与成功率数据源）。
+- **`workflowStore` 与 `runWorkflow` 主循环**仍是大函数，物理拆分暂缓（已有
+  RunContext 边界，但编排仍是单点大函数）。
 
 ---
 
@@ -162,4 +172,5 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
 
 ---
 
-*生成日期：2026-08-07 · 初版基于 main @ `2c9fcbb`；评审后续章节基于 main @ `00194ec`*
+*生成日期：2026-08-07 · 初版基于 main @ `2c9fcbb`；评审后续章节基于 main @ `00194ec`；
+2026-08-08 更新至 main @ `8046674`*

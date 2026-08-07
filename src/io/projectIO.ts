@@ -190,22 +190,34 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
 }
 
 /**
- * 阶段 C 独立落盘：把运行检查点单独原子写入 `.slimemold/runs/checkpoints.json`。
- * 运行收尾调用（不等项目整体保存），保证「运行结束即落盘」的跨会话断点续传闭环；
- * 不写 project.json、不触发项目脏标记。浏览器端 no-op（localStorage 已由 persist 接管）。
+ * 阶段 C 独立落盘：把运行检查点原子写入 `.slimemold/runs/checkpoints.json`。
+ * F9：先写 `checkpoints.json.tmp`，再 rename 覆盖目标文件——避免写入中途崩溃留下
+ * 不完整 JSON（直接 writeTextFile 覆盖不具备原子性）。rename 失败时回退直接写，
+ * 保证不因原子化失败而丢失检查点。浏览器端 no-op（localStorage 已由 persist 接管）。
  */
 export async function saveCheckpoints(
   root: string,
   checkpoints: Record<string, RunCheckpoint>,
 ): Promise<void> {
   if (!isTauri) return;
-  const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
+  const { mkdir, writeTextFile, rename, remove } = await import('@tauri-apps/plugin-fs');
   const runsDir = joinPath(root, SLIMEMOLD_DIR, RUNS_DIR);
   await mkdir(runsDir, { recursive: true });
-  await writeTextFile(
-    joinPath(runsDir, CHECKPOINTS_JSON),
-    JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2),
-  );
+  const finalPath = joinPath(runsDir, CHECKPOINTS_JSON);
+  const tmpPath = joinPath(runsDir, `${CHECKPOINTS_JSON}.tmp`);
+  const content = JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2);
+  try {
+    await writeTextFile(tmpPath, content);
+    await rename(tmpPath, finalPath); // rename 覆盖已有目标 = 原子替换
+  } catch {
+    // 原子替换失败（如跨设备/权限限制）：清理 tmp 并回退直接写，不阻塞收尾
+    try {
+      await remove(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    await writeTextFile(finalPath, content);
+  }
 }
 
 // ---------- 读取 ----------

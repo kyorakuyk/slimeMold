@@ -339,8 +339,10 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   rt.resetUsage();
   beginRun();
 
-  // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行
-  const limiter = new Semaphore(Math.max(1, wf.maxConcurrency ?? 3));
+  // 并发限流：同一时刻最多 maxConcurrency 个 LLM 请求在进行。
+  // F8：用 runCtx.policy.maxConcurrency——它已并入 opts.maxConcurrency 的运行时覆盖
+  // （RunOptions 传了则以本次运行为准），而非只取工作流全局配置。
+  const limiter = new Semaphore(Math.max(1, runCtx.policy.maxConcurrency));
   const MAX_RETRIES = 3;
   const RETRY_BASE_MS = 800;
   // #9/#8：轨迹采集器（供 reviewer 复盘沉淀记忆/技能），本轮运行共享一个实例
@@ -615,9 +617,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     rt.pushRunHistory(rec);
 
     // C：可恢复执行——把本次运行的节点级结果固化为检查点（覆盖式，按 wfId），
-    // 运行结束即独立落盘到 .slimemold/runs/checkpoints.json（F3：不等整体保存，
-    // 不标脏），下次打开项目可「从断点恢复」复用成功节点输出、续跑失败节点。
-    useWorkflowStore
+    // 运行结束即独立落盘到 .slimemold/runs/checkpoints.json（F3/F10：不等整体保存、
+    // 不标脏、await 落盘完成），下次打开项目可「从断点恢复」复用成功节点输出、续跑失败节点。
+    await useWorkflowStore
       .getState()
       .persistCheckpoint(buildCheckpoint(nodesNow, { wfId, runId: myRun, status, startedAt: startedWall }));
 

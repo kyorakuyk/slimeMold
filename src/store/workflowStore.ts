@@ -225,8 +225,8 @@ interface WorkflowState {
   clearRunHistory: () => void;
   /** 写入某 wfId 的运行检查点（覆盖式；suppressDirty——运行收尾不构成「未保存的项目改动」） */
   setCheckpoint: (cp: RunCheckpoint) => void;
-  /** 写入检查点并独立落盘到 .slimemold/runs/checkpoints.json（运行收尾调用，不等整体保存） */
-  persistCheckpoint: (cp: RunCheckpoint) => void;
+  /** 写入检查点并独立落盘到 .slimemold/runs/checkpoints.json（运行收尾调用，返回 Promise 便于等待落盘完成） */
+  persistCheckpoint: (cp: RunCheckpoint) => Promise<void>;
   /** 清除某 wfId 的检查点（缺省取当前激活工作流） */
   clearCheckpoint: (wfId?: string) => void;
   /** 从检查点恢复画布节点状态（success 复用输出 / error 保留 + 标脏），使「断点续跑」跨会话可用 */
@@ -854,20 +854,22 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ checkpoints: { ...get().checkpoints, [cp.wfId]: cp } });
         suppressDirty = false;
       },
-      // F3：运行收尾「即落盘」——内存更新 + 独立写 .slimemold/runs/checkpoints.json，
+      // F3/F10：运行收尾「即落盘」——内存更新 + 独立写 .slimemold/runs/checkpoints.json，
       // 不依赖用户手动保存，也不标脏（检查点是运行态快照，非项目内容变更）。
-      persistCheckpoint: (cp) => {
+      // 返回 Promise 供 executor 收尾 await，避免「runWorkflow 已返回但磁盘尚未写完」的竞态。
+      persistCheckpoint: async (cp) => {
         const s = get();
         suppressDirty = true;
         const next = { ...s.checkpoints, [cp.wfId]: cp };
         set({ checkpoints: next });
         suppressDirty = false;
         if (isTauri && s.projectPath) {
-          void import('../io/projectIO')
-            .then(({ saveCheckpoints }) => saveCheckpoints(s.projectPath!, next))
-            .catch((e) =>
-              console.warn('[persistCheckpoint] 检查点落盘失败（已保留内存态）:', e),
-            );
+          try {
+            const { saveCheckpoints } = await import('../io/projectIO');
+            await saveCheckpoints(s.projectPath, next);
+          } catch (e) {
+            console.warn('[persistCheckpoint] 检查点落盘失败（已保留内存态）:', e);
+          }
         }
       },
       clearCheckpoint: (wfId) => {
