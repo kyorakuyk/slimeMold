@@ -17,8 +17,6 @@ import type {
   LogEntry,
   NodeGroup,
   NodeStatus,
-  ProxyPort,
-  VirtualEdge,
   PortType,
   EdgeKind,
   ProjectFile,
@@ -65,56 +63,8 @@ import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/en
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 
-/**
- * 根据分组内部节点，按「端口类型」聚合推导折叠态的代理端口（ProxyPort）
- * 与一对多虚拟边（VirtualEdge）。
- * - 内部共需 2×img + 1×txt 输入 -> 仅生成 img、txt 两个聚合输入端口。
- * - 外部多对一：多个父图连线可连到同一个聚合端口。
- * - 内部一对多：聚合端口 -> 所有同类型内部端口（virtualEdges.targets）。
- */
-export function recomputeProxyPorts(
-  group: NodeGroup,
-  _sg: SubgraphDef,
-  nodes: FlowNode[],
-  _edges: FlowEdge[],
-): NodeGroup {
-  const defs = useRegistryStore.getState().defs;
-  const memberSet = new Set(group.nodeIds);
-
-  // 聚合：type -> 内部端口列表
-  const inByType = new Map<string, Array<{ nodeId: string; portId: string }>>();
-  const outByType = new Map<string, Array<{ nodeId: string; portId: string }>>();
-  for (const n of nodes) {
-    if (!memberSet.has(n.id)) continue;
-    const def = defs[n.data.typeId];
-    if (!def) continue;
-    for (const p of def.inputs ?? []) {
-      const list = inByType.get(p.type ?? 'any') ?? [];
-      list.push({ nodeId: n.id, portId: p.id });
-      inByType.set(p.type ?? 'any', list);
-    }
-    for (const p of def.outputs ?? []) {
-      const list = outByType.get(p.type ?? 'any') ?? [];
-      list.push({ nodeId: n.id, portId: p.id });
-      outByType.set(p.type ?? 'any', list);
-    }
-  }
-
-  const proxyPorts: ProxyPort[] = [];
-  const virtualEdges: VirtualEdge[] = [];
-  let idx = 0;
-  for (const [type, targets] of inByType) {
-    const id = `${group.id}:in:${type}`;
-    proxyPorts.push({ id, kind: 'input', type: type as PortType, label: type, internalTargets: targets });
-    virtualEdges.push({ id: `ve_${idx++}`, proxyPortId: id, kind: 'input', targets });
-  }
-  for (const [type, targets] of outByType) {
-    const id = `${group.id}:out:${type}`;
-    proxyPorts.push({ id, kind: 'output', type: type as PortType, label: type, internalTargets: targets });
-    virtualEdges.push({ id: `ve_${idx++}`, proxyPortId: id, kind: 'output', targets });
-  }
-  return { ...group, proxyPorts, virtualEdges };
-}
+// 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
+import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 
 /** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
 interface GraphSnapshot {
@@ -385,18 +335,6 @@ interface WorkflowState {
   duplicateSelection: () => void;
   /** 全选所有节点（Ctrl+A） */
   selectAll: () => void;
-}
-
-/** 组框预设配色（创建时轮换取用） */
-const GROUP_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
-
-function defaultParams(typeId: string): Record<string, unknown> {
-  const def = getNodeDef(typeId);
-  const params: Record<string, unknown> = {};
-  for (const p of def?.params ?? []) {
-    if (p.default !== undefined) params[p.key] = p.default;
-  }
-  return params;
 }
 
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等） */
