@@ -404,6 +404,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       };
       opts.onProgress?.(progress);
       rt.setRunProgress({ active: true, ...progress }, wfId);
+      // A2/A3：调度进度同样进统一事件流（JobBoard 从事件流消费，而非直接读 store）
+      emitRun(getRunBus(), 'run.progress', runCtx, progress);
       // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
       // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测。
       // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，

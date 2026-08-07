@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { getRunBus } from '../engine/runEvents';
+import { applyRunEvent, initialBoardState, replayBoardState } from '../engine/runBoard';
 import type { NodeStatus } from '../types';
 import { CheckCircle2, XCircle, Loader2, Circle, Zap, SkipForward } from 'lucide-react';
 import { useT } from '../i18n/useT';
@@ -26,15 +29,56 @@ const statusColor: Record<NodeStatus, string> = {
 };
 
 /**
- * 运行期调度看板（Job Board）：浮于画布右上角，展示
- * - 拓扑分层进度（第 N / 总层）
- * - 循环轮次（第 R / 总轮）
- * - 各节点 task 状态汇总（按状态分组计数）
- * 数据来自 workflowStore.runProgress 与 nodes[].data.status。
+ * 运行期调度看板（Job Board）：浮于画布右上角。
+ *
+ * A2 改造：不再直接读 store 的 runStates / runProgress / nodes[].data.status，
+ * 而是订阅统一事件总线（runEvents），经 runBoard 纯归约出本次运行的渲染快照。
+ * 数据源单一（executor 生产的 run.*/node.* 事件），UI 不再猜测零散字段。
+ *
+ * - 拓扑分层进度（第 N / 总层）、循环轮次（第 R / 总轮）来自 run.progress 事件
+ * - 节点状态汇总/列表来自 node.started / node.completed / node.failed / node.skipped
+ * - 挂载即同步：回放事件总线历史中当前 wfId 最近一次运行
  */
 export default function JobBoard({ wfId }: { wfId?: string }) {
-  const s = useWorkflowStore();
   const t = useT('panels');
+  const activeWfId = useWorkflowStore((s) => s.activeWfId);
+  const id = wfId ?? activeWfId ?? '';
+  const [board, setBoard] = useState(() => initialBoardState(id));
+
+  // wfId 变化（含 activeWfId 切换）时重置看板
+  useEffect(() => {
+    setBoard(initialBoardState(id));
+  }, [id]);
+
+  // 订阅事件流：挂载即回放当前 wfId 最近一次运行，其后实时增量归约
+  useEffect(() => {
+    if (!id) return;
+    const bus = getRunBus();
+    setBoard(replayBoardState(id, bus.history(id)));
+    const off = bus.subscribe((e) => {
+      setBoard((prev) => applyRunEvent(prev, e));
+    });
+    return off;
+  }, [id]);
+
+  if (!board.running) return null;
+
+  const nodes = Object.entries(board.nodes).map(([nodeId, n]) => ({ id: nodeId, ...n }));
+  const counts: Record<NodeStatus, number> = {
+    idle: 0, running: 0, success: 0, error: 0, cached: 0, skipped: 0, bypassed: 0, muted: 0,
+  };
+  for (const n of nodes) {
+    const st = n.status as NodeStatus;
+    counts[st] = (counts[st] ?? 0) + 1;
+  }
+
+  const total = board.nodeCount || nodes.length || 1;
+  const done = counts.success + counts.cached + counts.skipped + counts.error;
+  const pct = Math.round((done / total) * 100);
+
+  // 仅展示「非 idle」或「运行中」的节点，避免列表过长
+  const activeNodes = nodes.filter((n) => n.status && n.status !== 'idle');
+
   const statusLabel: Record<NodeStatus, string> = {
     idle: t('jobboard.status.idle'),
     running: t('jobboard.status.running'),
@@ -45,37 +89,14 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
     bypassed: t('jobboard.status.bypassed'),
     muted: t('jobboard.status.muted'),
   };
-  // 方案 A：按 wfId 隔离运行态；未传则用激活工作流
-  const running = wfId ? (s.runStates[wfId]?.running ?? false) : s.running;
-  const runProgress = wfId ? (s.runStates[wfId]?.progress ?? s.runProgress) : s.runProgress;
-  const nodes = wfId ? (s.workflows[wfId]?.nodes ?? []) : s.nodes;
-
-  if (!running && !runProgress.active) return null;
-
-  const counts: Record<NodeStatus, number> = {
-    idle: 0, running: 0, success: 0, error: 0, cached: 0, skipped: 0, bypassed: 0, muted: 0,
-  };
-  for (const n of nodes) {
-    const st = n.data.status ?? 'idle';
-    counts[st] = (counts[st] ?? 0) + 1;
-  }
-
-  const total = nodes.length || 1;
-  const done = counts.success + counts.cached + counts.skipped + counts.error;
-  const pct = Math.round((done / total) * 100);
-
-  // 仅展示「非 idle」或「运行中」的节点，避免列表过长
-  const activeNodes = nodes.filter(
-    (n) => n.data.status && n.data.status !== 'idle',
-  );
 
   return (
     <div className="sm-jobboard nowheel">
       <div className="sm-jobboard__head">
         <span className="sm-jobboard__title">{t('jobboard.title')}</span>
-        {runProgress.totalRounds > 1 && (
+        {board.progress.totalRounds > 1 && (
           <span className="sm-jobboard__round">
-            {t('jobboard.round', { round: runProgress.round, total: runProgress.totalRounds })}
+            {t('jobboard.round', { round: board.progress.round, total: board.progress.totalRounds })}
           </span>
         )}
       </div>
@@ -84,7 +105,12 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
         <div className="sm-jobboard__bar" style={{ width: `${pct}%` }} />
       </div>
       <div className="sm-jobboard__meta">
-        {t('jobboard.meta', { layer: runProgress.layer, totalLayers: runProgress.totalLayers, done, nodes: nodes.length })}
+        {t('jobboard.meta', {
+          layer: board.progress.layer,
+          totalLayers: board.progress.totalLayers,
+          done,
+          nodes: total,
+        })}
       </div>
 
       <div className="sm-jobboard__stats">
@@ -106,18 +132,18 @@ export default function JobBoard({ wfId }: { wfId?: string }) {
       {activeNodes.length > 0 && (
         <div className="sm-jobboard__list">
           {activeNodes.map((n) => {
-            const st = (n.data.status ?? 'idle') as NodeStatus;
+            const st = (n.status ?? 'idle') as NodeStatus;
             return (
               <div key={n.id} className="sm-jobboard__row">
                 <span style={{ color: statusColor[st] }}>
                   {statusIcon[st]}
                 </span>
-                <span className="sm-jobboard__rowlabel" title={n.data.label}>
-                  {n.data.label || n.data.typeId}
+                <span className="sm-jobboard__rowlabel" title={n.label}>
+                  {n.label || n.typeId}
                 </span>
-                {n.data.durationMs != null && st !== 'running' && (
+                {n.durationMs != null && st !== 'running' && (
                   <span className="sm-jobboard__dur">
-                    {(n.data.durationMs / 1000).toFixed(1)}s
+                    {(n.durationMs / 1000).toFixed(1)}s
                   </span>
                 )}
               </div>

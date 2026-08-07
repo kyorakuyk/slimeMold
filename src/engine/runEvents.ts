@@ -16,6 +16,7 @@
 export type RunEventKind =
   | 'run.created'
   | 'run.started'
+  | 'run.progress'
   | 'run.paused'
   | 'run.aborted'
   | 'run.completed'
@@ -96,7 +97,14 @@ export function createEventBus(opts: { bufferSize?: number } = {}): EventBus {
  */
 export function emitRun(
   bus: EventBus,
-  kind: 'run.created' | 'run.started' | 'run.paused' | 'run.aborted' | 'run.completed' | 'run.failed',
+  kind:
+    | 'run.created'
+    | 'run.started'
+    | 'run.progress'
+    | 'run.paused'
+    | 'run.aborted'
+    | 'run.completed'
+    | 'run.failed',
   ctx: { wfId: string; runId: number },
   payload?: Record<string, unknown>,
 ): void {
