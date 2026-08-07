@@ -33,7 +33,7 @@ const statusColor: Record<NodeStatus, string> = {
  *
  * A2 改造：不再直接读 store 的 runStates / runProgress / nodes[].data.status，
  * 而是订阅统一事件总线（runEvents），经 runBoard 纯归约出本次运行的渲染快照。
- * 数据源单一（executor 生产的 run.*/node.* 事件），UI 不再猜测零散字段。
+ * 数据源单一（executor 生产的 run 级与 node 级事件），UI 不再猜测零散字段。
  *
  * - 拓扑分层进度（第 N / 总层）、循环轮次（第 R / 总轮）来自 run.progress 事件
  * - 节点状态汇总/列表来自 node.started / node.completed / node.failed / node.skipped
