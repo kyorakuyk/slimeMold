@@ -58,6 +58,7 @@ export interface RunState {
   progress: RunProgressShape;
 }
 import { useRegistryStore, getNodeDef } from './registryStore';
+import { applyCheckpoint, type RunCheckpoint } from '../engine/checkpoint';
 import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
@@ -129,6 +130,8 @@ interface WorkflowState {
   projectAssets: AssetMeta[];
   /** 历史运行记录（持久化） */
   runHistory: RunRecord[];
+  /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目持久化 */
+  checkpoints: Record<string, RunCheckpoint>;
 
   /**
    * 最近一次「自动保存」的时间戳（仅 UI 提示用，不持久化到磁盘，
@@ -220,6 +223,12 @@ interface WorkflowState {
   removeVariable: (key: string) => void;
   pushRunHistory: (rec: RunRecord) => void;
   clearRunHistory: () => void;
+  /** 写入某 wfId 的运行检查点（覆盖式；suppressDirty——运行收尾不构成「未保存的项目改动」） */
+  setCheckpoint: (cp: RunCheckpoint) => void;
+  /** 清除某 wfId 的检查点（缺省取当前激活工作流） */
+  clearCheckpoint: (wfId?: string) => void;
+  /** 从检查点恢复画布节点状态（success 复用输出 / error 保留 + 标脏），使「断点续跑」跨会话可用 */
+  restoreCheckpoint: (wfId?: string) => boolean;
 
   setWorkflowName: (name: string) => void;
   loadGraph: (
@@ -376,6 +385,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       projectVariables: {},
       projectAssets: [],
       runHistory: [],
+      checkpoints: {},
       lastAutosave: null,
 
       projectName: null,
@@ -836,6 +846,35 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ runHistory: [rec, ...get().runHistory].slice(0, 30) }),
       clearRunHistory: () => set({ runHistory: [] }),
 
+      // 阶段 C 可恢复执行：检查点
+      setCheckpoint: (cp) => {
+        suppressDirty = true; // 运行收尾写检查点不构成「未保存的项目改动」
+        set({ checkpoints: { ...get().checkpoints, [cp.wfId]: cp } });
+        suppressDirty = false;
+      },
+      clearCheckpoint: (wfId) => {
+        const id = wfId ?? get().activeWfId;
+        if (!id) return;
+        const next = { ...get().checkpoints };
+        delete next[id];
+        set({ checkpoints: next });
+      },
+      restoreCheckpoint: (wfId) => {
+        const id = wfId ?? get().activeWfId;
+        if (!id) return false;
+        const s = get();
+        const cp = s.checkpoints[id];
+        if (!cp) return false;
+        const nodes = id === s.activeWfId ? s.nodes : (s.workflows[id]?.nodes ?? []);
+        const restored = applyCheckpoint(cp, nodes);
+        if (id === s.activeWfId) {
+          set({ nodes: restored });
+        } else {
+          set({ workflows: { ...s.workflows, [id]: { ...s.workflows[id]!, nodes: restored } } });
+        }
+        return true;
+      },
+
       setWorkflowName: (name) => set({ workflowName: name }),
 
       loadGraph: (name, nodes, edges, agents, roles) =>
@@ -1107,6 +1146,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           groups: wf.groups ?? [],
           // P2 成本跟项目：读回运行历史（落盘于 .slimemold/runs/history.json）
           runHistory: file.runs?.history ?? [],
+          // 阶段 C 可恢复执行：读回运行检查点（落盘于 .slimemold/runs/checkpoints.json）
+          checkpoints: file.checkpoints ?? {},
           selectedNodeId: null,
           logs: [],
         });
@@ -1965,6 +2006,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         projectVariables: s.projectVariables,
         projectAssets: s.projectAssets,
         runHistory: s.runHistory,
+        checkpoints: s.checkpoints,
         subgraphs: s.subgraphs,
         groups: s.groups,
         artifacts: s.artifacts,

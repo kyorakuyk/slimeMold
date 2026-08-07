@@ -8,6 +8,7 @@ const PROJECT_JSON = 'project.json';
 const WORKFLOWS_DIR = 'workflows';
 const RUNS_DIR = 'runs';
 const HISTORY_JSON = 'history.json';
+const CHECKPOINTS_JSON = 'checkpoints.json';
 const LEGACY_EXT = '.smproj';
 
 // 运行历史（可选，落盘到 .slimemold/runs/history.json；类型层宽松处理，避免与主类型耦合）
@@ -151,9 +152,17 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
     await mkdir(wfDir, { recursive: true });
     await mkdir(runsDir, { recursive: true });
 
-    // project.json（元数据 + 引用，不再内联所有 workflow 全文）
-    const meta: ProjectFile = { ...file, workflows: {} };
+    // project.json（元数据 + 引用，不再内联所有 workflow 全文；checkpoints 独立成文件避免膨胀）
+    const { checkpoints, ...metaRest } = file;
+    const meta: ProjectFile = { ...metaRest, workflows: {} };
     await writeTextFile(joinPath(cfg, PROJECT_JSON), JSON.stringify(meta, null, 2));
+
+    // runs/checkpoints.json（阶段 C 可恢复执行：每工作流最新一次运行的节点级结果）
+    const ckptPath = joinPath(runsDir, CHECKPOINTS_JSON);
+    await writeTextFile(
+      ckptPath,
+      JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2),
+    );
 
     // 每个工作流一个文件
     for (const [id, wf] of Object.entries(file.workflows ?? {})) {
@@ -220,7 +229,19 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
       }
     }
 
-    return { ...meta, workflows, runs: runs ?? { history: [] } };
+    // 阶段 C 可恢复执行：读回检查点（独立文件，缺失时保持 project.json 内的兜底）
+    let checkpoints = (meta as ProjectFile).checkpoints;
+    const ckptPath = joinPath(cfg, RUNS_DIR, CHECKPOINTS_JSON);
+    if (await exists(ckptPath)) {
+      try {
+        const raw = JSON.parse(await readTextTauri(ckptPath)) as { checkpoints?: Record<string, unknown> };
+        checkpoints = raw.checkpoints as Record<string, unknown>;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return { ...meta, workflows, runs: runs ?? { history: [] }, checkpoints };
   }
   return null;
 }

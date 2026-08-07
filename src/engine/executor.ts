@@ -31,6 +31,7 @@ import { MEMORY_REL } from '../agents/memoryIo';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentForRunContext } from '../agents/agentRouter';
+import { buildCheckpoint } from './checkpoint';
 import {
   cleanupRun,
   createRunResources,
@@ -580,6 +581,12 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         : null,
     };
     rt.pushRunHistory(rec);
+
+    // C：可恢复执行——把本次运行的节点级结果固化为检查点（覆盖式，按 wfId），
+    // 随项目落盘；下次打开项目可「从断点恢复」复用成功节点输出、续跑失败节点。
+    useWorkflowStore
+      .getState()
+      .setCheckpoint(buildCheckpoint(nodes, { wfId, runId: myRun, status, startedAt: startedWall }));
 
     // A3：运行级终态事件（completed / failed / aborted）统一在此发出，与历史记录状态一致。
     const finalKind: 'run.completed' | 'run.failed' | 'run.aborted' =

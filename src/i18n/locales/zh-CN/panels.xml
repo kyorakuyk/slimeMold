@@ -42,6 +42,8 @@
   <string name="runHistory.noOutput">无输出</string>
   <string name="runHistory.clear">清空</string>
   <string name="runHistory.clearTitle">清空历史</string>
+  <string name="runHistory.restore">恢复</string>
+  <string name="runHistory.restoreTitle">把最近一次运行的节点结果恢复回画布（成功复用、失败续跑）</string>
 
   <!-- PluginPanel -->
   <string name="plugins.title">插件管理</string>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, RotateCcw } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
 
@@ -214,6 +214,21 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
             <span className="text-xs text-ink-faint">{t('runHistory.recent', { count: runHistory.length })}</span>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              className="sm-btn hover:border-accent hover:text-accent"
+              onClick={() => {
+                const ok = useWorkflowStore.getState().restoreCheckpoint();
+                useWorkflowStore
+                  .getState()
+                  .addLog(
+                    ok ? 'info' : 'warn',
+                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                  );
+              }}
+              title={t('runHistory.restoreTitle')}
+            >
+              <RotateCcw size={14} /> {t('runHistory.restore')}
+            </button>
             {runHistory.length > 0 && (
               <button
                 className="sm-btn text-err hover:border-err"

@@ -42,6 +42,8 @@
   <string name="runHistory.noOutput">No output</string>
   <string name="runHistory.clear">Clear</string>
   <string name="runHistory.clearTitle">Clear history</string>
+  <string name="runHistory.restore">Restore</string>
+  <string name="runHistory.restoreTitle">Restore latest run node results to canvas (reuse success, resume failed)</string>
 
   <!-- PluginPanel -->
   <string name="plugins.title">Plugins</string>

@@ -808,6 +808,8 @@ export interface ProjectFile {
   pipelines?: import('./engine/pipeline').PipelineDef[];
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };
+  /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目落盘 */
+  checkpoints?: Record<string, import('./engine/checkpoint').RunCheckpoint>;
 }
 
 /** 最近项目记录（持久化在 localStorage，不随项目文件本身） */
