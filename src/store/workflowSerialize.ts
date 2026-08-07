@@ -202,7 +202,9 @@ export function buildProjectFile(
     createdAt: s.projectCreatedAt ?? (stable ? '' : new Date().toISOString()),
     updatedAt: stable ? '' : new Date().toISOString(),
     workflows,
-    activeId: s.activeWfId || Object.keys(workflows)[0],
+    // 稳定模式排除 activeId：切换激活工作流是视图态，不构成「项目内容变化」，
+    // 不应让脏检测误报未保存（activeId 仅在保存落盘时保留真实值）
+    activeId: stable ? '' : (s.activeWfId || Object.keys(workflows)[0]),
     roles: s.roles,
     variables: s.projectVariables,
     assets: s.projectAssets,
@@ -223,7 +225,13 @@ export function projectSnapshot(s: Parameters<typeof buildProjectFile>[0]): stri
 }
 
 /** 脏检测白名单：仅当这些字段变化时才比对快照，避免日志/运行态频繁触发 stringify。
- * 从 workflowStore 抽离为共享常量，供脏检测 subscribe 与测试复用。 */
+ * 从 workflowStore 抽离为共享常量，供脏检测 subscribe 与测试复用。
+ *
+ * 语义（Codex 评审后收口）：
+ * - 只列「落盘相关」字段（会写入 ProjectFile 的内容）；视图态/运行配置
+ *   （activeWfId 切换、llmChannel、failFast、skipFailed、maxConcurrency）不列，
+ *   因为它们要么已被 projectSnapshot 稳定化排除（activeId），要么根本不落盘，
+ *   变化不应触发 dirty 误报。 */
 export const DIRTY_KEYS = [
   'nodes',
   'edges',
@@ -239,10 +247,5 @@ export const DIRTY_KEYS = [
   'agentRouteTable',
   'pipelines',
   'projectName',
-  'activeWfId',
   'workflowName',
-  'llmChannel',
-  'failFast',
-  'skipFailed',
-  'maxConcurrency',
 ] as const;

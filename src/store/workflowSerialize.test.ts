@@ -45,6 +45,32 @@ function mkEdge(id: string, source: string, target: string): FlowEdge {
   } as FlowEdge;
 }
 
+/** 顶层共享的项目输入样例（供 projectSnapshot / DIRTY_KEYS 测试复用） */
+const baseProject = {
+  workflowName: '主',
+  nodes: [mkNode('n1')],
+  edges: [mkEdge('e1', 'n1', 'n2')],
+  agents: [] as never[],
+  roles: [] as never[],
+  variables: { v: 1 },
+  projectVariables: { pv: 2 },
+  projectAssets: [] as never[],
+  groups: [] as never[],
+  activeWfId: 'wfA',
+  workflows: {
+    wfA: { name: 'A', nodes: [mkNode('n1')], edges: [] } as never,
+    wfB: { name: 'B', nodes: [], edges: [] } as never,
+  },
+  projectName: '项目',
+  projectId: 'pid',
+  projectCreatedAt: '2026-01-01T00:00:00.000Z',
+  subgraphs: {} as Record<string, never>,
+  runHistory: [] as never[],
+  artifacts: { handoffs: {}, received: {} },
+  agentRouteTable: {} as Record<string, never>,
+  pipelines: [] as never[],
+};
+
 describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价）', () => {
   describe('sanitizeNodes', () => {
     it('清除运行态字段（status/error/durationMs/cached），保留其余', () => {
@@ -224,30 +250,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
   });
 
   describe('projectSnapshot', () => {
-    const base = {
-      workflowName: '主',
-      nodes: [mkNode('n1')],
-      edges: [mkEdge('e1', 'n1', 'n2')],
-      agents: [] as never[],
-      roles: [] as never[],
-      variables: { v: 1 },
-      projectVariables: { pv: 2 },
-      projectAssets: [] as never[],
-      groups: [] as never[],
-      activeWfId: 'wfA',
-      workflows: {
-        wfA: { name: 'A', nodes: [mkNode('n1')], edges: [] } as never,
-        wfB: { name: 'B', nodes: [], edges: [] } as never,
-      },
-      projectName: '项目',
-      projectId: 'pid',
-      projectCreatedAt: '2026-01-01T00:00:00.000Z',
-      subgraphs: {} as Record<string, never>,
-      runHistory: [] as never[],
-      artifacts: { handoffs: {}, received: {} },
-      agentRouteTable: {} as Record<string, never>,
-      pipelines: [] as never[],
-    };
+    const base = baseProject;
 
     it('是 buildProjectFile 的 JSON 字符串封装（可解析为合法 ProjectFile）', () => {
       const snap = projectSnapshot(base);
@@ -288,14 +291,28 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
   });
 
   describe('DIRTY_KEYS', () => {
-    it('覆盖核心落盘字段，且含运行态/日志白名单外的关键项', () => {
+    const base = baseProject;
+
+    it('覆盖核心落盘字段，且不含视图态/运行配置/运行态', () => {
       const keys = DIRTY_KEYS as readonly string[];
-      for (const k of ['nodes', 'edges', 'agents', 'groups', 'subgraphs', 'activeWfId', 'workflowName']) {
+      for (const k of ['nodes', 'edges', 'agents', 'groups', 'subgraphs', 'workflowName', 'projectVariables']) {
         expect(keys).toContain(k);
       }
-      // 运行态/日志不该进白名单（避免频繁触发脏标记）
-      expect(keys).not.toContain('running');
-      expect(keys).not.toContain('logs');
+      // 视图态/运行配置/运行态不该进白名单：
+      // - activeWfId：切换激活工作流是视图态，且 projectSnapshot 稳定模式已排除 activeId
+      // - llmChannel/failFast/skipFailed/maxConcurrency：不落盘的运行配置
+      // - running/logs：运行态，触发脏标记会误报
+      for (const k of ['activeWfId', 'llmChannel', 'failFast', 'skipFailed', 'maxConcurrency', 'running', 'logs']) {
+        expect(keys).not.toContain(k);
+      }
+    });
+
+    it('稳定快照的 activeId 被置空（保存落盘时仍保留真实值）', () => {
+      // DIRTY_KEYS 已不含 activeWfId（见上一用例），切换工作流不会触发脏比对误报；
+      // 此处验证稳定快照进一步把 activeId 置空，从字节层排除视图态。
+      expect(JSON.parse(projectSnapshot(base) as string).activeId).toBe('');
+      // 保存路径（stable=false）保留真实 activeId
+      expect(buildProjectFile(base).activeId).toBe('wfA');
     });
   });
 });
