@@ -12,6 +12,7 @@ import {
   matchExperience,
   removeExperience,
   resetExperienceCache,
+  successRateByAgent,
   summarizeExperience,
   type ExperienceEntry,
 } from './experienceStore';
@@ -35,6 +36,7 @@ describe('summarizeExperience 归约', () => {
       wfId: 'wf1',
       runId: 5,
       status: 'error',
+      agentByNode: { a: 'agent-A' },
       nodes: [
         { id: 'a', typeId: 'ai.chat', status: 'error', error: 'boom\nmore', label: '对话' },
         { id: 'b', typeId: 'input.text', status: 'success', durationMs: 10 },
@@ -44,6 +46,8 @@ describe('summarizeExperience 归约', () => {
     expect(f).toBeTruthy();
     expect(f!.typeId).toBe('ai.chat');
     expect(f!.insights[0]).toContain('失败原因：boom');
+    // F12：失败经验携带实际 agentId（供成功率统计）
+    expect(f!.agentId).toBe('agent-A');
   });
 
   it('成功节点按 typeId 聚合，含平均耗时', () => {
@@ -97,6 +101,18 @@ describe('addExperience / loadExperience / matchExperience', () => {
     expect(matchExperience('p1', 'ghost')).toHaveLength(0);
     // 不同项目隔离
     expect(matchExperience('p2', 'ai.chat')).toHaveLength(0);
+  });
+
+  it('successRateByAgent 按 agentId 统计成功率（忽略无 agentId 条目）', () => {
+    addExperience('p1', entry({ id: 'e1', typeId: 'ai.chat', agentId: 'A', outcome: 'success', runId: 1 }));
+    addExperience('p1', entry({ id: 'e2', typeId: 'ai.chat', agentId: 'A', outcome: 'success', runId: 2 }));
+    addExperience('p1', entry({ id: 'e3', typeId: 'ai.chat', agentId: 'B', outcome: 'failure', runId: 3 }));
+    addExperience('p1', entry({ id: 'e4', typeId: 'ai.chat', outcome: 'success', runId: 4 })); // 无 agentId
+    const rates = successRateByAgent('p1');
+    expect(rates['A']).toBe(1);
+    expect(rates['B']).toBe(0);
+    expect(rates['C']).toBeUndefined();
+    expect(Object.keys(rates)).toHaveLength(2); // 无 agentId 条目不计入
   });
 
   it('removeExperience / clearExperience', () => {

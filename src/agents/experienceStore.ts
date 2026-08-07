@@ -24,6 +24,8 @@ export interface ExperienceEntry {
   runId: number;
   /** 本次运行结局 */
   outcome: 'success' | 'failure';
+  /** 实际调用的智能体 id（供成本感知路由统计成功率；无 LLM 节点时缺省） */
+  agentId?: string;
   /** 一句话摘要（展示用） */
   summary: string;
   /** 提炼出的教训/建议（按条） */
@@ -130,6 +132,8 @@ export interface ExperienceSource {
     durationMs?: number | null;
     label?: string;
   }>;
+  /** 节点实际调用 agent 映射（nodeId → agentId，来自 costLog；供成功率统计） */
+  agentByNode?: Record<string, string>;
 }
 
 /** 失败教训：从失败的 error 消息提炼简短建议（首行截断）。 */
@@ -150,6 +154,8 @@ export function summarizeExperience(src: ExperienceSource): ExperienceEntry[] {
   const failed = src.nodes.filter((n) => n.status === 'error' || n.status === 'failed');
   const succeeded = src.nodes.filter((n) => n.status === 'success');
 
+  const agentOf = (nodeId: string): string | undefined => src.agentByNode?.[nodeId];
+
   // 失败节点逐条沉淀
   for (const n of failed) {
     out.push({
@@ -158,6 +164,7 @@ export function summarizeExperience(src: ExperienceSource): ExperienceEntry[] {
       wfId: src.wfId,
       runId: src.runId,
       outcome: 'failure',
+      agentId: agentOf(n.id),
       summary: `${n.label ?? n.typeId} 在 ${n.typeId} 节点上失败`,
       insights: [lessonFromError(n.error)],
       at: Date.now(),
@@ -179,11 +186,32 @@ export function summarizeExperience(src: ExperienceSource): ExperienceEntry[] {
       wfId: src.wfId,
       runId: src.runId,
       outcome: 'success',
+      agentId: agentOf(arr[0]!.id),
       summary: `${typeId} 成功执行 ×${arr.length}`,
       insights: [`该类型节点本轮成功，平均耗时 ${avg.toFixed(0)}ms；参数与上游输入可作为后续参考`],
       at: Date.now(),
     });
   }
 
+  return out;
+}
+
+/**
+ * 按 agent 统计历史成功率（success / (success+failure)，仅统计有 agentId 的条目）。
+ * 供成本感知路由评分（routerScoring）使用；无数据返回空表（调用方缺省 0.5）。
+ */
+export function successRateByAgent(projectId: string): Record<string, number> {
+  const list = loadExperience(projectId);
+  const stats: Record<string, { ok: number; fail: number }> = {};
+  for (const e of list) {
+    if (!e.agentId) continue;
+    const s = (stats[e.agentId] ??= { ok: 0, fail: 0 });
+    if (e.outcome === 'success') s.ok += 1;
+    else s.fail += 1;
+  }
+  const out: Record<string, number> = {};
+  for (const [id, s] of Object.entries(stats)) {
+    out[id] = s.ok / (s.ok + s.fail);
+  }
   return out;
 }

@@ -5,7 +5,7 @@
  * 无 agent 抛错、候选链生成、复杂度分档、RunContext 特征并入。
  */
 import { describe, it, expect } from 'vitest';
-import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext } from './agentRouter';
+import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext, resolveAgentScored } from './agentRouter';
 import type { AgentConfig, AgentRouteTable } from '../types';
 
 const ag = (id: string, model = 'm1'): AgentConfig =>
@@ -122,5 +122,69 @@ describe('resolveAgentForRunContext 特征并入', () => {
     expect(d.tier).toBe('heavy');
     // 无显式绑定、无路由、无默认 → 取首个可用
     expect(d.agent.id).toBe('a1');
+  });
+});
+
+describe('resolveAgentScored 成本感知决策', () => {
+  it('显式绑定有效时不评分，直接用', () => {
+    const env = {
+      agents: [ag('expensive', 'claude-opus-4'), ag('cheap', 'qwen2.5:3b')],
+      routeTable: {},
+      defaultAgentId: null,
+    };
+    const d = resolveAgentScored({ agentId: 'expensive', typeId: 'ai.chat' }, env);
+    expect(d.agent.id).toBe('expensive');
+    expect(d.reason).toBe('explicit');
+    expect(d.scores).toBeUndefined();
+  });
+
+  it('light 任务：评分取便宜模型，chain 按评分降序', () => {
+    const env = {
+      agents: [ag('strong', 'claude-opus-4'), ag('local', 'qwen2.5:3b')],
+      routeTable: {},
+      defaultAgentId: null,
+    };
+    const d = resolveAgentScored({ typeId: 'ai.chat', textLength: 10 }, env);
+    expect(d.reason).toBe('scored-optimal');
+    expect(d.agent.id).toBe('local'); // light 任务便宜优先
+    expect(d.chain[0]).toBe('local');
+    expect(d.chain).toContain('strong');
+    expect(d.scores).toBeTruthy();
+    expect(d.scores![0]!.agent.id).toBe('local');
+  });
+
+  it('heavy 任务：light 档被否决（评分选标准/强档）', () => {
+    const env = {
+      agents: [ag('strong', 'claude-opus-4'), ag('local', 'qwen2.5:3b'), ag('mid', 'gpt-4o')],
+      routeTable: {},
+      defaultAgentId: null,
+    };
+    const d = resolveAgentScored({ typeId: 'ai.chat', textLength: 99999 }, env);
+    // local（light 档）被 heavy 否决；gpt-4o 凭性价比胜出
+    expect(d.agent.id).toBe('mid');
+    expect(d.chain[d.chain.length - 1]).toBe('local'); // 被否决的排最后
+  });
+
+  it('成功率影响排序：成功率高的候选胜出', () => {
+    const env = {
+      agents: [ag('a', 'gpt-4o-mini'), ag('b', 'gpt-4o')],
+      routeTable: {},
+      defaultAgentId: null,
+    };
+    // 无成功率时 light 任务 a（便宜）胜
+    expect(resolveAgentScored({ typeId: 'x', textLength: 10 }, env).agent.id).toBe('a');
+    // b 成功率 0.9 vs a 0.1：b 可能仍不敌 a 的成本优势；用极端权重验证成功率起作用
+    const d = resolveAgentScored(
+      { typeId: 'x', textLength: 10 },
+      env,
+      { successByAgent: { a: 0.05, b: 1 }, weights: { cost: 0.1, success: 0.8, tierFit: 0.1 } },
+    );
+    expect(d.agent.id).toBe('b');
+  });
+
+  it('无任何可用 agent 抛错', () => {
+    expect(() =>
+      resolveAgentScored({}, { agents: [], routeTable: {}, defaultAgentId: null }),
+    ).toThrow(/没有可用的智能体/);
   });
 });

@@ -30,10 +30,10 @@ import { readProjectText } from '../platform/env';
 import { MEMORY_REL } from '../agents/memoryIo';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
-import { resolveAgentForRunContext } from '../agents/agentRouter';
+import { resolveAgentScored } from '../agents/agentRouter';
 import { buildCheckpoint } from './checkpoint';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
-import { addExperience, matchExperience, summarizeExperience } from '../agents/experienceStore';
+import { addExperience, matchExperience, successRateByAgent, summarizeExperience } from '../agents/experienceStore';
 import {
   cleanupRun,
   createRunResources,
@@ -642,11 +642,17 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       // E 自我学习：运行结果归约为结构化经验入经验库（零 LLM 费用），
       // 下次运行同类型节点决策时经 matchExperience 消费。
       try {
+        // F12：节点 → 实际 agent 映射（成本记录里已有 agentId），供成功率统计
+        const agentByNode: Record<string, string> = {};
+        for (const r of costLog) {
+          if (r.nodeId && r.agentId && !agentByNode[r.nodeId]) agentByNode[r.nodeId] = r.agentId;
+        }
         const expList = summarizeExperience({
           projectId: useWorkflowStore.getState().projectId ?? '',
           wfId,
           runId: myRun,
           status,
+          agentByNode,
           nodes: nodesNow.map((n) => ({
             id: n.id,
             typeId: n.data.typeId,
@@ -1079,15 +1085,22 @@ async function executeNode(
         typeof node.data.params?.category === 'string' && node.data.params.category.trim()
           ? node.data.params.category.trim()
           : undefined;
-      const decision = resolveAgentForRunContext(
-        { agentId: requestedAgentId, typeId: node.data.typeId, category },
-        {
-          agents: st0.agents,
-          routeTable: st0.agentRouteTable ?? {},
-          defaultAgentId: st0.defaultAgentId ?? null,
-        },
-        goal ? { goal } : null,
-      );
+      // 成本感知评分决策（F12）：非显式绑定路径按「价格 + 成功率 + 档位匹配」对候选集
+      // 评分取最优，chain 按评分降序；显式绑定仍直接命中（不评分）。
+      const scoringInput = {
+        agentId: requestedAgentId,
+        typeId: node.data.typeId,
+        category,
+        textLength: goal.length,
+        scopeSize: Array.isArray(node.data.params?.scope) ? (node.data.params.scope as unknown[]).length : undefined,
+      };
+      const decision = resolveAgentScored(scoringInput, {
+        agents: st0.agents,
+        routeTable: st0.agentRouteTable ?? {},
+        defaultAgentId: st0.defaultAgentId ?? null,
+      }, {
+        successByAgent: successRateByAgent(useWorkflowStore.getState().projectId ?? ''),
+      });
       // 经历路由（reason≠explicit）才 emit + 日志；显式绑定直接命中则保持安静
       if (decision.routed) {
         emitNode(runBus, 'node.progress', nodeCtx, id, {
@@ -1098,10 +1111,17 @@ async function executeNode(
           chain: decision.chain,
           tier: decision.tier,
           category,
+          topScores: decision.scores?.slice(0, 3).map((c) => ({
+            agentId: c.agent.id,
+            model: c.agent.model,
+            score: Number(c.score.toFixed(2)),
+            costPer1M: c.costPer1M,
+          })),
         });
+        const bestScore = decision.scores?.[0];
         R.addLog(
           'info',
-          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}经 AgentRouter 路由到「${decision.agent.name}」（${decision.reason}${category ? `，类别 ${category}` : ''}）`,
+          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}经 AgentRouter 成本感知路由到「${decision.agent.name}」（${decision.reason}${category ? `，类别 ${category}` : ''}${bestScore ? `，评分 ${bestScore.score.toFixed(2)}` : ''}）`,
         );
       }
       const byId = (id0: string) => st0.agents.find((a) => a.id === id0);

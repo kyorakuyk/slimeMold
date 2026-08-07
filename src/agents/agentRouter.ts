@@ -18,6 +18,7 @@
  */
 import type { AgentConfig, AgentRouteTable } from '../types';
 import type { RunContext } from '../engine/runContext';
+import { scoreCandidates, type CandidateScore, type ScoringWeights } from './routerScoring';
 
 /** 路由请求：一次 LLM 调用的路由上下文。 */
 export interface RouterRequest {
@@ -59,6 +60,16 @@ export interface RouterDecision {
   routed: boolean;
   /** 复杂度分档（estimateTier 结果，供事件标注） */
   tier: 'light' | 'standard' | 'heavy';
+  /** 成本感知评分明细（走 resolveAgentScored 时填充；固定顺序路径为空） */
+  scores?: CandidateScore[];
+}
+
+/** 成本感知评分选项（供 resolveAgentScored）。 */
+export interface ScoringOptions {
+  /** 各 agent 历史成功率（projectId 维度，经验库统计） */
+  successByAgent?: Record<string, number>;
+  /** 评分权重覆盖 */
+  weights?: Partial<ScoringWeights>;
 }
 
 /** 复杂度特征输入（供 estimateTier）。 */
@@ -216,4 +227,65 @@ export function resolveAgentForRunContext(
     textLength: request.textLength ?? (ctx?.goal ? ctx.goal.length : 0),
   };
   return resolveAgent(merged, env);
+}
+
+/**
+ * 成本感知运行时决策（二轮评审「AgentRouter 还不是成本感知」）：
+ * - 显式 agentId 有效 → 直接用（尊重用户绑定，不评分）
+ * - 否则对候选集（路由主 → fallback 链 → 默认 → 全部）做成本感知评分，
+ *   取分数最高的 agent；chain 按评分降序（失败重试即从次优开始）。
+ * - decision.scores 携带完整评分明细，供事件/日志/UI 展示决策依据。
+ * 候选集为空抛错（同 resolveAgent）。
+ */
+export function resolveAgentScored(
+  request: RouterRequest,
+  env: RouterEnv,
+  scoring: ScoringOptions = {},
+): RouterDecision {
+  const tier = estimateTier(request);
+  const byId = (id?: string | null) => env.agents.find((a) => a.id === id);
+
+  // 显式绑定有效：不评分，保持原有行为
+  const explicit = byId(request.agentId);
+  if (explicit) {
+    return makeDecision(explicit, 'explicit', false, env, request.category, tier);
+  }
+
+  // 构建候选集（去重且过滤不存在的 agent）
+  const entry = routeEntry(env.routeTable, request.category);
+  const pool: AgentConfig[] = [];
+  const seen = new Set<string>();
+  const add = (id?: string | null) => {
+    if (!id || seen.has(id)) return;
+    const a = byId(id);
+    if (a) {
+      seen.add(id);
+      pool.push(a);
+    }
+  };
+  add(entry?.agentId);
+  for (const f of entry?.fallback ?? []) add(f);
+  add(env.defaultAgentId);
+  for (const a of env.agents) add(a.id);
+  if (pool.length === 0) {
+    throw new Error('没有可用的智能体：请先在设置中配置智能体（Agent）再运行');
+  }
+
+  // 成本感知评分排序，取最优
+  const scored = scoreCandidates({
+    candidates: pool,
+    tier,
+    successByAgent: scoring.successByAgent,
+    weights: scoring.weights,
+  });
+  const best = scored[0]!;
+  return {
+    agent: best.agent,
+    model: best.agent.model,
+    reason: request.agentId ? 'explicit-missing-scored' : 'scored-optimal',
+    chain: scored.map((c) => c.agent.id),
+    routed: true,
+    tier,
+    scores: scored,
+  };
 }
