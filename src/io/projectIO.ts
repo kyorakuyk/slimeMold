@@ -192,8 +192,19 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
 /**
  * 阶段 C 独立落盘：把运行检查点原子写入 `.slimemold/runs/checkpoints.json`。
  * F9：先写 `checkpoints.json.tmp`，再 rename 覆盖目标文件——避免写入中途崩溃留下
- * 不完整 JSON（直接 writeTextFile 覆盖不具备原子性）。rename 失败时回退直接写，
- * 保证不因原子化失败而丢失检查点。浏览器端 no-op（localStorage 已由 persist 接管）。
+ * 不完整 JSON（直接 writeTextFile 覆盖不具备原子性）。
+ *
+ * 回退策略（2026-08 加固，应对 Windows 目标被短暂锁定的场景）：
+ * - rename 失败（目标可能被杀毒/句柄占用）→ 先 remove 旧目标再重试 rename，
+ *   尽量保持「整文件替换」语义（比直接 truncate+write 的非原子写更接近原子）；
+ * - 仍失败 → **保留 tmp 文件**（不删除、不静默退化到非原子直接写），
+ *   抛出错误由调用方（persistCheckpoint）记录告警；下次运行会重新写 tmp 覆盖。
+ *
+ * Windows 覆盖语义依据：tauri-plugin-fs `rename()` 文档明确
+ * "If newpath already exists and is not a directory, rename() replaces it"，
+ * 底层 Rust `std::fs::rename` 在 Windows 用 MoveFileExW + MOVEFILE_REPLACE_EXISTING；
+ * 行为已由 src-tauri 集成测试（fs_atomic_replace）在真实文件系统验证。
+ * 浏览器端 no-op（localStorage 已由 persist 接管）。
  */
 export async function saveCheckpoints(
   root: string,
@@ -209,14 +220,18 @@ export async function saveCheckpoints(
   try {
     await writeTextFile(tmpPath, content);
     await rename(tmpPath, finalPath); // rename 覆盖已有目标 = 原子替换
+    return;
   } catch {
-    // 原子替换失败（如跨设备/权限限制）：清理 tmp 并回退直接写，不阻塞收尾
+    // 第一次 rename 失败：尝试先移除旧目标再 rename（处理目标被短暂占用的边界）
     try {
-      await remove(tmpPath);
-    } catch {
-      /* ignore */
+      await remove(finalPath);
+      await rename(tmpPath, finalPath);
+      return;
+    } catch (e2) {
+      // 仍失败：保留 tmp（内容完整，供下次覆盖），抛出让调用方记录告警，
+      // 不静默退化为非原子的直接覆盖写。
+      throw e2 instanceof Error ? e2 : new Error(String(e2));
     }
-    await writeTextFile(finalPath, content);
   }
 }
 

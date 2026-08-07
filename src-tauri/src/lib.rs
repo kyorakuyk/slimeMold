@@ -555,3 +555,87 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     }
     Ok(buf)
 }
+
+/* ---------------- 检查点原子写入的底层行为验证（真实文件系统） ---------------- */
+// 前端 saveCheckpoints（src/io/projectIO.ts）的原子替换核心是 tauri-plugin-fs 的
+// `rename(tmp, target)`。插件命令是 Rust `std::fs::rename` 的薄封装，因此以下测试用
+// `std::fs::rename` 在真实文件系统上验证：
+//   1) 目标已存在时 rename 是否替换成功（Windows 上对应 MoveFileExW +
+//      MOVEFILE_REPLACE_EXISTING）——这是「已有目标文件时 rename 是否替换成功」的直接证明；
+//   2) 目标被独占锁定时 rename/remove 失败 → 保留 tmp（回退分支语义）。
+#[cfg(test)]
+mod fs_atomic_replace_tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmpdir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "slime_fs_atomic_{}_{}",
+            name,
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn rename_replaces_existing_target_file() {
+        let dir = tmpdir("replace");
+        let tmp = dir.join("checkpoints.json.tmp");
+        let target = dir.join("checkpoints.json");
+        fs::write(&tmp, "new-content").unwrap();
+        fs::write(&target, "old-content").unwrap();
+        // saveCheckpoints 的原子替换核心：rename 覆盖已存在目标
+        fs::rename(&tmp, &target).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new-content");
+        assert!(!tmp.exists(), "tmp 应被 rename 消费");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_to_missing_target_succeeds() {
+        let dir = tmpdir("missing");
+        let tmp = dir.join("a.tmp");
+        let target = dir.join("a.json");
+        fs::write(&tmp, "x").unwrap();
+        fs::rename(&tmp, &target).unwrap();
+        assert!(target.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_then_rename_fallback_works() {
+        let dir = tmpdir("fallback");
+        let tmp = dir.join("b.tmp");
+        let target = dir.join("b.json");
+        fs::write(&tmp, "new").unwrap();
+        fs::write(&target, "old").unwrap();
+        // saveCheckpoints 的第二次重试路径：先删旧目标再 rename
+        fs::remove_file(&target).unwrap();
+        fs::rename(&tmp, &target).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_locked_target_rename_fails_and_tmp_preserved() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tmpdir("locked");
+        let tmp = dir.join("c.tmp");
+        let target = dir.join("c.json");
+        fs::write(&tmp, "new").unwrap();
+        fs::write(&target, "old").unwrap();
+        // 独占共享模式打开目标（share_mode=0：拒绝其它进程读写/删除）
+        let handle = OpenOptions::new().read(true).share_mode(0).open(&target).unwrap();
+        // 1) 目标被锁时直接 rename 应失败
+        assert!(fs::rename(&tmp, &target).is_err(), "锁定目标时 rename 应失败");
+        // 2) remove 被锁目标也应失败 → saveCheckpoints 走「保留 tmp」分支
+        assert!(fs::remove_file(&target).is_err(), "锁定目标时 remove 应失败");
+        // 3) tmp 保留（内容完整，供下次覆盖）
+        assert_eq!(fs::read_to_string(&tmp).unwrap(), "new");
+        drop(handle);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
