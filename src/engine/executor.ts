@@ -1,12 +1,9 @@
 import type {
   AssetMeta,
-  CapabilityLevel,
   CostRecord,
   ExecContext,
   FlowEdge,
   FlowNode,
-  NodeDefinition,
-  NodeUsageStat,
   RunRecord,
   SandboxHandle,
 } from '../types';
@@ -101,94 +98,22 @@ async function cleanupSandbox(wfId: string): Promise<void> {
  * - `agent.` / `ai.` / `llm` / `http` / `io.` / `tool.` → io（受限 I/O）
  * - 其余（flow/expr/if/loop/assert/merge 等）→ compute（纯计算只读）
  */
-export function resolveCapability(def: NodeDefinition): CapabilityLevel {
-  if (def.minCapability) return def.minCapability;
-  const t = def.typeId;
-  if (t.startsWith('coord.') || t === 'flow.council') return 'coordinator';
-  if (t === 'tool.writeFile' || t.startsWith('tool.file') || t.startsWith('fs.') || t.startsWith('tool.fs'))
-    return 'sandbox_write';
-  if (
-    t.startsWith('agent.') ||
-    t.startsWith('ai.') ||
-    t.startsWith('llm') ||
-    t.startsWith('http') ||
-    t.startsWith('io.') ||
-    t.startsWith('tool.') ||
-    t.startsWith('worker.') ||
-    t.startsWith('architect.') ||
-    t === 'dispatch.plan' ||
-    t === 'flow.map' ||
-    t.startsWith('image.') // 图像节点涉及文件读取/生成，按受限 I/O 处理
-  )
-    return 'io';
-  return 'compute';
-}
-
-/**
- * 步骤 11 阶段 D：按能力等级裁剪注入的 ExecContext。
- * 不删除字段（保持类型完整），而是把越权字段替换为「拒绝型」实现：
- * - compute：禁用 llm/storage/addAsset/sandbox（纯计算只读）
- * - io：禁用 sandbox 句柄（不直接碰文件系统）
- * - sandbox_write：保留 sandbox 写副本能力，但剥离 commitAll/commitLanes（落地权只给协调者）
- * - coordinator / system：全权限（含 commit 汇总与系统级调用）
- * 沙箱模式下，非 coordinator 节点的 addAsset 收口为「仅预览、不回写主工作流库」，避免越权落盘。
- */
-export function applyCapability(
-  ctx: ExecContext,
-  def: NodeDefinition,
-  opts: { sandbox?: boolean; sandboxMode?: 'copy' | 'gitworktree' },
-): void {
-  const level = resolveCapability(def);
-  const hasSandbox = !!opts.sandbox && !!ctx.sandbox;
-  const deny = (what: string) =>
-    ctx.logger.error(`节点「${def.typeId}」权限不足（${level} 级），拒绝 ${what}`);
-
-  if (level === 'compute') {
-    ctx.llm = async () => {
-      deny('调用 LLM');
-      throw new Error(`权限不足：${def.typeId} 为 compute 级，不可调用 LLM`);
-    };
-    ctx.storage = { get: async () => null, set: async () => {} };
-    ctx.addAsset = () => {};
-    ctx.sandbox = undefined;
-    ctx.sandboxLanes = undefined;
-    return;
-  }
-
-  if (level === 'io') {
-    ctx.sandbox = undefined;
-    ctx.sandboxLanes = undefined;
-    return;
-  }
-
-  if (level === 'sandbox_write') {
-    ctx.sandboxLanes = undefined; // 无 commit 汇总权
-    if (hasSandbox && ctx.sandbox) {
-      const inner = ctx.sandbox;
-      ctx.sandbox = {
-        ...inner,
-        async commitAll() {
-          deny('commitAll（落地主工作区）');
-          throw new Error(`权限不足：${def.typeId} 为 sandbox_write 级，仅协调者可 commit`);
-        },
-        async commitLanes() {
-          deny('commitLanes（落地主工作区）');
-          throw new Error(`权限不足：${def.typeId} 为 sandbox_write 级，仅协调者可 commit`);
-        },
-      };
-    }
-    // 沙箱模式下收口 addAsset：仅预览、不回写主工作流库（避免越权落盘）
-    if (opts.sandbox) {
-      const orig = ctx.addAsset;
-      ctx.addAsset = (meta) => {
-        orig({ ...meta, inWorkspace: false });
-      };
-    }
-    return;
-  }
-
-  // coordinator / system：全权限，但沙箱模式下仍收口非主工作区资产标记由节点自身决定，这里不干预
-}
+// 能力等级推导与上下文裁剪、瞬时错误判断、上游输入汇集、用量累加等纯辅助函数
+// 已抽到 executorHelpers.ts，此处 import 供本文件使用，并再导出以保持既有 import 路径与单测兼容
+import {
+  resolveCapability,
+  applyCapability,
+  isTransient,
+  collectInputs,
+  accumulateUsage,
+} from './executorHelpers';
+export {
+  resolveCapability,
+  applyCapability,
+  isTransient,
+  collectInputs,
+  accumulateUsage,
+};
 
 /** 每工作流独立的运行代次/中止器（拆分视图左右栏可同时运行互不打断） */
 const runGens = new Map<string, { currentRunId: number; activeRunId: number; abort: AbortController | null }>();
@@ -246,33 +171,8 @@ export async function rerunWorkflow(wfId?: string): Promise<void> {
 }
 
 /**
- * 判断错误是否为「瞬时错误」：仅这类（网络/超时/限流/网关）值得在节点层重试；
- * 业务错误（参数/解析/逻辑）重试无意义，直接失败。
+ * 运行工作流的选项（RunOptions）。
  */
-function isTransient(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|timed out|ECONN|ENOTFOUND|ECONNRESET|ETIMEDOUT|429|too many requests|503|502|504|gateway|rate limit|network|socket|aborted/i.test(
-    msg,
-  );
-}
-
-/** 汇集上游输出：edge.targetHandle <- outputs[edge.source][edge.sourceHandle] */
-export function collectInputs(
-  nodeId: string,
-  edges: FlowEdge[],
-  outputsMap: Map<string, Record<string, unknown>>,
-): Record<string, unknown> {
-  const inputs: Record<string, unknown> = {};
-  for (const e of edges) {
-    if (e.target !== nodeId) continue;
-    const upstream = outputsMap.get(e.source);
-    if (!upstream) continue;
-    const value = upstream[e.sourceHandle ?? ''];
-    inputs[e.targetHandle ?? ''] = value;
-  }
-  return inputs;
-}
-
 export interface RunOptions {
   /** 目标工作流 id（拆分视图可独立运行；缺省取当前激活工作流） */
   wfId?: string;
@@ -777,42 +677,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
   if (opts.sandbox) await cleanupSandbox(wfId);
   syncDebugRun(wfId);
-}
-
-/** 把一条成本记录累加进节点级用量统计，返回新的统计对象（不改动入参） */
-function accumulateUsage(prev: NodeUsageStat | undefined, rec: CostRecord): NodeUsageStat {
-  const base: NodeUsageStat = prev ?? {
-    calls: 0,
-    failedCalls: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    cachedPromptTokens: 0,
-    writtenPromptTokens: 0,
-    reasoningTokens: 0,
-    replyTokens: 0,
-    llmDurationMs: 0,
-    models: [],
-  };
-  const u = rec.usage;
-  const prompt = u?.promptTokens ?? 0;
-  const completion = u?.completionTokens ?? 0;
-  return {
-    calls: base.calls + 1,
-    failedCalls: base.failedCalls + (rec.ok ? 0 : 1),
-    promptTokens: base.promptTokens + prompt,
-    completionTokens: base.completionTokens + completion,
-    totalTokens: base.totalTokens + (u?.totalTokens ?? prompt + completion),
-    cachedPromptTokens: base.cachedPromptTokens + (u?.cachedPromptTokens ?? 0),
-    writtenPromptTokens: base.writtenPromptTokens + (u?.writtenPromptTokens ?? 0),
-    reasoningTokens: base.reasoningTokens + (u?.reasoningTokens ?? 0),
-    replyTokens: base.replyTokens + (u?.replyTokens ?? completion),
-    llmDurationMs: base.llmDurationMs + (rec.durationMs ?? 0),
-    models:
-      rec.model && !base.models.includes(rec.model)
-        ? [...base.models, rec.model]
-        : base.models,
-  };
 }
 
 async function executeNode(
