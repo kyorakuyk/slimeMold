@@ -28,6 +28,8 @@ import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
 import { readProjectText } from '../platform/env';
 import { MEMORY_REL } from '../agents/memoryIo';
+import { derivePolicy, type RunContext } from './runContext';
+import { emitNode, emitRun, getRunBus } from './runEvents';
 import {
   cleanupRun,
   createRunResources,
@@ -108,12 +110,15 @@ export function stopWorkflow(wfId?: string): void {
   const id = wfId ?? useWorkflowStore.getState().activeWfId;
   const g = genFor(id);
   g.currentRunId += 1; // 让旧协程过期
+  const abortedRunId = g.currentRunId - 1; // 被终止运行的代次号
   g.abort?.abort();
   g.abort = null;
   const wf = useWorkflowStore.getState();
   wf.setRunning(false, id);
   wf.resetStatuses(id);
   wf.addLog('info', `已停止工作流运行：${id}`);
+  // 运行级中止事件：立即发出（被终止的旧协程 isCurrentRun=false，不再重复发）
+  emitRun(getRunBus(), 'run.aborted', { wfId: id, runId: abortedRunId }, { reason: 'user-stopped' });
 }
 
 /**
@@ -302,6 +307,23 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const signal = abortController.signal;
   wf.setRunning(true, wfId);
   wf.resetStatuses(wfId);
+  // A3：构建贯穿本次运行的 RunContext（A1 定型），并发出运行创建事件。
+  // 供统一事件流 / JobBoard / 后续检查点持久化与 AgentRouter 共用。
+  const runCtx: RunContext = {
+    projectId: wf.projectId,
+    wfId,
+    runId: myRun,
+    goal: wf.workflowName,
+    signal,
+    startedAt: performance.now(),
+    startedWall: Date.now(),
+    resources,
+    policy: derivePolicy(opts, { maxConcurrency: wf.maxConcurrency ?? 3 }),
+  };
+  emitRun(getRunBus(), 'run.created', runCtx, {
+    nodeCount: nodes.length,
+    mode: opts.incremental ? 'incremental' : opts.retryFailed ? 'retry-failed' : 'full',
+  });
   // 清空运行期成本账本，供 Companion 浮窗实时展示
   rt.resetUsage();
   beginRun();
@@ -351,6 +373,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   let loopContinued = false;
   // 预计算每层的 scope 串行化簇划分（层结构 stages 与边 edges 在轮间稳定，无需每轮重算）
   const clusterPlan = planClustersPerStage(stages, edges);
+  // A3：真正开始调度前发出运行开始事件（Node 级事件紧随其后）。
+  emitRun(getRunBus(), 'run.started', runCtx);
   do {
     if (round > 0) {
       wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
@@ -554,6 +578,19 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     };
     rt.pushRunHistory(rec);
 
+    // A3：运行级终态事件（completed / failed / aborted）统一在此发出，与历史记录状态一致。
+    const finalKind: 'run.completed' | 'run.failed' | 'run.aborted' =
+      status === 'error' ? 'run.failed' : status === 'aborted' ? 'run.aborted' : 'run.completed';
+    emitRun(getRunBus(), finalKind, runCtx, {
+      status,
+      durationMs: rec.durationMs,
+      nodeCount: nodes.length,
+      skipped,
+      pruned,
+      failed: failed.size,
+      elapsed: Number(elapsed),
+    });
+
     // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘，
     // 把轨迹沉淀为记忆（memory.md）/ 技能（subgraph 草稿）。fire-and-forget，不阻塞收尾。
     if (isSelfImprove()) {
@@ -640,6 +677,9 @@ async function executeNode(
   const targetWfId = wfId ?? store.activeWfId;
   const targetRunId = myRun ?? genFor(targetWfId).currentRunId;
   const gen = genFor(targetWfId);
+  // A3：节点级事件统一从全局单例总线发出（携带 wfId + runId + nodeId 三元组）。
+  const runBus = getRunBus();
+  const nodeCtx = { wfId: targetWfId, runId: targetRunId };
   // 解耦接缝：节点内的「只写」输出动作（状态/日志/成本/资产/边）经 rt 收口；
   // 缺省退化为直接委托 store，保证接缝接入前行为不变。
   const R = rt ?? createStoreRuntime(targetWfId);
@@ -693,6 +733,11 @@ async function executeNode(
       startedAt: null,
       durationMs: null,
     });
+    emitNode(runBus, 'node.skipped', nodeCtx, id, {
+      reason: 'upstream-failed',
+      label: node.data.label,
+      typeId: node.data.typeId,
+    });
     return;
   }
   if (mode.kind === 'missing-def') {
@@ -700,6 +745,11 @@ async function executeNode(
     branchState.set(id, new Set());
     setStatus(id, 'error', {
       error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
+    });
+    emitNode(runBus, 'node.skipped', nodeCtx, id, {
+      reason: 'missing-def',
+      label: node.data.label,
+      typeId: node.data.typeId,
     });
     return;
   }
@@ -865,6 +915,12 @@ async function executeNode(
   // 但全量运行意图是执行所有节点，因此只在增量模式才走此跳过路径。
   if (mode.kind === 'incremental-skip') {
     setStatus(id, mode.prevStatus === 'cached' ? 'cached' : mode.prevStatus);
+    emitNode(runBus, 'node.skipped', nodeCtx, id, {
+      reason: 'incremental-skip',
+      status: mode.prevStatus,
+      label: node.data.label,
+      typeId: node.data.typeId,
+    });
     return;
   }
 
@@ -872,6 +928,11 @@ async function executeNode(
   if (incoming.length > 0 && isBranchPruned(incoming, branchState, skipFailed ?? false, failed)) {
     branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
     setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+    emitNode(runBus, 'node.skipped', nodeCtx, id, {
+      reason: 'pruned',
+      label: node.data.label,
+      typeId: node.data.typeId,
+    });
     return;
   }
 
@@ -879,6 +940,11 @@ async function executeNode(
   if (cutSet.has(id)) {
     branchState.set(id, new Set());
     setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+    emitNode(runBus, 'node.skipped', nodeCtx, id, {
+      reason: 'cut',
+      label: node.data.label,
+      typeId: node.data.typeId,
+    });
     return;
   }
 
@@ -898,6 +964,12 @@ async function executeNode(
         outputs: cached,
         startedAt: null,
         durationMs: null,
+      });
+      emitNode(runBus, 'node.completed', nodeCtx, id, {
+        status: 'cached',
+        label: node.data.label,
+        typeId: node.data.typeId,
+        outputs: cached,
       });
       if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
       return;
@@ -1087,6 +1159,10 @@ async function executeNode(
   }
 
   setStatus(id, 'running');
+  emitNode(runBus, 'node.started', nodeCtx, id, {
+    label: node.data.label,
+    typeId: node.data.typeId,
+  });
   const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');
   if (isAgent) {
     R.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
@@ -1128,6 +1204,13 @@ async function executeNode(
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
     });
+    emitNode(runBus, 'node.completed', nodeCtx, id, {
+      status: 'success',
+      label: node.data.label,
+      typeId: node.data.typeId,
+      outputs: outputs ?? {},
+      durationMs: Math.round(performance.now() - perfStart),
+    });
     if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
   } catch (err) {
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
@@ -1143,6 +1226,12 @@ async function executeNode(
     setStatus(id, 'error', {
       error: message,
       startedAt: new Date(startedAt).toISOString(),
+      durationMs: Math.round(performance.now() - perfStart),
+    });
+    emitNode(runBus, 'node.failed', nodeCtx, id, {
+      error: message,
+      label: node.data.label,
+      typeId: node.data.typeId,
       durationMs: Math.round(performance.now() - perfStart),
     });
     R.addLog('error', `「${node.data.label}」这一步出错了：${message}`);

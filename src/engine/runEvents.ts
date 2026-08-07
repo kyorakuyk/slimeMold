@@ -113,3 +113,18 @@ export function emitNode(
 ): void {
   bus.emit({ kind, wfId: ctx.wfId, runId: ctx.runId, nodeId, payload });
 }
+
+/**
+ * 全局单例：executor 生产、UI（JobBoard / 状态栏 / 历史回放）消费同一事件流。
+ * 惰性创建；resetRunBus() 供测试隔离（避免 Vitest 用例间事件互相污染）。
+ */
+let globalRunBus: EventBus | null = null;
+
+export function getRunBus(): EventBus {
+  globalRunBus ??= createEventBus({ bufferSize: 1000 });
+  return globalRunBus;
+}
+
+export function resetRunBus(): void {
+  globalRunBus = null;
+}
