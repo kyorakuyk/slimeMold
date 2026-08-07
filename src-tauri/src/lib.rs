@@ -48,7 +48,8 @@ fn write_index(mut keys: Vec<String>) {
     keys.sort();
     keys.dedup();
     let json = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string());
-    let _ = keyring::Entry::new(KEYRING_SERVICE, CRED_INDEX_KEY).and_then(|e| e.set_password(&json));
+    let _ =
+        keyring::Entry::new(KEYRING_SERVICE, CRED_INDEX_KEY).and_then(|e| e.set_password(&json));
 }
 
 /// 在系统密钥库存一条凭据（覆盖写）。
@@ -58,8 +59,8 @@ fn set_credential(key: String, value: String) -> Result<(), String> {
     if k.is_empty() || k == CRED_INDEX_KEY {
         return Err("凭据键非法".into());
     }
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &k)
-        .map_err(|e| format!("密钥库初始化失败: {e}"))?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &k).map_err(|e| format!("密钥库初始化失败: {e}"))?;
     entry
         .set_password(&value)
         .map_err(|e| format!("保存凭据失败: {e}"))?;
@@ -75,8 +76,8 @@ fn set_credential(key: String, value: String) -> Result<(), String> {
 /// 从系统密钥库读取一条凭据；不存在返回 Ok(None) 而非错误。
 #[tauri::command]
 fn get_credential(key: String) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key)
-        .map_err(|e| format!("密钥库初始化失败: {e}"))?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("密钥库初始化失败: {e}"))?;
     match entry.get_password() {
         Ok(v) => Ok(Some(v)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -88,8 +89,8 @@ fn get_credential(key: String) -> Result<Option<String>, String> {
 #[tauri::command]
 fn delete_credential(key: String) -> Result<(), String> {
     let k = key.trim().to_string();
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &k)
-        .map_err(|e| format!("密钥库初始化失败: {e}"))?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &k).map_err(|e| format!("密钥库初始化失败: {e}"))?;
     match entry.delete_credential() {
         Ok(()) => {}
         Err(keyring::Error::NoEntry) => {}
@@ -156,8 +157,8 @@ fn save_endpoint(app: AppHandle, key: String, value: String) -> Result<(), Strin
         return Err("接入点键非法".into());
     }
     // 解析 value，提取明文 apiKey 并加密，写回 value 的 apiKey 字段（密文）
-    let mut v: serde_json::Value = serde_json::from_str(&value)
-        .map_err(|e| format!("接入点数据解析失败: {e}"))?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&value).map_err(|e| format!("接入点数据解析失败: {e}"))?;
     if let Some(plain) = v.get("apiKey").and_then(|x| x.as_str()) {
         if !plain.is_empty() {
             let enc = encrypt_api_key(plain)?;
@@ -180,7 +181,10 @@ fn save_endpoint(app: AppHandle, key: String, value: String) -> Result<(), Strin
 #[tauri::command]
 fn load_endpoint(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let list = read_ep_store(&app);
-    let found = list.into_iter().find(|(name, _)| name == &key).map(|(_, v)| v);
+    let found = list
+        .into_iter()
+        .find(|(name, _)| name == &key)
+        .map(|(_, v)| v);
     Ok(found.map(|v| decrypt_api_key_in_json(&v)))
 }
 
@@ -215,26 +219,27 @@ fn decrypt_api_key_in_json(json: &str) -> String {
 fn list_endpoints_raw(app: AppHandle) -> Result<Vec<String>, String> {
     let list = read_ep_store(&app);
     eprintln!("[ep] list_endpoints_raw count={}", list.len());
-    Ok(list.into_iter().map(|(_, v)| decrypt_api_key_in_json(&v)).collect())
+    Ok(list
+        .into_iter()
+        .map(|(_, v)| decrypt_api_key_in_json(&v))
+        .collect())
 }
 
 /// 步骤 11 阶段 C：Git Worktree 真隔离。在 Rust 侧直接调用系统 `git`（不受 Tauri 沙箱限制），
 /// 返回 stdout / stderr / 退出码，供前端的 git worktree 沙箱模式使用。
 ///
-/// 安全边界（2026-08-07 P0-S4）：
-/// - `cwd` 必填，且必须是已存在的目录；路径经 `canonicalize` 后禁止 `..` 逃逸。
-/// - 子命令白名单：仅放行安全的只读/提交类操作（add/commit/status/diff/branch/checkout/
-///   worktree/merge/restore/stash/log/show/rev-parse/remote/init/clone/config 等）。
-/// - 拒绝破坏性命令：`push`/`fetch`/`pull`（避免误推/带凭证外联）、`reset`/`clean`/`rm` 的
-///   破坏性 flag（`--hard`/`--force`/`-f`），以及裸 `reset --hard`、`clean -f` 等。
+/// 安全边界（2026-08-07 P0-S4，后续收紧）：
+/// - `cwd` 必填，且必须是已存在的目录；拒绝带 `..` 的路径。
+/// - 只接受前端沙箱实现实际需要的四种精确命令形状：
+///   `rev-parse --is-inside-work-tree`、`worktree add`、`worktree remove`、临时分支删除。
+/// - worktree 必须是 `<cwd>/.slime-wt/<branch>` 的直接子目录，临时分支必须以
+///   `slime-sandbox-` 开头；不暴露 clone/config/merge/checkout/push 等通用 Git 能力。
 ///
 /// 调用示例：`invoke('run_git', { args: ['worktree', 'add', '-q', dir, '-b', branch, 'HEAD'], cwd })`
 #[tauri::command]
 fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
     // 1) cwd 必填且为已存在目录，禁止越界
-    let cwd = cwd.ok_or_else(|| {
-        "run_git: cwd 必填（不允许在进程当前目录裸调 git）".to_string()
-    })?;
+    let cwd = cwd.ok_or_else(|| "run_git: cwd 必填（不允许在进程当前目录裸调 git）".to_string())?;
     let cwd_path = std::path::Path::new(&cwd);
     if !cwd_path.exists() {
         return Err(format!("run_git: cwd 不存在：{cwd}"));
@@ -242,54 +247,50 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
     if !cwd_path.is_dir() {
         return Err(format!("run_git: cwd 不是目录：{cwd}"));
     }
-    // 规范化后检查是否有父目录逃逸（canonicalize 会把 .. 解析掉，再比对原路径是否被夹带）
+    // 规范化后检查是否有父目录逃逸。
     let canon = cwd_path
         .canonicalize()
         .map_err(|e| format!("run_git: 无法解析 cwd（{cwd}）：{e}"))?;
-    if cwd.contains("..") {
-        // 允许规范化后的合法路径；仅当原始字符串夹带 .. 且规范化结果不在预期时才拒绝
-        let raw_canon = std::path::Path::new(&cwd)
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir));
-        if raw_canon {
-            return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+    if cwd_path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+    }
+
+    // 2) 精确命令形状白名单。这里不提供通用 Git 代理，只提供 worktree 沙箱协议。
+    let sandbox_root = canon.join(".slime-wt");
+    match args.as_slice() {
+        [sub, flag] if sub == "rev-parse" && flag == "--is-inside-work-tree" => {}
+        [sub, action, quiet, path, branch_flag, branch, head]
+            if sub == "worktree"
+                && action == "add"
+                && quiet == "-q"
+                && branch_flag == "-b"
+                && head == "HEAD" =>
+        {
+            validate_sandbox_branch(branch)?;
+            fs::create_dir_all(&sandbox_root)
+                .map_err(|e| format!("run_git: 创建沙箱目录失败：{e}"))?;
+            validate_worktree_path(&sandbox_root, path, branch, false)?;
         }
-    }
-    let _ = canon;
-
-    // 2) 子命令白名单
-    const ALLOWED_SUBCOMMANDS: &[&str] = &[
-        "add", "commit", "status", "diff", "branch", "checkout", "switch", "worktree",
-        "merge", "restore", "stash", "log", "show", "rev-parse", "remote", "init", "clone",
-        "config", "tag", "mv", "fetch", "pull",
-    ];
-    // 破坏性子命令（即便在白名单内也需额外限制 flag）
-    const DESTRUCTIVE_SUBCOMMANDS: &[&str] = &["reset", "clean", "rm", "push"];
-
-    let sub = args
-        .first()
-        .ok_or_else(|| "run_git: 缺少子命令".to_string())?
-        .as_str();
-    let is_allowed = ALLOWED_SUBCOMMANDS.contains(&sub);
-    let is_destructive = DESTRUCTIVE_SUBCOMMANDS.contains(&sub);
-    if !is_allowed && !is_destructive {
-        return Err(format!(
-            "run_git: 子命令 '{sub}' 不在白名单（允许：{}）",
-            ALLOWED_SUBCOMMANDS.join("/")
-        ));
-    }
-    // 破坏性子命令强制拒绝（避免误清/误推/误删）
-    if is_destructive {
-        return Err(format!(
-            "run_git: 子命令 '{sub}' 被安全策略禁止（破坏性操作需用户在终端手动执行）"
-        ));
-    }
-
-    // 3) 危险 flag 拦截（针对非破坏性子命令中的越权 flag）
-    let dangerous_flags = ["--hard", "--force", "-f", "--delete", "-D"];
-    for a in &args {
-        if dangerous_flags.contains(&a.as_str()) {
-            return Err(format!("run_git: 禁止危险参数 '{a}'（安全策略限制）"));
+        [sub, action, force, path]
+            if sub == "worktree" && action == "remove" && force == "--force" =>
+        {
+            let branch = std::path::Path::new(path)
+                .file_name()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| "run_git: worktree 路径缺少有效目录名".to_string())?;
+            validate_sandbox_branch(branch)?;
+            validate_worktree_path(&sandbox_root, path, branch, true)?;
+        }
+        [sub, delete, branch] if sub == "branch" && delete == "-D" => {
+            validate_sandbox_branch(branch)?;
+        }
+        _ => {
+            return Err(
+                "run_git: 仅允许仓库探测与 SlimeMold .slime-wt 沙箱的创建/清理".to_string(),
+            );
         }
     }
 
@@ -306,6 +307,57 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         code: output.status.code().unwrap_or(-1),
     })
+}
+
+fn validate_sandbox_branch(branch: &str) -> Result<(), String> {
+    if !branch.starts_with("slime-sandbox-")
+        || branch.len() <= "slime-sandbox-".len()
+        || branch.contains("..")
+        || branch.contains('/')
+        || branch.contains('\\')
+    {
+        return Err(format!("run_git: 非法沙箱分支名：{branch}"));
+    }
+    Ok(())
+}
+
+fn validate_worktree_path(
+    sandbox_root: &std::path::Path,
+    raw_path: &str,
+    branch: &str,
+    must_exist: bool,
+) -> Result<(), String> {
+    let path = std::path::Path::new(raw_path);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "run_git: worktree 必须是无 '..' 的绝对路径：{raw_path}"
+        ));
+    }
+
+    let root = sandbox_root
+        .canonicalize()
+        .map_err(|e| format!("run_git: 无法解析沙箱根目录：{e}"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("run_git: worktree 路径缺少父目录：{raw_path}"))?
+        .canonicalize()
+        .map_err(|e| format!("run_git: 无法解析 worktree 父目录：{e}"))?;
+    if parent != root || path.file_name().and_then(|v| v.to_str()) != Some(branch) {
+        return Err(format!(
+            "run_git: worktree 只能位于 <cwd>/.slime-wt/<slime-sandbox-*>：{raw_path}"
+        ));
+    }
+    if must_exist && !path.is_dir() {
+        return Err(format!("run_git: 待移除的 worktree 不存在：{raw_path}"));
+    }
+    if !must_exist && path.exists() {
+        return Err(format!("run_git: 待创建的 worktree 已存在：{raw_path}"));
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -376,8 +428,8 @@ fn get_master_key() -> Result<[u8; 32], String> {
     let mut k = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut k);
     let b64 = base64_encode(&k);
-    let _ = keyring::Entry::new(KEYRING_SERVICE, MASTER_KEY_ENTRY)
-        .and_then(|e| e.set_password(&b64));
+    let _ =
+        keyring::Entry::new(KEYRING_SERVICE, MASTER_KEY_ENTRY).and_then(|e| e.set_password(&b64));
     Ok(k)
 }
 
@@ -416,8 +468,7 @@ fn decrypt_api_key(b64: &str) -> Option<String> {
 
 // 简易 base64（避免引入额外 crate）
 fn base64_encode(input: &[u8]) -> String {
-    const CHARS: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in input.chunks(3) {
         let b = [

@@ -7,29 +7,32 @@ import type {
   RunRecord,
   SandboxHandle,
 } from '../types';
-import { topoStages } from './topoSort';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { getChannel } from '../agents/llmChannel';
 import { runAgentLoop } from '../agents/harness';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
-import { flattenSubgraphs, ownerRefId } from './subgraph';
+import { ownerRefId } from './subgraph';
 import {
-  collectReachable,
   computeDownstream,
   computeExecutionSet,
   isBranchPruned,
-  isReachable,
   planClustersPerStage,
   resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
+import { buildRunPlan } from './runPlan';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { isSelfImprove, runReview } from '../agents/reviewer';
 import { readProjectText } from '../platform/env';
 import { MEMORY_REL } from '../agents/memoryIo';
+import {
+  cleanupRun,
+  createRunResources,
+  getRunResources,
+} from './runResources';
 import {
   beginRun,
   cacheKey,
@@ -40,55 +43,6 @@ import {
   skippedCount,
   strike,
 } from './nodeCache';
-
-/** 步骤 11 阶段 C：每次运行实际用到的沙箱根目录集合（按 wfId 隔离，避免左右并行污染）。
- * 惰性填充：节点首次写文件时由沙箱句柄把解析出的真实根登记进来；
- * 对应 wfId 的运行结束后统一清理其下 `.sandbox/` 残留。 */
-const sandboxRootsUsed = new Map<string, Set<string>>();
-/** 步骤 11 阶段 C：每次运行创建的 Git Worktree 记录（按 wfId 隔离）。 */
-const gitWorktrees = new Map<string, Array<{ cwd: string; path: string; branch: string }>>();
-/** 步骤 11 阶段 C：本次运行若启用 gitworktree 且创建成功，则所有节点的沙箱根指向该 worktree（按 wfId）。 */
-const runWorktree = new Map<string, { cwd: string; path: string; branch: string } | null>();
-
-/**
- * 删除所有已登记沙箱根下的 `.sandbox/` 目录，释放并行 Worker 的临时副本。
- * 同时移除本次运行的 Git Worktree（若有）。Tauri 下用 plugin-fs / git command，
- * 浏览器无残留目录，直接跳过。任何单根删除失败仅告警、不影响其余清理（幂等）。 */
-async function cleanupSandbox(wfId: string): Promise<void> {
-  if (!isTauri) return;
-  const wts = gitWorktrees.get(wfId) ?? [];
-  if (wts.length > 0) {
-    try {
-      const { removeWorktree } = await import('../platform/git');
-      for (const wt of wts) {
-        try {
-          await removeWorktree(wt.cwd, wt.path, wt.branch);
-        } catch {
-          /* 忽略单条失败 */
-        }
-      }
-    } catch {
-      /* git 封装不可用：跳过 */
-    }
-    gitWorktrees.set(wfId, []);
-  }
-  const roots = sandboxRootsUsed.get(wfId);
-  if (!roots || roots.size === 0) return;
-  try {
-    const fs = await import('@tauri-apps/plugin-fs');
-    for (const base of roots) {
-      const dir = `${base}/.sandbox`;
-      try {
-        await fs.remove(dir, { recursive: true });
-      } catch {
-        // 目录不存在或已删：忽略
-      }
-    }
-    roots.clear();
-  } catch {
-    // 整体清理失败（如插件不可用）：静默放弃，下次运行会重新登记
-  }
-}
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -240,6 +194,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const running = wf.runStates[wfId]?.running ?? false;
   if (running && gen.activeRunId === gen.currentRunId) {
     if (opts.force) {
+      gen.abort?.abort();
       wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
     } else {
       wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
@@ -249,11 +204,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const myRun = ++gen.currentRunId; // 本次运行代次
   gen.activeRunId = myRun;
   syncDebugRun(wfId);
+  const resources = createRunResources(wfId, myRun);
+  let abortController: AbortController | null = null;
+  try {
   // 步骤 11 阶段 C：每次运行开始清空上次登记的沙箱根，避免跨运行累积误删
   if (opts.sandbox) {
-    sandboxRootsUsed.set(wfId, new Set());
-    gitWorktrees.set(wfId, []);
-    runWorktree.set(wfId, null);
     // Git Worktree 真隔离探测：仅 Tauri + workspaceDir 已知 + 显式请求 gitworktree 时尝试
     const runWorkspaceDir = wf.workspaceDir ?? null;
     if (opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir) {
@@ -265,8 +220,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
           const created = await addWorktree(runWorkspaceDir, wtPath, branch);
           if (created) {
             const wt = { cwd: runWorkspaceDir, path: wtPath, branch };
-            runWorktree.set(wfId, wt);
-            gitWorktrees.set(wfId, [wt]);
+            resources.worktree = wt;
+            resources.gitWorktrees = [wt];
             wf.addLog('info', `已创建 Git Worktree 强隔离沙箱：${wtPath}`);
           } else {
             wf.addLog('warn', 'Git Worktree 创建失败，降级为 copy 沙箱');
@@ -288,35 +243,19 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     return;
   }
 
-  // 子图扁平化：把 subgraph.ref 节点就地展开成内部节点，
-  // 之后整条执行链路（拓扑/缓存/剪枝/增量）看到的都是一张普通扁平图。
-  let nodes: FlowNode[];
-  let edges: FlowEdge[];
+  let plan: ReturnType<typeof buildRunPlan>;
   try {
-    const flat = flattenSubgraphs(graphNodes, graphEdges, wf.subgraphs);
-    nodes = flat.nodes;
-    edges = flat.edges;
+    plan = buildRunPlan(graphNodes, graphEdges, wf.subgraphs);
   } catch (err) {
     wf.addLog('error', err instanceof Error ? err.message : String(err));
     return;
   }
+  const { nodes, edges, stages, cyclic, loopGateIds, loopVarOf, maxLoopsOf, loopBodyOf, hasLoop } = plan;
   const expandedCount = nodes.length - graphNodes.length;
   if (expandedCount > 0) {
     wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
   }
 
-  // 控制流（control）边作为 stage 断点，不计入 DAG 环检测；data/task 边参与拓扑
-  const dataEdges = edges
-    .filter((e) => (e.data?.kind ?? 'data') !== 'control')
-    .map((e) => ({ source: e.source, target: e.target }));
-  const controlEdges = edges
-    .filter((e) => (e.data?.kind ?? 'data') === 'control')
-    .map((e) => ({ source: e.source, target: e.target }));
-  const { stages, cyclic } = topoStages(
-    nodes.map((n) => n.id),
-    dataEdges,
-    controlEdges,
-  );
   if (cyclic.length > 0) {
     const labels = cyclic
       .map((id) => nodes.find((n) => n.id === id)?.data.label ?? id)
@@ -351,31 +290,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   //  - force 节点恒在执行集；增量模式叠加 data.dirty；子图虚拟节点一律视为需执行。
   const { dirtySet } = computeExecutionSet(nodes, { ...opts, forceNodes: [...force] });
 
-  // 检测是否存在「循环迭代」结构：loopGate 的 pass(control) 分支指回其某个上游。
-  // 若存在，执行引擎将重复跑整个 stage 序列（多轮）；否则单轮即可。
-  const loopGates = nodes.filter((n) => n.data.typeId === 'flow.loopGate');
-  const loopGateIds = new Set(loopGates.map((n) => n.id));
-  // 每个 loopGate 的循环变量名（缺省 'i'）与最大轮数
-  const loopVarOf = new Map<string, string>();
-  const maxLoopsOf = new Map<string, number>();
-  for (const g of loopGates) {
-    loopVarOf.set(g.id, String((g.data.params as Record<string, unknown>)?.loopVar ?? 'i'));
-    maxLoopsOf.set(g.id, Number((g.data.params as Record<string, unknown>)?.maxLoops ?? 20));
-  }
-  // 计算 loopGate 的「循环体」节点集：从 gate.pass 出发、沿控制/数据边、在被 gate.control 回指之前可达的节点
-  const hasLoop = loopGates.length > 0 &&
-    controlEdges.some((e) => loopGateIds.has(e.source) && isReachable(e.target, e.source, edges));
-  // 预计算：每个 loopGate 的循环体下游集（用于每轮强制重算）
-  const loopBodyOf = new Map<string, Set<string>>();
-  if (hasLoop) {
-    for (const g of loopGates) {
-      const body = new Set<string>();
-      // 从 pass 端口出发可达、且能绕回 gate 的节点
-      const seed = controlEdges.filter((e) => e.source === g.id).map((e) => e.target);
-      for (const s of seed) collectReachable(s, g.id, edges, body);
-      loopBodyOf.set(g.id, body);
-    }
-  }
 
   // 强制重跑：清空全局节点缓存，使所有节点都重新执行（不复用上一轮 LLM 结果）
   if (opts.forceRerun) {
@@ -383,8 +297,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     wf.addLog('info', '已清空节点结果缓存，本轮将全量重新执行（强制重跑）');
   }
 
-  gen.abort = new AbortController();
-  const signal = gen.abort.signal;
+  abortController = new AbortController();
+  gen.abort = abortController;
+  const signal = abortController.signal;
   wf.setRunning(true, wfId);
   wf.resetStatuses(wfId);
   // 清空运行期成本账本，供 Companion 浮窗实时展示
@@ -659,24 +574,25 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // 使「开始」键可立刻跑下一个任务。循环工作流（hasLoop=true）依赖上一轮输出作为下一轮输入，
   // 指针不回退；失败 / 手动停止需用户介入，也不回退。
   const finishedClean = !hasLoop && failed.size === 0 && !signal.aborted;
-  if (finishedClean) {
+  if (finishedClean && myRun === gen.currentRunId) {
     const firstId = stages[0]?.[0] ?? nodes[0]?.id;
     if (firstId && firstId !== store.selectedNodeId) {
-      store.setSelected(firstId, store.activeWfId);
+      store.setSelected(firstId, wfId);
     }
     rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
   }
 
-  // 只有「最新且未被停止」的代次才允许复位 running / 清进度；
-  // 过期协程（被 stopWorkflow 抢占）静默退出，绝不回写 store 干扰新运行。
-  if (myRun === gen.activeRunId && myRun === gen.currentRunId) {
-    store.setRunning(false, wfId);
+  } finally {
+    // 只有最新代次才允许复位 UI/Abort；资源则始终按 runId 清理自己的那一份。
+    if (myRun === gen.activeRunId && myRun === gen.currentRunId) {
+      const latest = useWorkflowStore.getState();
+      latest.setRunning(false, wfId);
+      rt.setRunProgress({ active: false }, wfId);
+      if (abortController && gen.abort === abortController) gen.abort = null;
+    }
+    await cleanupRun(wfId, myRun);
+    syncDebugRun(wfId);
   }
-  rt.setRunProgress({ active: false }, wfId);
-  gen.abort = null;
-  // 步骤 11 阶段 C：运行结束（含被中止）统一清理本次用过的沙箱根下 `.sandbox/` 残留
-  if (opts.sandbox) await cleanupSandbox(wfId);
-  syncDebugRun(wfId);
 }
 
 async function executeNode(
@@ -711,10 +627,12 @@ async function executeNode(
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
-  const gen = genFor(wfId ?? store.activeWfId);
+  const targetWfId = wfId ?? store.activeWfId;
+  const targetRunId = myRun ?? genFor(targetWfId).currentRunId;
+  const gen = genFor(targetWfId);
   // 解耦接缝：节点内的「只写」输出动作（状态/日志/成本/资产/边）经 rt 收口；
   // 缺省退化为直接委托 store，保证接缝接入前行为不变。
-  const R = rt ?? createStoreRuntime(wfId ?? store.activeWfId);
+  const R = rt ?? createStoreRuntime(targetWfId);
 
   // 子图展开出来的虚拟节点在画布上并不存在，把它的状态回写到承载它的 subgraph.ref 节点上，
   // 这样用户能在画布上看到子图整体的运行/失败状态。
@@ -734,7 +652,7 @@ async function executeNode(
 
     const target = owner ?? rec.nodeId;
     const wf = useWorkflowStore.getState();
-    const cur = (wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId ?? '']?.nodes ?? [])).find((n) => n.id === target);
+    const cur = (targetWfId === wf.activeWfId ? wf.nodes : (wf.workflows[targetWfId]?.nodes ?? [])).find((n) => n.id === target);
     if (!cur) return;
     R.setNodeStatus(target, cur.data.status, {
       usage: accumulateUsage(cur.data.usage, rec),
@@ -781,38 +699,35 @@ async function executeNode(
   // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
   let sandbox: SandboxHandle | undefined;
   if (sandboxEnabled) {
-    const wfId = useWorkflowStore.getState().activeWfId;
-    const wf = useWorkflowStore.getState().workflows[wfId];
-    const workspaceDir = wf?.workspaceDir ?? null;
+    const currentStore = useWorkflowStore.getState();
+    const targetWorkflow = targetWfId === currentStore.activeWfId
+      ? { workspaceDir: currentStore.workspaceDir }
+      : currentStore.workflows[targetWfId];
+    const workspaceDir = targetWorkflow?.workspaceDir ?? null;
     const inBrowser = !isTauri;
 
     // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
     const rootDir = async (): Promise<string | null> => {
       if (inBrowser) return null;
       // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree（按 wfId）
-      const wid = wfId ?? store.activeWfId;
-      const wt = runWorktree.get(wid);
+      const resources = getRunResources(targetWfId, targetRunId);
+      const wt = resources?.worktree;
       if (wt) return wt.path;
       if (workspaceDir) return workspaceDir;
       try {
         const { appDataDir } = await import('@tauri-apps/api/path');
-        return `${await appDataDir()}/slime-mold/${wid}`;
+        return `${await appDataDir()}/slime-mold/${targetWfId}`;
       } catch {
         return null;
       }
     };
-    // 解析 + 登记：任何节点触达的真实根目录都登记到 sandboxRootsUsed，
-    // 供 runWorkflow 结束统一清理其下 `.sandbox/` 残留（步骤 11 阶段 C 收尾）。
+    // 解析 + 登记：任何节点触达的真实根目录都登记到当前 run 的资源对象，
+    // 供 runWorkflow 结束按 runId 清理其下 `.sandbox/` 残留。
     const rootDirAndTrack = async (): Promise<string | null> => {
       const base = await rootDir();
       if (base) {
-        const wid = wfId ?? store.activeWfId;
-        let set = sandboxRootsUsed.get(wid);
-        if (!set) {
-          set = new Set();
-          sandboxRootsUsed.set(wid, set);
-        }
-        set.add(base);
+        const resources = getRunResources(targetWfId, targetRunId);
+        resources?.sandboxRoots.add(base);
       }
       return base;
     };
@@ -1090,8 +1005,11 @@ async function executeNode(
     reportCost: (rec) => trackCost(rec),
     setPartial: (key, value) => {
       const target = owner ?? id;
-      const cur =
-        useWorkflowStore.getState().nodes.find((n) => n.id === target)?.data.outputs ?? {};
+      const st = useWorkflowStore.getState();
+      const targetNodes = targetWfId === st.activeWfId
+        ? st.nodes
+        : (st.workflows[targetWfId]?.nodes ?? []);
+      const cur = targetNodes.find((n) => n.id === target)?.data.outputs ?? {};
       setStatus(id, 'running', {
         outputs: { ...cur, [key]: value },
       });
@@ -1107,12 +1025,16 @@ async function executeNode(
     vars: {
       ...(extraVars ?? {}),
       ...useWorkflowStore.getState().projectVariables,
-      ...useWorkflowStore.getState().variables,
+      ...(targetWfId === useWorkflowStore.getState().activeWfId
+        ? useWorkflowStore.getState().variables
+        : (useWorkflowStore.getState().workflows[targetWfId]?.variables ?? {})),
     },
     // 资产：项目级库与当前工作流库合并（工作流级同名 id 覆盖项目级）
     assets: (() => {
       const st = useWorkflowStore.getState();
-      const wfAssets = st.workflows[st.activeWfId ?? '']?.assets ?? [];
+      const wfAssets = targetWfId === st.activeWfId
+        ? st.workflows[st.activeWfId ?? '']?.assets ?? []
+        : st.workflows[targetWfId]?.assets ?? [];
       const byId = new Map<string, AssetMeta>();
       for (const a of st.projectAssets) byId.set(a.id, a);
       for (const a of wfAssets) byId.set(a.id, a);
@@ -1178,6 +1100,7 @@ async function executeNode(
           ),
       },
     );
+    if (signal.aborted || targetRunId !== gen.currentRunId) return;
     outputsMap.set(id, outputs ?? {});
     // 写入缓存：以「类型+参数+上游输出」为 key，下游命中时自动复用
     const key = cacheKey(node.data.typeId, node.data.params, inputs);
@@ -1196,6 +1119,7 @@ async function executeNode(
     });
     if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
   } catch (err) {
+    if (signal.aborted || targetRunId !== gen.currentRunId) return;
     // 插件/节点异常隔离：捕获并标记失败，不影响主应用
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);

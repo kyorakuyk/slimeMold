@@ -520,7 +520,7 @@
 - ✅ **阶段 A（低成本，逻辑层模拟）**：已落地。`coord.resolver` 新增 `mergeMode='content'` 模式，接收 `FilePatch`（`{path, before, after, readSnapshot}`），做内容级合并/冲突检查（同 path 行区间不重叠直接拼合；区间重叠或 `readSnapshot.hash` 不一致归入 `needsArbitration`）；无冲突输出 `MergeResult`（建议下游接 Validator，对应 11.6 方案①）。`FilePatch`/`MergeResult` 类型见 types.ts。
 - ✅ **阶段 B（council 仲裁节点 + 回流回路）**：已落地。`coord.council` 节点（nodeCouncil）实现：并行层多议员 `ctx.llm` 评估 + 独立合成智能体提炼 single verdict + `consensus` 评级（`unanimous`/`majority`/`split`）+ 部分失败容错（对应 11.7.1 映射）。回流回路仍可经 `control` 边回指 `dispatch.split`（control 边语义已支持，见 builtin.ts loopGate 说明）。
 - ✅ **阶段 C（真沙箱，已落地 2026-08-04，2026-08-04 二次增强）**：`RunOptions.sandbox` 开关 + `ExecContext.sandbox`（SandboxHandle）注入。`executeNode` 在 `sandbox:true` 时为每个节点构造隔离目录 `workspaceDir/.sandbox/<nodeId>/`，并行 Worker 写文件互不踩踏；协调者（coord.resolver / coord.council）经 `commitLanes(laneIds)` 把各上游车道沙箱汇总落地主工作区。`tool.writeFile` 检测到 `ctx.sandbox` 即写沙箱副本（标记 `inWorkspace:false`）；浏览器环境退化为内存态。运行菜单新增「沙箱隔离运行」入口；示例 `examples/test-realsandbox.workflow.json`（双 Worker 并行写同一 result.txt → resolver 汇总落盘）可演示。
-  - **自动清理（本轮新增）**：`sandboxRootsUsed` 集合登记本次运行真实根，`runWorkflow` 结束（含被中止）经 `cleanupSandbox()` 统一递归删除 `.sandbox/` 残留，避免磁盘堆积；模块级幂等、可重复调用。
+  - **自动清理（本轮新增）**：运行资源按 `wfId + runId` 登记真实根，`runWorkflow` 结束（含被中止）经 `cleanupRun()` 只清理本次运行的 `.sandbox/` 与 Git Worktree，避免旧协程误删新运行资源。
   - **FilePatch 打通（本轮新增）**：`tool.writeFile` 在沙箱模式下额外产出 `FilePatch` 端口（`{path, before(写前快照), after, readSnapshot}`），`before` 为空表示新建、非空表示覆盖；协调者 `resolveByContent` 消费该 patch 做内容级合并（阶段 A↔C 打通），`commitLanes` 仍负责落盘。
   - **Git Worktree 强隔离（本轮新增）**：`RunOptions.sandboxMode: 'copy' | 'gitworktree'`；为 `gitworktree` 时经 Rust `run_git` command（std::process::Command 调系统 git）创建 detached worktree（`.slime-wt/<branch>`），所有节点沙箱根指向该 worktree，结束统一 `git worktree remove --force` 清理。仅在 Tauri 桌面端 + 当前 workspaceDir 为 git 仓库时启用，否则自动降级 `copy` 并记日志。TopBar 新增「Git Worktree 强隔离运行」菜单项；`src/platform/git.ts` 封装 `isGitRepo/addWorktree/removeWorktree`。
   - **阶段 D（节点能力分级 Capability，本轮新增 2026-08-04）**：`NodeDefinition.minCapability`（`CapabilityLevel`：`compute | io | sandbox_write | coordinator | system`）。`executor.applyCapability(ctx, def, opts)` 在 ctx 构造后按等级裁剪注入（compute 禁 llm/storage/sandbox；io 禁 sandbox；sandbox_write 剥离 commitAll/commitLanes 且收口 addAsset 为 `inWorkspace:false`；coordinator/system 全权限）。`resolveCapability` 在未显式声明时按 `typeId` 前缀推断默认等级（coord.→coordinator、tool.writeFile/fs.→sandbox_write、agent./ai./llm/http/io./tool./worker./architect./dispatch.plan/flow.map/image.→io、其余→compute）。**插件节点默认 `io` 级**（loader 注入，避免第三方越权拿落地权）。`ctx.storage` 进一步细化到节点实例级 scope（`pluginId:typeId:nodeId`），同插件不同实例存储隔离。
@@ -529,6 +529,32 @@
 - `coord.resolver` 现为「检测 + 输出建议」，需升级为「接收 FilePatch / 内容级合并 + 冲突出口接 council」（不破坏现有 `merged/conflicts/serialOrder` 出口，新增合并产物与 council 出口）。
 - 步骤 8 阶段 A 已把 task 边 scope 写回，11.1 的并存抽象层直接消费；步骤 9 的并查集自动串行化（`autoSerialize` 一旦实现）与 11.2① 一致。
 - `council` 节点分类可归入「协调」；回流控制流复用现有 `control` 边 + `topoStages` stage 边界语义。
+
+##### 11.5.1 执行引擎高风险重构：暂缓，按产品需求触发
+
+> 当前判断（2026-08-07）：高风险拆分有长期架构价值，但暂时不以「继续缩短
+> `executor.ts`」为目标推进。现有运行资源生命周期已完成按 `wfId + runId` 隔离，
+> 图计划与资源管理也已拆出；继续改造调度主循环的收益暂低于回归风险。
+
+- **当前状态：⏸ 暂缓**。不继续把 `runWorkflow` 的分层调度循环机械拆成多个文件。
+- **已完成的低风险基础**：
+  - `src/engine/runResources.ts`：运行资源创建、登记和按运行代次清理；
+  - `src/engine/runPlan.ts`：子图展开、边分类、拓扑分层与 loop 计划；
+  - `runWorkflow` 的 `try/finally` 收尾、旧协程代次保护、非激活工作流路径修正。
+- **只有出现以下产品需求时才启动高风险重构**：
+  - 同时支持桌面 UI、CLI/headless、远程 Worker 或 Rust 后端共用执行内核；
+  - 需要暂停/恢复、任务队列、断点续跑或更复杂的多运行调度；
+  - 运行态与 Zustand 解耦已经成为新功能的明确阻碍。
+- **启动前置条件**：先补齐真实运行生命周期测试：
+  - `stop → restart`；
+  - `force restart`；
+  - 两个工作流并行运行；
+  - 节点忽略 Abort 后返回；
+  - Git Worktree 创建后拓扑失败/异常退出；
+  - 旧运行结束时新运行已经启动。
+- **未来目标边界**：若启动，优先围绕单次运行上下文设计：
+  `RunController → RunPlan / RunState / Scheduler / ResourceManager / ExecutionRuntime`；
+  不以物理拆文件数量作为完成标准。
 
 **✅ 已落地（2026-08-04）**：A、B 并行实现完成，tsc 通过。`coord.resolver` 支持 FilePatch 内容级合并（mergeMode 参数切换旧 scope 逻辑）；新增 `coord.council` 仲裁节点（并行议员 + 独立合成 + 共识评级 + 容错）。回流回路（control 边 → dispatch.split）链路已就绪，待实际工作流编排时串联。
 

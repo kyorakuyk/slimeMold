@@ -25,7 +25,7 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
   return r.code === 0 && r.stdout.trim() === 'true';
 }
 
-/** 创建一个 detached git worktree 指向 HEAD，返回其路径。失败返回 null（调用方降级到 copy 沙箱）。 */
+/** 创建一个带临时分支的 git worktree 指向 HEAD，返回其路径。失败返回 null（调用方降级到 copy 沙箱）。 */
 export async function addWorktree(cwd: string, path: string, branch: string): Promise<string | null> {
   const r = await runGit(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], cwd);
   if (r.code !== 0) return null;

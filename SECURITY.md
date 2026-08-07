@@ -60,9 +60,9 @@ SlimeMold 是**本地桌面 Agent 工作流编辑器**（Tauri 2 + React + Vite�
 
 ### P0 —— 低成本、高收益（✅ 已全部完成，2026-08-07，commit d48401e）
 - [x] **S1 CSP**：`tauri.conf.json` 已配 CSP（self-only + 允许的 LLM/asset 域），替代 `null`。
-- [x] **S2 capabilities 收窄**：`path: "**"` → 限定 `$APPDATA/$HOME/$DOCUMENT/$RESOURCE` + 项目目录 `D:/Agent proj/**`；fs 权限按实际所需最小集。
+- [x] **S2 capabilities 收窄**：`path: "**"` → 限定 `$APPDATA/$HOME/$DOCUMENT/$RESOURCE`；移除开发机专用硬编码目录。Tauri dialog 选择目录后由官方插件自动加入运行时 scope。
 - [x] **S3 HTTP 收窄**：收敛到 `https://*/*` + 本地 Ollama（`http://127.0.0.1:11434/*`）。
-- [x] **S4 run_git 约束**：校验 `cwd` 必填 + 存在性 + `..` 逃逸；子命令白名单；拒绝破坏性命令（reset/clean/rm/push）与危险 flag（--hard/--force/-f/--delete/-D）。
+- [x] **S4 run_git 约束**：不再提供通用 Git 子命令白名单，只接受仓库探测，以及 `.slime-wt/slime-sandbox-*` 的精确创建、移除和临时分支清理命令形状。
 
 ### P1 —— 信任模型与文档
 - [x] **S5 信任声明**：✅ 已在 `loader.ts` 注释 + `README.md`「插件安全与信任模型」明确「插件运行于主 WebView，视为可信本地代码；仅加载本机来源；网络插件需升级进程级沙箱」（2026-08-07）。

@@ -102,7 +102,9 @@ export async function pickProjectFile(): Promise<string | null> {
       multiple: false,
       title: '选择项目文件夹（含 .slimemold 的目录）',
     });
-    if (dir) return Array.isArray(dir) ? dir[0] ?? null : dir;
+    if (dir) {
+      return Array.isArray(dir) ? dir[0] ?? null : dir;
+    }
     // 退回旧版单文件
     const file = await open({
       directory: false,

@@ -28,8 +28,7 @@
                 { "path": "$APPDATA/**" },
                 { "path": "$HOME/**" },
                 { "path": "$DOCUMENT/**" },
-                { "path": "$RESOURCE/**" },
-                { "path": "D:/Agent proj/**" }
+                { "path": "$RESOURCE/**" }
             ]
         },
         "dialog:default",
