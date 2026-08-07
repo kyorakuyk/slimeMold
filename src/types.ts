@@ -388,7 +388,26 @@ export interface ExecContext {
    * 即直接连入本节点的源节点。供 commitLanes 汇总这些 Worker 的沙箱产物到主工作区。
    */
   sandboxLanes?: string[];
+  /**
+   * 实时接管（阶段 D）：节点可请求人工介入——挂起本节点执行，直到用户在 UI
+   * 提交结果（resolved）或取消（cancelled）。仅显式调用此能力的节点生效；
+   * 默认不注入此能力时节点正常自动执行，行为完全不变。
+   */
+  intervene?(request: InterventionRequest): Promise<InterventionResult>;
 }
+
+/** 实时接管请求（阶段 D）：节点请求人工介入的输入。 */
+export interface InterventionRequest {
+  /** 请求说明（为何需要人工介入），展示给用户 */
+  message: string;
+  /** 可选的预填结果（如模型中途产出的草稿），用户可修改后提交 */
+  defaultResult?: string;
+}
+
+/** 实时接管结果（阶段 D）：人工介入的两种结束方式。 */
+export type InterventionResult =
+  | { kind: 'resolved'; result: string }
+  | { kind: 'cancelled'; error?: string };
 
 /**
  * 沙箱句柄：把"并行改同一份文件"的竞态收敛为"各自改副本、协调者合并"。

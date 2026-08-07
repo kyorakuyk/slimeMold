@@ -45,6 +45,13 @@
   <string name="runHistory.restore">恢复</string>
   <string name="runHistory.restoreTitle">把最近一次运行的节点结果恢复回画布（成功复用、失败续跑）</string>
 
+  <!-- InterventionModal -->
+  <string name="intervention.title">人工接管</string>
+  <string name="intervention.count">（共 {{count}} 个请求）</string>
+  <string name="intervention.placeholder">在此输入该节点的结果…</string>
+  <string name="intervention.submit">提交结果</string>
+  <string name="intervention.cancel">取消</string>
+
   <!-- PluginPanel -->
   <string name="plugins.title">插件管理</string>
   <string name="plugins.subtitle">以 JS/TS 插件包扩展自定义工具节点</string>

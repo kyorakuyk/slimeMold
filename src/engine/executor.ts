@@ -32,6 +32,7 @@ import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentForRunContext } from '../agents/agentRouter';
 import { buildCheckpoint } from './checkpoint';
+import { requestIntervention, cancelInterventionsForRun } from './intervention';
 import {
   cleanupRun,
   createRunResources,
@@ -119,6 +120,8 @@ export function stopWorkflow(wfId?: string): void {
   wf.setRunning(false, id);
   wf.resetStatuses(id);
   wf.addLog('info', `已停止工作流运行：${id}`);
+  // 阶段 D：取消该运行残留的待接管请求（防挂起泄漏）
+  cancelInterventionsForRun(id, abortedRunId);
   // 运行级中止事件：立即发出（被终止的旧协程 isCurrentRun=false，不再重复发）
   emitRun(getRunBus(), 'run.aborted', { wfId: id, runId: abortedRunId }, { reason: 'user-stopped' });
 }
@@ -648,6 +651,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       if (abortController && gen.abort === abortController) gen.abort = null;
     }
     await cleanupRun(wfId, myRun);
+    // 阶段 D：无论正常/异常结束，取消本运行残留的待接管请求（防挂起泄漏）
+    cancelInterventionsForRun(wfId, myRun);
     syncDebugRun(wfId);
   }
 }
@@ -1189,6 +1194,22 @@ async function executeNode(
             : e,
         ),
       );
+    },
+    // 阶段 D 实时接管：节点请求人工介入 → 挂起直至 UI 提交/取消。
+    // 挂起点绑定 wfId+runId+nodeId，运行结束/停止时由 cancelInterventionsForRun 统一放行。
+    intervene: async (req) => {
+      if (myRun !== gen.currentRunId) {
+        // 代次已过期：不再挂起，直接以取消返回（旧协程不应阻塞）
+        return { kind: 'cancelled', error: '运行已停止，介入请求被取消' };
+      }
+      return requestIntervention({
+        wfId: targetWfId,
+        runId: targetRunId,
+        nodeId: owner ?? id,
+        label: node.data.label,
+        typeId: node.data.typeId,
+        ...req,
+      });
     },
   };
 

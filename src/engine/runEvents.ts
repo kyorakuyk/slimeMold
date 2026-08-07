@@ -25,7 +25,8 @@ export type RunEventKind =
   | 'node.progress'
   | 'node.completed'
   | 'node.failed'
-  | 'node.skipped';
+  | 'node.skipped'
+  | 'node.intervene';
 
 /** 统一事件负载：所有字段携带运行三元组定位（wfId + runId + nodeId）。 */
 export interface RunEvent {
@@ -114,7 +115,13 @@ export function emitRun(
 /** 节点级事件便捷构造器。 */
 export function emitNode(
   bus: EventBus,
-  kind: 'node.started' | 'node.progress' | 'node.completed' | 'node.failed' | 'node.skipped',
+  kind:
+    | 'node.started'
+    | 'node.progress'
+    | 'node.completed'
+    | 'node.failed'
+    | 'node.skipped'
+    | 'node.intervene',
   ctx: { wfId: string; runId: number },
   nodeId: string,
   payload?: Record<string, unknown>,

@@ -11,6 +11,7 @@ import ExamplesModal from './components/ExamplesModal';
 import WorkflowWizard from './components/WorkflowWizard';
 import WelcomeModal from './components/WelcomeModal';
 import NewProjectModal from './components/NewProjectModal';
+import InterventionModal from './components/InterventionModal';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
@@ -445,6 +446,8 @@ export default function App() {
         )}
         {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} onNewProject={() => setNewProjectOpen(true)} />}
         {newProjectOpen && <NewProjectModal onClose={() => setNewProjectOpen(false)} />}
+        {/* 阶段 D 实时接管：节点请求人工介入时浮出，提交/取消放行挂起的执行 */}
+        <InterventionModal />
         {dragActive && (
           <div
             className="pointer-events-none fixed inset-0 z-[9999] flex items-center justify-center"

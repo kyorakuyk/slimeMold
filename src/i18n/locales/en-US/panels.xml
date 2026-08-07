@@ -45,6 +45,13 @@
   <string name="runHistory.restore">Restore</string>
   <string name="runHistory.restoreTitle">Restore latest run node results to canvas (reuse success, resume failed)</string>
 
+  <!-- InterventionModal -->
+  <string name="intervention.title">Human Takeover</string>
+  <string name="intervention.count">({{count}} requests)</string>
+  <string name="intervention.placeholder">Enter the result for this node…</string>
+  <string name="intervention.submit">Submit</string>
+  <string name="intervention.cancel">Cancel</string>
+
   <!-- PluginPanel -->
   <string name="plugins.title">Plugins</string>
   <string name="plugins.subtitle">Extend custom tool nodes via JS/TS plugin packages</string>
