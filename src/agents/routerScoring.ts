@@ -22,25 +22,55 @@ export interface ModelPrice {
   out: number;
 }
 
-/** 内置价格表（粗粒度，按常见主流模型；未知模型走默认值）。key 小写、支持子串匹配。 */
+/**
+ * 内置价格表（按 2026-07 LLM Price Watch + 官方定价页快照更新；未知模型走默认值）。
+ * key 小写、支持子串匹配；本地 Ollama 系列按 0 计价（无 API 费用）。
+ */
 export const MODEL_PRICE_PER_1M: Record<string, ModelPrice> = {
+  /* ---- OpenAI ---- */
   'gpt-4o-mini': { in: 0.15, out: 0.6 },
   'gpt-4o': { in: 2.5, out: 10 },
+  'gpt-4.1-mini': { in: 0.4, out: 1.6 },
   'gpt-4.1': { in: 2, out: 8 },
   'gpt-4': { in: 30, out: 60 },
+  'gpt-5.5': { in: 5, out: 30 },
+  'gpt-5': { in: 1.25, out: 10 },
+  'o4-mini': { in: 1.1, out: 4.4 },
+  'o3-mini': { in: 1.1, out: 4.4 },
+  'o3': { in: 2, out: 8 },
+  'o1': { in: 15, out: 60 },
+
+  /* ---- Anthropic（Claude）---- */
+  'claude-haiku': { in: 1, out: 5 }, // Haiku 4.5：$1/$5
+  'claude-sonnet': { in: 2, out: 10 }, // Sonnet 5：$2/$10
+  'claude-opus': { in: 5, out: 25 }, // Opus 4.8：$5/$25
+  'claude-fable': { in: 10, out: 50 }, // Fable 5：$10/$50
+
+  /* ---- Google（Gemini）---- */
+  'gemini-2.5-flash': { in: 0.15, out: 0.6 },
+  'gemini-3-flash': { in: 0.5, out: 3 },
+  'gemini-3.1-pro': { in: 2, out: 12 },
+  'gemini-pro': { in: 2, out: 12 },
+
+  /* ---- DeepSeek ---- */
   'deepseek-chat': { in: 0.14, out: 0.28 },
   'deepseek-v3': { in: 0.27, out: 1.1 },
   'deepseek-r1': { in: 0.55, out: 2.19 },
   'deepseek-reasoner': { in: 0.55, out: 2.19 },
-  'claude-sonnet': { in: 3, out: 15 },
-  'claude-opus': { in: 15, out: 75 },
-  'claude-haiku': { in: 0.8, out: 4 },
-  'o1': { in: 15, out: 60 },
-  'o3': { in: 2, out: 8 },
-  'llama3.1:8b': { in: 0, out: 0 }, // 本地 Ollama，无 API 费用
-  'qwen2.5': { in: 0, out: 0 }, // 本地 Ollama 系列
+
+  /* ---- xAI（Grok）---- */
+  'grok-4.1': { in: 0.2, out: 0.5 },
+  'grok-4': { in: 3, out: 15 },
+  'grok-3-mini': { in: 0.6, out: 4 },
+  'grok-3': { in: 3, out: 15 },
+
+  /* ---- 本地 Ollama（自托管，无 API 费用）---- */
+  'llama3.1:8b': { in: 0, out: 0 },
   'llama3': { in: 0, out: 0 },
+  'qwen2.5': { in: 0, out: 0 },
+  'qwen3': { in: 0, out: 0 },
   'mistral': { in: 0, out: 0 },
+  'deepseek-r1:7b': { in: 0, out: 0 },
 };
 
 /** 未知模型的默认价（中等偏上，避免误判为超便宜/超贵）。 */
@@ -60,12 +90,14 @@ export function modelPrice(model: string): ModelPrice {
 /** 模型能力档位（按名称关键字启发式；未知归 standard）。 */
 export function modelTier(model: string): 'light' | 'standard' | 'heavy' {
   const m = (model ?? '').toLowerCase();
+  // gpt-4.1-mini / o3-mini / gemini-*-flash 等带后缀的轻量变体先按 light 判定。
+  // 注意 `mini` 必须是 `-mini` 词边界——"gemini" 本身含 "mini"，裸 mini 会误伤旗舰 gemini。
   if (
-    /(opus|gpt-4\.1|o1|o3|deepseek-r1|deepseek-reasoner|claude-opus)/.test(m)
-  ) return 'heavy';
-  if (
-    /(mini|flash|3b|7b|8b|llama3|qwen2\.5|mistral|haiku|0\.5b)/.test(m)
+    /(-mini|flash|3b|7b|8b|llama3|qwen2\.5|qwen3|mistral|haiku|0\.5b|grok-4\.1|grok-3-mini|gemini.*flash)/.test(m)
   ) return 'light';
+  if (
+    /(opus|fable|gpt-4\.1(?!-mini)|gpt-5|o1|o3(?!-mini)|deepseek-r1|deepseek-reasoner|claude-opus|claude-fable|grok-(4|4\.5)(?!\.1)|gemini-3\.1-pro)/.test(m)
+  ) return 'heavy';
   return 'standard';
 }
 

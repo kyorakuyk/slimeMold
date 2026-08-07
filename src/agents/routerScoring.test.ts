@@ -17,10 +17,21 @@ import type { AgentConfig } from '../types';
 const ag = (id: string, model: string): AgentConfig =>
   ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model } as AgentConfig);
 
-describe('modelPrice 价格表', () => {
+describe('modelPrice 价格表（2026-07 快照）', () => {
   it('精确匹配已知模型', () => {
     expect(modelPrice('gpt-4o-mini').in).toBe(0.15);
     expect(modelPrice('deepseek-chat').out).toBe(0.28);
+    // 最新快照：Haiku 4.5 $1/$5、Opus 4.8 $5/$25、Sonnet 5 $2/$10
+    expect(modelPrice('claude-haiku-4-5')).toEqual({ in: 1, out: 5 });
+    expect(modelPrice('claude-opus-4-8')).toEqual({ in: 5, out: 25 });
+    expect(modelPrice('claude-sonnet-5')).toEqual({ in: 2, out: 10 });
+  });
+
+  it('新模型已收录（Gemini/Grok/GPT-5 系）', () => {
+    expect(modelPrice('gemini-2.5-flash')).toEqual({ in: 0.15, out: 0.6 });
+    expect(modelPrice('gemini-3.1-pro')).toEqual({ in: 2, out: 12 });
+    expect(modelPrice('grok-4.1')).toEqual({ in: 0.2, out: 0.5 });
+    expect(modelPrice('gpt-5.5')).toEqual({ in: 5, out: 30 });
   });
 
   it('子串匹配（带供应商前缀/后缀）', () => {
@@ -30,6 +41,7 @@ describe('modelPrice 价格表', () => {
 
   it('本地 Ollama 模型 0 计价', () => {
     expect(modelPrice('qwen2.5:3b')).toEqual({ in: 0, out: 0 });
+    expect(modelPrice('qwen3:8b')).toEqual({ in: 0, out: 0 });
   });
 
   it('未知模型走默认价', () => {
@@ -43,10 +55,18 @@ describe('modelTier 模型档位', () => {
     expect(modelTier('deepseek-r1')).toBe('heavy');
     expect(modelTier('gpt-4.1')).toBe('heavy');
     expect(modelTier('o3')).toBe('heavy');
+    expect(modelTier('gpt-5.5')).toBe('heavy');
+    expect(modelTier('gemini-3.1-pro')).toBe('heavy');
+    expect(modelTier('claude-fable-5')).toBe('heavy');
+    expect(modelTier('grok-4')).toBe('heavy'); // 旗舰（$3/$15）
   });
 
-  it('light：轻量/本地模型', () => {
+  it('light：轻量/本地模型（含带后缀轻量变体）', () => {
     expect(modelTier('gpt-4o-mini')).toBe('light');
+    expect(modelTier('gpt-4.1-mini')).toBe('light');
+    expect(modelTier('o4-mini')).toBe('light');
+    expect(modelTier('grok-4.1')).toBe('light');
+    expect(modelTier('gemini-2.5-flash')).toBe('light');
     expect(modelTier('qwen2.5:3b')).toBe('light');
     expect(modelTier('llama3.1:8b')).toBe('light');
   });
