@@ -30,6 +30,7 @@ import { readProjectText } from '../platform/env';
 import { MEMORY_REL } from '../agents/memoryIo';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
+import { resolveAgentForRunContext } from '../agents/agentRouter';
 import {
   cleanupRun,
   createRunResources,
@@ -987,10 +988,43 @@ async function executeNode(
       warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
     llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
-      const agent = useWorkflowStore
+      // B：AgentRouter 运行时决策——显式 agentId 有效则直接用；
+      // 缺失/失效时查项目级路由表 → fallback 链 → 默认 agent → 首个可用，逐级兜底，
+      // 使节点「没绑 agent / 绑的 agent 被删」不再白白抛错，路由表运行时真正生效。
+      const requestedAgentId = agentId;
+      let agent = useWorkflowStore
         .getState()
-        .agents.find((a) => a.id === agentId);
-      if (!agent) throw new Error(`智能体不存在: ${agentId}`);
+        .agents.find((a) => a.id === requestedAgentId);
+      if (!agent) {
+        const st = useWorkflowStore.getState();
+        const goal =
+          targetWfId === st.activeWfId
+            ? st.workflowName
+            : (st.workflows[targetWfId]?.name ?? '');
+        const decision = resolveAgentForRunContext(
+          { agentId: requestedAgentId, typeId: node.data.typeId },
+          {
+            agents: st.agents,
+            routeTable: st.agentRouteTable ?? {},
+            defaultAgentId: st.defaultAgentId ?? null,
+          },
+          goal ? { goal } : null,
+        );
+        agent = decision.agent;
+        // 路由决策进入事件流（JobBoard 忽略 node.progress，不污染看板；供历史/调试消费）
+        emitNode(runBus, 'node.progress', nodeCtx, id, {
+          progressKind: 'agent-route',
+          requestedAgentId: requestedAgentId ?? '',
+          agentId: decision.agent.id,
+          reason: decision.reason,
+          chain: decision.chain,
+          tier: decision.tier,
+        });
+        R.addLog(
+          'info',
+          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}不可用，AgentRouter 已路由到「${decision.agent.name}」（${decision.reason}）`,
+        );
+      }
       const effective = modelOverride
         ? { ...agent, model: modelOverride }
         : agent;
@@ -1001,7 +1035,7 @@ async function executeNode(
         trackCost({
           nodeId: id,
           nodeLabel: node.data.label,
-          agentId,
+          agentId: agent.id,
           model: effective.model,
           usage,
           durationMs: Math.round(performance.now() - callStart),
