@@ -180,8 +180,8 @@ export default function StatusBar({
                   <li key={r.id} className="flex gap-3">
                     <span style={{ color: 'var(--sm-ink-faint)' }}>{r.startedAt}</span>
                     <span>{r.note}</span>
-                    <span style={{ color: r.ok ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
-                      {r.ok ? t('history.ok') : t('history.fail')}
+                    <span style={{ color: r.status === 'success' ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
+                      {r.status === 'success' ? t('history.ok') : t('history.fail')}
                     </span>
                     {r.cost ? (
                       <span style={{ color: 'var(--sm-ink-faint)' }} title={t('history.tokens.title')}>

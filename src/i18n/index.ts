@@ -10,12 +10,14 @@ import { XMLParser } from 'fast-xml-parser';
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
 // Vite 构建期批量收集所有语言的 XML 文件（含 namespace 目录结构）。
-// 在非 Vite 环境（如 headless CLI / tsx 单文件运行）下 import.meta.glob 不存在，
-// 安全降级为空对象——i18n 资源留空，不影响引擎/节点执行逻辑。
-const globFn = (import.meta as unknown as { glob?: (pattern: string, opts: Record<string, unknown>) => Record<string, unknown> }).glob;
-const xmlModules = (globFn
-  ? globFn('./locales/*/*.xml', { query: '?raw', import: 'default', eager: true })
-  : {}) as Record<string, string>;
+// 必须让 Vite 直接看到字面量 `import.meta.glob(...)`，否则它不会把 XML
+// 资源打进 bundle。这里不能在运行时判断 import.meta.glob：Vite 会把它
+// 编译成静态模块映射，而浏览器运行时并不存在这个函数本身。
+const xmlModules = import.meta.glob('./locales/*/*.xml', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
 
 function buildResources(): Record<string, Record<string, Record<string, string>>> {
   const resources: Record<string, Record<string, Record<string, string>>> = {};
@@ -29,8 +31,13 @@ function buildResources(): Record<string, Record<string, Record<string, string>>
     const entries: Record<string, string> = {};
     const list = Array.isArray(strings) ? strings : [strings];
     for (const node of list) {
-      if (node && typeof node['#text'] === 'string' && typeof node['@_name'] === 'string') {
-        entries[node['@_name']] = node['#text'];
+      // fast-xml-parser returns plain text nodes as strings unless the node
+      // has attributes/structured content. XML resources use both forms
+      // across locales, so accept either representation.
+      const name = typeof node === 'object' && node !== null ? node['@_name'] : undefined;
+      const value = typeof node === 'string' ? node : node?.['#text'];
+      if (typeof name === 'string' && typeof value === 'string') {
+        entries[name] = value;
       }
     }
     resources[lang] = resources[lang] ?? {};
@@ -68,10 +75,21 @@ export function langLabel(lang: string): string {
 i18n.use(initReactI18next).init({
   resources,
   fallbackLng,
+  defaultNS: 'ui',
+  // 基础组件使用默认 ui namespace，但状态栏/检查器等 key 位于各自 XML namespace。
+  fallbackNS: ['statusbar', 'inspector', 'panels', 'modals', 'agents', 'settings'],
   // 初始语言：持久化的 locale（viewStore 会调用 changeLanguage）；无则从浏览器取，再回退到 fallbackLng
   lng: fallbackLng,
+  // XML 中的 key 使用 `topbar.file` 这种扁平命名；不要让 i18next 把 `.` 当作嵌套对象路径。
+  keySeparator: false,
   interpolation: { escapeValue: false },
   returnNull: false,
 });
+
+if (import.meta.env.DEV) {
+  (globalThis as typeof globalThis & {
+    __slimeMoldI18n?: typeof i18n;
+  }).__slimeMoldI18n = i18n;
+}
 
 export default i18n;

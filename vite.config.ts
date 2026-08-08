@@ -16,6 +16,10 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     allowedHosts: true,
+    // 不要监视 Rust 编译产物，避免和 cargo 编译抢锁导致 EBUSY 崩溃
+    watch: {
+      ignored: ['**/src-tauri/target/**'],
+    },
     // 禁用 dev 服务器缓存，避免 Tauri WebView 命中旧模块（修复 TDZ/HMR 不刷新）
     headers: {
       'Cache-Control': 'no-store, max-age=0, must-revalidate',
