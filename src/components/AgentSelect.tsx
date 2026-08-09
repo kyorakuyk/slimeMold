@@ -116,8 +116,8 @@ export function AgentSelect({
       <button
         type="button"
         onClick={toggleOpen}
-        className="sm-input flex min-h-[30px] cursor-pointer items-center gap-1 text-left"
-        style={{ padding: '4px 8px' }}
+        className="sm-input flex min-h-[30px] w-full cursor-pointer items-start gap-1 text-left"
+        style={{ padding: '4px 8px', height: 'auto' }}
       >
         {multiple && selectedIds.length > 0 ? (
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -155,7 +155,7 @@ export function AgentSelect({
         {multiple && selectedIds.length > 0 && (
           <button
             type="button"
-            className="opacity-50 hover:opacity-100"
+            className="shrink-0 opacity-50 hover:opacity-100"
             onClick={(e) => {
               e.stopPropagation();
               removeAll();
