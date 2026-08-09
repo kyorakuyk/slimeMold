@@ -1,6 +1,24 @@
 import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
 import { chatWithAgent } from './agentManager';
 import { useViewStore } from '../store/viewStore';
+import { loadCredential, loadEndpointKey } from './credentialStore';
+
+/**
+ * 按 credentialKey 解析真实 apiKey。
+ * 工作流/agent 序列化时只保留 credentialKey（明文 apiKey 被剥离），
+ * 运行时必须在此回填，否则 provider 会带着 `Bearer undefined` 请求而失败。
+ * 优先从系统密钥库（saveCredential 写入）取，其次从接入点库（saveEndpoint 写入）取。
+ */
+async function resolveApiKey(agent: AgentConfig): Promise<string | undefined> {
+  if (agent.apiKey) return agent.apiKey;
+  const ck = agent.credentialKey;
+  if (!ck) return undefined;
+  const fromCred = await loadCredential(ck);
+  if (fromCred) return fromCred;
+  const fromEp = await loadEndpointKey(ck);
+  if (fromEp) return fromEp;
+  return undefined;
+}
 
 /** 解析生效的代理：agent 级 proxyUrl 优先，其次全局代理；均空则直连 */
 function resolveProxy(agent: AgentConfig): string {
@@ -42,7 +60,12 @@ class FrontendChannel implements LLMChannel {
   readonly mode = 'frontend' as const;
   async chat(req: LLMRequest): Promise<LLMResponse> {
     const proxy = resolveProxy(req.agent);
-    const agent = proxy && !req.agent.proxyUrl?.trim() ? { ...req.agent, proxyUrl: proxy } : req.agent;
+    const key = await resolveApiKey(req.agent);
+    const agent: AgentConfig = {
+      ...req.agent,
+      ...(key ? { apiKey: key } : {}),
+      ...(proxy && !req.agent.proxyUrl?.trim() ? { proxyUrl: proxy } : {}),
+    };
     return chatWithAgent(agent, req.messages, req.signal, req.onToken);
   }
 }
