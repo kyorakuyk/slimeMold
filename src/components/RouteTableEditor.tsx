@@ -47,17 +47,19 @@ export function RouteTableEditor() {
           const entry = agentRouteTable[key] ?? {};
           return (
             <div key={key} className="rounded border border-line bg-white px-2.5 py-2">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-[12px] font-medium text-ink">{t(`route.cat.${key}`)}</span>
-                <span className="text-[10px] text-ink-faint">{t(`route.cat.${key}Hint`)}</span>
+              <div className="mb-1.5 flex items-baseline gap-2">
+                <span className="text-[12px] font-semibold text-ink">{t(`route.cat.${key}`)}</span>
+                <span className="text-[10px] opacity-60">{t(`route.cat.${key}Hint`)}</span>
               </div>
               <div className="flex items-center gap-2">
                 <select
-                  className="sm-input min-w-0 flex-1 cursor-pointer"
+                  className="sm-input min-w-0 flex-1 cursor-pointer text-[12px]"
                   value={entry.agentId ?? ''}
                   onChange={(e) => updateEntry(key, { agentId: e.target.value })}
                 >
-                  <option value="">{t('route.unbound')}</option>
+                  <option value="" disabled>
+                    {t('route.unbound')}
+                  </option>
                   {agents.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}（{a.model}）
@@ -66,7 +68,7 @@ export function RouteTableEditor() {
                 </select>
               </div>
               <input
-                className="sm-input mt-1.5 w-full"
+                className="sm-input mt-1.5 w-full text-[12px]"
                 placeholder={t('route.fallbackPlaceholder')}
                 value={(entry.fallback ?? []).join(', ')}
                 onChange={(e) =>

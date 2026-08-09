@@ -328,6 +328,22 @@ body {
 .sm-input:focus {
   border-color: var(--sm-accent-soft);
 }
+/* select 在深色主题下被浏览器画成大块黑底，覆盖原生外观 + 自绘细箭头，与 input 视觉一致 */
+select.sm-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%23999'><path d='M3 4.5l3 3 3-3'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px;
+  padding-right: 26px;
+  cursor: pointer;
+}
+select.sm-input:disabled,
+select.sm-input option[value=""]:disabled {
+  color: var(--sm-ink-faint);
+}
 textarea.sm-input {
   resize: y;
   line-height: 1.6;
