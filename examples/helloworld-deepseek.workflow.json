@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "name": "全能 Worker · DeepSeek deepseek-chat 生成 helloworld.py",
+  "savedAt": "2026-08-09T00:00:00.000Z",
+  "notes": "【配置说明 / 运行前必读】\n\n本示例使用 DeepSeek 云端模型（deepseek-chat，OpenAI 兼容协议）生成 helloworld.py 并写入磁盘。\n\n1) 配置 DeepSeek API Key（只需一次）\n   - 在左侧「智能体 / AgentPanel」→「接入点」中新建一个接入点：\n       名称：deepseek\n       协议：OpenAI 兼容\n       Base URL：https://api.deepseek.com/v1\n       模型：deepseek-chat\n       API Key：填写你在 https://platform.deepseek.com 申请到的真实 Key\n   - 该 Key 仅存于系统密钥库（磁盘加密），工作流文件只引用 credentialKey=\"deepseek\"，不会泄露明文。\n   - 若不想用「接入点」方式，也可直接在智能体里把 credentialKey 对应的 Key 配好；只要 credentialKey 同名即可。\n\n2) 在 SlimeMold 中加载本示例\n   - 顶部「导入工作流」选择本文件；导入后工作流已内置 agent-deepseek 智能体（credentialKey=deepseek），节点直接引用它。\n   - 若导入提示「缺失智能体凭据」，说明上一步的接入点尚未配置，请先完成第 1 步。\n\n3) 工作流做了什么\n   - input.text 给出任务：帮我生成一个 helloworld.py 文件\n   - agent.chat（全能 Worker）调用 DeepSeek 生成纯代码，并「推断文件名」输出 helloworld.py\n   - tool.writeFile 把代码写入工作区（节点 filename 留空，由上游自动推断；overwrite=true 覆盖同名文件）\n   - 运行后到左侧「资产」面板即可看到生成的 helloworld.py，可在终端 python helloworld.py 验证输出 Hello, World!。\n\n4) 常见问题\n   - 报错「401 / Authentication Fails」：DeepSeek API Key 无效或填错，请到接入点重新填入有效 Key。\n   - 报错「connect ... api.deepseek.com」：本地网络无法访问 DeepSeek，检查代理（节点/接入点的 proxyUrl）或网络。\n   - simulate 为 off 才会真实调用；若只想看流程骨架，可把它临时改为 on（离线回显）。",
+  "agents": [
+    {
+      "id": "agent-deepseek",
+      "name": "DeepSeek · deepseek-chat",
+      "protocol": "openai",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "providerId": "deepseek",
+      "credentialKey": "deepseek"
+    }
+  ],
+  "defaultAgentId": "agent-deepseek",
+  "nodes": [
+    {
+      "id": "n-input",
+      "typeId": "input.text",
+      "label": "任务输入",
+      "position": { "x": 40, "y": 140 },
+      "params": {
+        "text": "帮我生成一个helloworld.py文件"
+      }
+    },
+    {
+      "id": "n-worker",
+      "typeId": "agent.chat",
+      "label": "全能 Worker（DeepSeek deepseek-chat）",
+      "position": { "x": 360, "y": 140 },
+      "params": {
+        "agentId": "agent-deepseek",
+        "roleId": "",
+        "modelOverride": "",
+        "system": "你是一个全能代码生成助手。当用户要求生成文件时，必须且只能输出该文件的原始内容，禁止任何解释、禁止 markdown 代码块围栏、禁止前后缀文字。输出将直接写入磁盘作为文件内容。\n示例：\n用户：帮我生成一个helloworld.py文件\n你的输出（全文只有这一行）：\nprint('Hello, World!')",
+        "simulate": "off",
+        "isolated": false
+      }
+    },
+    {
+      "id": "n-asset",
+      "typeId": "tool.writeFile",
+      "label": "资产仓库（写文件）",
+      "position": { "x": 720, "y": 140 },
+      "params": {
+        "filename": "",
+        "overwrite": "true"
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-worker", "targetHandle": "prompt" },
+    { "id": "e2", "source": "n-worker", "sourceHandle": "text", "target": "n-asset", "targetHandle": "content" },
+    { "id": "e3", "source": "n-worker", "sourceHandle": "filename", "target": "n-asset", "targetHandle": "filename" }
+  ]
+}
