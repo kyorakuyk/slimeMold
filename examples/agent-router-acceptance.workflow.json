@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "name": "AgentRouter 类别路由验收",
+  "name": "AgentRouter 类别路由验收（含 Builder）",
   "savedAt": "2026-08-10T00:00:00.000Z",
-  "notes": "【AgentRouter 类别路由验收工作流】\n\n本工作流验收「六、AgentRouter 类别路由」与「主 agent 缺失补位」。\n语义（已对齐）：\n  · Builder 生成施工工作流时，按模块 category 查路由表注入主 agent；主 agent 被删/禁用时注入补位 agent（resolveAgentForCategory）。\n  · worker 运行时，若注入的 agent 缺失或调用失败，走 AgentRouter 类别路由+fallback 链自动补位（resolveAgentScored / candidateChain）。\n\n【前置：设置中配置】\n1) 3 个 agent：agent-cheap（便宜）、agent-strong（强）、agent-fallback（兜底）。\n   可导入本文件 agents 数组，再改 baseUrl/模型/credentialKey。\n2) 路由表（设置→路由表）：\n   ui    → agent-cheap，fallback 填 agent-fallback\n   logic → agent-strong，fallback 填 agent-fallback\n   data  → agent-fallback\n\n【验收方式 A：worker 运行时类别路由（本工作流直连）】\n· n-ui    ：worker.implementer，category=ui   → 应路由到 agent-cheap\n· n-logic ：worker.implementer，category=logic → 应路由到 agent-strong\n· 两节点 agentId 留空 + 填 category → 走类别路由，日志打印 AgentRouter/route-category/类别。\n· 运行后看底部 TerminalLog，搜「AgentRouter」「route-category」「类别」确认各节点用对应 agent。\n\n【验收方式 B：Builder 注入（另一条工作流或用 dispatch.split + architect.design + builder.generate）】\n· architect 产出带 category 的 modules → builder.generate 生成施工工作流 → 每个 worker 按 category 注入主 agent。\n· 若某类别主 agent 已被删除，Builder 会注入该行 fallback 补位 agent（而非失效 id）。\n\n【验收：主 agent 缺失 → fallback】\n· 删除/禁用 agent-strong → 重跑 n-logic → 应自动落到 agent-fallback，而不是报“智能体不存在”。\n  （Worker 运行时 resolveAgentScored 走 logic 类别行：主 agent 缺失 → fallback[] → agent-fallback）\n\n【验收：调用失败 → 下一候选】\n· 把 agent-cheap 改成错误 endpoint/无效模型 → 跑 n-ui → agent-cheap 失败 → 日志出现“尝试下一候选” → 切到 agent-fallback 成功 → 最终 success，成本记录见失败+成功候选。\n\nsimulate 若开 on 则离线回显（不真实调 LLM），便于先看链路。",
+  "notes": "【AgentRouter 类别路由验收工作流（含 Builder 链路）】\n\n本工作流验收「六、AgentRouter 类别路由」的完整链路：Builder 生成期注入 + worker 运行期补位。\n语义（已对齐）：\n  · Builder 生成施工工作流时，按模块 category 查路由表注入主 agent；主 agent 被删/禁用时注入补位 agent（resolveAgentForCategory）。\n  · worker 运行时，若注入的 agent 缺失或调用失败，走 AgentRouter 类别路由+fallback 链自动补位（resolveAgentScored / candidateChain）。\n\n【拓扑】\n  input.text → architect.design（产出带 category 的 modules）→ builder.generate（按 category 注入 agent，生成施工工作流）\n  施工工作流注册进项目后可打开，检查每个 worker 的 agentId 是否按 category 正确注入。\n\n【前置：设置中配置】\n1) 3 个 agent：agent-cheap（便宜）、agent-strong（强）、agent-fallback（兜底）。\n   可导入本文件 agents 数组，再改 baseUrl/模型/credentialKey。\n2) 路由表（设置→路由表）：\n   ui    → agent-cheap，fallback 填 agent-fallback\n   logic → agent-strong，fallback 填 agent-fallback\n   data  → agent-fallback\n\n【验收步骤】\n1) 运行本工作流。\n   · architect.design 用 agent（默认走路由，建议填 agent-strong）产出模块清单，每个 module 带 category（ui/logic 等）。\n   · builder.generate 按 module.category 经路由表注入主 agent 到施工工作流的 worker 节点。\n2) 打开「施工方工作流」（autoRegister=on 时已注册进项目），检查：\n   · category=ui 的 worker → agentId=agent-cheap\n   · category=logic 的 worker → agentId=agent-strong\n3) 运行施工工作流，看底部 TerminalLog 搜「AgentRouter」「route-category」「类别」确认各 worker 用对应 agent。\n\n【验收：主 agent 缺失 → 补位（Builder 侧）】\n· 删除/禁用 agent-strong → 重新跑 builder.generate → 生成施工工作流里 logic 类 worker 的 agentId 应落到 agent-fallback（resolveAgentForCategory 补位），而不是失效 id。\n\n【验收：主 agent 缺失 → fallback（Worker 运行侧）】\n· 手动建一个只填 agentId=agent-strong、不填 category 的 worker，且 agent-strong 已删 → 运行 → resolveAgentScored 走类别/全局兜底，不报“智能体不存在”。\n\n【验收：调用失败 → 下一候选（Worker 运行侧）】\n· 把 agent-cheap 改成错误 endpoint/无效模型 → 跑含 ui worker 的施工工作流 → agent-cheap 失败 → 日志“尝试下一候选” → 切到 agent-fallback 成功 → 最终 success。\n\nsimulate 若开 on 则离线回显（不真实调 LLM），便于先看链路。",
   "agents": [
     {
       "id": "agent-cheap",
@@ -39,43 +39,58 @@
     {
       "id": "n-input",
       "typeId": "input.text",
-      "label": "验收输入",
-      "position": { "x": 40, "y": 120 },
+      "label": "验收需求",
+      "position": { "x": 40, "y": 140 },
       "params": {
-        "text": "帮我生成一个欢迎页的 index.html（前端）和一个斐波那契的 fib.py（逻辑）。"
+        "text": "做一个待办清单小应用：包含一个前端页面（UI）和一个本地存储逻辑（logic）。模块数量控制在 2-3 个即可。"
       }
     },
     {
-      "id": "n-ui",
-      "typeId": "worker.implementer",
-      "label": "实现·前端页面(ui)",
-      "position": { "x": 360, "y": 40 },
+      "id": "n-architect",
+      "typeId": "architect.design",
+      "label": "架构师·拆分模块",
+      "position": { "x": 300, "y": 80 },
       "params": {
-        "agentId": "",
-        "category": "ui",
+        "agentId": "agent-strong",
         "roleId": "",
         "modelOverride": "",
-        "system": "你是资深前端工程师。仅输出完整可用的代码，不加解释。",
+        "format": "markdown",
         "simulate": "off"
       }
     },
     {
-      "id": "n-logic",
-      "typeId": "worker.implementer",
-      "label": "实现·逻辑算法(logic)",
-      "position": { "x": 360, "y": 260 },
+      "id": "n-builder",
+      "typeId": "builder.generate",
+      "label": "生成施工方工作流(按category注入)",
+      "position": { "x": 600, "y": 80 },
       "params": {
-        "agentId": "",
-        "category": "logic",
-        "roleId": "",
-        "modelOverride": "",
-        "system": "你是资深算法工程师。仅输出完整可用的代码，不加解释。",
-        "simulate": "off"
+        "autoRegister": "on",
+        "constructionName": "施工方工作流·验收",
+        "opsName": "物业运维工作流·验收"
       }
     }
   ],
   "edges": [
-    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-ui", "targetHandle": "plan" },
-    { "id": "e2", "source": "n-input", "sourceHandle": "text", "target": "n-logic", "targetHandle": "plan" }
+    {
+      "id": "e1",
+      "source": "n-input",
+      "sourceHandle": "text",
+      "target": "n-architect",
+      "targetHandle": "goal"
+    },
+    {
+      "id": "e2",
+      "source": "n-architect",
+      "sourceHandle": "design",
+      "target": "n-builder",
+      "targetHandle": "design"
+    },
+    {
+      "id": "e3",
+      "source": "n-architect",
+      "sourceHandle": "modules",
+      "target": "n-builder",
+      "targetHandle": "modules"
+    }
   ]
 }
