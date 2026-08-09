@@ -487,19 +487,36 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
             "grant_project_access: 路径禁止包含 '..' 逃逸：{path}"
         ));
     }
-    // fs:scope 的 allow 是「字符串数组」（EntryRaw::Value 形式），不是 `{path}` 对象数组——
-    // 官方 scope.toml 示例：`{ "identifier": "fs:scope", "allow": ["$APPDATA/**"] }`。
-    // 曾误用 `[{ "path": "..." }]`（对象形式）导致运行时 `error deserializing scope:
-    // data did not match any variant of untagged enum EntryRaw`。
-    let allowed: Vec<String> = vec![format!("{}/**", path.trim_end_matches('/'))];
-    // 具体操作权限（fs:allow-exists/read-dir/...）本身「无条件允许该命令」，真正限制路径
-    // 的是 fs:scope；因此只需把项目根注入 fs:scope 的 scoped 版本（配合 default.json 里
-    // 已授予的操作权限，运行时按注入的 scope 校验，非默认目录项目不再 forbidden）。
-    let capability = tauri::ipc::CapabilityBuilder::new("slime-project-fs")
-        .window("main")
-        .permission_scoped("fs:scope", allowed, Vec::<String>::new());
-    app.add_capability(capability)
-        .map_err(|e| format!("grant_project_access: 注入 capability 失败：{e}"))?;
+    // canonicalize 归一化真实路径（解析符号链接/`.`/大小写差异），
+    // 既保证 scope 注入的是磁盘真实路径，也避免同一目录的不同写法重复授权。
+    let canon = p
+        .canonicalize()
+        .map_err(|e| format!("grant_project_access: 路径解析失败：{path}（{e}）"))?;
+    let canon_str = canon.to_string_lossy().to_string();
+
+    // 幂等去重：同路径 1 秒内重复授权直接返回，避免高频调用反复重建 capability
+    //（曾致 Rust 主线程死循环、CPU 打满、WebView 输入事件冻结——每条 capability 都会
+    //  参与每次 fs 操作的权限校验，列表越滚越长越慢）。
+    use std::time::{Duration, Instant};
+    static LAST_GRANT: std::sync::Mutex<Option<(String, Instant)>> =
+        std::sync::Mutex::new(None);
+    {
+        let mut last = LAST_GRANT.lock().unwrap();
+        if let Some((prev, at)) = &*last {
+            if *prev == canon_str && at.elapsed() < Duration::from_secs(1) {
+                return Ok(()); // 同路径近期已授权，跳过
+            }
+        }
+        *last = Some((canon_str.clone(), Instant::now()));
+    }
+
+    // 使用 Tauri 官方 FsExt::fs_scope().allow_directory()：幂等（重复加同路径自动去重）、
+    // 无需重建 capability，也不受 add_capability 累积影响。recursive=true 允许子目录。
+    use tauri_plugin_fs::FsExt;
+    let scope = app.fs_scope();
+    scope
+        .allow_directory(&canon, true)
+        .map_err(|e| format!("grant_project_access: 注入 fs scope 失败：{path}（{e}）"))?;
     eprintln!("[cap] grant_project_access ok: {path}");
     Ok(())
 }
