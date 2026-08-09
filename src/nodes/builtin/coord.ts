@@ -298,8 +298,14 @@ export const nodeCouncil: NodeDefinition = {
           : []),
       ];
       if (missing.length > 0) {
+        // 附带 store 实际存在的 agent id 列表，便于诊断「id 拼写错」还是「store 没同步」
+        const existing = storeAgents0.map((a) => a.id);
         throw new Error(
-          `仲裁委员会：${missing.join('、')} 在智能体列表中不存在（请先在设置中配置，或修正 councillorAgentIds / synthesizerAgentId）。`,
+          `仲裁委员会：${missing.join('、')} 在智能体列表中不存在。` +
+            `\n  · councillorAgentIds 参数 = ${JSON.stringify(effectiveCouncillors)}` +
+            `\n  · synthesizerAgentId 参数 = ${JSON.stringify(effectiveSynth)}` +
+            `\n  · 当前 store 实际存在的 agent id = ${JSON.stringify(existing)}` +
+            `\n  · 请检查：① 节点参数与 Agent 面板里的 agent id 是否一致；② 工作流是否已保存/agents.json 是否已生成；③ 是否切换了项目导致 agent 未带入。`,
         );
       }
     }
