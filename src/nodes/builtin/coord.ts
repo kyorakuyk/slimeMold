@@ -285,6 +285,25 @@ export const nodeCouncil: NodeDefinition = {
     if (effectiveCouncillors.length === 0) throw new Error('仲裁委员会：未配置议员智能体（councillorAgentIds）');
     if (!effectiveSynth) throw new Error('仲裁委员会：未配置合成智能体（synthesizerAgentId）');
 
+    // 严格校验：非模拟模式下，指定的议员/合成 agent 必须存在。
+    // 否则 ctx.llm 会对缺失 agent 静默兜底到全局候选（如 Ollama），
+    // 造成「议员 agent-cheap 评估失败（Ollama...）」这类误导性日志，掩盖 agent 缺失的真实原因。
+    if (!simulate) {
+      const storeAgents0 = useWorkflowStore.getState().agents;
+      const known = new Set(storeAgents0.map((a) => a.id));
+      const missing = [
+        ...effectiveCouncillors.filter((id) => !known.has(id)).map((id) => `议员「${id}」`),
+        ...(effectiveSynth && effectiveSynth !== 'synthesizer' && !known.has(effectiveSynth)
+          ? [`合成智能体「${effectiveSynth}」`]
+          : []),
+      ];
+      if (missing.length > 0) {
+        throw new Error(
+          `仲裁委员会：${missing.join('、')} 在智能体列表中不存在（请先在设置中配置，或修正 councillorAgentIds / synthesizerAgentId）。`,
+        );
+      }
+    }
+
     const disputeText = typeof dispute === 'string' ? dispute : JSON.stringify(dispute, null, 2);
     const basePrompt =
       `【仲裁背景】\n${context || '（无）'}\n\n` +
