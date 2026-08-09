@@ -88,10 +88,22 @@ export function buildConstructionWorkflow(args: {
   const wfNodes: WorkflowFileNode[] = [];
   const wfEdges: WorkflowFileEdge[] = [];
 
-  const input = node('input.text', '设计输入', { x: 0, y: 0 });
+  // 任务源：flow.list 把模块清单转成 TaskItem[] 喂给 dispatch.split。
+  // 不能用 input.text（输出单文本，与 split.tasks 的 list 类型不兼容，会导致 split 扇不出、worker 无 plan）。
+  const taskSrc = node(
+    'flow.list',
+    '模块清单',
+    { x: 0, y: 0 },
+    {
+      text: modules
+        .map((m) => `${m.name}${m.responsibility ? `：${m.responsibility}` : ''}`)
+        .join('\n'),
+      split: 'newline',
+    },
+  );
   const split = node('dispatch.split', '任务派发', { x: COL, y: 0 });
-  wfNodes.push(input, split);
-  wfEdges.push(edge(input.id, 'text', split.id, 'tasks'));
+  wfNodes.push(taskSrc, split);
+  wfEdges.push(edge(taskSrc.id, 'items', split.id, 'tasks'));
 
   const workers: WorkflowFileNode[] = [];
   const SPLIT_TASK_PORTS = ['task1', 'task2', 'task3', 'task4'];
