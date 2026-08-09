@@ -19,20 +19,32 @@ function uid(prefix: string): string {
 }
 
 /**
- * 按 category 解析「主 agentId」注入 worker 节点（Builder 生成阶段）。
- * 只负责注入类别绑定的主 agent；fallback 是 worker 自身运行期的 AgentRouter 决策
- * （主 agent 缺失或调用失败时自动补位），不在生成期解析。
- * 类别大小写不敏感匹配。
+ * 按 category 解析注入 worker 的 agentId（Builder 生成阶段）。
+ * 优先类别绑定的主 agent；若该主 agent 已被删除/禁用（agents 列表中不存在），
+ * 则沿该行 fallback 链取第一个存在的补位 agent，再落全局 fallbackAgentId。
+ * 这是「Builder 侧补位」——主 agent 缺失时生成期就解析出可用 agent 注入，
+ * 避免运行时才因 agent 不存在而失败。类别大小写不敏感匹配。
  */
 export function resolveAgentForCategory(
   category: ModuleItem['category'],
   routeTable: AgentRouteTable,
   fallbackAgentId: string | null,
+  agents?: { id: string }[],
 ): string | undefined {
+  const exists = (id?: string | null): id is string =>
+    !!id && (!agents || agents.some((a) => a.id === id));
   const key = (category ?? 'data').toLowerCase();
   const entry = routeTable[key] ?? routeTable['data'];
-  const agentId = entry?.agentId ?? fallbackAgentId ?? undefined;
-  return agentId || undefined;
+  // 1) 类别主 agent（存在且未被删除/禁用）
+  if (exists(entry?.agentId)) return entry!.agentId;
+  // 2) 该行 fallback 链：主 agent 缺失时取第一个存在的补位 agent
+  for (const f of entry?.fallback ?? []) {
+    if (exists(f)) return f;
+  }
+  // 3) 全局 fallback
+  if (exists(fallbackAgentId)) return fallbackAgentId;
+  // 4) 无可用 → 不注入，交 worker 运行时全局路由兜底
+  return undefined;
 }
 
 function node(
@@ -68,9 +80,11 @@ export function buildConstructionWorkflow(args: {
   modules: ModuleItem[];
   routeTable: AgentRouteTable;
   fallbackAgentId: string | null;
+  /** 已配置的 agent 列表，用于判断类别主 agent 是否缺失（被删除/禁用），缺失则注入补位 agent */
+  agents?: { id: string }[];
   name?: string;
 }): WorkflowFile {
-  const { modules, routeTable, fallbackAgentId } = args;
+  const { modules, routeTable, fallbackAgentId, agents } = args;
   const wfNodes: WorkflowFileNode[] = [];
   const wfEdges: WorkflowFileEdge[] = [];
 
@@ -82,7 +96,7 @@ export function buildConstructionWorkflow(args: {
   const workers: WorkflowFileNode[] = [];
   const SPLIT_TASK_PORTS = ['task1', 'task2', 'task3', 'task4'];
   modules.forEach((m, i) => {
-    const agentId = resolveAgentForCategory(m.category, routeTable, fallbackAgentId);
+    const agentId = resolveAgentForCategory(m.category, routeTable, fallbackAgentId, agents);
     const w = node(
       'worker.implementer',
       `实现·${m.name}`,
