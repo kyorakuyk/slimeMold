@@ -233,17 +233,16 @@ export const nodeCouncil: NodeDefinition = {
   params: [
     {
       key: 'councillorAgentIds',
-      label: '议员智能体 IDs（逗号分隔，并行评估）',
-      type: 'text',
+      label: '议员智能体（多选，并行评估）',
+      type: 'agents',
       default: '',
-      placeholder: 'agentA,agentB,agentC',
+      multi: true,
     },
     {
       key: 'synthesizerAgentId',
-      label: '合成智能体 ID（应不同于议员）',
-      type: 'text',
+      label: '合成智能体（应不同于议员）',
+      type: 'agent',
       default: '',
-      placeholder: 'agentJudge',
     },
     {
       key: 'simulate',
