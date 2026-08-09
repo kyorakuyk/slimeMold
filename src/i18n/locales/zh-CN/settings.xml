@@ -69,6 +69,7 @@
   <string name="settings.apikeys.title">新增 API 接入点</string>
   <string name="settings.apikeys.desc">把「API 网址 + 密钥」绑定为一个可复用配置（类似 cc-switch 的 API 路由）。保存后自动校验网址与密钥，并拉取可用模型列表。明文仅存系统密钥库，智能体可下拉引用，无需重复填写。</string>
   <string name="settings.apikeys.namePlaceholder">名称（如 apinebula）</string>
+  <string name="settings.apikeys.labelPlaceholder">名称（可留空，自动取 Base URL 域名）</string>
   <string name="settings.apikeys.urlPlaceholder">API 网址（Base URL，如 https://apinebula.ai/v1）</string>
   <string name="settings.apikeys.keyPlaceholder">API Key（sk-...）</string>
   <string name="settings.apikeys.keyPlaceholderOllama">Ollama 本地无需密钥</string>

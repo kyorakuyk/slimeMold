@@ -69,6 +69,7 @@
   <string name="settings.apikeys.title">Add API endpoint</string>
   <string name="settings.apikeys.desc">Bind "API URL + key" into a reusable config (like cc-switch's API routing). On save it auto-verifies the URL and key and pulls the available model list. The plaintext is only stored in the OS keychain; agents can reference it from a dropdown without re-typing.</string>
   <string name="settings.apikeys.namePlaceholder">Name (e.g. apinebula)</string>
+  <string name="settings.apikeys.labelPlaceholder">Name (optional — auto-fills from the Base URL domain)</string>
   <string name="settings.apikeys.urlPlaceholder">API URL (Base URL, e.g. https://apinebula.ai/v1)</string>
   <string name="settings.apikeys.keyPlaceholder">API Key (sk-...)</string>
   <string name="settings.apikeys.keyPlaceholderOllama">Ollama local needs no key</string>
