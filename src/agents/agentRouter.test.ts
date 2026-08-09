@@ -188,3 +188,32 @@ describe('resolveAgentScored 成本感知决策', () => {
     ).toThrow(/没有可用的智能体/);
   });
 });
+
+describe('按名称（而非 id）引用 agent', () => {
+  // agent 真实 id 是 UUID，但用户在 council/worker 节点参数里填「名字」，
+  // byId 应支持按 name（忽略大小写与首尾空格）兜底匹配。
+  const env = {
+    agents: [
+      { id: '235fe1fb-d18c-415f-b464-01881c671bef', name: 'agent-cheap', protocol: 'openai', baseUrl: 'http://x', model: 'm1', credentialKey: 'k1' } as AgentConfig,
+      { id: '1f496f3b-3ac5-466d-86ec-e82054d02710', name: 'agent-strong', protocol: 'openai', baseUrl: 'http://x', model: 'm2', credentialKey: 'k2' } as AgentConfig,
+    ],
+    routeTable: {},
+    defaultAgentId: null,
+  };
+
+  it('显式填「名称」能解析到 agent', () => {
+    const d = resolveAgentScored({ agentId: 'agent-cheap' }, env);
+    expect(d.agent.id).toBe('235fe1fb-d18c-415f-b464-01881c671bef');
+    expect(d.reason).toBe('explicit');
+  });
+
+  it('名称大小写不敏感 + 忽略首尾空格', () => {
+    const d = resolveAgentScored({ agentId: '  Agent-Strong  ' }, env);
+    expect(d.agent.id).toBe('1f496f3b-3ac5-466d-86ec-e82054d02710');
+  });
+
+  it('名称不存在时不误配（走全局兜底，不抛错）', () => {
+    const d = resolveAgentScored({ agentId: 'ghost-agent' }, env);
+    expect(d.agent).toBeTruthy();
+  });
+});

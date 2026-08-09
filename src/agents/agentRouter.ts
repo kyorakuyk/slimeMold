@@ -171,7 +171,15 @@ function makeDecision(
  */
 export function resolveAgent(request: RouterRequest, env: RouterEnv): RouterDecision {
   const tier = estimateTier(request);
-  const byId = (id?: string | null) => env.agents.find((a) => a.id === id);
+  // 兼容「按 id 或 名称」引用：先按 id 精确匹配，找不到再按 name（忽略大小写与首尾空格）。
+  // 解决 council/worker 等节点用「名字」填 agentId 时匹配不上（真实 id 是 UUID）的问题。
+  const byId = (id?: string | null) => {
+    if (!id) return undefined;
+    const byExact = env.agents.find((a) => a.id === id);
+    if (byExact) return byExact;
+    const n = id.trim().toLowerCase();
+    return env.agents.find((a) => a.name?.trim().toLowerCase() === n);
+  };
 
   // ① 显式绑定：存在即用（保持既有行为）
   const explicit = byId(request.agentId);
@@ -263,7 +271,14 @@ export function resolveAgentScored(
   scoring: ScoringOptions = {},
 ): RouterDecision {
   const tier = estimateTier(request);
-  const byId = (id?: string | null) => env.agents.find((a) => a.id === id);
+  // 兼容「按 id 或 名称」引用（同 resolveAgent）
+  const byId = (id?: string | null) => {
+    if (!id) return undefined;
+    const byExact = env.agents.find((a) => a.id === id);
+    if (byExact) return byExact;
+    const n = id.trim().toLowerCase();
+    return env.agents.find((a) => a.name?.trim().toLowerCase() === n);
+  };
 
   // 显式绑定有效：不评分，保持原有行为
   const explicit = byId(request.agentId);

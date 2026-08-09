@@ -290,9 +290,12 @@ export const nodeCouncil: NodeDefinition = {
     // 造成「议员 agent-cheap 评估失败（Ollama...）」这类误导性日志，掩盖 agent 缺失的真实原因。
     if (!simulate) {
       const storeAgents0 = useWorkflowStore.getState().agents;
-      const known = new Set(storeAgents0.map((a) => a.id));
+      // 兼容「按 id 或 名称」引用：known 同时含 id 与 name（大小写不敏感）
+      const known = new Set<string>(
+        storeAgents0.flatMap((a) => [a.id, a.name?.trim().toLowerCase()].filter(Boolean) as string[]),
+      );
       const missing = [
-        ...effectiveCouncillors.filter((id) => !known.has(id)).map((id) => `议员「${id}」`),
+        ...effectiveCouncillors.filter((id) => !known.has(id.trim().toLowerCase())).map((id) => `议员「${id}」`),
         ...(effectiveSynth && effectiveSynth !== 'synthesizer' && !known.has(effectiveSynth)
           ? [`合成智能体「${effectiveSynth}」`]
           : []),
