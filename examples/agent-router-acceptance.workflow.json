@@ -2,7 +2,7 @@
   "version": 1,
   "name": "AgentRouter 类别路由验收",
   "savedAt": "2026-08-10T00:00:00.000Z",
-  "notes": "【AgentRouter 验收工作流】\n\n本工作流用于验收「六、AgentRouter 类别路由」：\n  ui    → agent-cheap\n  logic → agent-strong\n  fallback → agent-fallback\n\n1) 依赖已配置的三个 agent：agent-cheap / agent-strong / agent-fallback（见 agents 数组，可自行改 baseUrl/模型/credentialKey）。\n2) 两个 worker.implementer 节点：\n   - n-ui：category=ui   → 应路由到 agent-cheap\n   - n-logic：category=logic → 应路由到 agent-strong\n   节点 agentId 留空（不显式绑定），才会走类别路由并在日志打印 AgentRouter/route-category。\n3) 运行后看底部 TerminalLog：\n   - 搜「AgentRouter」「route-category」「类别」确认各节点用对应 agent。\n4) 验收「主 agent 缺失」：删掉/禁用 agent-strong，重跑 n-logic，应自动落到 logic 的 fallback（agent-fallback），而不是报“智能体不存在”。\n   - 注：逻辑类别未单独配 fallback 时，路由表其余类别/默认 fallback 生效；若没有，则落到 defaultAgentId 或全部 agent 兜底。\n5) 验收「调用失败 fallback」：把某 agent 改成错误 endpoint/无效模型，跑对应节点，日志会出现“尝试下一候选”并切到第二个有效 agent。\n\nsimulate 若开 on 则离线回显（不真实调 LLM），便于先看链路。",
+  "notes": "【AgentRouter 类别路由验收工作流】\n\n本工作流验收「六、AgentRouter 类别路由」：ui → agent-cheap、logic → agent-strong、fallback → agent-fallback。\n\n【前置：在设置中配置（路由表必须在设置里配，不随单工作流文件导入）】\n1) 智能体/Agent 面板建 3 个 agent：agent-cheap（便宜模型）、agent-strong（强模型）、agent-fallback（兜底）。\n   - 也可直接导入本文件自带的 agents 数组（见下方），再改其 baseUrl/模型/credentialKey。\n2) 路由表（设置→路由表）里配：\n   - ui    → agent-cheap，fallback 填 agent-fallback\n   - logic → agent-strong，fallback 填 agent-fallback\n\n【节点与预期】\n- n-ui    ：worker.implementer，category=ui   → 应路由到 agent-cheap\n- n-logic ：worker.implementer，category=logic → 应路由到 agent-strong\n  两个节点 agentId 均留空（不显式绑定），才会走类别路由并打印 AgentRouter/route-category。\n\n【运行后看底部 TerminalLog】搜「AgentRouter」「route-category」「类别」，确认各节点用了对应 agent。\n\n【验收：主 agent 缺失 fallback】删掉/禁用 agent-strong → 重跑 n-logic → 应自动落到 logic 的 fallback（agent-fallback），而不是报“智能体不存在”。\n【验收：调用失败 fallback】把某 agent 改成错误 endpoint/无效模型 → 跑对应节点 → 日志出现“尝试下一候选”并切到第二个有效 agent，最终状态仍 success。\n\nsimulate 若开 on 则离线回显（不真实调 LLM），便于先看链路。",
   "agents": [
     {
       "id": "agent-cheap",
@@ -35,14 +35,6 @@
       "credentialKey": "deepseek"
     }
   ],
-  "defaultAgentId": "agent-cheap",
-  "agentRouteTable": {
-    "ui": { "agentId": "agent-cheap", "fallback": ["agent-fallback"] },
-    "logic": { "agentId": "agent-strong", "fallback": ["agent-fallback"] },
-    "docs": { "agentId": "agent-cheap", "fallback": ["agent-fallback"] },
-    "infra": { "agentId": "agent-strong", "fallback": ["agent-fallback"] },
-    "data": { "agentId": "agent-fallback" }
-  },
   "nodes": [
     {
       "id": "n-input",
