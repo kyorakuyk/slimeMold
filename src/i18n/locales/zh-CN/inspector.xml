@@ -27,7 +27,10 @@
   <string name="param.asset.pickTitle">选择图片</string>
   <string name="param.asset.pickFilter">图片</string>
   <string name="param.asset.pickBtn">从本机选择图片文件</string>
-  <string name="param.agent.placeholder">— 选择智能体 —</string>
+  <string name="param.agent.placeholder">选择智能体</string>
+  <string name="param.agent.agentsPlaceholder">选择多个智能体…</string>
+  <string name="param.agent.searchPlaceholder">搜索智能体…</string>
+  <string name="param.agent.empty">无匹配的智能体</string>
   <string name="param.role.placeholder">— 不使用角色 —</string>
   <string name="param.role.builtin">（内置）</string>
 

@@ -8,6 +8,7 @@ import { isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef } from '../types';
 import { useT } from '../i18n/useT';
+import { AgentSelect } from './AgentSelect';
 
 function ParamField({
   def,
@@ -132,59 +133,15 @@ function ParamField({
       </select>
     );
   }
-  if (def.type === 'agent') {
+  if (def.type === 'agent' || def.type === 'agents') {
     return (
-      <select
-        className="sm-input cursor-pointer"
+      <AgentSelect
+        agents={agents}
         value={String(value ?? '')}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">{t('param.agent.placeholder')}</option>
-        {agents.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}（{a.model}）
-          </option>
-        ))}
-      </select>
-    );
-  }
-  if (def.type === 'agents') {
-    // 多选 agent：复选框列表，值以逗号分隔存真实 agent id
-    const ids = String(value ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const toggle = (id: string) => {
-      const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-      onChange(next.join(','));
-    };
-    if (agents.length === 0) {
-      return (
-        <p className="text-[11px] text-ink-faint">暂无可选的智能体，请先在设置中配置。</p>
-      );
-    }
-    return (
-      <div className="space-y-1">
-        {agents.map((a) => {
-          const checked = ids.includes(a.id);
-          return (
-            <label
-              key={a.id}
-              className="flex cursor-pointer items-center gap-1.5 rounded border border-line px-2 py-1 text-[12px] hover:bg-black/5"
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => toggle(a.id)}
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {a.name}
-                <span className="ml-1 text-[10px] text-ink-faint">{a.model}</span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
+        multiple={def.type === 'agents'}
+        placeholder={def.placeholder ?? (def.type === 'agents' ? t('param.agent.agentsPlaceholder') : t('param.agent.placeholder'))}
+        onChange={(v) => onChange(v)}
+      />
     );
   }
   if (def.type === 'role') {
