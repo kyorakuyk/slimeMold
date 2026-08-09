@@ -181,6 +181,7 @@ export function buildProjectFile(
     artifacts: import('../engine/pipeline').ProjectArtifacts;
     agentRouteTable: import('../types').AgentRouteTable;
     pipelines: import('../engine/pipeline').PipelineDef[];
+    defaultAgentId: string | null;
   },
   stable = false,
 ): ProjectFile {
@@ -211,6 +212,10 @@ export function buildProjectFile(
     assets: s.projectAssets,
     subgraphs: s.subgraphs,
     artifacts: s.artifacts,
+    // 项目级 agents 独立于任何工作流（2026-08-10）：持久化到 .slimemold/agents.json，
+    // 保证切换/重开工作流不丢失。
+    agents: s.agents,
+    defaultAgentId: s.defaultAgentId ?? null,
     agentRouteTable: s.agentRouteTable,
     pipelines: s.pipelines,
     runs: { history: s.runHistory },

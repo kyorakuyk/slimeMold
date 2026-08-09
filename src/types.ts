@@ -844,6 +844,13 @@ export interface ProjectFile {
   legacy?: boolean;
   /** 项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
   agentRouteTable?: AgentRouteTable;
+  /**
+   * 项目级智能体（跨工作流共享，2026-08-10 起从「随单个工作流」提升为项目级）。
+   * 持久化到 `.slimemold/agents.json`；加载时优先读此文件，旧版本内联在 workflow 的 agents 作为兼容合并。
+   */
+  agents?: AgentConfig[];
+  /** 项目级默认智能体 id（工作流未指定 agent 时引用） */
+  defaultAgentId?: string | null;
   /** 项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
   pipelines?: import('./engine/pipeline').PipelineDef[];
   /** 项目级运行历史（持久化） */

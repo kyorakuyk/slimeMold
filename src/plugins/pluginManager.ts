@@ -2,6 +2,7 @@ import { isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { loadPluginFromSource } from './loader';
+import { SLIMEMOLD_DIR } from '../io/projectIO';
 import type { NodeDefinition } from '../types';
 
 export const PLUGIN_DIR = 'plugins';
@@ -180,7 +181,14 @@ export async function scanProjectCustomNodes(): Promise<number> {
         /* 授权失败不阻断扫描（可能已在 scope 内） */
       }
     }
-    return await scanCustomNodesDir(`${projectPath.replace(/\\/g, '/')}/${CUSTOM_NODES_DIR}`, 'project');
+    const root = projectPath.replace(/\\/g, '/');
+    // 2026-08-10：项目级 custom_nodes 迁移到 .slimemold/custom_nodes（与项目配置集中管理）。
+    // 兼容旧路径 <项目根>/custom_nodes：仍会扫描，避免已有节点的项目升级后丢节点。
+    const newDir = `${root}/${SLIMEMOLD_DIR}/${CUSTOM_NODES_DIR}`;
+    const legacyDir = `${root}/${CUSTOM_NODES_DIR}`;
+    const n = await scanCustomNodesDir(newDir, 'project');
+    const m = await scanCustomNodesDir(legacyDir, 'project');
+    return n + m;
   } catch (e) {
     // 兜底：项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT 盘符），静默跳过
     log('info', `项目级自定义节点扫描跳过（目录可能不在文件系统权限范围内）：${e instanceof Error ? e.message : String(e)}`);

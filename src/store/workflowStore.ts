@@ -1180,8 +1180,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           // P1：打开即把活动工作流还原到画布，保证落盘内容完整
           nodes: flowNodesFrom(wf),
           edges: flowEdgesFrom(wf),
-          agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
-          defaultAgentId: wf.defaultAgentId ?? get().defaultAgentId,
+          // agents 项目级共享：优先用项目级 file.agents（来自 .slimemold/Agents/agents.json），
+          // 不再被某个工作流的 wf.agents 覆盖；旧数据无项目级 agents 时回退工作流级并合并。
+          agents: (file.agents && file.agents.length)
+            ? file.agents
+            : (wf.agents?.length ? wf.agents : [createAgent('ollama')]),
+          defaultAgentId: (file.defaultAgentId ?? wf.defaultAgentId) ?? get().defaultAgentId,
           roles: [
             ...builtinRoles.map((r) => ({ ...r })),
             ...(wf.roles ?? []).filter((r) => !r.builtin),
@@ -1253,7 +1257,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           // 方案 P：workflows 已是运行态 FlowNode，直接复用
           nodes: target.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
           edges: target.edges,
-          agents: target.agents?.length ? target.agents : s.agents,
+          // agents 是「项目级共享」，切换工作流不覆盖；仅当项目尚无任何 agent 时以目标工作流的做初始灌入
+          agents: s.agents.length ? s.agents : target.agents?.length ? target.agents : s.agents,
           roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
           variables: target.variables ?? {},
           groups: target.groups ?? [],
