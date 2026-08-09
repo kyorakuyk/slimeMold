@@ -19,33 +19,20 @@ function uid(prefix: string): string {
 }
 
 /**
- * 按 category 解析「最终可用」agentId（Builder 注入阶段，含 fallback 链）：
- * 1. 类别主 agentId 存在且可用 → 用它；
- * 2. 否则沿该行 fallback[] 依次取第一个存在的；
- * 3. 类别行全失效 → 落全局 fallbackAgentId（若存在）；
- * 4. 都没有 → undefined（不注入，由运行时全局路由兜底）。
+ * 按 category 解析「主 agentId」注入 worker 节点（Builder 生成阶段）。
+ * 只负责注入类别绑定的主 agent；fallback 是 worker 自身运行期的 AgentRouter 决策
+ * （主 agent 缺失或调用失败时自动补位），不在生成期解析。
  * 类别大小写不敏感匹配。
  */
 export function resolveAgentForCategory(
   category: ModuleItem['category'],
   routeTable: AgentRouteTable,
   fallbackAgentId: string | null,
-  agents?: { id: string }[],
 ): string | undefined {
-  const exists = (id?: string | null): id is string =>
-    !!id && (!agents || agents.some((a) => a.id === id));
   const key = (category ?? 'data').toLowerCase();
   const entry = routeTable[key] ?? routeTable['data'];
-  // 1) 类别主 agent
-  if (exists(entry?.agentId)) return entry!.agentId;
-  // 2) 该行 fallback 链
-  for (const f of entry?.fallback ?? []) {
-    if (exists(f)) return f;
-  }
-  // 3) 全局 fallback
-  if (exists(fallbackAgentId)) return fallbackAgentId;
-  // 4) 无可用
-  return undefined;
+  const agentId = entry?.agentId ?? fallbackAgentId ?? undefined;
+  return agentId || undefined;
 }
 
 function node(
@@ -81,11 +68,9 @@ export function buildConstructionWorkflow(args: {
   modules: ModuleItem[];
   routeTable: AgentRouteTable;
   fallbackAgentId: string | null;
-  /** 用于判断 agent 是否存在的列表（缺失/禁用的 agent 会被 fallback 链跳过） */
-  agents?: { id: string }[];
   name?: string;
 }): WorkflowFile {
-  const { modules, routeTable, fallbackAgentId, agents } = args;
+  const { modules, routeTable, fallbackAgentId } = args;
   const wfNodes: WorkflowFileNode[] = [];
   const wfEdges: WorkflowFileEdge[] = [];
 
@@ -97,7 +82,7 @@ export function buildConstructionWorkflow(args: {
   const workers: WorkflowFileNode[] = [];
   const SPLIT_TASK_PORTS = ['task1', 'task2', 'task3', 'task4'];
   modules.forEach((m, i) => {
-    const agentId = resolveAgentForCategory(m.category, routeTable, fallbackAgentId, agents);
+    const agentId = resolveAgentForCategory(m.category, routeTable, fallbackAgentId);
     const w = node(
       'worker.implementer',
       `实现·${m.name}`,

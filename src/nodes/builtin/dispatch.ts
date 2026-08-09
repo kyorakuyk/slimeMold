@@ -476,7 +476,6 @@ export const nodeBuilder: NodeDefinition = {
       modules,
       routeTable,
       fallbackAgentId,
-      agents: st.agents,
       name: String(params.constructionName || '施工方工作流'),
     });
     const opsWf = buildOpsWorkflow({
