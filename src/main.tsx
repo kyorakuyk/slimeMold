@@ -30,7 +30,12 @@ function showFatal(msg: string) {
  * 若不过滤，会被 showFatal 当致命错误清空整个 #root，造成假死。
  */
 function isBenignError(msg: string): boolean {
-  return /ResizeObserver loop (limit exceeded|completed with undelivered notifications)/i.test(msg);
+  return (
+    /ResizeObserver loop (limit exceeded|completed with undelivered notifications)/i.test(msg) ||
+    // Tauri plugin-http v2 在连接失败时，底层会在 Promise 链外 reject
+    // "The resource id NNNNNNN is invalid"，属良性噪声，不应当致命错误清空界面。
+    /resource id \d+ is invalid/i.test(msg)
+  );
 }
 
 window.addEventListener('error', (e) => {

@@ -23,7 +23,17 @@ export async function httpFetch(
 ): Promise<Response> {
   if (isTauri) {
     const mod = await import('@tauri-apps/plugin-http');
-    return mod.fetch(url, init);
+    // Tauri plugin-http v2 对 AbortSignal 有缺陷：连接失败时会在 Promise 链之外
+    // 内部 reject "resource id X is invalid"，变为 UnhandledRejection 拖垮整个应用。
+    // 不透传 signal，并把底层错误归一化为普通 Error 以可控方式抛出。
+    const { signal: _signal, ...restInit } = (init ?? {}) as RequestInit & {
+      signal?: AbortSignal;
+    };
+    const tauriInit = { ...restInit };
+    return mod.fetch(url, tauriInit as never).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`HTTP 请求失败（plugin-http）：${msg}`);
+    });
   }
   return window.fetch(url, init);
 }
