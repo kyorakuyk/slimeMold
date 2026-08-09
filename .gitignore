@@ -74,3 +74,6 @@ tsc_tmp.log
 
 dev_tmp.log
 dev-i18n.log
+
+# Local verification outputs (tsc / vitest / build / headless logs)
+*.out
