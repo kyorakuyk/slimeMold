@@ -3,6 +3,24 @@
   <string name="tab.terminal">终端</string>
   <string name="tab.history">历史 ({count})</string>
   <string name="tab.variables">变量</string>
+  <string name="tab.artifacts">产物</string>
+  <string name="artifact.empty">暂无交付产物。运行含 pipeline.handoff / 交付节点的流程后，交付成果会出现在这里。</string>
+  <string name="artifact.copy">复制</string>
+  <string name="artifact.download">下载</string>
+  <string name="artifact.stage.idea">构思</string>
+  <string name="artifact.stage.plan">方案</string>
+  <string name="artifact.stage.design">设计</string>
+  <string name="artifact.stage.construction">施工</string>
+  <string name="artifact.stage.test">测试</string>
+  <string name="artifact.stage.deliver">交付</string>
+  <string name="artifact.stage.ops">运维</string>
+  <string name="artifact.construction.project">项目交付物</string>
+  <string name="artifact.construction.constructionWf">施工方工作流</string>
+  <string name="artifact.construction.opsWf">运维工作流</string>
+  <string name="artifact.plan.plan">计划书</string>
+  <string name="artifact.plan.tasklist">任务清单</string>
+  <string name="artifact.design.design">设计书</string>
+  <string name="artifact.design.modules">模块清单</string>
 
   <string name="autosave.title">工作流已自动保存到本地，关闭后重新打开会自动恢复</string>
   <string name="autosave.at">已自动保存 {time}</string>

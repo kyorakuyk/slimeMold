@@ -3,6 +3,24 @@
   <string name="tab.terminal">Terminal</string>
   <string name="tab.history">History ({count})</string>
   <string name="tab.variables">Variables</string>
+  <string name="tab.artifacts">Artifacts</string>
+  <string name="artifact.empty">No artifacts yet. Run a flow containing pipeline.handoff / deliver nodes to see deliverables here.</string>
+  <string name="artifact.copy">Copy</string>
+  <string name="artifact.download">Download</string>
+  <string name="artifact.stage.idea">Ideation</string>
+  <string name="artifact.stage.plan">Plan</string>
+  <string name="artifact.stage.design">Design</string>
+  <string name="artifact.stage.construction">Construction</string>
+  <string name="artifact.stage.test">Test</string>
+  <string name="artifact.stage.deliver">Deliver</string>
+  <string name="artifact.stage.ops">Ops</string>
+  <string name="artifact.construction.project">Project deliverable</string>
+  <string name="artifact.construction.constructionWf">Construction workflow</string>
+  <string name="artifact.construction.opsWf">Ops workflow</string>
+  <string name="artifact.plan.plan">Plan doc</string>
+  <string name="artifact.plan.tasklist">Task list</string>
+  <string name="artifact.design.design">Design doc</string>
+  <string name="artifact.design.modules">Module list</string>
 
   <string name="autosave.title">Workflow auto-saved locally; reopening after close restores it automatically</string>
   <string name="autosave.at">Auto-saved {time}</string>

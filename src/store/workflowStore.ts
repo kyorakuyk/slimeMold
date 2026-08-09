@@ -1199,6 +1199,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           runHistory: file.runs?.history ?? [],
           // 阶段 C 可恢复执行：读回运行检查点（落盘于 .slimemold/runs/checkpoints.json）
           checkpoints: file.checkpoints ?? {},
+          // 交付物：读回项目级黑板（pipeline.handoff 产出的成果，落盘于 project.json 的 artifacts）
+          artifacts: file.artifacts ?? {},
+          pipelines: file.pipelines ?? [],
           selectedNodeId: null,
           logs: [],
         });
