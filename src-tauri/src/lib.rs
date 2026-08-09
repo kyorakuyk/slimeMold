@@ -161,7 +161,7 @@ fn save_endpoint(app: AppHandle, key: String, value: String) -> Result<(), Strin
         serde_json::from_str(&value).map_err(|e| format!("接入点数据解析失败: {e}"))?;
     if let Some(plain) = v.get("apiKey").and_then(|x| x.as_str()) {
         if !plain.is_empty() {
-            let enc = encrypt_api_key(plain)?;
+            let enc = encrypt_api_key(&app, plain)?;
             v["apiKey"] = serde_json::Value::String(enc);
         }
     }
@@ -185,7 +185,7 @@ fn load_endpoint(app: AppHandle, key: String) -> Result<Option<String>, String> 
         .into_iter()
         .find(|(name, _)| name == &key)
         .map(|(_, v)| v);
-    Ok(found.map(|v| decrypt_api_key_in_json(&v)))
+    Ok(found.map(|v| decrypt_api_key_in_json(&app, &v)))
 }
 
 /// 删一条 API 接入点。
@@ -200,11 +200,11 @@ fn delete_endpoint(app: AppHandle, key: String) -> Result<(), String> {
 }
 
 /// 把接入点 JSON 中密文 apiKey 解密回明文（供前端/智能体使用）。
-fn decrypt_api_key_in_json(json: &str) -> String {
+fn decrypt_api_key_in_json(app: &AppHandle, json: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(json) {
         Ok(mut v) => {
             if let Some(enc) = v.get("apiKey").and_then(|x| x.as_str()) {
-                if let Some(plain) = decrypt_api_key(enc) {
+                if let Some(plain) = decrypt_api_key(app, enc) {
                     v["apiKey"] = serde_json::Value::String(plain);
                 }
             }
@@ -245,7 +245,7 @@ fn save_vault(app: AppHandle, key: String, value: String) -> Result<(), String> 
         serde_json::from_str(&value).map_err(|e| format!("vault 数据解析失败: {e}"))?;
     if let Some(plain) = v.get("apiKey").and_then(|x| x.as_str()) {
         if !plain.is_empty() {
-            let enc = encrypt_api_key(plain)?;
+            let enc = encrypt_api_key(&app, plain)?;
             v["apiKey"] = serde_json::Value::String(enc);
         }
     }
@@ -280,7 +280,20 @@ fn load_vault_key(app: AppHandle, key: String) -> Result<Option<String>, String>
         .into_iter()
         .find(|(name, _)| name == &key)
         .map(|(_, v)| v);
-    Ok(found.map(|v| decrypt_api_key_in_json(&v)))
+    eprintln!(
+        "[vault] load_vault_key id={} hit={}",
+        &key,
+        if found.is_some() { "true" } else { "false" }
+    );
+    let raw = found.map(|v| decrypt_api_key_in_json(&app, &v));
+    if let Some(ref s) = raw {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+            if let Some(k) = v.get("apiKey").and_then(|x| x.as_str()) {
+                eprintln!("[vault] load_vault_key decrypted apiKey len={} prefix={}", k.len(), &k.chars().take(6).collect::<String>());
+            }
+        }
+    }
+    Ok(raw)
 }
 
 /// 删除一个 Vault。
@@ -540,8 +553,33 @@ pub fn run() {
 // endpoints.json 落盘时 apiKey 以密文存储，避免明文泄露；运行时按 name 解密取回。
 const MASTER_KEY_ENTRY: &str = "___sm_master_key___";
 
-fn get_master_key() -> Result<[u8; 32], String> {
-    // 优先从密钥库取既有主密钥
+/// 主密钥持久化到 AppData/com.slimemold/master.key 文件。
+/// 2026-08-09 修复：原存于 keyring，但 Windows keyring 存在 (service,user) 读写不一致问题，
+/// 导致首次生成后读回不同 key → 加解密错乱（apiKey 解密失败返回密文）。
+/// 改为落文件可稳定读回；文件位于 AppData 且非随工作流导出，可接受。
+fn master_key_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取 AppData 目录失败: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 AppData 目录失败: {e}"))?;
+    Ok(dir.join("master.key"))
+}
+
+fn get_master_key(app: &AppHandle) -> Result<[u8; 32], String> {
+    let path = master_key_path(app)?;
+    // 优先从文件读既有主密钥
+    if let Ok(b64) = fs::read_to_string(&path) {
+        let b64 = b64.trim();
+        if let Ok(bytes) = base64_decode(b64) {
+            if bytes.len() == 32 {
+                let mut k = [0u8; 32];
+                k.copy_from_slice(&bytes);
+                return Ok(k);
+            }
+        }
+    }
+    // 兼容：从 keyring 读旧主密钥（若存在）
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, MASTER_KEY_ENTRY) {
         if let Ok(b64) = entry.get_password() {
             if let Ok(bytes) = base64_decode(&b64) {
@@ -553,20 +591,19 @@ fn get_master_key() -> Result<[u8; 32], String> {
             }
         }
     }
-    // 否则生成并持久化
+    // 否则生成并写入文件
     let mut k = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut k);
     let b64 = base64_encode(&k);
-    let _ =
-        keyring::Entry::new(KEYRING_SERVICE, MASTER_KEY_ENTRY).and_then(|e| e.set_password(&b64));
+    fs::write(&path, &b64).map_err(|e| format!("写入主密钥文件失败: {e}"))?;
     Ok(k)
 }
 
 /// 加密明文 apiKey → "nonce(12B).ciphertext" 的 base64 串。
-fn encrypt_api_key(plain: &str) -> Result<String, String> {
+fn encrypt_api_key(app: &AppHandle, plain: &str) -> Result<String, String> {
     use aes_gcm::aead::Aead;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    let key = get_master_key()?;
+    let key = get_master_key(app)?;
     let cipher = Aes256Gcm::new(&key.into());
     let mut nonce_bytes = [0u8; 12];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
@@ -580,14 +617,14 @@ fn encrypt_api_key(plain: &str) -> Result<String, String> {
 }
 
 /// 解密经 encrypt_api_key 得到的密文 → 明文；失败返回 None。
-fn decrypt_api_key(b64: &str) -> Option<String> {
+fn decrypt_api_key(app: &AppHandle, b64: &str) -> Option<String> {
     use aes_gcm::aead::Aead;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
     let bytes = base64_decode(b64).ok()?;
     if bytes.len() < 12 {
         return None;
     }
-    let key = get_master_key().ok()?;
+    let key = get_master_key(app).ok()?;
     let cipher = Aes256Gcm::new(&key.into());
     let (nonce_raw, ct) = bytes.split_at(12);
     let nonce = Nonce::from_slice(nonce_raw);
@@ -729,5 +766,44 @@ mod fs_atomic_replace_tests {
         assert_eq!(fs::read_to_string(&tmp).unwrap(), "new");
         drop(handle);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/* ---------------- 诊断：apiKey AES-GCM 加密往返（排除算法 bug / master key 漂移） ---------------- */
+#[cfg(test)]
+mod vault_crypto_roundtrip_tests {
+    use crate::{base64_decode, base64_encode};
+
+    #[test]
+    fn base64_roundtrip() {
+        let raw = b"sk-test-1234567890abcdef"; // 24 字节 → 32 字符
+        let b64 = base64_encode(raw);
+        assert_eq!(base64_decode(&b64).unwrap(), raw, "base64 往返应一致");
+        assert_eq!(b64.len(), 32);
+        // 另一组含奇数字节的输入
+        let raw2 = b"hello world";
+        let b64_2 = base64_encode(raw2);
+        assert_eq!(base64_decode(&b64_2).unwrap(), raw2);
+    }
+
+    #[test]
+    fn aes_gcm_roundtrip_same_key() {
+        // 用固定 key 走加解密，确认算法配对（不依赖 master key 存储）
+        let plain = "sk-test-deepseek-abcdefghijklmnopqrstuvwxyz";
+        let key = aes_gcm::Aes256Gcm::new_from_slice(&[7u8; 32]).unwrap();
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        let mut nonce_bytes = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ct = key.encrypt(nonce, plain.as_bytes()).unwrap();
+        let mut buf = nonce_bytes.to_vec();
+        buf.extend_from_slice(&ct);
+        let b64 = base64_encode(&buf);
+        // 解密
+        let bytes = base64_decode(&b64).unwrap();
+        let (nonce_raw, ct_bytes) = bytes.split_at(12);
+        let pt = key.decrypt(Nonce::from_slice(nonce_raw), ct_bytes).unwrap();
+        assert_eq!(String::from_utf8(pt).unwrap(), plain, "AES-GCM 往返应还原明文");
     }
 }

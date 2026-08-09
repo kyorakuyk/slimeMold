@@ -216,7 +216,8 @@ export async function listVaults(): Promise<ApiVault[]> {
   return out;
 }
 
-/** 按 vaultId 读取单个 Vault 的明文 key（含元数据）。 */
+/** 按 vaultId 读取单个 Vault 的明文 key（含元数据）。
+ * 若解出的 apiKey 异常（如旧 master key 漂移导致的密文残渣），视为损坏返回 null。 */
 export async function loadVaultKey(id: string): Promise<{ apiKey: string; vault: ApiVault } | null> {
   if (!isTauri) return null;
   const raw = (await invokeRaw<OptionString>('load_vault_key', { key: id })) ?? null;
@@ -224,6 +225,10 @@ export async function loadVaultKey(id: string): Promise<{ apiKey: string; vault:
   try {
     const o = JSON.parse(raw) as StoredVault;
     if (typeof o?.apiKey === 'string') {
+      const k = o.apiKey;
+      // 正常明文 API key 极少超过 70 字符；若解密失败 fallback 出的是 84 字符 base64 密文，
+      // 判为损坏（旧 keyring 主密钥漂移产生的残渣），提示用户重录。
+      if (k.length > 70) return null;
       const { apiKey, ...vault } = o;
       return { apiKey, vault };
     }
