@@ -171,16 +171,26 @@ export async function saveVault(
   apiKey: string,
 ): Promise<ApiVault> {
   if (!isTauri) throw new Error('当前环境不支持系统密钥库（请使用桌面版）。');
-  const baseUrl = input.baseUrl.trim();
-  if (!baseUrl) throw new Error('Base URL 不能为空。');
   const protocol = input.protocol ?? 'openai';
-  const vendor = input.vendor ?? inferVendor(baseUrl, protocol);
+  const vendor = input.vendor ?? inferVendor(input.baseUrl, protocol);
+  // 对已知官方 vendor（deepseek/openai/siliconflow/openrouter）自动补 /v1，避免漏填路径拉不到模型
+  const baseUrl = normalizeVaultBaseUrl(input.baseUrl, vendor);
+  if (!baseUrl) throw new Error('Base URL 不能为空。');
   const id = input.id?.trim() || genVaultId();
   const label = input.label?.trim() || labelFromBaseUrl(baseUrl);
   const vault: ApiVault = { id, label, vendor, protocol, baseUrl };
   const stored: StoredVault = { ...vault, apiKey };
   await invokeRaw('save_vault', { key: id, value: JSON.stringify(stored) });
   return vault;
+}
+
+/** 补全 /v1 路径（仅对已知官方 vendor，transit 中转站不擅自加路径）。 */
+export function normalizeVaultBaseUrl(baseUrl: string, vendor: Vendor): string {
+  const b = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!b) return '';
+  if (vendor === 'transit' || vendor === 'claude' || vendor === 'anthropic') return b;
+  if (/\/v\d+$/.test(b)) return b;
+  return `${b}/v1`;
 }
 
 /** 枚举全部 Vault 元数据（不含明文 key）。 */

@@ -224,23 +224,38 @@ export async function fetchOpenAIModels(
   apiKey?: string,
   proxyUrl?: string,
 ): Promise<string[]> {
-  try {
-    const base = baseUrl.replace(/\/+$/, '');
-    const proxyOpt = proxyUrl?.trim() ? { proxy: proxyUrl.trim() } : {};
-    const res = await httpFetch(`${base}/models`, {
-      method: 'GET',
-      ...proxyOpt,
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: { id: string }[] };
-    const ids = (data.data ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => typeof id === 'string');
-    return ids.sort();
-  } catch {
-    return [];
+  const candidates = baseUrlListWithV1(baseUrl);
+  const proxyOpt = proxyUrl?.trim() ? { proxy: proxyUrl.trim() } : {};
+  for (const base of candidates) {
+    try {
+      const res = await httpFetch(`${base}/models`, {
+        method: 'GET',
+        ...proxyOpt,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      });
+      if (!res.ok) continue; // 尝试下一个候选（如缺 /v1 时补 /v1）
+      const data = (await res.json()) as { data?: { id: string }[] };
+      const ids = (data.data ?? [])
+        .map((m) => m.id)
+        .filter((id): id is string => typeof id === 'string');
+      if (ids.length > 0) return ids.sort();
+    } catch {
+      /* 单候选失败，尝试下一个 */
+    }
   }
+  return [];
+}
+
+/**
+ * 生成 Base URL 候选列表：优先原样，若未带 /v1 则追加 /v1 作为兜底候选。
+ * 解决用户漏填 /v1 导致 DeepSeek/OpenAI 官方拉不到模型的问题。
+ */
+export function baseUrlListWithV1(baseUrl: string): string[] {
+  const base = baseUrl.replace(/\/+$/, '');
+  const out = [base];
+  const hasVersion = /\/v\d+$/.test(base) || /\/v\d+\/$/.test(base);
+  if (!hasVersion) out.push(`${base}/v1`);
+  return out;
 }
 
 /** 拉取 Anthropic 原生服务的模型列表。
@@ -382,46 +397,50 @@ export async function probeAgent(
       };
     }
 
-    // OpenAI 兼容
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const res = await httpFetch(`${base}/chat/completions`, {
-      method: 'POST',
-      ...proxyOpt,
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        stream: false,
-      }),
-    });
-    if (res.ok) {
-      return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+    // OpenAI 兼容（遍历候选：原 base 优先，缺 /v1 时补 /v1 兜底）
+    const oaiCandidates = baseUrlListWithV1(base);
+    for (const cand of oaiCandidates) {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const res = await httpFetch(`${cand}/chat/completions`, {
+        method: 'POST',
+        ...proxyOpt,
+        headers,
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+          stream: false,
+        }),
+      });
+      if (res.ok) {
+        return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+      }
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
+      }
+      if (res.status === 404) {
+        // 可能是缺 /v1 路径：继续尝试下一个候选；全部失败再返回 url 错误
+        continue;
+      }
+      let odetail = '';
+      try {
+        const oe = (await res.json()) as { error?: { message?: string } };
+        odetail = oe.error?.message ?? '';
+      } catch {
+        /* ignore */
+      }
+      if (/model/i.test(odetail) && /(not|exist|found|invalid)/i.test(odetail)) {
+        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${odetail}`, proxied };
+      }
+      return {
+        ok: false,
+        stage: 'url',
+        message: `请求失败（${res.status}）${odetail ? '：' + odetail : '，请检查 Base URL 与模型名'}`,
+        proxied,
+      };
     }
-    if (res.status === 401 || res.status === 403) {
-      return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
-    }
-    if (res.status === 404) {
-      return { ok: false, stage: 'url', message: `地址返回 404，请检查 Base URL 是否带 /v1 后缀`, proxied };
-    }
-    // 尝试解析错误信息，判断是否为模型不存在
-    let detail = '';
-    try {
-      const err = (await res.json()) as { error?: { message?: string; type?: string } };
-      detail = err.error?.message ?? '';
-    } catch {
-      /* ignore */
-    }
-    if (/model/i.test(detail) && /(not|exist|found|invalid)/i.test(detail)) {
-      return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${detail}`, proxied };
-    }
-    return {
-      ok: false,
-      stage: 'url',
-      message: `请求失败（${res.status}）${detail ? '：' + detail : '，请检查 Base URL 与模型名'}`,
-      proxied,
-    };
+    return { ok: false, stage: 'url', message: '地址返回 404，请检查 Base URL（OpenAI 兼容需带 /v1）', proxied };
   } catch (e: any) {
     const msg = e?.message ?? String(e);
     return {
