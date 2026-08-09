@@ -32,7 +32,42 @@ function serializeMessages(messages: ChatMessage[]): unknown[] {
   });
 }
 
-/** OpenAI 兼容协议（OpenAI / DeepSeek / Moonshot / 通义 等） */
+/** 生成 Base URL 候选：原路径优先，若未带 /v1 则追加 /v1 兜底（中转站如 apinebula 漏填 /v1 时可用）。 */
+function baseCandidates(base: string): string[] {
+  const out = [base];
+  if (!/\/v\d+$/.test(base)) out.push(`${base}/v1`);
+  return out;
+}
+
+/** 发一次 OpenAI 兼容 POST，遍历候选路径（404 时自动补 /v1 重试），返回最后的响应。 */
+async function openAICompatPost(
+  base: string,
+  body: Record<string, unknown>,
+  agent: AgentConfig,
+  proxyOpt: Record<string, string>,
+  signal: AbortSignal,
+): Promise<Response> {
+  const candidates = baseCandidates(base);
+  let lastRes: Response | null = null;
+  for (const cand of candidates) {
+    const res = await httpFetch(`${cand}/chat/completions`, {
+      method: 'POST',
+      signal,
+      ...proxyOpt,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${agent.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    lastRes = res;
+    // 404 可能是漏填 /v1 路径：尝试下一个候选；否则（含 401/403/200 等）直接返回
+    if (res.status !== 404 || candidates.length === 1) break;
+  }
+  return lastRes!;
+}
+
+/** OpenAI 兼容协议（OpenAI / DeepSeek / Moonshot / 通义 / Gemini 中转 等） */
 export async function chatOpenAI(
   agent: AgentConfig,
   messages: ChatMessage[],
@@ -60,16 +95,7 @@ export async function chatOpenAI(
   const proxyOpt = agent.proxyUrl?.trim() ? { proxy: agent.proxyUrl.trim() } : {};
 
   if (!onToken) {
-    const res = await httpFetch(`${base}/chat/completions`, {
-      method: 'POST',
-      signal,
-      ...proxyOpt,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${agent.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    const res = await openAICompatPost(base, body, agent, proxyOpt, signal);
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`OpenAI 协议请求失败 (${res.status}): ${text.slice(0, 300)}`);
@@ -103,16 +129,7 @@ export async function chatOpenAI(
   }
 
   // 流式路径
-  const res = await httpFetch(`${base}/chat/completions`, {
-    method: 'POST',
-    signal,
-    ...proxyOpt,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${agent.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const res = await openAICompatPost(base, body, agent, proxyOpt, signal);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`OpenAI 协议请求失败 (${res.status}): ${text.slice(0, 300)}`);
