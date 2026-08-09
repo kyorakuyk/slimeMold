@@ -152,15 +152,14 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
     await mkdir(cfg, { recursive: true });
     await mkdir(wfDir, { recursive: true });
     await mkdir(runsDir, { recursive: true });
-    await mkdir(joinPath(cfg, 'Agents'), { recursive: true });
 
     // project.json（元数据 + 引用，不再内联所有 workflow 全文；checkpoints 独立成文件避免膨胀）
     const { checkpoints, ...metaRest } = file;
     const meta: ProjectFile = { ...metaRest, workflows: {}, agents: undefined, defaultAgentId: undefined };
     await writeTextFile(joinPath(cfg, PROJECT_JSON), JSON.stringify(meta, null, 2));
 
-    // Agents/agents.json：项目级智能体独立存储（2026-08-10 起从「随单个工作流」提升为项目级），
-    // 保证切换/重开工作流不丢失 agents；与工作流文件解耦，便于跨项目导入共享。
+    // agents.json：项目级智能体独立存储（2026-08-10 起从「随单个工作流」提升为项目级），
+    // 与 project.json 同级，保证切换/重开工作流不丢失 agents；与工作流文件解耦，便于跨项目导入共享。
     const agentsData: {
       version: 1;
       agents: AgentConfig[];
@@ -172,7 +171,7 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
       defaultAgentId: file.defaultAgentId ?? null,
       agentRouteTable: file.agentRouteTable,
     };
-    await writeTextFile(joinPath(cfg, 'Agents', 'agents.json'), JSON.stringify(agentsData, null, 2));
+    await writeTextFile(joinPath(cfg, 'agents.json'), JSON.stringify(agentsData, null, 2));
 
     // runs/checkpoints.json（阶段 C 可恢复执行：每工作流最新一次运行的节点级结果）
     const ckptPath = joinPath(runsDir, CHECKPOINTS_JSON);
@@ -308,7 +307,7 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
     // 兼容：旧版本 agents 内联在 project.json（meta.agents）或各工作流 wf.agents，
     // 缺失 agents.json 时回退 meta.agents。
     let agents = (meta as ProjectFile).agents;
-    const agentsPath = joinPath(cfg, 'Agents', 'agents.json');
+    const agentsPath = joinPath(cfg, 'agents.json');
     if (await exists(agentsPath)) {
       try {
         const raw = JSON.parse(await readTextTauri(agentsPath)) as {
