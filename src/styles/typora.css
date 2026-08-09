@@ -318,6 +318,9 @@ body {
   color: var(--sm-ink);
   padding: 6px 8px;
   font-size: 13px;
+  line-height: 1.4;
+  height: 30px;
+  box-sizing: border-box;
   outline: none;
   transition: border-color 0.15s ease;
   box-shadow: none;
@@ -337,7 +340,9 @@ select.sm-input {
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 10px;
-  padding-right: 26px;
+  padding: 6px 26px 6px 8px;
+  height: 30px;
+  line-height: 1.4;
   cursor: pointer;
 }
 select.sm-input:disabled,
