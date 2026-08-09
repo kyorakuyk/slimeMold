@@ -772,17 +772,17 @@ export const useWorkflowStore = create<WorkflowState>()(
           for (const key of Object.keys(routeTable)) {
             const item = routeTable[key];
             if (!item) continue;
-            const next: { agentId?: string; fallback?: string[] } = { ...item };
+            const next: import('../types').AgentRouteEntry = { agentId: item.agentId, fallback: item.fallback ? [...item.fallback] : [] };
             if (next.agentId === id) {
-              next.agentId = undefined;
+              next.agentId = '';
               tableChanged = true;
             }
             if (next.fallback?.includes(id)) {
               next.fallback = next.fallback.filter((f) => f !== id);
               tableChanged = true;
             }
-            // 类别项已无任何引用（既无主 agent 也无 fallback）→ 整体移除，避免留下脏配置
-            if (!next.agentId && (!next.fallback || next.fallback.length === 0)) {
+            // 类别项已无任何引用（agentId 被删或为空，且无 fallback）→ 整体移除，避免留下脏配置
+            if (!next.agentId && (next.fallback?.length ?? 0) === 0) {
               delete routeTable[key];
               tableChanged = true;
             } else {

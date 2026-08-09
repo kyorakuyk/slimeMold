@@ -439,7 +439,6 @@ function AgentsTab() {
               </div>
             ) : (
               <ApiKeyField
-                protocol={editing.protocol}
                 credentialKey={editing.credentialKey}
                 agentId={editing.id}
                 onSaved={onKeySaved}
@@ -606,13 +605,11 @@ function AgentsTab() {
  * 工作流 / agent 配置中只保留 credentialKey，绝不持久化明文。
  */
 function ApiKeyField({
-  protocol,
   credentialKey,
   agentId,
   onSaved,
   onCleared,
 }: {
-  protocol: Protocol;
   credentialKey?: string;
   /** 当前编辑的 Agent id，用于生成该 Agent 专属的凭据键，避免同协议 Agent 共用/覆盖密钥 */
   agentId: string;
