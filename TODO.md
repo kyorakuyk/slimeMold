@@ -1143,3 +1143,24 @@ Artifact = { kind: 'plan'|'design'|'project'|'bugreport'|..., payload: unknown, 
 - key 进 WebView 内存属本地应用常态；Rust 代理转发（TODO §4.3 方案 Y）为长期演进，不阻塞。
 
 *新增：2026-08-07（基于 Codex 评审，未改代码，仅整理文档）*
+
+---
+
+## 16. 凭据 Vault 自动分组（2026-08-09 立项）
+
+> 来源：用户需求「录入 api 后存储不靠用户打标，靠代码自动录入分组（deepseek/Claude 等）；并考虑中转站一个 key 映射不同模型（如同时 chatgpt+claude）」。
+> 已拍板：**方案 C**（只要自动分组 + 自动建 id，多模型映射暂不做）+ **一次性迁移**（升级时把旧 Endpoint 迁移为 Vault，之后旧机制废弃）。
+
+### 16.0 方案 A 设计考量（记录，暂不实施）
+> 用户明确选择 C，但 A 的架构价值需留存备忘，后续若要支持中转站多模型可回看。
+
+- **问题**：当前 `AgentConfig.protocol` 是固定单值，无法表达「同一个中转 key 选 gpt-4o 时走 OpenAI 协议、选 claude-3 时走 Anthropic 协议」。
+- **方案 A（彻底）**：新增 `Vault` 实体（一次录入自动分组、一个 key 映射多模型/多协议），`AgentConfig` 改为引用 `vaultId + model`，`protocol` 按所选模型前缀自动推断（gpt/deepseek → openai，claude → anthropic）。改动大但彻底解决中转站。
+- **不做原因**：改动面大（types/credentialStore/lib.rs/AgentPanel/SettingsCenter/agentManager/llmChannel），当前业务无强需求；C 已满足「自动分组、不靠打标」。
+
+### 16.1 方案 C 落地（进行中）
+- **`types.ts`**：新增 `Vendor`（`deepseek|openai|anthropic|claude|siliconflow|openrouter|transit`）+ `ApiVault`（`{id, label, vendor, baseUrl, protocol, models?}`）。
+- **Rust `lib.rs`**：新增 `save_vault` / `list_vaults` / `load_vault_key`；`save_vault` 自动推断 vendor（按 baseUrl 域名 + 拉取模型）+ 自动建 id（`crypto` 或时间戳哈希）；`list_vaults` 不返回 key；迁移时清理旧 `endpoints.json` 条目。
+- **`credentialStore.ts`**：新增 `saveVault` / `listVaults` / `loadVaultKey`；`listEndpoints` 标记废弃（一次性迁移后不再用）。
+- **UI**：录入 key 只填 `key + label + baseUrl`，vendor 自动推断、id 自动生成，不靠用户打标。
+- **运行时**：`resolveApiKey` 兼容按 `vaultId` 回填 key，兼容旧 `credentialKey`。

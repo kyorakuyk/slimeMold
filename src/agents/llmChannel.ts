@@ -1,18 +1,26 @@
 import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
 import { chatWithAgent } from './agentManager';
 import { useViewStore } from '../store/viewStore';
-import { loadCredential, loadEndpointKey } from './credentialStore';
+import { loadCredential, loadEndpointKey, loadVaultKey } from './credentialStore';
 
 /**
  * 按 credentialKey 解析真实 apiKey。
  * 工作流/agent 序列化时只保留 credentialKey（明文 apiKey 被剥离），
  * 运行时必须在此回填，否则 provider 会带着 `Bearer undefined` 请求而失败。
- * 优先从系统密钥库（saveCredential 写入）取，其次从接入点库（saveEndpoint 写入）取。
+ * 解析顺序：
+ * 1. 明文 apiKey（headless / 本地 Ollama 场景）
+ * 2. Vault（credentialKey 以 `vault-` 开头，2026-08-09 起的新存储）
+ * 3. 系统密钥库（saveCredential 写入）
+ * 4. 旧接入点库（saveEndpoint 写入，一次性迁移前的旧数据）
  */
 async function resolveApiKey(agent: AgentConfig): Promise<string | undefined> {
   if (agent.apiKey) return agent.apiKey;
   const ck = agent.credentialKey;
   if (!ck) return undefined;
+  if (ck.startsWith('vault-')) {
+    const vault = await loadVaultKey(ck);
+    if (vault?.apiKey) return vault.apiKey;
+  }
   const fromCred = await loadCredential(ck);
   if (fromCred) return fromCred;
   const fromEp = await loadEndpointKey(ck);

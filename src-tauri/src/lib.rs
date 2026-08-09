@@ -227,6 +227,73 @@ fn list_endpoints_raw(app: AppHandle) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/* ---------------- Vault（自动分组密钥库，2026-08-09） ----------------
+ * 用户在 UI 只填 key + label + baseUrl，id 由前端自动生成（UUID）、vendor 由前端按
+ * baseUrl 域名自动推断；Rust 侧负责加密存储与按需取回，不把明文 key 批量返回 WebView。
+ * 复用 endpoints.json 同一文件（结构性升级，旧 Endpoint 由前端一次性迁移）。
+ */
+
+/// 存一条 Vault（key = vaultId，value 含 apiKey 密文 + label/vendor/baseUrl/models 元数据）。
+/// 复用 encrypt_api_key 加密明文 apiKey。返回 ()。
+#[tauri::command]
+fn save_vault(app: AppHandle, key: String, value: String) -> Result<(), String> {
+    let k = key.trim().to_string();
+    if k.is_empty() {
+        return Err("vault 键非法".into());
+    }
+    let mut v: serde_json::Value =
+        serde_json::from_str(&value).map_err(|e| format!("vault 数据解析失败: {e}"))?;
+    if let Some(plain) = v.get("apiKey").and_then(|x| x.as_str()) {
+        if !plain.is_empty() {
+            let enc = encrypt_api_key(plain)?;
+            v["apiKey"] = serde_json::Value::String(enc);
+        }
+    }
+    let stored = serde_json::to_string(&v).map_err(|e| format!("序列化失败: {e}"))?;
+    let mut list = read_ep_store(&app);
+    if let Some(pos) = list.iter().position(|(name, _)| name == &k) {
+        list[pos].1 = stored.clone();
+    } else {
+        list.push((k.clone(), stored.clone()));
+    }
+    write_ep_store(&app, &list)?;
+    eprintln!("[vault] save_vault ok: id={k} total={}", list.len());
+    Ok(())
+}
+
+/// 枚举全部 Vault 元数据（剥离 apiKey，仅返回 id/label/vendor/baseUrl/protocol/models）。
+#[tauri::command]
+fn list_vaults(app: AppHandle) -> Result<Vec<String>, String> {
+    let list = read_ep_store(&app);
+    eprintln!("[vault] list_vaults count={}", list.len());
+    Ok(list
+        .into_iter()
+        .map(|(_, v)| strip_endpoint_api_key(&v))
+        .collect())
+}
+
+/// 按 vaultId 读取单个 Vault 的明文 apiKey（含元数据）。不存在返回 Ok(None)。
+#[tauri::command]
+fn load_vault_key(app: AppHandle, key: String) -> Result<Option<String>, String> {
+    let list = read_ep_store(&app);
+    let found = list
+        .into_iter()
+        .find(|(name, _)| name == &key)
+        .map(|(_, v)| v);
+    Ok(found.map(|v| decrypt_api_key_in_json(&v)))
+}
+
+/// 删除一个 Vault。
+#[tauri::command]
+fn delete_vault(app: AppHandle, key: String) -> Result<(), String> {
+    let k = key.trim().to_string();
+    let mut list = read_ep_store(&app);
+    list.retain(|(name, _)| name != &k);
+    write_ep_store(&app, &list)?;
+    let _ = keyring::Entry::new(KEYRING_SERVICE, &k).and_then(|e| e.delete_credential());
+    Ok(())
+}
+
 /// 解析接入点 JSON，删除 apiKey 字段后返回（不清零字段、不持有明文）。
 fn strip_endpoint_api_key(json: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(json) {
@@ -441,6 +508,10 @@ pub fn run() {
             load_endpoint,
             delete_endpoint,
             list_endpoints_raw,
+            save_vault,
+            list_vaults,
+            load_vault_key,
+            delete_vault,
             run_git,
             grant_project_access
         ])

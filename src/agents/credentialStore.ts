@@ -1,5 +1,5 @@
 import { isTauri } from '../platform/env';
-import type { ApiEndpoint } from '../types';
+import type { ApiEndpoint, ApiVault, Protocol, Vendor } from '../types';
 
 /**
  * API 接入点存储封装（路线 A）。
@@ -122,4 +122,105 @@ export async function listEndpoints(): Promise<ApiEndpoint[]> {
  */
 export function defaultCredentialKey(protocol: string): CredentialKey {
   return protocol; // 'openai' | 'anthropic' | 'ollama' ...
+}
+
+/* ---------------- Vault（自动分组密钥库，2026-08-09） ---------------- */
+
+/** 存储的 vault 整条（含明文 key，落盘时 Rust 加密）。 */
+type StoredVault = ApiVault & { apiKey: string };
+
+/** 生成一个唯一的 vault id（不靠用户打标）。 */
+export function genVaultId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `vault-${crypto.randomUUID()}`;
+  }
+  return `vault-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 默认展示名：取 baseUrl 的 host 域名（去掉协议与路径、www）。 */
+export function labelFromBaseUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    return (u.hostname || baseUrl).replace(/^www\./, '');
+  } catch {
+    return baseUrl.replace(/^https?:\/\//, '').split('/')[0] || 'transit';
+  }
+}
+
+/** 按 baseUrl 域名推断厂商分组（自动打标，不靠用户手填）。 */
+export function inferVendor(baseUrl: string, protocol: Protocol = 'openai'): Vendor {
+  const host = (() => {
+    try {
+      return new URL(baseUrl).hostname.toLowerCase();
+    } catch {
+      return (baseUrl || '').toLowerCase();
+    }
+  })();
+  const all = host + ' ' + (baseUrl || '').toLowerCase();
+  if (all.includes('deepseek')) return 'deepseek';
+  if (all.includes('anthropic')) return protocol === 'anthropic' ? 'anthropic' : 'claude';
+  if (all.includes('siliconflow')) return 'siliconflow';
+  if (all.includes('openrouter')) return 'openrouter';
+  if (all.includes('openai')) return 'openai';
+  return 'transit';
+}
+
+/** 保存一个 Vault（apiKey 明文仅传此函数，Rust 侧加密落盘）。id 自动生成或传入。 */
+export async function saveVault(
+  input: { label?: string; baseUrl: string; protocol?: Protocol; vendor?: Vendor; id?: string },
+  apiKey: string,
+): Promise<ApiVault> {
+  if (!isTauri) throw new Error('当前环境不支持系统密钥库（请使用桌面版）。');
+  const baseUrl = input.baseUrl.trim();
+  if (!baseUrl) throw new Error('Base URL 不能为空。');
+  const protocol = input.protocol ?? 'openai';
+  const vendor = input.vendor ?? inferVendor(baseUrl, protocol);
+  const id = input.id?.trim() || genVaultId();
+  const label = input.label?.trim() || labelFromBaseUrl(baseUrl);
+  const vault: ApiVault = { id, label, vendor, protocol, baseUrl };
+  const stored: StoredVault = { ...vault, apiKey };
+  await invokeRaw('save_vault', { key: id, value: JSON.stringify(stored) });
+  return vault;
+}
+
+/** 枚举全部 Vault 元数据（不含明文 key）。 */
+export async function listVaults(): Promise<ApiVault[]> {
+  if (!isTauri) return [];
+  const raws = (await invokeRaw<string[]>('list_vaults', {})) ?? [];
+  const out: ApiVault[] = [];
+  for (const r of raws) {
+    try {
+      const o = JSON.parse(r) as StoredVault;
+      if (typeof o?.id === 'string' && typeof o?.baseUrl === 'string') {
+        const { apiKey: _omit, ...rest } = o;
+        out.push(rest);
+      }
+    } catch {
+      /* 跳过损坏条目 */
+    }
+  }
+  return out;
+}
+
+/** 按 vaultId 读取单个 Vault 的明文 key（含元数据）。 */
+export async function loadVaultKey(id: string): Promise<{ apiKey: string; vault: ApiVault } | null> {
+  if (!isTauri) return null;
+  const raw = (await invokeRaw<OptionString>('load_vault_key', { key: id })) ?? null;
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as StoredVault;
+    if (typeof o?.apiKey === 'string') {
+      const { apiKey, ...vault } = o;
+      return { apiKey, vault };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 删除一个 Vault。 */
+export async function removeVault(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invokeRaw('delete_vault', { key: id });
 }

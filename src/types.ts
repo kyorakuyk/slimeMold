@@ -7,7 +7,8 @@ export type Protocol = 'openai' | 'anthropic' | 'ollama';
 /* ---------- API 接入点（APIKEYS 分区集中管理的「网址 + 密钥」） ---------- */
 /** 一个 API 接入点：把 Base URL 与密钥绑定成可复用的配置单元（类似 cc-switch 的 API 路由）。
  * - name：唯一标识，也作为系统密钥库的条目键（实际存 `ep::<name>`）。
- * - 密钥明文仅存系统密钥库；此结构不持久化明文（运行时从密钥库取回）。 */
+ * - 密钥明文仅存系统密钥库；此结构不持久化明文（运行时从密钥库取回）。
+ * @deprecated 2026-08-09 起由 ApiVault 取代（一次性迁移），保留仅用于读旧数据兼容。 */
 export interface ApiEndpoint {
   name: string;
   protocol: Protocol;
@@ -15,6 +16,26 @@ export interface ApiEndpoint {
   baseUrl: string;
   /** 系统密钥库中的凭据键（= name）。智能体可经此键引用，无需重复填 key。 */
   credentialKey: string;
+}
+
+/* ---------- Vault（自动分组密钥库，2026-08-09） ---------- */
+/** 厂商分组（录入时按 baseUrl 域名自动推断，不靠用户打标）。 */
+export type Vendor = 'deepseek' | 'openai' | 'anthropic' | 'claude' | 'siliconflow' | 'openrouter' | 'transit';
+
+/** 一个 Vault：一次录入一个明文 Key，id 自动生成、vendor 自动分组、可挂多个模型。
+ * 密钥明文只存 Rust 加密存储，此结构不含明文 apiKey。 */
+export interface ApiVault {
+  /** 自动生成的唯一 id（UUID），也是存储键 */
+  id: string;
+  /** 展示名（录入时可自动取 baseUrl 域名，用户可改） */
+  label: string;
+  /** 自动推断的厂商分组 */
+  vendor: Vendor;
+  protocol: Protocol;
+  /** 中转站 / 官方 Base URL，如 https://api.deepseek.com/v1 */
+  baseUrl: string;
+  /** 该 key 可用的模型列表（经 /models 拉取；可选） */
+  models?: string[];
 }
 
 /* ---------- 智能体配置 ---------- */

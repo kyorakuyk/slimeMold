@@ -12,10 +12,10 @@ import {
   findProviderPreset,
   type ProbeResult,
 } from '../agents/agentManager';
-import { saveCredential, removeCredential, loadCredential, defaultCredentialKey, listEndpoints, loadEndpointKey } from '../agents/credentialStore';
+import { saveCredential, removeCredential, loadCredential, defaultCredentialKey, listVaults, loadVaultKey } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
-import type { AgentConfig, ApiEndpoint, Protocol, RoleTemplate } from '../types';
+import type { AgentConfig, ApiVault, Protocol, RoleTemplate } from '../types';
 import { useT } from '../i18n/useT';
 
 interface AgentPanelProps {
@@ -124,25 +124,25 @@ function AgentsTab() {
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const editing = agents.find((a) => a.id === editingId);
 
-  /** APIKEYS 分区里已登记的接入点（供「从库导入」下拉）。 */
-  const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
+  /** APIKEYS 分区里已登记的 Vault（供「从库导入」下拉）。 */
+  const [vaults, setVaults] = useState<ApiVault[]>([]);
   useEffect(() => {
-    if (isTauri) listEndpoints().then(setEndpoints);
+    if (isTauri) listVaults().then(setVaults);
   }, []);
-  /** 从 APIKEYS 库选择一个接入点，自动生成一份填好 协议/网址/密钥 的智能体。 */
-  const importFromEndpoint = async (name: string) => {
-    if (!name) return;
-    const ep = endpoints.find((e) => e.name === name);
-    if (!ep) return;
-    const agent = createAgent(ep.protocol);
-    agent.baseUrl = ep.baseUrl;
-    agent.credentialKey = ep.credentialKey;
-    agent.name = t('agent.list.importedName', { name: ep.name });
-    agent.providerId = 'custom';
+  /** 从 Vault 库选择一个，自动生成一份填好 协议/网址/密钥 的智能体。 */
+  const importFromVault = async (vaultId: string) => {
+    if (!vaultId) return;
+    const v = vaults.find((x) => x.id === vaultId);
+    if (!v) return;
+    const agent = createAgent(v.protocol);
+    agent.baseUrl = v.baseUrl;
+    agent.credentialKey = v.id;
+    agent.name = t('agent.list.importedName', { name: v.label });
+    agent.providerId = v.vendor === 'transit' ? 'custom' : v.vendor;
     upsertAgent(agent);
     setEditingId(agent.id);
     // 取回明文 key 暂存内存，便于立即检测/拉模型
-    const key = ep.protocol === 'ollama' ? null : await loadEndpointKey(ep.name);
+    const key = v.protocol === 'ollama' ? null : (await loadVaultKey(v.id))?.apiKey ?? null;
     if (key) setPendingKey(key);
   };
 
@@ -377,15 +377,15 @@ function AgentsTab() {
             className="sm-input mt-1"
             value=""
             onChange={(e) => {
-              importFromEndpoint(e.target.value);
+              importFromVault(e.target.value);
               e.currentTarget.value = '';
             }}
             title={t('agent.list.importTitle')}
           >
             <option value="">{t('agent.list.importOption')}</option>
-            {endpoints.map((ep) => (
-              <option key={ep.name} value={ep.name}>
-                {ep.name}（{ep.protocol} · {ep.baseUrl}）
+            {vaults.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}（{v.vendor} · {v.protocol}）
               </option>
             ))}
           </select>
