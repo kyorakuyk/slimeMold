@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "name": "AgentRouter 类别路由验收",
+  "savedAt": "2026-08-10T00:00:00.000Z",
+  "notes": "【AgentRouter 验收工作流】\n\n本工作流用于验收「六、AgentRouter 类别路由」：\n  ui    → agent-cheap\n  logic → agent-strong\n  fallback → agent-fallback\n\n1) 依赖已配置的三个 agent：agent-cheap / agent-strong / agent-fallback（见 agents 数组，可自行改 baseUrl/模型/credentialKey）。\n2) 两个 worker.implementer 节点：\n   - n-ui：category=ui   → 应路由到 agent-cheap\n   - n-logic：category=logic → 应路由到 agent-strong\n   节点 agentId 留空（不显式绑定），才会走类别路由并在日志打印 AgentRouter/route-category。\n3) 运行后看底部 TerminalLog：\n   - 搜「AgentRouter」「route-category」「类别」确认各节点用对应 agent。\n4) 验收「主 agent 缺失」：删掉/禁用 agent-strong，重跑 n-logic，应自动落到 logic 的 fallback（agent-fallback），而不是报“智能体不存在”。\n   - 注：逻辑类别未单独配 fallback 时，路由表其余类别/默认 fallback 生效；若没有，则落到 defaultAgentId 或全部 agent 兜底。\n5) 验收「调用失败 fallback」：把某 agent 改成错误 endpoint/无效模型，跑对应节点，日志会出现“尝试下一候选”并切到第二个有效 agent。\n\nsimulate 若开 on 则离线回显（不真实调 LLM），便于先看链路。",
+  "agents": [
+    {
+      "id": "agent-cheap",
+      "name": "Agent · cheap",
+      "protocol": "openai",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "providerId": "custom",
+      "credentialKey": "deepseek"
+    },
+    {
+      "id": "agent-strong",
+      "name": "Agent · strong",
+      "protocol": "openai",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-v4-flash",
+      "temperature": 0.7,
+      "providerId": "deepseek",
+      "credentialKey": "deepseek"
+    },
+    {
+      "id": "agent-fallback",
+      "name": "Agent · fallback",
+      "protocol": "openai",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "providerId": "custom",
+      "credentialKey": "deepseek"
+    }
+  ],
+  "defaultAgentId": "agent-cheap",
+  "agentRouteTable": {
+    "ui": { "agentId": "agent-cheap", "fallback": ["agent-fallback"] },
+    "logic": { "agentId": "agent-strong", "fallback": ["agent-fallback"] },
+    "docs": { "agentId": "agent-cheap", "fallback": ["agent-fallback"] },
+    "infra": { "agentId": "agent-strong", "fallback": ["agent-fallback"] },
+    "data": { "agentId": "agent-fallback" }
+  },
+  "nodes": [
+    {
+      "id": "n-input",
+      "typeId": "input.text",
+      "label": "验收输入",
+      "position": { "x": 40, "y": 120 },
+      "params": {
+        "text": "帮我生成一个欢迎页的 index.html（前端）和一个斐波那契的 fib.py（逻辑）。"
+      }
+    },
+    {
+      "id": "n-ui",
+      "typeId": "worker.implementer",
+      "label": "实现·前端页面(ui)",
+      "position": { "x": 360, "y": 40 },
+      "params": {
+        "agentId": "",
+        "category": "ui",
+        "roleId": "",
+        "modelOverride": "",
+        "system": "你是资深前端工程师。仅输出完整可用的代码，不加解释。",
+        "simulate": "off"
+      }
+    },
+    {
+      "id": "n-logic",
+      "typeId": "worker.implementer",
+      "label": "实现·逻辑算法(logic)",
+      "position": { "x": 360, "y": 260 },
+      "params": {
+        "agentId": "",
+        "category": "logic",
+        "roleId": "",
+        "modelOverride": "",
+        "system": "你是资深算法工程师。仅输出完整可用的代码，不加解释。",
+        "simulate": "off"
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n-input", "sourceHandle": "text", "target": "n-ui", "targetHandle": "plan" },
+    { "id": "e2", "source": "n-input", "sourceHandle": "text", "target": "n-logic", "targetHandle": "plan" }
+  ]
+}

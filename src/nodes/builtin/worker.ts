@@ -60,6 +60,20 @@ const workerScaffolder: NodeDefinition = {
   outputs: [{ id: 'plan', label: '实现计划', type: 'text' }],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
+    {
+      key: 'category',
+      label: '类别路由（AgentRouter）',
+      type: 'select',
+      default: '',
+      options: [
+        { value: '', label: '（不指定，走全局评分）' },
+        { value: 'ui', label: 'ui · 前端' },
+        { value: 'logic', label: 'logic · 逻辑' },
+        { value: 'docs', label: 'docs · 文档' },
+        { value: 'infra', label: 'infra · 基础设施' },
+        { value: 'data', label: 'data · 数据' },
+      ],
+    },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
     { key: 'modelOverride', label: '节点级模型（留空用默认）', type: 'text', default: '' },
     { key: 'system', label: '系统提示词（覆盖默认）', type: 'textarea', default: '' },
@@ -125,6 +139,20 @@ const workerImplementer: NodeDefinition = {
   outputs: [{ id: 'code', label: '代码', type: 'text' }],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
+    {
+      key: 'category',
+      label: '类别路由（AgentRouter）',
+      type: 'select',
+      default: '',
+      options: [
+        { value: '', label: '（不指定，走全局评分）' },
+        { value: 'ui', label: 'ui · 前端' },
+        { value: 'logic', label: 'logic · 逻辑' },
+        { value: 'docs', label: 'docs · 文档' },
+        { value: 'infra', label: 'infra · 基础设施' },
+        { value: 'data', label: 'data · 数据' },
+      ],
+    },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
     { key: 'modelOverride', label: '节点级模型（留空用默认）', type: 'text', default: '' },
     { key: 'system', label: '系统提示词（覆盖默认）', type: 'textarea', default: '' },
@@ -195,6 +223,20 @@ const workerValidator: NodeDefinition = {
   ],
   params: [
     { key: 'agentId', label: '绑定智能体', type: 'agent', default: '' },
+    {
+      key: 'category',
+      label: '类别路由（AgentRouter）',
+      type: 'select',
+      default: '',
+      options: [
+        { value: '', label: '（不指定，走全局评分）' },
+        { value: 'ui', label: 'ui · 前端' },
+        { value: 'logic', label: 'logic · 逻辑' },
+        { value: 'docs', label: 'docs · 文档' },
+        { value: 'infra', label: 'infra · 基础设施' },
+        { value: 'data', label: 'data · 数据' },
+      ],
+    },
     { key: 'roleId', label: '角色（可选）', type: 'role', default: '' },
     { key: 'modelOverride', label: '节点级模型（留空用默认）', type: 'text', default: '' },
     {
