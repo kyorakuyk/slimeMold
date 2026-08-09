@@ -6,7 +6,7 @@ import {
   protocolDefaults,
   ollamaModels,
   fetchOllamaModels,
-  fetchOpenAIModels,
+  fetchModelsByProtocol,
   probeAgent,
   providerPresets,
   findProviderPreset,
@@ -241,7 +241,7 @@ function AgentsTab() {
           return;
         }
         const proxyUrl: string | undefined = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
-        list = await fetchOpenAIModels(editing.baseUrl, key, proxyUrl);
+        list = await fetchModelsByProtocol(editing.protocol, editing.baseUrl, key, proxyUrl);
         if (list.length === 0) {
           setModelHint(
             editing.protocol === 'anthropic'
@@ -441,6 +441,7 @@ function AgentsTab() {
               <ApiKeyField
                 protocol={editing.protocol}
                 credentialKey={editing.credentialKey}
+                agentId={editing.id}
                 onSaved={onKeySaved}
                 onCleared={onKeyCleared}
               />
@@ -607,11 +608,14 @@ function AgentsTab() {
 function ApiKeyField({
   protocol,
   credentialKey,
+  agentId,
   onSaved,
   onCleared,
 }: {
   protocol: Protocol;
   credentialKey?: string;
+  /** 当前编辑的 Agent id，用于生成该 Agent 专属的凭据键，避免同协议 Agent 共用/覆盖密钥 */
+  agentId: string;
   onSaved: (ck: string, value: string) => void;
   onCleared: () => void;
 }) {
@@ -619,7 +623,9 @@ function ApiKeyField({
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<'' | 'ok' | 'err'>('');
 
-  const ck = credentialKey ?? defaultCredentialKey(protocol);
+  // 优先使用 Agent 已绑定的 credentialKey；否则用 Agent 专属键（而非共享的协议默认键），
+  // 保证不同 Agent 各自独立存 key，互不覆盖。
+  const ck = credentialKey ?? `agent:${agentId}:cred`;
 
   const handleSave = async () => {
     if (!draft.trim()) return;

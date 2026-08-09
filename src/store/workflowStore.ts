@@ -764,10 +764,37 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       removeAgent: (id) =>
-        set((s) => ({
-          agents: s.agents.filter((a) => a.id !== id),
-          defaultAgentId: s.defaultAgentId === id ? null : s.defaultAgentId,
-        })),
+        set((s) => {
+          // 同步清理路由表：删除引用了该 agent 的类别项
+          // （agentId 命中则移除该类别；fallback 命中则从数组中剔除该 id）。
+          const routeTable = { ...s.agentRouteTable };
+          let tableChanged = false;
+          for (const key of Object.keys(routeTable)) {
+            const item = routeTable[key];
+            if (!item) continue;
+            const next: { agentId?: string; fallback?: string[] } = { ...item };
+            if (next.agentId === id) {
+              next.agentId = undefined;
+              tableChanged = true;
+            }
+            if (next.fallback?.includes(id)) {
+              next.fallback = next.fallback.filter((f) => f !== id);
+              tableChanged = true;
+            }
+            // 类别项已无任何引用（既无主 agent 也无 fallback）→ 整体移除，避免留下脏配置
+            if (!next.agentId && (!next.fallback || next.fallback.length === 0)) {
+              delete routeTable[key];
+              tableChanged = true;
+            } else {
+              routeTable[key] = next;
+            }
+          }
+          return {
+            agents: s.agents.filter((a) => a.id !== id),
+            defaultAgentId: s.defaultAgentId === id ? null : s.defaultAgentId,
+            ...(tableChanged ? { agentRouteTable: routeTable } : {}),
+          };
+        }),
 
       setDefaultAgent: (id) => set({ defaultAgentId: id }),
 

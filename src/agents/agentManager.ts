@@ -243,6 +243,51 @@ export async function fetchOpenAIModels(
   }
 }
 
+/** 拉取 Anthropic 原生服务的模型列表。
+ * Anthropic 不提供公开的 /models 枚举，官方仅支持通过 /v1/models 查询已授权模型，
+ * 用 x-api-key 鉴权 + anthropic-version 头。失败返回空数组。 */
+export async function fetchAnthropicModels(
+  baseUrl: string,
+  apiKey?: string,
+  proxyUrl?: string,
+): Promise<string[]> {
+  try {
+    const base = baseUrl.replace(/\/+$/, '');
+    const proxyOpt = proxyUrl?.trim() ? { proxy: proxyUrl.trim() } : {};
+    const res = await httpFetch(`${base}/v1/models`, {
+      method: 'GET',
+      ...proxyOpt,
+      headers: apiKey
+        ? {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          }
+        : { 'anthropic-version': '2023-06-01' },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: { id: string }[] };
+    const ids = (data.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string');
+    return ids.sort();
+  } catch {
+    return [];
+  }
+}
+
+/** 按协议拉取模型列表：OpenAI 兼容走 /models + Bearer，Anthropic 原生走 /v1/models + x-api-key。 */
+export async function fetchModelsByProtocol(
+  protocol: Protocol,
+  baseUrl: string,
+  apiKey?: string,
+  proxyUrl?: string,
+): Promise<string[]> {
+  if (protocol === 'anthropic') {
+    return fetchAnthropicModels(baseUrl, apiKey, proxyUrl);
+  }
+  return fetchOpenAIModels(baseUrl, apiKey, proxyUrl);
+}
+
 /** API 可用性探测结果。
  * stage 表示失败发生在哪一环，便于用户区分"网址错"还是"key 错"还是"模型错"。 */
 export interface ProbeResult {
@@ -293,7 +338,51 @@ export async function probeAgent(
       return { ok: false, stage: 'url', message: `Ollama 返回 ${res.status}`, proxied };
     }
 
-    // OpenAI 兼容 / Anthropic（中转多为 OpenAI 格式）
+    // Anthropic 原生协议：POST /v1/messages + x-api-key + anthropic-version
+    if (config.protocol === 'anthropic') {
+      const h: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      };
+      if (apiKey) h['x-api-key'] = apiKey;
+      const res = await httpFetch(`${base}/v1/messages`, {
+        method: 'POST',
+        ...proxyOpt,
+        headers: h,
+        body: JSON.stringify({
+          model: config.model,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        }),
+      });
+      if (res.ok) {
+        return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+      }
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
+      }
+      if (res.status === 404) {
+        return { ok: false, stage: 'url', message: `地址返回 404，请检查 Anthropic Base URL（应含 /v1 或正确域名）`, proxied };
+      }
+      let adetail = '';
+      try {
+        const ae = (await res.json()) as { error?: { message?: string } };
+        adetail = ae.error?.message ?? '';
+      } catch {
+        /* ignore */
+      }
+      if (/model/i.test(adetail) && /(not|exist|found|invalid)/i.test(adetail)) {
+        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${adetail}`, proxied };
+      }
+      return {
+        ok: false,
+        stage: 'url',
+        message: `请求失败（${res.status}）${adetail ? '：' + adetail : '，请检查 Base URL 与模型名'}`,
+        proxied,
+      };
+    }
+
+    // OpenAI 兼容
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const res = await httpFetch(`${base}/chat/completions`, {

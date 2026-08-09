@@ -33,7 +33,7 @@ import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentScored } from '../agents/agentRouter';
 import { buildCheckpoint } from './checkpoint';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
-import { addExperience, matchExperience, successRateByAgent, summarizeExperience } from '../agents/experienceStore';
+import { addExperience, matchExperience, successRateByAgent, summarizeExperience, recordAgentOutcome } from '../agents/experienceStore';
 import {
   cleanupRun,
   createRunResources,
@@ -574,6 +574,19 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     }
     const cacheMissTokens = Math.max(0, totalPrompt - cacheHitTokens - cacheWriteTokens);
     const hasCost = costLog.length > 0;
+
+    // P2：Agent 运行指标（成功/失败）始终记录，不受 selfImprove 开关影响，
+    // 供成本感知路由评分使用（否则默认成功率恒为 0.5，成功率权重失效）。
+    const metricProjectId = useWorkflowStore.getState().projectId ?? '';
+    if (metricProjectId) {
+      try {
+        for (const r of costLog) {
+          if (r.agentId) recordAgentOutcome(metricProjectId, r.agentId, !!r.ok);
+        }
+      } catch {
+        /* 指标记录失败不影响运行 */
+      }
+    }
 
     const rec: RunRecord = {
       id: `run_${Date.now()}`,

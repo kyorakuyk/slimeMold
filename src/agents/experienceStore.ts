@@ -196,21 +196,80 @@ export function summarizeExperience(src: ExperienceSource): ExperienceEntry[] {
   return out;
 }
 
+/* ---------------- Agent 运行指标统计（与 selfImprove 解耦，始终记录） ----------------
+ * 2026-08-09 P2：成功率评分不应依赖 selfImprove 开关。
+ * 独立的轻量指标（agentId + ok/fail 计数，不含 prompt/insights 等敏感内容）
+ * 在每次运行收尾时无条件写入，供 routerScoring 评分使用。
+ */
+
+const METRIC_PREFIX = 'sm.metric.';
+const metricCache = new Map<string, Record<string, { ok: number; fail: number }>>();
+
+function metricKey(projectId: string): string {
+  return `${METRIC_PREFIX}${projectId}`;
+}
+
+function loadMetrics(projectId: string): Record<string, { ok: number; fail: number }> {
+  const cached = metricCache.get(projectId);
+  if (cached) return cached;
+  let m: Record<string, { ok: number; fail: number }> = {};
+  try {
+    const raw = localStorage.getItem(metricKey(projectId));
+    if (raw) m = JSON.parse(raw) as typeof m;
+  } catch {
+    m = {};
+  }
+  metricCache.set(projectId, m);
+  return m;
+}
+
+function persistMetrics(projectId: string, m: Record<string, { ok: number; fail: number }>): void {
+  metricCache.set(projectId, m);
+  try {
+    localStorage.setItem(metricKey(projectId), JSON.stringify(m));
+  } catch {
+    /* 存储失败不影响运行 */
+  }
+}
+
+/** 记录一次 Agent 调用结局（成功/失败）。幂等累加，可重复调用。 */
+export function recordAgentOutcome(projectId: string, agentId: string, ok: boolean): void {
+  if (!agentId || !projectId) return;
+  const m = loadMetrics(projectId);
+  const s = (m[agentId] ??= { ok: 0, fail: 0 });
+  if (ok) s.ok += 1;
+  else s.fail += 1;
+  persistMetrics(projectId, m);
+}
+
+/** 测试隔离：清空指标缓存（不动 localStorage）。 */
+export function resetMetricCache(): void {
+  metricCache.clear();
+}
+
 /**
- * 按 agent 统计历史成功率（success / (success+failure)，仅统计有 agentId 的条目）。
- * 供成本感知路由评分（routerScoring）使用；无数据返回空表（调用方缺省 0.5）。
+ * 按 agent 统计历史成功率（success / (success+failure)）。
+ * 优先读独立指标（始终记录，不受 selfImprove 影响）；无指标时回退读经验库
+ * （兼容旧数据，平滑过渡）。无数据返回空表（调用方缺省 0.5）。
  */
 export function successRateByAgent(projectId: string): Record<string, number> {
-  const list = loadExperience(projectId);
-  const stats: Record<string, { ok: number; fail: number }> = {};
-  for (const e of list) {
+  const out: Record<string, number> = {};
+  const m = loadMetrics(projectId);
+  for (const [id, s] of Object.entries(m)) {
+    if (s.ok + s.fail === 0) continue;
+    out[id] = s.ok / (s.ok + s.fail);
+  }
+  // 兼容：经验库中尚未迁移到独立指标的旧条目也计入
+  const legacy = loadExperience(projectId);
+  const legacyStats: Record<string, { ok: number; fail: number }> = {};
+  for (const e of legacy) {
     if (!e.agentId) continue;
-    const s = (stats[e.agentId] ??= { ok: 0, fail: 0 });
+    const s = (legacyStats[e.agentId] ??= { ok: 0, fail: 0 });
     if (e.outcome === 'success') s.ok += 1;
     else s.fail += 1;
   }
-  const out: Record<string, number> = {};
-  for (const [id, s] of Object.entries(stats)) {
+  for (const [id, s] of Object.entries(legacyStats)) {
+    if (out[id] !== undefined || s.ok + s.fail === 0) continue;
     out[id] = s.ok / (s.ok + s.fail);
   }
   return out;

@@ -214,15 +214,30 @@ fn decrypt_api_key_in_json(json: &str) -> String {
     }
 }
 
-/// 枚举全部 API 接入点整条（apiKey 已解密为明文返回）。
+/// 枚举全部 API 接入点元数据（**不返回明文 apiKey**）。
+/// 安全边界（2026-08-09 P1）：前端只需要 name/protocol/baseUrl 等元数据来展示与选择，
+/// 明文 Key 一律按需经 `load_endpoint` 单条取回，避免把全部密钥批量暴露给 WebView 内存。
 #[tauri::command]
 fn list_endpoints_raw(app: AppHandle) -> Result<Vec<String>, String> {
     let list = read_ep_store(&app);
     eprintln!("[ep] list_endpoints_raw count={}", list.len());
     Ok(list
         .into_iter()
-        .map(|(_, v)| decrypt_api_key_in_json(&v))
+        .map(|(_, v)| strip_endpoint_api_key(&v))
         .collect())
+}
+
+/// 解析接入点 JSON，删除 apiKey 字段后返回（不清零字段、不持有明文）。
+fn strip_endpoint_api_key(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(mut v) => {
+            if let serde_json::Value::Object(ref mut map) = v {
+                map.remove("apiKey");
+            }
+            serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string())
+        }
+        Err(_) => "{}".to_string(),
+    }
 }
 
 /// 步骤 11 阶段 C：Git Worktree 真隔离。在 Rust 侧直接调用系统 `git`（不受 Tauri 沙箱限制），

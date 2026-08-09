@@ -20,6 +20,19 @@ import type { AgentConfig, AgentRouteTable } from '../types';
 import type { RunContext } from '../engine/runContext';
 import { scoreCandidates, type CandidateScore, type ScoringWeights } from './routerScoring';
 
+/**
+ * 判断 Agent 是否「可调用」：避免评分选出明显必败的 Agent（无 baseUrl / 无模型 / 无凭据）。
+ * - ollama：本地模型只需 baseUrl，不需要 key。
+ * - 非 ollama：baseUrl + model + 凭据（credentialKey 或 apiKey）三者缺一不可，
+ *   否则一次请求必然 401/失败，白白浪费时间与成本。
+ */
+export function isAgentCallable(a: AgentConfig): boolean {
+  if (!a.baseUrl?.trim()) return false;
+  if (!a.model?.trim()) return false;
+  if (a.protocol === 'ollama') return true;
+  return !!(a.credentialKey?.trim() || a.apiKey?.trim());
+}
+
 /** 路由请求：一次 LLM 调用的路由上下文。 */
 export interface RouterRequest {
   /** 显式指定的 agent id（节点参数 / Builder 绑定），优先于一切路由规则 */
@@ -119,9 +132,16 @@ export function candidateChain(
     chain.push(id);
   };
   push(agent.id);
-  for (const f of routeEntry(env.routeTable, category)?.fallback ?? []) push(f);
-  push(env.defaultAgentId);
-  for (const a of env.agents) push(a.id);
+  const entry = routeEntry(env.routeTable, category);
+  const hasCategoryRoute = !!(entry?.agentId || (entry?.fallback?.length ?? 0) > 0);
+  if (hasCategoryRoute) {
+    // category 是硬路由约束：fallback 链局限在类别内，不逃出到 default/全部
+    for (const f of entry?.fallback ?? []) push(f);
+  } else {
+    for (const f of entry?.fallback ?? []) push(f);
+    push(env.defaultAgentId);
+    for (const a of env.agents) push(a.id);
+  }
   return chain;
 }
 
@@ -251,22 +271,30 @@ export function resolveAgentScored(
     return makeDecision(explicit, 'explicit', false, env, request.category, tier);
   }
 
-  // 构建候选集（去重且过滤不存在的 agent）
+  // 构建候选集（去重且过滤不存在的 agent）。
+  // category 是「硬路由约束」：若类别路由表配置了主 agent / fallback，
+  // 评分只在类别候选内进行，绝不跨类别选到不属于该类的 agent；
+  // 仅当类别链路完全为空（未配置该类别）时才回退到「默认 + 全部」全局评分。
   const entry = routeEntry(env.routeTable, request.category);
   const pool: AgentConfig[] = [];
   const seen = new Set<string>();
   const add = (id?: string | null) => {
     if (!id || seen.has(id)) return;
     const a = byId(id);
-    if (a) {
+    // P2：评分前过滤不可调用的 Agent（无 baseUrl/model/凭据），避免选中后必败请求
+    if (a && isAgentCallable(a)) {
       seen.add(id);
       pool.push(a);
     }
   };
-  add(entry?.agentId);
-  for (const f of entry?.fallback ?? []) add(f);
-  add(env.defaultAgentId);
-  for (const a of env.agents) add(a.id);
+  const hasCategoryRoute = !!(entry?.agentId || (entry?.fallback?.length ?? 0) > 0);
+  if (hasCategoryRoute) {
+    add(entry?.agentId);
+    for (const f of entry?.fallback ?? []) add(f);
+  } else {
+    add(env.defaultAgentId);
+    for (const a of env.agents) add(a.id);
+  }
   if (pool.length === 0) {
     throw new Error('没有可用的智能体：请先在设置中配置智能体（Agent）再运行');
   }

@@ -9,7 +9,7 @@ import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext, 
 import type { AgentConfig, AgentRouteTable } from '../types';
 
 const ag = (id: string, model = 'm1'): AgentConfig =>
-  ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model } as AgentConfig);
+  ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model, credentialKey: `k:${id}` } as AgentConfig);
 
 describe('estimateTier 复杂度分档', () => {
   it('按文本长度与影响域大小分档', () => {
@@ -103,12 +103,12 @@ describe('candidateChain 候选链', () => {
     defaultAgentId: 'a3',
   };
 
-  it('首选 + fallback 链 + 默认 + 全部 agent，去重且过滤不存在', () => {
+  it('有 category 路由时：首选 + 类别 fallback 链（硬约束，不逃出类别）', () => {
     const chain = candidateChain(env.agents[0]!, env, 'ui');
-    expect(chain).toEqual(['a1', 'a2', 'a3']); // ghost 被过滤，a3 只出现一次
+    expect(chain).toEqual(['a1', 'a2']); // ghost 被过滤；ui 有专属路由，不再追加默认/全部
   });
 
-  it('不同类别不串 fallback 链', () => {
+  it('无 category 路由时：首选 + 默认 + 全部 agent，去重且过滤不存在', () => {
     const chain = candidateChain(env.agents[0]!, env, 'logic');
     expect(chain).toEqual(['a1', 'a3', 'a2']); // a3 默认在前，然后全部 agent
   });

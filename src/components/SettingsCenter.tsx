@@ -20,14 +20,13 @@ import {
 } from 'lucide-react';
 import { useViewStore } from '../store/viewStore';
 import { useWorkflowStore } from '../store/workflowStore';
-import { providerPresets } from '../agents/agentManager';
+import { providerPresets, fetchModelsByProtocol } from '../agents/agentManager';
 import {
   listEndpoints,
   loadEndpointKey,
   removeEndpoint,
   saveEndpoint,
 } from '../agents/credentialStore';
-import { fetchOpenAIModels } from '../agents/agentManager';
 import { isTauri } from '../platform/env';
 import type { ApiEndpoint, Protocol } from '../types';
 import AgentPanel from './AgentPanel';
@@ -341,7 +340,7 @@ function ApiKeysSection() {
     }
     if (!key) return { ok: false, count: 0, error: '缺少密钥' };
     try {
-      const models = await fetchOpenAIModels(ep.baseUrl, key);
+      const models = await fetchModelsByProtocol(ep.protocol, ep.baseUrl, key);
       if (models.length === 0) return { ok: false, count: 0, error: '网址可达但拉不到模型，检查 Base URL / Key' };
       return { ok: true, count: models.length };
     } catch (e) {
