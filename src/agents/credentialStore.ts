@@ -173,7 +173,7 @@ export async function saveVault(
   if (!isTauri) throw new Error('当前环境不支持系统密钥库（请使用桌面版）。');
   const protocol = input.protocol ?? 'openai';
   const vendor = input.vendor ?? inferVendor(input.baseUrl, protocol);
-  // 对已知官方 vendor（deepseek/openai/siliconflow/openrouter）自动补 /v1，避免漏填路径拉不到模型
+  // 仅对「必须带 /v1」的官方 vendor 补全；deepseek 官方 base_url 不带 /v1（兼容两者），保持原样
   const baseUrl = normalizeVaultBaseUrl(input.baseUrl, vendor);
   if (!baseUrl) throw new Error('Base URL 不能为空。');
   const id = input.id?.trim() || genVaultId();
@@ -184,11 +184,15 @@ export async function saveVault(
   return vault;
 }
 
-/** 补全 /v1 路径（仅对已知官方 vendor，transit 中转站不擅自加路径）。 */
+/**
+ * 补全 /v1 路径（仅对「官方 OpenAI 兼容且要求 /v1」的 vendor）。
+ * 特例：deepseek 官方 base_url 为 `https://api.deepseek.com`（不带 /v1，且兼容 /v1），
+ * 一律原样保存、不擅自加路径；transit 中转站、claude/anthropic 同样不加。
+ */
 export function normalizeVaultBaseUrl(baseUrl: string, vendor: Vendor): string {
   const b = (baseUrl || '').trim().replace(/\/+$/, '');
   if (!b) return '';
-  if (vendor === 'transit' || vendor === 'claude' || vendor === 'anthropic') return b;
+  if (vendor === 'deepseek' || vendor === 'transit' || vendor === 'claude' || vendor === 'anthropic') return b;
   if (/\/v\d+$/.test(b)) return b;
   return `${b}/v1`;
 }

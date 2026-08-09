@@ -49,10 +49,10 @@ describe('genVaultId 自动建 id', () => {
 });
 
 describe('normalizeVaultBaseUrl 自动补 /v1', () => {
-  it('deepseek 官方缺 /v1 时补全', () => {
-    expect(normalizeVaultBaseUrl('https://api.deepseek.com', 'deepseek')).toBe('https://api.deepseek.com/v1');
+  it('deepseek 官方原样保存（官方 base_url 不带 /v1）', () => {
+    expect(normalizeVaultBaseUrl('https://api.deepseek.com', 'deepseek')).toBe('https://api.deepseek.com');
   });
-  it('已带 /v1 不再重复补', () => {
+  it('deepseek 已带 /v1 也保留原样', () => {
     expect(normalizeVaultBaseUrl('https://api.deepseek.com/v1', 'deepseek')).toBe('https://api.deepseek.com/v1');
   });
   it('openai 官方缺 /v1 时补全', () => {
@@ -70,7 +70,7 @@ describe('normalizeVaultBaseUrl 自动补 /v1', () => {
 });
 
 describe('baseUrlListWithV1 候选列表', () => {
-  it('缺 /v1 时给出 base 与 base/v1 两个候选', () => {
+  it('原路径优先，缺 /v1 时补 /v1 作为兜底候选', () => {
     expect(baseUrlListWithV1('https://api.deepseek.com')).toEqual([
       'https://api.deepseek.com',
       'https://api.deepseek.com/v1',
