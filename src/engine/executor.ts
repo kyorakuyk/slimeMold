@@ -8,8 +8,6 @@ import type {
 } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
-import { getChannel } from '../agents/llmChannel';
-import { runAgentLoop } from '../agents/harness';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { ownerRefId } from './subgraph';
@@ -24,6 +22,7 @@ import { buildRunPlan } from './runPlan';
 import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { decideNodeExecution } from './nodeExecutionPolicy';
+import { runLlmWithFallback } from './runLlmCall';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
@@ -948,116 +947,34 @@ async function executeNode(
         }
       }
 
-      // F4：调用失败 fallback——按 decision.chain 逐级尝试候选 agent；
-      // 候选各自限流、记录成本；全部失败抛最后一个错误（信号中止则立即抛）。
-      const chainIds = decision.chain;
-      let lastErr: unknown = null;
-      for (const cid of chainIds) {
-        const cand = byId(cid);
-        if (!cand) continue;
-        const effective = modelOverride ? { ...cand, model: modelOverride } : cand;
-        const release = await limiter.acquire(signal);
-        const callStart = performance.now();
-        const recordCost = (usage: CostRecord['usage'], ok: boolean, errMsg?: string) => {
-          trackCost({
-            nodeId: id,
-            nodeLabel: node.data.label,
-            agentId: cand.id,
-            model: effective.model,
-            usage,
-            durationMs: Math.round(performance.now() - callStart),
-            at: new Date().toISOString(),
-            ok,
-            error: errMsg,
-          });
-        };
-        try {
-          // —— 工具多轮：走 AgentHarness（tool_call 循环由 harness 内部驱动）——
-          if (toolNames && toolNames.length) {
-            // 拆分 system（首条）与其余消息
-            const sys = effectiveMessages.find((m) => m.role === 'system');
-            const userMsgs = effectiveMessages.filter((m) => m.role !== 'system');
-            const result = await runAgentLoop({
-              agent: effective,
-              userMessages: userMsgs,
-              systemParts: sys ? { role: sys.content as string } : undefined,
-              toolNames,
-              // #7：把已合并的 (项目级 < 工作流级 < 节点级) 变量作为作用域栈注入上下文
-              scopeStack: [ctx.vars],
-              signal,
-              modelOverride: modelOverride || undefined,
-              // #9/#8：把 harness 事件桥接到本运行共享的 ExperienceSink（供 reviewer 复盘）
-              events: sink
-                ? (() => {
-                    const se = sink.events();
-                    return {
-                      onThinking: se.onThinking,
-                      onToolCall: se.onToolCall,
-                      onOutput: (text: string, done: boolean) => {
-                        se.onOutput?.(text, done);
-                        if (!done && onToken) onToken(text);
-                      },
-                      onLog: (lv: string, m: string) => {
-                        const level = lv as 'info' | 'warn' | 'error';
-                        se.onLog?.(level, m);
-                        R.addLog(level, m);
-                      },
-                    };
-                  })()
-                : {
-                    onOutput: (text: string, done: boolean) => {
-                      if (!done && onToken) onToken(text);
-                    },
-                    onLog: (lv: string, m: string) => R.addLog(lv as 'info' | 'warn' | 'error', m),
-                  },
-              toolCtx: { logger: ctx.logger, storage: ctx.storage, sandbox: ctx.sandbox },
-            });
-            recordCost(undefined, true);
-            release();
-            return result.text;
-          }
-          // —— 普通调用：保持原 channel.chat 行为（限流 + 重试 + 遥测）——
-          const channel = getChannel(useWorkflowStore.getState().llmChannel);
-          const resp = await withRetry(
-            () =>
-              channel.chat({
-                agent: effective,
-                messages: effectiveMessages,
-                signal,
-                onToken,
-              }),
-            {
-              retries: MAX_RETRIES,
-              baseDelay: RETRY_BASE_MS,
-              signal,
-              onRetry: (_msg, delay, attempt) =>
-                R.addLog(
-                  'info',
-                  `「${node.data.label}」网络有点忙，正在第 ${attempt} 次重试…（稍等约 ${(delay / 1000).toFixed(1)} 秒）`,
-                ),
-            },
-          );
-          recordCost(resp.usage, true);
-          release();
-          return resp.text;
-        } catch (err) {
-          const em = err instanceof Error ? err.message : String(err);
-          recordCost(undefined, false, em);
-          release();
-          if (signal.aborted || targetRunId !== gen.currentRunId) throw err;
-          lastErr = err;
-          if (cid !== chainIds[chainIds.length - 1]) {
-            R.addLog(
-              'warn',
-              `「${node.data.label}」智能体「${cand.name}」调用失败，尝试候选链下一项：${em}`,
-            );
-          }
-        }
-      }
-      // 全部候选失败
-      const finalMsg = lastErr instanceof Error ? lastErr.message : String(lastErr ?? '未知错误');
-      R.addLog('error', `「${node.data.label}」所有候选智能体均调用失败：${finalMsg}`);
-      throw lastErr ?? new Error(`没有可用智能体候选：${node.data.typeId}`);
+      // F4：调用失败 fallback——按 decision.chain 逐级尝试候选 agent（runLlmCall.ts）
+      return runLlmWithFallback({
+        chainIds: decision.chain,
+        byId,
+        messages,
+        effectiveMessages,
+        onToken,
+        modelOverride,
+        toolNames,
+        signal,
+        limiter,
+        maxRetries: MAX_RETRIES,
+        retryBaseMs: RETRY_BASE_MS,
+        recordCost: (rec) => trackCost(rec),
+        node: { id, label: node.data.label, typeId: node.data.typeId },
+        sink,
+        vars: ctx.vars,
+        toolStorage: ctx.storage,
+        toolSandbox: ctx.sandbox,
+        llmChannel: useWorkflowStore.getState().llmChannel,
+        myRun: myRun ?? targetRunId,
+        targetRunId,
+        logger: {
+          info: (m) => R.addLog('info', m),
+          warn: (m) => R.addLog('warn', m),
+          error: (m) => R.addLog('error', m),
+        },
+      });
     },
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,
