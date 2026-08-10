@@ -23,6 +23,7 @@ import {
 } from './graphAlgo';
 import { buildRunPlan } from './runPlan';
 import { runStage } from './runScheduler';
+import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
@@ -427,22 +428,20 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   // A3：真正开始调度前发出运行开始事件（Node 级事件紧随其后）。
   emitRun(getRunBus(), 'run.started', runCtx);
   do {
+    // 每轮前：循环变量注入 dirtySet/force + 清缓存（纯函数，runLoop.ts）
+    prepareLoopRound({
+      round,
+      loopBodies: loopBodyOf,
+      loopVarOf,
+      nodeById,
+      dirtySet,
+      force,
+      loopVarsState,
+      strike,
+    });
+    // 本轮开始日志（round > 0）
     if (round > 0) {
       wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
-    }
-    // 每轮前：把本轮循环变量注入 dirtySet/force，使循环体节点强制重算
-    if (round > 0) {
-      for (const [gid, body] of loopBodyOf) {
-        for (const bid of body) {
-          dirtySet.add(bid);
-          force.add(bid);
-          // 清缓存，避免循环体命中上一轮的缓存结果
-          strike(nodeById.get(bid)?.data.typeId ?? '');
-        }
-        // 循环变量递增
-        const lv = loopVarOf.get(gid)!;
-        loopVarsState[lv] = round;
-      }
     }
     for (let li = 0; li < stages.length; li++) {
       if (signal.aborted || myRun !== gen.currentRunId) break;
@@ -510,8 +509,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     loopContinued = cont;
     gateTaken.clear();
     round += 1;
-    if (reachedMax) {
-      wf.addLog('info', `已达到最大循环轮数 ${maxRounds}，强制结束循环`);
+    // 达到最大轮数提示
+    for (const msg of loopLogMessages({ round, maxRounds, reachedMax })) {
+      wf.addLog('info', msg);
     }
   } while (loopContinued);
   if (hasLoop && round > 1) {
