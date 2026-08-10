@@ -1,6 +1,9 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { XMLParser } from 'fast-xml-parser';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * 按语言分文件夹加载 XML 资源：
@@ -9,15 +12,35 @@ import { XMLParser } from 'fast-xml-parser';
  */
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
-// Vite 构建期批量收集所有语言的 XML 文件（含 namespace 目录结构）。
-// 必须让 Vite 直接看到字面量 `import.meta.glob(...)`，否则它不会把 XML
-// 资源打进 bundle。这里不能在运行时判断 import.meta.glob：Vite 会把它
-// 编译成静态模块映射，而浏览器运行时并不存在这个函数本身。
-const xmlModules = import.meta.glob('./locales/*/*.xml', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
+/** raw XML 文本：path → content。Vite 下走 import.meta.glob（构建期静态扫描）；tsx/Node 下
+ *  fs 兜底（headless / 单测 / CI 环境），同样保证跨环境可用。 */
+function loadXmlModules(): Record<string, string> {
+  // Vite 环境：import.meta.glob 编译期替换为静态映射
+  // （必须保留字面量 glob 调用，否则 Vite 不会批量收集 XML）。
+  if (typeof (import.meta as { glob?: unknown }).glob === 'function') {
+    return import.meta.glob('./locales/*/*.xml', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>;
+  }
+  // tsx / Node 环境：兜底扫描 locales 目录读取 XML
+  const here = dirname(fileURLToPath(import.meta.url));
+  const localesDir = resolve(here, './locales');
+  const out: Record<string, string> = {};
+  for (const lang of readdirSync(localesDir)) {
+    const langDir = join(localesDir, lang);
+    for (const file of readdirSync(langDir)) {
+      if (!file.endsWith('.xml')) continue;
+      const path = join(langDir, file);
+      // 与 Vite glob 路径形态对齐（便于 buildResources 路径正则匹配）
+      out[`./locales/${lang}/${file}`] = readFileSync(path, 'utf8');
+    }
+  }
+  return out;
+}
+
+const xmlModules = loadXmlModules();
 
 function buildResources(): Record<string, Record<string, Record<string, string>>> {
   const resources: Record<string, Record<string, Record<string, string>>> = {};
@@ -86,7 +109,7 @@ i18n.use(initReactI18next).init({
   returnNull: false,
 });
 
-if (import.meta.env.DEV) {
+if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
   (globalThis as typeof globalThis & {
     __slimeMoldI18n?: typeof i18n;
   }).__slimeMoldI18n = i18n;
