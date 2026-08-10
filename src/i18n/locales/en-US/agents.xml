@@ -63,6 +63,7 @@
   <string name="agent.model.noKey">Save the API Key first before pulling the model list</string>
   <string name="agent.model.noAnthropicModels">No models fetched. Native Anthropic has no /models endpoint — use "OpenAI compatible" protocol on the relay</string>
   <string name="agent.model.noModels">No models fetched — check Base URL and Key</string>
+  <string name="agent.model.pullFailed">Failed to pull models: {{error}}</string>
   <string name="agent.probe.proxied">via proxy</string>
 
   <!-- ApiKeyField -->

@@ -63,6 +63,7 @@
   <string name="agent.model.noKey">请先保存 API Key 再拉取模型列表</string>
   <string name="agent.model.noAnthropicModels">未获取到模型。Anthropic 原生无 /models 端点，中转站请改用「OpenAI 兼容」协议</string>
   <string name="agent.model.noModels">未获取到模型，请检查 Base URL 与 Key 是否正确</string>
+  <string name="agent.model.pullFailed">拉取模型失败：{{error}}</string>
   <string name="agent.probe.proxied">经代理</string>
 
   <!-- ApiKeyField -->

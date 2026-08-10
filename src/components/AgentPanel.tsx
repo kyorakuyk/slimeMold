@@ -280,6 +280,11 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         }
       }
       setRemoteModels(list);
+    } catch (e) {
+      // 静默吞错是诊断盲区：keyring 读取失败、HTTP 被拦截、URL 解析异常等都会表现为
+      // 「点了没反应」。把真实错误暴露到 UI，便于用户定位是 key / 网址 / 权限问题。
+      const msg = e instanceof Error ? e.message : String(e);
+      setModelHint(t('agent.model.pullFailed', { error: msg }));
     } finally {
       setLoadingModels(false);
     }
