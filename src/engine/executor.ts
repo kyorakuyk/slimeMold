@@ -16,7 +16,6 @@ import { ownerRefId } from './subgraph';
 import {
   computeDownstream,
   computeExecutionSet,
-  isBranchPruned,
   planClustersPerStage,
   resolveNodeExecutionMode,
   shouldContinueLoop,
@@ -24,6 +23,7 @@ import {
 import { buildRunPlan } from './runPlan';
 import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
+import { decideNodeExecution } from './nodeExecutionPolicy';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
@@ -638,37 +638,9 @@ async function executeNode(
     shouldRun,
     forced,
   });
-  if (mode.kind === 'upstream-failed') {
-    failed.add(id);
-    branchState.set(id, new Set());
-    setStatus(id, 'error', {
-      error: '上游节点失败，已跳过',
-      startedAt: null,
-      durationMs: null,
-    });
-    emitNode(runBus, 'node.skipped', nodeCtx, id, {
-      reason: 'upstream-failed',
-      label: node.data.label,
-      typeId: node.data.typeId,
-    });
-    return;
-  }
-  if (mode.kind === 'missing-def') {
-    failed.add(id);
-    branchState.set(id, new Set());
-    setStatus(id, 'error', {
-      error: `节点类型 ${node.data.typeId} 缺失（可能来自未加载的插件）`,
-    });
-    emitNode(runBus, 'node.skipped', nodeCtx, id, {
-      reason: 'missing-def',
-      label: node.data.label,
-      typeId: node.data.typeId,
-    });
-    return;
-  }
-
-  // ---- 步骤 11 阶段 C：真沙箱句柄 ----
-  // 缓存隔离环境指纹（细粒度化）：目标工作流的 workspace 上下文。
+  // 前置决策（nodeExecutionPolicy.ts）：合并 mode + 分支剪枝 + stopAfter 裁剪 + 缓存命中，
+  // 统一输出「执行 / 跳过 / 复用缓存 / 失败」决策，副作用在此函数外统一执行。
+  // ---- 缓存隔离环境指纹（细粒度化）：目标工作流的 workspace 上下文。----
   // 文件读写类节点的产物依赖工作区内容，workspace 变化时旧缓存应失效。
   const curStore = useWorkflowStore.getState();
   const targetWorkflow =
@@ -677,6 +649,101 @@ async function executeNode(
   // 细粒度缓存 scope：wfId → nodeId → workspaceDir（节点实例级隔离，杜绝同工作流内
   // 相同配置的节点实例互相串产物；workspace 指纹使环境变化自动失效）。
   const cacheScope = composeCacheScope(targetWfId, id, nodeWorkspaceDir);
+  const policy = decideNodeExecution({
+    id,
+    node,
+    def,
+    incoming,
+    edges,
+    outputsMap,
+    branchState,
+    cutSet,
+    skipFailed,
+    mode,
+    forced,
+    isolated: isolatedIds?.has(id),
+    cacheScope,
+    cacheHooks: { collectInputs, cacheKey, getCached },
+  });
+  // 按决策执行副作用（不直接进后续沙箱/执行路径）
+  switch (policy.kind) {
+    case 'upstream-failed':
+      failed.add(id);
+      branchState.set(id, new Set());
+      setStatus(id, 'error', { error: '上游节点失败，已跳过', startedAt: null, durationMs: null });
+      emitNode(runBus, 'node.skipped', nodeCtx, id, {
+        reason: 'upstream-failed',
+        label: node.data.label,
+        typeId: node.data.typeId,
+      });
+      return;
+    case 'missing-def':
+      failed.add(id);
+      branchState.set(id, new Set());
+      setStatus(id, 'error', { error: `节点类型 ${policy.typeId} 缺失（可能来自未加载的插件）` });
+      emitNode(runBus, 'node.skipped', nodeCtx, id, {
+        reason: 'missing-def',
+        label: node.data.label,
+        typeId: node.data.typeId,
+      });
+      return;
+    case 'bypass': {
+      const out = policy.outputs;
+      outputsMap.set(id, out);
+      branchState.set(id, new Set((def?.outputs ?? []).filter((o) => o.id in out).map((o) => o.id)));
+      setStatus(id, 'bypassed', { outputs: out, startedAt: null, durationMs: null });
+      return;
+    }
+    case 'mute':
+      outputsMap.set(id, {});
+      branchState.set(id, new Set());
+      setStatus(id, 'muted', { startedAt: null, durationMs: null });
+      return;
+    case 'incremental-skip':
+      setStatus(id, policy.prevStatus === 'cached' ? 'cached' : policy.prevStatus ?? 'idle');
+      emitNode(runBus, 'node.skipped', nodeCtx, id, {
+        reason: 'incremental-skip',
+        status: policy.prevStatus,
+        label: node.data.label,
+        typeId: node.data.typeId,
+      });
+      return;
+    case 'pruned':
+      branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
+      setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+      emitNode(runBus, 'node.skipped', nodeCtx, id, {
+        reason: 'pruned',
+        label: node.data.label,
+        typeId: node.data.typeId,
+      });
+      return;
+    case 'cut':
+      branchState.set(id, new Set());
+      setStatus(id, 'skipped', { startedAt: null, durationMs: null });
+      emitNode(runBus, 'node.skipped', nodeCtx, id, {
+        reason: 'cut',
+        label: node.data.label,
+        typeId: node.data.typeId,
+      });
+      return;
+    case 'cached': {
+      const cached = policy.outputs;
+      outputsMap.set(id, cached);
+      branchState.set(id, new Set((def?.outputs ?? []).map((o) => o.id)));
+      countSkip();
+      setStatus(id, 'cached', { outputs: cached, startedAt: null, durationMs: null });
+      emitNode(runBus, 'node.completed', nodeCtx, id, {
+        status: 'cached',
+        label: node.data.label,
+        typeId: node.data.typeId,
+        outputs: cached,
+      });
+      if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
+      return;
+    }
+    case 'execute':
+      break; // 继续执行路径
+  }
 
   // 每个节点一份独立隔离目录（workspaceDir/.sandbox/<nodeId>），并行 Worker 互不踩踏。
   // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
@@ -800,98 +867,6 @@ async function executeNode(
         return committed;
       },
     };
-  }
-
-  // bypass / mute 调试开关（仿 ComfyUI 的 Ctrl+B / Ctrl+M）
-  if (mode.kind === 'bypass' || mode.kind === 'mute') {
-    const bypassIn = edges.filter((e) => e.target === id);
-    const out: Record<string, unknown> = {};
-    if (node.data.bypass) {
-      // 同名端口透传：上游输入端口的值直接作为同 id 输出端口的值
-      for (const e of bypassIn) {
-        const inPort = def.inputs.find((i) => i.id === e.targetHandle);
-        if (!inPort) continue;
-        const outPort = def.outputs.find((o) => o.id === inPort.id);
-        if (!outPort) continue;
-        const upstreamOut = outputsMap.get(e.source);
-        out[outPort.id] = upstreamOut ? upstreamOut[e.sourceHandle ?? ''] : undefined;
-      }
-      outputsMap.set(id, out);
-      branchState.set(id, new Set(def.outputs.filter((o) => o.id in out).map((o) => o.id)));
-      setStatus(id, 'bypassed', { outputs: out, startedAt: null, durationMs: null });
-    } else {
-      // mute：不执行，输出置空
-      outputsMap.set(id, out);
-      branchState.set(id, new Set());
-      setStatus(id, 'muted', { startedAt: null, durationMs: null });
-    }
-    return;
-  }
-
-  // 增量模式下被跳过的节点：上游输出已被预填，直接复用，不执行也不改写状态
-  // 注意：全量运行（!isIncremental）时 dirtySet 为空、shouldRun 全部为 false，
-  // 但全量运行意图是执行所有节点，因此只在增量模式才走此跳过路径。
-  if (mode.kind === 'incremental-skip') {
-    setStatus(id, mode.prevStatus === 'cached' ? 'cached' : mode.prevStatus);
-    emitNode(runBus, 'node.skipped', nodeCtx, id, {
-      reason: 'incremental-skip',
-      status: mode.prevStatus,
-      label: node.data.label,
-      typeId: node.data.typeId,
-    });
-    return;
-  }
-
-  // 分支剪枝：若所有入边都来自「分支节点且未被激活」的分支，则整条子图跳过
-  if (incoming.length > 0 && isBranchPruned(incoming, branchState, skipFailed ?? false, failed)) {
-    branchState.set(id, new Set()); // 被剪枝：其下游也一并剪枝
-    setStatus(id, 'skipped', { startedAt: null, durationMs: null });
-    emitNode(runBus, 'node.skipped', nodeCtx, id, {
-      reason: 'pruned',
-      label: node.data.label,
-      typeId: node.data.typeId,
-    });
-    return;
-  }
-
-  // 裁剪：stopAfter 节点的下游不再执行（其本身已执行完毕）
-  if (cutSet.has(id)) {
-    branchState.set(id, new Set());
-    setStatus(id, 'skipped', { startedAt: null, durationMs: null });
-    emitNode(runBus, 'node.skipped', nodeCtx, id, {
-      reason: 'cut',
-      label: node.data.label,
-      typeId: node.data.typeId,
-    });
-    return;
-  }
-
-  // 缓存命中判断：相同 类型+参数+上游输出 直接复用结果（forced 时已在 runWorkflow 内 strike）
-  if (!forced) {
-    // 单节点运行（isolated）：不汇聚任何上游，强制以空输入参与缓存键计算
-    const upstreamOutputs = isolatedIds && isolatedIds.has(id) ? {} : collectInputs(id, edges, outputsMap);
-    // scope=targetWfId：跨工作流隔离缓存，避免文件/资产/workspace 上下文不同的工作流互相复用产物
-    const key = cacheKey(node.data.typeId, node.data.params, upstreamOutputs, cacheScope);
-    const cached = getCached(key);
-    if (cached) {
-      outputsMap.set(id, cached);
-      // 命中缓存的普通节点视为全部输出端口激活
-      branchState.set(id, new Set(def.outputs.map((o) => o.id)));
-      countSkip();
-      setStatus(id, 'cached', {
-        outputs: cached,
-        startedAt: null,
-        durationMs: null,
-      });
-      emitNode(runBus, 'node.completed', nodeCtx, id, {
-        status: 'cached',
-        label: node.data.label,
-        typeId: node.data.typeId,
-        outputs: cached,
-      });
-      if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
-      return;
-    }
   }
 
   let branchesTaken: string[] | undefined;
