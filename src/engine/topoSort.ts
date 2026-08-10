@@ -94,6 +94,7 @@ export function topoStages(
   nodeIds: string[],
   edges: { source: string; target: string }[],
   controlEdges: { source: string; target: string }[],
+  forwardControlSources?: Set<string>,
 ): StageResult {
   // Pass A：仅 data/task 边做标准 Kahn 分层
   const { layers, cyclic } = topoLayers(nodeIds, edges);
@@ -105,6 +106,11 @@ export function topoStages(
   // 注意：回流边（control 的 target 已在 source 之前，如 council.backflow → architect.goal）
   // 不抬高——否则与 data 边 architect→council 互相追逐导致死循环。回流边语义是「断点」，
   // architect 先跑、council 后跑，backflow 回流 architect 属异步重派，不应把 architect 重排到最后。
+  //
+  // 例外：loopGate 的 pass 出口是「向下游触发循环体」的正向 control 边——它的 target
+  // （循环体首节点）不参与 Pass A 分层（control 边被忽略），可能被错误排到 loop 之前。
+  // forwardControlSources 标记这类 source（loopGate id），对其出边一律把 target 抬高到
+  // source 之后，保证「loop 先判断 → 再触发循环体」。
   const stageOf = new Map<string, number>();
   layers.forEach((layer, i) => layer.forEach((id) => stageOf.set(id, i)));
 
@@ -126,6 +132,24 @@ export function topoStages(
       const fs = stageOf.get(e.source);
       const ts = stageOf.get(e.target);
       if (fs == null || ts == null) continue;
+      // loopGate 正向触发边：无条件把 target 抬高到 fs+1（即使 target 初始在 source 之前）
+      if (forwardControlSources?.has(e.source)) {
+        const need = fs + 1;
+        const stack = [e.target];
+        const seen = new Set<string>();
+        while (stack.length > 0) {
+          const cur = stack.pop()!;
+          if (seen.has(cur)) continue;
+          seen.add(cur);
+          const curS = stageOf.get(cur) ?? 0;
+          if (curS < need) {
+            stageOf.set(cur, need);
+            changed = true;
+          }
+          for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
+        }
+        continue;
+      }
       if (ts <= fs) continue; // 回流边（target 已在 source 之前）跳过，避免互相抬高死循环
       const need = fs + 1;
       const stack = [e.target];

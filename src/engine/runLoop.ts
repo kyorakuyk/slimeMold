@@ -19,6 +19,10 @@ export type LoopBodies = Map<string, Set<string>>;
  *   （避免循环体命中上一轮缓存结果）；
  * - 递增该 gate 的循环变量为当前 round 值。
  *
+ * 关键：loopGate 自身也必须 force 每轮重新执行——它的 cacheKey 不含循环变量值，
+ * 若命中缓存会直接返回上轮 outputs、setBranches/onGate 不再触发，gateTaken 无记录
+ * 导致循环误判停止。force 保证每轮重算条件、上报分支，循环才能真正跑满。
+ *
  * 纯函数：修改传入的 dirtySet / force / loopVarsState（与 executor 共享引用），返回 void。
  */
 export function prepareLoopRound(args: {
@@ -34,6 +38,10 @@ export function prepareLoopRound(args: {
   const { round, loopBodies, loopVarOf, nodeById, dirtySet, force, loopVarsState, strike } = args;
   if (round <= 0) return;
   for (const [gid, body] of loopBodies) {
+    // loopGate 自身每轮强制重算（见上方注释：防缓存命中吞掉分支上报）
+    dirtySet.add(gid);
+    force.add(gid);
+    strike(nodeById.get(gid)?.data.typeId ?? '');
     for (const bid of body) {
       dirtySet.add(bid);
       force.add(bid);

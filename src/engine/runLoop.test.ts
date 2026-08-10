@@ -37,7 +37,7 @@ describe('prepareLoopRound 循环变量注入', () => {
     expect(vars.i).toBe(0);
   });
 
-  it('round>0 注入循环体节点到 dirty/force 并清缓存、递增循环变量', () => {
+  it('round>0 注入循环体节点与 loopGate 自身到 dirty/force 并清缓存、递增循环变量', () => {
     const dirty = new Set<string>();
     const force = new Set<string>();
     const vars: Record<string, number> = { i: 0 };
@@ -46,15 +46,20 @@ describe('prepareLoopRound 循环变量注入', () => {
       round: 2,
       loopBodies: new Map([['gate1', new Set(['a', 'b'])]]),
       loopVarOf: new Map([['gate1', 'i']]),
-      nodeById: new Map([['a', mkNode('a', 'type.a')], ['b', mkNode('b', 'type.b')]]),
+      nodeById: new Map([
+        ['gate1', mkNode('gate1', 'flow.loopGate')],
+        ['a', mkNode('a', 'type.a')],
+        ['b', mkNode('b', 'type.b')],
+      ]),
       dirtySet: dirty,
       force,
       loopVarsState: vars,
       strike: (t) => struck.push(t),
     });
-    expect(dirty).toEqual(new Set(['a', 'b']));
-    expect(force).toEqual(new Set(['a', 'b']));
-    expect(struck).toEqual(['type.a', 'type.b']);
+    // loopGate 自身每轮必须强制重算（cacheKey 不含循环变量，命中缓存会吞掉分支上报导致循环误停）
+    expect(dirty).toEqual(new Set(['gate1', 'a', 'b']));
+    expect(force).toEqual(new Set(['gate1', 'a', 'b']));
+    expect(struck).toEqual(['flow.loopGate', 'type.a', 'type.b']);
     expect(vars.i).toBe(2);
   });
 

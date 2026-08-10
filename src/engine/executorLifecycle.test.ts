@@ -48,8 +48,8 @@ function mkNode(id: string, typeId: string, label?: string): FlowNode {
   } as unknown as FlowNode;
 }
 
-function mkEdge(id: string, source: string, target: string, sourceHandle = 'out', targetHandle = 'in'): FlowEdge {
-  return { id, source, target, sourceHandle, targetHandle, data: { kind: 'data' } } as unknown as FlowEdge;
+function mkEdge(id: string, source: string, target: string, sourceHandle = 'out', targetHandle = 'in', kind: string = 'data'): FlowEdge {
+  return { id, source, target, sourceHandle, targetHandle, data: { kind } } as unknown as FlowEdge;
 }
 
 /** 重置 store 到已知状态：注入单工作流图（激活）+ 独立 wfId */
@@ -350,5 +350,58 @@ describe('runWorkflow 生命周期集成', () => {
     // 新运行的节点 success，历史里至少有新运行的成功记录
     expect(st.nodes.find((n) => n.id === 'b')?.data.status).toBe('success');
     expect(st.runHistory.some((h) => h.status === 'success')).toBe(true);
+  });
+
+  it('loopGate 多轮迭代：i<3 跑 3 轮，循环体每轮强制重算（loopGate 自身不被缓存吞掉）', async () => {
+    const wfId = 'wf-life-loop';
+    // 计数节点：每次 execute 递增外部计数（模拟「每轮重算」的可观测副作用）
+    let count = 0;
+    const counter: NodeDefinition = {
+      typeId: 'gate.counter',
+      name: 'gate.counter',
+      category: '测试',
+      description: '',
+      inputs: [{ id: 'in', label: 'in', type: 'any' }],
+      outputs: [{ id: 'out', label: 'out', type: 'any' }],
+      params: [],
+      execute: async () => {
+        count += 1;
+        return { out: `round-${count}` };
+      },
+    } as unknown as NodeDefinition;
+    useRegistryStore.getState().register([counter]);
+
+    // 拓扑：seed(input.text) → counter；loopGate(i<3) pass → counter.in（control 回环）
+    // 注意：loopGate 需要 cond 输入。seed 接 cond；pass 接 counter；stop 接 output.text
+    const nodes = [
+      mkNode('seed', 'input.text', '种子'),
+      mkNode('counter', 'gate.counter', '循环体'),
+      mkNode('loop', 'flow.loopGate', '迭代闸门'),
+      mkNode('done', 'output.text', '结束'),
+    ];
+    useWorkflowStore.setState({
+      nodes: [
+        { ...nodes[0], data: { ...nodes[0].data, params: { text: 'go' } } },
+        { ...nodes[2], data: { ...nodes[2].data, params: { expression: 'i < 3', maxLoops: 3, loopVar: 'i' } } },
+        nodes[1],
+        nodes[3],
+      ] as never,
+    } as never);
+    const edges = [
+      mkEdge('e1', 'seed', 'loop', 'text', 'cond'), // seed → loop.cond（data）
+      mkEdge('e2', 'loop', 'counter', 'pass', 'in', 'control'), // loop.pass → counter.in（control 回环触发循环体）
+      mkEdge('e3', 'loop', 'done', 'stop', 'text'), // loop.stop → done（data）
+    ];
+    seedStore(wfId, useWorkflowStore.getState().nodes, edges);
+
+    await runWorkflow({ wfId });
+
+    // i<3：i=0,1,2 走 pass 共 3 轮，第 4 轮 i=3 走 stop 退出
+    expect(count).toBe(3);
+    // 循环结束节点应被执行（stop 分支）
+    const st = useWorkflowStore.getState();
+    expect(st.nodes.find((n) => n.id === 'done')?.data.status).toBe('success');
+    // loopGate 每轮被强制重算（count 3 证明循环体跑了 3 次）
+    expect(st.runHistory.length).toBeGreaterThanOrEqual(1);
   });
 });

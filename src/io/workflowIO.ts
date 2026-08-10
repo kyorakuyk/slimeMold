@@ -119,7 +119,10 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
     target: e.target,
     targetHandle: e.targetHandle,
     type: 'kind',
-    data: { kind: e.kind ?? 'data', scope: e.scope },
+    // 与导出对称（导出用 e.data?.kind），从磁盘文件读 e.data?.kind。
+    // 修复前用 e.kind 永远 undefined → 所有边被当成 data 边 → control 边失效
+    // （loopGate 循环 / scope 标注 / stage 边界全部丢失）。
+    data: { kind: e.data?.kind ?? 'data', scope: e.data?.scope },
   }));
 
   const store = useWorkflowStore.getState();
