@@ -74,11 +74,11 @@ export function renderSidePanel(key: SidePanelKey) {
     case 'plugins':
       return <PluginPanel embedded />;
     case 'agents':
-      return <AgentPanel embedded />;
+      return <AgentPanel variant="sidebar" />;
     case 'variables':
       return <VariablesPanel embedded />;
     case 'history':
-      return <RunHistoryPanel embedded />;
+      return <RunHistoryPanel variant="sidebar" />;
     case 'assets':
       return <AssetsPanel embedded />;
     case 'tokens':
@@ -251,7 +251,7 @@ export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) 
 
   return (
     <div
-      className="relative flex h-full min-h-0 flex-col border-r"
+      className="relative flex h-full min-h-0 shrink-0 flex-col border-r overflow-visible"
       style={{ width, background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
     >
       <div

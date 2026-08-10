@@ -21,10 +21,13 @@ import { useT } from '../i18n/useT';
 interface AgentPanelProps {
   onClose?: () => void;
   embedded?: boolean;
+  /** 'center'（控制中心，默认）= 左列表 + 右编辑 inline 左右二分；
+   *  'sidebar'（侧边栏）= 列表为一级菜单，编辑配置作 absolute 二级抽屉从右滑入覆盖列表 */
+  variant?: 'center' | 'sidebar';
 }
 
 /** 智能体管理弹层：多协议配置的增删改 + 角色库（角色模板）管理 */
-export default function AgentPanel({ onClose, embedded = false }: AgentPanelProps) {
+export default function AgentPanel({ onClose, embedded = false, variant = 'center' }: AgentPanelProps) {
   const t = useT('agents');
   const [tab, setTab] = useState<'agents' | 'roles'>('agents');
 
@@ -52,10 +55,12 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
           {t('agent.tab.roles')}
         </button>
       </div>
-      {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
+      {tab === 'agents' ? <AgentsTab variant={variant} /> : <RolesTab />}
     </div>
   );
 
+  // sidebar 模式：不需要外层居中弹层（SidePanel 已提供容器），直接返回 inner
+  if (variant === 'sidebar') return inner;
   if (embedded) return inner;
 
   return (
@@ -98,13 +103,13 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
             <X size={16} />
           </button>
         </div>
-        {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
+        {tab === 'agents' ? <AgentsTab variant={variant} /> : <RolesTab />}
       </div>
     </div>
   );
 }
 
-function AgentsTab() {
+function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   const t = useT('agents');
   const agents = useWorkflowStore((s) => s.agents);
   const upsertAgent = useWorkflowStore((s) => s.upsertAgent);
@@ -310,14 +315,14 @@ function AgentsTab() {
   };
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className={`relative flex flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
       {/* 左列：智能体列表 */}
-      <div className="flex w-56 shrink-0 flex-col border-r border-line bg-paper-soft">
+      <div className={`flex shrink-0 flex-col border-r border-line bg-paper-soft ${variant === 'sidebar' ? 'w-full' : 'w-56'}`}>
         <div className="border-b border-line px-3 py-2.5">
           <h2 className="text-[13px] font-semibold text-ink">{t('agent.title')}</h2>
           <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
         </div>
-        <ul className="flex-1 overflow-y-auto p-2">
+        <ul className="min-h-0 flex-1 overflow-y-auto p-2">
           {pool.map((a) => {
             const dot = probeStates[a.id];
             const isDefault = defaultAgentId === a.id;
@@ -325,10 +330,10 @@ function AgentsTab() {
             return (
               <li
                 key={a.id}
-                onClick={() => setEditingId(a.id)}
+                onClick={() => setEditingId(editingId === a.id ? null : a.id)}
                 className={`mb-1 cursor-pointer rounded border px-2.5 py-2 transition-colors ${
                   a.id === editingId
-                    ? 'border-accent-soft bg-white'
+                    ? 'border-line bg-paper-soft'
                     : 'border-transparent hover:bg-white'
                 }`}
               >
@@ -375,7 +380,7 @@ function AgentsTab() {
                       }}
                       className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
                         isGlobal
-                          ? 'bg-accent text-white'
+                          ? 'bg-paper-deep text-ink'
                           : 'text-ink-faint hover:bg-paper-soft hover:text-ink'
                       }`}
                     >
@@ -444,15 +449,32 @@ function AgentsTab() {
         </div>
       </div>
 
-      {/* 右列：编辑表单 */}
-      <div className="flex flex-1 flex-col">
+      {/* 右列/二级抽屉：编辑表单
+          - 控制中心（variant='center'）：inline 右列 flex-1，左右二分原样
+          - 侧边栏（variant='sidebar'）：作 absolute 二级抽屉覆盖整个面板，从右滑入 */}
+      {(variant === 'center' || editing) && (
+      <div className={
+        variant === 'center'
+          ? 'flex min-h-0 flex-1 flex-col'
+          : 'absolute left-full top-0 z-20 flex h-full w-[360px] flex-col border-l border-line bg-paper-soft shadow-[0_8px_24px_-8px_rgba(0,0,0,0.25)] animate-in slide-in-from-left duration-200'
+      }>
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
             {editing ? t('agent.edit.title') : t('agent.edit.none')}
           </h3>
+          {variant === 'sidebar' && editing && (
+            <button
+              type="button"
+              className="text-ink-faint hover:text-ink"
+              title={t('agent.edit.close')}
+              onClick={() => setEditingId(null)}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         {editing ? (
-          <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
               <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.name')}</label>
               <input
@@ -648,6 +670,7 @@ function AgentsTab() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -791,14 +814,14 @@ function RolesTab() {
             {t('roles.subtitle')}
           </p>
         </div>
-        <ul className="flex-1 overflow-y-auto p-2">
+        <ul className="min-h-0 flex-1 overflow-y-auto p-2">
           {roles.map((r) => (
             <li
               key={r.id}
-              onClick={() => setEditingId(r.id)}
+              onClick={() => setEditingId(editingId === r.id ? null : r.id)}
               className={`mb-1 cursor-pointer rounded border px-2.5 py-2 transition-colors ${
                 r.id === editingId
-                  ? 'border-accent-soft bg-white'
+                  ? 'border-line bg-paper-soft'
                   : 'border-transparent hover:bg-white'
               }`}
             >
@@ -824,14 +847,14 @@ function RolesTab() {
       </div>
 
       {/* 右列：角色编辑 */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
             {editing ? (editing.builtin ? t('roles.viewBuiltinTitle') : t('roles.editTitle')) : t('roles.none')}
           </h3>
         </div>
         {editing ? (
-          <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
               <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.name')}</label>
               <input

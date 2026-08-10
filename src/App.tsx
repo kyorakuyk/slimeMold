@@ -21,6 +21,7 @@ import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
 import { useViewStore } from './store/viewStore';
+import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 
 registerBuiltins();
@@ -178,6 +179,10 @@ export default function App() {
   useEffect(() => {
     // 桌面端启动时自动扫描插件目录
     if (isTauri) scanPluginsDir();
+    // 启动时从 AppData 加载全局通用智能体（跨项目共享）到 store
+    loadGlobalAgents().then((gs) => {
+      if (gs.length > 0) useWorkflowStore.getState().setGlobalAgents(gs);
+    });
   }, []);
 
   // P3：桌面端启动自动恢复上次项目（含激活工作流），仅当当前尚无已加载项目时
@@ -344,8 +349,8 @@ export default function App() {
             />
           )}
           {/* 内容区：展开面板 + 画布 + Inspector + 底部面板（均位于图标条右侧） */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col overflow-x-visible overflow-y-hidden">
+            <div className={`flex min-h-0 flex-1 ${activePanel === 'agents' ? 'overflow-visible' : 'overflow-hidden'}`}>
               {sidebarOpen && activePanel && (
                 <>
                   <SidePanel
