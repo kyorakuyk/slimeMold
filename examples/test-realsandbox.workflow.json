@@ -22,14 +22,14 @@
       "typeId": "tool.writeFile",
       "label": "W1 写 result.txt（沙箱）",
       "position": { "x": 420, "y": 80 },
-      "params": { "filename": "result.txt", "overwrite": "true" }
+      "params": { "path": "result.txt", "mode": "overwrite" }
     },
     {
       "id": "n-w2w",
       "typeId": "tool.writeFile",
       "label": "W2 写 result.txt（沙箱）",
       "position": { "x": 420, "y": 320 },
-      "params": { "filename": "result.txt", "overwrite": "true" }
+      "params": { "path": "result.txt", "mode": "overwrite" }
     },
     {
       "id": "n-resolver",
