@@ -91,8 +91,13 @@ import {
 } from './workflowGraph';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
-// 状态转换纯逻辑（upsertById / 路由表清理）已抽到 workflowState.ts（G5 门面化）
-import { cleanupRouteTableForAgent, upsertById } from './workflowState';
+// 状态转换纯逻辑（upsertById / 路由表清理 / 项目装载 / 工作流切换）已抽到 workflowState.ts（G5 门面化）
+import {
+  buildOpenProjectState,
+  buildSwitchWorkflowState,
+  cleanupRouteTableForAgent,
+  upsertById,
+} from './workflowState';
 
 interface WorkflowState {
   workflowName: string;
@@ -1146,52 +1151,15 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       openProject: (file, path) => {
-        const id = file.activeId ?? Object.keys(file.workflows)[0];
-        const wf = file.workflows[id];
-        if (!wf) return;
-        // 方案 P：磁盘态拍平 workflows 统一收口为内存态 FlowNode
-        const workflowsInMemory = Object.fromEntries(
-          Object.entries(file.workflows).map(([k, w]) => [k, fromDisk(w)]),
-        );
+        // 状态构建纯逻辑已抽到 workflowState.buildOpenProjectState（G5 门面化）
+        let state;
+        try {
+          state = buildOpenProjectState(file, path ?? file.name, get().defaultAgentId);
+        } catch {
+          return; // 无可用工作流，保持现状
+        }
         suppressDirty = true;
-        set({
-          projectName: file.name,
-          projectId: file.id,
-          projectCreatedAt: file.createdAt,
-          projectPath: path ?? file.name, // 实际磁盘路径由调用方传入
-          workflows: workflowsInMemory,
-          activeWfId: id,
-          workflowName: wf.name,
-          // P1：打开即把活动工作流还原到画布，保证落盘内容完整
-          nodes: flowNodesFrom(wf),
-          edges: flowEdgesFrom(wf),
-          // agents 项目级共享：优先用项目级 file.agents（来自 .slimemold/Agents/agents.json），
-          // 不再被某个工作流的 wf.agents 覆盖；旧数据无项目级 agents 时回退工作流级并合并。
-          agents: (file.agents && file.agents.length)
-            ? file.agents
-            : (wf.agents?.length ? wf.agents : [createAgent('ollama')]),
-          defaultAgentId: (file.defaultAgentId ?? wf.defaultAgentId) ?? get().defaultAgentId,
-          roles: [
-            ...builtinRoles.map((r) => ({ ...r })),
-            ...(wf.roles ?? []).filter((r) => !r.builtin),
-          ],
-          variables: wf.variables ?? {},
-          projectVariables: file.variables ?? {},
-          projectAssets: file.assets ?? [],
-          subgraphs: file.subgraphs ?? {},
-          groups: wf.groups ?? [],
-          // P2 成本跟项目：读回运行历史（落盘于 .slimemold/runs/history.json）
-          runHistory: file.runs?.history ?? [],
-          // 阶段 C 可恢复执行：读回运行检查点（落盘于 .slimemold/runs/checkpoints.json）
-          checkpoints: file.checkpoints ?? {},
-          // 阶段 G2：读回检查点多版本历史（同文件）
-          checkpointHistory: file.checkpointHistory ?? {},
-          // 交付物：读回项目级黑板（pipeline.handoff 产出的成果，落盘于 project.json 的 artifacts）
-          artifacts: file.artifacts ?? {},
-          pipelines: file.pipelines ?? [],
-          selectedNodeId: null,
-          logs: [],
-        });
+        set(state);
         finalizeLoaded();
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
@@ -1224,37 +1192,12 @@ export const useWorkflowStore = create<WorkflowState>()(
       switchWorkflow: (id) => {
         const s = get();
         if (id === s.activeWfId) return;
-        // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
-        const synced: Record<string, WorkflowFileInMemory> = { ...s.workflows };
-        const curId = s.activeWfId || `wf-${Date.now()}`;
-        const prev = s.workflows[curId];
-        synced[curId] = serializeCurrent(
-          s,
-          {
-            belongsToProject: prev?.belongsToProject,
-            standalonePath: prev?.standalonePath,
-          },
-          prev?.assets,
-        );
-        const target = synced[id];
-        if (!target) return;
+        // 状态构建纯逻辑已抽到 workflowState.buildSwitchWorkflowState（G5 门面化）
+        const state = buildSwitchWorkflowState(s, id);
+        if (!state) return;
         // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测
         suppressDirty = true;
-        set({
-          workflows: synced,
-          activeWfId: id,
-          workflowName: target.name,
-          // 方案 P：workflows 已是运行态 FlowNode，直接复用
-          nodes: target.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
-          edges: target.edges,
-          // agents 是「项目级共享」，切换工作流不覆盖；仅当项目尚无任何 agent 时以目标工作流的做初始灌入
-          agents: s.agents.length ? s.agents : target.agents?.length ? target.agents : s.agents,
-          roles: [...builtinRoles.map((r) => ({ ...r })), ...(target.roles ?? []).filter((r) => !r.builtin)],
-          variables: target.variables ?? {},
-          groups: target.groups ?? [],
-          selectedNodeId: null,
-          logs: [],
-        });
+        set(state);
         suppressDirty = false;
       },
 
