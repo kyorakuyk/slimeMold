@@ -6,7 +6,7 @@
  * classifyConnection（连线决策）、expandSubgraphInstance（子图展开）。
  */
 import { describe, it, expect } from 'vitest';
-import type { FlowNode, FlowEdge, NodeDefinition, PortDef, SubgraphDef, SubgraphPort } from '../types';
+import type { FlowNode, FlowEdge, NodeDefinition, PortDef, SubgraphDef } from '../types';
 import {
   classifyConnection,
   expandSubgraphInstance,
@@ -16,7 +16,6 @@ import {
   snapshotPush,
   snapshotUndo,
   snapshotRedo,
-  type ConnectDecision,
   type GraphSnapshot,
 } from './workflowGraph';
 
@@ -129,8 +128,7 @@ describe('历史栈 snapshotPush / Undo / Redo', () => {
 
   it('redo 恢复 future 末尾、当前态进 past', () => {
     const snap1: GraphSnapshot = { nodes: [mkNode('a')], edges: [] };
-    const snap2: GraphSnapshot = { nodes: [mkNode('a'), mkNode('b')], edges: [] };
-    // 先 undo：future=[snap2]，再 redo 恢复
+    // 先 undo：future=[当前态]，再 redo 恢复
     const undone = snapshotUndo([snap1], [], [mkNode('a'), mkNode('b')], [], sanitize)!;
     const r = snapshotRedo(undone.past, undone.future, undone.nodes, undone.edges, sanitize);
     expect(r).not.toBeNull();

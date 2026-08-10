@@ -25,6 +25,7 @@ export function markDirtyDownstream(
   edges: FlowEdge[],
   startId: string,
 ): Set<string> {
+  void nodes; // 参数保留（语义：在此节点集内），BFS 实际只依赖 edges 结构
   const downstream = new Set<string>([startId]);
   const queue = [startId];
   while (queue.length > 0) {

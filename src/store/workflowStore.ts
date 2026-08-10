@@ -10,7 +10,6 @@ import {
 } from '@xyflow/react';
 import type {
   AgentConfig,
-  AgentRouteEntry,
   AgentRouteTable,
   Artifact,
   AssetMeta,
@@ -20,8 +19,6 @@ import type {
   LogEntry,
   NodeGroup,
   NodeStatus,
-  PortType,
-  EdgeKind,
   PipelineDef,
   ProjectArtifacts,
   ProjectFile,
@@ -40,8 +37,6 @@ import { saveGlobalAgents } from '../agents/globalAgents';
 // 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价
 import {
   sanitizeNodes,
-  flowNodesFrom,
-  flowEdgesFrom,
   fromDisk,
   toDisk,
   serializeCurrent,

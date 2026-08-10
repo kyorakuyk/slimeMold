@@ -1,7 +1,7 @@
 import type { FlowEdge, FlowNode, SubgraphDef } from '../types';
 import { flattenSubgraphs } from './subgraph';
 import { topoStages } from './topoSort';
-import { collectReachable, isReachable } from './graphAlgo';
+import { collectReachable } from './graphAlgo';
 
 export interface RunPlan {
   nodes: FlowNode[];

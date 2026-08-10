@@ -238,14 +238,14 @@ export interface NewProjectState {
   workflows: Record<string, WorkflowFileInMemory>;
   activeWfId: string;
   workflowName: string;
-  nodes: never[];
-  edges: never[];
+  nodes: FlowNode[];
+  edges: FlowEdge[];
   agents: import('../types').AgentConfig[];
-  defaultAgentId: null;
+  defaultAgentId: string | null;
   roles: import('../types').RoleTemplate[];
-  variables: Record<string, never>;
-  projectVariables: Record<string, never>;
-  projectAssets: never[];
+  variables: Record<string, unknown>;
+  projectVariables: Record<string, unknown>;
+  projectAssets: import('../types').AssetMeta[];
   selectedNodeId: null;
   logs: never[];
 }

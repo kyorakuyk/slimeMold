@@ -1,4 +1,5 @@
 import type {
+  EdgeKind,
   FlowEdge,
   FlowNode,
   NodeDefinition,
@@ -112,18 +113,22 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
       status: 'idle',
     },
   }));
-  const edges: FlowEdge[] = raw.edges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    sourceHandle: e.sourceHandle,
-    target: e.target,
-    targetHandle: e.targetHandle,
-    type: 'kind',
-    // 与导出对称（导出用 e.data?.kind），从磁盘文件读 e.data?.kind。
-    // 修复前用 e.kind 永远 undefined → 所有边被当成 data 边 → control 边失效
-    // （loopGate 循环 / scope 标注 / stage 边界全部丢失）。
-    data: { kind: e.data?.kind ?? 'data', scope: e.data?.scope },
-  }));
+  const edges: FlowEdge[] = raw.edges.map((e) => {
+    // 兼容两种磁盘形态：导出拍平为 e.kind；旧的手写示例/历史文件可能是 e.data.kind。
+    // 导出路径（serializeWorkflow）拍平为 e.kind，故 e.kind 优先。
+    const legacyData = (e as unknown as { data?: { kind?: EdgeKind; scope?: string[] } }).data;
+    const kind = e.kind ?? legacyData?.kind ?? 'data';
+    const scope = e.scope ?? legacyData?.scope;
+    return {
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      targetHandle: e.targetHandle,
+      type: 'kind',
+      data: { kind, scope },
+    };
+  });
 
   const store = useWorkflowStore.getState();
   store.loadGraph(raw.name || '导入的工作流', nodes, edges, raw.agents ?? [], raw.roles ?? []);
