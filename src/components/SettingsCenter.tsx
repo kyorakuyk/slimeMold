@@ -140,7 +140,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
 /* ---------------- 通用 ---------------- */
 function GeneralSection() {
   const t = useT('settings');
-  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme, locale, setLocale, selfImprove, setSelfImprove } = useViewStore();
+  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme, locale, setLocale, selfImprove, setSelfImprove, eventPersistence, setEventPersistence } = useViewStore();
   const llmChannel = useWorkflowStore((s) => s.llmChannel);
   const setLlmChannel = useWorkflowStore((s) => s.setLlmChannel);
 
@@ -243,6 +243,24 @@ function GeneralSection() {
           checked={selfImprove}
           onChange={() => setSelfImprove(!selfImprove)}
         />
+      </div>
+
+      <div className="rounded border border-line p-3">
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.eventPersistence')}</h3>
+        <div className="space-y-1">
+          {(['off', 'summary', 'full'] as const).map((m) => (
+            <label key={m} className="flex cursor-pointer items-center gap-2 text-[12px] text-ink-soft">
+              <input
+                type="radio"
+                name="event-persistence"
+                checked={eventPersistence === m}
+                onChange={() => setEventPersistence(m)}
+              />
+              {t(`settings.general.eventPersistence.${m}`)}
+            </label>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-ink-faint">{t('settings.general.eventPersistenceDesc')}</p>
       </div>
 
       <div className="rounded border border-line p-3">

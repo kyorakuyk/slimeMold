@@ -41,6 +41,11 @@
   <string name="settings.general.llmChannel">LLM 调用通道</string>
   <string name="settings.general.selfImprove">自我学习</string>
   <string name="settings.general.selfImproveDesc">开启后，失败/成功运行会沉淀运行经验，并在同类型节点上注入【历史经验参考】（会产生额外 LLM 复盘调用）</string>
+  <string name="settings.general.eventPersistence">运行事件日志</string>
+  <string name="settings.general.eventPersistence.off">关闭（默认）</string>
+  <string name="settings.general.eventPersistence.summary">摘要（脱敏，仅结构化字段）</string>
+  <string name="settings.general.eventPersistence.full">完整（含输出，剥离密钥）</string>
+  <string name="settings.general.eventPersistenceDesc">把每次运行的事件流落盘到 .slimemold/runs/{工作流}/{运行号}/events.jsonl，用于运行回放与审计。摘要模式剥离敏感内容；完整模式保留输出但会移除 apiKey 等字段。</string>
   <string name="settings.general.llmChannelDesc">后端：经 Rust 命令发起，密钥不出渲染层（推荐）；前端：WebView 直接请求</string>
   <string name="settings.channel.backend">后端（推荐）</string>
   <string name="settings.channel.frontend">前端</string>

@@ -6,6 +6,7 @@ export type LocaleCode = string;
 
 import i18n from '../i18n';
 import { setSelfImprove } from '../agents/reviewer';
+import { setEventPersistenceMode, type EventPersistenceMode } from '../engine/eventLog';
 
 /** 读取系统配色偏好（prefers-color-scheme） */
 function systemPrefersDark(): boolean {
@@ -90,6 +91,10 @@ interface ViewState {
   selfImprove: boolean;
   /** 切换自我学习开关（同步 reviewer 模块级标志并持久化） */
   setSelfImprove: (v: boolean) => void;
+  /** 事件持久化模式（G4）：off=不落盘 / summary=脱敏摘要 / full=完整（含 outputs，剥离敏感键）。默认 off */
+  eventPersistence: EventPersistenceMode;
+  /** 设置事件持久化模式（同步 eventLog 模块级标志并持久化） */
+  setEventPersistence: (m: EventPersistenceMode) => void;
 }
 
 export const useViewStore = create<ViewState>()(
@@ -113,6 +118,11 @@ export const useViewStore = create<ViewState>()(
       setSelfImprove: (v) => {
         setSelfImprove(v);
         set({ selfImprove: v });
+      },
+      eventPersistence: 'off',
+      setEventPersistence: (m) => {
+        setEventPersistenceMode(m);
+        set({ eventPersistence: m });
       },
       setLocale: (l) => {
         i18n.changeLanguage(l);
@@ -152,6 +162,8 @@ export const useViewStore = create<ViewState>()(
           applyTheme(state.theme);
           // 恢复持久化的自我学习开关到 reviewer 模块级标志
           setSelfImprove(!!state.selfImprove);
+          // 恢复持久化的事件持久化模式到 eventLog 模块级标志
+          if (state.eventPersistence) setEventPersistenceMode(state.eventPersistence);
         }
       },
     },

@@ -41,6 +41,11 @@
   <string name="settings.general.llmChannel">LLM call channel</string>
   <string name="settings.general.selfImprove">Self-improvement</string>
   <string name="settings.general.selfImproveDesc">When enabled, failed/successful runs deposit run experience and inject 【historical experience reference】 into same-type nodes (incurs extra LLM review calls)</string>
+  <string name="settings.general.eventPersistence">Run event log</string>
+  <string name="settings.general.eventPersistence.off">Off (default)</string>
+  <string name="settings.general.eventPersistence.summary">Summary (sanitized, structured fields only)</string>
+  <string name="settings.general.eventPersistence.full">Full (with outputs, keys stripped)</string>
+  <string name="settings.general.eventPersistenceDesc">Persist the run event stream to .slimemold/runs/{workflow}/{run}/events.jsonl for replay &amp; audit. Summary strips sensitive content; full keeps outputs but removes apiKey etc.</string>
   <string name="settings.general.llmChannelDesc">Backend: via Rust command, keys stay in the render layer (recommended); Frontend: WebView direct request</string>
   <string name="settings.channel.backend">Backend (recommended)</string>
   <string name="settings.channel.frontend">Frontend</string>

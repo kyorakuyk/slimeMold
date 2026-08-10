@@ -33,6 +33,7 @@ import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentScored } from '../agents/agentRouter';
 import { mergeAgentPool } from '../agents/globalAgents';
 import { buildCheckpoint, buildRunningCheckpoint } from './checkpoint';
+import { attachEventLog, getEventPersistenceMode } from './eventLog';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
 import { addExperience, matchExperience, successRateByAgent, summarizeExperience, recordAgentOutcome } from '../agents/experienceStore';
 import {
@@ -254,6 +255,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   syncDebugRun(wfId);
   const resources = createRunResources(wfId, myRun);
   let abortController: AbortController | null = null;
+  // G4：事件日志 detach 句柄——在 try 顶部声明（finally 总可安全调用），run.created 后赋值
+  let detachEventLog: () => void = () => {};
   try {
   // 步骤 11 阶段 C：每次运行开始清空上次登记的沙箱根，避免跨运行累积误删
   if (opts.sandbox) {
@@ -367,6 +370,12 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     nodeCount: nodes.length,
     mode: opts.incremental ? 'incremental' : opts.retryFailed ? 'retry-failed' : 'full',
   });
+  // G4：可选脱敏事件日志——订阅总线旁路落盘（off 时零开销）。收尾 finally 中 detach。
+  const eventLogMode = getEventPersistenceMode();
+  const eventLogRoot = useWorkflowStore.getState().projectPath;
+  if (eventLogMode !== 'off' && eventLogRoot) {
+    detachEventLog = attachEventLog(getRunBus(), eventLogRoot, wfId, myRun, eventLogMode);
+  }
   // 清空运行期成本账本，供 Companion 浮窗实时展示
   rt.resetUsage();
   beginRun();
@@ -767,6 +776,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     await cleanupRun(wfId, myRun);
     // 阶段 D：无论正常/异常结束，取消本运行残留的待接管请求（防挂起泄漏）
     cancelInterventionsForRun(wfId, myRun);
+    // G4：收尾 detach 事件日志（强刷缓冲并关闭文件）
+    detachEventLog();
     syncDebugRun(wfId);
   }
 }
