@@ -30,27 +30,44 @@ function summarize(v: unknown): string {
   }
 }
 
-export default function RunHistoryPanel({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
+export default function RunHistoryPanel({
+  onClose,
+  embedded = false,
+  variant = 'center',
+}: {
+  onClose?: () => void;
+  embedded?: boolean;
+  /** 'center'（控制中心，默认）= 左列表 + 右详情 inline 左右二分；
+   *  'sidebar'（侧边栏）= 列表为一级菜单，详情作 absolute 二级抽屉从右滑入覆盖列表 */
+  variant?: 'center' | 'sidebar';
+}) {
   const t = useT('panels');
   const runHistory = useWorkflowStore((s) => s.runHistory);
   const clearRunHistory = useWorkflowStore((s) => s.clearRunHistory);
-  const [selectedId, setSelectedId] = useState<string | null>(runHistory[0]?.id ?? null);
+  // 侧边栏默认无选中（点选展开，再点收回）；center 默认选第一条
+  const [selectedId, setSelectedId] = useState<string | null>(
+    variant === 'sidebar' ? null : (runHistory[0]?.id ?? null),
+  );
 
   const selected = runHistory.find((r) => r.id === selectedId) ?? null;
 
   const body = (
-    <div className="flex min-h-0 flex-1">
-      {/* 左侧：运行列表 */}
-      <div className="w-[210px] shrink-0 overflow-y-auto border-r border-line bg-paper-soft">
+    <div className={`relative flex min-h-0 flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
+      {/* 左侧：运行列表（一级菜单） */}
+      <div className={
+        variant === 'sidebar'
+          ? 'min-h-0 w-full shrink-0 overflow-y-auto border-r border-line bg-paper-soft'
+          : 'w-[210px] shrink-0 overflow-y-auto border-r border-line bg-paper-soft'
+      }>
         {runHistory.length === 0 ? (
           <p className="px-3 py-4 text-xs text-ink-faint">{t('runHistory.empty')}</p>
         ) : (
           runHistory.map((r) => (
             <button
               key={r.id}
-              onClick={() => setSelectedId(r.id)}
+              onClick={() => setSelectedId(selectedId === r.id ? null : r.id)}
               className={`block w-full border-b border-line px-3 py-2 text-left transition-colors ${
-                selectedId === r.id ? 'bg-accent-soft/30' : 'hover:bg-white'
+                selectedId === r.id ? 'border-l-2 border-line bg-paper-soft' : 'border-l-2 border-transparent hover:bg-paper-soft'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -70,8 +87,15 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
         )}
       </div>
 
-      {/* 右侧：详情 */}
-      <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3">
+      {/* 右侧：详情
+          - center（inline 右栏，默认）：flex-1，左右二分
+          - sidebar（absolute 二级抽屉，从面板右滑入）：仅选中时渲染 */}
+      {(variant === 'center' || selected) && (
+      <div className={
+        variant === 'center'
+          ? 'min-w-0 flex-1 overflow-y-auto px-4 py-3'
+          : 'absolute left-full top-0 z-20 h-full w-[400px] overflow-y-auto border-l border-line bg-paper-soft px-4 py-3 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.25)] animate-in slide-in-from-left duration-200'
+      }>
         {!selected ? (
           <p className="text-xs text-ink-faint">{t('runHistory.selectHint')}</p>
         ) : (
@@ -194,9 +218,12 @@ export default function RunHistoryPanel({ onClose, embedded = false }: { onClose
           </div>
         )}
       </div>
+      )}
     </div>
   );
 
+  // sidebar 模式：不需要外层弹层（SidePanel 已提供容器），直接返回 body
+  if (variant === 'sidebar') return body;
   if (embedded) {
     return <div className="flex min-h-0 flex-1 flex-col">{body}</div>;
   }

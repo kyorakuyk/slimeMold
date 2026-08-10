@@ -236,7 +236,6 @@ export const nodeCouncil: NodeDefinition = {
       label: '议员智能体（多选，并行评估）',
       type: 'agents',
       default: '',
-      multi: true,
     },
     {
       key: 'synthesizerAgentId',

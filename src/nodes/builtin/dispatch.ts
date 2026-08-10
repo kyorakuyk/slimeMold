@@ -1,6 +1,7 @@
 import { createNodeDef, type NodeDefinition, type ModuleItem, type TaskItem, type ChatMessage } from '../../types';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { findRole, resolveRoleSystem } from '../../agents/agentManager';
+import { mergeAgentPool } from '../../agents/globalAgents';
 import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../../engine/pipeline';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../../engine/builder';
 import { extractModulesFromDesign, extractTasksFromPlan } from '../builtinHelpers';
@@ -476,7 +477,8 @@ export const nodeBuilder: NodeDefinition = {
       modules,
       routeTable,
       fallbackAgentId,
-      agents: st.agents,
+      // 可用候选池 = 项目级 ∪ 全局：Builder 生成期即从全局通用智能体自动补位，跨项目复用
+      agents: mergeAgentPool(st.agents, st.globalAgents),
       name: String(params.constructionName || '施工方工作流'),
     });
     const opsWf = buildOpsWorkflow({
@@ -532,7 +534,9 @@ export const nodeHandoff: NodeDefinition = {
   typeId: 'pipeline.handoff',
   name: '交付（跨工作流）',
   category: '派发',
-  description: '把产物写入项目级黑板指定阶段，供其他工作流接收。',
+  description: '把产物写入项目级黑板指定阶段，供其他工作流接收；可选直接落盘为磁盘文件（writeOut=on）。',
+  // 需要写文件能力：保留 sandbox.writeFile（隔离写），剥离 commit 汇总权
+  minCapability: 'sandbox_write',
   inputs: [{ id: 'payload', label: '交付物', type: 'any' }],
   outputs: [{ id: 'artifact', label: '交付回执', type: 'json' }],
   params: [
@@ -546,6 +550,18 @@ export const nodeHandoff: NodeDefinition = {
     },
     { key: 'kindCustom', label: '自定义 kind（kind=自定义时生效）', type: 'text', default: '' },
     { key: 'meta', label: '附带元信息（任意文本，如模块 scope 汇总）', type: 'text', default: '', placeholder: '可选，随交付物透传给下游' },
+    {
+      key: 'writeOut',
+      label: '直接落盘为文件',
+      type: 'select',
+      default: 'off',
+      options: [
+        { value: 'off', label: '关闭（仅写黑板）' },
+        { value: 'on', label: '开启（黑板 + 写磁盘文件）' },
+      ],
+    },
+    { key: 'outDir', label: '落盘目录（相对项目/工作区）', type: 'text', default: 'deliverables', placeholder: '如 deliverables' },
+    { key: 'outFile', label: '落盘文件名（留空按 kind 推断）', type: 'text', default: '', placeholder: '如 construction-project.md' },
   ],
   async execute(inputs, params, ctx) {
     const stage = String(params.stage ?? '').trim();
@@ -562,9 +578,93 @@ export const nodeHandoff: NodeDefinition = {
         : payload;
     const artifact = publishArtifactFromNode({ stage, kind, payload: finalPayload });
     ctx.logger.info(`交付完成 stage=${stage} kind=${kind} version=${artifact.version}`);
-    return { artifact };
+
+    // —— 直接落盘：把交付物写成磁盘文件（用户可在交付末端拿到实体文件） ——
+    let writtenPath: string | null = null;
+    if (String(params.writeOut ?? 'off') === 'on') {
+      // 落盘内容：字符串直接用；字符串数组（各 worker 合并的项目代码）按分隔拼接成可读文本；
+      // 其余对象序列化为 JSON。
+      const content = serializeForFile(finalPayload);
+      const outDir = String(params.outDir ?? 'deliverables').trim() || 'deliverables';
+      const file =
+        String(params.outFile ?? '').trim() ||
+        `${stage}-${kind}-v${artifact.version}.${inferArtifactExt(finalPayload, kind)}`;
+      const rel = `${outDir}/${file}`;
+      try {
+        if (ctx.sandbox?.writeFile) {
+          // 沙箱模式：写入隔离副本（协调者可 commitAll 汇总，或用户在工作区 .sandbox 读取）
+          writtenPath = await ctx.sandbox.writeFile(rel, content);
+          ctx.logger.info(`[交付落盘·沙箱] ${writtenPath} (${content.length} 字节)`);
+        } else {
+          // 非沙箱模式：直接写工作区/项目/AppData 目录
+          writtenPath = await writeDeliverableToDisk(rel, content);
+          if (writtenPath) {
+            ctx.logger.info(`[交付落盘] ${writtenPath} (${content.length} 字节)`);
+          } else {
+            // 非 Tauri 环境（浏览器预览）明确告知，避免静默丢失交付物
+            ctx.logger.warn(`[交付落盘] 当前环境为浏览器/无文件系统，交付物仅入黑板，未写文件；可在桌面端重启后重跑`);
+          }
+        }
+      } catch (e) {
+        ctx.logger.error(`交付落盘失败 ${rel}: ${(e as Error).message}`);
+        writtenPath = null;
+      }
+    }
+
+    return { artifact: { ...artifact, writtenPath } };
   },
 };
+
+/** 把交付物序列化为适合落盘的文本：字符串原样；字符串数组按分隔拼接；其余 JSON。 */
+function serializeForFile(payload: unknown): string {
+  if (typeof payload === 'string') return payload;
+  if (Array.isArray(payload) && payload.every((x) => typeof x === 'string')) {
+    return payload
+      .map((s, i) => `\n${'='.repeat(40)} 模块/任务 ${i + 1} ${'='.repeat(40)}\n\n${s}`)
+      .join('\n')
+      .trim();
+  }
+  return JSON.stringify(payload, null, 2);
+}
+
+/** 按交付物内容推断扩展名（字符串按是否含换行/代码围栏；对象默认 .json）。 */
+function inferArtifactExt(payload: unknown, kind: ArtifactKind): string {
+  if (kind === 'plan' || kind === 'design' || kind === 'project') return 'md';
+  if (typeof payload === 'string') return payload.includes('\n') ? 'md' : 'txt';
+  if (Array.isArray(payload)) return 'md';
+  return 'json';
+}
+
+/** 非沙箱模式下把交付物写到磁盘：优先项目/工作区目录下，其次 AppData 内部目录；浏览器降级 null。 */
+async function writeDeliverableToDisk(relPath: string, content: string): Promise<string | null> {
+  const { isTauri } = await import('../../platform/env');
+  if (!isTauri) return null; // 浏览器无真实文件系统
+  const st = useWorkflowStore.getState();
+  let root: string | null = null;
+  if (st.workspaceDir) {
+    root = st.workspaceDir;
+  } else if (st.projectPath) {
+    root = st.projectPath;
+  }
+  const fs = await import('@tauri-apps/plugin-fs');
+  if (root) {
+    await fs.mkdir(`${root}/${relPath.split('/').slice(0, -1).join('/')}`, { recursive: true });
+    await fs.writeTextFile(`${root}/${relPath}`, content);
+    return `${root}/${relPath}`;
+  }
+  // 无绑定目录：落到 AppData 内部目录（与 Rust 端 endpoint/master.key 同根，便于统一检索）
+  try {
+    const { appDataDir } = await import('@tauri-apps/api/path');
+    // Tauri 2 在 Windows 下 appDataDir() 返回 Roaming（不带 identifier），
+    // Rust 端 app_data_dir() 返回 Roaming/com.slimemold。统一用 com.slimemold 子目录，与 endpoint/master.key 同根。
+    const base = `${await appDataDir()}/com.slimemold/deliverables`;
+    await fs.mkdir(`${base}/${relPath.split('/').slice(0, -1).join('/')}`, { recursive: true });
+    await fs.writeTextFile(`${base}/${relPath}`, content);
+    return `${base}/${relPath}`;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * `pipeline.receive`：从项目级黑板读取上游工作流交付的产物（同 stage+kind）。

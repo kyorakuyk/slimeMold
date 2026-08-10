@@ -174,8 +174,9 @@
   <string name="route.fillDefaults">Fill defaults</string>
   <string name="route.fillDefaultsTitle">Bind all categories to the default agent</string>
   <string name="route.unbound">— Default / unbound —</string>
-  <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId)</string>
-  <string name="route.noAgents">No agents in this workflow yet. Add one in the Agent panel first.</string>
+  <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId; global agents work too)</string>
+  <string name="route.noAgents">No usable agents (project + global both empty). Add one in the Agent panel first.</string>
+  <string name="route.globalSuffix"> (global)</string>
   <string name="route.cat.ui">UI / Frontend</string>
   <string name="route.cat.uiHint">Interface, interaction, styling</string>
   <string name="route.cat.logic">Logic</string>

@@ -8,6 +8,7 @@
 - **执行引擎**：分层拓扑排序、独立分支并行执行、节点状态可视化（灰/转圈/绿/红）、失败即停开关
 - **多协议智能体**：OpenAI 兼容 / Anthropic / Ollama 本地模型，顶栏「智能体」中配置，Agent 节点绑定使用
 - **规划 / 架构 / 派发**：`dispatch.plan`（规划）→ `architect.design`（架构设计）→ `dispatch.split`（派发扇出）三段式编排，下游接 `worker.*` 并行施工、`coord.resolver` 冲突协调，构成完整「规划→架构→派发→施工→协调」Agent 流水线（详见 `USAGE.md` 节点分层对照表，示例见 `examples/test-architect.workflow.json`）
+- **交付物直接落盘**：Builder 生成的施工方工作流末端 `pipeline.handoff` 默认开启「直接落盘」，把最终合并的项目代码写成 `deliverables/construction-project.md`（项目/工作区目录下）；可在交付节点参数里关闭（writeOut=off）或改目标路径。
 - **调试模式**：顶栏 🐛 按钮开启后，节点卡片提供「重跑子图 / 重跑到此节点」等调试动作
 - **导入导出**：工作流保存为 `.workflow.json`（含节点、连线、参数、智能体配置），带版本与缺失类型校验
 - **插件系统**：JS 插件包动态加载自定义工具节点，见下文插件开发

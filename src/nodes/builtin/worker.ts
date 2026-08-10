@@ -168,7 +168,17 @@ const workerImplementer: NodeDefinition = {
     },
   ],
   async execute(inputs, params, ctx) {
-    const plan = String(inputs.plan ?? '');
+    // plan 可能来自 dispatch.split 的 task 端口（TaskItem 对象 { label, payload, index }）或上游文本。
+    // 若为对象则优先取其 payload/label 文本，避免 String(对象) = "[object Object]"。
+    const rawPlan = inputs.plan;
+    const plan =
+      rawPlan && typeof rawPlan === 'object'
+        ? String(
+            (rawPlan as { payload?: unknown; label?: unknown }).payload ??
+              (rawPlan as { label?: unknown }).label ??
+              JSON.stringify(rawPlan),
+          )
+        : String(rawPlan ?? '');
     if (!plan) throw new Error('实现工缺少实现计划输入（plan 端口）');
     const context = inputs.context != null ? String(inputs.context) : '';
     const { system, simulate } = await resolveWorkerCtx(

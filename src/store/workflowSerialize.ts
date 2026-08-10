@@ -181,7 +181,7 @@ export function buildProjectFile(
     artifacts: import('../engine/pipeline').ProjectArtifacts;
     agentRouteTable: import('../types').AgentRouteTable;
     pipelines: import('../engine/pipeline').PipelineDef[];
-    defaultAgentId: string | null;
+    defaultAgentId?: string | null;
   },
   stable = false,
 ): ProjectFile {

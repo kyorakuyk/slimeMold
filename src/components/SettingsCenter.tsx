@@ -122,7 +122,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-hidden p-4">
             {section === 'general' && <GeneralSection />}
             {section === 'agent' && <AgentSection />}
             {section === 'model' && <ModelSection />}
@@ -145,7 +145,7 @@ function GeneralSection() {
   const setLlmChannel = useWorkflowStore((s) => s.setLlmChannel);
 
   return (
-    <div className="space-y-4">
+    <div className="h-full space-y-4 overflow-y-auto">
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.appearance')}</h3>
         <div className="flex items-center justify-between rounded border border-line px-3 py-2.5">
@@ -255,7 +255,13 @@ function GeneralSection() {
 
 /* ---------------- 智能体（复用 AgentPanel，内联嵌入） ---------------- */
 function AgentSection() {
-  return <AgentPanel embedded />;
+  // 全屏撑满，让 AgentPanel 内部 flex/min-h-0 正确建立滚动约束（智能体列表 + 编辑表单各自滚动）
+  // wrapper 必须是 flex 容器，让 AgentPanel inner 的 flex-1 生效
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <AgentPanel embedded />
+    </div>
+  );
 }
 
 /* ---------------- 模型 ---------------- */
@@ -266,7 +272,7 @@ function ModelSection() {
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
 
   return (
-    <div className="space-y-4">
+    <div className="h-full space-y-4 overflow-y-auto">
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.model.presetLib')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -463,7 +469,7 @@ function ApiKeysSection() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="h-full space-y-4 overflow-y-auto">
       <div className="rounded border border-line p-3">
         <h3 className="mb-1 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.apikeys.title')}</h3>
         <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -579,7 +585,7 @@ function ApiKeysSection() {
 function RoutingSection() {
   const t = useT('settings');
   return (
-    <div className="space-y-3">
+    <div className="h-full space-y-3 overflow-y-auto">
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.routing.title')}</h3>
         <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -600,7 +606,7 @@ function FlowSection() {
   const setMaxConcurrency = useWorkflowStore((s) => s.setMaxConcurrency);
 
   return (
-    <div className="space-y-4">
+    <div className="h-full space-y-4 overflow-y-auto">
       <div className="rounded border border-line p-3">
         <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.flow.title')}</h3>
         <ToggleRow

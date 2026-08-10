@@ -31,6 +31,7 @@ import type {
 } from '../types';
 import { arePortsCompatible } from '../types';
 import { wouldCreateCycle } from '../engine/topoSort';
+import { saveGlobalAgents } from '../agents/globalAgents';
 // 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价
 import {
   sanitizeNodes,
@@ -84,6 +85,9 @@ interface WorkflowState {
   nodes: FlowNode[];
   edges: FlowEdge[];
   agents: AgentConfig[];
+  /** 全局通用智能体（应用级，跨项目共享，落 AppData；不随项目序列化）。
+   *  项目打开时与项目级 agents 合并为可用候选池，项目级同名(id)覆盖全局。 */
+  globalAgents: AgentConfig[];
   /** 默认智能体 id：节点未指定智能体时引用此默认项 */
   defaultAgentId: string | null;
   /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
@@ -204,6 +208,12 @@ interface WorkflowState {
   upsertAgent: (agent: AgentConfig) => void;
   removeAgent: (id: string) => void;
   setDefaultAgent: (id: string | null) => void;
+  /** 载入全局智能体（应用启动/恢复时从 AppData 读取后调用） */
+  setGlobalAgents: (agents: AgentConfig[]) => void;
+  /** 新增/更新一个全局智能体，并立即落盘 AppData */
+  upsertGlobalAgent: (agent: AgentConfig) => void;
+  /** 删除一个全局智能体，并立即落盘 AppData */
+  removeGlobalAgent: (id: string) => void;
 
   upsertRole: (role: RoleTemplate) => void;
   removeRole: (id: string) => void;
@@ -362,6 +372,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       nodes: [],
       edges: [],
       agents: [createAgent('ollama')],
+      globalAgents: [],
       defaultAgentId: null,
       workspaceDir: null,
       roles: builtinRoles.map((r) => ({ ...r })),
@@ -798,6 +809,22 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       setDefaultAgent: (id) => set({ defaultAgentId: id }),
 
+      setGlobalAgents: (agents) => set({ globalAgents: agents }),
+
+      upsertGlobalAgent: (agent) => {
+        const list = get().globalAgents;
+        const exists = list.some((a) => a.id === agent.id);
+        const next = exists ? list.map((a) => (a.id === agent.id ? agent : a)) : [...list, agent];
+        set({ globalAgents: next });
+        void saveGlobalAgents(next);
+      },
+
+      removeGlobalAgent: (id) => {
+        const next = get().globalAgents.filter((a) => a.id !== id);
+        set({ globalAgents: next });
+        void saveGlobalAgents(next);
+      },
+
       upsertRole: (role) => {
         const exists = get().roles.some((r) => r.id === role.id);
         set({
@@ -1199,6 +1226,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           runHistory: file.runs?.history ?? [],
           // 阶段 C 可恢复执行：读回运行检查点（落盘于 .slimemold/runs/checkpoints.json）
           checkpoints: file.checkpoints ?? {},
+          // 交付物：读回项目级黑板（pipeline.handoff 产出的成果，落盘于 project.json 的 artifacts）
+          artifacts: file.artifacts ?? {},
+          pipelines: file.pipelines ?? [],
           selectedNodeId: null,
           logs: [],
         });
@@ -2104,6 +2134,26 @@ useWorkflowStore.subscribe((state, prev) => {
   if (state.lastSavedSnapshot !== projectSnapshot(state)) {
     if (!state.projectDirty) useWorkflowStore.setState({ projectDirty: true });
   }
+});
+
+// ---------- 智能体/配置类字段变更自动落盘 ----------
+// 用户加/改/删 agent、角色、路由表、默认 agent 时，若有磁盘项目（projectPath），
+// 防抖自动 saveProject，避免「改了 agent 忘保存 → 重启自动恢复时 agents.json 没有 → agent 消失」。
+// 只监听配置型字段，不监听 nodes/edges/运行态，避免频繁全量保存。
+let configSaveTimer: ReturnType<typeof setTimeout> | null = null;
+const CONFIG_AUTO_SAVE_KEYS = ['agents', 'roles', 'defaultAgentId', 'agentRouteTable'] as const;
+useWorkflowStore.subscribe((state, prev) => {
+  if (suppressDirty) return;
+  const changed = CONFIG_AUTO_SAVE_KEYS.some((k) => (state as any)[k] !== (prev as any)[k]);
+  if (!changed) return;
+  // 无磁盘项目无从落盘（靠 localStorage + 用户「另存为」），不自动保存
+  if (!state.projectPath) return;
+  if (configSaveTimer) clearTimeout(configSaveTimer);
+  configSaveTimer = setTimeout(() => {
+    configSaveTimer = null;
+    // 取最新 state，避免闭包拿到过期引用；失败静默，不阻塞 UI
+    void useWorkflowStore.getState().saveProject().catch(() => {});
+  }, 1000);
 });
 
 // 确保启动/恢复后始终有一个激活的工作流承载当前画布（避免游离态丢节点）

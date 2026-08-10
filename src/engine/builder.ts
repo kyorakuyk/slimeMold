@@ -88,10 +88,22 @@ export function buildConstructionWorkflow(args: {
   const wfNodes: WorkflowFileNode[] = [];
   const wfEdges: WorkflowFileEdge[] = [];
 
-  const input = node('input.text', '设计输入', { x: 0, y: 0 });
+  // 任务源：flow.list 把模块清单转成 TaskItem[] 喂给 dispatch.split。
+  // 不能用 input.text（输出单文本，与 split.tasks 的 list 类型不兼容，会导致 split 扇不出、worker 无 plan）。
+  const taskSrc = node(
+    'flow.list',
+    '模块清单',
+    { x: 0, y: 0 },
+    {
+      text: modules
+        .map((m) => `${m.name}${m.responsibility ? `：${m.responsibility}` : ''}`)
+        .join('\n'),
+      split: 'newline',
+    },
+  );
   const split = node('dispatch.split', '任务派发', { x: COL, y: 0 });
-  wfNodes.push(input, split);
-  wfEdges.push(edge(input.id, 'text', split.id, 'tasks'));
+  wfNodes.push(taskSrc, split);
+  wfEdges.push(edge(taskSrc.id, 'items', split.id, 'tasks'));
 
   const workers: WorkflowFileNode[] = [];
   const SPLIT_TASK_PORTS = ['task1', 'task2', 'task3', 'task4'];
@@ -144,10 +156,19 @@ export function buildConstructionWorkflow(args: {
     .flatMap((m) => (Array.isArray(m.scope) ? m.scope : []))
     .filter(Boolean)
     .join(', ');
-  const out = node('pipeline.handoff', '交付施工成果', { x: COL * 5, y: -ROW }, { stage: 'construction', kind: 'project', ...(scopeNote ? { meta: `施工模块 scope: ${scopeNote}` } : {}) });
+  // 交付施工成果：写黑板 + 默认直接落盘到项目/工作区 deliverables/ 目录（用户期望交付成果直接成文件）。
+  // 交付物取 coord.resolver.merged（真正的项目代码），而非 validator 的 report（那只是验收报告文本）。
+  const out = node('pipeline.handoff', '交付施工成果', { x: COL * 5, y: -ROW }, {
+    stage: 'construction',
+    kind: 'project',
+    writeOut: 'on',
+    outDir: 'deliverables',
+    outFile: 'construction-project.md',
+    ...(scopeNote ? { meta: `施工模块 scope: ${scopeNote}` } : {}),
+  });
   wfNodes.push(out);
-  // validator 验收通过走 data 边直接交付；loopGate 终止分支（多次仍 fail）不交付次品，留空终止
-  wfEdges.push(edge(validator.id, 'report', out.id, 'payload', 'data'));
+  // resolver.merged → handoff.payload：交付最终合并的项目代码（施工成果）；validator 仅作诊断校验
+  wfEdges.push(edge(resolver.id, 'merged', out.id, 'payload', 'data'));
 
   return {
     version: 1,

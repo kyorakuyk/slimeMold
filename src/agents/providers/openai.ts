@@ -44,7 +44,7 @@ async function openAICompatPost(
   base: string,
   body: Record<string, unknown>,
   agent: AgentConfig,
-  proxyOpt: Record<string, string>,
+  proxyOpt: { proxy?: string },
   signal: AbortSignal,
 ): Promise<Response> {
   const candidates = baseCandidates(base);
@@ -53,7 +53,7 @@ async function openAICompatPost(
     const res = await httpFetch(`${cand}/chat/completions`, {
       method: 'POST',
       signal,
-      ...proxyOpt,
+      ...(proxyOpt.proxy ? { proxy: proxyOpt.proxy } : {}),
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${agent.apiKey}`,

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2, Pin } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import {
   createAgent,
@@ -21,10 +21,13 @@ import { useT } from '../i18n/useT';
 interface AgentPanelProps {
   onClose?: () => void;
   embedded?: boolean;
+  /** 'center'（控制中心，默认）= 左列表 + 右编辑 inline 左右二分；
+   *  'sidebar'（侧边栏）= 列表为一级菜单，编辑配置作 absolute 二级抽屉从右滑入覆盖列表 */
+  variant?: 'center' | 'sidebar';
 }
 
 /** 智能体管理弹层：多协议配置的增删改 + 角色库（角色模板）管理 */
-export default function AgentPanel({ onClose, embedded = false }: AgentPanelProps) {
+export default function AgentPanel({ onClose, embedded = false, variant = 'center' }: AgentPanelProps) {
   const t = useT('agents');
   const [tab, setTab] = useState<'agents' | 'roles'>('agents');
 
@@ -52,10 +55,12 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
           {t('agent.tab.roles')}
         </button>
       </div>
-      {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
+      {tab === 'agents' ? <AgentsTab variant={variant} /> : <RolesTab />}
     </div>
   );
 
+  // sidebar 模式：不需要外层居中弹层（SidePanel 已提供容器），直接返回 inner
+  if (variant === 'sidebar') return inner;
   if (embedded) return inner;
 
   return (
@@ -98,20 +103,23 @@ export default function AgentPanel({ onClose, embedded = false }: AgentPanelProp
             <X size={16} />
           </button>
         </div>
-        {tab === 'agents' ? <AgentsTab /> : <RolesTab />}
+        {tab === 'agents' ? <AgentsTab variant={variant} /> : <RolesTab />}
       </div>
     </div>
   );
 }
 
-function AgentsTab() {
+function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   const t = useT('agents');
   const agents = useWorkflowStore((s) => s.agents);
   const upsertAgent = useWorkflowStore((s) => s.upsertAgent);
   const removeAgent = useWorkflowStore((s) => s.removeAgent);
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
+  const upsertGlobalAgent = useWorkflowStore((s) => s.upsertGlobalAgent);
+  const removeGlobalAgent = useWorkflowStore((s) => s.removeGlobalAgent);
   const defaultAgentId = useWorkflowStore((s) => s.defaultAgentId);
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
-  const [editingId, setEditingId] = useState<string | null>(agents[0]?.id ?? null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelHint, setModelHint] = useState('');
@@ -122,7 +130,24 @@ function AgentsTab() {
   /** 保存成功后暂存的明文 key（仅当前会话内存，不落盘），供随后的检测/拉取直接使用，
    *  避免依赖从密钥库读回导致「已保存却读不到」的困惑。 */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const editing = agents.find((a) => a.id === editingId);
+  /** 归属查找：项目级优先，全局兜底。 */
+  const globalSet = useMemo(() => new Set(globalAgents.map((a) => a.id)), [globalAgents]);
+  const projectSet = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
+  const belongsToGlobal = (id: string | null) => !!id && globalSet.has(id) && !projectSet.has(id);
+
+  /** 合并池：项目级在前，全局在后（同名项目级优先） */
+  const pool = useMemo<AgentConfig[]>(() => {
+    const seen = new Set<string>();
+    const out: AgentConfig[] = [];
+    for (const a of [...agents, ...globalAgents]) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      out.push(a);
+    }
+    return out;
+  }, [agents, globalAgents]);
+
+  const editing = pool.find((a) => a.id === editingId);
 
   /** APIKEYS 分区里已登记的 Vault（供「从库导入」下拉）。 */
   const [vaults, setVaults] = useState<ApiVault[]>([]);
@@ -258,13 +283,16 @@ function AgentsTab() {
 
   const patch = (p: Partial<AgentConfig>) => {
     if (!editing) return;
-    upsertAgent({ ...editing, ...p });
+    if (belongsToGlobal(editing.id)) upsertGlobalAgent({ ...editing, ...p });
+    else upsertAgent({ ...editing, ...p });
   };
 
   const changeProtocol = (protocol: Protocol) => {
     if (!editing) return;
     const d = protocolDefaults[protocol];
-    upsertAgent({ ...editing, protocol, baseUrl: d.baseUrl, model: d.model });
+    const updated = { ...editing, protocol, baseUrl: d.baseUrl, model: d.model };
+    if (belongsToGlobal(editing.id)) upsertGlobalAgent(updated);
+    else upsertAgent(updated);
   };
 
   const addAgent = (protocol: Protocol) => {
@@ -273,25 +301,39 @@ function AgentsTab() {
     setEditingId(agent.id);
   };
 
+  /** 图钉按钮：切换 agent 作用域（项目级 ↔ 全局通用）。 */
+  const toggleGlobal = (id: string) => {
+    const a = pool.find((x) => x.id === id);
+    if (!a) return;
+    if (belongsToGlobal(id)) {
+      upsertAgent({ ...a });
+      removeGlobalAgent(id);
+    } else {
+      upsertGlobalAgent({ ...a });
+      removeAgent(id);
+    }
+  };
+
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className={`relative flex flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
       {/* 左列：智能体列表 */}
-      <div className="flex w-56 shrink-0 flex-col border-r border-line bg-paper-soft">
+      <div className={`flex shrink-0 flex-col border-r border-line bg-paper-soft ${variant === 'sidebar' ? 'w-full' : 'w-56'}`}>
         <div className="border-b border-line px-3 py-2.5">
           <h2 className="text-[13px] font-semibold text-ink">{t('agent.title')}</h2>
           <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
         </div>
-        <ul className="flex-1 overflow-y-auto p-2">
-          {agents.map((a) => {
+        <ul className="min-h-0 flex-1 overflow-y-auto p-2">
+          {pool.map((a) => {
             const dot = probeStates[a.id];
             const isDefault = defaultAgentId === a.id;
+            const isGlobal = belongsToGlobal(a.id);
             return (
               <li
                 key={a.id}
-                onClick={() => setEditingId(a.id)}
+                onClick={() => setEditingId(editingId === a.id ? null : a.id)}
                 className={`mb-1 cursor-pointer rounded border px-2.5 py-2 transition-colors ${
                   a.id === editingId
-                    ? 'border-accent-soft bg-white'
+                    ? 'border-line bg-paper-soft'
                     : 'border-transparent hover:bg-white'
                 }`}
               >
@@ -328,6 +370,21 @@ function AgentsTab() {
                       }`}
                     >
                       {isDefault ? '★' : '☆'}
+                    </button>
+                    <button
+                      type="button"
+                      title={isGlobal ? t('agent.pin.global') : t('agent.pin.project')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleGlobal(a.id);
+                      }}
+                      className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                        isGlobal
+                          ? 'bg-paper-deep text-ink'
+                          : 'text-ink-faint hover:bg-paper-soft hover:text-ink'
+                      }`}
+                    >
+                      <Pin size={12} className="rotate-45 opacity-60" />
                     </button>
                   </div>
                 </div>
@@ -392,15 +449,32 @@ function AgentsTab() {
         </div>
       </div>
 
-      {/* 右列：编辑表单 */}
-      <div className="flex flex-1 flex-col">
+      {/* 右列/二级抽屉：编辑表单
+          - 控制中心（variant='center'）：inline 右列 flex-1，左右二分原样
+          - 侧边栏（variant='sidebar'）：作 absolute 二级抽屉覆盖整个面板，从右滑入 */}
+      {(variant === 'center' || editing) && (
+      <div className={
+        variant === 'center'
+          ? 'flex min-h-0 flex-1 flex-col'
+          : 'absolute left-full top-0 z-20 flex h-full w-[360px] flex-col border-l border-line bg-paper-soft shadow-[0_8px_24px_-8px_rgba(0,0,0,0.25)] animate-in slide-in-from-left duration-200'
+      }>
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
             {editing ? t('agent.edit.title') : t('agent.edit.none')}
           </h3>
+          {variant === 'sidebar' && editing && (
+            <button
+              type="button"
+              className="text-ink-faint hover:text-ink"
+              title={t('agent.edit.close')}
+              onClick={() => setEditingId(null)}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         {editing ? (
-          <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
               <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.name')}</label>
               <input
@@ -582,7 +656,8 @@ function AgentsTab() {
             <button
               className="sm-btn text-err hover:border-err hover:text-err"
               onClick={() => {
-                removeAgent(editing.id);
+                if (belongsToGlobal(editing.id)) removeGlobalAgent(editing.id);
+                else removeAgent(editing.id);
                 setEditingId(null);
               }}
             >
@@ -595,6 +670,7 @@ function AgentsTab() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -738,14 +814,14 @@ function RolesTab() {
             {t('roles.subtitle')}
           </p>
         </div>
-        <ul className="flex-1 overflow-y-auto p-2">
+        <ul className="min-h-0 flex-1 overflow-y-auto p-2">
           {roles.map((r) => (
             <li
               key={r.id}
-              onClick={() => setEditingId(r.id)}
+              onClick={() => setEditingId(editingId === r.id ? null : r.id)}
               className={`mb-1 cursor-pointer rounded border px-2.5 py-2 transition-colors ${
                 r.id === editingId
-                  ? 'border-accent-soft bg-white'
+                  ? 'border-line bg-paper-soft'
                   : 'border-transparent hover:bg-white'
               }`}
             >
@@ -771,14 +847,14 @@ function RolesTab() {
       </div>
 
       {/* 右列：角色编辑 */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink">
             {editing ? (editing.builtin ? t('roles.viewBuiltinTitle') : t('roles.editTitle')) : t('roles.none')}
           </h3>
         </div>
         {editing ? (
-          <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
               <label className="mb-1 block text-xs text-ink-soft">{t('roles.field.name')}</label>
               <input
