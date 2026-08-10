@@ -130,22 +130,26 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   /** 保存成功后暂存的明文 key（仅当前会话内存，不落盘），供随后的检测/拉取直接使用，
    *  避免依赖从密钥库读回导致「已保存却读不到」的困惑。 */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  /** 列表筛选：all=全部（默认）/ project=仅项目智能体 / global=仅全局智能体 */
+  const [filter, setFilter] = useState<'all' | 'project' | 'global'>('all');
   /** 归属查找：项目级优先，全局兜底。 */
   const globalSet = useMemo(() => new Set(globalAgents.map((a) => a.id)), [globalAgents]);
   const projectSet = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
   const belongsToGlobal = (id: string | null) => !!id && globalSet.has(id) && !projectSet.has(id);
 
-  /** 合并池：项目级在前，全局在后（同名项目级优先） */
+  /** 合并池（同名项目级覆盖全局）：纯全局智能体置顶，项目级在后 */
   const pool = useMemo<AgentConfig[]>(() => {
-    const seen = new Set<string>();
-    const out: AgentConfig[] = [];
-    for (const a of [...agents, ...globalAgents]) {
-      if (seen.has(a.id)) continue;
-      seen.add(a.id);
-      out.push(a);
-    }
-    return out;
+    const projectIdSet = new Set(agents.map((a) => a.id));
+    const globalOnly = globalAgents.filter((g) => !projectIdSet.has(g.id));
+    return [...globalOnly, ...agents];
   }, [agents, globalAgents]);
+
+  /** 按筛选过滤后的展示列表 */
+  const filteredPool = useMemo(() => {
+    if (filter === 'project') return pool.filter((a) => projectSet.has(a.id));
+    if (filter === 'global') return pool.filter((a) => globalSet.has(a.id) && !projectSet.has(a.id));
+    return pool;
+  }, [pool, filter, globalSet, projectSet]);
 
   const editing = pool.find((a) => a.id === editingId);
 
@@ -322,8 +326,21 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
           <h2 className="text-[13px] font-semibold text-ink">{t('agent.title')}</h2>
           <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
         </div>
+        {/* 列表筛选：全部 / 项目智能体 / 全局智能体（默认全部） */}
+        <div className="border-b border-line px-3 py-2">
+          <select
+            className="sm-input cursor-pointer text-[12px]"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as 'all' | 'project' | 'global')}
+            title={t('agent.filter.title')}
+          >
+            <option value="all">{t('agent.filter.all', { count: pool.length })}</option>
+            <option value="project">{t('agent.filter.project', { count: pool.filter((a) => projectSet.has(a.id)).length })}</option>
+            <option value="global">{t('agent.filter.global', { count: pool.filter((a) => globalSet.has(a.id) && !projectSet.has(a.id)).length })}</option>
+          </select>
+        </div>
         <ul className="min-h-0 flex-1 overflow-y-auto p-2">
-          {pool.map((a) => {
+          {filteredPool.map((a) => {
             const dot = probeStates[a.id];
             const isDefault = defaultAgentId === a.id;
             const isGlobal = belongsToGlobal(a.id);
@@ -396,6 +413,13 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
               </li>
             );
           })}
+          {filteredPool.length === 0 && (
+            <li className="px-1 py-2 text-[11px] text-ink-faint">
+              {t('agent.list.empty', {
+                filter: t(`agent.filter.${filter}`, { count: 0 }),
+              })}
+            </li>
+          )}
         </ul>
         <div className="space-y-1.5 border-t border-line p-2">
           <select

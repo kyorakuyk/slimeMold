@@ -9,6 +9,7 @@
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
 import { mergeAgentPool } from '../agents/globalAgents';
+import { AgentSelect } from './AgentSelect';
 
 const CATEGORY_KEYS = ['ui', 'logic', 'docs', 'infra', 'data'] as const;
 
@@ -46,14 +47,32 @@ export function RouteTableEditor() {
           </button>
         )}
       </div>
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {CATEGORY_KEYS.map((key) => {
           const entry = agentRouteTable[key] ?? {};
+          const bound = pool.find((a) => a.id === entry.agentId);
           return (
-            <div key={key} className="rounded border border-line bg-white px-2.5 py-2">
-              <div className="mb-1.5 flex items-baseline gap-2">
-                <span className="text-[12px] font-semibold text-ink">{t(`route.cat.${key}`)}</span>
-                <span className="text-[10px] opacity-60">{t(`route.cat.${key}Hint`)}</span>
+            <div
+              key={key}
+              className="rounded-md border border-line bg-paper-soft px-3 py-2.5 shadow-[0_1px_0_rgba(0,0,0,0.04)]"
+            >
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[12px] font-semibold tracking-wide text-ink">
+                    {t(`route.cat.${key}`)}
+                  </span>
+                  <span className="text-[10px] text-ink-faint">
+                    {t(`route.cat.${key}Hint`)}
+                  </span>
+                </div>
+                <span
+                  className={`shrink-0 text-[10px] ${
+                    bound ? 'text-ok' : 'text-ink-faint'
+                  }`}
+                  title={bound ? `${bound.name}（${bound.model}）` : t('route.unbound')}
+                >
+                  {bound ? `● ${bound.name}` : '○ 未绑定'}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <select
@@ -71,19 +90,28 @@ export function RouteTableEditor() {
                   ))}
                 </select>
               </div>
-              <input
-                className="sm-input mt-1.5 w-full text-[12px]"
-                placeholder={t('route.fallbackPlaceholder')}
-                value={(entry.fallback ?? []).join(', ')}
-                onChange={(e) =>
-                  updateEntry(key, {
-                    fallback: e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
-              />
+              <div className="mt-1.5">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span className="shrink-0 text-[10px] text-ink-faint">回退链</span>
+                  <span className="text-[10px] text-ink-faint">{t('route.fallbackPlaceholder')}</span>
+                </div>
+                <AgentSelect
+                  agents={pool}
+                  multiple
+                  value={(entry.fallback ?? []).join(',')}
+                  onChange={(v) =>
+                    updateEntry(key, {
+                      fallback: v
+                        ? v
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                        : [],
+                    })
+                  }
+                  placeholder={t('route.fallbackPlaceholder')}
+                />
+              </div>
             </div>
           );
         })}
