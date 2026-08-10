@@ -17,27 +17,31 @@ const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: 
 function loadXmlModules(): Record<string, string> {
   // Vite 环境：import.meta.glob 编译期替换为静态映射
   // （必须保留字面量 glob 调用，否则 Vite 不会批量收集 XML）。
-  if (typeof (import.meta as { glob?: unknown }).glob === 'function') {
-    return import.meta.glob('./locales/*/*.xml', {
+  // 注意：编译后 glob 是**模块/对象**而非函数——不能用 typeof === 'function' 检测，
+  // 用 try/catch 探测：Vite 环境调用成功，tsx/Node 环境抛 ReferenceError。
+  try {
+    // @ts-expect-error Vite 编译期类型擦除；运行时存在 import.meta.glob
+    return (import.meta as { glob: unknown }).glob('./locales/*/*.xml', {
       query: '?raw',
       import: 'default',
       eager: true,
     }) as Record<string, string>;
-  }
-  // tsx / Node 环境：兜底扫描 locales 目录读取 XML
-  const here = dirname(fileURLToPath(import.meta.url));
-  const localesDir = resolve(here, './locales');
-  const out: Record<string, string> = {};
-  for (const lang of readdirSync(localesDir)) {
-    const langDir = join(localesDir, lang);
-    for (const file of readdirSync(langDir)) {
-      if (!file.endsWith('.xml')) continue;
-      const path = join(langDir, file);
-      // 与 Vite glob 路径形态对齐（便于 buildResources 路径正则匹配）
-      out[`./locales/${lang}/${file}`] = readFileSync(path, 'utf8');
+  } catch {
+    // tsx / Node 环境：兜底扫描 locales 目录读取 XML
+    const here = dirname(fileURLToPath(import.meta.url));
+    const localesDir = resolve(here, './locales');
+    const out: Record<string, string> = {};
+    for (const lang of readdirSync(localesDir)) {
+      const langDir = join(localesDir, lang);
+      for (const file of readdirSync(langDir)) {
+        if (!file.endsWith('.xml')) continue;
+        const path = join(langDir, file);
+        // 与 Vite glob 路径形态对齐（便于 buildResources 路径正则匹配）
+        out[`./locales/${lang}/${file}`] = readFileSync(path, 'utf8');
+      }
     }
+    return out;
   }
-  return out;
 }
 
 const xmlModules = loadXmlModules();
