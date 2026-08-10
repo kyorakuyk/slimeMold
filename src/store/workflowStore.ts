@@ -725,12 +725,21 @@ export const useWorkflowStore = create<WorkflowState>()(
           // 运行态复位纯映射已抽到 nodeRuntime（resetNodeRuntime / resetEdgeRuntime）
           const resetNodes = (nodes: FlowNode[]): FlowNode[] => resetNodeRuntime(nodes);
           const resetEdges = (edges: FlowEdge[]): FlowEdge[] => resetEdgeRuntime(edges);
+          // 注意：此处只清节点执行状态，不碰 running 标志位。
+          // running 由 executor 的 setRunning 统一管理（启动置 true、停止/收尾置 false）。
+          // 此前把 running 一并复位导致 runWorkflow 里 setRunning(true) 被紧接着的
+          // resetStatuses 打回 false，顶栏停止按钮永不出现（运行正常但无法停止）。
+          const prev = state.runStates[target];
           const patch: Partial<WorkflowState> = {
-            // 复位该工作流运行态，避免「卡在 running==true」时刷新键失效
-            runStates: { ...state.runStates, [target]: { running: false, progress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 } } },
+            runStates: {
+              ...state.runStates,
+              [target]: {
+                running: prev?.running ?? false,
+                progress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
+              },
+            },
           };
           if (target === state.activeWfId) {
-            patch.running = false;
             patch.runProgress = { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 };
             patch.costLog = [];
             patch.nodes = resetNodes(state.nodes);
