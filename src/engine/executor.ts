@@ -23,6 +23,7 @@ import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { decideNodeExecution } from './nodeExecutionPolicy';
 import { runLlmWithFallback } from './runLlmCall';
+import { handleNodeSuccess, handleNodeFailure } from './nodeResultHandler';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
@@ -1099,57 +1100,54 @@ async function executeNode(
       },
     );
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
-    outputsMap.set(id, outputs ?? {});
-    // 写入缓存：以「类型+参数+上游输出+工作流scope」为 key，下游命中时自动复用
-    const key = cacheKey(node.data.typeId, node.data.params, inputs, cacheScope);
-    setCached(key, outputs ?? {});
-    // 登记分支状态：分支节点用其声明的激活 handle，普通节点视为全部输出端口激活
-    branchState.set(
+    // 节点成功收尾（nodeResultHandler.ts）：写缓存/登记分支/状态/事件/快照/stopAfter 剪裁
+    handleNodeSuccess({
       id,
-      branchesTaken !== undefined
-        ? new Set(branchesTaken)
-        : new Set(def.outputs.map((o) => o.id)),
-    );
-    setStatus(id, 'success', {
+      node,
+      def,
       outputs: outputs ?? {},
+      inputs,
+      upstreamOutputs: inputs,
+      cacheScope,
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
+      branchesTaken,
+      stopAfter,
+      cache: { key: cacheKey, set: setCached },
+      outputMap: { set: (nid, o) => outputsMap.set(nid, o) },
+      branchState: { set: (nid, handles) => branchState.set(nid, handles) },
+      h: {
+        setStatus: (s, patch) => setStatus(id, s, patch),
+        emit: (kind, payload) => emitNode(runBus, kind, nodeCtx, id, payload),
+        onSnapshot: () => scheduleRunCheckpoint(targetWfId, targetRunId, Date.now()),
+        onCut: () => {
+          for (const d of computeDownstream(id, edges)) cutSet.add(d);
+        },
+        onErrorLog: () => {},
+      },
     });
-    emitNode(runBus, 'node.completed', nodeCtx, id, {
-      status: 'success',
-      label: node.data.label,
-      typeId: node.data.typeId,
-      outputs: outputs ?? {},
-      durationMs: Math.round(performance.now() - perfStart),
-    });
-    // 阶段 G2：节点成功后落盘中间快照（节流）——崩溃恢复可见该节点成果
-    scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
-    if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
   } catch (err) {
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
-    // 插件/节点异常隔离：捕获并标记失败，不影响主应用
+    // 插件/节点异常隔离：捕获并标记失败（nodeResultHandler.ts）
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);
-    if (skipFailed) {
-      // 跳过失败模式：失败节点不屏蔽下游，使下游仍能以空上游输出继续尝试
-      branchState.set(id, new Set(def.outputs.map((o) => o.id)));
-    } else {
-      branchState.set(id, new Set()); // 失败节点视为屏蔽下游
-    }
-    setStatus(id, 'error', {
-      error: message,
+    handleNodeFailure({
+      id,
+      node,
+      def,
+      message,
       startedAt: new Date(startedAt).toISOString(),
       durationMs: Math.round(performance.now() - perfStart),
+      skipFailed: skipFailed ?? false,
+      branchState: { set: (nid, handles) => branchState.set(nid, handles) },
+      h: {
+        setStatus: (s, patch) => setStatus(id, s, patch),
+        emit: (kind, payload) => emitNode(runBus, kind, nodeCtx, id, payload),
+        onSnapshot: () => scheduleRunCheckpoint(targetWfId, targetRunId, Date.now()),
+        onCut: () => {},
+        onErrorLog: (m) => R.addLog('error', m),
+      },
     });
-    emitNode(runBus, 'node.failed', nodeCtx, id, {
-      error: message,
-      label: node.data.label,
-      typeId: node.data.typeId,
-      durationMs: Math.round(performance.now() - perfStart),
-    });
-    // 阶段 G2：节点失败也落盘快照（记录失败位置，恢复时可从此续跑）
-    scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
-    R.addLog('error', `「${node.data.label}」这一步出错了：${message}`);
   }
 }
 
