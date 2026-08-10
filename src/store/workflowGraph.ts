@@ -10,7 +10,7 @@
  * 设计原则：纯函数，不触碰 store 单例 / IO / 运行态；只依赖输入参数 + 类型。
  * workflowStore.ts 调用这些函数替换内联逻辑，对外 API 与行为完全不变。
  */
-import type { FlowEdge, FlowNode, NodeStatus } from '../types';
+import type { EdgeKind, FlowEdge, FlowNode, NodeDefinition, NodeStatus, PortDef, PortType, SubgraphDef } from '../types';
 
 /** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
 export interface GraphSnapshot {
@@ -127,4 +127,77 @@ export function snapshotRedo(
     past: [...past, current],
     future: future.slice(0, -1),
   };
+}
+
+/* ---------------- onConnect 决策段（G5 门面化第二步） ---------------- */
+
+/** 连线决策结果：通过 → {ok, kind}；失败 → {ok:false, reason, message}。 */
+export type ConnectDecision =
+  | { ok: true; kind: EdgeKind }
+  | { ok: false; reason: 'cycle' | 'incompatible'; message: string };
+
+/** classifyConnection 依赖注入：端口解析 + 环检测 + 类型兼容判定（保持零 store 依赖）。 */
+export interface ConnectDeps {
+  /** 按节点实例解析端口（普通节点取类型定义，subgraph.ref 取子图定义） */
+  resolvePorts: (
+    typeId: string,
+    params: Record<string, unknown> | undefined,
+    defs: Record<string, NodeDefinition>,
+    subgraphs: Record<string, SubgraphDef>,
+  ) => { inputs: PortDef[]; outputs: PortDef[]; name: string };
+  /** 新增边 source→target 后是否成环（忽略 control 边） */
+  wouldCreateCycle: (source: string, target: string, edges: FlowEdge[]) => boolean;
+  /** 端口类型兼容校验 */
+  arePortsCompatible: (src: PortType | undefined, tgt: PortType | undefined) => boolean;
+}
+
+/**
+ * onConnect 决策段纯函数：端口解析 → 环检测 → 类型校验 → kind 推断。
+ * 返回统一决策，不直接改 store；副作用（addLog / set edges / markDirty）由调用方执行。
+ * 与 workflowStore.onConnect 内联逻辑行为完全等价。
+ */
+export function classifyConnection(
+  conn: { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null },
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  defs: Record<string, NodeDefinition>,
+  subgraphs: Record<string, SubgraphDef>,
+  deps: ConnectDeps,
+): ConnectDecision {
+  const srcNode = nodes.find((n) => n.id === conn.source);
+  const tgtNode = nodes.find((n) => n.id === conn.target);
+  const srcDef = deps.resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, subgraphs);
+  const tgtDef = deps.resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, subgraphs);
+  const srcName = srcNode?.data.label ?? srcDef.name;
+  const tgtName = tgtNode?.data.label ?? tgtDef.name;
+
+  if (deps.wouldCreateCycle(conn.source, conn.target, edges)) {
+    return {
+      ok: false,
+      reason: 'cycle',
+      message: `「${srcName}」和「${tgtName}」这样连会绕成死循环，换一种接法吧`,
+    };
+  }
+  // 端口类型校验：source 输出端口类型须与 target 输入端口类型兼容
+  const srcPort = srcDef.outputs.find((o) => o.id === conn.sourceHandle);
+  const tgtPort = tgtDef.inputs.find((i) => i.id === conn.targetHandle);
+  const srcType: PortType | undefined = srcPort?.type;
+  const tgtType: PortType | undefined = tgtPort?.type;
+  if (!deps.arePortsCompatible(srcType, tgtType)) {
+    // 在目标节点上找一个兼容的输入端口，给出更友好的引导
+    const suggest = tgtDef.inputs.find((i) => deps.arePortsCompatible(srcType, i.type));
+    const srcLabel = srcPort?.label ?? '输出';
+    const tgtLabel = tgtPort?.label ?? '输入';
+    const hint = suggest
+      ? `可以把「${srcName}」的「${srcLabel}」连到「${tgtName}」的「${suggest.label}」端口`
+      : `「${srcName}」提供的内容类型，和「${tgtName}」需要的对不上`;
+    return {
+      ok: false,
+      reason: 'incompatible',
+      message: `这条线连不上：「${srcName}」的「${srcLabel}」和「${tgtName}」的「${tgtLabel}」内容类型不一样。${hint}`,
+    };
+  }
+  // 推断连线语义：默认 'data'，若 source 输出端口声明了 flow 则采用该语义
+  const kind = (srcPort?.flow as EdgeKind | undefined) ?? 'data';
+  return { ok: true, kind };
 }

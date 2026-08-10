@@ -5,14 +5,16 @@
  * remapPasted（id 映射 + 位置偏移）、snapshotPush/Undo/Redo（历史栈）。
  */
 import { describe, it, expect } from 'vitest';
-import type { FlowNode, FlowEdge } from '../types';
+import type { FlowNode, FlowEdge, NodeDefinition, PortDef } from '../types';
 import {
+  classifyConnection,
   markDirtyDownstream,
   sanitizeForClipboard,
   remapPasted,
   snapshotPush,
   snapshotUndo,
   snapshotRedo,
+  type ConnectDecision,
   type GraphSnapshot,
 } from './workflowGraph';
 
@@ -137,5 +139,54 @@ describe('历史栈 snapshotPush / Undo / Redo', () => {
 
   it('future 为空 redo 返回 null', () => {
     expect(snapshotRedo([], [], [], [], sanitize)).toBeNull();
+  });
+});
+
+describe('classifyConnection 连线决策', () => {
+  const def = (typeId: string, inputs: PortDef[], outputs: PortDef[]): NodeDefinition =>
+    ({ typeId, name: typeId, category: 'x', description: '', inputs, outputs, params: [], execute: async () => ({}) }) as unknown as NodeDefinition;
+  const node = (id: string, typeId: string): FlowNode =>
+    ({ id, type: 'base', position: { x: 0, y: 0 }, data: { typeId, label: id, params: {}, status: 'idle' } }) as unknown as FlowNode;
+
+  const deps = {
+    resolvePorts: (_t: string, _p: unknown, defs: Record<string, NodeDefinition>, _s: unknown) => {
+      const d = defs[_t]!;
+      return { inputs: d.inputs, outputs: d.outputs, name: d.name };
+    },
+    wouldCreateCycle: (_s: string, _t: string, edges: FlowEdge[]) => edges.length > 0,
+    arePortsCompatible: (a: string | undefined, b: string | undefined) => a === b,
+  };
+
+  it('兼容端口 + 无环 → ok:true + kind=data', () => {
+    const defs = { src: def('src', [], [{ id: 'out', label: 'o', type: 'text' }]), tgt: def('tgt', [{ id: 'in', label: 'i', type: 'text' }], []) };
+    const d = classifyConnection({ source: 'a', target: 'b', sourceHandle: 'out', targetHandle: 'in' }, [node('a', 'src'), node('b', 'tgt')], [], defs, {}, deps);
+    expect(d).toEqual({ ok: true, kind: 'data' });
+  });
+
+  it('source 输出端口声明 flow:task → kind=task', () => {
+    const defs = { src: def('src', [], [{ id: 'out', label: 'o', type: 'any', flow: 'task' }]), tgt: def('tgt', [{ id: 'in', label: 'i', type: 'any' }], []) };
+    const d = classifyConnection({ source: 'a', target: 'b', sourceHandle: 'out', targetHandle: 'in' }, [node('a', 'src'), node('b', 'tgt')], [], defs, {}, deps);
+    expect(d).toEqual({ ok: true, kind: 'task' });
+  });
+
+  it('成环 → ok:false reason=cycle，消息含节点名', () => {
+    const defs = { src: def('src', [], [{ id: 'out', label: 'o', type: 'text' }]), tgt: def('tgt', [{ id: 'in', label: 'i', type: 'text' }], []) };
+    const d = classifyConnection({ source: 'a', target: 'b', sourceHandle: 'out', targetHandle: 'in' }, [node('a', 'src'), node('b', 'tgt')], [mkEdge('e1', 'b', 'a')], defs, {}, deps);
+    expect(d.ok).toBe(false);
+    if (!d.ok) {
+      expect(d.reason).toBe('cycle');
+      expect(d.message).toContain('死循环');
+    }
+  });
+
+  it('类型不兼容 → ok:false reason=incompatible，消息含引导', () => {
+    const defs = { src: def('src', [], [{ id: 'out', label: 'o', type: 'number' }]), tgt: def('tgt', [{ id: 'in', label: 'i', type: 'text' }, { id: 'num', label: 'num', type: 'number' }], []) };
+    const d = classifyConnection({ source: 'a', target: 'b', sourceHandle: 'out', targetHandle: 'in' }, [node('a', 'src'), node('b', 'tgt')], [], defs, {}, deps);
+    expect(d.ok).toBe(false);
+    if (!d.ok) {
+      expect(d.reason).toBe('incompatible');
+      // 应引导到兼容的 num 端口
+      expect(d.message).toContain('num');
+    }
   });
 });

@@ -78,8 +78,9 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
-// 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈）已抽到 workflowGraph.ts（G5 门面化）
+// 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策）已抽到 workflowGraph.ts（G5 门面化）
 import {
+  classifyConnection,
   markDirtyDownstream,
   remapPasted,
   snapshotPush,
@@ -460,52 +461,27 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       onConnect: (conn) => {
         if (!conn.source || !conn.target) return;
-        // 注意：端口须按「节点实例」解析——普通节点取自类型定义，
-        // 子图引用节点（subgraph.ref）的端口是动态的，取自其引用的子图定义。
-        const nodesNow = get().nodes;
-        const srcNode = nodesNow.find((n) => n.id === conn.source);
-        const tgtNode = nodesNow.find((n) => n.id === conn.target);
-        const defs = useRegistryStore.getState().defs;
-        const sgs = get().subgraphs;
-        const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, sgs);
-        const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, sgs);
-        const srcName = srcNode?.data.label ?? srcDef.name;
-        const tgtName = tgtNode?.data.label ?? tgtDef.name;
-
-        if (wouldCreateCycle(conn.source, conn.target, get().edges)) {
-          get().addLog(
-            'error',
-            `「${srcName}」和「${tgtName}」这样连会绕成死循环，换一种接法吧`,
-          );
+        // 决策段（端口解析/成环/类型校验/kind 推断）已抽到 workflowGraph.classifyConnection（G5 门面化）
+        const decision = classifyConnection(
+          conn,
+          get().nodes,
+          get().edges,
+          useRegistryStore.getState().defs,
+          get().subgraphs,
+          {
+            resolvePorts,
+            wouldCreateCycle,
+            arePortsCompatible,
+          },
+        );
+        if (!decision.ok) {
+          get().addLog('error', decision.message);
           return;
         }
-        // 端口类型校验：source 输出端口类型须与 target 输入端口类型兼容
-        const srcPort = srcDef.outputs.find((o) => o.id === conn.sourceHandle);
-        const tgtPort = tgtDef.inputs.find((i) => i.id === conn.targetHandle);
-        const srcType: PortType | undefined = srcPort?.type;
-        const tgtType: PortType | undefined = tgtPort?.type;
-        if (!arePortsCompatible(srcType, tgtType)) {
-          // 在目标节点上找一个兼容的输入端口，给出更友好的引导
-          const suggest = tgtDef.inputs.find((i) =>
-            arePortsCompatible(srcType, i.type),
-          );
-          const srcLabel = srcPort?.label ?? '输出';
-          const tgtLabel = tgtPort?.label ?? '输入';
-          const hint = suggest
-            ? `可以把「${srcName}」的「${srcLabel}」连到「${tgtName}」的「${suggest.label}」端口`
-            : `「${srcName}」提供的内容类型，和「${tgtName}」需要的对不上`;
-          get().addLog(
-            'error',
-            `这条线连不上：「${srcName}」的「${srcLabel}」和「${tgtName}」的「${tgtLabel}」内容类型不一样。${hint}`,
-          );
-          return;
-        }
-        // 推断连线语义：默认 'data'，若 source 输出端口声明了 flow 则采用该语义
-        const kind = (srcPort?.flow as EdgeKind | undefined) ?? 'data';
         get().pushHistory();
         set({
           edges: addEdge(
-            { ...conn, type: 'kind', data: { kind } },
+            { ...conn, type: 'kind', data: { kind: decision.kind } },
             get().edges,
           ),
         });
