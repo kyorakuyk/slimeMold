@@ -56,9 +56,10 @@ export default function RunHistoryPanel({
       {/* 左侧：运行列表（一级菜单） */}
       <div className={
         variant === 'sidebar'
-          ? 'min-h-0 w-full shrink-0 overflow-y-auto border-r border-line bg-paper-soft'
-          : 'w-[210px] shrink-0 overflow-y-auto border-r border-line bg-paper-soft'
+          ? 'flex min-h-0 w-full shrink-0 flex-col border-r border-line bg-paper-soft'
+          : 'flex min-h-0 w-[210px] shrink-0 flex-col border-r border-line bg-paper-soft'
       }>
+        <div className="min-h-0 flex-1 overflow-y-auto">
         {runHistory.length === 0 ? (
           <p className="px-3 py-4 text-xs text-ink-faint">{t('runHistory.empty')}</p>
         ) : (
@@ -84,6 +85,27 @@ export default function RunHistoryPanel({
               </div>
             </button>
           ))
+        )}
+        </div>
+        {/* sidebar 模式：底部「恢复检查点」操作栏 */}
+        {variant === 'sidebar' && (
+          <div className="shrink-0 border-t border-line p-2">
+            <button
+              className="sm-btn w-full justify-center hover:border-accent hover:text-accent"
+              onClick={() => {
+                const ok = useWorkflowStore.getState().restoreCheckpoint();
+                useWorkflowStore
+                  .getState()
+                  .addLog(
+                    ok ? 'info' : 'warn',
+                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                  );
+              }}
+              title={t('runHistory.restoreTitle')}
+            >
+              <RotateCcw size={14} /> {t('runHistory.restore')}
+            </button>
+          </div>
         )}
       </div>
 

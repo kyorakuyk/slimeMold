@@ -61,6 +61,8 @@ export interface AgentConfig {
    * 非空时经该代理访问 Base URL，适配中转/OpenAI 格式统一。
    * backend 通道（Rust reqwest）与 frontend 通道（plugin-http proxy 选项）均已生效。 */
   proxyUrl?: string;
+  /** 是否启用：false 表示被禁用，不出现在可选用 agent 候选中（节点/路由表），但保留在智能体库列表中可重新启用。缺省视为启用 */
+  enabled?: boolean;
 }
 
 /** 角色上下文隔离粒度：

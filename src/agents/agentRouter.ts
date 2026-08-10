@@ -105,13 +105,26 @@ export function estimateTier(f: TierFeatures): 'light' | 'standard' | 'heavy' {
   return 'light';
 }
 
-/** 按类别取路由表项（大小写不敏感键匹配）。 */
+/** 兜底路由的保留键：当 category 为空/无法推断，或未配置任何类别路由项时生效。
+ *  该键不在 CATEGORY_KEYS 中，避免被当作真实 category 参与大小写匹配。 */
+export const FALLBACK_CATEGORY = '__fallback__';
+
+/**
+ * 按类别取路由表项（大小写不敏感键匹配）。
+ * category 为空或未匹配任何类别时，回退到兜底条目（FALLBACK_CATEGORY，需已配置内容才生效）。
+ */
 function routeEntry(routeTable: AgentRouteTable, category?: string): { agentId?: string; fallback?: string[] } | undefined {
-  const key = (category ?? '').toLowerCase();
-  if (!key) return undefined;
-  if (routeTable[key]) return routeTable[key];
-  const matched = Object.keys(routeTable).find((k) => k.toLowerCase() === key);
-  return matched ? routeTable[matched] : undefined;
+  const key = (category ?? '').toLowerCase().trim();
+  // 1) 有 category：优先精确匹配，其次大小写不敏感匹配（跳过兜底保留键）
+  if (key) {
+    if (routeTable[key]) return routeTable[key];
+    const matched = Object.keys(routeTable).find((k) => k !== FALLBACK_CATEGORY && k.toLowerCase() === key);
+    if (matched) return routeTable[matched];
+  }
+  // 2) category 为空或未匹配 → 若配置了兜底条目则用它兜底
+  const fallback = routeTable[FALLBACK_CATEGORY];
+  if (fallback && (fallback.agentId || (fallback.fallback?.length ?? 0) > 0)) return fallback;
+  return undefined;
 }
 
 /**

@@ -477,8 +477,8 @@ export const nodeBuilder: NodeDefinition = {
       modules,
       routeTable,
       fallbackAgentId,
-      // 可用候选池 = 项目级 ∪ 全局：Builder 生成期即从全局通用智能体自动补位，跨项目复用
-      agents: mergeAgentPool(st.agents, st.globalAgents),
+      // 可用候选池 = 项目级 ∪ 全局：Builder 生成期即从全局通用智能体自动补位，跨项目复用；禁用智能体不参与
+      agents: mergeAgentPool(st.agents, st.globalAgents).filter((a) => a.enabled !== false),
       name: String(params.constructionName || '施工方工作流'),
     });
     const opsWf = buildOpsWorkflow({

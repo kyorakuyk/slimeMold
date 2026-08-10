@@ -11,6 +11,7 @@
  */
 
 import type { AgentRouteTable, ModuleItem, WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types';
+import { FALLBACK_CATEGORY } from '../agents/agentRouter';
 
 let _seq = 0;
 function uid(prefix: string): string {
@@ -33,8 +34,10 @@ export function resolveAgentForCategory(
 ): string | undefined {
   const exists = (id?: string | null): id is string =>
     !!id && (!agents || agents.some((a) => a.id === id));
-  const key = (category ?? 'data').toLowerCase();
-  const entry = routeTable[key] ?? routeTable['data'];
+  // category 为空/未匹配时优先用兜底条目（FALLBACK_CATEGORY），其次才落到 'data' 类别
+  const raw = (category ?? '').toLowerCase().trim();
+  let entry = raw ? routeTable[raw] ?? routeTable[FALLBACK_CATEGORY] : routeTable[FALLBACK_CATEGORY];
+  if (!entry || (!entry.agentId && !entry.fallback?.length)) entry = routeTable['data'];
   // 1) 类别主 agent（存在且未被删除/禁用）
   if (exists(entry?.agentId)) return entry!.agentId;
   // 2) 该行 fallback 链：主 agent 缺失时取第一个存在的补位 agent

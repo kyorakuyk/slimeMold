@@ -32,6 +32,7 @@ edit its params and view results</string>
   <string name="param.agent.agentsPlaceholder">Select agents…</string>
   <string name="param.agent.searchPlaceholder">Search agents…</string>
   <string name="param.agent.empty">No matching agent</string>
+  <string name="param.agent.disabled">Disabled</string>
   <string name="param.role.placeholder">— No Role —</string>
   <string name="param.role.builtin">(built-in)</string>
 

@@ -5,6 +5,7 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 export type LocaleCode = string;
 
 import i18n from '../i18n';
+import { setSelfImprove } from '../agents/reviewer';
 
 /** 读取系统配色偏好（prefers-color-scheme） */
 function systemPrefersDark(): boolean {
@@ -85,6 +86,10 @@ interface ViewState {
   locale: LocaleCode;
   /** 切换界面语言（同步 i18n.changeLanguage 并持久化） */
   setLocale: (l: LocaleCode) => void;
+  /** 自我学习（selfImprove）开关：开启后失败/成功运行会沉淀经验并在同类节点上注入参考 */
+  selfImprove: boolean;
+  /** 切换自我学习开关（同步 reviewer 模块级标志并持久化） */
+  setSelfImprove: (v: boolean) => void;
 }
 
 export const useViewStore = create<ViewState>()(
@@ -104,6 +109,11 @@ export const useViewStore = create<ViewState>()(
       debugMode: false,
       globalProxyUrl: '',
       locale: (typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en-US' : 'zh-CN'),
+      selfImprove: false,
+      setSelfImprove: (v) => {
+        setSelfImprove(v);
+        set({ selfImprove: v });
+      },
       setLocale: (l) => {
         i18n.changeLanguage(l);
         set({ locale: l });
@@ -140,6 +150,8 @@ export const useViewStore = create<ViewState>()(
           state.focusedSubgraphId = null;
           // 持久化的主题（可能是 system）重新套用，并注册系统监听
           applyTheme(state.theme);
+          // 恢复持久化的自我学习开关到 reviewer 模块级标志
+          setSelfImprove(!!state.selfImprove);
         }
       },
     },

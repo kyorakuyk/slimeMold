@@ -52,6 +52,11 @@
   <string name="agent.advanced.desc">Enter a local proxy address (e.g. http://127.0.0.1:7890) to reach Base URL through it — handy for unified relays / OpenAI format. Both backend and frontend channels apply; backend mode requires switching to "via Rust backend" in Settings. Leave empty to connect directly.</string>
   <string name="agent.advanced.placeholder">http://127.0.0.1:7890 (empty = direct)</string>
   <string name="agent.delete">Delete this agent</string>
+  <string name="agent.disable">Disable</string>
+  <string name="agent.enable">Enable</string>
+  <string name="agent.disableTitle">Disabled agents are hidden from node/route pickers</string>
+  <string name="agent.enableTitle">Enable this agent</string>
+  <string name="agent.disabledSuffix">(disabled)</string>
   <string name="agent.empty">Select or create an agent on the left</string>
   <string name="agent.probe.saveKeyFirst">Save the API Key first before probing</string>
   <string name="agent.probe.saveKeyFirstWeb">Use the desktop build to save the Key before probing</string>
