@@ -22,6 +22,7 @@ import {
   shouldContinueLoop,
 } from './graphAlgo';
 import { buildRunPlan } from './runPlan';
+import { runStage } from './runScheduler';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
@@ -443,72 +444,58 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         loopVarsState[lv] = round;
       }
     }
-    for (const layer of stages) {
+    for (let li = 0; li < stages.length; li++) {
       if (signal.aborted || myRun !== gen.currentRunId) break;
-      // 上报调度进度（层索引 / 总层数 / 当前轮次 / 总轮次）
-      const progress = {
-        layer: stages.indexOf(layer) + 1,
+      // 单层调度已抽到 runScheduler.runStage：进度事件 / 簇并发 / executeNode / fail-fast / 层快照
+      await runStage({
+        layer: stages[li]!,
+        layerIndex: li,
         totalLayers: stages.length,
-        round: round + 1,
+        round,
         totalRounds: maxRounds,
-      };
-      opts.onProgress?.(progress);
-      rt.setRunProgress({ active: true, ...progress }, wfId);
-      // A2/A3：调度进度同样进统一事件流（JobBoard 从事件流消费，而非直接读 store）
-      emitRun(getRunBus(), 'run.progress', runCtx, progress);
-      // 同 stage 内节点相互独立，可并行调度（瓶颈在 LLM I/O）；
-      // 控制流（control）边已保证 stage 间严格有序，循环/条件断点不破坏检测。
-      // B-full 串行化：若同 stage 内多个节点通过 task 边声明了**相交的影响域(scope)**，
-      // 说明它们会争用同一资源，强制把它们归到同一「串行簇」内按序执行，消解并发冲突；
-      // 互不冲突的节点仍保持并行（簇间并行、簇内串行），最大化并行度。
-      const clusters = clusterPlan[stages.indexOf(layer)];
-      // 簇间并行；每个簇内按列表顺序串行执行（冲突节点被挤进同一簇）
-      await Promise.all(
-        clusters.map((cluster) =>
-          (async () => {
-            for (const id of cluster) {
-              if (signal.aborted || myRun !== gen.currentRunId) break;
-              await executeNode(
-                id,
-                nodeById,
-                edges,
-                outputsMap,
-                branchState,
-                failed,
-                cutSet,
-                stopAfter,
-                sink,
-                signal,
-                limiter,
-                MAX_RETRIES,
-                RETRY_BASE_MS,
-                dirtySet.has(id),
-                force.has(id),
-                costLog,
-                costByNode,
-                { ...loopVarsState }, // 本轮循环变量（仅注入，不污染用户全局变量）
-                (gid, handles) => gateTaken.set(gid, handles),
-                opts.skipFailed,
-                !!opts.incremental,
-                myRun,
-                isolatedIds,
-                !!opts.sandbox,
-                opts.sandboxMode,
-                wfId,
-                rt,
-              );
-            }
-          })(),
-        ),
-      );
-      if (failFast && failed.size > 0) {
-        gen.abort?.abort();
-        break;
-      }
-      // 阶段 G2：每层执行完落盘一次中间快照（节流），崩溃恢复可见「已完成层」的成果
-      scheduleRunCheckpoint(wfId, myRun, startedWall);
-      // failFast=false 且开启「跳过失败继续」：不中断，继续下一 stage
-      // （失败节点的下游会在 executeNode 内判定为「跳过失败」而非剪枝）
+        clusters: clusterPlan[li],
+        failed,
+        signal,
+        isCurrent: () => myRun === gen.currentRunId,
+        failFast,
+        abort: () => gen.abort?.abort(),
+        wfId,
+        runCtx,
+        rt,
+        scheduleCheckpoint: () => scheduleRunCheckpoint(wfId, myRun, startedWall),
+        onProgress: opts.onProgress,
+        // 绑定 executeNode 全部参数（含本轮循环变量与 gate 回调）
+        executeNode: (id) =>
+          executeNode(
+            id,
+            nodeById,
+            edges,
+            outputsMap,
+            branchState,
+            failed,
+            cutSet,
+            stopAfter,
+            sink,
+            signal,
+            limiter,
+            MAX_RETRIES,
+            RETRY_BASE_MS,
+            dirtySet.has(id),
+            force.has(id),
+            costLog,
+            costByNode,
+            { ...loopVarsState },
+            (gid, handles) => gateTaken.set(gid, handles),
+            opts.skipFailed,
+            !!opts.incremental,
+            myRun,
+            isolatedIds,
+            !!opts.sandbox,
+            opts.sandboxMode,
+            wfId,
+            rt,
+          ),
+      });
     }
     if (signal.aborted || myRun !== gen.currentRunId) break;
 

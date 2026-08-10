@@ -8,6 +8,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // i18n 的 Node 兜底 loader 仅 tsx/headless 使用；浏览器构建 shim 掉 node: 模块，
+      // 避免 rollup 解析 node 内置模块报错（Vite 环境实际走 import.meta.glob 分支，shim 不执行）。
+      'node:fs': fileURLToPath(new URL('./src/i18n/shims/node-fs.ts', import.meta.url)),
+      'node:path': fileURLToPath(new URL('./src/i18n/shims/node-path.ts', import.meta.url)),
+      'node:url': fileURLToPath(new URL('./src/i18n/shims/node-url.ts', import.meta.url)),
     },
   },
   clearScreen: false,
