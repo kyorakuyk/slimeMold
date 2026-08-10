@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2, Pin } from 'lucide-react';
+import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2, Pin, Ban, Power } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import {
   createAgent,
@@ -344,6 +344,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
             const dot = probeStates[a.id];
             const isDefault = defaultAgentId === a.id;
             const isGlobal = belongsToGlobal(a.id);
+            const disabled = a.enabled === false;
             return (
               <li
                 key={a.id}
@@ -352,10 +353,15 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                   a.id === editingId
                     ? 'border-line bg-paper-soft'
                     : 'border-transparent hover:bg-white'
-                }`}
+                } ${disabled ? 'opacity-50' : ''}`}
               >
                 <div className="flex items-center justify-between gap-1">
-                  <p className="truncate text-[13px] text-ink">{a.name}</p>
+                  <p className="truncate text-[13px] text-ink">
+                    {a.name}
+                    {disabled && (
+                      <span className="ml-1 text-[10px] text-ink-faint">{t('agent.disabledSuffix')}</span>
+                    )}
+                  </p>
                   <div className="flex shrink-0 items-center gap-1">
                     {dot && (
                       <span
@@ -677,16 +683,33 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                 onChange={(e) => patch({ proxyUrl: e.target.value.trim() || undefined })}
               />
             </details>
-            <button
-              className="sm-btn text-err hover:border-err hover:text-err"
-              onClick={() => {
-                if (belongsToGlobal(editing.id)) removeGlobalAgent(editing.id);
-                else removeAgent(editing.id);
-                setEditingId(null);
-              }}
-            >
-              <Trash2 size={13} /> {t('agent.delete')}
-            </button>
+            <div className="flex gap-2">
+              <button
+                className={`sm-btn flex-1 justify-center ${editing.enabled === false ? 'text-ok hover:border-ok' : 'text-ink-soft hover:border-line'}`}
+                onClick={() => patch({ enabled: editing.enabled === false ? true : false })}
+                title={editing.enabled === false ? t('agent.enableTitle') : t('agent.disableTitle')}
+              >
+                {editing.enabled === false ? (
+                  <>
+                    <Power size={13} className="rotate-180" /> {t('agent.enable')}
+                  </>
+                ) : (
+                  <>
+                    <Ban size={13} /> {t('agent.disable')}
+                  </>
+                )}
+              </button>
+              <button
+                className="sm-btn text-err hover:border-err hover:text-err"
+                onClick={() => {
+                  if (belongsToGlobal(editing.id)) removeGlobalAgent(editing.id);
+                  else removeAgent(editing.id);
+                  setEditingId(null);
+                }}
+              >
+                <Trash2 size={13} /> {t('agent.delete')}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center">

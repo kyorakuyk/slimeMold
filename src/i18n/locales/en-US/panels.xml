@@ -177,6 +177,9 @@
   <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId; global agents work too)</string>
   <string name="route.noAgents">No usable agents (project + global both empty). Add one in the Agent panel first.</string>
   <string name="route.globalSuffix"> (global)</string>
+  <string name="route.disabledSuffix"> (disabled)</string>
+  <string name="route.cat.fallback">Fallback route</string>
+  <string name="route.cat.fallbackHint">When work type cannot be inferred or not assigned by builder</string>
   <string name="route.cat.ui">UI / Frontend</string>
   <string name="route.cat.uiHint">Interface, interaction, styling</string>
   <string name="route.cat.logic">Logic</string>

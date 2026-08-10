@@ -9,6 +9,7 @@ import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef } from '../types';
 import { useT } from '../i18n/useT';
 import { AgentSelect } from './AgentSelect';
+import { mergeAgentPool } from '../agents/globalAgents';
 
 function ParamField({
   def,
@@ -20,6 +21,7 @@ function ParamField({
   onChange: (v: unknown) => void;
 }) {
   const agents = useWorkflowStore((s) => s.agents);
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
   const roles = useWorkflowStore((s) => s.roles);
   const assets = useWorkflowStore((s) => s.workflows[s.activeWfId]?.assets);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -136,7 +138,7 @@ function ParamField({
   if (def.type === 'agent' || def.type === 'agents') {
     return (
       <AgentSelect
-        agents={agents}
+        agents={mergeAgentPool(agents, globalAgents)}
         value={String(value ?? '')}
         multiple={def.type === 'agents'}
         placeholder={def.placeholder ?? (def.type === 'agents' ? t('param.agent.agentsPlaceholder') : t('param.agent.placeholder'))}

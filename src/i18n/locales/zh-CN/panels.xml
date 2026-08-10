@@ -177,6 +177,9 @@
   <string name="route.fallbackPlaceholder">回退链（可选，逗号分隔 agentId，可用全局智能体）</string>
   <string name="route.noAgents">当前无可用智能体（项目级+全局均为空），请先在智能体面板添加。</string>
   <string name="route.globalSuffix">（全局）</string>
+  <string name="route.disabledSuffix">（已禁用）</string>
+  <string name="route.cat.fallback">兜底路由</string>
+  <string name="route.cat.fallbackHint">无法推断工作类型或未经 builder 指派时</string>
   <string name="route.cat.ui">UI / 前端</string>
   <string name="route.cat.uiHint">界面、交互、样式</string>
   <string name="route.cat.logic">Logic / 逻辑</string>

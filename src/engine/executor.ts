@@ -1092,8 +1092,9 @@ async function executeNode(
       // category 取自节点参数（Builder 生成 worker 时写入 params.category），真正参与类别路由。
       const requestedAgentId = agentId;
       const st0 = useWorkflowStore.getState();
-      // 可用候选池 = 项目级 ∪ 全局（项目级同名覆盖全局），跨项目可复用全局通用智能体
-      const mergedAgents = mergeAgentPool(st0.agents, st0.globalAgents);
+      // 可用候选池 = 项目级 ∪ 全局（项目级同名覆盖全局），跨项目可复用全局通用智能体；
+      // 禁用的智能体（enabled===false）不参与运行时决策
+      const mergedAgents = mergeAgentPool(st0.agents, st0.globalAgents).filter((a) => a.enabled !== false);
       const goal =
         targetWfId === st0.activeWfId
           ? st0.workflowName

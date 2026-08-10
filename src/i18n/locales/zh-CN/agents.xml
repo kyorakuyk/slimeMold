@@ -52,6 +52,11 @@
   <string name="agent.advanced.desc">填入本地代理地址（如 http://127.0.0.1:7890）后，经该代理访问 Base URL，适合统一适配中转 / OpenAI 格式。backend 与 frontend 通道均已生效；backend 模式需在设置中切换为「经 Rust 后端」。留空则直连。</string>
   <string name="agent.advanced.placeholder">http://127.0.0.1:7890（留空则直连）</string>
   <string name="agent.delete">删除此智能体</string>
+  <string name="agent.disable">禁用</string>
+  <string name="agent.enable">启用</string>
+  <string name="agent.disableTitle">禁用后不会出现在节点/路由表的可选中</string>
+  <string name="agent.enableTitle">启用此智能体</string>
+  <string name="agent.disabledSuffix">（已禁用）</string>
   <string name="agent.empty">从左侧选择或新建智能体</string>
   <string name="agent.probe.saveKeyFirst">请先保存 API Key 再检测</string>
   <string name="agent.probe.saveKeyFirstWeb">请使用桌面版保存 Key 后再检测</string>

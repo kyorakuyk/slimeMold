@@ -193,13 +193,19 @@ export function AgentSelect({
             ) : (
               filtered.map((a) => {
                 const checked = selectedIds.includes(a.id);
+                const disabled = a.enabled === false;
                 return (
                   <button
                     key={a.id}
                     type="button"
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-black/5"
-                    style={{ color: 'var(--sm-ink)' }}
-                    onClick={() => pick(a.id)}
+                    style={{
+                      color: 'var(--sm-ink)',
+                      opacity: disabled ? 0.45 : 1,
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                    }}
+                    onClick={() => !disabled && pick(a.id)}
+                    title={disabled ? t('param.agent.disabled') : undefined}
                   >
                     <span
                       className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border"
@@ -208,7 +214,10 @@ export function AgentSelect({
                       {checked && <Check size={11} />}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                    <span className="truncate text-[10px] opacity-60">{a.model}</span>
+                    <span className="truncate text-[10px] opacity-60">
+                      {a.model}
+                      {disabled ? ` · ${t('param.agent.disabled')}` : ''}
+                    </span>
                   </button>
                 );
               })
