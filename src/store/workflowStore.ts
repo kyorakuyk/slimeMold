@@ -91,6 +91,8 @@ import {
 } from './workflowGraph';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
+// 状态转换纯逻辑（upsertById / 路由表清理）已抽到 workflowState.ts（G5 门面化）
+import { cleanupRouteTableForAgent, upsertById } from './workflowState';
 
 interface WorkflowState {
   workflowName: string;
@@ -761,44 +763,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       upsertAgent: (agent) => {
-        const exists = get().agents.some((a) => a.id === agent.id);
-        set({
-          agents: exists
-            ? get().agents.map((a) => (a.id === agent.id ? agent : a))
-            : [...get().agents, agent],
-        });
+        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        set({ agents: upsertById(get().agents, agent) });
       },
 
       removeAgent: (id) =>
         set((s) => {
-          // 同步清理路由表：删除引用了该 agent 的类别项
-          // （agentId 命中则移除该类别；fallback 命中则从数组中剔除该 id）。
-          const routeTable = { ...s.agentRouteTable };
-          let tableChanged = false;
-          for (const key of Object.keys(routeTable)) {
-            const item = routeTable[key];
-            if (!item) continue;
-            const next: AgentRouteEntry = { agentId: item.agentId, fallback: item.fallback ? [...item.fallback] : [] };
-            if (next.agentId === id) {
-              next.agentId = '';
-              tableChanged = true;
-            }
-            if (next.fallback?.includes(id)) {
-              next.fallback = next.fallback.filter((f) => f !== id);
-              tableChanged = true;
-            }
-            // 类别项已无任何引用（agentId 被删或为空，且无 fallback）→ 整体移除，避免留下脏配置
-            if (!next.agentId && (next.fallback?.length ?? 0) === 0) {
-              delete routeTable[key];
-              tableChanged = true;
-            } else {
-              routeTable[key] = next;
-            }
-          }
+          // 路由表清理纯逻辑已抽到 workflowState.cleanupRouteTableForAgent（G5 门面化）
+          const { table, changed } = cleanupRouteTableForAgent(s.agentRouteTable, id);
           return {
             agents: s.agents.filter((a) => a.id !== id),
             defaultAgentId: s.defaultAgentId === id ? null : s.defaultAgentId,
-            ...(tableChanged ? { agentRouteTable: routeTable } : {}),
+            ...(changed ? { agentRouteTable: table } : {}),
           };
         }),
 
@@ -807,9 +783,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       setGlobalAgents: (agents) => set({ globalAgents: agents }),
 
       upsertGlobalAgent: (agent) => {
-        const list = get().globalAgents;
-        const exists = list.some((a) => a.id === agent.id);
-        const next = exists ? list.map((a) => (a.id === agent.id ? agent : a)) : [...list, agent];
+        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        const next = upsertById(get().globalAgents, agent);
         set({ globalAgents: next });
         void saveGlobalAgents(next);
       },
@@ -821,12 +796,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       upsertRole: (role) => {
-        const exists = get().roles.some((r) => r.id === role.id);
-        set({
-          roles: exists
-            ? get().roles.map((r) => (r.id === role.id ? role : r))
-            : [...get().roles, role],
-        });
+        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        set({ roles: upsertById(get().roles, role) });
       },
 
       removeRole: (id) => {
