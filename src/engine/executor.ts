@@ -28,13 +28,12 @@ import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
-import { resolveAgentScored } from '../agents/agentRouter';
-import { mergeAgentPool } from '../agents/globalAgents';
+import { decideAgentCall } from '../agents/agentDecision';
 import { buildRunningCheckpoint } from './checkpoint';
 import { attachEventLog, getEventPersistenceMode } from './eventLog';
 import { finalizeRun } from './runFinalizer';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
-import { matchExperience, successRateByAgent } from '../agents/experienceStore';
+import { matchExperience } from '../agents/experienceStore';
 import {
   cleanupRun,
   createRunResources,
@@ -904,41 +903,27 @@ async function executeNode(
       warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
     llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
-      // B/F4：AgentRouter 运行时决策——**始终**经 Router 统一决策（不再只在缺失时兜底）：
-      // 显式 agent 有效 → reason=explicit 直接使用（保持原有行为不变）；
-      // 缺失/失效 → 类别路由表 → fallback 链 → 默认 → 首个可用，逐级兜底。
-      // category 取自节点参数（Builder 生成 worker 时写入 params.category），真正参与类别路由。
+      // B/F4：AgentRouter 运行时决策（已抽到 agents/agentDecision.ts）——
+      // 始终经 Router 统一决策：显式 agent 有效直接使用；缺失/失效按类别路由 → fallback 链 → 默认 → 首个可用。
       const requestedAgentId = agentId;
       const st0 = useWorkflowStore.getState();
-      // 可用候选池 = 项目级 ∪ 全局（项目级同名覆盖全局），跨项目可复用全局通用智能体；
-      // 禁用的智能体（enabled===false）不参与运行时决策
-      const mergedAgents = mergeAgentPool(st0.agents, st0.globalAgents).filter((a) => a.enabled !== false);
       const goal =
         targetWfId === st0.activeWfId
           ? st0.workflowName
           : (st0.workflows[targetWfId]?.name ?? '');
-      const category =
-        typeof node.data.params?.category === 'string' && node.data.params.category.trim()
-          ? node.data.params.category.trim()
-          : undefined;
-      // 成本感知评分决策（F12）：非显式绑定路径按「价格 + 成功率 + 档位匹配」对候选集
-      // 评分取最优，chain 按评分降序；显式绑定仍直接命中（不评分）。
-      const scoringInput = {
-        agentId: requestedAgentId,
+      const { decision, routed, mergedAgents, routeLog } = decideAgentCall({
+        requestedAgentId,
         typeId: node.data.typeId,
-        category,
-        textLength: goal.length,
-        scopeSize: Array.isArray(node.data.params?.scope) ? (node.data.params.scope as unknown[]).length : undefined,
-      };
-      const decision = resolveAgentScored(scoringInput, {
-        agents: mergedAgents,
-        routeTable: st0.agentRouteTable ?? {},
-        defaultAgentId: st0.defaultAgentId ?? null,
-      }, {
-        successByAgent: successRateByAgent(useWorkflowStore.getState().projectId ?? ''),
+        params: node.data.params,
+        agents: st0.agents,
+        globalAgents: st0.globalAgents,
+        routeTable: st0.agentRouteTable,
+        defaultAgentId: st0.defaultAgentId,
+        goal,
+        projectId: st0.projectId ?? '',
       });
       // 经历路由（reason≠explicit）才 emit + 日志；显式绑定直接命中则保持安静
-      if (decision.routed) {
+      if (routed) {
         emitNode(runBus, 'node.progress', nodeCtx, id, {
           progressKind: 'agent-route',
           requestedAgentId: requestedAgentId ?? '',
@@ -946,7 +931,10 @@ async function executeNode(
           reason: decision.reason,
           chain: decision.chain,
           tier: decision.tier,
-          category,
+          category:
+            typeof node.data.params?.category === 'string' && node.data.params.category.trim()
+              ? node.data.params.category.trim()
+              : undefined,
           topScores: decision.scores?.slice(0, 3).map((c) => ({
             agentId: c.agent.id,
             model: c.agent.model,
@@ -954,11 +942,7 @@ async function executeNode(
             costPer1M: c.costPer1M,
           })),
         });
-        const bestScore = decision.scores?.[0];
-        R.addLog(
-          'info',
-          `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}经 AgentRouter 成本感知路由到「${decision.agent.name}」（${decision.reason}${category ? `，类别 ${category}` : ''}${bestScore ? `，评分 ${bestScore.score.toFixed(2)}` : ''}）`,
-        );
+        R.addLog('info', `「${node.data.label}」${routeLog}`);
       }
       const byId = (id0: string) => mergedAgents.find((a) => a.id === id0);
       // E/F7 自我学习消费：同类型节点的历史经验注入本次调用——
