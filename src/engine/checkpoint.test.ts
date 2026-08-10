@@ -8,9 +8,13 @@ import { describe, it, expect } from 'vitest';
 import {
   applyCheckpoint,
   buildCheckpoint,
+  buildRunningCheckpoint,
   fromRunRecord,
   isRestorable,
+  mergeCheckpointHistory,
   pickCheckpoint,
+  pickCheckpointHistory,
+  CHECKPOINT_HISTORY_MAX,
   type RunCheckpoint,
 } from './checkpoint';
 import type { FlowNode, RunRecord } from '../types';
@@ -155,5 +159,63 @@ describe('pickCheckpoint', () => {
     const map = { wf1: buildCheckpoint([], { wfId: 'wf1', runId: 1, status: 'success', startedAt: 0 }) };
     expect(pickCheckpoint(map, 'wf1')).toBeTruthy();
     expect(pickCheckpoint(map, 'wf2')).toBeNull();
+  });
+});
+
+describe('阶段 G2：多版本历史与运行中快照', () => {
+  const mkCp = (runId: number, endedAt: number, status: RunCheckpoint['status'] = 'success'): RunCheckpoint => ({
+    wfId: 'wf1',
+    runId,
+    status,
+    startedAt: 0,
+    endedAt,
+    nodes: {},
+  });
+
+  it('mergeCheckpointHistory 按 runId 去重，同 runId 新快照替换旧快照', () => {
+    // 运行中节流快照（runId=1）与收尾终态（runId=1）同代次
+    const snap = mkCp(1, 100, 'running');
+    const final = mkCp(1, 200, 'success');
+    const h = mergeCheckpointHistory(undefined, snap);
+    const h2 = mergeCheckpointHistory(h, final);
+    expect(h2).toHaveLength(1);
+    expect(h2[0]!.status).toBe('success'); // 终态替换了 running 快照
+  });
+
+  it('mergeCheckpointHistory 保留不同 runId 的多个版本，按时间降序', () => {
+    let h = mergeCheckpointHistory(undefined, mkCp(1, 100));
+    h = mergeCheckpointHistory(h, mkCp(2, 300));
+    h = mergeCheckpointHistory(h, mkCp(3, 200));
+    expect(h.map((c) => c.runId)).toEqual([2, 3, 1]); // 时间降序
+  });
+
+  it('mergeCheckpointHistory 裁剪到 CHECKPOINT_HISTORY_MAX 条', () => {
+    let h: RunCheckpoint[] | undefined;
+    for (let i = 1; i <= CHECKPOINT_HISTORY_MAX + 3; i++) {
+      h = mergeCheckpointHistory(h, mkCp(i, i * 10));
+    }
+    expect(h!.length).toBeLessThanOrEqual(CHECKPOINT_HISTORY_MAX);
+    // 最新（最大 runId）保留
+    expect(h![0]!.runId).toBe(CHECKPOINT_HISTORY_MAX + 3);
+    // 最旧被淘汰
+    expect(h!.some((c) => c.runId === 1)).toBe(false);
+  });
+
+  it('pickCheckpointHistory 按 wfId 取历史，不存在返回空数组', () => {
+    const hist = { wf1: [mkCp(1, 10), mkCp(2, 20)] };
+    expect(pickCheckpointHistory(hist, 'wf1')).toHaveLength(2);
+    expect(pickCheckpointHistory(hist, 'wf2')).toHaveLength(0);
+    expect(pickCheckpointHistory(undefined, 'wf1')).toHaveLength(0);
+  });
+
+  it('buildRunningCheckpoint 生成 status=running 快照，提取非 idle 节点', () => {
+    const nodes = [
+      mkNode('a', { status: 'success', outputs: { out: 1 } }),
+      mkNode('b', { status: 'idle' }),
+    ];
+    const cp = buildRunningCheckpoint(nodes, { wfId: 'wf1', runId: 9, startedAt: 50 });
+    expect(cp.status).toBe('running');
+    expect(cp.runId).toBe(9);
+    expect(Object.keys(cp.nodes)).toEqual(['a']);
   });
 });

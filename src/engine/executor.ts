@@ -32,7 +32,7 @@ import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentScored } from '../agents/agentRouter';
 import { mergeAgentPool } from '../agents/globalAgents';
-import { buildCheckpoint } from './checkpoint';
+import { buildCheckpoint, buildRunningCheckpoint } from './checkpoint';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
 import { addExperience, matchExperience, successRateByAgent, summarizeExperience, recordAgentOutcome } from '../agents/experienceStore';
 import {
@@ -107,6 +107,35 @@ function syncDebugRun(wfId: string): void {
   useWorkflowStore.getState().setDebugRun({ current: g.currentRunId, active: g.activeRunId });
 }
 
+/* ---------------- 阶段 G2：运行中节流检查点快照 ----------------
+ * 应用可能在节点执行中途被崩溃/强制关闭，收尾的终态检查点来不及写。
+ * 本机制在运行关键时机（节点完成、阶段结束、接管前）以节流方式把「当前已完成节点结果」
+ * 落盘为 status='running' 的快照，跨会话可从最近进度恢复。
+ *
+ * 节流：同一 wfId+runId 每 CHECKPOINT_THROTTLE_MS 内只落一次，避免写盘放大；
+ * 但每次落盘都会更新 latest（同 runId 覆盖），收尾终态再覆盖一次并进历史。
+ */
+const CHECKPOINT_THROTTLE_MS = 2000;
+const lastSnapshotAt = new Map<string, number>();
+
+/** 从目标工作流当前 store 状态构建 running 检查点并落盘（默认节流；force 跳过节流，供停止等关键时机）。fire-and-forget（不阻塞调度）。 */
+function scheduleRunCheckpoint(wfId: string, runId: number, startedWall: number, force = false): void {
+  const now = Date.now();
+  const key = `${wfId}:${runId}`;
+  const last = lastSnapshotAt.get(key) ?? 0;
+  if (!force && now - last < CHECKPOINT_THROTTLE_MS) return; // 节流：未到间隔直接跳过
+  lastSnapshotAt.set(key, now);
+
+  const st = useWorkflowStore.getState();
+  const nodes =
+    wfId === st.activeWfId ? st.nodes : (st.workflows[wfId]?.nodes ?? []);
+  if (nodes.length === 0) return;
+  const cp = buildRunningCheckpoint(nodes, { wfId, runId, startedAt: startedWall });
+  void st.persistCheckpointSnapshot(cp).catch((e) => {
+    console.warn('[scheduleRunCheckpoint] 快照落盘失败（已节流跳过，不影响运行）:', e);
+  });
+}
+
 // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
 // 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
 const NODE_RETRIES = 2;
@@ -121,6 +150,8 @@ export function stopWorkflow(wfId?: string): void {
   g.abort = null;
   const wf = useWorkflowStore.getState();
   wf.setRunning(false, id);
+  // 阶段 G2：停止前强制落盘快照（跳过节流），保存已完成节点结果——resetStatuses 会清空节点状态
+  scheduleRunCheckpoint(id, abortedRunId, Date.now(), true);
   wf.resetStatuses(id);
   wf.addLog('info', `已停止工作流运行：${id}`);
   // 阶段 D：取消该运行残留的待接管请求（防挂起泄漏）
@@ -469,6 +500,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         gen.abort?.abort();
         break;
       }
+      // 阶段 G2：每层执行完落盘一次中间快照（节流），崩溃恢复可见「已完成层」的成果
+      scheduleRunCheckpoint(wfId, myRun, startedWall);
       // failFast=false 且开启「跳过失败继续」：不中断，继续下一 stage
       // （失败节点的下游会在 executeNode 内判定为「跳过失败」而非剪枝）
     }
@@ -1353,6 +1386,8 @@ async function executeNode(
         // 代次已过期：不再挂起，直接以取消返回（旧协程不应阻塞）
         return { kind: 'cancelled', error: '运行已停止，介入请求被取消' };
       }
+      // 阶段 G2：人工接管挂起前落盘快照——用户处理期间应用崩溃也不丢已有进度
+      scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
       return requestIntervention({
         wfId: targetWfId,
         runId: targetRunId,
@@ -1426,6 +1461,8 @@ async function executeNode(
       outputs: outputs ?? {},
       durationMs: Math.round(performance.now() - perfStart),
     });
+    // 阶段 G2：节点成功后落盘中间快照（节流）——崩溃恢复可见该节点成果
+    scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
     if (stopAfter.has(id)) for (const d of computeDownstream(id, edges)) cutSet.add(d);
   } catch (err) {
     if (signal.aborted || targetRunId !== gen.currentRunId) return;
@@ -1449,6 +1486,8 @@ async function executeNode(
       typeId: node.data.typeId,
       durationMs: Math.round(performance.now() - perfStart),
     });
+    // 阶段 G2：节点失败也落盘快照（记录失败位置，恢复时可从此续跑）
+    scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
     R.addLog('error', `「${node.data.label}」这一步出错了：${message}`);
   }
 }

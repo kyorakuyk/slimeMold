@@ -178,6 +178,7 @@ export function buildProjectFile(
     subgraphs: Record<string, SubgraphDef>;
     runHistory: RunRecord[];
     checkpoints?: Record<string, import('../engine/checkpoint').RunCheckpoint>;
+    checkpointHistory?: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
     artifacts: import('../engine/pipeline').ProjectArtifacts;
     agentRouteTable: import('../types').AgentRouteTable;
     pipelines: import('../engine/pipeline').PipelineDef[];
@@ -220,6 +221,7 @@ export function buildProjectFile(
     pipelines: s.pipelines,
     runs: { history: s.runHistory },
     checkpoints: s.checkpoints ?? {},
+    checkpointHistory: s.checkpointHistory ?? {},
   };
 }
 

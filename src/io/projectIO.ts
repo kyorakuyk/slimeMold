@@ -153,8 +153,8 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
     await mkdir(wfDir, { recursive: true });
     await mkdir(runsDir, { recursive: true });
 
-    // project.json（元数据 + 引用，不再内联所有 workflow 全文；checkpoints 独立成文件避免膨胀）
-    const { checkpoints, ...metaRest } = file;
+    // project.json（元数据 + 引用，不再内联所有 workflow 全文；checkpoints/history 独立成文件避免膨胀）
+    const { checkpoints, checkpointHistory, ...metaRest } = file;
     const meta: ProjectFile = { ...metaRest, workflows: {}, agents: undefined, defaultAgentId: undefined };
     await writeTextFile(joinPath(cfg, PROJECT_JSON), JSON.stringify(meta, null, 2));
 
@@ -173,11 +173,11 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
     };
     await writeTextFile(joinPath(cfg, 'agents.json'), JSON.stringify(agentsData, null, 2));
 
-    // runs/checkpoints.json（阶段 C 可恢复执行：每工作流最新一次运行的节点级结果）
+    // runs/checkpoints.json（阶段 C/G2 可恢复执行：每工作流最新检查点 + 多版本历史）
     const ckptPath = joinPath(runsDir, CHECKPOINTS_JSON);
     await writeTextFile(
       ckptPath,
-      JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2),
+      JSON.stringify({ checkpoints: checkpoints ?? {}, checkpointHistory: checkpointHistory ?? {} }, null, 2),
     );
 
     // 每个工作流一个文件
@@ -224,6 +224,7 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
 export async function saveCheckpoints(
   root: string,
   checkpoints: Record<string, RunCheckpoint>,
+  checkpointHistory?: Record<string, RunCheckpoint[]>,
 ): Promise<void> {
   if (!isTauri) return;
   const { mkdir, writeTextFile, rename, remove } = await import('@tauri-apps/plugin-fs');
@@ -231,7 +232,11 @@ export async function saveCheckpoints(
   await mkdir(runsDir, { recursive: true });
   const finalPath = joinPath(runsDir, CHECKPOINTS_JSON);
   const tmpPath = joinPath(runsDir, `${CHECKPOINTS_JSON}.tmp`);
-  const content = JSON.stringify({ checkpoints: checkpoints ?? {} }, null, 2);
+  const content = JSON.stringify(
+    { checkpoints: checkpoints ?? {}, checkpointHistory: checkpointHistory ?? {} },
+    null,
+    2,
+  );
   try {
     await writeTextFile(tmpPath, content);
     await rename(tmpPath, finalPath); // rename 覆盖已有目标 = 原子替换
@@ -291,13 +296,18 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
       }
     }
 
-    // 阶段 C 可恢复执行：读回检查点（独立文件，缺失时保持 project.json 内的兜底）
+    // 阶段 C/G2 可恢复执行：读回检查点 + 多版本历史（独立文件，缺失时保持 project.json 内的兜底）
     let checkpoints = (meta as ProjectFile).checkpoints;
+    let checkpointHistory = (meta as ProjectFile).checkpointHistory;
     const ckptPath = joinPath(cfg, RUNS_DIR, CHECKPOINTS_JSON);
     if (await exists(ckptPath)) {
       try {
-        const raw = JSON.parse(await readTextTauri(ckptPath)) as { checkpoints?: unknown };
+        const raw = JSON.parse(await readTextTauri(ckptPath)) as {
+          checkpoints?: unknown;
+          checkpointHistory?: unknown;
+        };
         checkpoints = raw.checkpoints as ProjectFile['checkpoints'];
+        checkpointHistory = raw.checkpointHistory as ProjectFile['checkpointHistory'];
       } catch {
         /* ignore */
       }
@@ -325,7 +335,7 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
       }
     }
 
-    return { ...meta, workflows, runs: runs ?? { history: [] }, checkpoints, agents };
+    return { ...meta, workflows, runs: runs ?? { history: [] }, checkpoints, checkpointHistory, agents };
   }
   return null;
 }

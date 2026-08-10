@@ -201,3 +201,54 @@ describe('runWorkflow 生命周期事件流（A3）', () => {
     expect(events.some((e) => e.kind === 'node.started')).toBe(false);
   });
 });
+
+describe('阶段 G2：运行中节流检查点快照', () => {
+  beforeEach(() => {
+    registerBuiltins();
+    clearCache();
+    beginRun();
+    resetRunBus();
+  });
+
+  it('节点执行后写入 running 快照，收尾后 latest 变终态且进历史', async () => {
+    const wfId = 'wf-g2-snap';
+    registerGateNode('gate.g2', { delayMs: 5, output: { out: 'g2-result' } });
+    const nodes = [mkNode('a', 'gate.g2', 'G2 节点')];
+    seedStore(wfId, nodes, []);
+
+    await runWorkflow({ wfId });
+
+    // 收尾后：latest 是终态（success），历史含该运行版本
+    const st = useWorkflowStore.getState();
+    const latest = st.checkpoints[wfId];
+    expect(latest).toBeTruthy();
+    expect(latest!.status).toBe('success');
+    expect(latest!.nodes['a']?.status).toBe('success');
+    // 多版本历史：至少含本次 runId 的终态条目
+    const hist = st.checkpointHistory[wfId] ?? [];
+    expect(hist.some((c) => c.runId === latest!.runId)).toBe(true);
+  });
+
+  it('stopWorkflow 在 resetStatuses 前强制落盘快照（保留已完成节点结果）', async () => {
+    const wfId = 'wf-g2-stop';
+    // 两节点：a 快完成，b 挂起（延迟很长）——stop 时 a 已完成
+    registerGateNode('gate.g2a', { delayMs: 5, output: { out: 'a-done' } });
+    registerGateNode('gate.g2b', { delayMs: 300, output: { out: 'b-slow' } });
+    const nodes = [mkNode('a', 'gate.g2a', '快节点'), mkNode('b', 'gate.g2b', '慢节点')];
+    const edges = [mkEdge('e1', 'a', 'b')];
+    seedStore(wfId, nodes, edges);
+
+    const runPromise = runWorkflow({ wfId });
+    // 等 a 完成、b 仍在跑
+    await new Promise((r) => setTimeout(r, 40));
+    stopWorkflow(wfId);
+    await runPromise;
+
+    const st = useWorkflowStore.getState();
+    const latest = st.checkpoints[wfId];
+    // 停止后 resetStatuses 清空了画布节点状态，但落盘快照应在 reset 前捕获了 a 的结果
+    expect(latest).toBeTruthy();
+    // 快照至少包含已完成节点（若节流窗口内 a 成功已触发，则 a 在快照中）
+    expect(latest!.status).toBe('running');
+  });
+});

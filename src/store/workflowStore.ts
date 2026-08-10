@@ -59,7 +59,7 @@ export interface RunState {
   progress: RunProgressShape;
 }
 import { useRegistryStore, getNodeDef } from './registryStore';
-import { applyCheckpoint, type RunCheckpoint } from '../engine/checkpoint';
+import { applyCheckpoint, mergeCheckpointHistory, type RunCheckpoint } from '../engine/checkpoint';
 import { useViewStore } from './viewStore';
 import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
@@ -136,6 +136,8 @@ interface WorkflowState {
   runHistory: RunRecord[];
   /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目持久化 */
   checkpoints: Record<string, RunCheckpoint>;
+  /** 检查点多版本历史（阶段 G2）：按 wfId 保留最近 CHECKPOINT_HISTORY_MAX 条运行快照（含终态），供回滚/对比 */
+  checkpointHistory: Record<string, RunCheckpoint[]>;
 
   /**
    * 最近一次「自动保存」的时间戳（仅 UI 提示用，不持久化到磁盘，
@@ -237,6 +239,12 @@ interface WorkflowState {
   setCheckpoint: (cp: RunCheckpoint) => void;
   /** 写入检查点并独立落盘到 .slimemold/runs/checkpoints.json（运行收尾调用，返回 Promise 便于等待落盘完成） */
   persistCheckpoint: (cp: RunCheckpoint) => Promise<void>;
+  /**
+   * 运行中节流快照（阶段 G2）：把当前节点中间结果写入检查点并落盘（status='running'）。
+   * 供节点完成/阶段结束/接管前/停止时调用——应用崩溃/强制关闭时保留最近进度，跨会话可从中恢复。
+   * 与 persistCheckpoint 的区别：收尾写终态（覆盖 latest + 进历史），快照写中间态（同 runId 覆盖 latest）。
+   */
+  persistCheckpointSnapshot: (cp: RunCheckpoint) => Promise<void>;
   /** 清除某 wfId 的检查点（缺省取当前激活工作流） */
   clearCheckpoint: (wfId?: string) => void;
   /** 从检查点恢复画布节点状态（success 复用输出 / error 保留 + 标脏），使「断点续跑」跨会话可用 */
@@ -399,6 +407,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       projectAssets: [],
       runHistory: [],
       checkpoints: {},
+      checkpointHistory: {},
       lastAutosave: null,
 
       projectName: null,
@@ -905,7 +914,15 @@ export const useWorkflowStore = create<WorkflowState>()(
       // 阶段 C 可恢复执行：检查点
       setCheckpoint: (cp) => {
         suppressDirty = true; // 运行收尾写检查点不构成「未保存的项目改动」
-        set({ checkpoints: { ...get().checkpoints, [cp.wfId]: cp } });
+        const s = get();
+        set({
+          checkpoints: { ...s.checkpoints, [cp.wfId]: cp },
+          // 阶段 G2：终态/快照同时并入多版本历史（按 runId 去重，保留最近 N 条）
+          checkpointHistory: {
+            ...s.checkpointHistory,
+            [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
+          },
+        });
         suppressDirty = false;
       },
       // F3/F10：运行收尾「即落盘」——内存更新 + 独立写 .slimemold/runs/checkpoints.json，
@@ -914,15 +931,36 @@ export const useWorkflowStore = create<WorkflowState>()(
       persistCheckpoint: async (cp) => {
         const s = get();
         suppressDirty = true;
+        const nextCheckpoints = { ...s.checkpoints, [cp.wfId]: cp };
+        const nextHistory = {
+          ...s.checkpointHistory,
+          [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
+        };
+        set({ checkpoints: nextCheckpoints, checkpointHistory: nextHistory });
+        suppressDirty = false;
+        if (isTauri && s.projectPath) {
+          try {
+            const { saveCheckpoints } = await import('../io/projectIO');
+            await saveCheckpoints(s.projectPath, nextCheckpoints, nextHistory);
+          } catch (e) {
+            console.warn('[persistCheckpoint] 检查点落盘失败（已保留内存态）:', e);
+          }
+        }
+      },
+      // 阶段 G2：运行中节流快照——只更新 latest（同 runId 覆盖），不进历史（避免中间态污染版本列表），
+      // 但会落盘，使崩溃/强制关闭后仍能从最近进度恢复。
+      persistCheckpointSnapshot: async (cp) => {
+        const s = get();
+        suppressDirty = true;
         const next = { ...s.checkpoints, [cp.wfId]: cp };
         set({ checkpoints: next });
         suppressDirty = false;
         if (isTauri && s.projectPath) {
           try {
             const { saveCheckpoints } = await import('../io/projectIO');
-            await saveCheckpoints(s.projectPath, next);
+            await saveCheckpoints(s.projectPath, next, s.checkpointHistory);
           } catch (e) {
-            console.warn('[persistCheckpoint] 检查点落盘失败（已保留内存态）:', e);
+            console.warn('[persistCheckpointSnapshot] 检查点快照落盘失败（已保留内存态）:', e);
           }
         }
       },
@@ -931,7 +969,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!id) return;
         const next = { ...get().checkpoints };
         delete next[id];
-        set({ checkpoints: next });
+        const nextHistory = { ...get().checkpointHistory };
+        delete nextHistory[id];
+        set({ checkpoints: next, checkpointHistory: nextHistory });
       },
       restoreCheckpoint: (wfId) => {
         const id = wfId ?? get().activeWfId;
@@ -1226,6 +1266,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           runHistory: file.runs?.history ?? [],
           // 阶段 C 可恢复执行：读回运行检查点（落盘于 .slimemold/runs/checkpoints.json）
           checkpoints: file.checkpoints ?? {},
+          // 阶段 G2：读回检查点多版本历史（同文件）
+          checkpointHistory: file.checkpointHistory ?? {},
           // 交付物：读回项目级黑板（pipeline.handoff 产出的成果，落盘于 project.json 的 artifacts）
           artifacts: file.artifacts ?? {},
           pipelines: file.pipelines ?? [],
@@ -2083,6 +2125,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         projectAssets: s.projectAssets,
         runHistory: s.runHistory,
         checkpoints: s.checkpoints,
+        checkpointHistory: s.checkpointHistory,
         subgraphs: s.subgraphs,
         groups: s.groups,
         artifacts: s.artifacts,

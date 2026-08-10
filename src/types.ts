@@ -860,6 +860,8 @@ export interface ProjectFile {
   runs?: { history: RunRecord[] };
   /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目落盘 */
   checkpoints?: Record<string, import('./engine/checkpoint').RunCheckpoint>;
+  /** 检查点多版本历史（阶段 G2）：按 wfId 保留最近 N 条运行快照 */
+  checkpointHistory?: Record<string, import('./engine/checkpoint').RunCheckpoint[]>;
 }
 
 /** 最近项目记录（持久化在 localStorage，不随项目文件本身） */

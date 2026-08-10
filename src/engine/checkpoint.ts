@@ -24,12 +24,12 @@ export interface CheckpointNode {
   durationMs?: number;
 }
 
-/** 一次运行的检查点（按 wfId 覆盖式存储，只保留最新）。 */
+/** 一次运行的检查点（按 wfId 覆盖式存储 latest，另保留多版本历史）。 */
 export interface RunCheckpoint {
   wfId: string;
   runId: number;
-  /** 本次运行终态（success / error / aborted） */
-  status: 'success' | 'error' | 'aborted';
+  /** 本次运行终态（success / error / aborted / running——running 为运行中节流快照） */
+  status: 'success' | 'error' | 'aborted' | 'running';
   startedAt: number;
   endedAt: number;
   /** 节点 id → 节点级结果 */
@@ -63,7 +63,7 @@ export function fromRunRecord(rec: RunRecord, wfId: string): RunCheckpoint {
 /** 从画布节点列表构建检查点（收尾时调用；忽略 idle 节点以减小体积）。 */
 export function buildCheckpoint(
   nodes: FlowNode[],
-  meta: { wfId: string; runId: number; status: 'success' | 'error' | 'aborted'; startedAt: number },
+  meta: { wfId: string; runId: number; status: RunCheckpoint['status']; startedAt: number },
 ): RunCheckpoint {
   const cp: Record<string, CheckpointNode> = {};
   for (const n of nodes) {
@@ -143,4 +143,47 @@ export function pickCheckpoint(
   wfId: string,
 ): RunCheckpoint | null {
   return checkpoints[wfId] ?? null;
+}
+
+/** 多版本历史保留上限（阶段 G2：latest + 最近 N-1 个历史版本）。 */
+export const CHECKPOINT_HISTORY_MAX = 5;
+
+/**
+ * 把新检查点并入历史列表（阶段 G2 多版本保留）：
+ * - 按 runId 去重（同 runId 的旧快照被新快照替换——运行中节流快照与收尾快照同 runId）；
+ * - 按时间戳（endedAt）降序，保留最近 CHECKPOINT_HISTORY_MAX 条。
+ * 纯函数，返回新数组。
+ */
+export function mergeCheckpointHistory(
+  history: RunCheckpoint[] | undefined,
+  cp: RunCheckpoint,
+): RunCheckpoint[] {
+  const withoutSameRun = (history ?? []).filter((h) => h.runId !== cp.runId);
+  const merged = [...withoutSameRun, cp].sort((a, b) => b.endedAt - a.endedAt);
+  return merged.slice(0, CHECKPOINT_HISTORY_MAX);
+}
+
+/** 取某 wfId 的多版本历史（返回按时间新→旧排序；不存在返回 []）。 */
+export function pickCheckpointHistory(
+  history: Record<string, RunCheckpoint[]> | undefined,
+  wfId: string,
+): RunCheckpoint[] {
+  return history?.[wfId] ?? [];
+}
+
+/**
+ * 运行中节流快照辅助：从画布节点构建一个 status='running' 的检查点。
+ * 与收尾 buildCheckpoint 的区别：不关心终态，只记录「当前已完成/失败节点」的中间结果，
+ * 供崩溃恢复时恢复最近一次已完成的节点成果。
+ */
+export function buildRunningCheckpoint(
+  nodes: FlowNode[],
+  meta: { wfId: string; runId: number; startedAt: number },
+): RunCheckpoint {
+  return buildCheckpoint(nodes, {
+    wfId: meta.wfId,
+    runId: meta.runId,
+    status: 'running',
+    startedAt: meta.startedAt,
+  });
 }
