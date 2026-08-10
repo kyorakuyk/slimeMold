@@ -156,6 +156,10 @@ export function stopWorkflow(wfId?: string): void {
   cancelInterventionsForRun(id, abortedRunId);
   // 运行级中止事件：立即发出（被终止的旧协程 isCurrentRun=false，不再重复发）
   emitRun(getRunBus(), 'run.aborted', { wfId: id, runId: abortedRunId }, { reason: 'user-stopped' });
+  // 同步诊断代次：active 对齐 current，避免状态栏误报「旧协程残留」——
+  // 停止是主动收尾，activeRunId 指向被终止运行的代次，此处推进为与 current 一致。
+  g.activeRunId = g.currentRunId;
+  syncDebugRun(id);
 }
 
 /**
@@ -1099,7 +1103,13 @@ async function executeNode(
           ),
       },
     );
-    if (signal.aborted || targetRunId !== gen.currentRunId) return;
+    if (signal.aborted || targetRunId !== gen.currentRunId) {
+      // 竞态防御：abort 时节点可能仍停在「running」（stopWorkflow 的 resetStatuses
+      // 在 execute 返回前已执行，随后无后续复位）。这里把当前节点复位为 idle，
+      // 避免停止后节点永久显示「正在运行」。
+      setStatus(id, 'idle', { outputs: undefined, error: undefined, usage: undefined });
+      return;
+    }
     // 节点成功收尾（nodeResultHandler.ts）：写缓存/登记分支/状态/事件/快照/stopAfter 剪裁
     handleNodeSuccess({
       id,
@@ -1127,7 +1137,11 @@ async function executeNode(
       },
     });
   } catch (err) {
-    if (signal.aborted || targetRunId !== gen.currentRunId) return;
+    if (signal.aborted || targetRunId !== gen.currentRunId) {
+      // 竞态防御（同上）：abort 路径复位节点为 idle
+      setStatus(id, 'idle', { outputs: undefined, error: undefined, usage: undefined });
+      return;
+    }
     // 插件/节点异常隔离：捕获并标记失败（nodeResultHandler.ts）
     const message = err instanceof Error ? err.message : String(err);
     failed.add(id);

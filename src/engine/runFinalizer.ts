@@ -116,7 +116,14 @@ export async function finalizeRun(input: FinalizeInput): Promise<void> {
   const pruned = nodesNow.filter((n) => n.data.status === 'skipped').length;
 
   if (!isCurrentRun) {
-    // 被淘汰的旧运行：只留最简日志，不写历史/复盘，避免污染新运行
+    // 手动停止（stopWorkflow 已自增代次）会走到这里，但这并非「被新运行替代」。
+    // 用 signal.aborted 区分：停止是用户主动中止，stopWorkflow 已打过「已停止」日志，
+    // 这里只补一条收尾说明，不写历史/复盘（避免污染后续运行）。
+    if (signal.aborted) {
+      rt.addLog('info', `已停止（旧协程收尾，用时 ${elapsed}s）`);
+      return;
+    }
+    // 真正被新一次运行顶替的旧运行：只留最简日志，不写历史/复盘
     rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
     return;
   }
