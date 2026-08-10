@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentRouteTable, FlowEdge, FlowNode, ProjectFile, WorkflowFile } from '../types';
 import {
+  buildNewProjectState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
@@ -156,5 +157,31 @@ describe('buildSwitchWorkflowState 工作流切换状态构建', () => {
 
   it('目标不存在 → 返回 null', () => {
     expect(buildSwitchWorkflowState(baseView, 'ghost')).toBeNull();
+  });
+});
+
+describe('buildNewProjectState 新建项目状态构建', () => {
+  it('生成项目元信息 + 一个空白工作流', () => {
+    const st = buildNewProjectState('新项目');
+    expect(st.projectName).toBe('新项目');
+    expect(st.projectId).toMatch(/^proj-/);
+    expect(st.projectPath).toBeNull();
+    expect(st.projectDirty).toBe(true); // 尚未落盘
+    expect(st.lastSavedSnapshot).toBeNull();
+    expect(Object.keys(st.workflows)).toHaveLength(1);
+    const wfId = Object.keys(st.workflows)[0];
+    expect(st.activeWfId).toBe(wfId);
+    expect(st.workflowName).toBe('未命名工作流');
+    expect(st.nodes).toHaveLength(0);
+    expect(st.edges).toHaveLength(0);
+    expect(st.selectedNodeId).toBeNull();
+  });
+
+  it('空白工作流带默认 ollama agent 和内置角色', () => {
+    const st = buildNewProjectState('x');
+    const wf = st.workflows[st.activeWfId];
+    expect(wf.agents[0]?.protocol).toBe('ollama');
+    expect(st.agents[0]?.protocol).toBe('ollama');
+    expect(st.roles.length).toBeGreaterThan(0);
   });
 });

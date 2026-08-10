@@ -226,3 +226,70 @@ export function buildSwitchWorkflowState(
     logs: [],
   };
 }
+
+/** newProject 的纯状态构建结果。 */
+export interface NewProjectState {
+  projectName: string;
+  projectId: string;
+  projectCreatedAt: string;
+  projectPath: null;
+  projectDirty: true;
+  lastSavedSnapshot: null;
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  workflowName: string;
+  nodes: never[];
+  edges: never[];
+  agents: import('../types').AgentConfig[];
+  defaultAgentId: null;
+  roles: import('../types').RoleTemplate[];
+  variables: Record<string, never>;
+  projectVariables: Record<string, never>;
+  projectAssets: never[];
+  selectedNodeId: null;
+  logs: never[];
+}
+
+/**
+ * 构建「新建项目」的纯状态（newProject 纯计算段，G5 门面化收口）。
+ * 生成一个空白工作流 + 项目元信息，返回新的 store 状态子集。
+ * 不触碰 store 单例；suppressDirty + set 由调用方执行。
+ */
+export function buildNewProjectState(name: string): NewProjectState {
+  const id = `wf-${Date.now()}`;
+  const projId = `proj-${Date.now()}`;
+  const now = new Date().toISOString();
+  const wf: WorkflowFileInMemory = {
+    version: 1,
+    name: '未命名工作流',
+    savedAt: now,
+    nodes: [],
+    edges: [],
+    agents: [createAgent('ollama')],
+    roles: builtinRoles.map((r) => ({ ...r })),
+    variables: {},
+    belongsToProject: projId,
+  };
+  return {
+    projectName: name,
+    projectId: projId,
+    projectCreatedAt: now,
+    projectPath: null,
+    // 新建项目尚未落盘：标记项目级脏，且无落盘快照
+    projectDirty: true,
+    lastSavedSnapshot: null,
+    workflows: { [id]: wf },
+    activeWfId: id,
+    workflowName: wf.name,
+    nodes: [],
+    edges: [],
+    agents: wf.agents,
+    defaultAgentId: wf.defaultAgentId ?? null,
+    roles: wf.roles!,
+    variables: wf.variables!,
+    projectVariables: {},
+    projectAssets: [],
+    selectedNodeId: null,
+    logs: [],
+  };
+}

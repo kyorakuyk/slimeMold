@@ -91,8 +91,9 @@ import {
 } from './workflowGraph';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
-// 状态转换纯逻辑（upsertById / 路由表清理 / 项目装载 / 工作流切换）已抽到 workflowState.ts（G5 门面化）
+// 状态转换纯逻辑（upsertById / 路由表清理 / 项目装载 / 工作流切换 / 新建项目）已抽到 workflowState.ts（G5 门面化）
 import {
+  buildNewProjectState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
@@ -1031,43 +1032,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       // 通过下方 newProject/openProject/switchWorkflow/saveProject 间接调用。
 
       newProject: (name) => {
-        const id = `wf-${Date.now()}`;
-        const projId = `proj-${Date.now()}`;
-        const now = new Date().toISOString();
-        const wf: WorkflowFileInMemory = {
-          version: 1,
-          name: '未命名工作流',
-          savedAt: now,
-          nodes: [],
-          edges: [],
-          agents: [createAgent('ollama')],
-          roles: builtinRoles.map((r) => ({ ...r })),
-          variables: {},
-          belongsToProject: projId,
-        };
+        // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
         suppressDirty = true;
-        set({
-          projectName: name,
-          projectId: projId,
-          projectCreatedAt: now,
-          projectPath: null,
-          // 新建项目尚未落盘：标记项目级脏，且无落盘快照
-          projectDirty: true,
-          lastSavedSnapshot: null,
-          workflows: { [id]: wf },
-          activeWfId: id,
-          workflowName: wf.name,
-          nodes: [],
-          edges: [],
-          agents: wf.agents,
-          defaultAgentId: wf.defaultAgentId ?? null,
-          roles: wf.roles!,
-          variables: wf.variables!,
-          projectVariables: {},
-          projectAssets: [],
-          selectedNodeId: null,
-          logs: [],
-        });
+        set(buildNewProjectState(name));
         suppressDirty = false;
       },
 
