@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveAgentForCategory } from './builder';
+import { resolveAgentForCategory, buildConstructionWorkflow } from './builder';
 import type { AgentRouteTable } from '../types';
 
 const agents = [{ id: 'agent-cheap' }, { id: 'agent-strong' }, { id: 'agent-fallback' }];
@@ -42,7 +42,7 @@ describe('resolveAgentForCategory（Builder 注入 + 主 agent 缺失补位）',
   });
 
   it('类别行 + 全局 fallback 均失效 → undefined（不注入，交 worker 运行时）', () => {
-    expect(resolveAgentForCategory('logic', { data: {} }, 'ghost', [])).toBeUndefined();
+    expect(resolveAgentForCategory('logic', { data: { agentId: 'ghost' } }, 'ghost', [])).toBeUndefined();
   });
 
   it('未传 agents 列表时不判断存在性，直接返回主 agent（兼容旧调用）', () => {
@@ -51,5 +51,40 @@ describe('resolveAgentForCategory（Builder 注入 + 主 agent 缺失补位）',
 
   it('类别大小写不敏感匹配', () => {
     expect(resolveAgentForCategory('UI' as never, table({}), 'agent-fallback', agents)).toBe('agent-cheap');
+  });
+});
+
+describe('buildConstructionWorkflow（施工方工作流交付落盘）', () => {
+  const modules = [
+    { name: 'api', category: 'ui' as const, responsibility: '对外接口层', scope: ['src/api'], index: 0 },
+    { name: 'core', category: 'logic' as const, responsibility: '核心逻辑', scope: ['src/core'], index: 1 },
+  ];
+
+  it('交付节点 pipeline.handoff 默认开启直接落盘（writeOut=on）', () => {
+    const wf = buildConstructionWorkflow({
+      modules,
+      routeTable: table({}),
+      fallbackAgentId: 'agent-fallback',
+      agents,
+    });
+    const handoff = wf.nodes.find((n) => n.typeId === 'pipeline.handoff');
+    expect(handoff).toBeDefined();
+    expect(handoff!.params.writeOut).toBe('on');
+    expect(handoff!.params.outDir).toBe('deliverables');
+    expect(handoff!.params.outFile).toBe('construction-project.md');
+  });
+
+  it('交付 payload 接 coord.resolver.merged（真实项目代码），而非 validator.report', () => {
+    const wf = buildConstructionWorkflow({
+      modules,
+      routeTable: table({}),
+      fallbackAgentId: 'agent-fallback',
+      agents,
+    });
+    const handoff = wf.nodes.find((n) => n.typeId === 'pipeline.handoff');
+    const resolver = wf.nodes.find((n) => n.typeId === 'coord.resolver');
+    const e = wf.edges.find((e) => e.target === handoff!.id && e.targetHandle === 'payload');
+    expect(e?.source).toBe(resolver!.id);
+    expect(e?.sourceHandle).toBe('merged');
   });
 });

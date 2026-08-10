@@ -174,6 +174,7 @@ export type ParamType =
   | 'boolean'
   | 'select'
   | 'agent'
+  | 'agents' // 多选智能体（逗号分隔的 agentId 列表）
   | 'role'
   | 'asset'; // 从当前工作流资产库选择（图片资产下拉 + 气泡手填路径）
 

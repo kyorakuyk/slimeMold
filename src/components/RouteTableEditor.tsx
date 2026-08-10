@@ -8,6 +8,7 @@
  */
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { mergeAgentPool } from '../agents/globalAgents';
 
 const CATEGORY_KEYS = ['ui', 'logic', 'docs', 'infra', 'data'] as const;
 
@@ -16,7 +17,10 @@ export function RouteTableEditor() {
   const agentRouteTable = useWorkflowStore((s) => s.agentRouteTable);
   const setAgentRouteTable = useWorkflowStore((s) => s.setAgentRouteTable);
   const agents = useWorkflowStore((s) => s.agents);
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
   const defaultAgentId = useWorkflowStore((s) => s.defaultAgentId);
+  // 类别下拉候选 = 项目级 ∪ 全局（项目级优先）；全局项用「全局」后缀标识，跨项目仍可用
+  const pool = mergeAgentPool(agents, globalAgents);
 
   const updateEntry = (category: string, patch: { agentId?: string; fallback?: string[] }) => {
     const cur = agentRouteTable[category] ?? {};
@@ -25,7 +29,7 @@ export function RouteTableEditor() {
   };
 
   const fillDefaults = () => {
-    const target = defaultAgentId ?? agents[0]?.id;
+    const target = defaultAgentId ?? pool[0]?.id;
     if (!target) return;
     const next: Record<string, { agentId: string; fallback?: string[] }> = {};
     for (const c of CATEGORY_KEYS) next[c] = { agentId: target };
@@ -60,9 +64,9 @@ export function RouteTableEditor() {
                   <option value="" disabled>
                     {t('route.unbound')}
                   </option>
-                  {agents.map((a) => (
+                  {pool.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name}（{a.model}）
+                      {a.name}（{a.model}）{globalAgents.some((g) => g.id === a.id) && !agents.some((p) => p.id === a.id) ? t('route.globalSuffix') : ''}
                     </option>
                   ))}
                 </select>
@@ -84,7 +88,7 @@ export function RouteTableEditor() {
           );
         })}
       </div>
-      {agents.length === 0 && (
+      {pool.length === 0 && (
         <p className="text-[11px] text-ink-faint">{t('route.noAgents')}</p>
       )}
     </div>

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Plus, Trash2, RefreshCw, KeyRound, Check, PlugZap, Loader2, Pin } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import {
   createAgent,
@@ -109,9 +109,12 @@ function AgentsTab() {
   const agents = useWorkflowStore((s) => s.agents);
   const upsertAgent = useWorkflowStore((s) => s.upsertAgent);
   const removeAgent = useWorkflowStore((s) => s.removeAgent);
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
+  const upsertGlobalAgent = useWorkflowStore((s) => s.upsertGlobalAgent);
+  const removeGlobalAgent = useWorkflowStore((s) => s.removeGlobalAgent);
   const defaultAgentId = useWorkflowStore((s) => s.defaultAgentId);
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
-  const [editingId, setEditingId] = useState<string | null>(agents[0]?.id ?? null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelHint, setModelHint] = useState('');
@@ -122,7 +125,24 @@ function AgentsTab() {
   /** 保存成功后暂存的明文 key（仅当前会话内存，不落盘），供随后的检测/拉取直接使用，
    *  避免依赖从密钥库读回导致「已保存却读不到」的困惑。 */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const editing = agents.find((a) => a.id === editingId);
+  /** 归属查找：项目级优先，全局兜底。 */
+  const globalSet = useMemo(() => new Set(globalAgents.map((a) => a.id)), [globalAgents]);
+  const projectSet = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
+  const belongsToGlobal = (id: string | null) => !!id && globalSet.has(id) && !projectSet.has(id);
+
+  /** 合并池：项目级在前，全局在后（同名项目级优先） */
+  const pool = useMemo<AgentConfig[]>(() => {
+    const seen = new Set<string>();
+    const out: AgentConfig[] = [];
+    for (const a of [...agents, ...globalAgents]) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      out.push(a);
+    }
+    return out;
+  }, [agents, globalAgents]);
+
+  const editing = pool.find((a) => a.id === editingId);
 
   /** APIKEYS 分区里已登记的 Vault（供「从库导入」下拉）。 */
   const [vaults, setVaults] = useState<ApiVault[]>([]);
@@ -258,19 +278,35 @@ function AgentsTab() {
 
   const patch = (p: Partial<AgentConfig>) => {
     if (!editing) return;
-    upsertAgent({ ...editing, ...p });
+    if (belongsToGlobal(editing.id)) upsertGlobalAgent({ ...editing, ...p });
+    else upsertAgent({ ...editing, ...p });
   };
 
   const changeProtocol = (protocol: Protocol) => {
     if (!editing) return;
     const d = protocolDefaults[protocol];
-    upsertAgent({ ...editing, protocol, baseUrl: d.baseUrl, model: d.model });
+    const updated = { ...editing, protocol, baseUrl: d.baseUrl, model: d.model };
+    if (belongsToGlobal(editing.id)) upsertGlobalAgent(updated);
+    else upsertAgent(updated);
   };
 
   const addAgent = (protocol: Protocol) => {
     const agent = createAgent(protocol);
     upsertAgent(agent);
     setEditingId(agent.id);
+  };
+
+  /** 图钉按钮：切换 agent 作用域（项目级 ↔ 全局通用）。 */
+  const toggleGlobal = (id: string) => {
+    const a = pool.find((x) => x.id === id);
+    if (!a) return;
+    if (belongsToGlobal(id)) {
+      upsertAgent({ ...a });
+      removeGlobalAgent(id);
+    } else {
+      upsertGlobalAgent({ ...a });
+      removeAgent(id);
+    }
   };
 
   return (
@@ -282,9 +318,10 @@ function AgentsTab() {
           <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2">
-          {agents.map((a) => {
+          {pool.map((a) => {
             const dot = probeStates[a.id];
             const isDefault = defaultAgentId === a.id;
+            const isGlobal = belongsToGlobal(a.id);
             return (
               <li
                 key={a.id}
@@ -328,6 +365,21 @@ function AgentsTab() {
                       }`}
                     >
                       {isDefault ? '★' : '☆'}
+                    </button>
+                    <button
+                      type="button"
+                      title={isGlobal ? t('agent.pin.global') : t('agent.pin.project')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleGlobal(a.id);
+                      }}
+                      className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                        isGlobal
+                          ? 'bg-accent text-white'
+                          : 'text-ink-faint hover:bg-paper-soft hover:text-ink'
+                      }`}
+                    >
+                      <Pin size={12} className="rotate-45 opacity-60" />
                     </button>
                   </div>
                 </div>
@@ -582,7 +634,8 @@ function AgentsTab() {
             <button
               className="sm-btn text-err hover:border-err hover:text-err"
               onClick={() => {
-                removeAgent(editing.id);
+                if (belongsToGlobal(editing.id)) removeGlobalAgent(editing.id);
+                else removeAgent(editing.id);
                 setEditingId(null);
               }}
             >

@@ -31,6 +31,7 @@ import { MEMORY_REL } from '../agents/memoryIo';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
 import { resolveAgentScored } from '../agents/agentRouter';
+import { mergeAgentPool } from '../agents/globalAgents';
 import { buildCheckpoint } from './checkpoint';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
 import { addExperience, matchExperience, successRateByAgent, summarizeExperience, recordAgentOutcome } from '../agents/experienceStore';
@@ -686,7 +687,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
         rt.addLog('warn', `经验沉淀失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
       }
 
-      const reviewerAgent = useWorkflowStore.getState().agents.find((a) => a.id === 'role.reviewer');
+      const stReview = useWorkflowStore.getState();
+      const reviewerAgent = mergeAgentPool(stReview.agents, stReview.globalAgents).find((a) => a.id === 'role.reviewer');
       if (reviewerAgent) {
         sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
         const root = useWorkflowStore.getState().projectPath ?? null;
@@ -1090,6 +1092,8 @@ async function executeNode(
       // category 取自节点参数（Builder 生成 worker 时写入 params.category），真正参与类别路由。
       const requestedAgentId = agentId;
       const st0 = useWorkflowStore.getState();
+      // 可用候选池 = 项目级 ∪ 全局（项目级同名覆盖全局），跨项目可复用全局通用智能体
+      const mergedAgents = mergeAgentPool(st0.agents, st0.globalAgents);
       const goal =
         targetWfId === st0.activeWfId
           ? st0.workflowName
@@ -1108,7 +1112,7 @@ async function executeNode(
         scopeSize: Array.isArray(node.data.params?.scope) ? (node.data.params.scope as unknown[]).length : undefined,
       };
       const decision = resolveAgentScored(scoringInput, {
-        agents: st0.agents,
+        agents: mergedAgents,
         routeTable: st0.agentRouteTable ?? {},
         defaultAgentId: st0.defaultAgentId ?? null,
       }, {
@@ -1137,7 +1141,7 @@ async function executeNode(
           `「${node.data.label}」智能体${requestedAgentId ? ` ${requestedAgentId}` : '未指定'}经 AgentRouter 成本感知路由到「${decision.agent.name}」（${decision.reason}${category ? `，类别 ${category}` : ''}${bestScore ? `，评分 ${bestScore.score.toFixed(2)}` : ''}）`,
         );
       }
-      const byId = (id0: string) => st0.agents.find((a) => a.id === id0);
+      const byId = (id0: string) => mergedAgents.find((a) => a.id === id0);
       // E/F7 自我学习消费：同类型节点的历史经验注入本次调用——
       // ① 事件与日志（可观测）；② 注入 system prompt（真正影响本次 LLM 决策）。
       const expHits = matchExperience(useWorkflowStore.getState().projectId ?? '', node.data.typeId);

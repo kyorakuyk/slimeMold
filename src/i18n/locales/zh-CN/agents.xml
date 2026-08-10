@@ -8,6 +8,16 @@
   <!-- AgentsTab -->
   <string name="agent.title">智能体</string>
   <string name="agent.subtitle">多协议 LLM 配置</string>
+  <string name="agent.filter.all">全部智能体（{{count}}）</string>
+  <string name="agent.filter.project">项目级（{{count}}）</string>
+  <string name="agent.filter.global">全局通用（{{count}}）</string>
+  <string name="agent.filter.title">按作用域筛选智能体</string>
+  <string name="agent.pin.global">已固定为全局通用（跨项目可用）</string>
+  <string name="agent.pin.project">点图钉固定为全局通用智能体</string>
+  <string name="agent.expand">展开详情</string>
+  <string name="agent.collapse">折叠</string>
+  <string name="agent.expandEdit">详细编辑</string>
+  <string name="agent.list.empty">当前筛选（{{filter}}）下暂无智能体</string>
   <string name="agent.list.dotOk">连接正常</string>
   <string name="agent.list.dotAuth">Key 异常</string>
   <string name="agent.list.dotOther">地址/模型异常</string>
@@ -21,6 +31,7 @@
   <string name="agent.list.importedName">{{name}} 智能体</string>
   <string name="agent.edit.title">编辑配置</string>
   <string name="agent.edit.none">未选择</string>
+  <string name="agent.edit.close">收起编辑配置</string>
   <string name="agent.field.name">名称</string>
   <string name="agent.field.protocol">协议</string>
   <string name="agent.field.baseUrl">Base URL</string>

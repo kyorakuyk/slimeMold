@@ -174,8 +174,9 @@
   <string name="route.fillDefaults">一键填充默认</string>
   <string name="route.fillDefaultsTitle">所有类别绑定到默认智能体</string>
   <string name="route.unbound">— 默认/未绑定 —</string>
-  <string name="route.fallbackPlaceholder">回退链（可选，逗号分隔 agentId）</string>
-  <string name="route.noAgents">当前工作流暂无智能体，请先在智能体面板添加。</string>
+  <string name="route.fallbackPlaceholder">回退链（可选，逗号分隔 agentId，可用全局智能体）</string>
+  <string name="route.noAgents">当前无可用智能体（项目级+全局均为空），请先在智能体面板添加。</string>
+  <string name="route.globalSuffix">（全局）</string>
   <string name="route.cat.ui">UI / 前端</string>
   <string name="route.cat.uiHint">界面、交互、样式</string>
   <string name="route.cat.logic">Logic / 逻辑</string>

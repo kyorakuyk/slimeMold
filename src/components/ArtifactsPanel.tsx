@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Package, FileText, Code, Bug, ClipboardList, Box, Download } from 'lucide-react';
+import { FileText, Code, Bug, ClipboardList, Box, Download } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
 

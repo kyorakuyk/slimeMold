@@ -273,26 +273,29 @@ export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) 
 
       <div className="flex min-h-0 flex-1 flex-col">{renderSidePanel(item.key)}</div>
 
-      {/* 拖拽调节宽度 */}
-      <div
-        onMouseDown={(e) => {
-          e.preventDefault();
-          const startX = e.clientX;
-          const startW = width;
-          const onMove = (ev: MouseEvent) => {
-            onResize(Math.min(420, Math.max(200, startW + (ev.clientX - startX))));
-          };
-          const onUp = () => {
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
-          };
-          window.addEventListener('mousemove', onMove);
-          window.addEventListener('mouseup', onUp);
-        }}
-        className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize"
-        style={{ background: 'transparent' }}
-        title="拖动调节宽度"
-      />
+      {/* 拖拽调节宽度：智能体面板（agents）内部已是「列表 + 编辑配置」两栏固定布局，
+          其「编辑配置」次级子菜单不应被左右缩放，故禁用手柄 */}
+      {active !== 'agents' && (
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = width;
+            const onMove = (ev: MouseEvent) => {
+              onResize(Math.min(420, Math.max(200, startW + (ev.clientX - startX))));
+            };
+            const onUp = () => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+          className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize"
+          style={{ background: 'transparent' }}
+          title="拖动调节宽度"
+        />
+      )}
     </div>
   );
 }

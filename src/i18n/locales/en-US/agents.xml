@@ -8,6 +8,16 @@
   <!-- AgentsTab -->
   <string name="agent.title">Agents</string>
   <string name="agent.subtitle">Multi-protocol LLM configuration</string>
+  <string name="agent.filter.all">All agents ({{count}})</string>
+  <string name="agent.filter.project">Project ({{count}})</string>
+  <string name="agent.filter.global">Global (cross-project, {{count}})</string>
+  <string name="agent.filter.title">Filter agents by scope</string>
+  <string name="agent.pin.global">Pinned as global (cross-project)</string>
+  <string name="agent.pin.project">Click the pin to promote this agent to global scope</string>
+  <string name="agent.expand">Expand details</string>
+  <string name="agent.collapse">Collapse</string>
+  <string name="agent.expandEdit">Detailed edit</string>
+  <string name="agent.list.empty">No agents under filter ({{filter}})</string>
   <string name="agent.list.dotOk">Connection OK</string>
   <string name="agent.list.dotAuth">Key error</string>
   <string name="agent.list.dotOther">URL/model error</string>
@@ -21,6 +31,7 @@
   <string name="agent.list.importedName">{{name}} agent</string>
   <string name="agent.edit.title">Edit config</string>
   <string name="agent.edit.none">None selected</string>
+  <string name="agent.edit.close">Collapse edit panel</string>
   <string name="agent.field.name">Name</string>
   <string name="agent.field.protocol">Protocol</string>
   <string name="agent.field.baseUrl">Base URL</string>
