@@ -63,6 +63,17 @@ export interface AgentConfig {
   proxyUrl?: string;
   /** 是否启用：false 表示被禁用，不出现在可选用 agent 候选中（节点/路由表），但保留在智能体库列表中可重新启用。缺省视为启用 */
   enabled?: boolean;
+  /** 经济参数（G3 成本感知路由）：用户可覆盖内置价格表。订阅制模型置 subscription=true 按 0 计价 */
+  cost?: {
+    /** 每 1M token 输入价（USD），覆盖内置价格表 */
+    inputPrice?: number;
+    /** 每 1M token 输出价（USD），覆盖内置价格表 */
+    outputPrice?: number;
+    /** 固定成本（USD/调用），如订阅模型按调用平摊 */
+    fixedCost?: number;
+  };
+  /** 订阅制模型：true 表示无按 token 计费（走订阅额度），成本评分按 0 计价 */
+  subscription?: boolean;
 }
 
 /** 角色上下文隔离粒度：

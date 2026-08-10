@@ -198,21 +198,35 @@ export function summarizeExperience(src: ExperienceSource): ExperienceEntry[] {
 
 /* ---------------- Agent 运行指标统计（与 selfImprove 解耦，始终记录） ----------------
  * 2026-08-09 P2：成功率评分不应依赖 selfImprove 开关。
- * 独立的轻量指标（agentId + ok/fail 计数，不含 prompt/insights 等敏感内容）
- * 在每次运行收尾时无条件写入，供 routerScoring 评分使用。
+ * 2026-08-11 G3：扩展为含 token 用量与估算成本的 AgentMetric——
+ *   recordAgentUsage(projectId, agentId, ok, usage) 在每次调用收尾无条件写入，
+ *   供 routerScoring 成功率评分 + 成本统计（agentCostStats / modelHistoricalPrice）使用。
+ * 结构向后兼容：旧数据 `{ ok, fail }` 无 token/cost 字段，读取时按 0 处理。
  */
 
+/** Agent 运行指标：ok/fail 计数 + token 累计 + 估算成本累计（USD）。 */
+export interface AgentMetric {
+  ok: number;
+  fail: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** 累计估算成本（USD，按价格表/用户覆盖估算） */
+  costUsd: number;
+  /** 最近一次调用墙钟 */
+  lastAt: number;
+}
+
 const METRIC_PREFIX = 'sm.metric.';
-const metricCache = new Map<string, Record<string, { ok: number; fail: number }>>();
+const metricCache = new Map<string, Record<string, AgentMetric>>();
 
 function metricKey(projectId: string): string {
   return `${METRIC_PREFIX}${projectId}`;
 }
 
-function loadMetrics(projectId: string): Record<string, { ok: number; fail: number }> {
+function loadMetrics(projectId: string): Record<string, AgentMetric> {
   const cached = metricCache.get(projectId);
   if (cached) return cached;
-  let m: Record<string, { ok: number; fail: number }> = {};
+  let m: Record<string, AgentMetric> = {};
   try {
     const raw = localStorage.getItem(metricKey(projectId));
     if (raw) m = JSON.parse(raw) as typeof m;
@@ -223,7 +237,7 @@ function loadMetrics(projectId: string): Record<string, { ok: number; fail: numb
   return m;
 }
 
-function persistMetrics(projectId: string, m: Record<string, { ok: number; fail: number }>): void {
+function persistMetrics(projectId: string, m: Record<string, AgentMetric>): void {
   metricCache.set(projectId, m);
   try {
     localStorage.setItem(metricKey(projectId), JSON.stringify(m));
@@ -232,19 +246,45 @@ function persistMetrics(projectId: string, m: Record<string, { ok: number; fail:
   }
 }
 
-/** 记录一次 Agent 调用结局（成功/失败）。幂等累加，可重复调用。 */
-export function recordAgentOutcome(projectId: string, agentId: string, ok: boolean): void {
+/** 记录一次 Agent 调用结局（成功/失败）+ token 用量 + 估算成本。幂等累加，可重复调用。 */
+export function recordAgentOutcome(
+  projectId: string,
+  agentId: string,
+  ok: boolean,
+  usage?: { promptTokens?: number; completionTokens?: number } | null,
+  costUsd = 0,
+): void {
   if (!agentId || !projectId) return;
   const m = loadMetrics(projectId);
-  const s = (m[agentId] ??= { ok: 0, fail: 0 });
+  const s = (m[agentId] ??= { ok: 0, fail: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, lastAt: 0 });
   if (ok) s.ok += 1;
   else s.fail += 1;
+  s.promptTokens += usage?.promptTokens ?? 0;
+  s.completionTokens += usage?.completionTokens ?? 0;
+  s.costUsd += costUsd;
+  s.lastAt = Date.now();
   persistMetrics(projectId, m);
 }
 
 /** 测试隔离：清空指标缓存（不动 localStorage）。 */
 export function resetMetricCache(): void {
   metricCache.clear();
+}
+
+/** 按 agent 汇总成本与用量统计（含成功率、token、估算成本）。无数据返回空表。 */
+export function agentCostStats(projectId: string): Record<string, AgentMetric> {
+  return loadMetrics(projectId);
+}
+
+/** 估算单次调用成本（USD），供 recordAgentOutcome 使用。 */
+export function estimateUsageCostUsd(
+  price: { in: number; out: number },
+  usage: { promptTokens?: number; completionTokens?: number } | null | undefined,
+): number {
+  if (!usage) return 0;
+  return (
+    ((usage.promptTokens ?? 0) * price.in + (usage.completionTokens ?? 0) * price.out) / 1_000_000
+  );
 }
 
 /**

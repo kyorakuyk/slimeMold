@@ -149,6 +149,8 @@ export interface ScoringInput {
   successByAgent?: Record<string, number>;
   /** 权重覆盖（缺省用 DEFAULT_SCORING_WEIGHTS） */
   weights?: Partial<ScoringWeights>;
+  /** 各模型历史实际价格（model → price，来自经验库；仅内置表未知时兜底） */
+  historicalPriceByModel?: Record<string, HistoricalPrice>;
 }
 
 /**
@@ -165,12 +167,13 @@ function isDisqualified(tier: 'light' | 'standard' | 'heavy', mTier: 'light' | '
  * - 若候选 ≤1 直接返回；免费模型成本分最高；成功率缺省 0.5。
  */
 export function scoreCandidates(input: ScoringInput): CandidateScore[] {
-  const { candidates, tier, successByAgent, weights } = input;
+  const { candidates, tier, successByAgent, weights, historicalPriceByModel } = input;
   const w: ScoringWeights = { ...DEFAULT_SCORING_WEIGHTS, ...weights };
   if (candidates.length === 0) return [];
 
   const priced = candidates.map((agent) => {
-    const p = modelPrice(agent.model);
+    // G3：四级优先级解析模型价格（用户 cost 覆盖 > 内置表 > 历史估计 > 默认）
+    const p = resolveModelPrice(agent, historicalPriceByModel?.[agent.model]);
     return { agent, costPer1M: p.in + p.out };
   });
   const min = Math.min(...priced.map((x) => x.costPer1M));
@@ -193,4 +196,64 @@ export function scoreCandidates(input: ScoringInput): CandidateScore[] {
   });
 
   return scored.sort((a, b) => b.score - a.score);
+}
+
+/* ---------------- G3：Agent 经济参数模型（四级价格优先级） ----------------
+ * 用户配置（AgentConfig.cost/subscription） > 内置价格表 > 运行历史估计 > 默认价。
+ * 放在本模块避免与 agentEconomics 循环依赖（agentEconomics 依赖本模块的 modelPrice）。
+ */
+
+/** Agent 经济参数（用户可选配置，覆盖内置价格表）。 */
+export interface AgentEconomics {
+  /** 每 1M token 输入价（USD）；undefined 表示走价格表/历史/默认 */
+  inputPrice?: number;
+  /** 每 1M token 输出价（USD） */
+  outputPrice?: number;
+  /** 固定成本（USD/调用，如订阅模型按调用平摊）；缺省 0 */
+  fixedCost?: number;
+  /** 订阅制：true 表示无按 token 计费（走订阅额度），价格视为 0 */
+  subscription?: boolean;
+}
+
+/** 从 AgentConfig 提取经济参数（缺省为空对象）。 */
+export function economicsOf(agent: Pick<AgentConfig, 'cost' | 'subscription'>): AgentEconomics {
+  return { ...(agent.cost ?? {}), subscription: agent.subscription ?? undefined };
+}
+
+/** 历史估计输入：某模型的历史实际价格（由经验库统计提供）。 */
+export interface HistoricalPrice {
+  /** 每 1M token 输入价（USD），已含历史实际用量加权 */
+  in?: number;
+  /** 每 1M token 输出价（USD） */
+  out?: number;
+}
+
+/**
+ * 四级优先级解析模型价格：
+ *   1. 用户配置 cost 覆盖（含 subscription 置 0）
+ *   2. 内置价格表
+ *   3. 运行历史估计（historical 参数）
+ *   4. 默认价
+ */
+export function resolveModelPrice(
+  agent: Pick<AgentConfig, 'model' | 'cost' | 'subscription'>,
+  historical?: HistoricalPrice,
+): ModelPrice {
+  const eco = economicsOf(agent);
+  if (eco.subscription) return { in: 0, out: 0 };
+  // 表内价格作为「缺失侧」的参照：部分覆盖时未指定的一侧沿用表内值（而非直接跳默认）
+  const fromTable = modelPrice(agent.model);
+  const tableIsDefault = fromTable.in === DEFAULT_MODEL_PRICE.in && fromTable.out === DEFAULT_MODEL_PRICE.out;
+  if (eco.inputPrice != null || eco.outputPrice != null) {
+    return {
+      in: eco.inputPrice ?? (tableIsDefault ? (historical?.in ?? DEFAULT_MODEL_PRICE.in) : fromTable.in),
+      out: eco.outputPrice ?? (tableIsDefault ? (historical?.out ?? DEFAULT_MODEL_PRICE.out) : fromTable.out),
+    };
+  }
+  // 内置价格表优先于历史估计（价格表是权威快照；历史估计作为缺省兜底）
+  if (!tableIsDefault) return fromTable;
+  if (historical?.in != null || historical?.out != null) {
+    return { in: historical.in ?? DEFAULT_MODEL_PRICE.in, out: historical.out ?? DEFAULT_MODEL_PRICE.out };
+  }
+  return DEFAULT_MODEL_PRICE;
 }
