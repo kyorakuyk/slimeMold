@@ -39,6 +39,8 @@
   <string name="settings.option.select">框选</string>
   <string name="settings.option.click">点击</string>
   <string name="settings.general.llmChannel">LLM 调用通道</string>
+  <string name="settings.general.selfImprove">自我学习</string>
+  <string name="settings.general.selfImproveDesc">开启后，失败/成功运行会沉淀运行经验，并在同类型节点上注入【历史经验参考】（会产生额外 LLM 复盘调用）</string>
   <string name="settings.general.llmChannelDesc">后端：经 Rust 命令发起，密钥不出渲染层（推荐）；前端：WebView 直接请求</string>
   <string name="settings.channel.backend">后端（推荐）</string>
   <string name="settings.channel.frontend">前端</string>

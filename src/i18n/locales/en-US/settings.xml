@@ -39,6 +39,8 @@
   <string name="settings.option.select">Box-select</string>
   <string name="settings.option.click">Click</string>
   <string name="settings.general.llmChannel">LLM call channel</string>
+  <string name="settings.general.selfImprove">Self-improvement</string>
+  <string name="settings.general.selfImproveDesc">When enabled, failed/successful runs deposit run experience and inject 【historical experience reference】 into same-type nodes (incurs extra LLM review calls)</string>
   <string name="settings.general.llmChannelDesc">Backend: via Rust command, keys stay in the render layer (recommended); Frontend: WebView direct request</string>
   <string name="settings.channel.backend">Backend (recommended)</string>
   <string name="settings.channel.frontend">Frontend</string>

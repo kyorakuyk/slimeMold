@@ -140,7 +140,7 @@ export default function SettingsCenter({ onClose }: { onClose: () => void }) {
 /* ---------------- 通用 ---------------- */
 function GeneralSection() {
   const t = useT('settings');
-  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme, locale, setLocale } = useViewStore();
+  const { showGrid, showMinimap, toggleGrid, toggleMinimap, interactionMode, setInteractionMode, globalProxyUrl, setGlobalProxyUrl, theme, setTheme, locale, setLocale, selfImprove, setSelfImprove } = useViewStore();
   const llmChannel = useWorkflowStore((s) => s.llmChannel);
   const setLlmChannel = useWorkflowStore((s) => s.setLlmChannel);
 
@@ -233,6 +233,16 @@ function GeneralSection() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="rounded border border-line p-3">
+        <h3 className="mb-2 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>{t('settings.general.selfImprove')}</h3>
+        <ToggleRow
+          label={t('settings.general.selfImprove')}
+          desc={t('settings.general.selfImproveDesc')}
+          checked={selfImprove}
+          onChange={() => setSelfImprove(!selfImprove)}
+        />
       </div>
 
       <div className="rounded border border-line p-3">
