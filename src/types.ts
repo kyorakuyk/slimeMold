@@ -853,7 +853,7 @@ export interface ProjectFile {
   /** 项目级子图库（可复用节点组合），key 为子图 id */
   subgraphs?: Record<string, SubgraphDef>;
   /** 项目级资产/产物库（构建产物、导出物等元数据），供后续步骤/报告引用 */
-  artifacts?: import('./engine/pipeline').ProjectArtifacts;
+  artifacts?: ProjectArtifacts;
   /** 旧版单文件 .smproj 兼容标记（由单文件迁移到目录形态后置 true） */
   legacy?: boolean;
   /** 项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
@@ -866,7 +866,7 @@ export interface ProjectFile {
   /** 项目级默认智能体 id（工作流未指定 agent 时引用） */
   defaultAgentId?: string | null;
   /** 项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
-  pipelines?: import('./engine/pipeline').PipelineDef[];
+  pipelines?: PipelineDef[];
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };
   /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目落盘 */
@@ -1000,4 +1000,74 @@ export interface LogEntry {
   /** 可选：单次运行的摘要说明与成败标记（运行历史行使用） */
   note?: string;
   ok?: boolean;
+}
+
+/* ---------- Pipeline / Artifact（跨工作流三方协作，G5 上提自 engine/pipeline） ---------- */
+
+/** 交付物种类：对应承建方→施工方→物业 三方的有结构传递物（见 TODO 14.1）。 */
+export type ArtifactKind =
+  | 'plan' //      承建方：dispatch.plan 的计划书 + 任务清单
+  | 'design' //    承建方：architect.design 的设计书 + 模块清单
+  | 'project' //   施工方：装配完整的项目（代码 + 结构 + 验收报告）
+  | 'bugreport' // 物业：运维期收集的 bug 报告
+  | 'constructionWf' // Builder 生成的施工方工作流 JSON
+  | 'opsWf' //      Builder 生成的物业运维工作流 JSON
+  | string; //      预留：自定义种类
+
+/** 交付物：跨工作流传递的有类型包裹（不塞进黑板字符串，复用现有 TaskItem/ModuleItem/FilePatch 等类型）。 */
+export interface Artifact {
+  kind: ArtifactKind;
+  /** 负载：结构化数据（plan/text/design/modules/project/bugreport…），由消费方按 kind 解释。 */
+  payload: unknown;
+  /** 来源工作流 id（谁产出的）。 */
+  fromWf: string;
+  /** 产出时的运行代次（executor.currentRunId 的快照），用于新鲜度判断。 */
+  runId: string;
+  /** 该种类下的版本号，每次覆盖同一 (stage, kind) 自增，便于消费方判断「是否更新」。 */
+  version: number;
+  /** 产出时间戳（ISO 字符串），用于 UI 显示「数据来自 X 前」。 */
+  updatedAt: string;
+}
+
+/**
+ * 项目级交付物存储：按「阶段 → 种类 → Artifact」组织。
+ * 阶段（stage）对应 pipeline 的节点式生命周期（idea/plan/design/construction/test/deliver/ops）。
+ * 同一阶段可有多种 kind（如 construction 阶段既有 project 又有 bugreport 回流）。
+ */
+export type ProjectArtifacts = Record<string, Record<string, Artifact>>;
+
+/**
+ * 阶段定义：pipeline 的一个「职能节点」（对应承建方/施工方/物业 等职能角色）。
+ * 注意：stage 不是图内节点，而是「工作流」级别的概念——每个 stage 绑定一个工作流 id。
+ */
+export interface PipelineStage {
+  /** 阶段 id（如 'plan' / 'design' / 'construction' / 'ops'）。 */
+  id: string;
+  /** 人类可读名。 */
+  label: string;
+  /** 绑定的工作流 id（来自 workflowStore.workflows）。Builder 生成后由 Orchestrator 回填。 */
+  wfId?: string;
+  /** 职能分类（承建方/施工方/物业），仅 UI 着色用。 */
+  role?: 'builder' | 'constructor' | 'ops';
+}
+
+/** 有向边：upstream 阶段完成后，把产物交给 downstream 阶段。 */
+export interface PipelineEdge {
+  from: string; // stage id
+  to: string; //   stage id
+  /** 该边传递的 Artifact kind（决定 advance 时从上游取哪种产物传给下游）。 */
+  artifactKind: ArtifactKind;
+  /**
+   * 回流标记：true 表示这是「回流边」（如 council 裁决 → design 决断 → 重派），
+   * 不计入正向主流程，仅 rework() 时触发，避免主流程成环。
+   */
+  backflow?: boolean;
+}
+
+/** 一条 pipeline 定义：阶段集合 + 有向边集合。 */
+export interface PipelineDef {
+  id: string;
+  label: string;
+  stages: PipelineStage[];
+  edges: PipelineEdge[];
 }

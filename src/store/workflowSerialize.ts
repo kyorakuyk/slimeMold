@@ -179,9 +179,9 @@ export function buildProjectFile(
     runHistory: RunRecord[];
     checkpoints?: Record<string, import('../engine/checkpoint').RunCheckpoint>;
     checkpointHistory?: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
-    artifacts: import('../engine/pipeline').ProjectArtifacts;
+    artifacts: import('../types').ProjectArtifacts;
     agentRouteTable: import('../types').AgentRouteTable;
-    pipelines: import('../engine/pipeline').PipelineDef[];
+    pipelines: import('../types').PipelineDef[];
     defaultAgentId?: string | null;
   },
   stable = false,

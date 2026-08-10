@@ -10,6 +10,9 @@ import {
 } from '@xyflow/react';
 import type {
   AgentConfig,
+  AgentRouteEntry,
+  AgentRouteTable,
+  Artifact,
   AssetMeta,
   CostRecord,
   FlowEdge,
@@ -19,6 +22,8 @@ import type {
   NodeStatus,
   PortType,
   EdgeKind,
+  PipelineDef,
+  ProjectArtifacts,
   ProjectFile,
   RoleTemplate,
   RunRecord,
@@ -73,12 +78,17 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
-
-/** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
-interface GraphSnapshot {
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-}
+// 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈）已抽到 workflowGraph.ts（G5 门面化）
+import {
+  markDirtyDownstream,
+  remapPasted,
+  snapshotPush,
+  snapshotUndo,
+  snapshotRedo,
+  type GraphSnapshot,
+} from './workflowGraph';
+// 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
+import { saveCheckpointToDisk } from './workflowPersistence';
 
 interface WorkflowState {
   workflowName: string;
@@ -169,11 +179,11 @@ interface WorkflowState {
   /** 当前工作流的节点组（纯视觉编组） */
   groups: NodeGroup[];
   /** 步骤 14.A：项目级交付物表（跨工作流三方协作的 Artifact 存储），随 .slimemold 持久化 */
-  artifacts: import('../engine/pipeline').ProjectArtifacts;
+  artifacts: ProjectArtifacts;
   /** 步骤 14.7：项目级「模块类别 → 智能体」路由表（Builder 生成施工方工作流时绑定 agent 用），随 .slimemold 持久化 */
-  agentRouteTable: import('../types').AgentRouteTable;
+  agentRouteTable: AgentRouteTable;
   /** 步骤 14.A：项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
-  pipelines: import('../engine/pipeline').PipelineDef[];
+  pipelines: PipelineDef[];
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 
@@ -305,13 +315,13 @@ interface WorkflowState {
   updateWorkflowGraph: (id: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
 
   /** 步骤 14.A：写入一份跨工作流交付物（Artifact）到项目级存储，走 store 方法以触发脏标记与持久化 */
-  setArtifact: (stage: string, kind: string, artifact: import('../engine/pipeline').Artifact) => void;
+  setArtifact: (stage: string, kind: string, artifact: Artifact) => void;
   /** 步骤 14.7：覆盖项目级「类别 → agent」路由表（Builder 生成施工方工作流时绑定 agent 用） */
-  setAgentRouteTable: (table: import('../types').AgentRouteTable) => void;
+  setAgentRouteTable: (table: AgentRouteTable) => void;
   /** 步骤 14.A：覆盖整个 Pipeline 定义集合（随项目持久化） */
-  setPipelines: (defs: import('../engine/pipeline').PipelineDef[]) => void;
+  setPipelines: (defs: PipelineDef[]) => void;
   /** 步骤 14.A：声明或更新单条 Pipeline 定义（随项目持久化，触发脏标记） */
-  upsertPipeline: (def: import('../engine/pipeline').PipelineDef) => void;
+  upsertPipeline: (def: PipelineDef) => void;
 
   /* ---- 子图（方案 A：引用节点 + 执行期扁平化） ---- */
   /** 把选中的一批节点打包成子图，并用一个 subgraph.ref 节点替换它们。返回新子图 id */
@@ -757,18 +767,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       markDirty: (startId: string) => {
         const { nodes, edges } = get();
         if (!nodes.some((n) => n.id === startId)) return;
-        // BFS 收集下游
-        const downstream = new Set<string>([startId]);
-        const queue = [startId];
-        while (queue.length > 0) {
-          const cur = queue.shift()!;
-          for (const e of edges) {
-            if (e.source === cur && !downstream.has(e.target)) {
-              downstream.add(e.target);
-              queue.push(e.target);
-            }
-          }
-        }
+        // BFS 收集下游（纯计算已抽到 workflowGraph.markDirtyDownstream）
+        const downstream = markDirtyDownstream(nodes, edges, startId);
         set({
           nodes: nodes.map((n) =>
             downstream.has(n.id) ? { ...n, data: { ...n.data, dirty: true } } : n,
@@ -801,7 +801,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           for (const key of Object.keys(routeTable)) {
             const item = routeTable[key];
             if (!item) continue;
-            const next: import('../types').AgentRouteEntry = { agentId: item.agentId, fallback: item.fallback ? [...item.fallback] : [] };
+            const next: AgentRouteEntry = { agentId: item.agentId, fallback: item.fallback ? [...item.fallback] : [] };
             if (next.agentId === id) {
               next.agentId = '';
               tableChanged = true;
@@ -947,14 +947,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         };
         set({ checkpoints: nextCheckpoints, checkpointHistory: nextHistory });
         suppressDirty = false;
-        if (isTauri && s.projectPath) {
-          try {
-            const { saveCheckpoints } = await import('../io/projectIO');
-            await saveCheckpoints(s.projectPath, nextCheckpoints, nextHistory);
-          } catch (e) {
-            console.warn('[persistCheckpoint] 检查点落盘失败（已保留内存态）:', e);
-          }
-        }
+        // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
+        await saveCheckpointToDisk(s.projectPath, nextCheckpoints, nextHistory);
       },
       // 阶段 G2：运行中节流快照——只更新 latest（同 runId 覆盖），不进历史（避免中间态污染版本列表），
       // 但会落盘，使崩溃/强制关闭后仍能从最近进度恢复。
@@ -964,14 +958,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         const next = { ...s.checkpoints, [cp.wfId]: cp };
         set({ checkpoints: next });
         suppressDirty = false;
-        if (isTauri && s.projectPath) {
-          try {
-            const { saveCheckpoints } = await import('../io/projectIO');
-            await saveCheckpoints(s.projectPath, next, s.checkpointHistory);
-          } catch (e) {
-            console.warn('[persistCheckpointSnapshot] 检查点快照落盘失败（已保留内存态）:', e);
-          }
-        }
+        // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
+        await saveCheckpointToDisk(s.projectPath, next, s.checkpointHistory);
       },
       clearCheckpoint: (wfId) => {
         const id = wfId ?? get().activeWfId;
@@ -1032,35 +1020,23 @@ export const useWorkflowStore = create<WorkflowState>()(
       /* ---- 撤销 / 重做（图结构历史栈） ---- */
       pushHistory: () => {
         const { nodes, edges, past, maxHistory } = get();
-        const snap: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
-        const next = [...past, snap];
-        // 超出上限丢弃最旧记录
-        if (next.length > maxHistory) next.splice(0, next.length - maxHistory);
-        set({ past: next, future: [] });
+        // 历史栈纯逻辑已抽到 workflowGraph.snapshotPush
+        const { past: nextPast, future: nextFuture } = snapshotPush(past, nodes, edges, maxHistory, sanitizeNodes);
+        set({ past: nextPast, future: nextFuture });
       },
       undo: () => {
         const { past, future, nodes, edges } = get();
-        if (past.length === 0) return;
-        const prev = past[past.length - 1];
-        const current: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
-        set({
-          nodes: sanitizeNodes(prev.nodes),
-          edges: [...prev.edges],
-          past: past.slice(0, -1),
-          future: [...future, current],
-        });
+        // 撤销纯逻辑已抽到 workflowGraph.snapshotUndo
+        const result = snapshotUndo(past, future, nodes, edges, sanitizeNodes);
+        if (!result) return;
+        set({ nodes: result.nodes, edges: result.edges, past: result.past, future: result.future });
       },
       redo: () => {
         const { past, future, nodes, edges } = get();
-        if (future.length === 0) return;
-        const nextSnap = future[future.length - 1];
-        const current: GraphSnapshot = { nodes: sanitizeNodes(nodes), edges: [...edges] };
-        set({
-          nodes: sanitizeNodes(nextSnap.nodes),
-          edges: [...nextSnap.edges],
-          past: [...past, current],
-          future: future.slice(0, -1),
-        });
+        // 重做纯逻辑已抽到 workflowGraph.snapshotRedo
+        const result = snapshotRedo(past, future, nodes, edges, sanitizeNodes);
+        if (!result) return;
+        set({ nodes: result.nodes, edges: result.edges, past: result.past, future: result.future });
       },
       clearHistory: () => set({ past: [], future: [] }),
 
@@ -1069,6 +1045,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const { nodes, edges } = get();
         const selIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
         if (selIds.size === 0) return;
+        // 运行态字段清洗纯映射已抽到 workflowGraph.sanitizeForClipboard
         const selNodes = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n, data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, durationMs: undefined, cached: undefined } }));
         const selEdges = edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
         set({ clipboard: { nodes: selNodes, edges: [...selEdges] } });
@@ -1078,30 +1055,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         const clip = get().clipboard;
         if (!clip || clip.nodes.length === 0) return;
         get().pushHistory();
-        const offset = 40;
-        const idMap = new Map<string, string>();
-        const newNodes: FlowNode[] = clip.nodes.map((n) => {
-          const newId = crypto.randomUUID();
-          idMap.set(n.id, newId);
-          return {
-            ...n,
-            id: newId,
-            position: { x: n.position.x + offset, y: n.position.y + offset },
-            selected: true,
-          };
-        });
-        const newEdges: FlowEdge[] = clip.edges.map((e) => ({
-          ...e,
-          id: crypto.randomUUID(),
-          source: idMap.get(e.source) ?? e.source,
-          target: idMap.get(e.target) ?? e.target,
-        }));
+        // id 映射 + 位置偏移纯计算已抽到 workflowGraph.remapPasted
+        const { nodes: newNodes, edges: newEdges, firstId } = remapPasted(clip, 40);
         // 取消其它节点的选中，仅选中粘贴进来的节点
         const deselected = get().nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
         set({
           nodes: [...deselected, ...newNodes],
           edges: [...get().edges, ...newEdges],
-          selectedNodeId: newNodes[0]?.id ?? null,
+          selectedNodeId: firstId,
         });
       },
       duplicateSelection: () => {
@@ -1713,11 +1674,11 @@ export const useWorkflowStore = create<WorkflowState>()(
       /* ---------- 步骤 14.A：Pipeline 编排定义（随项目持久化） ---------- */
 
       /** 覆盖整个 pipeline 定义集合（Builder / Orchestrator 全量写入时调用） */
-      setPipelines: (defs: import('../engine/pipeline').PipelineDef[]) => {
+      setPipelines: (defs: PipelineDef[]) => {
         set({ pipelines: defs });
       },
       /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
-      upsertPipeline: (def: import('../engine/pipeline').PipelineDef) => {
+      upsertPipeline: (def: PipelineDef) => {
         const s = get();
         const exists = s.pipelines.some((p) => p.id === def.id);
         set({
