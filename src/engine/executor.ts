@@ -165,9 +165,11 @@ export function stopWorkflow(wfId?: string): void {
 /**
  * 强制重跑：清空缓存后全量重新执行当前工作流。
  * 等价于在运行入口传入 forceRerun，供菜单/快捷键直接调用。
+ * force: true——若上一次运行仍在进行中，直接 abort 旧协程接管重启
+ * （否则运行中调用会被并发拦截忽略）。
  */
 export async function rerunWorkflow(wfId?: string): Promise<void> {
-  return runWorkflow({ forceRerun: true, wfId });
+  return runWorkflow({ forceRerun: true, force: true, wfId });
 }
 
 /**

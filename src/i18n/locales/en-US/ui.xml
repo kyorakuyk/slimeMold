@@ -38,6 +38,7 @@
   <string name="menu.runGitworktree">Git Worktree Isolation Run (separate git worktree)</string>
   <string name="menu.resumeRun">Resume from Breakpoint (failed node + downstream)</string>
   <string name="menu.rerun">Force Rerun (clear cache, full)</string>
+  <string name="menu.rerunForce">Force Rerun (take over current run)</string>
   <string name="menu.failFastOn">Fail Fast: On</string>
   <string name="menu.failFastOff">Fail Fast: Off</string>
   <string name="menu.skipFailedOn">Continue on Failure: On</string>
@@ -68,6 +69,7 @@
   <string name="topbar.redo">Redo (Ctrl+Shift+Z / Ctrl+Y)</string>
   <string name="topbar.stop">Stop</string>
   <string name="topbar.run">Run Workflow</string>
+  <string name="topbar.rerunForce">Force rerun (clear cache, take over)</string>
   <string name="topbar.closeWorkflow">Close Workflow</string>
 
   <!-- TopBar: dialogs -->

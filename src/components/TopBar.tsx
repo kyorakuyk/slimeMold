@@ -281,7 +281,7 @@ export default function TopBar({
         { label: t('menu.runSandbox'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, wfId: activeWfId }), disabled: running },
         { label: t('menu.runGitworktree'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree', wfId: activeWfId }), disabled: running },
         { label: t('menu.resumeRun'), icon: <RotateCcw size={14} />, onClick: () => resumeRun(activeWfId), disabled: running },
-        { label: t('menu.rerun'), icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(activeWfId), disabled: running },
+        { label: running ? t('menu.rerunForce') : t('menu.rerun'), icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(activeWfId) },
         'separator',
         {
           label: failFast ? t('menu.failFastOn') : t('menu.failFastOff'),
@@ -651,9 +651,14 @@ export default function TopBar({
         </button>
 
         {running ? (
-          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} onClick={() => stopWorkflow(activeWfId)}>
-            <Square size={14} />
-          </button>
+          <>
+            <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} onClick={() => stopWorkflow(activeWfId)}>
+              <Square size={14} />
+            </button>
+            <button className="sm-btn px-1.5" title={t('topbar.rerunForce')} onClick={() => rerunWorkflow(activeWfId)}>
+              <RefreshCw size={14} />
+            </button>
+          </>
         ) : (
           <button className="sm-btn sm-btn-primary px-1.5" title={t('topbar.run')} onClick={() => runWorkflow({ wfId: activeWfId })}>
             <Play size={14} />

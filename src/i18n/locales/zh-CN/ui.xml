@@ -38,6 +38,7 @@
   <string name="menu.runGitworktree">Git Worktree 强隔离运行（独立 git 工作树）</string>
   <string name="menu.resumeRun">从断点续跑（失败节点 + 下游）</string>
   <string name="menu.rerun">强制重跑（清空缓存，全量）</string>
+  <string name="menu.rerunForce">强制重跑（接管当前运行）</string>
   <string name="menu.failFastOn">失败即停：开</string>
   <string name="menu.failFastOff">失败即停：关</string>
   <string name="menu.skipFailedOn">失败时继续：开</string>
@@ -68,6 +69,7 @@
   <string name="topbar.redo">重做 (Ctrl+Shift+Z / Ctrl+Y)</string>
   <string name="topbar.stop">停止运行</string>
   <string name="topbar.run">运行工作流</string>
+  <string name="topbar.rerunForce">强制重跑（清空缓存，接管运行）</string>
   <string name="topbar.closeWorkflow">关闭工作流</string>
 
   <!-- TopBar: 提示与弹窗 -->
