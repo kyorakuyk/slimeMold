@@ -79,9 +79,16 @@ Tauri 2 + React 18 + React Flow (@xyflow/react) + Zustand + TypeScript + Vite。
 | `src/store/nodeLayout.ts` | 节点几何对齐/分布（纯） | types |
 | `src/store/nodeRuntime.ts` | 运行态复位映射（纯） | types |
 | `src/engine/executorHelpers.ts` | 能力/输入/用量/瞬时错误（纯） | types |
-| `src/engine/graphAlgo.ts` | 图算法（reachable / downstream / executionSet / 剪枝） | types |
-| `src/engine/topoSort.ts` | 拓扑分层 | types |
+| `src/engine/graphAlgo.ts` | 图算法（reachable / downstream / executionSet / 剪枝 / scope 簇 / loop 决策） | types |
+| `src/engine/topoSort.ts` | 拓扑分层（stage 化，含 loopGate 正向触发边抬高） | types |
 | `src/engine/runtime.ts` | 运行时状态（store runtime） | — |
+| `src/engine/runFinalizer.ts` | 运行收尾（历史/checkpoint/成本/指针回退） | types + store |
+| `src/engine/runScheduler.ts` | 单层调度（进度/簇并发/executeNode 注入） | types |
+| `src/engine/runLoop.ts` | 循环变量注入 + loopGate 每轮 force | types |
+| `src/engine/nodeExecutionPolicy.ts` | 节点前置决策（NodeDecision 联合类型） | types |
+| `src/engine/runLlmCall.ts` | LLM 候选链 fallback 调用骨架 | types |
+| `src/engine/nodeResultHandler.ts` | 节点成功/失败结果副作用 | types |
+| `src/agents/agentDecision.ts` | AgentRouter 运行时决策纯函数 | types |
 
 > 除 `groupProxy.ts` 依赖 `registryStore` 单例外，抽出的计算模块不依赖
 > workflowStore / executor 主流程，可被独立单测。
@@ -137,8 +144,8 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
   `<项目根>/**` 动态注入 `main` 窗口 `fs:scope`，替代静态写死绝对路径白名单。
 - **序列化往返修复**：`flowEdgesFrom` 恢复 `data.kind/scope`，补 round-trip 测试。
 
-当前验证基线（main @ `8046674`）：`npm run build`（tsc -b + vite build）0 错误、
-`vitest` 307/307、`i18n:check` 568 keys 对齐、`headless` 冒烟通过。
+当前验证基线（main @ `917e13d`，2026-08-11）：`npm run build`（tsc -b + vite build）
+0 错误、`vitest` **437/437**（37 文件）、`i18n:check` **621 keys** 对齐、`headless` 冒烟通过。
 
 ### 后续（2026-08-08）已落地
 
@@ -152,12 +159,53 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
   executorEvents/executorIntervene 共 14 用例）、缓存已按 wfId+nodeId+workspace
   隔离、旧运行收尾有代次守卫、RunContext 显式边界已建。
 
+### H1a–g：executor 七刀拆分（2026-08-11 完成，Codex 节奏「先收尾 → 调度 → 循环 → 节点策略 → LLM → 结果副作用」）
+
+> 此前的「未了结课题：`runWorkflow` 主循环仍是大函数」已解决——executor 从
+> ~1500 行降至 **1233 行**，7 个纯逻辑模块抽出并各自补了直接单测。
+
+| # | 新模块 | 行数 | 职责 | 直接单测 |
+|---|---|---|---|---|
+| H1a | `src/engine/runFinalizer.ts` | 313 | 运行收尾收敛（状态归约/最新视图/运行历史/checkpoint 终态/成本指标/终态事件/经验复盘/指针回退），显式 `FinalizeInput` 输入对象 | runFinalizer.test（5） |
+| H1b | `src/engine/runScheduler.ts` | 104 | 单层调度（层进度事件/簇并发/executeNode 闭包注入/fail-fast/层中间检查点快照） | runScheduler.test（8） |
+| H1c | `src/engine/runLoop.ts` | 69 | 循环控制辅助（`prepareLoopRound` 循环变量注入 + loopGate 每轮 force 重算；`loopLogMessages` 轮次日志） | runLoop.test（5） |
+| H1d | `src/agents/agentDecision.ts` | ~98 | `decideAgentCall`：ctx.llm 的 AgentRouter 决策段（agent 池合并/过滤/goal/category/评分/路由日志）纯函数 | — |
+| H1e | `src/engine/nodeExecutionPolicy.ts` | 155 | `decideNodeExecution`：节点前置决策统一输出 NodeDecision 联合类型（upstream-failed/bypass/mute/…/cached/execute），副作用由 executor switch 执行 | nodeExecutionPolicy.test（14） |
+| H1f | `src/engine/runLlmCall.ts` | 175 | `runLlmWithFallback`：候选链逐级尝试（限流+成本记录）、harness/普通分发、失败换候选、中止立即抛、全败抛最后错误 | runLlmCall.test（6） |
+| H1g | `src/engine/nodeResultHandler.ts` | 120 | 节点成功/失败结果副作用（缓存写入/分支登记/状态/事件/快照/stopAfter 剪裁） | nodeResultHandler.test（5） |
+
+**拆分模式**：显式输入对象 + 回调注入（不直接依赖 Zustand 闭包），副作用留在
+executor 主流程。曾有两次过度抽取尝试（`nodePreflight.ts` 前置判定、`nodeContextFactory`
+ctx 构造工厂）因行为偏差/参数爆炸**删除回退**——「小步、纯函数、行为不变」是铁律。
+
+### H1v：八项 GUI 验收（2026-08-11 完成）
+
+executor 拆分后的最终稳定性验证，四项自动化全绿 + 八项 GUI 人工验收全过：
+
+- 自动化：`tsc -b` 0 错误 · `vitest` **437 tests**（37 文件）· `headless` 冒烟 ·
+  `i18n:check` 621 keys 对齐
+- GUI：① 运行/停止 ② 强制重启 ③ 失败续跑 ④ 缓存复用 ⑤ 循环 ⑥ 并发+沙箱
+  ⑦ 接管（单测覆盖） ⑧ checkpoint 恢复
+
+**验收期间修复的真实 bug**（均已 push）：
+- `AgentPanel.pullModels` 静默吞错 → catch 暴露真实错误（新增 i18n key `agent.model.pullFailed`）
+- 顶栏停止按钮不出现：`resetStatuses` 无条件清 `running`，`runWorkflow` 里
+  `setRunning(true)` 被紧随的 `resetStatuses` 打回 false
+- 停止流程三处：`stopWorkflow` 未同步 debugRun（runID 残留误报）；`finalizeRun`
+  不区分手动停止与「被新运行顶替」（日志误导）；abort 路径不清节点状态（节点卡「正在运行」）
+- loopGate 循环只跑 1 轮（**三层根因**）：① `workflowIO` 导入边 kind 读 `e.kind`
+  而非 `e.data?.kind`（与导出不对称，所有 control 边导入后变 data 边——最关键）；
+  ② `runPlan.hasLoop` 误用图论环检测；③ `topoStages` Pass B 把 loopGate 触发边当
+  回流边跳过；④ loopGate 每轮命中缓存吞掉分支上报（`prepareLoopRound` 补 force）
+
 ### 仍未了结的课题
 
 - **成本感知路由**：AgentRouter 目前是「运行时路由 + 失败回退」，tier 仅作标注，
-  未按价格/成功率/订阅额度动态评分（需先建立价格与成功率数据源）。
-- **`workflowStore` 与 `runWorkflow` 主循环**仍是大函数，物理拆分暂缓（已有
-  RunContext 边界，但编排仍是单点大函数）。
+  未按价格/成功率/订阅额度动态评分（注：G3 AgentEconomics 已落地四级价格优先级，
+  但动态评分与「性价比最优」编排闭环仍待深化）。
+- **`workflowStore` 仍是大函数**（约 2050 行），物理拆分暂缓（Codex 确认 G5 门面化，
+  待 executor 拆完 + GUI 验收稳定后再启动——H1v 验收已通过，G5 可重新评估）。
+- **插件进程级隔离（H2）**、**Orchestrator/主控 Agent（H3）** 未做。
 
 ---
 
@@ -173,4 +221,4 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
 ---
 
 *生成日期：2026-08-07 · 初版基于 main @ `2c9fcbb`；评审后续章节基于 main @ `00194ec`；
-2026-08-08 更新至 main @ `8046674`*
+2026-08-08 更新至 main @ `8046674`；2026-08-11 更新至 main @ `917e13d`（H1a–g 七刀拆分 + H1v 验收）*

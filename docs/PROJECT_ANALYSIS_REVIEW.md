@@ -13,7 +13,7 @@
 | P0 限制 `run_git` 参数与 cwd | 任意参数 | ✅ cwd 必填且校验存在/目录；`validate_worktree_path` 防越界；沙箱分支名白名单；仅允许 worktree/branch 白名单子命令 |
 | P0 配置 CSP（当时 `csp: null`） | 无 | ✅ `tauri.conf.json` 已配 `default-src 'self'` + connect-src 白名单 |
 | P1 拆分 `builtin.ts`（当时约 2700 行） | 上帝模块 | ✅ 已拆到 `nodes/builtin/`，`builtin.ts` 现仅 50 行 |
-| P1 补自动化测试（当时无测试脚本） | 无 | ✅ 28 个测试文件、349+ tests（engine 全模块 + agents 路由/评分 + store 序列化 + nodes 辅助） |
+| P1 补自动化测试（当时无测试脚本） | 无 | ✅ 37 个测试文件、437 tests（engine 全模块 + agents 路由/评分 + store 序列化 + nodes 辅助） |
 | P1 Pipeline 持久化（当时模块级 `Map`，重启丢失） | 内存态 | ✅ `getPipeline` 读 store，`pipelines` 已进 `ProjectFile` 落盘 |
 | 凭据批量解密返回 WebView | 全量明文 | ✅ `list_endpoints_raw` 用 `strip_endpoint_api_key` 剥离明文，单条按需 `load_endpoint` |
 
@@ -32,10 +32,10 @@
 
 | 待办 | 现状与风险 |
 |---|---|
-| **executor.ts 大函数拆分**（1514 行） | ⚠️ 已抽出 runPlan/runtime/checkpoint/intervention/runEvents 等 12 个模块，但 `runWorkflow`/`executeNode` 主路径仍是单体大函数。**分析文档最核心预警「功能继续加进核心 Store 和 Executor」部分成立** |
-| **workflowStore 2151 行** | ⚠️ 未拆（Codex 评审确认「物理拆分暂缓」，留门面 G5） |
-| **插件进程级隔离**（Blob URL 动态 `import()`，无进程沙箱） | ⚠️ `applyCapability` 仍是 API 层约束，非代码隔离；分析文档判断为「当前架构最大安全短板」，**至今成立** |
-| **Orchestrator / 主控 Agent**（动态生成、修改、执行、验收工作流） | ⚠️ 未做。当前仍是「用户预设 DAG + 节点内 Agent」，动态重规划未实现 |
+| **executor.ts 大函数拆分**（1514 行） | ✅ **已解决（H1a–g，2026-08-11）**：`runWorkflow`/`executeNode` 主路径拆出 7 个纯逻辑模块（runFinalizer 313 / runScheduler 104 / runLoop 69 / agentDecision ~98 / nodeExecutionPolicy 155 / runLlmCall 175 / nodeResultHandler 120），executor 降至 **1233 行**，各模块补直接单测。H1v 八项 GUI 验收 + 437 自动化测试全绿 |
+| **workflowStore 2151 行** | ⚠️ 未拆（Codex 评审确认「物理拆分暂缓」，留门面 G5；H1v 验收已通过，G5 可重新评估） |
+| **插件进程级隔离**（Blob URL 动态 `import()`，无进程沙箱） | ⚠️ `applyCapability` 仍是 API 层约束，非代码隔离；分析文档判断为「当前架构最大安全短板」，**至今成立**（H2 待做） |
+| **Orchestrator / 主控 Agent**（动态生成、修改、执行、验收工作流） | ⚠️ 未做。当前仍是「用户预设 DAG + 节点内 Agent」，动态重规划未实现（H3 待做） |
 
 ## 四、文档自身已修正 / 过时的观点
 
@@ -56,4 +56,4 @@
 - 待办拆解见 Codex 设计评审 `CODEX_DESIGN_REVIEW.md` + 本文档 §三；执行顺序见 todo。
 - 验证清单见 `EXECUTION_PHASES_VERIFICATION.md`；架构重构历史见 `REFACTOR_SUMMARY.md`。
 
-*生成日期：2026-08-10 · 基于 main @ `c9e25e6`*
+*生成日期：2026-08-10 · 基于 main @ `c9e25e6`；2026-08-11 更新至 main @ `917e13d`（executor 拆分完成，H1a–g + H1v）*
