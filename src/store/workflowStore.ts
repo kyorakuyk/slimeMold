@@ -78,9 +78,10 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
-// 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策）已抽到 workflowGraph.ts（G5 门面化）
+// 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策 / 子图展开）已抽到 workflowGraph.ts（G5 门面化）
 import {
   classifyConnection,
+  expandSubgraphInstance,
   markDirtyDownstream,
   remapPasted,
   snapshotPush,
@@ -1753,59 +1754,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
 
-        // 内部节点重新分配 id，避免与画布上已有节点（含同一子图的其他实例）冲突
-        const idMap = new Map<string, string>();
-        for (const n of sg.nodes) idMap.set(n.id, crypto.randomUUID());
-
-        const newNodes: FlowNode[] = sg.nodes.map((n) => ({
-          id: idMap.get(n.id)!,
-          type: 'base',
-          position: { x: ref.position.x + n.position.x * 0.35, y: ref.position.y + n.position.y * 0.35 },
-          data: {
-            typeId: n.typeId,
-            label: n.label,
-            params: { ...n.params },
-            status: 'idle' as NodeStatus,
-            dirty: true,
-          },
-        }));
-        const newEdges: FlowEdge[] = sg.edges.map((e) => ({
-          id: crypto.randomUUID(),
-          source: idMap.get(e.source)!,
-          sourceHandle: e.sourceHandle ?? undefined,
-          target: idMap.get(e.target)!,
-          targetHandle: e.targetHandle ?? undefined,
-          type: 'kind',
-          data: { kind: e.kind ?? 'data' },
-        }));
-
-        // 原先接在 ref 节点上的外部连线，改接到对应的内部节点端口
-        const inPort = new Map(sg.inputs.map((p) => [p.id, p]));
-        const outPort = new Map(sg.outputs.map((p) => [p.id, p]));
-        for (const e of s.edges) {
-          if (e.target === refNodeId) {
-            const p = inPort.get(e.targetHandle ?? '');
-            if (!p) continue;
-            newEdges.push({
-              ...e,
-              id: crypto.randomUUID(),
-              target: idMap.get(p.innerNodeId)!,
-              targetHandle: p.innerHandle ?? undefined,
-            });
-          } else if (e.source === refNodeId) {
-            const p = outPort.get(e.sourceHandle ?? '');
-            if (!p) continue;
-            newEdges.push({
-              ...e,
-              id: crypto.randomUUID(),
-              source: idMap.get(p.innerNodeId)!,
-              sourceHandle: p.innerHandle ?? undefined,
-            });
-          } else {
-            newEdges.push(e);
-          }
-        }
-
+        // 内部节点 id 重映射 + 节点/边重建 + 外部连线重接（纯计算已抽到 workflowGraph.expandSubgraphInstance）
+        const { nodes: newNodes, edges: newEdges } = expandSubgraphInstance(
+          sg,
+          ref.position,
+          s.edges,
+          refNodeId,
+        );
         set({
           nodes: [...s.nodes.filter((n) => n.id !== refNodeId), ...newNodes],
           edges: newEdges,

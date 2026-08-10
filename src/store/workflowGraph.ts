@@ -11,6 +11,7 @@
  * workflowStore.ts 调用这些函数替换内联逻辑，对外 API 与行为完全不变。
  */
 import type { EdgeKind, FlowEdge, FlowNode, NodeDefinition, NodeStatus, PortDef, PortType, SubgraphDef } from '../types';
+import type { XYPosition } from '@xyflow/react';
 
 /** 撤销/重做的历史快照：仅含图本体（节点/连线），排除运行态与 UI 态 */
 export interface GraphSnapshot {
@@ -200,4 +201,73 @@ export function classifyConnection(
   // 推断连线语义：默认 'data'，若 source 输出端口声明了 flow 则采用该语义
   const kind = (srcPort?.flow as EdgeKind | undefined) ?? 'data';
   return { ok: true, kind };
+}
+
+/**
+ * 展开子图实例（unpackSubgraphNode 纯计算段，G5 门面化）：
+ * - 内部节点重新分配 id（避免与画布已有节点/同子图其他实例冲突）
+ * - 节点/边按子图定义重建（相对 ref 位置缩放）
+ * - 原先接在 ref 上的外部连线改接到对应内部节点端口
+ *
+ * 返回新的节点列表 + 边列表（不含 ref 节点本身，由调用方决定是否替换）。
+ */
+export function expandSubgraphInstance(
+  sg: SubgraphDef,
+  refPosition: XYPosition,
+  externalEdges: FlowEdge[],
+  refNodeId: string,
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  // 内部节点重新分配 id
+  const idMap = new Map<string, string>();
+  for (const n of sg.nodes) idMap.set(n.id, crypto.randomUUID());
+
+  const newNodes: FlowNode[] = sg.nodes.map((n) => ({
+    id: idMap.get(n.id)!,
+    type: 'base',
+    position: { x: refPosition.x + n.position.x * 0.35, y: refPosition.y + n.position.y * 0.35 },
+    data: {
+      typeId: n.typeId,
+      label: n.label,
+      params: { ...n.params },
+      status: 'idle' as NodeStatus,
+      dirty: true,
+    },
+  }));
+  const newEdges: FlowEdge[] = sg.edges.map((e) => ({
+    id: crypto.randomUUID(),
+    source: idMap.get(e.source)!,
+    sourceHandle: e.sourceHandle ?? undefined,
+    target: idMap.get(e.target)!,
+    targetHandle: e.targetHandle ?? undefined,
+    type: 'kind',
+    data: { kind: e.kind ?? 'data' },
+  }));
+
+  // 原先接在 ref 节点上的外部连线，改接到对应的内部节点端口
+  const inPort = new Map(sg.inputs.map((p) => [p.id, p]));
+  const outPort = new Map(sg.outputs.map((p) => [p.id, p]));
+  for (const e of externalEdges) {
+    if (e.target === refNodeId) {
+      const p = inPort.get(e.targetHandle ?? '');
+      if (!p) continue;
+      newEdges.push({
+        ...e,
+        id: crypto.randomUUID(),
+        target: idMap.get(p.innerNodeId)!,
+        targetHandle: p.innerHandle ?? undefined,
+      });
+    } else if (e.source === refNodeId) {
+      const p = outPort.get(e.sourceHandle ?? '');
+      if (!p) continue;
+      newEdges.push({
+        ...e,
+        id: crypto.randomUUID(),
+        source: idMap.get(p.innerNodeId)!,
+        sourceHandle: p.innerHandle ?? undefined,
+      });
+    } else {
+      newEdges.push(e);
+    }
+  }
+  return { nodes: newNodes, edges: newEdges };
 }

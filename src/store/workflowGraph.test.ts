@@ -1,13 +1,15 @@
 /**
- * workflowGraph.test.ts — G5 门面化第一步：图编辑纯逻辑单测。
+ * workflowGraph.test.ts — G5 门面化：图编辑纯逻辑单测。
  *
  * 覆盖：markDirtyDownstream（BFS 下游收集）、sanitizeForClipboard（运行态清洗）、
- * remapPasted（id 映射 + 位置偏移）、snapshotPush/Undo/Redo（历史栈）。
+ * remapPasted（id 映射 + 位置偏移）、snapshotPush/Undo/Redo（历史栈）、
+ * classifyConnection（连线决策）、expandSubgraphInstance（子图展开）。
  */
 import { describe, it, expect } from 'vitest';
-import type { FlowNode, FlowEdge, NodeDefinition, PortDef } from '../types';
+import type { FlowNode, FlowEdge, NodeDefinition, PortDef, SubgraphDef, SubgraphPort } from '../types';
 import {
   classifyConnection,
+  expandSubgraphInstance,
   markDirtyDownstream,
   sanitizeForClipboard,
   remapPasted,
@@ -188,5 +190,53 @@ describe('classifyConnection 连线决策', () => {
       // 应引导到兼容的 num 端口
       expect(d.message).toContain('num');
     }
+  });
+});
+
+describe('expandSubgraphInstance 子图展开', () => {
+  const sg: SubgraphDef = {
+    id: 'sg1',
+    name: '子图',
+    createdAt: '',
+    updatedAt: '',
+    nodes: [
+      { id: 'in1', typeId: 'input.text', label: 'A', position: { x: 0, y: 0 }, params: {} },
+      { id: 'mid', typeId: 'text.template', label: 'B', position: { x: 100, y: 0 }, params: {} },
+    ],
+    edges: [{ id: 'se1', source: 'in1', sourceHandle: 'text', target: 'mid', targetHandle: 'a' }],
+    inputs: [{ id: 'p1', label: '入', type: 'text', innerNodeId: 'in1', innerHandle: 'text' }],
+    outputs: [],
+  };
+
+  it('内部节点重新分配 id、位置相对 ref 缩放、内部边按新 id 重连', () => {
+    const { nodes, edges } = expandSubgraphInstance(sg, { x: 200, y: 100 }, [], 'ref1');
+    expect(nodes).toHaveLength(2);
+    expect(edges).toHaveLength(1);
+    // 新 id 不与旧 id 相同
+    expect(nodes[0].id).not.toBe('in1');
+    expect(nodes[1].id).not.toBe('mid');
+    // 位置缩放
+    expect(nodes[0].position.x).toBeCloseTo(200);
+    expect(nodes[0].position.y).toBeCloseTo(100);
+    expect(nodes[1].position.x).toBeCloseTo(235); // 200 + 100*0.35
+    // 内部边重连
+    expect(edges[0].source).toBe(nodes[0].id);
+    expect(edges[0].target).toBe(nodes[1].id);
+  });
+
+  it('接在 ref 上的外部输入连线改接到内部节点端口', () => {
+    // 外部边：source 节点 out 端口 → ref1 的 p1 端口（子图对外输入）
+    const external: FlowEdge[] = [
+      { id: 'x1', source: 'outA', sourceHandle: 'out', target: 'ref1', targetHandle: 'p1', data: {} } as FlowEdge,
+    ];
+    const { nodes, edges } = expandSubgraphInstance(sg, { x: 0, y: 0 }, external, 'ref1');
+    // 内部边 1 + 外部重接 1（重接边会生成新 id，不能按原 id 找）
+    expect(edges).toHaveLength(2);
+    // 重接的外部边：source 保持 outA，target 应指向内部 in1 的新 id、targetHandle='text'
+    const rerouted = edges.find((e) => e.source === 'outA');
+    expect(rerouted).toBeTruthy();
+    expect(rerouted!.target).toBe(nodes[0].id); // in1 的新 id（nodes[0] 是 in1 展开）
+    expect(rerouted!.targetHandle).toBe('text');
+    expect(rerouted!.target).not.toBe('ref1');
   });
 });
