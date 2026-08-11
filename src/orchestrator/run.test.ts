@@ -235,6 +235,11 @@ describe('runOrchestration 编排执行器', () => {
     expect(stopped[0]).toContain('plan');
     // plan 阶段不得被写成 success（cancel 后复查 cancelled）
     expect(final.stageLogs.find((l) => l.stageId === 'plan')?.status).not.toBe('success');
+    // H3c 验收优化：被取消阶段标 cancelled、未运行后续阶段标 skipped（不再残留「运行中」）
+    expect(final.stageLogs.find((l) => l.stageId === 'plan')?.status).toBe('cancelled');
+    expect(final.stageLogs.find((l) => l.stageId === 'construction')?.status).toBe('skipped');
+    expect(final.stageLogs.find((l) => l.stageId === 'acceptance')?.status).toBe('skipped');
+    expect(final.stageLogs.find((l) => l.stageId === 'plan')?.finishedAt).toBeTruthy();
   });
 
   it('readonly 约束：固化在 Orchestration.readonly，不执行', async () => {

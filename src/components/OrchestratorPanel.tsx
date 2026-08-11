@@ -61,6 +61,7 @@ const logStatusCls: Record<string, string> = {
   success: 'text-ok',
   failed: 'text-err',
   skipped: 'text-ink-faint',
+  cancelled: 'text-warn',
 };
 
 /** 阶段职能角色徽标 */

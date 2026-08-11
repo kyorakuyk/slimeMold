@@ -1129,7 +1129,7 @@ export interface PipelineDraft {
 /** 每阶段执行记录 */
 export interface StageLog {
   stageId: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'cancelled';
   wfId?: string;
   /** 真实运行 id（executor runId 数字代次；兼容历史字符串形态） */
   runId?: string | number;

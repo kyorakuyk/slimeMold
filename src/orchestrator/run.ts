@@ -254,7 +254,21 @@ export function cancelOrchestrationRun(orchId: string, deps: OrchestrationDeps =
   const runningStage = orch.stageLogs.find((l) => l.status === 'running');
   const wfId = runningStage?.wfId ?? orch.cursor;
   if (wfId) void deps.stopWorkflow(wfId);
+  // 收口阶段日志（H3c 验收优化）：正在运行的阶段标 cancelled，未运行的后续阶段标 skipped，
+  // 避免取消后仍显示「运行中」
+  const stageLogs: StageLog[] = orch.stageLogs.map((l) => {
+    if (l.status === 'running') {
+      return { ...l, status: 'cancelled' as const, finishedAt: new Date().toISOString() };
+    }
+    if (l.status === 'pending') {
+      return { ...l, status: 'skipped' as const };
+    }
+    return l;
+  });
   cancelOrchestration(orchId);
+  if (stageLogs.some((l, i) => l.status !== orch.stageLogs[i]?.status)) {
+    updateOrchestration(orchId, { stageLogs });
+  }
 }
 
 /**

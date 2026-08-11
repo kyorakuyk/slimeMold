@@ -297,4 +297,5 @@
   <string name="orchestrator.stageLog.success">成功</string>
   <string name="orchestrator.stageLog.failed">失败</string>
   <string name="orchestrator.stageLog.skipped">跳过</string>
+  <string name="orchestrator.stageLog.cancelled">已取消</string>
 </resources>
