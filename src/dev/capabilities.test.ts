@@ -107,16 +107,28 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['git', 'config', 'user.email', 'x'],
       ['rm', '-rf', '/'],
       ['tsc'], // 无参数（非 --noEmit）也拒
+      // 审计收紧：输出重定向 / 参数注入 / 绝对路径 / 越权脚本参数
+      ['git', 'diff', '--output=/tmp/pwn'],
+      ['git', 'diff', '--no-index', 'a', 'b'],
+      ['git', 'diff'], // 无参数（需 baseRef）
+      ['git', 'log', '--oneline', '-n', '5', '--output=/tmp/pwn'],
+      ['npm', 'run', 'test', '--', '--coverage'],
+      ['npm', 'run', 'build', '--extra'],
+      ['cat', '/etc/passwd'],
+      ['cat', '../secret'],
+      ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
       expect(r.stderr).toContain('白名单');
     }
     // 只读命令放行
-    const ok1 = await svc.shellRun(['git', 'status'], ctx);
+    const ok1 = await svc.shellRun(['git', 'status', '--porcelain'], ctx);
     expect(ok1.exitCode).toBe(0);
     const ok2 = await svc.shellRun(['cat', 'src/components/A.tsx'], ctx);
     expect(ok2.exitCode).toBe(0);
+    const ok3 = await svc.shellRun(['git', 'log', '--oneline', '-n', '5'], ctx);
+    expect(ok3.exitCode).toBe(0);
     // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
     const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
     expect(t1.exitCode).toBe(0);

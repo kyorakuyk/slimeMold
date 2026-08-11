@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EvidenceCollector, createJsonlEvidenceStore } from './evidence';
+import { EvidenceCollector, createJsonlEvidenceStore, evidencePathFor } from './evidence';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -53,6 +53,31 @@ describe('H4 EvidenceCollector', () => {
     expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
     expect(c2.records).toHaveLength(2);
     // 清理临时文件
+    const { unlink } = await import('node:fs/promises');
+    await unlink(tmp).catch(() => {});
+  });
+
+  it('审计：evidencePathFor 拒绝路径逃逸 key；flush/addAsync 等待落盘确认', async () => {
+    // 路径约束：合法 key → <baseDir>/<key>.jsonl；非法 key（分隔符/..）→ 抛错
+    expect(evidencePathFor('/data/evidence', 'orch-20260812')).toBe('/data/evidence/orch-20260812.jsonl');
+    expect(() => evidencePathFor('/data/evidence', '../etc/passwd')).toThrow(/非法证据存储 key/);
+    expect(() => evidencePathFor('/data/evidence', 'a/b')).toThrow(/非法证据存储 key/);
+    expect(() => evidencePathFor('/data/evidence', 'a\\b')).toThrow(/非法证据存储 key/);
+
+    // addAsync 等待落盘；flush 在落盘失败时 throw
+    const tmp = `evidence-flush-${Date.now()}.jsonl`;
+    const store = createJsonlEvidenceStore(tmp);
+    const c = new EvidenceCollector(store);
+    await c.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'sync' });
+    await c.flush(); // 无失败 → 不抛
+    expect(c.records).toHaveLength(1);
+
+    // 落盘失败（写不可用路径）→ flush throw（含证据 id 与失败原因），验收据此拒绝
+    const badStore = createJsonlEvidenceStore('/no/such/dir/evidence.jsonl');
+    const c2 = new EvidenceCollector(badStore);
+    c2.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', summary: 'x' });
+    await expect(c2.flush()).rejects.toThrow(/证据.*落盘失败/);
+
     const { unlink } = await import('node:fs/promises');
     await unlink(tmp).catch(() => {});
   });

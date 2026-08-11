@@ -213,7 +213,7 @@ src/platform/env.ts    # ⏳ Tauri/浏览器执行层分支（MVP 仅 Node/headl
 docs/H4_*              # ✅ 本设计文档（随实现修订）
 ```
 
-### 实现状态（2026-08-12，H4 Foundation 第一刀）
+### 实现状态（2026-08-12，H4 Foundation 第一刀 + 审计加固 f47c3c0/f4ed3a8）
 
 已落地（纯函数 + 策略 + 证据 + 验收 + worktree + Node 执行层，全部可单测）：
 - `policy.ts`：`defaultDevPolicy`（allowedPaths=components/nodes/tests/docs；protectedPaths 含

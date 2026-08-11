@@ -34,13 +34,34 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(m.get('t1')?.path).toBe('/wt/t1');
     expect(m.list()).toHaveLength(1);
 
-    const cleaned = await m.cleanup('t1');
+    // 审计确认门：未显式 confirm 拒绝清理（防误删未提交改动）
+    expect(await m.cleanup('t1')).toBe(false);
+    expect(m.get('t1')?.status).toBe('created');
+    // 无未提交改动时 hasUncommittedChanges = false
+    expect(await m.hasUncommittedChanges('t1')).toBe(false);
+
+    const cleaned = await m.cleanup('t1', { confirm: true });
     expect(cleaned).toBe(true);
     expect(m.get('t1')?.status).toBe('cleaned');
     expect(calls).toContainEqual(['worktree', 'remove', '--force', '/wt/t1']);
     expect(calls).toContainEqual(['branch', '-D', info!.branch]);
     // 二次清理返回 false（幂等）
-    expect(await m.cleanup('t1')).toBe(false);
+    expect(await m.cleanup('t1', { confirm: true })).toBe(false);
+  });
+
+  it('hasUncommittedChanges：有 tracked diff 或 untracked 文件 → true', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok('h1\n');
+      if (args[0] === 'worktree' && args[1] === 'add') return ok();
+      if (args[0] === 'diff' && args[1] === '--quiet') {
+        return { exitCode: 1, stdout: '', stderr: '', durationMs: 1 }; // 有未提交改动
+      }
+      if (args[0] === 'ls-files') return ok('docs/new.md\n');
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, '/repo');
+    await m.create('t1', '/wt/t1');
+    expect(await m.hasUncommittedChanges('t1')).toBe(true);
   });
 
   it('cleanup 失败（git 报错）→ 保留现场返回 false', async () => {
@@ -54,7 +75,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     });
     const m = new WorktreeManager({ git }, '/repo');
     await m.create('t1', '/wt/t1');
-    expect(await m.cleanup('t1')).toBe(false);
+    expect(await m.cleanup('t1', { confirm: true })).toBe(false);
     expect(m.get('t1')?.status).toBe('created'); // 保留现场
   });
 

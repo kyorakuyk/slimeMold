@@ -15,6 +15,30 @@ export interface CommandResult {
   durationMs: number;
 }
 
+/** 常见凭据/密钥环境变量名（执行子命令时剥离，防止开发节点读取宿主凭据）。 */
+const CREDENTIAL_KEYS = new Set([
+  'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+  'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
+  'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY_1', 'AZURE_OPENAI_API_KEY_2',
+  'HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN', 'REPLICATE_API_TOKEN',
+]);
+
+/**
+ * 生成无凭据执行环境：复制 process.env 并剥离常见凭据变量，注入 git 非交互配置。
+ * （审计修复：统一设置无凭据环境，开发节点执行任何命令都拿不到宿主密钥。）
+ */
+export function sanitizeEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue;
+    if (CREDENTIAL_KEYS.has(k)) continue;
+    out[k] = v;
+  }
+  out.GIT_TERMINAL_PROMPT = '0'; // git 不弹凭据交互
+  out.GIT_CONFIG_NOSYSTEM = '1'; // 不读系统级 git 配置
+  return out;
+}
+
 /** 执行命令并捕获退出码/stdout/stderr（timeout 用 ms；非零退出码不抛错，返回结构）。 */
 export function runCommand(
   cmd: string,
@@ -27,7 +51,7 @@ export function runCommand(
     execFile(
       cmd,
       args,
-      { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+      { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, env: sanitizeEnv() },
       (err, stdout, stderr) => {
         const durationMs = Date.now() - start;
         if (!err) {

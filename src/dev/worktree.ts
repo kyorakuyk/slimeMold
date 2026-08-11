@@ -68,10 +68,27 @@ export class WorktreeManager {
     return [...this.infos.values()];
   }
 
-  /** 清理 worktree（force 丢弃未提交改动）并删除临时分支。失败返回 false（保留现场供回放）。 */
-  async cleanup(id: string): Promise<boolean> {
+  /** worktree 是否还有未提交改动（tracked diff 或 untracked 文件）。 */
+  async hasUncommittedChanges(id: string): Promise<boolean> {
     const info = this.infos.get(id);
     if (!info || info.status === 'cleaned') return false;
+    const [diffQ, untracked] = await Promise.all([
+      this.runner.git(['diff', '--quiet', 'HEAD'], info.path),
+      this.runner.git(['ls-files', '--others', '--exclude-standard'], info.path),
+    ]);
+    return diffQ.exitCode !== 0 || untracked.stdout.trim().length > 0;
+  }
+
+  /**
+   * 清理 worktree 并删除临时分支。
+   * 确认门（审计修复）：必须显式传入 { confirm: true }（由上层在人工验收后调用）——
+   * `git worktree remove --force` 会丢弃未提交改动，未确认一律拒绝清理（返回 false）。
+   * 失败返回 false（保留现场供回放）。
+   */
+  async cleanup(id: string, opts: { confirm?: boolean } = {}): Promise<boolean> {
+    const info = this.infos.get(id);
+    if (!info || info.status === 'cleaned') return false;
+    if (!opts.confirm) return false; // 确认门：未确认拒绝清理（防误删未提交改动）
     const rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
     if (rm.exitCode !== 0) return false;
     await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);

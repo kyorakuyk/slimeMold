@@ -120,19 +120,50 @@ export function applyUnifiedPatch(original: string, patch: string): ApplyPatchRe
 /* Node 实现                                                           */
 /* ------------------------------------------------------------------ */
 
-/** 命令白名单规则：命令名 + 允许的参数前缀（argsPrefix 缺失=任意参数但命令名受限）。 */
+/**
+ * 命令白名单规则（审计收紧）：
+ * - args：精确匹配（参数完全一致才允许——防 `npm run test -- --extra` 之类穿透）；
+ * - argsPrefix：前缀匹配 + allowExtraArgs 限制额外参数个数；
+ * - disallowDashExtra：额外参数不得以 `-` 开头（防 `--output=`/`--config` 等危险选项）；
+ * - denyContain：任一参数包含这些子串 → 拒绝（防 `git diff --output=` 落盘越权、`--no-index` 等）；
+ * - denyAbsPath：参数不得是绝对路径或含 `..` 段（防 `cat /etc/passwd`、`cat ../secret`）。
+ */
 interface CommandRule {
   cmd: string;
+  args?: string[];
   argsPrefix?: string[];
+  /** 前缀后允许的额外参数个数下限/上限 */
+  minExtraArgs?: number;
+  allowExtraArgs?: number;
+  disallowDashExtra?: boolean;
+  denyContain?: string[];
+  denyAbsPath?: boolean;
 }
 
-/** 命令数组是否匹配规则：命令名一致且参数以 argsPrefix 为前缀（参数数量 ≥ 前缀长度）。 */
+/** 命令数组是否匹配规则（精确 / 前缀 + 受限额外参数 / 纯命令名）。 */
 function matchesRule(rule: CommandRule, cmd: string[]): boolean {
   if (cmd[0] !== rule.cmd) return false;
-  if (!rule.argsPrefix) return true;
   const args = cmd.slice(1);
-  if (args.length < rule.argsPrefix.length) return false;
-  return rule.argsPrefix.every((p, i) => args[i] === p);
+  if (rule.args) {
+    // 精确匹配：参数完全一致才允许
+    if (args.length !== rule.args.length) return false;
+    if (!rule.args.every((a, i) => args[i] === a)) return false;
+  } else if (rule.argsPrefix) {
+    // 前缀匹配 + 额外参数个数上下限 + 禁 '-' 开头额外参数
+    if (args.length < rule.argsPrefix.length) return false;
+    if (!rule.argsPrefix.every((a, i) => args[i] === a)) return false;
+    const extra = args.slice(rule.argsPrefix.length);
+    const minExtra = rule.minExtraArgs ?? 0;
+    const maxExtra = rule.allowExtraArgs ?? 0;
+    if (extra.length < minExtra || extra.length > maxExtra) return false;
+    if (rule.disallowDashExtra && extra.some((a) => a.startsWith('-'))) return false;
+  }
+  // 既无 args 也无 argsPrefix → 纯命令名规则（如 {cmd:'cat', denyAbsPath:true}），命令名匹配即可
+  if (rule.denyContain?.some((d) => args.some((a) => a.includes(d)))) return false;
+  if (rule.denyAbsPath && args.some((a) => a.startsWith('/') || a.split(/[/\\]/).includes('..'))) {
+    return false;
+  }
+  return true;
 }
 
 function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
@@ -140,28 +171,54 @@ function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
 }
 
 /**
- * shell 白名单（只读命令）：基础查询 + 只读 git。
- * 明确排除：git push/commit/config/remote、node -e、npx（下载执行外部包）、npm install/任意 npm run。
+ * shell 白名单（只读）：基础查询命令（禁绝对路径/..）+ 只读 git（精确参数）。
+ * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
+ * git diff/log 的 --output= 与 --no-index 等。
  */
 const DEFAULT_SHELL_RULES: CommandRule[] = [
-  { cmd: 'pwd' }, { cmd: 'echo' }, { cmd: 'ls' }, { cmd: 'cat' },
-  { cmd: 'find' }, { cmd: 'head' }, { cmd: 'tail' }, { cmd: 'grep' },
-  { cmd: 'git', argsPrefix: ['status'] },
-  { cmd: 'git', argsPrefix: ['diff'] },
-  { cmd: 'git', argsPrefix: ['log'] },
-  { cmd: 'git', argsPrefix: ['ls-files'] },
-  { cmd: 'git', argsPrefix: ['rev-parse'] },
+  { cmd: 'pwd' },
+  { cmd: 'echo' },
+  { cmd: 'ls', denyAbsPath: true },
+  { cmd: 'cat', denyAbsPath: true },
+  { cmd: 'find', denyAbsPath: true },
+  { cmd: 'head', denyAbsPath: true },
+  { cmd: 'tail', denyAbsPath: true },
+  { cmd: 'grep', denyAbsPath: true },
+  { cmd: 'git', args: ['status', '--porcelain'] },
+  { cmd: 'git', args: ['status', '--short'] },
+  { cmd: 'git', args: ['diff', 'HEAD'] },
+  { cmd: 'git', args: ['diff', '--name-only', 'HEAD'] },
+  { cmd: 'git', args: ['diff', '--stat', 'HEAD'] },
+  { cmd: 'git', args: ['diff', '--name-only'] },
+  {
+    cmd: 'git',
+    argsPrefix: ['diff'],
+    minExtraArgs: 1,
+    allowExtraArgs: 1,
+    disallowDashExtra: true,
+    denyContain: ['--output=', '--no-index', '--ext-diff'],
+  },
+  {
+    cmd: 'git',
+    argsPrefix: ['log', '--oneline', '-n'],
+    minExtraArgs: 1,
+    allowExtraArgs: 1,
+    disallowDashExtra: true,
+    denyContain: ['--output=', '--no-walk'],
+  },
+  { cmd: 'git', args: ['ls-files', '--others', '--exclude-standard'] },
+  { cmd: 'git', args: ['rev-parse', 'HEAD'] },
 ];
 
-/** 测试白名单：typecheck / vitest / 本地脚本（scripts/ 目录） / 仓库自带的特定 npm script。 */
+/** 测试白名单：typecheck / vitest / 本地脚本（scripts/）/ 仓库自带特定 npm script（精确，禁额外参数）。 */
 const DEFAULT_TEST_RULES: CommandRule[] = [
-  { cmd: 'tsc', argsPrefix: ['--noEmit'] },
-  { cmd: 'tsc', argsPrefix: ['-b'] },
-  { cmd: 'vitest', argsPrefix: ['run'] },
-  { cmd: 'tsx', argsPrefix: ['scripts/'] },
-  { cmd: 'npm', argsPrefix: ['run', 'test'] },
-  { cmd: 'npm', argsPrefix: ['run', 'build'] },
-  { cmd: 'npm', argsPrefix: ['run', 'i18n:check'] },
+  { cmd: 'tsc', args: ['--noEmit'] },
+  { cmd: 'tsc', args: ['-b'] },
+  { cmd: 'vitest', args: ['run'] },
+  { cmd: 'tsx', argsPrefix: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true },
+  { cmd: 'npm', args: ['run', 'test'] },
+  { cmd: 'npm', args: ['run', 'build'] },
+  { cmd: 'npm', args: ['run', 'i18n:check'] },
 ];
 
 export interface NodeDevDeps {

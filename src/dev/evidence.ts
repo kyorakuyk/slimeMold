@@ -51,7 +51,7 @@ function nextId(): string {
 
 /**
  * Evidence 持久化接口：宿主独占落盘（EvidenceStore 必须位于 worktree 之外）。
- * append 在 add 时 fire-and-forget 调用；load 用于启动/恢复跨会话审计。
+ * append 在 add 时调用；load 用于启动/恢复跨会话审计。
  */
 export interface EvidencePersistence {
   append(rec: EvidenceRecord): Promise<void>;
@@ -59,8 +59,22 @@ export interface EvidencePersistence {
 }
 
 /**
+ * 宿主统一约束的 EvidenceStore 路径（审计修复）：
+ * - baseDir 由宿主指定（如 `<项目根>/.slimemold/evidence/`，位于 worktree 之外）；
+ * - key 只允许 `[a-zA-Z0-9._-]`，**拒绝任何路径分隔符与 `..`**（防 `../` 逃逸到任意目录）；
+ * - 返回 `<baseDir>/<key>.jsonl` 绝对路径。
+ */
+export function evidencePathFor(baseDir: string, key: string): string {
+  if (!/^[\w.-]+$/.test(key) || key.includes('..')) {
+    throw new Error(`非法证据存储 key：${key}（仅允许 [a-zA-Z0-9._-]，禁止路径分隔符/..）`);
+  }
+  return `${baseDir.replace(/\\/g, '/').replace(/\/+$/, '')}/${key}.jsonl`;
+}
+
+/**
  * JSONL 证据存储（每行一条证据，追加写）。仅 Node 环境可用（动态 import fs）——
  * 浏览器/WebView 调用即 reject，由宿主在 headless/CI 或 Tauri Rust 通道侧使用。
+ * 文件路径必须经 evidencePathFor 由宿主生成（不接受调用方任意 filePath）。
  */
 export function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
   return {
@@ -83,27 +97,62 @@ export function createJsonlEvidenceStore(filePath: string): EvidencePersistence 
  * EvidenceCollector：宿主侧证据采集器。
  * 所有 add 调用强制 capturedBy='host'；调用方（DevCapabilityService）负责在
  * 真实命令/测试/git/路径检查完成后采集——绝不接受模型/节点自报结果。
- * 可选注入 EvidencePersistence（宿主独占路径），add 时同步落盘。
+ * 可选注入 EvidencePersistence（宿主独占路径）。持久化失败默认不阻断内存采集，
+ * 但提供 addAsync/flush 供验收流程「等待并确认落盘成功」——未落盘的证据不得作为验收依据。
  */
 export class EvidenceCollector {
   private _records: EvidenceRecord[] = [];
+  private _pending: Promise<void>[] = [];
+  private _persistErrors: string[] = [];
 
   constructor(private readonly persistence?: EvidencePersistence) {}
 
-  add(input: EvidenceInput): EvidenceRecord {
-    const rec: EvidenceRecord = {
+  private makeRec(input: EvidenceInput): EvidenceRecord {
+    return {
       ...input,
       id: nextId(),
       capturedBy: 'host',
       createdAt: new Date().toISOString(),
     };
+  }
+
+  /** fire-and-forget 落盘（不等待；持久化失败记录到 persistErrors）。 */
+  add(input: EvidenceInput): EvidenceRecord {
+    const rec = this.makeRec(input);
     this._records.push(rec);
     if (this.persistence) {
-      void this.persistence.append(rec).catch(() => {
-        // 落盘失败不阻断采集（内存仍保留）；由宿主告警审计缺失
+      const p = this.persistence.append(rec).catch((e: unknown) => {
+        this._persistErrors.push(
+          `证据 ${rec.id} 落盘失败：${e instanceof Error ? e.message : String(e)}`,
+        );
       });
+      this._pending.push(p);
     }
     return rec;
+  }
+
+  /** 添加并等待该条落盘成功（失败 throw——验收关键证据必须确认持久化）。 */
+  async addAsync(input: EvidenceInput): Promise<EvidenceRecord> {
+    const rec = this.makeRec(input);
+    this._records.push(rec);
+    if (this.persistence) {
+      const p = this.persistence.append(rec);
+      this._pending.push(p.catch(() => {}));
+      await p;
+    }
+    return rec;
+  }
+
+  /** 等待所有在途落盘完成；若有失败则 throw 汇总错误（验收前必须 flush）。 */
+  async flush(): Promise<void> {
+    const pending = this._pending;
+    this._pending = [];
+    await Promise.all(pending);
+    if (this._persistErrors.length > 0) {
+      const errs = this._persistErrors;
+      this._persistErrors = [];
+      throw new Error(`证据持久化存在失败，不能作为验收依据：${errs.join('；')}`);
+    }
   }
 
   /** 启动/恢复：从持久化 store 载入历史证据（强制 capturedBy='host'）。 */
@@ -118,6 +167,10 @@ export class EvidenceCollector {
     return this._records;
   }
 
+  get persistErrors(): readonly string[] {
+    return this._persistErrors;
+  }
+
   /** 追加已构造好的证据（批量恢复用；仍强制 capturedBy='host'）。 */
   restore(rec: EvidenceRecord): void {
     this._records.push({ ...rec, capturedBy: 'host' });
@@ -130,6 +183,8 @@ export class EvidenceCollector {
 
   clear(): void {
     this._records = [];
+    this._pending = [];
+    this._persistErrors = [];
   }
 
   toJSON(): EvidenceRecord[] {
