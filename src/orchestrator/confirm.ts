@@ -35,7 +35,11 @@ export function canTransition(from: OrchestrationStatus, to: OrchestrationStatus
 }
 
 /** 创建编排记录（草案态，不落 pipeline）——仅写入 orchestrations 集合 */
-export function createOrchestration(goal: string, draft: PipelineDraft): Orchestration {
+export function createOrchestration(
+  goal: string,
+  draft: PipelineDraft,
+  opts?: { readonly?: boolean },
+): Orchestration {
   const now = new Date().toISOString();
   const orch: Orchestration = {
     id: `orch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -44,6 +48,8 @@ export function createOrchestration(goal: string, draft: PipelineDraft): Orchest
     createdAt: now,
     updatedAt: now,
     draft,
+    // readonly 约束固化到编排记录（P1 修复：运行路径无需 getRequest 也能读到）
+    readonly: opts?.readonly,
     stageLogs: draft.stages.map((s) => ({ stageId: s.id, status: 'pending' })),
     runIds: [],
   };

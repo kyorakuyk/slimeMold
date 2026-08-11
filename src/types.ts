@@ -1151,6 +1151,8 @@ export interface Orchestration {
   pipelineId?: string;
   /** 当前执行到哪一阶段（可恢复） */
   cursor?: string;
+  /** 只读模式：只产出草案不执行（constraints.readonly 固化到编排记录，运行路径无需 getRequest） */
+  readonly?: boolean;
   stageLogs: StageLog[];
   /** 关联运行 id（runEvents 重放） */
   runIds: string[];
