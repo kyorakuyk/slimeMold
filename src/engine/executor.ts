@@ -168,7 +168,7 @@ export function stopWorkflow(wfId?: string): void {
  * force: true——若上一次运行仍在进行中，直接 abort 旧协程接管重启
  * （否则运行中调用会被并发拦截忽略）。
  */
-export async function rerunWorkflow(wfId?: string): Promise<void> {
+export async function rerunWorkflow(wfId?: string): Promise<RunResult> {
   return runWorkflow({ forceRerun: true, force: true, wfId });
 }
 
@@ -232,7 +232,17 @@ export interface RunOptions {
   sandboxMode?: 'copy' | 'gitworktree';
 }
 
-export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
+/** runWorkflow 运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行） */
+export interface RunResult {
+  /** success=无失败节点；error=有失败节点；aborted=手动停止/被顶替/空图/非法图 */
+  status: 'success' | 'error' | 'aborted';
+  /** 本次运行代次（runFinalizer 用同一 runId 写历史/checkpoint） */
+  runId: number;
+  /** 失败/拦截原因（aborted/error 时有） */
+  error?: string;
+}
+
+export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
   // 解耦接缝：执行引擎的输出动作（日志/进度/历史/成本）经 ExecutionRuntime 接口，
@@ -250,7 +260,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
     } else {
       wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
-      return;
+      return { status: 'aborted', runId: gen.currentRunId, error: '上一次运行仍在有效进行中，已忽略重复启动' };
     }
   }
   const myRun = ++gen.currentRunId; // 本次运行代次
@@ -294,7 +304,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
   const graphEdges = wfId === wf.activeWfId ? wf.edges : (wf.workflows[wfId]?.edges ?? []);
   if (graphNodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
-    return;
+    return { status: 'aborted', runId: gen.currentRunId, error: '还没放任何节点' };
   }
 
   let plan: ReturnType<typeof buildRunPlan>;
@@ -302,7 +312,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     plan = buildRunPlan(graphNodes, graphEdges, wf.subgraphs);
   } catch (err) {
     wf.addLog('error', err instanceof Error ? err.message : String(err));
-    return;
+    return { status: 'aborted', runId: gen.currentRunId, error: err instanceof Error ? err.message : String(err) };
   }
   const { nodes, edges, stages, cyclic, loopGateIds, loopVarOf, maxLoopsOf, loopBodyOf, hasLoop } = plan;
   const expandedCount = nodes.length - graphNodes.length;
@@ -318,7 +328,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
       wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' }, wfId);
     }
     wf.addLog('error', `有节点连成了死循环（${labels}），请拆掉其中一条连线后再运行`);
-    return;
+    return { status: 'aborted', runId: gen.currentRunId, error: `节点连成了死循环（${labels}）` };
   }
 
   const force = new Set(opts.forceNodes ?? []);
@@ -525,7 +535,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
 
   // 收尾：状态归约 / 运行历史 / checkpoint 终态 / 成本指标 / 终态事件 / 经验复盘 / 指针回退
   // 已抽到 runFinalizer.ts（executor 拆分第一刀），此处仅传入运行上下文。
-  await finalizeRun({
+  // 返回明确结果（status + runId），供调用方（含 H3b 编排器）判定执行成败。
+  const finalizeResult = await finalizeRun({
     wfId,
     myRun,
     isCurrentRun: myRun === gen.currentRunId,
@@ -543,6 +554,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<void> {
     hasLoop,
     stages,
   });
+  return finalizeResult;
 
   } finally {
     // 只有最新代次才允许复位 UI/Abort；资源则始终按 runId 清理自己的那一份。

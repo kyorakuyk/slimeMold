@@ -53,15 +53,14 @@ function fakeDeps(over: Partial<OrchestrationDeps> = {}): {
   const baseEnsure = over.ensureStageWorkflow;
   const baseGetWf = over.getWorkflow;
   const depsImpl: OrchestrationDeps = {
-    // runWorkflow 包装：记录 runs，返回真实 runId，再调覆盖实现（若有）
+    // runWorkflow 包装：记录 runs，返回 success + 递增 runId，再调覆盖实现（若有）
     runWorkflow: vi.fn(async (opts) => {
       runs.push(opts.wfId);
-      const runId = `real-run-${opts.wfId}-${runs.length}`;
+      const runId = 1000 + runs.length;
       if (baseRun) {
-        const r = await baseRun(opts);
-        return { runId: r && typeof r === 'object' && 'runId' in r ? r.runId : runId };
+        return await baseRun(opts);
       }
-      return { runId };
+      return { status: 'success' as const, runId };
     }),
     // stopWorkflow 包装：记录 stopped，再调覆盖实现（若有）
     stopWorkflow: vi.fn((wfId) => {
@@ -108,9 +107,9 @@ describe('runOrchestration 编排执行器', () => {
     expect(runs[2]).toContain('acceptance');
     expect(result.stageLogs.every((l) => l.status === 'success')).toBe(true);
     expect(result.stageLogs.every((l) => l.wfId && l.startedAt && l.finishedAt)).toBe(true);
-    // 真实 runId（非时间戳伪造）
-    expect(result.stageLogs.every((l) => l.runId?.startsWith('real-run-'))).toBe(true);
-    // runIds 已收集
+    // 真实 runId（executor 返回，非时间戳伪造）
+    expect(result.stageLogs.every((l) => typeof l.runId === 'number')).toBe(true);
+    // runIds 已收集（executor 真实 runId）
     expect(result.runIds.length).toBe(3);
   });
 
@@ -119,6 +118,7 @@ describe('runOrchestration 编排执行器', () => {
     const { deps: f, runs } = fakeDeps({
       runWorkflow: vi.fn(async (opts) => {
         if (opts.wfId.includes('construction')) throw new Error('construction 爆炸');
+        return { status: 'success' as const, runId: 1 };
       }),
     });
     const result = await runOrchestration(orch.id, f);
@@ -192,11 +192,10 @@ describe('runOrchestration 编排执行器', () => {
     const gate = new Promise<void>((r) => { resolvePlan = r; });
     const { deps: f, runs, stopped } = fakeDeps({
       runWorkflow: vi.fn(async (opts) => {
-        runs.push(opts.wfId);
         if (opts.wfId.includes('plan')) {
           await gate; // 挂起，让 cancel 有机会介入
         }
-        return { runId: `real-run-${opts.wfId}` };
+        return { status: 'success' as const, runId: 42 };
       }),
     });
     const p = runOrchestration(orch.id, f);
@@ -219,5 +218,40 @@ describe('runOrchestration 编排执行器', () => {
     await expect(runOrchestration(orch.id, f)).rejects.toThrow(/只读模式/);
     expect(runs).toHaveLength(0);
     expect(getOrchestration(orch.id)?.status).toBe('cancelled');
+  });
+
+  it('executor 返回 error → 阶段 failed，不假成功（P0 核心）', async () => {
+    const orch = makeReadyOrch();
+    const { deps: f, runs } = fakeDeps({
+      runWorkflow: vi.fn(async (opts) => {
+        if (opts.wfId.includes('construction')) {
+          return { status: 'error' as const, runId: 7, error: '节点执行失败：网络超时' };
+        }
+        return { status: 'success' as const, runId: 1 };
+      }),
+    });
+    const result = await runOrchestration(orch.id, f);
+    expect(result.status).toBe('failed');
+    expect(result.stageLogs.find((l) => l.stageId === 'plan')?.status).toBe('success');
+    expect(result.stageLogs.find((l) => l.stageId === 'construction')?.status).toBe('failed');
+    expect(result.stageLogs.find((l) => l.stageId === 'construction')?.error).toContain('节点执行失败');
+    expect(result.stageLogs.find((l) => l.stageId === 'acceptance')?.status).toBe('pending');
+    expect(runs).toHaveLength(2); // acceptance 未跑
+  });
+
+  it('executor 返回 aborted → 阶段 failed（空图/非法图/被停止均经此判定）', async () => {
+    const orch = makeReadyOrch();
+    const { deps: f } = fakeDeps({
+      runWorkflow: vi.fn(async (opts) => {
+        if (opts.wfId.includes('construction')) {
+          return { status: 'aborted' as const, runId: 8, error: '工作流无可用执行计划' };
+        }
+        return { status: 'success' as const, runId: 1 };
+      }),
+    });
+    const result = await runOrchestration(orch.id, f);
+    expect(result.status).toBe('failed');
+    expect(result.stageLogs.find((l) => l.stageId === 'construction')?.status).toBe('failed');
+    expect(result.stageLogs.find((l) => l.stageId === 'construction')?.error).toContain('无可用执行计划');
   });
 });

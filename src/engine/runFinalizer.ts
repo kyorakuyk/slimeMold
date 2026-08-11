@@ -34,6 +34,14 @@ import {
 import { modelPrice } from '../agents/routerScoring';
 import { skippedCount } from './nodeCache';
 
+/** 收尾结果（H3b 编排器依赖：status 判定执行成败） */
+export interface RunFinalizeResult {
+  /** executor 运行结果：success / error（有失败节点）/ aborted（手动停止） */
+  status: 'success' | 'error' | 'aborted';
+  /** 本次运行代次（作为 runId 语义） */
+  runId: number;
+}
+
 /** 收尾器输入（由 runWorkflow 在收尾点构造传入）。 */
 export interface FinalizeInput {
   wfId: string;
@@ -68,8 +76,8 @@ export interface FinalizeInput {
   stages: string[][];
 }
 
-/** 由 runWorkflow 收尾调用；返回 Promise（checkpoint 落盘 await）。 */
-export async function finalizeRun(input: FinalizeInput): Promise<void> {
+/** 由 runWorkflow 收尾调用；返回 Promise<RunFinalizeResult>（checkpoint 落盘 await）。 */
+export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResult> {
   const {
     wfId,
     myRun,
@@ -121,11 +129,11 @@ export async function finalizeRun(input: FinalizeInput): Promise<void> {
     // 这里只补一条收尾说明，不写历史/复盘（避免污染后续运行）。
     if (signal.aborted) {
       rt.addLog('info', `已停止（旧协程收尾，用时 ${elapsed}s）`);
-      return;
+      return { status: 'aborted', runId: myRun };
     }
     // 真正被新一次运行顶替的旧运行：只留最简日志，不写历史/复盘
     rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
-    return;
+    return { status: 'aborted', runId: myRun };
   }
   if (signal.aborted && failed.size === 0) {
     rt.addLog('info', `已手动停止（用时 ${elapsed}s）`);
@@ -309,4 +317,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<void> {
     }
     rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
   }
+
+  // 返回明确运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行）
+  return { status, runId: myRun };
 }

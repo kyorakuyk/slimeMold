@@ -27,14 +27,16 @@ export type StageWfBind =
   | { ok: true; wfId: string }
   | { ok: false; error: string };
 
-/** runWorkflow 依赖返回：真实 runId（executor 运行记录 id，非编排器伪造） */
+/** runWorkflow 依赖返回：executor 真实运行结果（status 判定成败，runId 精确对应本次运行） */
 export interface RunWorkflowResult {
-  runId?: string;
+  status: 'success' | 'error' | 'aborted';
+  runId: number;
+  error?: string;
 }
 
 /** 依赖注入：真实 executor / 工作流存储；测试可注入 fake */
 export interface OrchestrationDeps {
-  runWorkflow: (opts: { wfId: string }) => Promise<RunWorkflowResult | void>;
+  runWorkflow: (opts: { wfId: string }) => Promise<RunWorkflowResult>;
   stopWorkflow: (wfId?: string) => void | Promise<void>;
   /**
    * 为某阶段绑定真实工作流：
@@ -50,10 +52,9 @@ export interface OrchestrationDeps {
 const defaultDeps: OrchestrationDeps = {
   runWorkflow: async (opts) => {
     const { runWorkflow: real } = await import('../engine/executor');
-    await real({ wfId: opts.wfId });
-    // 提取真实 runId：runHistory 最近一条记录（前插），其 id 即本次运行的 runId
-    const top = useWorkflowStore.getState().runHistory[0];
-    return { runId: top?.id };
+    // executor 现返回 { status, runId }——真实运行结果，禁止反查全局 runHistory（并发串号风险）
+    const r = await real({ wfId: opts.wfId });
+    return { status: r.status, runId: r.runId, error: r.error };
   },
   stopWorkflow: async (wfId) => {
     const { stopWorkflow: real } = await import('../engine/executor');
@@ -169,15 +170,27 @@ export async function runOrchestration(
         // P1 修复：cancel 后若 runWorkflow 返回，复查 cancelled——不得标 success
         const after = getOrchestration(orchId);
         if (!after || after.status === 'cancelled') break;
-        // P1 修复：真实 runId（executor 运行记录 id），不伪造时间戳
-        const runId = result && typeof result === 'object' && 'runId' in result ? result.runId : undefined;
+        // 核心判定：仅 executor 返回 status==='success' 才算阶段成功；
+        // error/aborted（非法图、节点失败、死循环等）→ 阶段 failed，绝不假成功
+        if (result.status !== 'success') {
+          updateStageLog(orchId, stageId, {
+            status: 'failed',
+            wfId,
+            runId: result.runId,
+            error: result.error ?? `工作流执行未成功（${result.status}）`,
+            finishedAt: new Date().toISOString(),
+          });
+          const failed = getOrchestration(orchId)!;
+          updateOrchestration(orchId, { status: 'failed', stageLogs: failed.stageLogs });
+          return getOrchestration(orchId)!;
+        }
         updateStageLog(orchId, stageId, {
           status: 'success',
           wfId,
-          runId,
+          runId: result.runId,
           finishedAt: new Date().toISOString(),
         });
-        updateOrchestration(orchId, { cursor: stageId, runIds: runId ? [...after.runIds, runId] : after.runIds });
+        updateOrchestration(orchId, { cursor: stageId, runIds: [...after.runIds, result.runId] });
       } catch (e) {
         // 首次失败：标记该阶段 failed，编排转 failed，停止后续阶段
         updateStageLog(orchId, stageId, {

@@ -1131,7 +1131,8 @@ export interface StageLog {
   stageId: string;
   status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
   wfId?: string;
-  runId?: string;
+  /** 真实运行 id（executor runId 数字代次；兼容历史字符串形态） */
+  runId?: string | number;
   cost?: number;
   startedAt?: string;
   finishedAt?: string;
@@ -1156,6 +1157,6 @@ export interface Orchestration {
   /** 阶段 → 真实 wfId 固化映射（首次绑定后写入，恢复/重试复用同一工作流，不重建） */
   stageWfIds?: Record<string, string>;
   stageLogs: StageLog[];
-  /** 关联运行 id（runEvents 重放） */
-  runIds: string[];
+  /** 关联运行 id（runEvents 重放；executor runId 数字代次） */
+  runIds: (string | number)[];
 }
