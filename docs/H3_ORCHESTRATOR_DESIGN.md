@@ -182,8 +182,14 @@ type OrchestrationEventKind =
    - `wfRef.kind: 'existing'` 的复用，**只读引用**（不 clone 不修改原工作流）；
    - `wfRef.kind: 'new'` 的生成，落地为**新工作流**（`registerWorkflow(..., {activate:false})`），
      用户可以编辑后再跑；Orchestrator 不会自动运行未经确认的新工作流。
-4. **撤销/废弃**：`discardDraft(orchId)` 删除草案与孤儿编排记录，**不触碰任何用户工作流**。
-5. 异常路径：任何阶段失败不自动回流（需用户确认「重试/回流/停止」三选一），
+4. **撤销/废弃（状态约束）**：`discardDraft(orchId)` 只允许删除**未开始执行**的编排
+   （draft / awaiting-confirm / ready），**不触碰任何用户工作流**；`running`/`paused` 必须
+   先 `cancelOrchestration()`（停止当前阶段 → 转 cancelled）再删除；`done`/`failed` 属于
+   历史记录，应归档而非「废弃草案」。
+5. **取消/暂停**：`cancelOrchestration(orchId)` 是 running/paused → cancelled 的状态收口
+   （H3b 的停止钩子先 `stopWorkflow` 停止当前阶段，再落 cancelled）；`pause` 语义由 H3b
+   执行器实现（running → paused）。
+6. 异常路径：任何阶段失败不自动回流（需用户确认「重试/回流/停止」三选一），
    避免 Orchestrator 自说自话改写用户工程。
 
 ---
@@ -298,7 +304,7 @@ async function runOrchestration(orchId: string): Promise<void> {
 src/orchestrator/
   types.ts        # Orchestration / PipelineDraft / DraftStage / StageLog / OrchestratorRequest
   draft.ts        # generateDraft（纯函数，复用 decideAgentCall + 阶段模板）
-  confirm.ts      # confirmDraft / discardDraft / bindStageWorkflows（store 收口）
+  confirm.ts      # confirmDraft / discardDraft / cancelOrchestration / ALLOWED_TRANSITIONS（store 收口）
   run.ts          # runOrchestration（按拓扑序调 runWorkflow + 事件/checkpoint/StageLog）
   events.ts       # OrchestrationEventKind 扩展 + emitOrch
   *.test.ts       # 各模块单测（fake runWorkflow）

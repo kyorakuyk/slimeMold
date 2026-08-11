@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateDraft } from './draft';
 import {
   canTransition,
+  cancelOrchestration,
   confirmDraft,
   createOrchestration,
   discardDraft,
@@ -139,6 +140,54 @@ describe('confirm 确认门', () => {
     expect(getOrchestration(orch.id)).toBeUndefined();
     expect(getOrchestration(other.id)).toBeTruthy();
     expect(useWorkflowStore.getState().orchestrations).toHaveLength(1);
+  });
+
+  it('discardDraft：awaiting-confirm / ready 可废弃', () => {
+    const a = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    expect(discardDraft(a.id)).toBe(true);
+    const b = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    confirmDraft(b.id, 'approved');
+    expect(discardDraft(b.id)).toBe(true);
+    expect(useWorkflowStore.getState().orchestrations).toHaveLength(0);
+  });
+
+  it('discardDraft：running 状态拒绝（须先 cancelOrchestration）', () => {
+    const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    confirmDraft(orch.id, 'approved');
+    updateOrchestration(orch.id, { status: 'running' });
+    expect(() => discardDraft(orch.id)).toThrow(/running\/paused 须先 cancelOrchestration/);
+    // 记录仍在（未被误删）
+    expect(getOrchestration(orch.id)?.status).toBe('running');
+  });
+
+  it('discardDraft：done/failed 拒绝（归档历史，非废弃草案）', () => {
+    const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    confirmDraft(orch.id, 'approved');
+    updateOrchestration(orch.id, { status: 'running' });
+    updateOrchestration(orch.id, { status: 'done' });
+    expect(() => discardDraft(orch.id)).toThrow(/应归档历史/);
+    expect(getOrchestration(orch.id)?.status).toBe('done');
+  });
+
+  it('cancelOrchestration：ready → cancelled；running → cancelled（停止后落 cancelled）', () => {
+    const a = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    cancelOrchestration(a.id); // awaiting-confirm → cancelled
+    expect(getOrchestration(a.id)?.status).toBe('cancelled');
+
+    const b = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    confirmDraft(b.id, 'approved');
+    updateOrchestration(b.id, { status: 'running' });
+    const next = cancelOrchestration(b.id);
+    expect(next.status).toBe('cancelled');
+    expect(getOrchestration(b.id)?.status).toBe('cancelled');
+  });
+
+  it('cancelOrchestration：done 终态拒绝取消', () => {
+    const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    confirmDraft(orch.id, 'approved');
+    updateOrchestration(orch.id, { status: 'running' });
+    updateOrchestration(orch.id, { status: 'done' });
+    expect(() => cancelOrchestration(orch.id)).toThrow(/不能取消/);
   });
 });
 
