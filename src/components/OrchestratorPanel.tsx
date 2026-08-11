@@ -34,6 +34,7 @@ import {
 } from '../orchestrator/confirm';
 import {
   cancelOrchestrationRun,
+  effectiveStageWfId,
   prepareStageWorkflows,
   runOrchestration,
   stagesReadyToRun,
@@ -362,7 +363,8 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
             {selected.draft?.stages.map((stage, idx) => {
               const log = stageLogOf(selected, stage.id);
-              const boundWfId = selected.stageWfIds?.[stage.id];
+              // 有效绑定：已固化 stageWfIds 优先；复用已有工作流时取 wfRef（即使未固化也可打开编辑）
+              const boundWfId = effectiveStageWfId(selected, stage.id);
               const wfNodeCount = boundWfId ? workflows[boundWfId]?.nodes?.length : undefined;
               const bindable = BINDABLE_STATUSES.has(selected.status);
               return (

@@ -25,6 +25,7 @@ import {
 import {
   runOrchestration,
   cancelOrchestrationRun,
+  effectiveStageWfId,
   prepareStageWorkflows,
   stagesReadyToRun,
   type OrchestrationDeps,
@@ -409,6 +410,21 @@ describe('runOrchestration 编排执行器', () => {
       'wf-c': { nodes: [{ id: 'n3' }] },
     };
     expect(stagesReadyToRun(bound, fullWfs as never)).toBe(true);
+  });
+
+  it('effectiveStageWfId：existing 未固化取 wfRef；new 未固化 undefined；固化后 stageWfIds 优先', () => {
+    const orch = makeReadyOrch();
+    // new 未固化 → undefined
+    expect(effectiveStageWfId(orch, 'plan')).toBeUndefined();
+    // existing 未固化（复用已有工作流，旧固化被清除）→ 取 wfRef.wfId
+    bindStageWorkflow(orch.id, 'plan', { kind: 'existing', wfId: 'wf-B' });
+    expect(effectiveStageWfId(getOrchestration(orch.id)!, 'plan')).toBe('wf-B');
+    // 固化后 stageWfIds 优先（即使 wfRef 是 existing 引用别的）
+    bindStageWorkflow(orch.id, 'construction', { kind: 'existing', wfId: 'wf-C' });
+    prepareStageWorkflows(orch.id, fakeDeps().deps);
+    const cur = getOrchestration(orch.id)!;
+    const constructionWfId = cur.stageWfIds!.construction;
+    expect(effectiveStageWfId(cur, 'construction')).toBe(constructionWfId);
   });
 
   it('failed → running 重试：runOrchestration 接受 failed 状态，复用已固化 stageWfIds 重跑至 done', async () => {

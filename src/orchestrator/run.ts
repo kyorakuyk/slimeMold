@@ -279,6 +279,22 @@ export function stagesReadyToRun(
   });
 }
 
+/**
+ * 阶段当前「有效绑定工作流」（H3c：复用已有工作流后旧固化被清除，但 existing 引用仍明确指向某工作流）。
+ * 判定优先级：
+ * - 已固化 stageWfIds[stageId]（无论 new/existing 固化后）；
+ * - 否则 existing wfRef 直接引用的工作流（无需固化即可打开编辑/查看节点数）；
+ * - new 未固化 → undefined（尚无真实 wfId）。
+ * 与 stagesReadyToRun 的 existing 分支语义一致。
+ */
+export function effectiveStageWfId(orch: Orchestration, stageId: string): string | undefined {
+  const bound = orch.stageWfIds?.[stageId];
+  if (bound) return bound;
+  const stage = orch.draft?.stages.find((s) => s.id === stageId);
+  if (stage?.wfRef.kind === 'existing') return stage.wfRef.wfId;
+  return undefined;
+}
+
 /** 写阶段日志（合并到 stageLogs） */
 function updateStageLog(orchId: string, stageId: string, patch: Partial<StageLog>): void {
   const orch = getOrchestration(orchId);
