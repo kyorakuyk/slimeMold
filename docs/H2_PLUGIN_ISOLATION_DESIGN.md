@@ -331,13 +331,32 @@ Codex 结论：P0 质量从「存在明显缺口」提升为「PoC 基础可靠�
 3. **P2：白名单双份复制漂移** → 删除 runtime 内 WHITELIST 复制；宿主 `allowedMethodsFor(level)`
    生成列表随 execute 消息下发，worker 只消费 `execMsg.allowedMethods`。单一真相源=protocol.ts。
 
-### 9.4 剩余（P2 韧性注入 / P3 GUI 端到端）
+### 9.4 第三轮审计（2026-08-11，commit ec0058f 之后）——P0 阻断项修复
+
+Codex 结论：发现**新的 P0 阻断**——`sandbox: true` 时 loader 仍先在主 WebView 经 Blob `import()`
+执行完整 entryCode（读取 executors/类导出），之后才把同一源码交给 Worker 再 import 一次。
+**恶意插件顶层代码已在宿主线程（DOM/Tauri IPC 权限）运行过一次**，Worker 只隔离 execute()，
+不构成「插件加载隔离」。
+
+**修复（commit 待发）**：
+- `sandbox: true` 时**禁止主线程 import(entryCode)**：不解析 executors/类导出；节点定义完全由
+  manifest 构造；execute 直接是 Worker 包装器；fallback（无 Worker 环境）改为**报错**而非回退
+  主线程——保持「不预执行」承诺。
+- Worker 内自行 `import()` 入口并验证 `executors[typeId]` 存在；缺失经 RPC `execute:error` 报错。
+- **类式插件（extends 声明）沙箱模式明确拒绝**（顶层类定义/原型链校验需主线程解析，与
+  「不预执行」冲突），报「类式插件暂不支持沙箱模式，后续单独设计」。
+- 新增 `loader.sandbox.test.ts` 3 用例：① 函数式插件沙箱加载成功且不预执行（若误走主线程
+  import，jsdom 下 Blob import 会抛错，测试即失败）；② 类式插件沙箱拒绝；③ 默认（非沙箱）路径
+  与沙箱路径行为差异。
+
+### 9.5 剩余（P2 韧性注入 / P3 GUI 端到端）
 
 - P2：死循环插件（超时→terminate→重建）、抛错插件（onerror→重建）、永不返回插件（超时）。
 - P3：插件面板「沙箱运行」开关 UI（已备 viewStore.pluginSandbox）；真实 word-counter 经 Worker
   加载→注册→executor 执行→结果回传的 GUI 验收。
+- 已知限制：pluginSandbox 开关只影响「重新扫描/重新导入」后的插件，不迁移已加载插件。
 
 ---
 
-*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ 本修订（P1 两项 + P2 一项）·
-本文档为设计稿，PoC 验证后按实际修正*
+*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ ec0058f（P1 两项+P2 一项）→
+本修订（第三轮 P0 主线程预执行修复）· 本文档为设计稿，PoC 验证后按实际修正*

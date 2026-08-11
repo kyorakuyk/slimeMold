@@ -144,6 +144,53 @@ export async function loadPluginFromSource(
   const manifest = validateManifest(JSON.parse(manifestText), source);
   const occupations = manifest.occupations ?? [];
 
+  // P0 修复（Codex 第三轮）：sandbox: true 时禁止主线程 import(entryCode)。
+  // 否则恶意插件的顶层代码会在宿主 WebView（DOM/Tauri IPC 权限）先执行一遍，
+  // Worker 只隔离后续 execute，不构成「插件加载隔离」。沙箱模式下：
+  // - 不读取 executors / 类导出（由 Worker 内自行 import 并验证 executors[typeId] 存在，
+  //   缺失时经 RPC load-error / execute:error 报错）；
+  // - 类式插件（extends 声明）暂不支持沙箱——顶层类定义同样需在主线程解析原型链，
+  //   因此沙箱模式明确拒绝，避免「主线程预执行」漏洞与能力识别偏差；
+  // - 节点定义完全由 manifest 构造，execute 直接是 Worker 包装器。
+  if (sandboxEnabled) {
+    const classNode = manifest.nodes.find((n) => n.extends);
+    if (classNode) {
+      throw new Error(
+        `插件 ${manifest.id} 的节点 ${classNode.typeId} 声明了 extends（类式插件）。` +
+          `类式插件暂不支持沙箱模式（H2 PoC 仅支持函数式 executors；类式沙箱后续单独设计）。`,
+      );
+    }
+    const defs = manifest.nodes.map((meta) => {
+      const minCapability = resolveExtendsCapability(meta.extends, occupations, source, meta.minCapability);
+      return createNodeDef({
+        typeId: meta.typeId,
+        name: meta.name,
+        category: meta.category ?? `自定义·${manifest.name}`,
+        description: meta.description,
+        inputs: meta.inputs,
+        outputs: meta.outputs,
+        params: meta.params ?? [],
+        pluginId: manifest.id,
+        minCapability,
+        // 沙箱 execute：纯 Worker 包装器（无主线程预执行）。fallback 在无 Worker 环境
+        // 下会报「沙箱需要 Worker」，而不会回退到主线程执行——保持「不预执行」承诺。
+        execute: createSandboxedNodeExecute(
+          sandboxManager,
+          manifest.id,
+          entryCode,
+          minCapability,
+          meta.typeId,
+          async () => {
+            throw new Error(
+              `插件 ${manifest.id} 的节点 ${meta.typeId} 以沙箱模式加载，但当前环境无 Web Worker，无法执行。`,
+            );
+          },
+        ),
+      });
+    });
+    return { plugin: { manifest, source, path }, defs };
+  }
+
   const url = URL.createObjectURL(
     new Blob([entryCode], { type: 'text/javascript' }),
   );
@@ -221,17 +268,7 @@ export async function loadPluginFromSource(
               }
               return result as Record<string, unknown>;
             };
-            // H2 沙箱：Worker 内执行，能力白名单宿主下发/拦截；无 Worker 自动回退 direct
-            return sandboxEnabled
-              ? createSandboxedNodeExecute(
-                  sandboxManager,
-                  manifest.id,
-                  entryCode,
-                  minCapability,
-                  meta.typeId,
-                  direct,
-                )
-              : direct;
+            return direct;
           })()
         : async () => {
             throw new Error(`插件 ${manifest.id} 未提供 ${meta.typeId} 的 executor（亦无同名职业类 execute）`);
