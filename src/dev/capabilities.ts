@@ -16,7 +16,7 @@
 import type { SelfDevelopmentPolicy } from './policy';
 import { assertPathAllowed } from './policy';
 import type { CommandResult } from './node-run';
-import { runCommand, readTextFile, writeTextFile, resolveInside } from './node-run';
+import { runCommand, readTextFile, writeTextFile, resolveInside, relativePath } from './node-run';
 
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -120,18 +120,58 @@ export function applyUnifiedPatch(original: string, patch: string): ApplyPatchRe
 /* Node 实现                                                           */
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_SHELL_ALLOW = new Set([
-  'git', 'npm', 'npx', 'node', 'tsx', 'ls', 'cat', 'pwd', 'echo', 'find', 'head', 'tail', 'grep',
-]);
-const DEFAULT_TEST_ALLOW = new Set(['npm', 'npx', 'tsc', 'vitest', 'tsx']);
+/** 命令白名单规则：命令名 + 允许的参数前缀（argsPrefix 缺失=任意参数但命令名受限）。 */
+interface CommandRule {
+  cmd: string;
+  argsPrefix?: string[];
+}
+
+/** 命令数组是否匹配规则：命令名一致且参数以 argsPrefix 为前缀（参数数量 ≥ 前缀长度）。 */
+function matchesRule(rule: CommandRule, cmd: string[]): boolean {
+  if (cmd[0] !== rule.cmd) return false;
+  if (!rule.argsPrefix) return true;
+  const args = cmd.slice(1);
+  if (args.length < rule.argsPrefix.length) return false;
+  return rule.argsPrefix.every((p, i) => args[i] === p);
+}
+
+function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
+  return rules.some((r) => matchesRule(r, cmd));
+}
+
+/**
+ * shell 白名单（只读命令）：基础查询 + 只读 git。
+ * 明确排除：git push/commit/config/remote、node -e、npx（下载执行外部包）、npm install/任意 npm run。
+ */
+const DEFAULT_SHELL_RULES: CommandRule[] = [
+  { cmd: 'pwd' }, { cmd: 'echo' }, { cmd: 'ls' }, { cmd: 'cat' },
+  { cmd: 'find' }, { cmd: 'head' }, { cmd: 'tail' }, { cmd: 'grep' },
+  { cmd: 'git', argsPrefix: ['status'] },
+  { cmd: 'git', argsPrefix: ['diff'] },
+  { cmd: 'git', argsPrefix: ['log'] },
+  { cmd: 'git', argsPrefix: ['ls-files'] },
+  { cmd: 'git', argsPrefix: ['rev-parse'] },
+];
+
+/** 测试白名单：typecheck / vitest / 本地脚本（scripts/ 目录） / 仓库自带的特定 npm script。 */
+const DEFAULT_TEST_RULES: CommandRule[] = [
+  { cmd: 'tsc', argsPrefix: ['--noEmit'] },
+  { cmd: 'tsc', argsPrefix: ['-b'] },
+  { cmd: 'vitest', argsPrefix: ['run'] },
+  { cmd: 'tsx', argsPrefix: ['scripts/'] },
+  { cmd: 'npm', argsPrefix: ['run', 'test'] },
+  { cmd: 'npm', argsPrefix: ['run', 'build'] },
+  { cmd: 'npm', argsPrefix: ['run', 'i18n:check'] },
+];
 
 export interface NodeDevDeps {
   runCommand?: (cmd: string, args: string[], cwd: string) => Promise<CommandResult>;
   readFile?: (abs: string) => Promise<string>;
   writeFile?: (abs: string, content: string) => Promise<void>;
   resolveInside?: (root: string, relPath: string) => Promise<string>;
-  shellAllow?: (cmd: string) => boolean;
-  testAllow?: (cmd: string) => boolean;
+  relativePath?: (root: string, abs: string) => Promise<string>;
+  shellAllow?: (cmd: string[]) => boolean;
+  testAllow?: (cmd: string[]) => boolean;
 }
 
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
@@ -156,12 +196,20 @@ export function createNodeDevService(
   const read = deps.readFile ?? readTextFile;
   const write = deps.writeFile ?? writeTextFile;
   const resolveP = deps.resolveInside ?? resolveInside;
-  const shellAllow = deps.shellAllow ?? ((cmd: string) => DEFAULT_SHELL_ALLOW.has(base(cmd)));
-  const testAllow = deps.testAllow ?? ((cmd: string) => DEFAULT_TEST_ALLOW.has(base(cmd)));
+  const relP = deps.relativePath ?? relativePath;
+  const shellAllow = deps.shellAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_SHELL_RULES, cmd));
+  const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
 
+  /**
+   * P0 修复（审计）：路径必须先规范化再判定白名单/保护路径。
+   * `src/components/../orchestrator/run.ts` 若先对原始串判定会过 components 白名单，
+   * 随后才解析到受保护的 orchestrator——必须 resolve → 转相对 → 再 assertPathAllowed。
+   */
   const guardedAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
-    assertPathAllowed(policy, relPath);
-    return resolveP(ctx.cwd, relPath);
+    const abs = await resolveP(ctx.cwd, relPath);
+    const rel = await relP(ctx.cwd, abs);
+    assertPathAllowed(policy, rel);
+    return abs;
   };
 
   return {
@@ -183,18 +231,18 @@ export function createNodeDevService(
     },
 
     async shellRun(cmd, ctx) {
-      const [c0, ...rest] = cmd;
-      if (!c0 || !shellAllow(c0)) {
-        return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${c0 ?? ''}`, durationMs: 0 };
+      if (cmd.length === 0 || !shellAllow(cmd)) {
+        return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
+      const [c0, ...rest] = cmd;
       return run(c0, rest, ctx.cwd);
     },
 
     async testRun(cmd, ctx) {
-      const [c0, ...rest] = cmd;
-      if (!c0 || !testAllow(c0)) {
-        return { exitCode: -1, stdout: '', stderr: `测试命令不在白名单内：${c0 ?? ''}`, durationMs: 0 };
+      if (cmd.length === 0 || !testAllow(cmd)) {
+        return { exitCode: -1, stdout: '', stderr: `测试命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
+      const [c0, ...rest] = cmd;
       return run(c0, rest, ctx.cwd);
     },
 
@@ -222,9 +270,4 @@ export function createNodeDevService(
       return [...set];
     },
   };
-}
-
-function base(cmd: string): string {
-  const i = cmd.lastIndexOf('/');
-  return i >= 0 ? cmd.slice(i + 1) : cmd;
 }

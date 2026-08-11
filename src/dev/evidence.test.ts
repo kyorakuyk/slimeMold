@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EvidenceCollector } from './evidence';
+import { EvidenceCollector, createJsonlEvidenceStore } from './evidence';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -36,5 +36,24 @@ describe('H4 EvidenceCollector', () => {
     expect(snap).toHaveLength(2);
     c.clear();
     expect(c.records).toHaveLength(0);
+  });
+
+  it('P1 持久化：JSONL store 落盘 + loadPersisted 跨会话恢复', async () => {
+    const tmp = `evidence-test-${Date.now()}.jsonl`;
+    const store = createJsonlEvidenceStore(tmp);
+    const c1 = new EvidenceCollector(store);
+    c1.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'first' });
+    c1.add({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'second' });
+    // 等待 fire-and-forget 落盘完成
+    await new Promise((r) => setTimeout(r, 30));
+    // 新 collector 从同一 store 恢复（模拟重启）
+    const c2 = new EvidenceCollector(store);
+    const loaded = await c2.loadPersisted();
+    expect(loaded).toHaveLength(2);
+    expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
+    expect(c2.records).toHaveLength(2);
+    // 清理临时文件
+    const { unlink } = await import('node:fs/promises');
+    await unlink(tmp).catch(() => {});
   });
 });

@@ -51,6 +51,29 @@ describe('H4 DevEvaluator', () => {
     expect(bad.changedProtectedPaths).toContain('src/orchestrator/run.ts');
   });
 
+  it('P1 硬失败：规则全绿但 changedProtectedPaths 非空 → passed=false（即使测试通过也不得自动验收）', () => {
+    const rules: AcceptanceRule[] = [
+      { id: 'typecheck', kind: 'test', command: 'tsc --noEmit' },
+      { id: 'vitest', kind: 'test', command: 'vitest run' },
+    ];
+    const out = evaluateDevAcceptance(
+      rules,
+      [
+        ev({ kind: 'test', command: 'tsc --noEmit', status: 'passed', exitCode: 0, summary: 'tsc' }),
+        ev({ kind: 'test', command: 'vitest run', status: 'passed', exitCode: 0, summary: 'vt' }),
+      ],
+      ['src/orchestrator/run.ts'],
+    );
+    expect(out.passed).toBe(false);
+    expect(out.failedChecks).toContain('protected-paths');
+    // 未触碰保护路径且全绿 → 通过
+    const clean = evaluateDevAcceptance(rules, [
+      ev({ kind: 'test', command: 'tsc --noEmit', status: 'passed', exitCode: 0, summary: 'tsc' }),
+      ev({ kind: 'test', command: 'vitest run', status: 'passed', exitCode: 0, summary: 'vt' }),
+    ], []);
+    expect(clean.passed).toBe(true);
+  });
+
   it('diff 规则：headRevision ≠ baseRevision 通过；无 diff 证据失败', () => {
     const rules: AcceptanceRule[] = [{ id: 'real-change', kind: 'diff' }];
     const ok = evaluateDevAcceptance(rules, [

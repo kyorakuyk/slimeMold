@@ -70,10 +70,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       const rel = abs.replace(/\\/g, '/').split('/worktree/')[1];
       files.set(rel, content);
     },
-    resolveInside: async (root, rel) => {
-      const p = root.endsWith('/') ? root + rel : `${root}/${rel}`;
-      return p;
-    },
+    resolveInside: async (root, rel) => (await import('node:path')).resolve(root, rel),
+    relativePath: async (root, abs) => (await import('node:path')).relative(root, abs).replace(/\\/g, '/'),
   };
 
   const ctx = { cwd: '/repo/worktree' };
@@ -85,6 +83,45 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(r.lineCount).toBe(2);
     await expect(svc.codeRead('src/orchestrator/run.ts', ctx)).rejects.toThrow(/受保护/);
     await expect(svc.codeRead('src/store/workflowStore.ts', ctx)).rejects.toThrow(/受保护/);
+  });
+
+  it('P0 路径规范化：../ 穿越到受保护路径被拒（先解析再判定）', async () => {
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    // 原始串含 src/components 前缀看似过白名单，但解析后落到受保护的 orchestrator
+    await expect(svc.codeRead('src/components/../orchestrator/run.ts', ctx)).rejects.toThrow(/受保护/);
+    await expect(svc.codePatch('src/components/../../package.json', '', ctx)).rejects.toThrow(/不在允许范围|受保护/);
+    // 真实合法的 components 路径仍可用
+    const r = await svc.codeRead('src/components/A.tsx', ctx);
+    expect(r.content).toBeTruthy();
+  });
+
+  it('P1 命令白名单收紧：危险/越界命令被拒，只读命令放行', async () => {
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    // 危险命令全拒
+    for (const bad of [
+      ['node', '-e', 'process.exit(0)'],
+      ['npx', 'evil-pkg'],
+      ['npm', 'install'],
+      ['git', 'push'],
+      ['git', 'commit'],
+      ['git', 'config', 'user.email', 'x'],
+      ['rm', '-rf', '/'],
+      ['tsc'], // 无参数（非 --noEmit）也拒
+    ]) {
+      const r = await svc.shellRun(bad, ctx);
+      expect(r.exitCode).toBe(-1);
+      expect(r.stderr).toContain('白名单');
+    }
+    // 只读命令放行
+    const ok1 = await svc.shellRun(['git', 'status'], ctx);
+    expect(ok1.exitCode).toBe(0);
+    const ok2 = await svc.shellRun(['cat', 'src/components/A.tsx'], ctx);
+    expect(ok2.exitCode).toBe(0);
+    // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
+    const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
+    expect(t1.exitCode).toBe(0);
+    const t2 = await svc.testRun(['tsc'], ctx);
+    expect(t2.exitCode).toBe(-1);
   });
 
   it('codePatch：受控 diff 落盘 + contentHash；白名单外命令拒绝', async () => {

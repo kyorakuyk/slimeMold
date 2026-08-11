@@ -50,12 +50,45 @@ function nextId(): string {
 }
 
 /**
- * EvidenceCollector：宿主侧证据采集器（内存态）。
+ * Evidence 持久化接口：宿主独占落盘（EvidenceStore 必须位于 worktree 之外）。
+ * append 在 add 时 fire-and-forget 调用；load 用于启动/恢复跨会话审计。
+ */
+export interface EvidencePersistence {
+  append(rec: EvidenceRecord): Promise<void>;
+  load(): Promise<EvidenceRecord[]>;
+}
+
+/**
+ * JSONL 证据存储（每行一条证据，追加写）。仅 Node 环境可用（动态 import fs）——
+ * 浏览器/WebView 调用即 reject，由宿主在 headless/CI 或 Tauri Rust 通道侧使用。
+ */
+export function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
+  return {
+    async append(rec) {
+      const { appendFile } = await import('node:fs/promises');
+      await appendFile(filePath, `${JSON.stringify(rec)}\n`, 'utf8');
+    },
+    async load() {
+      const { readFile } = await import('node:fs/promises');
+      const text = await readFile(filePath, 'utf8').catch(() => '');
+      return text
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as EvidenceRecord);
+    },
+  };
+}
+
+/**
+ * EvidenceCollector：宿主侧证据采集器。
  * 所有 add 调用强制 capturedBy='host'；调用方（DevCapabilityService）负责在
  * 真实命令/测试/git/路径检查完成后采集——绝不接受模型/节点自报结果。
+ * 可选注入 EvidencePersistence（宿主独占路径），add 时同步落盘。
  */
 export class EvidenceCollector {
   private _records: EvidenceRecord[] = [];
+
+  constructor(private readonly persistence?: EvidencePersistence) {}
 
   add(input: EvidenceInput): EvidenceRecord {
     const rec: EvidenceRecord = {
@@ -65,7 +98,20 @@ export class EvidenceCollector {
       createdAt: new Date().toISOString(),
     };
     this._records.push(rec);
+    if (this.persistence) {
+      void this.persistence.append(rec).catch(() => {
+        // 落盘失败不阻断采集（内存仍保留）；由宿主告警审计缺失
+      });
+    }
     return rec;
+  }
+
+  /** 启动/恢复：从持久化 store 载入历史证据（强制 capturedBy='host'）。 */
+  async loadPersisted(): Promise<EvidenceRecord[]> {
+    if (!this.persistence) return [];
+    const recs = await this.persistence.load();
+    for (const r of recs) this.restore(r);
+    return recs;
   }
 
   get records(): readonly EvidenceRecord[] {

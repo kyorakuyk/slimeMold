@@ -71,3 +71,9 @@ export async function resolveInside(root: string, relPath: string): Promise<stri
   }
   return abs;
 }
+
+/** 计算绝对路径相对于 root 的规范化相对路径（POSIX 分隔符，无 .. 段）。 */
+export async function relativePath(root: string, abs: string): Promise<string> {
+  const { relative } = await import('node:path');
+  return relative(root, abs).replace(/\\/g, '/');
+}

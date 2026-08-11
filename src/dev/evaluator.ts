@@ -45,9 +45,12 @@ function ruleSatisfied(rule: AcceptanceRule, evidence: readonly EvidenceRecord[]
 }
 
 /**
- * 确定性验收：所有规则满足 → passed；否则列出 failedChecks。
- * changedProtectedPaths 由能力层在 diff/path-policy 检查时采集传入（负向证据）。
- * uncertainties 只记录模型不确定性，不直接置 failed——但上层可据此要求人工复核。
+ * 确定性验收：
+ * - 所有规则满足 → 通过；
+ * - **changedProtectedPaths 非空 → 硬失败（P1 审计修复）**——即使测试全绿，只要改动受保护
+ *   路径（workflowStore/executor/sandbox/capabilities/orchestrator）就不得自动验收，
+ *   除非存在明确的人工批准证据（MVP 阶段一律硬失败，留待人工 diff 审查）；
+ * - uncertainties 只记录模型不确定性，不直接置 failed——但上层可据此要求人工复核。
  */
 export function evaluateDevAcceptance(
   rules: AcceptanceRule[],
@@ -59,10 +62,12 @@ export function evaluateDevAcceptance(
   for (const rule of rules) {
     if (!ruleSatisfied(rule, evidence)) failedChecks.push(rule.id);
   }
+  const protectedTouched = changedProtectedPaths.length > 0;
+  const passed = failedChecks.length === 0 && !protectedTouched;
   return {
-    passed: failedChecks.length === 0,
+    passed,
     requiredChecks: rules.map((r) => r.id),
-    failedChecks,
+    failedChecks: protectedTouched ? [...failedChecks, 'protected-paths'] : failedChecks,
     changedProtectedPaths,
     uncertainties,
   };
