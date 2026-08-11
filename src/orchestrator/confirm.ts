@@ -125,6 +125,25 @@ export function discardDraft(orchId: string): boolean {
 }
 
 /**
+ * 删除编排记录（H3c 收口补齐：历史清理入口）。
+ * - 允许删除**非运行中**的任意状态记录（draft / awaiting-confirm / ready / failed / done / cancelled）；
+ * - running / paused：**拒绝**——必须先 cancelOrchestrationRun 落 cancelled 再删除；
+ * - 只删除编排记录（orchestrations），**绝不触碰任何用户工作流**（与 discardDraft 一致）。
+ */
+export function removeOrchestration(orchId: string): boolean {
+  const st = useWorkflowStore.getState();
+  const orch = st.orchestrations.find((o) => o.id === orchId);
+  if (!orch) return false;
+  if (orch.status === 'running' || orch.status === 'paused') {
+    throw new Error(`编排记录正在执行（${orch.status}），请先取消再删除`);
+  }
+  const next = st.orchestrations.filter((o) => o.id !== orchId);
+  if (next.length === st.orchestrations.length) return false;
+  st.setOrchestrations(next);
+  return true;
+}
+
+/**
  * 取消编排：running / paused（以及未开始的 awaiting-confirm/ready/draft）→ cancelled。
  * - 若在 running/paused，调用方（H3b runOrchestration 的停止钩子）应先 stopWorkflow 停止
  *   当前阶段，再调本函数落 cancelled 状态——本函数只负责状态收口；

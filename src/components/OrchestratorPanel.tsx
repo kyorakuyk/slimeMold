@@ -30,7 +30,7 @@ import {
   bindStageWorkflow,
   confirmDraft,
   createDraftOrchestration,
-  discardDraft,
+  removeOrchestration,
 } from '../orchestrator/confirm';
 import {
   cancelOrchestrationRun,
@@ -222,11 +222,14 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
     }
   };
 
-  /** 废弃（仅未执行的草案可删；不触碰用户工作流） */
-  const onDiscard = (orchId: string) => {
+  /** 删除编排记录：草案直接废弃；终态历史删除需确认（均不触碰用户工作流） */
+  const onRemove = (orchId: string, status: string) => {
+    const isTerminal = status === 'done' || status === 'cancelled' || status === 'failed';
+    // 终态历史含审计信息（StageLog/runIds），删除不可恢复——需确认
+    if (isTerminal && !window.confirm(t('orchestrator.deleteConfirm'))) return;
     try {
-      if (discardDraft(orchId)) {
-        addLog('info', '编排草案已废弃');
+      if (removeOrchestration(orchId)) {
+        addLog('info', isTerminal ? '编排历史记录已删除' : '编排草案已废弃');
         if (selectedId === orchId) setSelectedId(null);
       }
     } catch (e) {
@@ -558,11 +561,11 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                 <XCircle size={13} /> {cancelling ? t('orchestrator.cancelling') : t('orchestrator.cancel')}
               </button>
             )}
-            {['draft', 'awaiting-confirm', 'ready', 'failed'].includes(selected.status) && (
+            {selected.status !== 'running' && selected.status !== 'paused' && (
               <button
                 className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-err"
-                onClick={() => onDiscard(selected.id)}
-                title={t('orchestrator.discardHint')}
+                onClick={() => onRemove(selected.id, selected.status)}
+                title={t('orchestrator.deleteHint')}
                 disabled={busy}
               >
                 <Trash2 size={13} />

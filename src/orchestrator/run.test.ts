@@ -20,6 +20,7 @@ import {
   createOrchestration,
   confirmDraft,
   getOrchestration,
+  removeOrchestration,
   updateOrchestration,
 } from './confirm';
 import {
@@ -453,5 +454,21 @@ describe('runOrchestration 编排执行器', () => {
     // 其它状态仍拒绝启动（未确认的 awaiting-confirm 编排）
     const unconfirmed = createOrchestration('x', generateDraft({ goal: 'x', source: 'ui' }, deps()));
     await expect(runOrchestration(unconfirmed.id, f)).rejects.toThrow(/不允许启动/);
+  });
+
+  it('removeOrchestration：终态历史可删除（done/cancelled），running 拒绝，删除不触碰工作流', () => {
+    const orch = makeReadyOrch();
+    // running 状态拒绝删除
+    updateOrchestration(orch.id, { status: 'running' });
+    expect(() => removeOrchestration(orch.id)).toThrow(/先取消再删除/);
+    // cancelled 终态可删除
+    updateOrchestration(orch.id, { status: 'cancelled' });
+    expect(removeOrchestration(orch.id)).toBe(true);
+    expect(getOrchestration(orch.id)).toBeUndefined();
+    // done 终态可删除（历史清理入口；走合法迁移链 ready → running → done）
+    const doneOrch = makeReadyOrch();
+    updateOrchestration(doneOrch.id, { status: 'running' });
+    updateOrchestration(doneOrch.id, { status: 'done' });
+    expect(removeOrchestration(doneOrch.id)).toBe(true);
   });
 });

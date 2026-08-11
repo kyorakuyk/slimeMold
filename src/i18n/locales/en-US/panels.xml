@@ -272,6 +272,8 @@
   <string name="orchestrator.cancel">Cancel</string>
   <string name="orchestrator.cancelling">Cancelling…</string>
   <string name="orchestrator.discardHint">Discard the draft (never touches your workflows; cancel first while running)</string>
+  <string name="orchestrator.deleteHint">Delete this orchestration record (never touches your workflows; cancel first while running)</string>
+  <string name="orchestrator.deleteConfirm">This orchestration has finished. Deleting its history is permanent (stage logs / run IDs will be lost). Delete?</string>
   <string name="orchestrator.hint.readonly">Read-only orchestration won't run</string>
   <string name="orchestrator.hint.ready">All stages bound to non-empty workflows — ready to run</string>
   <string name="orchestrator.hint.notReady">Some stage has no non-empty workflow bound: materialize workflows first and add nodes, or reuse an existing workflow</string>
