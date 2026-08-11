@@ -390,6 +390,27 @@ describe('runOrchestration 编排执行器', () => {
     expect(stagesReadyToRun(allExisting, wfs as never)).toBe(true);
   });
 
+  it('stagesReadyToRun：固化后空白工作流 → false（复现 GUI 验收 D：2、3 为空白画布仍可点执行）', () => {
+    const orch = makeReadyOrch();
+    const bound: Orchestration = {
+      ...orch,
+      stageWfIds: { plan: 'wf-a', construction: 'wf-b', acceptance: 'wf-c' },
+    };
+    const emptyWfs = { 'wf-a': { nodes: [] }, 'wf-b': { nodes: [] }, 'wf-c': { nodes: [] } };
+    // 全部空白 → false
+    expect(stagesReadyToRun(bound, emptyWfs as never)).toBe(false);
+    // 阶段 1 非空、2/3 空白 → false（用户报告场景：不应可执行）
+    const partialWfs = { ...emptyWfs, 'wf-a': { nodes: [{ id: 'n1' }] } };
+    expect(stagesReadyToRun(bound, partialWfs as never)).toBe(false);
+    // 全部非空 → true
+    const fullWfs = {
+      'wf-a': { nodes: [{ id: 'n1' }] },
+      'wf-b': { nodes: [{ id: 'n2' }] },
+      'wf-c': { nodes: [{ id: 'n3' }] },
+    };
+    expect(stagesReadyToRun(bound, fullWfs as never)).toBe(true);
+  });
+
   it('failed → running 重试：runOrchestration 接受 failed 状态，复用已固化 stageWfIds 重跑至 done', async () => {
     const orch = makeReadyOrch();
     const { deps: f } = fakeDeps();

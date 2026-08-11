@@ -174,9 +174,24 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
     }
   };
 
-  /** 开始执行（仅 ready → running） */
+  /** 开始执行（仅 ready / failed → running） */
   const onRun = async (orchId: string) => {
     if (busy) return;
+    // 运行时防御（H3c 审计：执行前必须所有阶段绑定非空工作流）：
+    // 即使按钮禁用状态因数据同步/旧界面误判，这里也阻断空图执行
+    const st = useWorkflowStore.getState();
+    const orch = st.orchestrations.find((o) => o.id === orchId);
+    if (!orch) return;
+    if (orch.readonly) {
+      setErr(t('orchestrator.hint.readonly'));
+      return;
+    }
+    if (!stagesReadyToRun(orch, st.workflows)) {
+      const msg = t('orchestrator.hint.notReady');
+      setErr(msg);
+      addLog('warn', msg);
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
