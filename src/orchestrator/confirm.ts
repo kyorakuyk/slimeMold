@@ -10,8 +10,29 @@
  */
 
 import { useWorkflowStore } from '../store/workflowStore';
-import type { Orchestration, PipelineDraft } from '../types';
+import type { Orchestration, OrchestrationStatus, PipelineDraft } from '../types';
 import type { Confirmation } from './types';
+
+/**
+ * 状态迁移表：from → 允许的 to 集合。
+ * 非法跳转（如 awaiting-confirm → running、running → ready）会被拒绝。
+ * running 只能由 ready → running 进入（H3b runOrchestration）。
+ */
+export const ALLOWED_TRANSITIONS: Record<OrchestrationStatus, ReadonlySet<OrchestrationStatus>> = {
+  draft: new Set(['awaiting-confirm', 'cancelled']),
+  'awaiting-confirm': new Set(['ready', 'cancelled']),
+  ready: new Set(['running', 'cancelled']),
+  running: new Set(['paused', 'done', 'failed', 'cancelled']),
+  paused: new Set(['running', 'cancelled']),
+  done: new Set([]),
+  cancelled: new Set([]),
+  failed: new Set(['running', 'cancelled']), // failed 可重试回 running
+};
+
+/** 判断状态迁移是否合法 */
+export function canTransition(from: OrchestrationStatus, to: OrchestrationStatus): boolean {
+  return ALLOWED_TRANSITIONS[from].has(to);
+}
 
 /** 创建编排记录（草案态，不落 pipeline）——仅写入 orchestrations 集合 */
 export function createOrchestration(goal: string, draft: PipelineDraft): Orchestration {
@@ -51,8 +72,9 @@ export function confirmDraft(orchId: string, approval: Confirmation): Orchestrat
   const idx = st.orchestrations.findIndex((o) => o.id === orchId);
   if (idx < 0) throw new Error(`编排记录不存在：${orchId}`);
   const orch = st.orchestrations[idx];
-  if (orch.status !== 'awaiting-confirm') {
-    throw new Error(`编排记录当前状态不允许确认：${orch.status}`);
+  // 状态迁移校验：仅 awaiting-confirm → ready 合法
+  if (!canTransition(orch.status, 'ready')) {
+    throw new Error(`编排记录当前状态不允许确认（${orch.status} → ready）：${orch.status}`);
   }
   const next: Orchestration = {
     ...orch,
@@ -78,9 +100,9 @@ export function discardDraft(orchId: string): boolean {
 }
 
 /**
- * 更新编排状态（通用内部收口，供 run.ts 推进进度）。
- * 注意：进入 running 只允许由 runOrchestration 调用（H3b），此处不设限制以便复用，
- * 但调用方须遵循「ready → running」的语义。
+ * 更新编排状态（内部收口，供 run.ts 推进进度）。
+ * 若 patch 含 status，则按 ALLOWED_TRANSITIONS 强制校验非法跳转：
+ *   awaiting-confirm → running 等非法迁移会被拒绝（抛错）。
  */
 export function updateOrchestration(
   orchId: string,
@@ -89,8 +111,14 @@ export function updateOrchestration(
   const st = useWorkflowStore.getState();
   const idx = st.orchestrations.findIndex((o) => o.id === orchId);
   if (idx < 0) return undefined;
+  const cur = st.orchestrations[idx];
+  if (patch.status && !canTransition(cur.status, patch.status)) {
+    throw new Error(
+      `编排状态非法迁移：${cur.status} → ${patch.status}（拒绝；见 ALLOWED_TRANSITIONS）`,
+    );
+  }
   const next: Orchestration = {
-    ...st.orchestrations[idx],
+    ...cur,
     ...patch,
     updatedAt: new Date().toISOString(),
   };

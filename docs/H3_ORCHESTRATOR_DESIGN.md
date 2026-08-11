@@ -82,6 +82,8 @@ interface Orchestration {
   goal: string;                   // 原始目标
   // 生命周期：draft → awaiting-confirm → ready（确认待执行）→ running（仅 runOrchestration 进入）
   //         → done / failed / cancelled / paused（可恢复回 running）
+  // 状态迁移由 ALLOWED_TRANSITIONS 表强制（confirm.ts）：非法跳转（如 awaiting-confirm → running）
+  // 会被拒绝。
   status: 'draft' | 'awaiting-confirm' | 'ready' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed';
   createdAt: string;
   updatedAt: string;
@@ -203,11 +205,13 @@ type OrchestrationEventKind =
 [2] UI 展示草案（编排面板：DAG 预览 + 每阶段 agent/产物说明）
    ↓
 [3] 用户确认（confirmDraft）
-   - 生成 PipelineDef（绑定各阶段 wfId；新工作流注册但 activate:false）
-   - 写入 workflowStore.pipelines / orchestrations
+   - 只做：批准校验 + 状态 awaiting-confirm → ready（确认 ≠ 执行）
+   - 不在此处生成 pipeline / 绑定工作流——确认后用户仍可编辑草案
    ↓  emit orch.draft.confirmed
-[4] 按拓扑序执行各阶段（orch.run）
-   - 对每阶段：校验前置产物 → 调 runWorkflow({ wfId, incremental? }) → 收集 Artifact
+[4] 启动执行（H3b runOrchestration，ready → running 的唯一入口）
+   - 此时才生成 PipelineDef（绑定各阶段 wfId；新工作流注册但 activate:false）
+   - 写入 workflowStore.pipelines / orchestrations
+   - 按拓扑序执行各阶段：校验前置产物 → 调 runWorkflow({ wfId, incremental? }) → 收集 Artifact
    - 阶段事件：orch.stage.started / completed / failed
    - 每阶段完成落 checkpoint（可中断续跑）
    ↓
@@ -304,5 +308,6 @@ src/engine/runEvents.ts     # OrchestrationEventKind 扩展
 
 ---
 
-*生成日期：2026-08-11 · 基线 main @ e5ccb37（H2 收口）→ 43bf641（H3a 地基）→ 本修订
-（确认门语义修正：confirmDraft 置 ready 而非 running；补 request 校验）。本文档为设计稿，按实现修正。*
+*生成日期：2026-08-11 · 基线 main @ e5ccb37（H2 收口）→ 43bf641（H3a 地基）→ 83be944
+（确认门语义修正：confirmDraft 置 ready 而非 running；补 request 校验）→ 本修订
+（状态迁移表强制化 ALLOWED_TRANSITIONS；§7.1 确认/执行解耦表述同步）。本文档为设计稿，按实现修正。*

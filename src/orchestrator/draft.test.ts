@@ -11,7 +11,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateDraft } from './draft';
-import { createOrchestration, confirmDraft, discardDraft, getOrchestration } from './confirm';
+import {
+  canTransition,
+  confirmDraft,
+  createOrchestration,
+  discardDraft,
+  getOrchestration,
+  updateOrchestration,
+} from './confirm';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { AgentConfig } from '../types';
 
@@ -132,5 +139,35 @@ describe('confirm 确认门', () => {
     expect(getOrchestration(orch.id)).toBeUndefined();
     expect(getOrchestration(other.id)).toBeTruthy();
     expect(useWorkflowStore.getState().orchestrations).toHaveLength(1);
+  });
+});
+
+describe('状态迁移表（ALLOWED_TRANSITIONS 强制）', () => {
+  it('canTransition：合法迁移', () => {
+    expect(canTransition('awaiting-confirm', 'ready')).toBe(true);
+    expect(canTransition('ready', 'running')).toBe(true);
+    expect(canTransition('running', 'done')).toBe(true);
+    expect(canTransition('running', 'failed')).toBe(true);
+    expect(canTransition('failed', 'running')).toBe(true); // 失败可重试
+    expect(canTransition('paused', 'running')).toBe(true); // 暂停可恢复
+  });
+
+  it('canTransition：非法迁移被拒绝', () => {
+    expect(canTransition('awaiting-confirm', 'running')).toBe(false); // 确认≠执行
+    expect(canTransition('ready', 'done')).toBe(false);               // 未执行不能直接完成
+    expect(canTransition('running', 'ready')).toBe(false);            // 不可回退
+    expect(canTransition('done', 'running')).toBe(false);             // 终态不可再跑
+  });
+
+  it('updateOrchestration：非法状态跳转抛错', () => {
+    const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
+    // awaiting-confirm → running 被迁移表拒绝
+    expect(() =>
+      updateOrchestration(orch.id, { status: 'running' }),
+    ).toThrow(/非法迁移/);
+    // 合法：awaiting-confirm → ready
+    expect(updateOrchestration(orch.id, { status: 'ready' })?.status).toBe('ready');
+    // ready → running 合法（H3b runOrchestration 进入）
+    expect(updateOrchestration(orch.id, { status: 'running' })?.status).toBe('running');
   });
 });
