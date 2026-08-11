@@ -19,6 +19,7 @@ import type {
   LogEntry,
   NodeGroup,
   NodeStatus,
+  Orchestration,
   PipelineDef,
   ProjectArtifacts,
   ProjectFile,
@@ -189,6 +190,8 @@ interface WorkflowState {
   agentRouteTable: AgentRouteTable;
   /** 步骤 14.A：项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
   pipelines: PipelineDef[];
+  /** H3 Orchestrator：项目级编排记录（草案/进度/阶段日志），随 .slimemold 持久化 */
+  orchestrations: Orchestration[];
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 
@@ -325,6 +328,8 @@ interface WorkflowState {
   setAgentRouteTable: (table: AgentRouteTable) => void;
   /** 步骤 14.A：覆盖整个 Pipeline 定义集合（随项目持久化） */
   setPipelines: (defs: PipelineDef[]) => void;
+  /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
+  setOrchestrations: (orchs: Orchestration[]) => void;
   /** 步骤 14.A：声明或更新单条 Pipeline 定义（随项目持久化，触发脏标记） */
   upsertPipeline: (def: PipelineDef) => void;
 
@@ -438,6 +443,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       artifacts: {},
       agentRouteTable: {},
       pipelines: [],
+      orchestrations: [],
 
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
@@ -1530,6 +1536,10 @@ export const useWorkflowStore = create<WorkflowState>()(
       setPipelines: (defs: PipelineDef[]) => {
         set({ pipelines: defs });
       },
+      /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
+      setOrchestrations: (orchs: Orchestration[]) => {
+        set({ orchestrations: orchs });
+      },
       /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
       upsertPipeline: (def: PipelineDef) => {
         const s = get();
@@ -1908,6 +1918,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         artifacts: s.artifacts,
         agentRouteTable: s.agentRouteTable,
         pipelines: s.pipelines,
+        orchestrations: s.orchestrations,
       }),
       // 恢复持久化状态时，把拍平的 workflows 重新收口为内存态 FlowNode
       merge: (persisted, current) => {

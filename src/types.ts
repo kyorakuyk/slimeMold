@@ -1076,3 +1076,76 @@ export interface PipelineDef {
   stages: PipelineStage[];
   edges: PipelineEdge[];
 }
+
+/* ---------- H3 Orchestrator（总控 Agent，只生成草案不静默改用户工作流） ---------- */
+
+/** 编排状态机 */
+export type OrchestrationStatus =
+  | 'draft'
+  | 'awaiting-confirm'
+  | 'running'
+  | 'paused'
+  | 'done'
+  | 'cancelled'
+  | 'failed';
+
+/** 草案阶段（未绑定 wfId） */
+export interface DraftStage {
+  id: string;
+  label: string;
+  role: 'builder' | 'constructor' | 'ops';
+  /** 该阶段子目标 */
+  goal: string;
+  /** 建议绑定的工作流：新生成 或 复用已有（只读引用） */
+  wfRef: { kind: 'new' } | { kind: 'existing'; wfId: string };
+  /** AgentRouter 决策结果（选哪个 agent） */
+  agentId?: string;
+  /** 需要的上游产物 */
+  artifactIn?: ArtifactKind[];
+  /** 产出的交付物 */
+  artifactOut?: ArtifactKind[];
+}
+
+/** 草案边（有向） */
+export interface DraftEdge {
+  from: string; // stageId
+  to: string;   // stageId
+  artifactKind: ArtifactKind;
+  backflow?: boolean;
+}
+
+/** DAG 草案（纯数据，不落盘） */
+export interface PipelineDraft {
+  stages: DraftStage[];
+  edges: DraftEdge[];
+}
+
+/** 每阶段执行记录 */
+export interface StageLog {
+  stageId: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  wfId?: string;
+  runId?: string;
+  cost?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+/** 一次编排（存项目态 orchestrations 字段，随 .slimemold 持久化） */
+export interface Orchestration {
+  id: string;
+  goal: string;
+  status: OrchestrationStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** DAG 草案（确认前不变更用户工作流） */
+  draft: PipelineDraft | null;
+  /** 确认后生成的 pipeline 定义 id */
+  pipelineId?: string;
+  /** 当前执行到哪一阶段（可恢复） */
+  cursor?: string;
+  stageLogs: StageLog[];
+  /** 关联运行 id（runEvents 重放） */
+  runIds: string[];
+}
