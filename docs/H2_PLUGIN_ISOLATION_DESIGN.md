@@ -361,6 +361,31 @@ Codex 结论：发现**新的 P0 阻断**——`sandbox: true` 时 loader 仍先
   执行→结果回传；勾选沙箱后重新扫描同样正常，logger.info 转发显示）。
 - **已知限制**：pluginSandbox 开关只影响「重新扫描/重新导入」后的插件，不迁移已加载插件；
   权限声明仍来自插件 manifest（未来「不可信插件」需改为宿主侧授权策略，见 §5.2）。
+- **状态表述**：P2/P3 为「代码实现 + fake Worker 单测 + word-counter 人工 GUI 验收达成」；
+  **自动化真实 Worker 验收待补**（jsdom/Node 无原生 Worker，真实 WebView2 Worker 行为需人工 GUI 验证）。
+
+### 9.6 第四轮审计（2026-08-11）——在途 terminateAll 生命周期泄漏修复
+
+Codex 指出：`terminateAll()` 在存在在途 execute 时只 terminate Worker 和清空 responder，
+不 reject 当前 Promise，也不清理 timeout / heartbeat interval——卸载插件/切换项目时在途执行
+会悬挂、心跳定时器继续运行，直到超时或心跳阈值触发。
+
+**修复**：
+- `timer` / `heartbeatTimer` / `detachAbort` 纳入 `WorkerSlot.current`；
+- 统一收敛到 `disposeSlot(slot, err, rebuild)`：清理两个定时器 → 解除 abort listener →
+  reject 在途 Promise → terminate worker → （rebuild 时）移除槽位；
+- 超时 / 心跳判死 / worker 崩溃 / `terminateAll` 全部走 `disposeSlot`；
+- 顺带修复一个隐性 bug：`runOnSlot` 的 resolve/reject 包装为「首次调用统一 finish 清理」，
+  否则正常完成时 `slot.current` 残留，同 slot 后续 execute 会被并发拦截误伤（responder 路由
+  测试曾捕获 `expected 'ex-10' to be 'ex-11'`）。
+- 新增测试：在途执行 → terminateAll → **立即 reject（「插件沙箱已卸载/终止」）** 且无残留
+  timer（等待超过原超时时间后 Promise 不被二次覆盖）。489 tests（41 文件）全绿。
+
+---
+
+*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ ec0058f（P1 两项+P2 一项）→
+b0cafe3（第三轮 P0 主线程预执行修复）→ fe49d0f（P2 心跳）→ 本修订（第四轮在途 terminateAll 泄漏修复）*
+本文档为设计稿，PoC 验证后按实际修正。
 
 ---
 

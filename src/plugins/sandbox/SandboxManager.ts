@@ -73,6 +73,12 @@ interface WorkerSlot {
     capability: CapabilityLevel;
     resolve: (o: Record<string, unknown>) => void;
     reject: (e: Error) => void;
+    /** execute 超时定时器（dispose 时清理） */
+    timer: ReturnType<typeof setTimeout> | null;
+    /** 心跳探针定时器（dispose 时清理） */
+    heartbeatTimer: ReturnType<typeof setInterval> | null;
+    /** 解除 abort 监听的函数（dispose 时调用，避免 listener 泄漏） */
+    detachAbort: (() => void) | null;
   };
   /** 心跳状态（execute 期间启用；worker 卡死/死循环时心跳丢失 → 判死重建） */
   heartbeat?: {
@@ -175,53 +181,73 @@ export class SandboxManager {
     const runId = `run-${Date.now()}`;
 
     return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // 先声明 current 引用（timer/heartbeatTimer/detachAbort 延迟赋值，dispose 时读取）
+      // resolve/reject 包装：首次调用即统一清理定时器 + 置空 current/heartbeat，
+      // 避免「正常完成但 slot.current 残留」导致同 slot 后续 execute 被并发拦截误伤。
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (current.timer) clearTimeout(current.timer);
+        if (current.heartbeatTimer) clearInterval(current.heartbeatTimer);
+        current.detachAbort?.();
         slot.current = undefined;
-        this.killSlot(slot, true);
-        reject(new Error(`插件执行超时（${timeoutMs}ms）：${params.typeId}`));
-      }, timeoutMs);
-      slot.current = {
+        slot.heartbeat = undefined;
+      };
+      const current: NonNullable<WorkerSlot['current']> = {
         executionId: id,
         capability: params.capability,
         resolve: (o) => {
-          clearTimeout(timer);
-          clearInterval(heartbeatTimer);
-          slot.current = undefined;
-          slot.heartbeat = undefined;
+          finish();
           resolve(o);
         },
         reject: (e) => {
-          clearTimeout(timer);
-          clearInterval(heartbeatTimer);
-          slot.current = undefined;
-          slot.heartbeat = undefined;
+          finish();
           reject(e);
         },
+        timer: null,
+        heartbeatTimer: null,
+        detachAbort: null,
       };
-      // 心跳探针：execute 期间周期 ping，连续丢失超阈值 → 判死重建（死循环/卡死检测）
+      slot.current = current;
       slot.heartbeat = { runId, lastReply: Date.now(), missed: 0 };
-      const heartbeatTimer = setInterval(() => {
+
+      // 超时：disposeSlot 统一清理定时器 + terminate + reject
+      current.timer = setTimeout(() => {
+        this.disposeSlot(
+          slot,
+          new Error(`插件执行超时（${timeoutMs}ms）：${params.typeId}`),
+          true,
+        );
+      }, timeoutMs);
+
+      // 心跳探针：execute 期间周期 ping，连续丢失超阈值 → 判死重建（死循环/卡死检测）
+      current.heartbeatTimer = setInterval(() => {
         const hb = slot.heartbeat;
         if (!hb || hb.runId !== runId) return;
         hb.missed += 1;
         if (hb.missed > this.heartbeatMissThreshold) {
-          clearTimeout(timer);
-          clearInterval(heartbeatTimer);
-          slot.current = undefined;
-          slot.heartbeat = undefined;
-          this.killSlot(slot, true);
-          reject(new Error(`插件沙箱心跳丢失（worker 疑似死循环/卡死）：${params.typeId}`));
+          this.disposeSlot(
+            slot,
+            new Error(`插件沙箱心跳丢失（worker 疑似死循环/卡死）：${params.typeId}`),
+            true,
+          );
           return;
         }
         slot.worker.postMessage({ kind: 'ping', runId });
       }, this.heartbeatIntervalMs);
+
       // 取消：宿主 signal abort → 转发 abort 消息（worker 内 ctx.signal 触发）
       if (params.signal) {
         const onAbort = () => {
           slot.worker.postMessage({ kind: 'abort', runId });
         };
         if (params.signal.aborted) onAbort();
-        else params.signal.addEventListener('abort', onAbort, { once: true });
+        else {
+          params.signal.addEventListener('abort', onAbort, { once: true });
+          // 记录解除函数，dispose 时调用避免 listener 泄漏
+          current.detachAbort = () => params.signal?.removeEventListener('abort', onAbort);
+        }
       }
       slot.worker.postMessage({
         kind: 'execute',
@@ -308,13 +334,32 @@ export class SandboxManager {
     }
   }
 
-  /** worker 崩溃：reject 当前执行 + 销毁槽位（下次 execute 自动重建） */
+  /** worker 崩溃：disposeSlot 统一清理 + reject + terminate + 重建 */
   private onWorkerError(slot: WorkerSlot, ev: { message?: string }): void {
-    slot.current?.reject(new Error(`插件沙箱崩溃：${ev.message ?? '未知错误'}`));
-    this.killSlot(slot, true);
+    this.disposeSlot(
+      slot,
+      new Error(`插件沙箱崩溃：${ev.message ?? '未知错误'}`),
+      true,
+    );
   }
 
-  private killSlot(slot: WorkerSlot, rebuild: boolean): void {
+  /**
+   * 统一销毁槽位（超时 / 心跳判死 / 崩溃 / terminateAll 共用）：
+   * - 清理 execute 超时 timer 与心跳 interval
+   * - 解除 abort listener（防泄漏）
+   * - reject 在途执行的 Promise
+   * - terminate worker；rebuild=true 时移除槽位（下次 execute 自动重建）
+   */
+  private disposeSlot(slot: WorkerSlot, err: Error, rebuild: boolean): void {
+    const cur = slot.current;
+    if (cur) {
+      if (cur.timer) clearTimeout(cur.timer);
+      if (cur.heartbeatTimer) clearInterval(cur.heartbeatTimer);
+      cur.detachAbort?.();
+      slot.current = undefined;
+      slot.heartbeat = undefined;
+      cur.reject(err);
+    }
     slot.dead = true;
     try {
       slot.worker.terminate();
@@ -333,10 +378,14 @@ export class SandboxManager {
     this.responders.delete(executionId);
   }
 
-  /** 终止所有沙箱（卸载插件 / 切换项目时调用） */
+  /**
+   * 终止所有沙箱（卸载插件 / 切换项目时调用）。
+   * 对在途 execute 统一 reject（「插件沙箱已卸载/终止」）并清理定时器/abort listener，
+   * 避免 Promise 悬挂、心跳 interval 残留运行。
+   */
   terminateAll(): void {
     for (const slot of this.slots.values()) {
-      this.killSlot(slot, false);
+      this.disposeSlot(slot, new Error('插件沙箱已卸载/终止'), false);
     }
     this.slots.clear();
     this.responders.clear();

@@ -398,6 +398,33 @@ describe('SandboxManager 沙箱执行链路', () => {
     expect(f.workers[0].terminated).toBe(true);
   });
 
+  it('在途执行 → terminateAll → 立即 reject 且无残留 timer（生命周期泄漏修复）', async () => {
+    // 短超时：若 timer 未被清理，会在 terminateAll 后仍触发超时 reject（双重 reject 无害但可观测）
+    const fast = new SandboxManager({ workerFactory: f.factory, timeoutMs: 300, heartbeatIntervalMs: 5000 });
+    const p = fast.execute('p1', ENTRY, mkParams());
+    await vi.waitFor(() => expect(f.workers.length).toBeGreaterThan(0));
+    const w = f.workers[0];
+    w.reply({ kind: 'ready', pluginId: 'p1' });
+    await vi.waitFor(() => expect(w.lastExec()).toBeTruthy());
+    // 不回复 execute → 在途执行
+    let settled: 'pending' | 'rejected' | 'resolved' = 'pending';
+    p.then(
+      () => { settled = 'resolved'; },
+      () => { settled = 'rejected'; },
+    );
+    // terminateAll → 应立即 reject（错误=卸载/终止），而非等 300ms 超时
+    fast.terminateAll();
+    await vi.waitFor(() => expect(settled).toBe('rejected'));
+    expect(w.terminated).toBe(true);
+    // 等待超过原超时时间，确认没有二次 reject 覆盖已 reject 的 Promise（timer 已清理）
+    const err1 = await p.catch((e) => e);
+    await new Promise((r) => setTimeout(r, 350));
+    const err2 = await p.catch((e) => e);
+    expect(err1.message).toContain('卸载/终止');
+    expect(err2.message).toContain('卸载/终止');
+    expect(f.workers[0].terminated).toBe(true);
+  });
+
   it('心跳：worker 卡死（不回复 ping）→ 连续丢失判死 terminate + reject', async () => {
     // 短心跳间隔 + 低阈值，加速判死
     const fast = new SandboxManager({ workerFactory: f.factory, timeoutMs: 5000, heartbeatIntervalMs: 20, heartbeatMissThreshold: 2 });
