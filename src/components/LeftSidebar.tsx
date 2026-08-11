@@ -14,6 +14,7 @@ import {
   Archive,
   FolderTree,
   BarChart3,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import NodePalette from './NodePalette';
@@ -25,6 +26,7 @@ import RunHistoryPanel from './RunHistoryPanel';
 import AssetsPanel from './AssetsPanel';
 import GroupsPanel from './GroupsPanel';
 import TokenUsagePanel from './TokenUsagePanel';
+import OrchestratorPanel from './OrchestratorPanel';
 
 export type SidePanelKey =
   | 'nodes'
@@ -36,6 +38,7 @@ export type SidePanelKey =
   | 'tokens'
   | 'groups'
   | 'examples'
+  | 'orchestrator'
   | 'help';
 
 interface PanelItem {
@@ -51,6 +54,7 @@ const PANEL_ITEMS: PanelItem[] = [
   { key: 'groups', label: '组', icon: FolderTree, shortcut: '' },
   { key: 'plugins', label: '插件', icon: Puzzle, shortcut: '' },
   { key: 'agents', label: '智能体库', icon: Users, shortcut: '' },
+  { key: 'orchestrator', label: '编排', icon: Workflow, shortcut: '' },
   { key: 'assets', label: '资产', icon: Archive, shortcut: '' },
   { key: 'variables', label: '变量', icon: Variable, shortcut: '' },
   { key: 'history', label: '运行历史', icon: History, shortcut: '' },
@@ -85,6 +89,8 @@ export function renderSidePanel(key: SidePanelKey) {
       return <TokenUsagePanel embedded />;
     case 'groups':
       return <GroupsPanel embedded />;
+    case 'orchestrator':
+      return <OrchestratorPanel embedded />;
     case 'help':
       return (
         <div className="flex-1 overflow-y-auto px-4 py-3">

@@ -14,8 +14,19 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateDraft } from './draft';
-import { createOrchestration, confirmDraft, getOrchestration, updateOrchestration } from './confirm';
-import { runOrchestration, cancelOrchestrationRun, type OrchestrationDeps } from './run';
+import {
+  bindStageWorkflow,
+  createOrchestration,
+  confirmDraft,
+  getOrchestration,
+  updateOrchestration,
+} from './confirm';
+import {
+  runOrchestration,
+  cancelOrchestrationRun,
+  prepareStageWorkflows,
+  type OrchestrationDeps,
+} from './run';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { OrchestratorRequest } from './types';
 
@@ -67,12 +78,23 @@ function fakeDeps(over: Partial<OrchestrationDeps> = {}): {
       if (wfId) stopped.push(wfId);
       if (baseStop) baseStop(wfId);
     }),
-    // ensureStageWorkflow：默认返回真实 wfId（记录 bound）；可覆盖
+    // ensureStageWorkflow：默认返回真实 wfId（记录 bound）；可覆盖。
+    // 同时模拟 defaultDeps 的「固化绑定」行为——把 wfId 写入 stageWfIds（prepareStageWorkflows 断言依赖）
     ensureStageWorkflow: vi.fn(
       (orchId: string, stage: Parameters<OrchestrationDeps['ensureStageWorkflow']>[1]) => {
         bound.push(stage.id);
         if (baseEnsure) return baseEnsure(orchId, stage);
-        return { ok: true as const, wfId: `wf-${orchId}-${stage.id}` };
+        const wfId = `wf-${orchId}-${stage.id}`;
+        const st = useWorkflowStore.getState();
+        const o = st.orchestrations.find((x) => x.id === orchId);
+        if (o) {
+          st.setOrchestrations(
+            st.orchestrations.map((x) =>
+              x.id === orchId ? { ...x, stageWfIds: { ...x.stageWfIds, [stage.id]: wfId } } : x,
+            ),
+          );
+        }
+        return { ok: true as const, wfId };
       },
     ),
     // getWorkflow：必需依赖；默认返回非空节点（可覆盖）
@@ -253,5 +275,53 @@ describe('runOrchestration 编排执行器', () => {
     expect(result.status).toBe('failed');
     expect(result.stageLogs.find((l) => l.stageId === 'construction')?.status).toBe('failed');
     expect(result.stageLogs.find((l) => l.stageId === 'construction')?.error).toContain('无可用执行计划');
+  });
+
+  /* ---------- H3c：阶段工作流绑定/配置入口 ---------- */
+
+  it('bindStageWorkflow：awaiting-confirm 可改 wfRef，确认后 ready 仍可调整，running 拒绝', async () => {
+    // 未确认的编排（awaiting-confirm）
+    const orch = createOrchestration('x', generateDraft({ goal: 'x', source: 'ui' }, deps()));
+    // awaiting-confirm 状态（确认前）绑定 existing
+    bindStageWorkflow(orch.id, 'construction', { kind: 'existing', wfId: 'wf-existing-1' });
+    let cur = getOrchestration(orch.id)!;
+    expect(cur.draft!.stages.find((s) => s.id === 'construction')?.wfRef).toEqual({
+      kind: 'existing',
+      wfId: 'wf-existing-1',
+    });
+    // ready 状态（确认后执行前）仍可调整回 new
+    confirmDraft(orch.id, 'approved');
+    bindStageWorkflow(orch.id, 'construction', { kind: 'new' });
+    cur = getOrchestration(orch.id)!;
+    expect(cur.status).toBe('ready');
+    expect(cur.draft!.stages.find((s) => s.id === 'construction')?.wfRef).toEqual({ kind: 'new' });
+    // running 状态拒绝修改
+    updateOrchestration(orch.id, { status: 'running' });
+    expect(() => bindStageWorkflow(orch.id, 'construction', { kind: 'existing', wfId: 'x' })).toThrow(
+      /不允许修改阶段绑定/,
+    );
+  });
+
+  it('prepareStageWorkflows：提前固化每阶段 wfId 到 stageWfIds（runOrchestration 复用不重建）', async () => {
+    const orch = makeReadyOrch();
+    const { deps: f, bound } = fakeDeps();
+    const binds = prepareStageWorkflows(orch.id, f);
+    expect(binds).toHaveLength(3);
+    expect(binds.every((b) => b.bind.ok)).toBe(true);
+    expect(bound).toEqual(['plan', 'construction', 'acceptance']);
+    // 固化写入 stageWfIds，与 ensureStageWorkflow 返回的 wfId 一致
+    const cur = getOrchestration(orch.id)!;
+    expect(Object.keys(cur.stageWfIds ?? {})).toEqual(['plan', 'construction', 'acceptance']);
+    // 运行复用已固化绑定：ensureStageWorkflow 不再重建（fake 里 stageWfIds 优先返回）
+    const result = await runOrchestration(orch.id, f);
+    expect(result.status).toBe('done');
+    expect(result.stageLogs.every((l) => l.wfId === cur.stageWfIds![l.stageId])).toBe(true);
+  });
+
+  it('prepareStageWorkflows：running 状态拒绝', async () => {
+    const orch = makeReadyOrch();
+    updateOrchestration(orch.id, { status: 'running' });
+    const { deps: f } = fakeDeps();
+    expect(() => prepareStageWorkflows(orch.id, f)).toThrow(/不允许提前固化绑定/);
   });
 });

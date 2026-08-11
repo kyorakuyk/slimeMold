@@ -49,7 +49,7 @@ export interface OrchestrationDeps {
   getWorkflow: (wfId: string) => { nodes?: unknown[]; name?: string } | undefined;
 }
 
-const defaultDeps: OrchestrationDeps = {
+export const defaultDeps: OrchestrationDeps = {
   runWorkflow: async (opts) => {
     const { runWorkflow: real } = await import('../engine/executor');
     // executor 现返回 { status, runId }——真实运行结果，禁止反查全局 runHistory（并发串号风险）
@@ -98,6 +98,29 @@ const defaultDeps: OrchestrationDeps = {
     return { nodes: wf.nodes, name: wf.name };
   },
 };
+
+/**
+ * 提前固化各阶段工作流绑定（H3c：确认/运行前让用户看到真实 wfId 并可打开编辑）。
+ * - 对每个阶段调用 ensureStageWorkflow：existing 验证存在 / new 创建空白工作流（activate:false）；
+ * - 真实 wfId 固化到 Orchestration.stageWfIds（runOrchestration 复用同一 ID，不重建）；
+ * - 仅允许在 awaiting-confirm / ready 状态调用（running 中由运行路径自行绑定）。
+ * 返回每阶段绑定结果（{ stageId, bind }），供 UI 展示失败原因。
+ */
+export function prepareStageWorkflows(
+  orchId: string,
+  deps: OrchestrationDeps = defaultDeps,
+): Array<{ stageId: string; bind: StageWfBind }> {
+  const orch = getOrchestration(orchId);
+  if (!orch) throw new Error(`编排记录不存在：${orchId}`);
+  if (orch.status !== 'awaiting-confirm' && orch.status !== 'ready') {
+    throw new Error(
+      `编排记录状态 ${orch.status} 不允许提前固化绑定（仅 awaiting-confirm / ready）`,
+    );
+  }
+  const draft = orch.draft;
+  if (!draft) return [];
+  return draft.stages.map((stage) => ({ stageId: stage.id, bind: deps.ensureStageWorkflow(orchId, stage) }));
+}
 
 /** 运行编排：ready → running → 绑定并执行各阶段。返回最终 Orchestration。 */
 export async function runOrchestration(

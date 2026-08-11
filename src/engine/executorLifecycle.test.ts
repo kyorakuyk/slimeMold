@@ -10,7 +10,7 @@
  * - beforeEach 重置 store 关键状态 + registerBuiltins + 清缓存；
  * - 竞态场景用可控延迟的测试节点 def（resolveNodeExecutionMode 前注册）。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { registerBuiltins } from '../nodes/builtin';
@@ -403,5 +403,55 @@ describe('runWorkflow 生命周期集成', () => {
     expect(st.nodes.find((n) => n.id === 'done')?.data.status).toBe('success');
     // loopGate 每轮被强制重算（count 3 证明循环体跑了 3 次）
     expect(st.runHistory.length).toBeGreaterThanOrEqual(1);
+  });
+
+  /* ---------- H3b 审计补充：提前返回分支必须返回明确 aborted 结果（真实生命周期） ---------- */
+
+  it('空图 → runWorkflow 返回 { status: aborted }，绝不静默 void', async () => {
+    const wfId = 'wf-life-aborted-empty';
+    seedStore(wfId, [], []);
+    const result = await runWorkflow({ wfId });
+    expect(result.status).toBe('aborted');
+    expect(result.error).toContain('还没放任何节点');
+    expect(typeof result.runId).toBe('number');
+  });
+
+  it('非法执行计划（子图引用丢失，buildRunPlan 抛错）→ 返回 aborted', async () => {
+    const wfId = 'wf-life-aborted-badplan';
+    const refNode = mkNode('a', 'subgraph.ref', '丢失的子图');
+    refNode.data.params = { subgraphId: 'missing-sg' };
+    seedStore(wfId, [refNode], []);
+    const result = await runWorkflow({ wfId });
+    expect(result.status).toBe('aborted');
+    expect(result.error).toContain('引用的定义已丢失');
+    expect(typeof result.runId).toBe('number');
+  });
+
+  it('数据成环 → runWorkflow 返回 aborted（死循环拦截）', async () => {
+    const wfId = 'wf-life-aborted-cycle';
+    const nodes = [mkNode('a', 'input.text', 'A'), mkNode('b', 'input.text', 'B')];
+    const edges = [
+      mkEdge('e1', 'a', 'b', 'text', 'in'),
+      mkEdge('e2', 'b', 'a', 'text', 'in'),
+    ];
+    seedStore(wfId, nodes, edges);
+    const result = await runWorkflow({ wfId });
+    expect(result.status).toBe('aborted');
+    expect(result.error).toContain('死循环');
+    expect(typeof result.runId).toBe('number');
+  });
+
+  it('并发拦截（上次运行仍有效）→ runWorkflow 返回 aborted', async () => {
+    const wfId = 'wf-life-aborted-concurrent';
+    registerGateNode('gate.block', { delayMs: 80 });
+    const nodes = [mkNode('a', 'gate.block')];
+    seedStore(wfId, nodes, []);
+    const first = runWorkflow({ wfId });
+    // 等待第一次运行已进入 running 态（setRunning 后 runStates[wfId].running === true）
+    await vi.waitFor(() => expect(useWorkflowStore.getState().runStates[wfId]?.running).toBe(true));
+    const result = await runWorkflow({ wfId });
+    expect(result.status).toBe('aborted');
+    expect(result.error).toContain('已忽略重复启动');
+    await first;
   });
 });

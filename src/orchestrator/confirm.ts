@@ -155,7 +155,9 @@ export function cancelOrchestration(orchId: string): Orchestration {
  */
 export function updateOrchestration(
   orchId: string,
-  patch: Partial<Pick<Orchestration, 'status' | 'cursor' | 'stageLogs' | 'runIds' | 'pipelineId' | 'stageWfIds'>>,
+  patch: Partial<
+    Pick<Orchestration, 'status' | 'cursor' | 'stageLogs' | 'runIds' | 'pipelineId' | 'stageWfIds' | 'draft'>
+  >,
 ): Orchestration | undefined {
   const st = useWorkflowStore.getState();
   const idx = st.orchestrations.findIndex((o) => o.id === orchId);
@@ -175,4 +177,34 @@ export function updateOrchestration(
   list[idx] = next;
   st.setOrchestrations(list);
   return next;
+}
+
+/**
+ * 为某阶段绑定/配置工作流（H3c 编辑入口）：
+ * - 仅允许在 awaiting-confirm / ready 状态（确认后、执行前仍可调整绑定）；
+ * - 修改 draft.stages[stageId].wfRef（new=运行前创建空白工作流 / existing=只读引用已有工作流）；
+ * - 不在此处创建/校验工作流——实际绑定由 runOrchestration 的 ensureStageWorkflow 在运行时
+ *   完成（或由 prepareStageWorkflows 提前固化）。
+ */
+export function bindStageWorkflow(
+  orchId: string,
+  stageId: string,
+  wfRef: { kind: 'new' } | { kind: 'existing'; wfId: string },
+): Orchestration {
+  const st = useWorkflowStore.getState();
+  const orch = st.orchestrations.find((o) => o.id === orchId);
+  if (!orch) throw new Error(`编排记录不存在：${orchId}`);
+  if (orch.status !== 'awaiting-confirm' && orch.status !== 'ready') {
+    throw new Error(
+      `编排记录状态 ${orch.status} 不允许修改阶段绑定（仅 awaiting-confirm / ready）`,
+    );
+  }
+  if (!orch.draft) throw new Error(`编排记录没有草案：${orchId}`);
+  const stage = orch.draft.stages.find((s) => s.id === stageId);
+  if (!stage) throw new Error(`阶段不存在：${stageId}`);
+  const draft: PipelineDraft = {
+    ...orch.draft,
+    stages: orch.draft.stages.map((s) => (s.id === stageId ? { ...s, wfRef } : s)),
+  };
+  return updateOrchestration(orchId, { draft })!;
 }

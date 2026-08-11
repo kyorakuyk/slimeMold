@@ -278,14 +278,17 @@ async function runOrchestration(orchId: string): Promise<void> {
 |---|---|---|
 | **H3a 类型 + 纯函数地基** ✅ | `src/orchestrator/types.ts`（Orchestration/PipelineDraft/StageLog）+ `generateDraft` 纯函数（模板 + AgentRouter 选 agent）+ `confirmDraft`/`discardDraft`/`cancelOrchestration`/`ALLOWED_TRANSITIONS`（store 收口） | 单测：generateDraft 不写 store；confirm 才落盘；discard 状态约束；迁移表强制 |
 | **H3b 编排执行器** ⚠️ 骨架完成 | `src/orchestrator/run.ts`：`runOrchestration`（ready→running→拓扑序执行→写 StageLog→首败即 failed→cancel 先 stopWorkflow 再 cancelled）；**每个阶段执行前真实绑定工作流**（existing 验证存在 / new 注册 activate:false，真实 wfId 固化到 `Orchestration.stageWfIds` 供恢复复用）；**空工作流 → 阶段失败（getWorkflow 为必需依赖，绝不运行空图标 success）**；**executor 返回明确结果 `{ status, runId }`——仅 `status==='success'` 才标阶段 success，error/aborted（非法图/节点失败/死循环/被停止）→ 阶段 failed**；**runId 由 executor 直接返回，禁止反查全局 runHistory（并发串号风险）**；readonly 固化在 Orchestration；写 success 前复查 cancelled。**待完成：pipeline 绑定持久化到 PipelineDef、orch.* 事件接入 runEvents、每阶段 checkpoint 落盘** | 单测（fake）：仅 ready/顺序/失败停/cancel/readonly/existing 不存在→失败/空工作流→失败/cancel 后不标 success/stageWfIds 固化复用/**executor 返回 error→阶段 failed**/**executor 返回 aborted→阶段 failed** |
-| **H3c 编排面板 UI** ⏳ | 左栏「编排」入口：目标输入 → 草案预览（DAG+agent）→ 确认/废弃 → 进度展示 | GUI：目标→草案→确认→执行最小闭环 |
+| **H3c 编排面板 UI** ✅ 核心闭环 | 左栏「编排」入口（`OrchestratorPanel`）：目标输入 → 草案预览（DAG+agent+产物）→ **为每阶段绑定/配置工作流**（new=新建空白 / existing=复用已有，`bindStageWorkflow` 修改 wfRef，`prepareStageWorkflows` 提前固化真实 wfId 并可打开编辑）→ 显式确认（confirmDraft→ready）→ 执行（runOrchestration）→ 进度展示（StageLog 状态/runId/error） | GUI：目标→草案→绑定→确认→执行→进度 最小闭环（H3b 待补项：orch.* 事件、checkpoint、runIds 结构） |
 | **H3d 阶段模板 + LLM 草案**（可选延后） | `stageForGoal` 模板化 → 后续接入 LLM 生成草案 | — |
 
-> H3a（纯函数地基）✅ → H3b（执行器骨架，Codex P0 修复后收口）⚠️ → H3c（UI 闭环）→ H3d 延后。
+> H3a（纯函数地基）✅ → H3b（执行器，Codex P0 修复后收口）✅ → H3c（UI 闭环）✅ → H3d 延后。
 > H3b 按 Codex 建议：仅接受 ready、原子迁移 running、拓扑序、StageLog、首败即 failed、
 > cancel 先 stopWorkflow 再 cancelled、暂不做自动回流与 LLM 动态改图。
 > P0 修复：真实 wfId 绑定（existing 验证/new 注册）、删除绕过确认的 orchestrateGoal 入口、
-> readonly 固化到 Orchestration、写 success 前复查 cancelled。
+> readonly 固化到 Orchestration、写 success 前复查 cancelled、executor 返回 RunResult（error/aborted 必失败）。
+> H3c：`OrchestratorPanel`（左栏「编排」）+ `bindStageWorkflow`/`prepareStageWorkflows`；
+> 审计补充的 executor 提前返回分支（空图/非法图/环路/并发拦截 → aborted）真实生命周期单测已补。
+> 待补（H3b 遗留，不阻塞）：orch.* 事件接入 runEvents、每阶段 checkpoint、runIds 改为 { wfId, runId }[]。
 
 ---
 
@@ -308,16 +311,22 @@ async function runOrchestration(orchId: string): Promise<void> {
 src/orchestrator/
   types.ts        # Orchestration / PipelineDraft / DraftStage / StageLog / OrchestratorRequest
   draft.ts        # generateDraft（纯函数，复用 decideAgentCall + 阶段模板）
-  confirm.ts      # confirmDraft / discardDraft / cancelOrchestration / ALLOWED_TRANSITIONS（store 收口）
-  run.ts          # runOrchestration（按拓扑序调 runWorkflow + 事件/checkpoint/StageLog）
-  events.ts       # OrchestrationEventKind 扩展 + emitOrch
+  confirm.ts      # confirmDraft / discardDraft / cancelOrchestration / bindStageWorkflow /
+                  #   ALLOWED_TRANSITIONS / updateOrchestration（store 收口）
+  run.ts          # runOrchestration + prepareStageWorkflows + defaultDeps（按拓扑序调 runWorkflow + StageLog）
+  events.ts       # OrchestrationEventKind 扩展 + emitOrch（未实现，H3b 遗留）
   *.test.ts       # 各模块单测（fake runWorkflow）
+src/components/OrchestratorPanel.tsx  # H3c 编排面板（目标输入/草案预览/阶段绑定/确认/执行/进度）
+src/components/LeftSidebar.tsx        # 左栏「编排」入口（SidePanelKey.orchestrator）
 src/store/workflowStore.ts  # 新增 orchestrations 字段（partialize 白名单）
-src/engine/runEvents.ts     # OrchestrationEventKind 扩展
+src/engine/runEvents.ts     # OrchestrationEventKind 扩展（未实现，H3b 遗留）
 ```
 
 ---
 
 *生成日期：2026-08-11 · 基线演进：e5ccb37（H2 收口）→ 43bf641（H3a 地基）→ 83be944
 （确认门语义修正）→ ad9eebb（状态迁移表强制）→ cb668eb（discard 边界 + cancelOrchestration）
-→ 本修订（H3b 编排执行器 runOrchestration + fake runWorkflow 单测）。本文档为设计稿，按实现修正。*
+→ H3b（runOrchestration，Codex 三轮审计 P0 修复：真实 wfId 绑定 / stageWfIds 固化 / 空图必失败 /
+executor 返回 RunResult，error/aborted 必失败）→ 本修订（H3c 编排面板 UI 最小闭环：目标输入 →
+草案预览 → 每阶段绑定/配置工作流（bindStageWorkflow + prepareStageWorkflows）→ 显式确认 → 执行 →
+StageLog 进度；executor 提前返回分支真实生命周期单测）。本文档为设计稿，按实现修正。*
