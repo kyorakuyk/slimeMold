@@ -1079,10 +1079,16 @@ export interface PipelineDef {
 
 /* ---------- H3 Orchestrator（总控 Agent，只生成草案不静默改用户工作流） ---------- */
 
-/** 编排状态机 */
+/**
+ * 编排状态机。
+ * 生命周期：draft → awaiting-confirm → ready（确认后待执行）→ running（仅 runOrchestration 进入）
+ *          → done / failed / cancelled / paused（可恢复回 running）
+ * 注意：confirmDraft 只把状态置为 ready，绝不进入 running——「确认」≠「执行」。
+ */
 export type OrchestrationStatus =
   | 'draft'
   | 'awaiting-confirm'
+  | 'ready'
   | 'running'
   | 'paused'
   | 'done'

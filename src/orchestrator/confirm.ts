@@ -3,6 +3,8 @@
  *
  * 安全红线（docs/H3_ORCHESTRATOR_DESIGN.md §6）：
  * - confirmDraft 是唯一「落盘」入口；approval 必须显式为 'approved'；
+ * - **confirmDraft 只把状态置为 ready（确认待执行），绝不进入 running**——
+ *   「确认」≠「执行」；running 只能由 H3b runOrchestration() 进入；
  * - discardDraft 只删除编排记录，不触碰任何用户工作流；
  * - 新工作流由调用方以 activate:false 注册（Orchestrator 不会自动运行未确认的工作流）。
  */
@@ -37,7 +39,9 @@ export function getOrchestration(orchId: string): Orchestration | undefined {
 /**
  * 确认草案（唯一落盘门）：
  * - approval 非 'approved' 直接抛错（代码级强制，防止误调）；
- * - 更新状态为 awaiting 之后的 running-ready（paused 之前），并记录 pipelineId。
+ * - 状态 awaiting-confirm → **ready**（确认待执行），**不进入 running**。
+ * - 不在此处创建 pipeline / 绑定工作流 / 调 runWorkflow——那些由 H3b runOrchestration()
+ *   在真正启动执行时完成（「确认」与「执行」解耦，确认后用户仍可编辑草案绑定）。
  */
 export function confirmDraft(orchId: string, approval: Confirmation): Orchestration {
   if (approval !== 'approved') {
@@ -52,7 +56,7 @@ export function confirmDraft(orchId: string, approval: Confirmation): Orchestrat
   }
   const next: Orchestration = {
     ...orch,
-    status: 'running',
+    status: 'ready',
     updatedAt: new Date().toISOString(),
   };
   const list = [...st.orchestrations];
@@ -73,7 +77,11 @@ export function discardDraft(orchId: string): boolean {
   return true;
 }
 
-/** 更新编排状态（通用内部收口，供 run.ts 推进进度） */
+/**
+ * 更新编排状态（通用内部收口，供 run.ts 推进进度）。
+ * 注意：进入 running 只允许由 runOrchestration 调用（H3b），此处不设限制以便复用，
+ * 但调用方须遵循「ready → running」的语义。
+ */
 export function updateOrchestration(
   orchId: string,
   patch: Partial<Pick<Orchestration, 'status' | 'cursor' | 'stageLogs' | 'runIds' | 'pipelineId'>>,

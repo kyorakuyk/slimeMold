@@ -70,6 +70,29 @@ describe('generateDraft 草案生成（纯函数零副作用）', () => {
     expect(draft.stages).toHaveLength(1);
     expect(draft.stages[0].id).toBe('plan');
   });
+
+  it('校验：goal 为空抛错', () => {
+    expect(() => generateDraft({ goal: '   ', source: 'ui' }, deps())).toThrow(/目标不能为空/);
+  });
+
+  it('校验：goal 超 2000 字符抛错', () => {
+    expect(() => generateDraft({ goal: 'x'.repeat(2001), source: 'ui' }, deps())).toThrow(/目标过长/);
+  });
+
+  it('校验：maxStages 超上限抛错', () => {
+    expect(() =>
+      generateDraft({ goal: 'x', source: 'ui', constraints: { maxStages: 8 } }, deps()),
+    ).toThrow(/maxStages.*上限/);
+    expect(() =>
+      generateDraft({ goal: 'x', source: 'ui', constraints: { maxStages: 0 } }, deps()),
+    ).toThrow(/maxStages.*正整数/);
+  });
+
+  it('校验：budgetTokens 负数抛错', () => {
+    expect(() =>
+      generateDraft({ goal: 'x', source: 'ui', constraints: { budgetTokens: -1 } }, deps()),
+    ).toThrow(/budgetTokens/);
+  });
 });
 
 describe('confirm 确认门', () => {
@@ -88,17 +111,17 @@ describe('confirm 确认门', () => {
     expect(() => confirmDraft(orch.id, 'maybe' as never)).toThrow(/必须显式批准/);
   });
 
-  it('confirmDraft：确认后状态 running', () => {
+  it('confirmDraft：确认后状态为 ready（确认≠执行，不进入 running）', () => {
     const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
     const next = confirmDraft(orch.id, 'approved');
-    expect(next.status).toBe('running');
-    expect(getOrchestration(orch.id)?.status).toBe('running');
+    expect(next.status).toBe('ready');
+    expect(getOrchestration(orch.id)?.status).toBe('ready');
   });
 
   it('confirmDraft：非 awaiting-confirm 状态拒绝（幂等保护）', () => {
     const orch = createOrchestration('g', generateDraft({ goal: 'g', source: 'ui' }, deps()));
     confirmDraft(orch.id, 'approved');
-    // 二次确认（已在 running）应抛错
+    // 二次确认（已在 ready）应抛错
     expect(() => confirmDraft(orch.id, 'approved')).toThrow(/不允许确认/);
   });
 

@@ -80,7 +80,9 @@ Orchestrator 本身是**无状态协调器**；编排进度存于项目态（`wo
 interface Orchestration {
   id: string;                     // orch-<ts>
   goal: string;                   // 原始目标
-  status: 'draft' | 'awaiting-confirm' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed';
+  // 生命周期：draft → awaiting-confirm → ready（确认待执行）→ running（仅 runOrchestration 进入）
+  //         → done / failed / cancelled / paused（可恢复回 running）
+  status: 'draft' | 'awaiting-confirm' | 'ready' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed';
   createdAt: string;
   updatedAt: string;
   /** DAG 草案（阶段 + 有向边），用户确认前不变更用户工作流 */
@@ -170,9 +172,10 @@ type OrchestrationEventKind =
 这是 H3 的**安全红线**，落实为代码级强制：
 
 1. **草案生成 = 纯函数**：`generateDraft(goal, constraints)` 返回 `PipelineDraft`，**不写 store、
-   不落盘、不注册工作流**。
-2. **确认门**：`confirmDraft(orchId, approval)` 是唯一允许「把草案落成 pipeline + 绑定/注册
-   工作流」的入口；`approval` 必须显式为 `'approved'`。
+   不落盘、不注册工作流**；入口校验 goal 非空 / 长度 ≤2000 / maxStages ≤7 / budgetTokens ≥0。
+2. **确认门（确认 ≠ 执行）**：`confirmDraft(orchId, approval)` 是唯一允许把草案落盘的入口；
+   `approval` 必须显式为 `'approved'`；**只把状态置为 `ready`（确认待执行），绝不进入 `running`**。
+   `running` 只能由 H3b `runOrchestration()` 进入——确认后用户仍可编辑草案/绑定工作流，不自动运行。
 3. **草案与用户工作流隔离**：
    - `wfRef.kind: 'existing'` 的复用，**只读引用**（不 clone 不修改原工作流）；
    - `wfRef.kind: 'new'` 的生成，落地为**新工作流**（`registerWorkflow(..., {activate:false})`），
@@ -301,4 +304,5 @@ src/engine/runEvents.ts     # OrchestrationEventKind 扩展
 
 ---
 
-*生成日期：2026-08-11 · 基线 main @ e5ccb37（H2 收口）· 本文档为设计稿，H3a 纯函数地基实现后按实际修正*
+*生成日期：2026-08-11 · 基线 main @ e5ccb37（H2 收口）→ 43bf641（H3a 地基）→ 本修订
+（确认门语义修正：confirmDraft 置 ready 而非 running；补 request 校验）。本文档为设计稿，按实现修正。*

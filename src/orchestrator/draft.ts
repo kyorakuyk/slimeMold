@@ -55,11 +55,42 @@ export interface DraftDeps {
   projectId?: string;
 }
 
+/** 阶段数上限（防草案爆炸） */
+export const MAX_STAGES_LIMIT = 7;
+
+/**
+ * 校验编排请求（generateDraft 入口，纯函数）。
+ * - goal 非空（trim 后）且长度 ≤ 2000；
+ * - maxStages 若指定必须 ≥1 且 ≤ MAX_STAGES_LIMIT。
+ * 违反即抛错，不做静默截断。
+ */
+export function validateRequest(request: OrchestratorRequest): void {
+  const goal = (request.goal ?? '').trim();
+  if (!goal) throw new Error('Orchestrator：目标不能为空');
+  if (goal.length > 2000) {
+    throw new Error(`Orchestrator：目标过长（${goal.length} 字符，上限 2000）`);
+  }
+  const maxStages = request.constraints?.maxStages;
+  if (maxStages != null) {
+    if (!Number.isInteger(maxStages) || maxStages < 1) {
+      throw new Error(`Orchestrator：maxStages 必须为正整数（收到 ${maxStages}）`);
+    }
+    if (maxStages > MAX_STAGES_LIMIT) {
+      throw new Error(`Orchestrator：maxStages 超过上限 ${MAX_STAGES_LIMIT}`);
+    }
+  }
+  const budgetTokens = request.constraints?.budgetTokens;
+  if (budgetTokens != null && (!Number.isFinite(budgetTokens) || budgetTokens < 0)) {
+    throw new Error(`Orchestrator：budgetTokens 必须为非负数（收到 ${budgetTokens}）`);
+  }
+}
+
 /** 生成 DAG 草案（纯函数：只返回 PipelineDraft，不写任何状态） */
 export function generateDraft(
   request: OrchestratorRequest,
   deps: DraftDeps,
 ): PipelineDraft {
+  validateRequest(request);
   const maxStages = request.constraints?.maxStages ?? STAGE_TEMPLATE.length;
   const template = STAGE_TEMPLATE.slice(0, Math.min(maxStages, STAGE_TEMPLATE.length));
 
