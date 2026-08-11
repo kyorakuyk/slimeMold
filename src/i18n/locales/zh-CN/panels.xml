@@ -271,6 +271,8 @@
   <string name="orchestrator.cancel">取消</string>
   <string name="orchestrator.discardHint">废弃草案（不触碰任何用户工作流；运行中须先取消）</string>
   <string name="orchestrator.hint.readonly">只读编排不执行</string>
+  <string name="orchestrator.hint.ready">所有阶段已绑定非空工作流，可以执行</string>
+  <string name="orchestrator.hint.notReady">有阶段未绑定非空工作流：请先「固化工作流」并编辑添加节点，或改为复用已有工作流</string>
   <string name="orchestrator.status.draft">草案</string>
   <string name="orchestrator.status.awaiting-confirm">待确认</string>
   <string name="orchestrator.status.ready">待执行</string>

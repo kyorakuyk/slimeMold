@@ -26,17 +26,17 @@ import {
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
-import { generateDraft } from '../orchestrator/draft';
 import {
   bindStageWorkflow,
   confirmDraft,
-  createOrchestration,
+  createDraftOrchestration,
   discardDraft,
 } from '../orchestrator/confirm';
 import {
   cancelOrchestrationRun,
   prepareStageWorkflows,
   runOrchestration,
+  stagesReadyToRun,
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
 import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
@@ -107,7 +107,7 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
   const stageLogOf = (orch: Orchestration, stageId: string): StageLog | undefined =>
     orch.stageLogs.find((l) => l.stageId === stageId);
 
-  /** 生成草案（纯函数）并创建编排记录 */
+  /** 生成草案（纯函数）并创建编排记录（readonly 经 createDraftOrchestration 固化，P0 修复） */
   const onGenerate = () => {
     setErr(null);
     try {
@@ -115,15 +115,17 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
       if (agentId) constraints.agentId = agentId;
       if (readonly) constraints.readonly = true;
       const request: OrchestratorRequest = { goal, source: 'ui', constraints };
-      const draft = generateDraft(request, {
+      const orch = createDraftOrchestration(request, {
         agents,
         globalAgents,
         routeTable: useWorkflowStore.getState().agentRouteTable,
         defaultAgentId: useWorkflowStore.getState().defaultAgentId,
         projectId: useWorkflowStore.getState().projectId ?? undefined,
       });
-      const orch = createOrchestration(goal.trim(), draft);
-      addLog('info', `编排草案已生成（${orch.id}），共 ${draft.stages.length} 个阶段，请绑定工作流并确认`);
+      addLog(
+        'info',
+        `编排草案已生成（${orch.id}），共 ${orch.draft?.stages.length ?? 0} 个阶段，请绑定工作流并确认`,
+      );
       setSelectedId(orch.id);
       setGoal('');
     } catch (e) {
@@ -496,16 +498,27 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                     <CheckCircle2 size={13} /> {t('orchestrator.confirm')}
                   </button>
                 )}
-                {selected.status === 'ready' && (
-                  <button
-                    className="sm-btn justify-center hover:border-accent hover:text-accent"
-                    onClick={() => onRun(selected.id)}
-                    disabled={busy || !!selected.readonly}
-                    title={selected.readonly ? t('orchestrator.hint.readonly') : t('orchestrator.prepareHint')}
-                  >
-                    <Play size={13} /> {busy ? t('orchestrator.running') : t('orchestrator.run')}
-                  </button>
-                )}
+                {selected.status === 'ready' &&
+                  (() => {
+                    // 审计建议：执行前检查所有阶段已绑定非空工作流，未就绪禁用并提示
+                    const runnable = stagesReadyToRun(selected, workflows);
+                    return (
+                      <button
+                        className="sm-btn justify-center hover:border-accent hover:text-accent"
+                        onClick={() => onRun(selected.id)}
+                        disabled={busy || !!selected.readonly || !runnable}
+                        title={
+                          selected.readonly
+                            ? t('orchestrator.hint.readonly')
+                            : runnable
+                              ? t('orchestrator.hint.ready')
+                              : t('orchestrator.hint.notReady')
+                        }
+                      >
+                        <Play size={13} /> {busy ? t('orchestrator.running') : t('orchestrator.run')}
+                      </button>
+                    );
+                  })()}
               </>
             )}
             {(selected.status === 'running' || selected.status === 'paused') && (

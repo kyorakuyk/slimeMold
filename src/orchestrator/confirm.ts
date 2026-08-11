@@ -11,7 +11,8 @@
 
 import { useWorkflowStore } from '../store/workflowStore';
 import type { Orchestration, OrchestrationStatus, PipelineDraft } from '../types';
-import type { Confirmation } from './types';
+import { generateDraft, type DraftDeps } from './draft';
+import type { Confirmation, OrchestratorRequest } from './types';
 
 /**
  * 状态迁移表：from → 允许的 to 集合。
@@ -206,5 +207,30 @@ export function bindStageWorkflow(
     ...orch.draft,
     stages: orch.draft.stages.map((s) => (s.id === stageId ? { ...s, wfRef } : s)),
   };
-  return updateOrchestration(orchId, { draft })!;
+  // P0 修复（H3c 审计）：重新绑定会使旧的固化绑定失效——执行器优先用 stageWfIds，
+  // 若不清除，UI 上选中工作流 B 实际仍可能执行先前固化的工作流 A。
+  // 清除该阶段的 stageWfIds，让 prepareStageWorkflows/runOrchestration 按新 wfRef 重新绑定。
+  const patch: Partial<Pick<Orchestration, 'draft' | 'stageWfIds'>> = { draft };
+  if (orch.stageWfIds && stageId in orch.stageWfIds) {
+    const stageWfIds = { ...orch.stageWfIds };
+    delete stageWfIds[stageId];
+    patch.stageWfIds = stageWfIds;
+  }
+  return updateOrchestration(orchId, patch)!;
+}
+
+/**
+ * 生成草案并创建编排记录（H3c UI 入口，供 OrchestratorPanel.onGenerate 调用）。
+ * - 纯函数 generateDraft 生成草案（不落盘、不改用户工作流）；
+ * - createOrchestration 写入编排记录并把 constraints.readonly 固化到 Orchestration.readonly
+ *   （P0 修复：此前 UI 层漏传 readonly，勾选「只读」后仍可执行）。
+ */
+export function createDraftOrchestration(
+  request: OrchestratorRequest,
+  deps: DraftDeps,
+): Orchestration {
+  const draft = generateDraft(request, deps);
+  return createOrchestration(request.goal.trim(), draft, {
+    readonly: request.constraints?.readonly,
+  });
 }

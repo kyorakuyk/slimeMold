@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateDraft } from './draft';
 import {
   bindStageWorkflow,
+  createDraftOrchestration,
   createOrchestration,
   confirmDraft,
   getOrchestration,
@@ -25,9 +26,11 @@ import {
   runOrchestration,
   cancelOrchestrationRun,
   prepareStageWorkflows,
+  stagesReadyToRun,
   type OrchestrationDeps,
 } from './run';
 import { useWorkflowStore } from '../store/workflowStore';
+import type { Orchestration } from '../types';
 import type { OrchestratorRequest } from './types';
 
 const agent = {
@@ -323,5 +326,67 @@ describe('runOrchestration 编排执行器', () => {
     updateOrchestration(orch.id, { status: 'running' });
     const { deps: f } = fakeDeps();
     expect(() => prepareStageWorkflows(orch.id, f)).toThrow(/不允许提前固化绑定/);
+  });
+
+  it('createDraftOrchestration：readonly 从请求固化到 Orchestration.readonly（P0）', async () => {
+    const readonlyOrch = createDraftOrchestration(
+      { goal: '只读目标', source: 'ui', constraints: { readonly: true } },
+      deps(),
+    );
+    expect(readonlyOrch.readonly).toBe(true);
+    // 非只读请求不误写 readonly
+    const normalOrch = createDraftOrchestration({ goal: '普通目标', source: 'ui' }, deps());
+    expect(normalOrch.readonly).toBeUndefined();
+  });
+
+  it('bindStageWorkflow：重新绑定会清除该阶段旧固化 stageWfIds（P0，防执行对象错配）', async () => {
+    const orch = makeReadyOrch();
+    const { deps: f } = fakeDeps();
+    // 先固化：plan 绑定到旧工作流
+    prepareStageWorkflows(orch.id, f);
+    let cur = getOrchestration(orch.id)!;
+    const oldPlanWfId = cur.stageWfIds!.plan;
+    expect(oldPlanWfId).toBeDefined();
+    // 重新绑定 plan → 旧固化绑定被清除（执行器不得再用旧 wfId）
+    bindStageWorkflow(orch.id, 'plan', { kind: 'existing', wfId: 'wf-B' });
+    cur = getOrchestration(orch.id)!;
+    expect(cur.stageWfIds!.plan).toBeUndefined();
+    // 其它阶段的固化绑定保留
+    expect(cur.stageWfIds!.construction).toBeDefined();
+    expect(cur.stageWfIds!.acceptance).toBeDefined();
+    // 再次固化：plan 按新 wfRef 重新绑定（不再复用旧 id）
+    prepareStageWorkflows(orch.id, f);
+    cur = getOrchestration(orch.id)!;
+    expect(cur.stageWfIds!.plan).toBeDefined();
+  });
+
+  it('stagesReadyToRun：new 未固化 / 固化空图 → false；固化非空 / existing 非空 → true', async () => {
+    const orch = makeReadyOrch(); // 三阶段默认 new 且未固化
+    expect(stagesReadyToRun(orch, {})).toBe(false);
+    // 全部固化且对应工作流非空
+    const full: Orchestration = {
+      ...orch,
+      stageWfIds: { plan: 'w1', construction: 'w2', acceptance: 'w3' },
+    };
+    const wfs = { w1: { nodes: [{}] }, w2: { nodes: [{}] }, w3: { nodes: [{}] } };
+    expect(stagesReadyToRun(full, wfs as never)).toBe(true);
+    // 某阶段固化后对应工作流为空图 → false
+    const emptyBound: Orchestration = {
+      ...full,
+      stageWfIds: { ...full.stageWfIds!, construction: 'w-empty' },
+    };
+    expect(stagesReadyToRun(emptyBound, { ...wfs, 'w-empty': { nodes: [] } } as never)).toBe(false);
+    // existing 引用非空工作流（未固化）→ true
+    const allExisting: Orchestration = {
+      ...orch,
+      draft: {
+        ...orch.draft!,
+        stages: orch.draft!.stages.map((s) => ({
+          ...s,
+          wfRef: { kind: 'existing', wfId: s.id === 'plan' ? 'w1' : s.id === 'construction' ? 'w2' : 'w3' },
+        })),
+      },
+    };
+    expect(stagesReadyToRun(allExisting, wfs as never)).toBe(true);
   });
 });

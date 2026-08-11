@@ -271,6 +271,8 @@
   <string name="orchestrator.cancel">Cancel</string>
   <string name="orchestrator.discardHint">Discard the draft (never touches your workflows; cancel first while running)</string>
   <string name="orchestrator.hint.readonly">Read-only orchestration won't run</string>
+  <string name="orchestrator.hint.ready">All stages bound to non-empty workflows — ready to run</string>
+  <string name="orchestrator.hint.notReady">Some stage has no non-empty workflow bound: materialize workflows first and add nodes, or reuse an existing workflow</string>
   <string name="orchestrator.status.draft">Draft</string>
   <string name="orchestrator.status.awaiting-confirm">Awaiting confirm</string>
   <string name="orchestrator.status.ready">Ready</string>

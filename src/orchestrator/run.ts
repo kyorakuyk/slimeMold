@@ -254,6 +254,28 @@ export function cancelOrchestrationRun(orchId: string, deps: OrchestrationDeps =
   cancelOrchestration(orchId);
 }
 
+/**
+ * 所有阶段是否都已绑定到「非空工作流」（H3c 执行按钮前置检查）：
+ * - 已固化（stageWfIds 有该阶段）→ 对应工作流 nodes 非空；
+ * - 未固化但 existing 引用已有工作流 → 该工作流 nodes 非空；
+ * - new 且未固化 → false（须先「固化工作流」再编辑添加节点）。
+ * 审计建议：未就绪时 UI 禁用执行按钮，而非运行后才安全失败。
+ */
+export function stagesReadyToRun(
+  orch: Orchestration,
+  workflows: Record<string, { nodes?: unknown[]; name?: string }>,
+): boolean {
+  if (!orch.draft || orch.draft.stages.length === 0) return false;
+  return orch.draft.stages.every((stage) => {
+    const bound = orch.stageWfIds?.[stage.id];
+    if (bound) return (workflows[bound]?.nodes?.length ?? 0) > 0;
+    if (stage.wfRef.kind === 'existing') {
+      return (workflows[stage.wfRef.wfId]?.nodes?.length ?? 0) > 0;
+    }
+    return false; // new 未固化
+  });
+}
+
 /** 写阶段日志（合并到 stageLogs） */
 function updateStageLog(orchId: string, stageId: string, patch: Partial<StageLog>): void {
   const orch = getOrchestration(orchId);
