@@ -23,6 +23,10 @@ import { allowedMethodsFor, isCapabilityAllowed } from './protocol';
 
 /** 默认单次 execute 超时（毫秒） */
 export const DEFAULT_TIMEOUT_MS = 60_000;
+/** 心跳探针间隔（毫秒）：execute 期间周期 ping */
+export const HEARTBEAT_INTERVAL_MS = 5_000;
+/** 连续丢失心跳次数超过此值 → 判定 worker 卡死，terminate + 重建 */
+export const HEARTBEAT_MISS_THRESHOLD = 3;
 
 /** 宿主侧能力响应函数：按 CapabilityMethod 分派到真实 ExecContext 的方法 */
 export type CapabilityResponder = (
@@ -70,6 +74,14 @@ interface WorkerSlot {
     resolve: (o: Record<string, unknown>) => void;
     reject: (e: Error) => void;
   };
+  /** 心跳状态（execute 期间启用；worker 卡死/死循环时心跳丢失 → 判死重建） */
+  heartbeat?: {
+    runId: string;
+    /** 最近一次 heartbeat 回复时间戳 */
+    lastReply: number;
+    /** 连续丢失次数（超 threshold 判死） */
+    missed: number;
+  };
 }
 
 export class SandboxManager {
@@ -78,10 +90,19 @@ export class SandboxManager {
   private responders = new Map<string, CapabilityResponder>();
   private makeWorker: WorkerFactory;
   private defaultTimeoutMs: number;
+  private heartbeatIntervalMs: number;
+  private heartbeatMissThreshold: number;
 
-  constructor(opts?: { workerFactory?: WorkerFactory; timeoutMs?: number }) {
+  constructor(opts?: {
+    workerFactory?: WorkerFactory;
+    timeoutMs?: number;
+    heartbeatIntervalMs?: number;
+    heartbeatMissThreshold?: number;
+  }) {
     this.makeWorker = opts?.workerFactory ?? defaultWorkerFactory;
     this.defaultTimeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.heartbeatIntervalMs = opts?.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+    this.heartbeatMissThreshold = opts?.heartbeatMissThreshold ?? HEARTBEAT_MISS_THRESHOLD;
   }
 
   /** 建立（或复用）某插件的 worker 并加载入口源码 */
@@ -164,15 +185,36 @@ export class SandboxManager {
         capability: params.capability,
         resolve: (o) => {
           clearTimeout(timer);
+          clearInterval(heartbeatTimer);
           slot.current = undefined;
+          slot.heartbeat = undefined;
           resolve(o);
         },
         reject: (e) => {
           clearTimeout(timer);
+          clearInterval(heartbeatTimer);
           slot.current = undefined;
+          slot.heartbeat = undefined;
           reject(e);
         },
       };
+      // 心跳探针：execute 期间周期 ping，连续丢失超阈值 → 判死重建（死循环/卡死检测）
+      slot.heartbeat = { runId, lastReply: Date.now(), missed: 0 };
+      const heartbeatTimer = setInterval(() => {
+        const hb = slot.heartbeat;
+        if (!hb || hb.runId !== runId) return;
+        hb.missed += 1;
+        if (hb.missed > this.heartbeatMissThreshold) {
+          clearTimeout(timer);
+          clearInterval(heartbeatTimer);
+          slot.current = undefined;
+          slot.heartbeat = undefined;
+          this.killSlot(slot, true);
+          reject(new Error(`插件沙箱心跳丢失（worker 疑似死循环/卡死）：${params.typeId}`));
+          return;
+        }
+        slot.worker.postMessage({ kind: 'ping', runId });
+      }, this.heartbeatIntervalMs);
       // 取消：宿主 signal abort → 转发 abort 消息（worker 内 ctx.signal 触发）
       if (params.signal) {
         const onAbort = () => {
@@ -251,8 +293,17 @@ export class SandboxManager {
           );
         break;
       }
+      case 'heartbeat': {
+        // 心跳回复：重置连续丢失计数（死循环/卡死检测）
+        const hb = slot.heartbeat;
+        if (hb && hb.runId === m.runId) {
+          hb.lastReply = Date.now();
+          hb.missed = 0;
+        }
+        break;
+      }
       default:
-        // log / cost / partial / ready / load-error / heartbeat：PoC 阶段宿主按需消费
+        // log / cost / partial / ready / load-error：PoC 阶段宿主按需消费
         break;
     }
   }

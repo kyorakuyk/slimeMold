@@ -38,6 +38,8 @@ export type HostToWorker =
   | { kind: 'capability:response'; id: string; ok: true; value: unknown }
   | { kind: 'capability:response'; id: string; ok: false; error: string }
   | { kind: 'abort'; runId: string }
+  /** 心跳探针：worker 须回 { kind:'heartbeat', runId }（死循环/卡死检测，Codex §4.3） */
+  | { kind: 'ping'; runId: string }
   | { kind: 'terminate' };
 
 /** worker → 宿主 */

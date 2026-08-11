@@ -101,6 +101,12 @@ self.onmessage = async (e) => {
       return;
     }
 
+    if (msg.kind === 'ping') {
+      // 心跳探针：只要 worker 事件循环没被插件死循环/同步卡死阻塞，就能回复
+      post({ kind: 'heartbeat', runId: msg.runId });
+      return;
+    }
+
     if (msg.kind === 'abort') {
       if (abortController) abortController.abort();
       return;

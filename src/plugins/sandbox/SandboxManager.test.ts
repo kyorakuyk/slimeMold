@@ -34,11 +34,16 @@ if (typeof URL.revokeObjectURL !== 'function') {
 class FakeWorker implements WorkerLike {
   sent: HostToWorker[] = [];
   terminated = false;
+  /** 若为 true，收到 ping 自动回 heartbeat（模拟健康 worker） */
+  autoHeartbeat = false;
   onmessage: ((ev: { data: WorkerToHost }) => void) | null = null;
   onerror: ((ev: { message?: string }) => void) | null = null;
   /** 测试辅助：宿主向 worker 发消息 */
   postMessage(msg: HostToWorker): void {
     this.sent.push(msg);
+    if (msg.kind === 'ping' && this.autoHeartbeat) {
+      this.reply({ kind: 'heartbeat', runId: msg.runId });
+    }
   }
   terminate(): void {
     this.terminated = true;
@@ -391,5 +396,40 @@ describe('SandboxManager 沙箱执行链路', () => {
     mgr.terminateAll();
     expect(mgr.activeCount).toBe(0);
     expect(f.workers[0].terminated).toBe(true);
+  });
+
+  it('心跳：worker 卡死（不回复 ping）→ 连续丢失判死 terminate + reject', async () => {
+    // 短心跳间隔 + 低阈值，加速判死
+    const fast = new SandboxManager({ workerFactory: f.factory, timeoutMs: 5000, heartbeatIntervalMs: 20, heartbeatMissThreshold: 2 });
+    const p = fast.execute('p1', ENTRY, mkParams());
+    await vi.waitFor(() => expect(f.workers.length).toBeGreaterThan(0));
+    const w = f.workers[0];
+    w.reply({ kind: 'ready', pluginId: 'p1' });
+    await vi.waitFor(() => expect(w.lastExec()).toBeTruthy());
+    // worker 不回复 execute 也不回 heartbeat → 心跳连续丢失 → 判死
+    await expect(p).rejects.toThrow(/心跳丢失/);
+    expect(w.terminated).toBe(true);
+    // 重建：下次 execute 用新 worker
+    const p2 = fast.execute('p1', ENTRY, mkParams({ timeoutMs: 500 }));
+    const w2 = f.workers[1];
+    w2.reply({ kind: 'ready', pluginId: 'p1' });
+    await vi.waitFor(() => expect(w2.lastExec()).toBeTruthy());
+    w2.reply({ kind: 'execute:result', id: w2.lastExec()!.id, outputs: { out: 7 } });
+    await expect(p2).resolves.toEqual({ out: 7 });
+  });
+
+  it('心跳：健康 worker（自动回复 ping）不被误杀，正常完成', async () => {
+    const fast = new SandboxManager({ workerFactory: f.factory, timeoutMs: 500, heartbeatIntervalMs: 20, heartbeatMissThreshold: 2 });
+    const p = fast.execute('p1', ENTRY, mkParams());
+    await vi.waitFor(() => expect(f.workers.length).toBeGreaterThan(0));
+    const w = f.workers[0];
+    w.autoHeartbeat = true; // 收到 ping 自动回 heartbeat
+    w.reply({ kind: 'ready', pluginId: 'p1' });
+    await vi.waitFor(() => expect(w.lastExec()).toBeTruthy());
+    // 等待若干心跳周期后仍未被判死，正常完成
+    await new Promise((r) => setTimeout(r, 80));
+    expect(w.terminated).toBe(false);
+    w.reply({ kind: 'execute:result', id: w.lastExec()!.id, outputs: { out: 3 } });
+    await expect(p).resolves.toEqual({ out: 3 });
   });
 });

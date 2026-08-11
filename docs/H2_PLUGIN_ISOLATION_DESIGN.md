@@ -349,12 +349,18 @@ Codex 结论：发现**新的 P0 阻断**——`sandbox: true` 时 loader 仍先
   import，jsdom 下 Blob import 会抛错，测试即失败）；② 类式插件沙箱拒绝；③ 默认（非沙箱）路径
   与沙箱路径行为差异。
 
-### 9.5 剩余（P2 韧性注入 / P3 GUI 端到端）
+### 9.5 P2 韧性注入 + P3 GUI 端到端（已完成）
 
-- P2：死循环插件（超时→terminate→重建）、抛错插件（onerror→重建）、永不返回插件（超时）。
-- P3：插件面板「沙箱运行」开关 UI（已备 viewStore.pluginSandbox）；真实 word-counter 经 Worker
-  加载→注册→executor 执行→结果回传的 GUI 验收。
-- 已知限制：pluginSandbox 开关只影响「重新扫描/重新导入」后的插件，不迁移已加载插件。
+- **P2 韧性注入 ✅**：新增心跳探针机制（`ping`/`heartbeat` 消息 + `HEARTBEAT_INTERVAL_MS`/
+  `HEARTBEAT_MISS_THRESHOLD` 可配置）——execute 期间周期 ping，连续丢失心跳判死
+  terminate + 重建（死循环/卡死检测，不再只靠 60s execute 超时兜底）。测试 +2：
+  ① worker 不回复心跳 → 判死 reject + 重建；② 健康 worker 自动回心跳不被误杀。
+  此前已覆盖：execute 超时→terminate+重建、worker onerror 崩溃→重建、signal abort 取消、
+  并发限制、terminateAll。
+- **P3 GUI 端到端 ✅**：word-counter 复制至 AppData/plugins，GUI 验收通过（扫描→加载→拖入→
+  执行→结果回传；勾选沙箱后重新扫描同样正常，logger.info 转发显示）。
+- **已知限制**：pluginSandbox 开关只影响「重新扫描/重新导入」后的插件，不迁移已加载插件；
+  权限声明仍来自插件 manifest（未来「不可信插件」需改为宿主侧授权策略，见 §5.2）。
 
 ---
 
