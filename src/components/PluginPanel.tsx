@@ -10,6 +10,7 @@ import {
 } from '../plugins/pluginManager';
 import { isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import type { NodeDefinition } from '../types';
 
@@ -55,6 +56,8 @@ export default function PluginPanel({ onClose, embedded = false }: PluginPanelPr
   const plugins = useRegistryStore((s) => s.plugins);
   const defs = useRegistryStore((s) => s.defs);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pluginSandbox = useViewStore((s) => s.pluginSandbox);
+  const setPluginSandbox = useViewStore((s) => s.setPluginSandbox);
 
   const nodeCount = (pluginId: string) =>
     Object.values(defs).filter((d) => d.pluginId === pluginId).length;
@@ -100,6 +103,19 @@ export default function PluginPanel({ onClose, embedded = false }: PluginPanelPr
             e.target.value = '';
           }}
         />
+        {/* H2 沙箱执行开关：影响此后扫描/导入的插件；Worker 线程隔离但不隔离网络 */}
+        <label
+          className="flex cursor-pointer items-center gap-1.5 text-[11px] text-ink"
+          title={t('plugins.sandboxHint')}
+        >
+          <input
+            type="checkbox"
+            className="cursor-pointer"
+            checked={pluginSandbox}
+            onChange={(e) => setPluginSandbox(e.target.checked)}
+          />
+          {t('plugins.sandbox')}
+        </label>
         <span className="ml-auto text-[11px] text-ink-faint">
           {isTauri ? t('plugins.dirHint') : t('plugins.dirHintBrowser')}
         </span>

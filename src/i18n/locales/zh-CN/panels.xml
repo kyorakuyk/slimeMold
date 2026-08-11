@@ -73,6 +73,8 @@
   <string name="plugins.unloadTitle">卸载插件</string>
   <string name="plugins.escalatedTitle">该节点通过继承职业类提权至 {{cap}} 级</string>
   <string name="plugins.escalated">已提权·{{cap}} · {{name}}</string>
+  <string name="plugins.sandbox">沙箱执行</string>
+  <string name="plugins.sandboxHint">插件节点在 Web Worker 内运行（线程隔离）。注意：Worker 不隔离网络，插件仍可直接 fetch 联网；类式（extends）插件不支持沙箱。开关只影响此后重新扫描/导入的插件。</string>
   <string name="plugins.openFailed">打开 custom_nodes 失败：{{err}}</string>
 
   <!-- AssetsPanel -->

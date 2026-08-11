@@ -73,6 +73,8 @@
   <string name="plugins.unloadTitle">Unload plugin</string>
   <string name="plugins.escalatedTitle">This node escalates to level {{cap}} via an inherited occupation class</string>
   <string name="plugins.escalated">Escalated·{{cap}} · {{name}}</string>
+  <string name="plugins.sandbox">Sandbox execution</string>
+  <string name="plugins.sandboxHint">Plugin nodes run inside a Web Worker (thread isolation). Note: Worker does NOT isolate network — plugins can still fetch directly; class-based (extends) plugins are not sandboxable. The switch only affects plugins re-scanned/re-imported afterwards.</string>
   <string name="plugins.openFailed">Failed to open custom_nodes: {{err}}</string>
 
   <!-- AssetsPanel -->
