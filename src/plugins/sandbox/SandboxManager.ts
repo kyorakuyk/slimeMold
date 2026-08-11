@@ -4,7 +4,8 @@
  * 职责：
  * - 按 pluginId 建立/复用 Web Worker（worker 内跑 runtime.ts 引导脚本）；
  * - `execute`：把插件节点调用封装为 postMessage 请求-响应（带超时）；
- * - 能力代理：worker 内 ctx 的 llm/storage/logger 等请求由宿主侧真实 ExecContext 响应；
+ * - 能力代理：worker 内 ctx 的 llm/storage/logger 等请求由宿主侧真实 ExecContext 响应，
+ *   并按 capability 等级做白名单拦截（Codex P0 修复：宿主侧结构性强制）；
  * - 生命周期：abort（取消）、terminate（超时/崩溃兜底）、worker 崩溃自动重建。
  *
  * 设计见 docs/H2_PLUGIN_ISOLATION_DESIGN.md §3-4。
@@ -18,6 +19,7 @@ import type {
 } from '../../types';
 import { SANDBOX_RUNTIME_SRC } from './runtime';
 import type { CapabilityMethod, HostToWorker, WorkerToHost } from './protocol';
+import { isCapabilityAllowed } from './protocol';
 
 /** 默认单次 execute 超时（毫秒） */
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -41,6 +43,8 @@ export type WorkerFactory = (url: string) => WorkerLike;
 
 /** 单次沙箱执行参数 */
 export interface SandboxExecuteParams {
+  /** 本次执行的唯一 id（createSandboxedNodeExecute 生成，作 responder 路由键） */
+  executionId: string;
   typeId: string;
   inputs: Record<string, unknown>;
   params: Record<string, unknown>;
@@ -61,6 +65,8 @@ interface WorkerSlot {
   dead: boolean;
   ready: Promise<void>;
   current?: {
+    executionId: string;
+    capability: CapabilityLevel;
     resolve: (o: Record<string, unknown>) => void;
     reject: (e: Error) => void;
   };
@@ -68,6 +74,7 @@ interface WorkerSlot {
 
 export class SandboxManager {
   private slots = new Map<string, WorkerSlot>();
+  /** responder 按 executionId 注册（非 pluginId 单例），避免同插件并发互相覆盖 */
   private responders = new Map<string, CapabilityResponder>();
   private makeWorker: WorkerFactory;
   private defaultTimeoutMs: number;
@@ -142,7 +149,7 @@ export class SandboxManager {
         new Error('沙箱插件当前正在执行另一个节点，暂不支持并发（PoC 限制）'),
       );
     }
-    const id = `ex-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+    const id = params.executionId;
     const timeoutMs = params.timeoutMs ?? this.defaultTimeoutMs;
     const runId = `run-${Date.now()}`;
 
@@ -153,6 +160,8 @@ export class SandboxManager {
         reject(new Error(`插件执行超时（${timeoutMs}ms）：${params.typeId}`));
       }, timeoutMs);
       slot.current = {
+        executionId: id,
+        capability: params.capability,
         resolve: (o) => {
           clearTimeout(timer);
           slot.current = undefined;
@@ -179,6 +188,7 @@ export class SandboxManager {
         inputs: params.inputs,
         params: params.params,
         capability: params.capability,
+        nodeId: params.nodeId,
         vars: params.vars,
         costLog: params.costLog,
       });
@@ -195,13 +205,33 @@ export class SandboxManager {
         slot.current?.reject(new Error(m.error));
         break;
       case 'capability:request': {
-        const responder = this.responders.get(slot.pluginId);
+        // 白名单拦截（Codex P0 修复）：即使 worker 侧漏挂，宿主侧也强制校验等级
+        const cur = slot.current;
+        if (!cur || cur.executionId !== m.executionId) {
+          slot.worker.postMessage({
+            kind: 'capability:response',
+            id: m.id,
+            ok: false,
+            error: `能力请求不属于当前执行（executionId 不匹配）`,
+          });
+          return;
+        }
+        if (!isCapabilityAllowed(cur.capability, m.method)) {
+          slot.worker.postMessage({
+            kind: 'capability:response',
+            id: m.id,
+            ok: false,
+            error: `权限不足：${cur.capability} 级不允许调用 ${m.method}`,
+          });
+          return;
+        }
+        const responder = this.responders.get(m.executionId);
         if (!responder) {
           slot.worker.postMessage({
             kind: 'capability:response',
             id: m.id,
             ok: false,
-            error: `宿主未为插件 ${slot.pluginId} 注册能力处理器`,
+            error: `宿主未为本次执行 ${m.executionId} 注册能力处理器`,
           });
           return;
         }
@@ -241,13 +271,13 @@ export class SandboxManager {
     if (rebuild) this.slots.delete(slot.pluginId);
   }
 
-  /** 注册某插件的能力处理器（把能力映射到真实 ExecContext） */
-  registerResponder(pluginId: string, responder: CapabilityResponder): void {
-    this.responders.set(pluginId, responder);
+  /** 注册本次执行的能力处理器（按 executionId，非 pluginId——避免并发覆盖） */
+  registerResponder(executionId: string, responder: CapabilityResponder): void {
+    this.responders.set(executionId, responder);
   }
 
-  unregisterResponder(pluginId: string): void {
-    this.responders.delete(pluginId);
+  unregisterResponder(executionId: string): void {
+    this.responders.delete(executionId);
   }
 
   /** 终止所有沙箱（卸载插件 / 切换项目时调用） */
@@ -256,6 +286,7 @@ export class SandboxManager {
       this.killSlot(slot, false);
     }
     this.slots.clear();
+    this.responders.clear();
   }
 
   get activeCount(): number {
@@ -266,16 +297,20 @@ export class SandboxManager {
 /** 默认 worker 工厂：浏览器/WebView 环境的真实 Web Worker（module worker） */
 export function defaultWorkerFactory(url: string): WorkerLike {
   const w = new Worker(url, { type: 'module' });
-  return {
-    postMessage: (msg) => w.postMessage(msg),
+  // 内部引用，让 WorkerLike.onmessage 与原生 Worker 的 MessageEvent 桥接
+  const like: WorkerLike = {
+    postMessage: (msg: HostToWorker) => w.postMessage(msg),
     terminate: () => w.terminate(),
-    onmessage: (ev) => {
-      w.onmessage = ev as MessageEvent<WorkerToHost>;
-    },
-    onerror: (ev) => {
-      w.onerror = ev as ErrorEvent;
-    },
-  } as unknown as WorkerLike;
+    onmessage: null,
+    onerror: null,
+  };
+  w.onmessage = (e: MessageEvent<WorkerToHost>) => {
+    like.onmessage?.({ data: e.data });
+  };
+  w.onerror = (e: ErrorEvent) => {
+    like.onerror?.({ message: e.message });
+  };
+  return like;
 }
 
 /** 把 runtime 源码包装为 Blob URL（module worker 入口） */
@@ -341,9 +376,11 @@ export function execContextResponder(ctx: ExecContext): CapabilityResponder {
         return ctx.sandbox?.commitAll() ?? Promise.resolve([]);
       case 'sandbox.commitLanes':
         return ctx.sandbox?.commitLanes((a0 as string[]) ?? []) ?? Promise.resolve([]);
-      case 'intervene':
-        if (!ctx.intervene) return { kind: 'cancelled', error: '宿主未启用接管能力' };
-        return ctx.intervene(a0 as Parameters<ExecContext['intervene']>[0]);
+      case 'intervene': {
+        const intervene = ctx.intervene;
+        if (!intervene) return { kind: 'cancelled', error: '宿主未启用接管能力' };
+        return intervene(a0 as Parameters<NonNullable<ExecContext['intervene']>>[0]);
+      }
       default:
         throw new Error(`未知能力方法：${method}`);
     }
@@ -352,8 +389,9 @@ export function execContextResponder(ctx: ExecContext): CapabilityResponder {
 
 /**
  * 组装沙箱节点的 NodeExecuteFn：
- * 把 executor 构造的真实 ctx 透传给沙箱，返回与普通节点一致的 execute 签名。
- * 浏览器无 Worker 时回退现有直接执行（保底路径，Node/headless 可用）。
+ * - 生成每次执行的唯一 executionId，按它注册/注销 responder（避免并发覆盖）；
+ * - 把 executor 构造的真实 ctx（含 nodeId）透传给沙箱；
+ * - 浏览器无 Worker 时回退现有直接执行（保底路径，Node/headless 可用）。
  */
 export function createSandboxedNodeExecute(
   manager: SandboxManager,
@@ -367,20 +405,22 @@ export function createSandboxedNodeExecute(
     if (typeof Worker === 'undefined') {
       return fallback(inputs, params, ctx);
     }
-    manager.registerResponder(pluginId, execContextResponder(ctx));
+    const executionId = `ex-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+    manager.registerResponder(executionId, execContextResponder(ctx));
     try {
       return await manager.execute(pluginId, entryCode, {
+        executionId,
         typeId,
         inputs,
         params,
         capability,
-        nodeId: '',
+        nodeId: ctx.nodeId ?? '',
         vars: ctx.vars,
         costLog: ctx.costLog,
         signal: ctx.signal,
       });
     } finally {
-      manager.unregisterResponder(pluginId);
+      manager.unregisterResponder(executionId);
     }
   };
 }

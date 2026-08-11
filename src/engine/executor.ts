@@ -878,6 +878,8 @@ async function executeNode(
   let branchesTaken: string[] | undefined;
   const ctx: ExecContext = {
     signal,
+    // 当前节点 id（owner ?? id，子图虚拟节点回写用）：供沙箱插件 RPC 按节点归属路由
+    nodeId: owner ?? id,
     logger: {
       info: (m) => R.addLog('info', `[${node.data.label}] ${m}`),
       error: (m) => R.addLog('error', `[${node.data.label}] ${m}`),

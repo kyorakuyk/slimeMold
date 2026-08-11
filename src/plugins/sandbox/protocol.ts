@@ -17,11 +17,14 @@ export type HostToWorker =
     }
   | {
       kind: 'execute';
+      /** 本次执行的唯一 id（宿主生成，作为请求-响应关联与 responder 路由键） */
       id: string;
       typeId: string;
       inputs: Record<string, unknown>;
       params: Record<string, unknown>;
       capability: CapabilityLevel;
+      /** 节点 id（owner ?? id），用于日志/partial/能力调用的节点归属 */
+      nodeId: string;
       /** ctx.vars 快照（同步读取，postMessage 无法同步往返） */
       vars: Record<string, unknown>;
       /** ctx.costLog 快照（同理） */
@@ -40,13 +43,18 @@ export type WorkerToHost =
   | { kind: 'execute:error'; id: string; error: string; stack?: string }
   | {
       kind: 'capability:request';
+      /** 能力请求 id（worker 内生成，用于关联响应） */
       id: string;
+      /** 所属执行 id（execute 消息的 id），宿主据此路由到正确的 responder */
+      executionId: string;
       method: CapabilityMethod;
       args: unknown[];
+      /** 节点 id（归属） */
+      nodeId: string;
     }
-  | { kind: 'log'; level: 'info' | 'warn' | 'error'; message: string }
-  | { kind: 'cost'; record: CostRecord }
-  | { kind: 'partial'; key: string; value: unknown }
+  | { kind: 'log'; level: 'info' | 'warn' | 'error'; message: string; nodeId: string }
+  | { kind: 'cost'; record: CostRecord; nodeId: string }
+  | { kind: 'partial'; key: string; value: unknown; nodeId: string }
   | { kind: 'heartbeat'; runId: string };
 
 /** ExecContext 能力方法枚举（对齐 src/types.ts ExecContext 字段） */
@@ -74,3 +82,97 @@ export type CapabilityMethod =
 export type ExecuteResult =
   | { ok: true; outputs: Record<string, unknown> }
   | { ok: false; error: string; stack?: string };
+
+/* ---------------- 能力白名单（对齐 executorHelpers.applyCapability 的等级语义） ---------------- */
+
+/**
+ * 各 CapabilityLevel 允许调用的能力方法集合（结构性强制的单一真相源）。
+ * 与 executorHelpers.applyCapability 的裁剪点一致：
+ * - compute：仅基础只读（logger/vars/signal/costLog/reportCost/setPartial/setBranches）
+ * - io：+ llm / storage / addAsset / writeOutEdgeScope
+ * - sandbox_write：+ sandbox 写副本（writeFile/readFrom/list），剥离 commitAll/commitLanes
+ * - coordinator / system：+ 完整 commit 汇总权（commitAll/commitLanes / intervene）
+ * 宿主侧（SandboxManager）据此拦截越权 RPC；worker 侧（runtime.ts）据此只挂白名单方法键。
+ */
+export const CAPABILITY_WHITELIST: Record<CapabilityLevel, ReadonlySet<CapabilityMethod>> = {
+  compute: new Set([
+    'logger.info',
+    'logger.warn',
+    'logger.error',
+    'reportCost',
+    'setPartial',
+    'setBranches',
+  ]),
+  io: new Set([
+    'logger.info',
+    'logger.warn',
+    'logger.error',
+    'reportCost',
+    'setPartial',
+    'setBranches',
+    'llm',
+    'storage.get',
+    'storage.set',
+    'addAsset',
+    'writeOutEdgeScope',
+  ]),
+  sandbox_write: new Set([
+    'logger.info',
+    'logger.warn',
+    'logger.error',
+    'reportCost',
+    'setPartial',
+    'setBranches',
+    'llm',
+    'storage.get',
+    'storage.set',
+    'addAsset',
+    'writeOutEdgeScope',
+    'sandbox.writeFile',
+    'sandbox.readFrom',
+    'sandbox.list',
+  ]),
+  coordinator: new Set([
+    'logger.info',
+    'logger.warn',
+    'logger.error',
+    'reportCost',
+    'setPartial',
+    'setBranches',
+    'llm',
+    'storage.get',
+    'storage.set',
+    'addAsset',
+    'writeOutEdgeScope',
+    'sandbox.writeFile',
+    'sandbox.readFrom',
+    'sandbox.list',
+    'sandbox.commitAll',
+    'sandbox.commitLanes',
+    'intervene',
+  ]),
+  system: new Set([
+    'logger.info',
+    'logger.warn',
+    'logger.error',
+    'reportCost',
+    'setPartial',
+    'setBranches',
+    'llm',
+    'storage.get',
+    'storage.set',
+    'addAsset',
+    'writeOutEdgeScope',
+    'sandbox.writeFile',
+    'sandbox.readFrom',
+    'sandbox.list',
+    'sandbox.commitAll',
+    'sandbox.commitLanes',
+    'intervene',
+  ]),
+};
+
+/** 判断某能力方法是否在某等级下允许（宿主侧拦截用） */
+export function isCapabilityAllowed(level: CapabilityLevel, method: CapabilityMethod): boolean {
+  return CAPABILITY_WHITELIST[level].has(method);
+}

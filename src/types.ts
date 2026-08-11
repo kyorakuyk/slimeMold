@@ -429,6 +429,11 @@ export interface ExecContext {
    * 默认不注入此能力时节点正常自动执行，行为完全不变。
    */
   intervene?(request: InterventionRequest): Promise<InterventionResult>;
+  /**
+   * 当前节点 id（owner ?? id，子图虚拟节点回写用）。供沙箱插件 RPC 按节点归属路由
+   * 日志/partial/能力调用；非沙箱节点通常不需要读它。
+   */
+  nodeId?: string;
 }
 
 /** 实时接管请求（阶段 D）：节点请求人工介入的输入。 */

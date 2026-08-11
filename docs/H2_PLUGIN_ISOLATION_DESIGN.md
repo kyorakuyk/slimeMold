@@ -1,8 +1,13 @@
-# H2 插件进程隔离 —— 设计方案（设计与 PoC 阶段，非全量迁移）
+# H2 插件隔离 —— 设计方案（Web Worker 沙箱 PoC 阶段，非全量迁移）
 
-> 状态：**设计稿**（2026-08-11）。经用户拍板：H2 不做全量插件进程隔离迁移，先完成
-> 本设计方案 + 单个低权限插件的 PoC，验证「启动 / 通信 / 超时 / 取消 / 崩溃 / 结果回传」
-> 六项指标后再决定逐类迁移策略。当前代码基线：main @ `daf4b40`。
+> 状态：**设计稿 + PoC P0/P1**（2026-08-11）。经用户拍板：H2 不做全量插件进程隔离迁移，
+> 先完成本设计方案 + 单个低权限插件的 PoC，验证「启动 / 通信 / 超时 / 取消 / 崩溃 / 结果回传」
+> 六项指标后再决定逐类迁移策略。
+>
+> **术语澄清（Codex 审计）**：Web Worker 是**线程级隔离**（独立 JS 堆/全局/DOM 无共享、可隔离
+> UI 卡死与崩溃），**不是独立操作系统进程**。本方案是「Worker 沙箱 PoC」，不宣称进程隔离。
+>
+> 当前代码基线：main @ `15de1d1`（PoC P0）→ 本修订（PoC P1：能力白名单 / executionId 路由 / nodeId）。
 
 ---
 
@@ -24,17 +29,20 @@
 
 ### 1.2 目标
 
-1. **进程/线程级隔离**：插件执行不再与主 WebView 同栈，崩溃不带走主应用。
-2. **能力由宿主代理**：插件拿不到 `window` / `@tauri-apps` / `fetch`，一切能力经宿主桥转发，
-   `applyCapability` 从「约定式」升级为「结构性」——沙箱内根本不存在越权通道。
-3. **可观测**：日志 / 成本 / 取消 / 超时 / 崩溃均有明确事件回传宿主。
-4. **向后兼容**：现有 `executors` 函数式节点与「类式继承职业」写法不变，只是执行后端可切换。
+1. **Worker 级隔离**：插件执行与主 WebView 分开（独立 JS 堆/全局），崩溃/卡死不带走主应用。
+2. **能力由宿主代理且结构性强制**：插件拿不到 `window` / `@tauri-apps` / `fetch`，一切能力经宿主桥
+   转发；**能力白名单在 worker 侧（只挂白名单方法键）与宿主侧（RPC 拦截）双重执行**——
+   `applyCapability` 从「约定式」升级为「结构性」，越权通道不存在。
+3. **可观测**：日志 / 成本 / 取消 / 超时 / 崩溃均有明确事件回传宿主，且按节点归属（nodeId）。
+4. **向后兼容**：现有 `executors` 函数式节点与「类式继承职业」写法不变，沙箱只是可选执行后端。
 
 ### 1.3 非目标（本阶段明确不做）
 
 - 不做「网络下载第三方插件」的完整供应链。
 - 不做把内置节点也搬进沙箱（内置节点信任度高、依赖 ctx 闭包深，收益低风险高）。
-- 不引入 Deno/Bun/独立 Node runtime 作为插件运行时（见 §2 选型）。
+- 不引入 Deno/Bun/独立 Node runtime 作为插件运行时（§2 选型）。
+- **不是操作系统进程隔离**：Worker 无法隔离「宿主进程被系统级恶意利用」的场景；若未来出现
+  不受信任网络插件，需升级到独立进程（Node/Bun sidecar），协议层可复用（§3）。
 
 ---
 
@@ -42,7 +50,7 @@
 
 | 维度 | A. Web Worker | B. Node 子进程 | C. Rust sidecar（内嵌 JS 引擎） |
 |---|---|---|---|
-| 隔离级别 | 线程级（同一 WebView 进程，独立 JS 栈/堆/全局） | 进程级（独立 PID/内存/崩溃域） | 进程级 |
+| 隔离级别 | 线程级（独立 JS 栈/堆/全局，无 DOM/IPC） | 进程级（独立 PID/内存/崩溃域） | 进程级 |
 | 是否已具备 | 浏览器/WebView 原生支持，零依赖 | 需打包 Node runtime（~30MB+，三平台） | 需集成 quickjs/deno_core |
 | 主线程阻塞 | 阻塞可隔离（worker 卡死不影响 UI 渲染） | 完全隔离 | 完全隔离 |
 | 打包体积影响 | 无 | 大（node.exe 或 Bun） | 中（wasm 引擎） |
@@ -51,19 +59,14 @@
 | 调试体验 | DevTools 原生支持 worker 面板 | 需额外工具 | 最差 |
 | 浏览器端（无 Tauri）可用 | ✅ 天然可用 | ❌ | ❌ |
 
-**结论：选 A. Web Worker。**
+**结论：选 A. Web Worker（本阶段）**，理由：
+1. 零依赖、零体积；桌面端（Tauri WebView）与浏览器预览行为一致。
+2. worker 内 `window`/`document`/`fetch`/`@tauri-apps` 均不可用 → **结构性无越权通道**。
+3. 崩溃域：`onerror` + 宿主超时 → `terminate()` 重启，主应用不受影响（满足 PoC 崩溃隔离指标）。
+4. 迁移成本最低：现有 `loader.ts` 把源码读成字符串 → 改为 `new Worker(url, {type:'module'})`。
 
-理由：
-1. **零依赖、零体积**：不引入新运行时，桌面端（Tauri WebView）与浏览器预览（`npm run dev`）行为一致。
-2. **隔离足够**：worker 与主线程共享进程但**不共享 JS 全局、DOM、内存**；worker 内 `window`/`document`
-   `fetch`/`@tauri-apps` 均不可用（WebView2 的 worker 无 DOM 与 IPC），天然满足「结构性无越权通道」。
-3. **崩溃域**：worker 抛未捕获异常/死循环 → `onerror` + 宿主心跳超时 → 宿主 `terminate()` 重启，
-   主应用不受影响。这满足 PoC 六项指标里的「崩溃隔离」。
-4. **迁移成本最低**：现有 `loader.ts` 把源码读成字符串 → 我们只需把「Blob URL 供 import」改为
-   「Blob URL 供 `new Worker(url, {type:'module'})`」，加载链路的目录扫描/manifest 校验不变。
-
-> 若未来某类插件需要真正进程级隔离（如不受信任的网络插件），可基于同一份协议把 worker 后端
-> 替换为 Node/Bun 子进程——RPC 协议层保持不变（§3），这是本设计预留的升级路径。
+> 若未来需真正进程级隔离，可基于同一份 RPC 协议（§3）把 worker 后端替换为 Node/Bun 子进程，
+> 协议层保持不变——这是预留的升级路径。
 
 ---
 
@@ -78,14 +81,15 @@
 │  registryStore.defs[typeId].execute = 沙箱执行包装器                             │
 │    （NodeDefinition 接口不变，内部转 postMessage）                               │
 └───────────────▲───────────────────────────────────────────▲────────────────────┘
-                │ ① execute { id, typeId, inputs, params }    │ ③ 能力请求（llm/storage/logger/…）
+                │ ① execute { executionId, typeId, inputs, params, nodeId } │ ③ 能力请求（llm/storage/logger/…）
                 │ ② result / error                            │ ④ 能力响应（含流式 onToken）
 ┌───────────────┴───────────────────────────────────────────┴────────────────────┐
 │  Web Worker（沙箱内）                                                           │
 │  sandbox-runtime.js（框架注入的引导脚本，非插件代码）                              │
 │    - import() 插件入口（同 Blob URL 机制，但现在在 worker 作用域内）               │
 │    - 收到 execute → 调用 def.execute(inputs, params, ctxProxy)                   │
-│    - ctxProxy = 一个「把每个能力调用转成 postMessage 并 await 响应」的代理对象       │
+│    - ctxProxy = 受限代理：只挂「当前 capability 白名单」内的方法键                   │
+│      （越权方法 undefined → 插件调用即 TypeError，结构性越权不存在）                │
 │    - signal = AbortSignal 由宿主 abort 消息驱动                                    │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -95,52 +99,78 @@
 
 ### 3.2 消息协议（JSON 序列化，双向）
 
-所有消息带 `id`（请求-响应关联）与 `pluginId`/`runId`（资源归属）。
+所有消息带 `id`（请求-响应关联）。执行与能力请求均携带 `executionId`（每次 execute 唯一，
+responder 路由键）与 `nodeId`（节点归属）。
 
 ```ts
-// 宿主 → worker
+// 宿主 → worker（HostToWorker）
 type HostToWorker =
-  | { kind: 'execute'; id: string; typeId: string; inputs: Record<string, unknown>; params: Record<string, unknown>; capability: CapabilityLevel }
+  | { kind: 'load-plugin'; pluginId: string; entryCode: string }
+  | {
+      kind: 'execute';
+      id: string;                 // = executionId
+      typeId: string;
+      inputs: Record<string, unknown>;
+      params: Record<string, unknown>;
+      capability: CapabilityLevel;
+      nodeId: string;             // owner ?? id
+      vars: Record<string, unknown>;
+      costLog: CostRecord[];
+    }
   | { kind: 'capability:response'; id: string; ok: true; value: unknown }
   | { kind: 'capability:response'; id: string; ok: false; error: string }
-  | { kind: 'abort'; runId: string }        // 取消本次运行：worker 内部 signal.abort()
-  | { kind: 'terminate' };                  // 强制销毁 worker（崩溃/超时兜底）
+  | { kind: 'abort'; runId: string }
+  | { kind: 'terminate' };
 
-// worker → 宿主
+// worker → 宿主（WorkerToHost）
 type WorkerToHost =
   | { kind: 'ready'; pluginId: string }
+  | { kind: 'load-error'; pluginId: string; error: string }
   | { kind: 'execute:result'; id: string; outputs: Record<string, unknown> }
   | { kind: 'execute:error'; id: string; error: string; stack?: string }
-  | { kind: 'capability:request'; id: string; method: CapabilityMethod; args: unknown[] }
-  | { kind: 'log'; level: 'info'|'warn'|'error'; message: string }
-  | { kind: 'cost'; record: CostRecord }    // reportCost 转发
-  | { kind: 'partial'; key: string; value: unknown }  // setPartial 转发
-  | { kind: 'heartbeat'; runId: string };   // 心跳（可配置间隔，超时判死）
+  | {
+      kind: 'capability:request';
+      id: string;                 // 能力请求 id（worker 内生成）
+      executionId: string;        // 所属 execute，宿主据此路由 responder
+      method: CapabilityMethod;
+      args: unknown[];
+      nodeId: string;
+    }
+  | { kind: 'log'; level: 'info'|'warn'|'error'; message: string; nodeId: string }
+  | { kind: 'cost'; record: CostRecord; nodeId: string }
+  | { kind: 'partial'; key: string; value: unknown; nodeId: string }
+  | { kind: 'heartbeat'; runId: string };
 ```
 
-`CapabilityMethod` 枚举（对应 `ExecContext` 13 项，逐项映射）：
+### 3.3 能力白名单（结构性强制，Codex P0 修复）
 
-| 方法 | 参数 | 宿主实现 | 沙箱内可见性 |
-|---|---|---|---|
-| `logger.info/warn/error` | `(message)` | 直接 `addLog` | 始终 |
-| `vars` | 读 | 宿主读 `useWorkflowStore.getState().variables` | 始终 |
-| `signal` | 读 | 见 §4 取消 | 始终 |
-| `costLog` | 读 | 宿主传入快照 | 始终 |
-| `reportCost` | `(record)` | 转发 `useWorkflowStore` 成本账本 | 始终 |
-| `setPartial` | `(key, value)` | 转发节点实时预览 | 始终 |
-| `setBranches` | `(handles)` | 转发分支登记 | 始终 |
-| `llm` | `(agentId, messages, onToken?, modelOverride?, toolNames?)` | 宿主 `chatWithAgent`；onToken 用流式消息回传 | io+ |
-| `storage.get/set` | `(key, value)` | 宿主 credential/storage 层 | io+ |
-| `assets` / `addAsset` | — | 宿主资产库 | io+ |
-| `writeOutEdgeScope` | `(handle, scope)` | 宿主边写回 | io+ |
-| `sandbox.*` | — | 宿主沙箱句柄代理 | sandbox_write+ |
-| `intervene` | `(request)` | 宿主接管面板 | 显式调用 |
+`CAPABILITY_WHITELIST`（`protocol.ts`）按 `CapabilityLevel` 定义允许的方法集合，与
+`executorHelpers.applyCapability` 的裁剪语义对齐：
 
-### 3.3 流式（onToken / setPartial）
+| 等级 | 允许能力 |
+|---|---|
+| compute | logger / reportCost / setPartial / setBranches（+ vars/costLog/signal 快照） |
+| io | + llm / storage.get·set / addAsset / writeOutEdgeScope |
+| sandbox_write | + sandbox.writeFile/readFrom/list（剥离 commitAll/commitLanes） |
+| coordinator / system | + sandbox.commitAll/commitLanes / intervene |
 
-- `llm.onToken`：宿主侧 `chatWithAgent` 每次 token 回调 → `capability:response` 变体
-  `{ kind:'stream'; id; chunk }` → worker 内 `onToken(chunk)`。
-- `setPartial`：`{ kind:'partial' }` 直接转发节点实时输出。
+**双重执行**：
+1. **worker 侧**：`runtime.ts makeCtx()` 只挂白名单内的方法键；越权键 `undefined` →
+   插件调用即 `TypeError`（越权通道不存在）。
+2. **宿主侧**：`SandboxManager.onWorkerMessage` 收到 `capability:request` 时，先按当前 execute 的
+   `capability` 校验方法是否在白名单，越权直接回错误回包（即使 worker 侧被绕过）。
+
+### 3.4 Responder 路由（Codex P0 修复：并发竞态）
+
+- responder **按 `executionId` 注册**（`registerResponder(executionId, responder)`），非 `pluginId`
+  单例——同插件不同节点并发执行时互不覆盖。
+- worker 的 `capability:request` 带 `executionId`，宿主据此路由到正确的 responder。
+- `createSandboxedNodeExecute` 每次执行生成唯一 `executionId`，try/finally 注销。
+
+### 3.5 流式（onToken / setPartial）
+
+- `llm.onToken`：PoC 阶段非流式（`llm` 消息不传 onToken）；P1 规划 `llm:onToken` 流式消息。
+- `setPartial`：`{ kind:'partial'; key; value; nodeId }` 直接转发节点实时输出。
 
 ---
 
@@ -148,45 +178,35 @@ type WorkerToHost =
 
 ### 4.1 超时
 
-- 每个 `execute` 请求宿主侧挂超时（默认 `PLUGIN_TIMEOUT_MS = 60_000`，可经 `RunOptions` 覆写）。
+- 每个 `execute` 宿主侧挂超时（默认 `PLUGIN_TIMEOUT_MS = 60_000`，可经 `RunOptions` 覆写）。
 - 超时后：`terminate()` 当前 worker（避免僵尸协程）→ 重新 `new Worker`（恢复就绪态）→
-  把该节点标记失败，错误信息「插件执行超时（60s）」。不中断整个运行（沿用 `skipFailed` 语义）。
+  该节点标记失败，错误信息「插件执行超时」。不中断整个运行（沿用 `skipFailed` 语义）。
 
 ### 4.2 取消（与现有 `currentRunId` 代次机制对齐）
 
-- 宿主 `stopWorkflow()` 已递增 `gen.currentRunId`；沙箱包装器在收到代次过期信号时，
-  向 worker 发 `{ kind:'abort'; runId }`。
-- worker 内 `sandbox-runtime.js` 维护 `AbortController`，收到 abort → `controller.abort()` →
-  节点 `ctx.signal` 立即触发（与现有节点 `signal.aborted` 检查一致，见 executor 代次守卫）。
+- 宿主 `stopWorkflow()` 已递增 `gen.currentRunId`；沙箱包装器在代次过期时发 `{ kind:'abort'; runId }`。
+- worker 内 `AbortController` 收到 abort → `controller.abort()` → 节点 `ctx.signal` 立即触发。
 
 ### 4.3 崩溃检测与恢复
 
-- 三类崩溃源：
-  1. worker 抛未捕获异常 → `worker.onerror`（错误堆栈回传宿主日志）。
-  2. worker 内部死循环 / 卡死 → 心跳丢失（heartbeat 间隔 5s，3 连丢判死）。
-  3. worker 被宿主 terminate（超时/停止兜底）。
-- 恢复策略：`SandboxManager` 维护「每 pluginId 一个 worker」的池，崩溃后自动重建；
-  正在执行的节点标记失败（错误含崩溃原因），其余等待该 worker 的节点重排/标记失败。
+- 三类崩溃源：① worker 抛未捕获异常 → `onerror`；② 死循环/卡死 → 心跳丢失；③ 宿主 terminate。
+- 恢复：`SandboxManager` 按 pluginId 维护 worker 池，崩溃后自动重建；正在执行节点标记失败。
 
 ### 4.4 资源归属
 
-- worker 按 `pluginId` 复用（同一插件多次运行不重复 spawn）；`runId` 用于区分代次。
-- 应用卸载插件 / 关闭项目：`SandboxManager.terminateAll()`（配合现有 `unloadProjectCustomNodes`）。
+- worker 按 `pluginId` 复用；`runId` 区分代次。应用卸载插件 / 关闭项目 → `terminateAll()`。
 
 ---
 
 ## 5. 权限模型（结构性强制）
 
 沙箱内**不存在** `window`/`document`/`fetch`/`@tauri-apps` 全局（WebView2 worker 无 DOM 与 IPC），
-因此 `applyCapability` 的「裁剪」从「替换为拒绝型实现」升级为**「根本不提供」**：
+`applyCapability` 的「裁剪」从「替换为拒绝型实现」升级为**「根本不提供」**：
 
-- 宿主侧 `CapabilityProxy` 仍按 `CapabilityLevel` 决定**哪些能力方法可被转发**（对齐
-  `applyCapability` 的等级语义：compute 不发 llm/storage/sandbox 请求）。
-- worker 侧 ctx 代理只含该等级白名单内的方法键；越权方法 `undefined`，节点调用即
-  `TypeError`——这是「结构性」而非「约定式」的（越权通道不存在）。
+- worker 侧 ctx 代理只含该等级白名单内的方法键；越权方法 `undefined` → 调用即 TypeError。
+- 宿主侧 `SandboxManager` 再按等级白名单拦截 RPC——**即使 worker 侧被绕过，宿主仍拒绝**。
 
-manifest 无需改动（`minCapability`/`extends` 语义沿用），但新增可选字段（PoC 阶段不做，
-设计预留）：
+manifest 无需改动（`minCapability`/`extends` 语义沿用），预留可选字段（PoC 阶段不做）：
 
 ```jsonc
 // manifest.json（预留，不强制）
@@ -213,10 +233,10 @@ manifest 无需改动（`minCapability`/`extends` 语义沿用），但新增可
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **P0 最小沙箱加载器** | `src/plugins/sandbox/` 新建：`SandboxManager.ts` + `sandbox-runtime.ts`；把 `loadPluginFromSource` 的执行段替换为「new Worker + execute 消息」；`registryStore` 注册沙箱节点 | headless 或单测：word-counter 沙箱执行返回正确 report |
-| **P1 能力代理** | `CapabilityProxy` 接通 logger / llm / storage / setPartial（至少 llm 一条走宿主转发） | 单测：mock 宿主 llm 返回，节点拿到正确文本 |
-| **P2 韧性注入** | 造一个死循环插件 + 一个抛错插件 + 一个永不返回插件 | 超时→terminate→节点失败标记；崩溃→onerror→worker 重建；取消→abort→节点静默退出 |
-| **P3 GUI 集成** | 插件面板新增「沙箱运行」开关（`viewStore` 偏好）；沙箱插件与主线程插件可切换 | GUI：加载 word-counter 沙箱节点→拖入→运行→结果正确 |
+| **P0 最小沙箱加载器** ✅ | `SandboxManager` + `sandbox-runtime`；协议消息封装 execute | 单测：加载/执行/结果/错误/超时/崩溃/取消/并发限制/terminateAll |
+| **P1 能力代理 + 白名单** ✅ | `execContextResponder` 接 logger/llm/storage；`CAPABILITY_WHITELIST` worker+宿主双侧强制；responder 按 executionId 路由；nodeId 全链路传入 | 单测：能力代理/白名单拦截（compute 拒 llm、io 拒 sandbox）/并发 responder 不覆盖/execute 携带 nodeId |
+| **P2 韧性注入** ⏳ | 死循环插件 + 抛错插件 + 永不返回插件 | 超时→terminate→失败标记；崩溃→onerror→重建；取消→abort→静默退出 |
+| **P3 GUI 集成** ⏳ | loader 接入沙箱分支；插件面板「沙箱运行」开关（viewStore）；word-counter 端到端 | GUI：加载 word-counter 沙箱节点→拖入→运行→结果正确 |
 
 ### 6.3 迁移策略（PoC 通过后）
 
@@ -241,19 +261,40 @@ manifest 无需改动（`minCapability`/`extends` 语义沿用），但新增可
 
 ---
 
-## 8. 文件落点（PoC 规划）
+## 8. 文件落点（PoC 现状）
 
 ```
 src/plugins/sandbox/
-  SandboxManager.ts     # worker 池 + 生命周期 + 超时/崩溃/取消 + 能力代理
-  sandbox-runtime.ts    # worker 内引导脚本（import 插件 + ctx 代理 + 消息循环）
-  protocol.ts           # §3.2 消息类型定义 + CapabilityMethod 枚举
-src/plugins/loader.ts   # 增加 sandbox 分支（保留原 import 路径）
+  SandboxManager.ts     # worker 池 + 生命周期 + 超时/崩溃/取消 + 能力代理（白名单拦截 + executionId 路由）
+  sandbox-runtime.ts    # worker 内引导脚本（import 插件 + 白名单 ctx 代理 + 消息循环）
+  protocol.ts           # §3.2 消息类型 + CAPABILITY_WHITELIST + isCapabilityAllowed
+  SandboxManager.test.ts # 12 单测（P0 协议链路 + P1 白名单/responder 路由/nodeId）
+src/types.ts            # ExecContext 新增 nodeId? 字段
+src/engine/executor.ts  # ctx 构造注入 nodeId: owner ?? id
+src/plugins/loader.ts   # 沙箱分支（P3 接入，未做）
 src/store/viewStore.ts  # pluginSandbox: boolean 偏好（P3）
 src/components/PluginPanel.tsx  # 沙箱开关（P3）
-src/plugins/sandbox/*.test.ts   # P0-P2 单测
 ```
 
 ---
 
-*生成日期：2026-08-11 · 基线 main @ daf4b40 · 本文档为设计稿，PoC 验证后按实际修正*
+## 9. Codex 审计记录（2026-08-11）
+
+### 9.1 P0 不可作为安全基线，须修三点（已全部修复）
+
+1. **能力白名单未真正执行** → 新增 `CAPABILITY_WHITELIST`（protocol.ts）；worker 侧 `makeCtx`
+   只挂白名单方法键（越权 `undefined`）；宿主侧 `onWorkerMessage` 按等级拦截越权 RPC。
+2. **同插件并发 responder 竞态** → responder 从 `pluginId` 单例改为按 `executionId` 注册/路由；
+   新增测试验证「同插件两 executionId 并发互不覆盖」。
+3. **nodeId 未真正传入 execute** → `ExecContext` 加 `nodeId`（executor 填 `owner ?? id`）；
+   execute 消息与 capability:request/log/cost/partial 均携带 nodeId；测试断言 execute 消息含 nodeId。
+
+### 9.2 术语澄清
+
+- Web Worker 是**线程级隔离**，非操作系统进程隔离。文档标题/内容已明确为「Worker 沙箱 PoC」。
+- 若未来需要真实进程隔离（不受信任网络插件），协议层（§3.2）可复用，仅更换 worker 后端。
+
+---
+
+*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 本修订（P1：白名单/executionId/nodeId）·
+本文档为设计稿，PoC 验证后按实际修正*
