@@ -8,6 +8,7 @@ import type {
 } from '../types';
 import { createNodeDef } from '../types';
 import { OCCUPATION_CAPABILITY, capabilityOfClass } from '../nodes/sdk';
+import { createSandboxedNodeExecute, sandboxManager } from './sandbox';
 
 /**
  * 插件格式约定（步骤 13 增强后）：
@@ -122,12 +123,24 @@ export function resolveExtendsCapability(
   return lvl;
 }
 
+export interface LoadPluginOptions {
+  path?: string;
+  /**
+   * 沙箱执行（H2）：为 true 时插件节点 execute 经 Web Worker 执行（能力白名单由
+   * 宿主下发并拦截）。缺省 false——保持现有主线程 Blob import 路径（兼容/回退）。
+   * 浏览器无 Worker 环境自动回退主线程执行。
+   */
+  sandbox?: boolean;
+}
+
 export async function loadPluginFromSource(
   manifestText: string,
   entryCode: string,
   source: 'dir' | 'files' | 'custom',
   path?: string,
+  options?: LoadPluginOptions,
 ): Promise<ParsedPlugin> {
+  const sandboxEnabled = options?.sandbox ?? false;
   const manifest = validateManifest(JSON.parse(manifestText), source);
   const occupations = manifest.occupations ?? [];
 
@@ -199,13 +212,27 @@ export async function loadPluginFromSource(
       // 能力等级由 extends 声明（继承式提权）或旧规则决定；引擎 applyCapability 仍按此等级裁剪注入。
       minCapability,
       execute: execFn
-        ? async (inputs, params, ctx) => {
-            const result = await execFn(inputs, params, ctx);
-            if (result === null || typeof result !== 'object') {
-              throw new Error(`插件节点 ${meta.typeId} 必须返回对象作为输出`);
-            }
-            return result as Record<string, unknown>;
-          }
+        ? (() => {
+            // 主线程执行（fallback / 默认路径）
+            const direct: NodeExecuteFn = async (inputs, params, ctx) => {
+              const result = await execFn(inputs, params, ctx);
+              if (result === null || typeof result !== 'object') {
+                throw new Error(`插件节点 ${meta.typeId} 必须返回对象作为输出`);
+              }
+              return result as Record<string, unknown>;
+            };
+            // H2 沙箱：Worker 内执行，能力白名单宿主下发/拦截；无 Worker 自动回退 direct
+            return sandboxEnabled
+              ? createSandboxedNodeExecute(
+                  sandboxManager,
+                  manifest.id,
+                  entryCode,
+                  minCapability,
+                  meta.typeId,
+                  direct,
+                )
+              : direct;
+          })()
         : async () => {
             throw new Error(`插件 ${manifest.id} 未提供 ${meta.typeId} 的 executor（亦无同名职业类 execute）`);
           },

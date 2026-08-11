@@ -25,6 +25,11 @@ export type HostToWorker =
       capability: CapabilityLevel;
       /** 节点 id（owner ?? id），用于日志/partial/能力调用的节点归属 */
       nodeId: string;
+      /**
+       * 本次执行允许的能力方法白名单（宿主从 CAPABILITY_WHITELIST[capability] 生成）。
+       * worker 侧只消费此列表构造 ctx——避免 protocol 与 runtime 双份复制漂移（Codex P2）。
+       */
+      allowedMethods: CapabilityMethod[];
       /** ctx.vars 快照（同步读取，postMessage 无法同步往返） */
       vars: Record<string, unknown>;
       /** ctx.costLog 快照（同理） */
@@ -175,4 +180,9 @@ export const CAPABILITY_WHITELIST: Record<CapabilityLevel, ReadonlySet<Capabilit
 /** 判断某能力方法是否在某等级下允许（宿主侧拦截用） */
 export function isCapabilityAllowed(level: CapabilityLevel, method: CapabilityMethod): boolean {
   return CAPABILITY_WHITELIST[level].has(method);
+}
+
+/** 取某等级的允许方法列表（宿主侧生成，随 execute 消息下发给 worker） */
+export function allowedMethodsFor(level: CapabilityLevel): CapabilityMethod[] {
+  return [...CAPABILITY_WHITELIST[level]];
 }

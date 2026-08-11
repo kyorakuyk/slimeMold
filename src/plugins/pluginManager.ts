@@ -1,9 +1,15 @@
 import { isTauri } from '../platform/env';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { loadPluginFromSource } from './loader';
 import { SLIMEMOLD_DIR } from '../io/projectIO';
 import type { NodeDefinition } from '../types';
+
+/** 当前是否启用插件沙箱执行（H2）：由 viewStore.pluginSandbox 决定 */
+function sandboxEnabled(): boolean {
+  return useViewStore.getState().pluginSandbox;
+}
 
 export const PLUGIN_DIR = 'plugins';
 /** 自定义节点目录名（位于程序安装目录下：<程序根>/custom_nodes） */
@@ -47,6 +53,7 @@ export async function scanPluginsDir(): Promise<number> {
         entryCode,
         'dir',
         base,
+        { sandbox: sandboxEnabled() },
       );
       useRegistryStore.getState().registerPlugin(plugin, defs);
       loaded += 1;
@@ -83,6 +90,8 @@ export async function importPluginFiles(files: FileList | File[]): Promise<void>
       manifestText,
       entryCode,
       'files',
+      undefined,
+      { sandbox: sandboxEnabled() },
     );
     useRegistryStore.getState().registerPlugin(plugin, defs);
     log('info', `插件已导入：${plugin.manifest.name}（${defs.length} 个节点）`);
@@ -141,6 +150,7 @@ async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): P
         entryCode,
         'custom',
         packDir,
+        { sandbox: sandboxEnabled() },
       );
       // 标注生效范围：程序级全局、项目级仅本项目
       useRegistryStore.getState().registerPlugin({ ...plugin, source: 'custom', scope }, defs);

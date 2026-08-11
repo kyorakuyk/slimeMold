@@ -12,7 +12,7 @@
  * - 取消（signal abort → 转发 abort 消息）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SandboxManager, execContextResponder } from './SandboxManager';
+import { SandboxManager, createSandboxedNodeExecute, execContextResponder } from './SandboxManager';
 import type { WorkerLike, SandboxExecuteParams } from './SandboxManager';
 import type { HostToWorker, WorkerToHost } from './protocol';
 import type { ExecContext } from '../../types';
@@ -130,6 +130,9 @@ describe('SandboxManager 沙箱执行链路', () => {
     });
     expect(w.lastExec()!.nodeId).toBe('n1');
     expect(w.lastExec()!.capability).toBe('compute');
+    // 白名单随 execute 下发（Codex P2：单一真相源=宿主 protocol）
+    expect(w.lastExec()!.allowedMethods).toContain('logger.info');
+    expect(w.lastExec()!.allowedMethods).not.toContain('llm');
     // 模拟 worker 返回结果
     w.reply({ kind: 'execute:result', id: w.lastExec()!.id, outputs: { out: 5 } });
     await expect(p).resolves.toEqual({ out: 5 });
@@ -358,6 +361,22 @@ describe('SandboxManager 沙箱执行链路', () => {
     await expect(p2).rejects.toThrow(/并发/);
     w.reply({ kind: 'execute:result', id: w.lastExec()!.id, outputs: { out: 1 } });
     await expect(p1).resolves.toEqual({ out: 1 });
+  });
+
+  it('createSandboxedNodeExecute：无 Worker 环境回退 fallback（保底路径，Node/headless）', async () => {
+    // jsdom 无全局 Worker → createSandboxedNodeExecute 应回退 direct
+    const fallback = vi.fn().mockResolvedValue({ out: 42 });
+    const wrapped = createSandboxedNodeExecute(
+      mgr,
+      'p1',
+      ENTRY,
+      'compute',
+      'test.add',
+      fallback,
+    );
+    const result = await wrapped({ a: 1 }, {}, stubCtx());
+    expect(result).toEqual({ out: 42 });
+    expect(fallback).toHaveBeenCalledTimes(1);
   });
 
   it('terminateAll：清空全部 worker 槽位', async () => {

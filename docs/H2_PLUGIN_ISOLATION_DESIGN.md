@@ -30,9 +30,11 @@
 ### 1.2 目标
 
 1. **Worker 级隔离**：插件执行与主 WebView 分开（独立 JS 堆/全局），崩溃/卡死不带走主应用。
-2. **能力由宿主代理且结构性强制**：插件拿不到 `window` / `@tauri-apps` / `fetch`，一切能力经宿主桥
-   转发；**能力白名单在 worker 侧（只挂白名单方法键）与宿主侧（RPC 拦截）双重执行**——
-   `applyCapability` 从「约定式」升级为「结构性」，越权通道不存在。
+2. **能力由宿主代理且结构性强制**：插件拿不到 `window` / `document` / `@tauri-apps`（Worker 内无 DOM 与
+   IPC），需要的能力经宿主桥转发；**能力白名单在 worker 侧（只挂白名单方法键）与宿主侧（RPC 拦截）
+   双重执行**——`applyCapability` 从「约定式」升级为「结构性」。
+   **注意：Worker 原生自带 `fetch`（Codex 审计 P1）**——本方案**不隔离网络**；插件在沙箱内仍可
+   `fetch()` 直连外网（绕过宿主能力代理）。网络隔离需要独立进程或显式屏蔽策略，见 §5.2。
 3. **可观测**：日志 / 成本 / 取消 / 超时 / 崩溃均有明确事件回传宿主，且按节点归属（nodeId）。
 4. **向后兼容**：现有 `executors` 函数式节点与「类式继承职业」写法不变，沙箱只是可选执行后端。
 
@@ -61,7 +63,8 @@
 
 **结论：选 A. Web Worker（本阶段）**，理由：
 1. 零依赖、零体积；桌面端（Tauri WebView）与浏览器预览行为一致。
-2. worker 内 `window`/`document`/`fetch`/`@tauri-apps` 均不可用 → **结构性无越权通道**。
+2. worker 内无 `window`/`document`/`@tauri-apps` → 平台能力结构性不可达；**但标准 Worker 自带
+   `fetch`**（Codex 审计 P1）——Worker 隔离 **DOM / JS 堆 / UI 卡死 / 平台 IPC**，**不隔离网络**。
 3. 崩溃域：`onerror` + 宿主超时 → `terminate()` 重启，主应用不受影响（满足 PoC 崩溃隔离指标）。
 4. 迁移成本最低：现有 `loader.ts` 把源码读成字符串 → 改为 `new Worker(url, {type:'module'})`。
 
@@ -200,11 +203,30 @@ type WorkerToHost =
 
 ## 5. 权限模型（结构性强制）
 
-沙箱内**不存在** `window`/`document`/`fetch`/`@tauri-apps` 全局（WebView2 worker 无 DOM 与 IPC），
+Worker 沙箱内**无** `window`/`document`/`@tauri-apps` 全局（WebView2 worker 无 DOM 与 IPC），
 `applyCapability` 的「裁剪」从「替换为拒绝型实现」升级为**「根本不提供」**：
 
 - worker 侧 ctx 代理只含该等级白名单内的方法键；越权方法 `undefined` → 调用即 TypeError。
 - 宿主侧 `SandboxManager` 再按等级白名单拦截 RPC——**即使 worker 侧被绕过，宿主仍拒绝**。
+- **`fetch` 例外（Codex 审计 P1）**：标准 Web Worker 原生自带 `fetch`，本方案**默认不屏蔽**——
+  见 §5.2 网络权限产品决策。
+
+### 5.2 网络权限产品决策（Codex 审计 P1）
+
+**事实**：Web Worker 原生提供 `fetch`。恶意插件可在沙箱内直接联网（绕过宿主能力代理），
+因此本方案**不提供网络能力隔离**，不应宣称「完整安全沙箱」。
+
+产品决策（当前信任模型=本地可信插件，沿用 §1.1）：
+
+| 方案 | 适用场景 | 代价 |
+|---|---|---|
+| **A. 接受网络直连**（当前默认） | 插件是用户显式安装的本地可信代码；`io` 级插件本身就需要联网（http 节点等） | 无网络隔离承诺；文档/UI 明确提示 |
+| **B. Worker 内屏蔽 fetch** | 仅要求「UI/DOM/Tauri IPC 隔离 + 插件不许直连外网」 | 合法网络节点（http/LLM 直连）也会失效——必须全部改走宿主 `ctx.llm`/`httpFetch` 代理 |
+| **C. 独立进程/sidecar** | 必须「不可信插件不可直接联网」 | 引入 Node/Bun 运行时（~30MB+ 三平台）、打包/调试成本高 |
+
+**当前实施**：方案 A。`runtime.ts` 不屏蔽 `self.fetch`；`ctx` 能力白名单不含 `httpFetch`（插件网络能力走
+原生 fetch 或宿主 `llm` 代理）。若未来要求「不可信插件」，切方案 B（worker 引导脚本置 `self.fetch=undefined`，
+合法网络节点改走宿主代理）或方案 C（协议层 §3.2 复用，更换 worker 后端为独立进程）。
 
 manifest 无需改动（`minCapability`/`extends` 语义沿用），预留可选字段（PoC 阶段不做）：
 
@@ -213,7 +235,8 @@ manifest 无需改动（`minCapability`/`extends` 语义沿用），预留可选
 "sandbox": {
   "timeoutMs": 30000,       // 覆盖默认超时
   "heartbeatMs": 5000,      // 覆盖默认心跳
-  "requireSandbox": true    // 强制该插件必须沙箱运行，禁止回退主线程
+  "requireSandbox": true,   // 强制该插件必须沙箱运行，禁止回退主线程
+  "noNetwork": true         // 方案 B 预留：屏蔽 worker 内 fetch（需合法网络节点走宿主代理）
 }
 ```
 
@@ -294,7 +317,27 @@ src/components/PluginPanel.tsx  # 沙箱开关（P3）
 - Web Worker 是**线程级隔离**，非操作系统进程隔离。文档标题/内容已明确为「Worker 沙箱 PoC」。
 - 若未来需要真实进程隔离（不受信任网络插件），协议层（§3.2）可复用，仅更换 worker 后端。
 
+### 9.3 第二轮审计（2026-08-11，commit 4718ff2 之后）
+
+Codex 结论：P0 质量从「存在明显缺口」提升为「PoC 基础可靠」，但安全承诺须降级表述。
+已处理：
+
+1. **P1：Worker 可用 fetch，非网络隔离** → 修正 §1.2/§2/§5 三处错误声明（「fetch 不存在」→
+   「fetch 存在但不代理」）；新增 §5.2 网络权限产品决策（当前=方案 A 接受直连，文档/UI 明示；
+   未来不可信插件切方案 B 屏蔽 fetch 或方案 C 独立进程）。
+2. **P1：未接入真实插件加载链路** → `loadPluginFromSource` 新增 `options.sandbox`；沙箱开启时用
+   `createSandboxedNodeExecute` 包装 execute；`viewStore` 新增 `pluginSandbox` 偏好；`pluginManager`
+   三处扫描/导入调用透传开关。word-counter 等真实插件可在 GUI 验证 Worker 加载执行。
+3. **P2：白名单双份复制漂移** → 删除 runtime 内 WHITELIST 复制；宿主 `allowedMethodsFor(level)`
+   生成列表随 execute 消息下发，worker 只消费 `execMsg.allowedMethods`。单一真相源=protocol.ts。
+
+### 9.4 剩余（P2 韧性注入 / P3 GUI 端到端）
+
+- P2：死循环插件（超时→terminate→重建）、抛错插件（onerror→重建）、永不返回插件（超时）。
+- P3：插件面板「沙箱运行」开关 UI（已备 viewStore.pluginSandbox）；真实 word-counter 经 Worker
+  加载→注册→executor 执行→结果回传的 GUI 验收。
+
 ---
 
-*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 本修订（P1：白名单/executionId/nodeId）·
+*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ 本修订（P1 两项 + P2 一项）·
 本文档为设计稿，PoC 验证后按实际修正*

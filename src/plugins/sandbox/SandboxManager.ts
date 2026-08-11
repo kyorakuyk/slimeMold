@@ -19,7 +19,7 @@ import type {
 } from '../../types';
 import { SANDBOX_RUNTIME_SRC } from './runtime';
 import type { CapabilityMethod, HostToWorker, WorkerToHost } from './protocol';
-import { isCapabilityAllowed } from './protocol';
+import { allowedMethodsFor, isCapabilityAllowed } from './protocol';
 
 /** 默认单次 execute 超时（毫秒） */
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -189,6 +189,8 @@ export class SandboxManager {
         params: params.params,
         capability: params.capability,
         nodeId: params.nodeId,
+        // 白名单随 execute 下发，worker 只消费此列表（避免双份复制漂移，Codex P2）
+        allowedMethods: allowedMethodsFor(params.capability),
         vars: params.vars,
         costLog: params.costLog,
       });

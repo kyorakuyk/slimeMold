@@ -36,15 +36,6 @@ let abortController = null;
 let currentExecId = null;
 let currentNodeId = '';
 
-/** 能力白名单（与宿主侧 protocol.CAPABILITY_WHITELIST 同步；越权键保持 undefined） */
-var WHITELIST = {
-  compute: ['logger.info', 'logger.warn', 'logger.error', 'reportCost', 'setPartial', 'setBranches'],
-  io: ['logger.info', 'logger.warn', 'logger.error', 'reportCost', 'setPartial', 'setBranches', 'llm', 'storage.get', 'storage.set', 'addAsset', 'writeOutEdgeScope'],
-  sandbox_write: ['logger.info', 'logger.warn', 'logger.error', 'reportCost', 'setPartial', 'setBranches', 'llm', 'storage.get', 'storage.set', 'addAsset', 'writeOutEdgeScope', 'sandbox.writeFile', 'sandbox.readFrom', 'sandbox.list'],
-  coordinator: ['logger.info', 'logger.warn', 'logger.error', 'reportCost', 'setPartial', 'setBranches', 'llm', 'storage.get', 'storage.set', 'addAsset', 'writeOutEdgeScope', 'sandbox.writeFile', 'sandbox.readFrom', 'sandbox.list', 'sandbox.commitAll', 'sandbox.commitLanes', 'intervene'],
-  system: ['logger.info', 'logger.warn', 'logger.error', 'reportCost', 'setPartial', 'setBranches', 'llm', 'storage.get', 'storage.set', 'addAsset', 'writeOutEdgeScope', 'sandbox.writeFile', 'sandbox.readFrom', 'sandbox.list', 'sandbox.commitAll', 'sandbox.commitLanes', 'intervene'],
-};
-
 function post(msg) {
   self.postMessage(msg);
 }
@@ -142,9 +133,9 @@ function cap(method, args) {
   });
 }
 
-/** 构造受限 ctx：只挂白名单内的方法键（越权键 undefined → 插件调用即 TypeError） */
+/** 构造受限 ctx：只挂宿主下发的 allowedMethods 白名单方法键（越权键 undefined → 插件调用即 TypeError） */
 function makeCtx(execMsg) {
-  const allowed = new Set(WHITELIST[execMsg.capability] || WHITELIST.compute);
+  const allowed = new Set(execMsg.allowedMethods || []);
   const nodeId = execMsg.nodeId || '';
   const vars = execMsg.vars || {};
   const costLog = execMsg.costLog || [];

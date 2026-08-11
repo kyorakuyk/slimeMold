@@ -95,6 +95,14 @@ interface ViewState {
   eventPersistence: EventPersistenceMode;
   /** 设置事件持久化模式（同步 eventLog 模块级标志并持久化） */
   setEventPersistence: (m: EventPersistenceMode) => void;
+  /**
+   * 插件沙箱执行（H2）：为 true 时插件节点在 Web Worker 内执行（线程隔离 + 能力白名单）。
+   * 注意：Worker 是线程级隔离，**不隔离网络**（标准 Worker 自带 fetch）；安全承诺见
+   * docs/H2_PLUGIN_ISOLATION_DESIGN.md。默认 false（保持主线程加载路径）。
+   */
+  pluginSandbox: boolean;
+  /** 切换插件沙箱执行开关 */
+  setPluginSandbox: (v: boolean) => void;
 }
 
 export const useViewStore = create<ViewState>()(
@@ -124,6 +132,8 @@ export const useViewStore = create<ViewState>()(
         setEventPersistenceMode(m);
         set({ eventPersistence: m });
       },
+      pluginSandbox: false,
+      setPluginSandbox: (v) => set({ pluginSandbox: v }),
       setLocale: (l) => {
         i18n.changeLanguage(l);
         set({ locale: l });
