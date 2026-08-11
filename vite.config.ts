@@ -13,6 +13,8 @@ export default defineConfig({
       'node:fs': fileURLToPath(new URL('./src/i18n/shims/node-fs.ts', import.meta.url)),
       'node:path': fileURLToPath(new URL('./src/i18n/shims/node-path.ts', import.meta.url)),
       'node:url': fileURLToPath(new URL('./src/i18n/shims/node-url.ts', import.meta.url)),
+      // H4 开发节点执行层仅 headless/Node 可用；浏览器构建 shim 掉 node:child_process。
+      'node:child_process': fileURLToPath(new URL('./src/dev/shims/node-child-process.ts', import.meta.url)),
     },
   },
   clearScreen: false,

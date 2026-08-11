@@ -196,20 +196,45 @@ autoPush: false,
 - 不重写 executor / topoSort / runWorkflow；
 - 不实现完整 H3d（LLM 自由生成 DAG）——主控 Agent 第一版只做「模板填充 + 验收条件 + 推荐 Agent」。
 
-## 11. 文件落点（规划）
+## 11. 文件落点
 
 ```
 src/dev/
-  capabilities.ts      # DevCapabilityService（code.read/code.patch/shell.run/test.run/git.*/worktree.*）
-  policy.ts            # SelfDevelopmentPolicy + allow/deny 判定
-  evidence.ts          # EvidenceRecord / DevAcceptance 类型 + EvidenceCollector
-  evaluator.ts         # DevEvaluator（确定性验收判定）
-  worktree.ts          # WorktreeManager（创建/保留/清理）
-  *.test.ts            # 各模块单测
-src/nodes/dev/         # 开发节点薄封装（code.read / code.patch / shell.run / test.run / git.status / git.diff）
-src/platform/env.ts    # 扩展 dev 能力平台适配
-docs/H4_*              # 本设计文档（随实现修订）
+  policy.ts            # ✅ SelfDevelopmentPolicy + 路径白名单/保护路径判定（matchesGlob/assertPathAllowed）
+  evidence.ts          # ✅ EvidenceRecord / DevAcceptance 类型 + EvidenceCollector（capturedBy 恒 'host'）
+  evaluator.ts         # ✅ DevEvaluator（规则+证据→DevAcceptance，确定性判定）
+  capabilities.ts      # ✅ DevCapabilityService 接口 + applyUnifiedPatch 纯函数 + createNodeDevService
+  node-run.ts          # ✅ Node 执行层（execFile 命令执行 + 动态 import fs/path）
+  worktree.ts          # ✅ WorktreeManager（创建/保留/清理，git runner 可注入）
+  shims/node-child-process.ts  # ✅ 浏览器构建占位（GUI 下开发节点禁止执行命令）
+  *.test.ts            # ✅ 各模块单测（23 例）
+src/nodes/dev/         # ⏳ 开发节点薄封装（code.read / code.patch / shell.run / test.run / git.status / git.diff）——下一步
+src/platform/env.ts    # ⏳ Tauri/浏览器执行层分支（MVP 仅 Node/headless；Tauri 复用 run_git，shell 走 Rust 命令待补）
+docs/H4_*              # ✅ 本设计文档（随实现修订）
 ```
+
+### 实现状态（2026-08-12，H4 Foundation 第一刀）
+
+已落地（纯函数 + 策略 + 证据 + 验收 + worktree + Node 执行层，全部可单测）：
+- `policy.ts`：`defaultDevPolicy`（allowedPaths=components/nodes/tests/docs；protectedPaths 含
+  workflowStore/executor/sandbox/capabilities/orchestrator；autoPush 固定 false）；`assertPathAllowed`
+  拒绝受保护/越界路径；`collectChangedProtectedPaths` 产出负向证据。
+- `evidence.ts`：`EvidenceCollector.add` 强制 `capturedBy='host'`（伪造输入也被覆盖）；
+  `byStage/toJSON/clear/restore`。
+- `evaluator.ts`：`evaluateDevAcceptance`——test/command 看真实 exitCode、path-policy 看负向证据、
+  diff 看 headRevision≠baseRevision、**无证据一律视为未满足**；uncertainties 只记录不直接置失败。
+- `capabilities.ts`：`applyUnifiedPatch`（上下文精确匹配、禁整文件覆盖）；`createNodeDevService`
+  （命令/文件/路径均可注入便于单测；shell/test 白名单；`resolveInside` 防 ../ 逃逸；
+  gitChangedFiles 合并 tracked+untracked）。
+- `node-run.ts`：`runCommand`（execFile 包装，非零码不抛错返回结构）+ 动态 import fs/path。
+- `worktree.ts`：`WorktreeManager`（rev-parse 校验、worktree add/remove/分支清理、清理失败保留现场）。
+- vite alias `node:child_process` → shim（浏览器构建不炸；GUI 调用即抛错）。
+
+待落地（下一步）：
+- `src/nodes/dev/` 开发节点薄封装（把上述能力暴露为工作流节点，绑定到编排阶段）；
+- Tauri/浏览器执行层分支（MVP 仅 Node/headless 可真实执行；GUI 编排里的开发节点需显式
+  降级/禁用并提示走 headless）；
+- 第一轮低风险自举任务（worktree → code.patch → test.run → Evidence → evaluate → 用户审查 diff）。
 
 ---
 
