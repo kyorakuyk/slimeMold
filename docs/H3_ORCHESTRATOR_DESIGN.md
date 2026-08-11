@@ -287,7 +287,9 @@ async function runOrchestration(orchId: string): Promise<void> {
 > P0 修复：真实 wfId 绑定（existing 验证/new 注册）、删除绕过确认的 orchestrateGoal 入口、
 > readonly 固化到 Orchestration、写 success 前复查 cancelled、executor 返回 RunResult（error/aborted 必失败）。
 > H3c：`OrchestratorPanel`（左栏「编排」）+ `bindStageWorkflow`/`prepareStageWorkflows`；
-> 审计补充的 executor 提前返回分支（空图/非法图/环路/并发拦截 → aborted）真实生命周期单测已补。
+> 审计补充的 executor 提前返回分支（空图/非法图/环路/并发拦截 → aborted）真实生命周期单测已补；
+> failed 重试闭环：`runOrchestration` 接受 failed 状态（failed→running），复用已固化 stageWfIds，
+> UI 显示「重试」按钮；阶段重入 running 时清除旧 error/finishedAt。
 > 待补（H3b 遗留，不阻塞）：orch.* 事件接入 runEvents、每阶段 checkpoint、runIds 改为 { wfId, runId }[]。
 
 ---

@@ -389,4 +389,27 @@ describe('runOrchestration 编排执行器', () => {
     };
     expect(stagesReadyToRun(allExisting, wfs as never)).toBe(true);
   });
+
+  it('failed → running 重试：runOrchestration 接受 failed 状态，复用已固化 stageWfIds 重跑至 done', async () => {
+    const orch = makeReadyOrch();
+    const { deps: f } = fakeDeps();
+    const mockRun = f.runWorkflow as unknown as ReturnType<typeof vi.fn>;
+    // 先固化全部阶段
+    prepareStageWorkflows(orch.id, f);
+    const planWfId = getOrchestration(orch.id)!.stageWfIds!.plan;
+    // 第一次运行：plan 阶段失败（error 结果 → 编排 failed，首败即停）
+    mockRun.mockResolvedValueOnce({ status: 'error', runId: 1, error: '节点失败' });
+    const first = await runOrchestration(orch.id, f);
+    expect(first.status).toBe('failed');
+    expect(first.stageLogs.find((l) => l.stageId === 'plan')?.status).toBe('failed');
+    expect(first.stageLogs.find((l) => l.stageId === 'construction')?.status).toBe('pending');
+    // 重试：failed 状态可直接启动（迁移 failed → running），复用已固化绑定不重建
+    const second = await runOrchestration(orch.id, f);
+    expect(second.status).toBe('done');
+    expect(second.stageLogs.every((l) => l.status === 'success')).toBe(true);
+    expect(second.stageWfIds!.plan).toBe(planWfId);
+    // 其它状态仍拒绝启动（未确认的 awaiting-confirm 编排）
+    const unconfirmed = createOrchestration('x', generateDraft({ goal: 'x', source: 'ui' }, deps()));
+    await expect(runOrchestration(unconfirmed.id, f)).rejects.toThrow(/不允许启动/);
+  });
 });

@@ -2,7 +2,7 @@
  * H3 Orchestrator —— 编排执行器（H3b）。
  *
  * 设计约束（docs/H3_ORCHESTRATOR_DESIGN.md §7.2）：
- * - 仅接受 ready 状态；原子迁移 ready → running；
+ * - 仅接受 ready / failed（重试）状态；原子迁移 ready → running；
  * - **每个阶段执行前真实绑定工作流**（P0 修复）：
  *   - wfRef.kind === 'existing'：验证目标工作流存在（不存在 → 阶段失败）；
  *   - wfRef.kind === 'new'：创建空白工作流并以 activate:false 注册，真实 wfId 固化到
@@ -129,8 +129,11 @@ export async function runOrchestration(
 ): Promise<Orchestration> {
   const orch = getOrchestration(orchId);
   if (!orch) throw new Error(`编排记录不存在：${orchId}`);
-  if (orch.status !== 'ready') {
-    throw new Error(`编排记录状态 ${orch.status} 不允许启动（仅 ready → running）：${orch.status}`);
+  // H3c：failed 可重试（failed → running 迁移表合法）；其余状态拒绝启动
+  if (orch.status !== 'ready' && orch.status !== 'failed') {
+    throw new Error(
+      `编排记录状态 ${orch.status} 不允许启动（仅 ready / failed → running）：${orch.status}`,
+    );
   }
 
   // readonly 约束：固化在 Orchestration.readonly（P1 修复）
@@ -280,9 +283,16 @@ export function stagesReadyToRun(
 function updateStageLog(orchId: string, stageId: string, patch: Partial<StageLog>): void {
   const orch = getOrchestration(orchId);
   if (!orch) return;
-  const stageLogs = orch.stageLogs.map((l) =>
-    l.stageId === stageId ? { ...l, ...patch } : l,
-  );
+  const stageLogs = orch.stageLogs.map((l) => {
+    if (l.stageId !== stageId) return l;
+    const merged = { ...l, ...patch };
+    // 阶段重新进入 running（failed 重试）时，清除旧的终态字段，避免成功日志残留旧 error/finishedAt
+    if (patch.status === 'running') {
+      delete (merged as Partial<StageLog>).error;
+      delete (merged as Partial<StageLog>).finishedAt;
+    }
+    return merged;
+  });
   updateOrchestration(orchId, { stageLogs });
 }
 

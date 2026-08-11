@@ -498,29 +498,31 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                     <CheckCircle2 size={13} /> {t('orchestrator.confirm')}
                   </button>
                 )}
-                {selected.status === 'ready' &&
-                  (() => {
-                    // 审计建议：执行前检查所有阶段已绑定非空工作流，未就绪禁用并提示
-                    const runnable = stagesReadyToRun(selected, workflows);
-                    return (
-                      <button
-                        className="sm-btn justify-center hover:border-accent hover:text-accent"
-                        onClick={() => onRun(selected.id)}
-                        disabled={busy || !!selected.readonly || !runnable}
-                        title={
-                          selected.readonly
-                            ? t('orchestrator.hint.readonly')
-                            : runnable
-                              ? t('orchestrator.hint.ready')
-                              : t('orchestrator.hint.notReady')
-                        }
-                      >
-                        <Play size={13} /> {busy ? t('orchestrator.running') : t('orchestrator.run')}
-                      </button>
-                    );
-                  })()}
               </>
             )}
+            {(selected.status === 'ready' || selected.status === 'failed') &&
+              (() => {
+                // H3c：failed 可重试（failed → running 迁移表合法，复用已固化 stageWfIds）
+                // 审计建议：执行前检查所有阶段已绑定非空工作流，未就绪禁用并提示
+                const runnable = stagesReadyToRun(selected, workflows);
+                const isRetry = selected.status === 'failed';
+                return (
+                  <button
+                    className="sm-btn justify-center hover:border-accent hover:text-accent"
+                    onClick={() => onRun(selected.id)}
+                    disabled={busy || !!selected.readonly || !runnable}
+                    title={
+                      selected.readonly
+                        ? t('orchestrator.hint.readonly')
+                        : runnable
+                          ? t('orchestrator.hint.ready')
+                          : t('orchestrator.hint.notReady')
+                    }
+                  >
+                    <Play size={13} /> {busy ? t('orchestrator.running') : isRetry ? t('orchestrator.retry') : t('orchestrator.run')}
+                  </button>
+                );
+              })()}
             {(selected.status === 'running' || selected.status === 'paused') && (
               <button
                 className="sm-btn text-err hover:border-err"
@@ -530,7 +532,7 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                 <XCircle size={13} /> {t('orchestrator.cancel')}
               </button>
             )}
-            {['draft', 'awaiting-confirm', 'ready'].includes(selected.status) && (
+            {['draft', 'awaiting-confirm', 'ready', 'failed'].includes(selected.status) && (
               <button
                 className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-err"
                 onClick={() => onDiscard(selected.id)}
