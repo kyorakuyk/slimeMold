@@ -46,7 +46,7 @@ import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { runWorkflow, stopWorkflow, resumeRun, rerunWorkflow } from '../engine/executor';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
-import { openDirDialog, isTauri } from '../platform/env';
+import { alertDialog, confirmDialog, openDirDialog, isTauri } from '../platform/env';
 import { ask } from '@tauri-apps/plugin-dialog';
 import {
   openProjectFile,
@@ -194,7 +194,7 @@ export default function TopBar({
         pushRecentProject({ path, name: projectName ?? path, openedAt: new Date().toISOString() });
       }
     } catch (e) {
-      alert(t('dialog.saveAsFailed') + (e as Error).message);
+      void alertDialog(t('dialog.saveAsFailed') + (e as Error).message);
     }
   };
 
@@ -205,7 +205,7 @@ export default function TopBar({
             title: t('dialog.closeConfirmTitle'),
             kind: 'warning',
           })
-        : window.confirm(t('dialog.closeConfirm'));
+        : await confirmDialog(t('dialog.closeConfirm'));
       if (!ok) return;
     }
     closeProject();

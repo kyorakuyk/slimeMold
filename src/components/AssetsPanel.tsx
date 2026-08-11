@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
-import { downloadBlob, isTauri } from '../platform/env';
+import { alertDialog, confirmDialog, downloadBlob, isTauri } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import { useT } from '../i18n/useT';
 import type { AssetMeta } from '../types';
@@ -89,9 +89,7 @@ export default function AssetsPanel({
     if (scope === 'project') {
       const refs = removeProjectAsset(id);
       if (refs.length > 0) {
-        window.alert(
-          t('assets.deleteRefs', { refs: refs.join('、') }),
-        );
+        void alertDialog(t('assets.deleteRefs', { refs: refs.join('、') }));
       }
     } else {
       removeAsset(id);
@@ -179,7 +177,7 @@ export default function AssetsPanel({
         await openPath(dir);
       } catch (err2) {
         console.error('openPath 失败', err2);
-        window.alert(t('assets.openFolderFailed', { path: winPath }));
+        void alertDialog(t('assets.openFolderFailed', { path: winPath }));
       }
     }
   };
@@ -189,11 +187,11 @@ export default function AssetsPanel({
     if (!inspectorOpen) toggleInspector();
   };
 
-  const handleBulkRemove = () => {
+  const handleBulkRemove = async () => {
     if (selectedIds.size === 0) return;
     const list = visibleAssets.filter((a) => selectedIds.has(a.id));
     const names = list.map((a) => a.name).join('、');
-    if (!window.confirm(t('assets.deleteConfirm', { count: selectedIds.size, names }))) return;
+    if (!(await confirmDialog(t('assets.deleteConfirm', { count: selectedIds.size, names })))) return;
     list.forEach((a) => doRemove(a.id));
     setSelectedIds(new Set());
     setSelectAll(false);
@@ -242,7 +240,7 @@ export default function AssetsPanel({
     const ids = multiMode ? selectedIds : inspectAssetId ? new Set([inspectAssetId]) : new Set();
     const list = visibleAssets.filter((a) => ids.has(a.id));
     if (list.length === 0) {
-      window.alert(t('assets.exportEmpty'));
+      void alertDialog(t('assets.exportEmpty'));
       return;
     }
     list.forEach((a) => downloadBlob(a.name, a.content, mimeOf(a.name)));

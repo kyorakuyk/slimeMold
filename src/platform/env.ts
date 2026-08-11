@@ -129,6 +129,42 @@ export async function pickProjectFile(): Promise<string | null> {
 }
 
 /**
+ * 确认对话框（Tauri 桌面端走 plugin-dialog 的 confirm，浏览器退化 window.confirm）。
+ * 不要在 Tauri 下直接调 window.confirm：WebView 会拦截原生 JS dialog 并尝试调
+ * dialog.confirm 命令，未授权时抛 UnhandledRejection（需 capabilities 含 dialog:allow-confirm）。
+ */
+export async function confirmDialog(message: string): Promise<boolean> {
+  if (isTauri) {
+    try {
+      const { confirm } = await import('@tauri-apps/plugin-dialog');
+      return await confirm(message, { kind: 'warning' });
+    } catch (e) {
+      log('warn', `dialog.confirm 调用失败，退化为 window.confirm — ${e instanceof Error ? e.message : String(e)}`);
+      return window.confirm(message);
+    }
+  }
+  return window.confirm(message);
+}
+
+/**
+ * 提示对话框（Tauri 桌面端走 plugin-dialog 的 message，浏览器退化 window.alert）。
+ * 与 confirmDialog 同因：Tauri WebView 下不要直接调 window.alert/confirm，
+ * 否则原生 JS dialog 被拦截后尝试调 dialog.* 命令，未授权即 UnhandledRejection。
+ */
+export async function alertDialog(message: string): Promise<void> {
+  if (isTauri) {
+    try {
+      const { message: msg } = await import('@tauri-apps/plugin-dialog');
+      await msg(message, { kind: 'info' });
+      return;
+    } catch (e) {
+      log('warn', `dialog.message 调用失败，退化为 window.alert — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  window.alert(message);
+}
+
+/**
  * 新建项目时选择保存位置：选一个目录作为项目根。
  * Tauri 下可创建目录；浏览器返回 null（走 localStorage 草稿）。
  * 使用 Tauri v2 官方 @tauri-apps/plugin-dialog（不依赖 __TAURI__ 全局对象）。

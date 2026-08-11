@@ -4,7 +4,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { useViewStore } from '../store/viewStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { isTauri, downloadBlob } from '../platform/env';
+import { alertDialog, isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef } from '../types';
 import { useT } from '../i18n/useT';
@@ -227,7 +227,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
           await openPath(dir);
         } catch (err2) {
           console.error('openPath 失败', err2);
-          window.alert(`${t('asset.cannotOpen')}\n${winPath}`);
+          void alertDialog(`${t('asset.cannotOpen')}\n${winPath}`);
         }
       }
     };

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { confirmDialog } from '../platform/env';
 import {
   bindStageWorkflow,
   confirmDraft,
@@ -223,10 +224,10 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
   };
 
   /** 删除编排记录：草案直接废弃；终态历史删除需确认（均不触碰用户工作流） */
-  const onRemove = (orchId: string, status: string) => {
+  const onRemove = async (orchId: string, status: string) => {
     const isTerminal = status === 'done' || status === 'cancelled' || status === 'failed';
-    // 终态历史含审计信息（StageLog/runIds），删除不可恢复——需确认
-    if (isTerminal && !window.confirm(t('orchestrator.deleteConfirm'))) return;
+    // 终态历史含审计信息（StageLog/runIds），删除不可恢复——需确认（平台层对话框，Tauri 安全可用）
+    if (isTerminal && !(await confirmDialog(t('orchestrator.deleteConfirm')))) return;
     try {
       if (removeOrchestration(orchId)) {
         addLog('info', isTerminal ? '编排历史记录已删除' : '编排草案已废弃');
