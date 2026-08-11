@@ -258,8 +258,11 @@ manifest 无需改动（`minCapability`/`extends` 语义沿用），预留可选
 |---|---|---|
 | **P0 最小沙箱加载器** ✅ | `SandboxManager` + `sandbox-runtime`；协议消息封装 execute | 单测：加载/执行/结果/错误/超时/崩溃/取消/并发限制/terminateAll |
 | **P1 能力代理 + 白名单** ✅ | `execContextResponder` 接 logger/llm/storage；`CAPABILITY_WHITELIST` worker+宿主双侧强制；responder 按 executionId 路由；nodeId 全链路传入 | 单测：能力代理/白名单拦截（compute 拒 llm、io 拒 sandbox）/并发 responder 不覆盖/execute 携带 nodeId |
-| **P2 韧性注入** ⏳ | 死循环插件 + 抛错插件 + 永不返回插件 | 超时→terminate→失败标记；崩溃→onerror→重建；取消→abort→静默退出 |
-| **P3 GUI 集成** ⏳ | loader 接入沙箱分支；插件面板「沙箱运行」开关（viewStore）；word-counter 端到端 | GUI：加载 word-counter 沙箱节点→拖入→运行→结果正确 |
+| **P2 韧性注入** ✅ | 心跳探针（死循环/卡死检测）+ 超时/崩溃/取消统一 `disposeSlot`；在途 `terminateAll` 立即 reject 无残留 timer | 单测：心跳判死/健康不误杀/在途 terminateAll 立即 reject（489 tests） |
+| **P3 GUI 集成** ✅ | loader 接入沙箱分支（禁止主线程预执行）；插件面板「沙箱运行」开关（viewStore）；word-counter 端到端 | GUI：加载 word-counter 沙箱节点→拖入→运行→结果正确（人工验收通过） |
+
+> **验收状态统一说明**：P2/P3 为「代码实现 + fake Worker 单测 + word-counter 人工 GUI 验收」达成；
+> **自动化真实 WebView2 Worker 验收待补**（jsdom/Node 无原生 Worker，真实 Worker 行为需人工 GUI 验证）。
 
 ### 6.3 迁移策略（PoC 通过后）
 
@@ -338,7 +341,7 @@ Codex 结论：发现**新的 P0 阻断**——`sandbox: true` 时 loader 仍先
 **恶意插件顶层代码已在宿主线程（DOM/Tauri IPC 权限）运行过一次**，Worker 只隔离 execute()，
 不构成「插件加载隔离」。
 
-**修复（commit 待发）**：
+**修复（commit b0cafe3）**：
 - `sandbox: true` 时**禁止主线程 import(entryCode)**：不解析 executors/类导出；节点定义完全由
   manifest 构造；execute 直接是 Worker 包装器；fallback（无 Worker 环境）改为**报错**而非回退
   主线程——保持「不预执行」承诺。
@@ -383,11 +386,6 @@ Codex 指出：`terminateAll()` 在存在在途 execute 时只 terminate Worker 
 
 ---
 
-*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ ec0058f（P1 两项+P2 一项）→
-b0cafe3（第三轮 P0 主线程预执行修复）→ fe49d0f（P2 心跳）→ 本修订（第四轮在途 terminateAll 泄漏修复）*
-本文档为设计稿，PoC 验证后按实际修正。
-
----
-
-*生成日期：2026-08-11 · 基线 main @ 15de1d1（P0）→ 4718ff2（P1 三项）→ ec0058f（P1 两项+P2 一项）→
-本修订（第三轮 P0 主线程预执行修复）· 本文档为设计稿，PoC 验证后按实际修正*
+*生成日期：2026-08-11 · 基线演进：15de1d1（P0）→ 4718ff2（P1 三项）→ ec0058f（P1 两项+P2 一项）→
+b0cafe3（第三轮 P0 主线程预执行修复）→ 3e13221（P3 开关 UI）→ fe49d0f（P2 心跳）→
+6bb6907（第四轮在途 terminateAll 泄漏修复）。本文档为设计稿，PoC 验证后按实际修正。*
