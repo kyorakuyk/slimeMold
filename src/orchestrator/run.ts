@@ -5,15 +5,17 @@
  * - 仅接受 ready 状态；原子迁移 ready → running；
  * - **每个阶段执行前真实绑定工作流**（P0 修复）：
  *   - wfRef.kind === 'existing'：验证目标工作流存在（不存在 → 阶段失败）；
- *   - wfRef.kind === 'new'：创建空白工作流并以 activate:false 注册，真实 wfId 写入 StageLog；
- *   - 工作流不存在 / 为空 / 运行失败 → 阶段失败，不能标 success。
- * - 按草案拓扑顺序（edges）执行各阶段；每阶段写 StageLog；
+ *   - wfRef.kind === 'new'：创建空白工作流并以 activate:false 注册，真实 wfId 固化到
+ *     Orchestration.stageWfIds（恢复/重试复用同一 ID，不重建）；
+ *   - **空工作流（无节点）→ 阶段失败，绝不运行空图后标 success**（getWorkflow 为必需依赖）；
+ *   - 运行失败 → 阶段 failed。
+ * - 按草案拓扑顺序（edges）执行各阶段；每阶段写 StageLog（含真实 runId）；
  * - 首次失败即 failed 并停止后续阶段；
  * - cancel：先 stopWorkflow(wfId) 停止当前阶段，再 cancelOrchestration() 落 cancelled；
  * - **写 success 前复查 cancelled**（P1 修复：cancel 后若 runWorkflow 返回，不得标 success）；
  * - readonly 固化在 Orchestration.readonly（P1 修复：运行路径无需 getRequest）；
  * - 暂不做自动回流 / LLM 动态改图（后续 H3d）；
- * - 依赖注入 runWorkflow/stopWorkflow/ensureStageWorkflow，便于单测（fake 注入）。
+ * - 依赖注入 runWorkflow/stopWorkflow/ensureStageWorkflow/getWorkflow，便于单测（fake 注入）。
  */
 
 import { useWorkflowStore } from '../store/workflowStore';
@@ -25,30 +27,43 @@ export type StageWfBind =
   | { ok: true; wfId: string }
   | { ok: false; error: string };
 
+/** runWorkflow 依赖返回：真实 runId（executor 运行记录 id，非编排器伪造） */
+export interface RunWorkflowResult {
+  runId?: string;
+}
+
 /** 依赖注入：真实 executor / 工作流存储；测试可注入 fake */
 export interface OrchestrationDeps {
-  runWorkflow: (opts: { wfId: string }) => Promise<void>;
+  runWorkflow: (opts: { wfId: string }) => Promise<RunWorkflowResult | void>;
   stopWorkflow: (wfId?: string) => void | Promise<void>;
   /**
    * 为某阶段绑定真实工作流：
    * - wfRef.kind='existing'：验证目标工作流存在；
    * - wfRef.kind='new'：创建空白工作流并 activate:false 注册，返回真实 wfId。
+   * 实现应优先复用 Orchestration.stageWfIds 已绑定的 wfId（恢复/重试不重建）。
    */
   ensureStageWorkflow: (orchId: string, stage: DraftStage) => StageWfBind;
-  /** 按真实 wfId 读取工作流（用于「为空→失败」校验，可选） */
-  getWorkflow?: (wfId: string) => { nodes?: unknown[]; name?: string } | undefined;
+  /** 按真实 wfId 读取工作流（必需依赖；空图校验依赖它） */
+  getWorkflow: (wfId: string) => { nodes?: unknown[]; name?: string } | undefined;
 }
 
 const defaultDeps: OrchestrationDeps = {
   runWorkflow: async (opts) => {
     const { runWorkflow: real } = await import('../engine/executor');
     await real({ wfId: opts.wfId });
+    // 提取真实 runId：runHistory 最近一条记录（前插），其 id 即本次运行的 runId
+    const top = useWorkflowStore.getState().runHistory[0];
+    return { runId: top?.id };
   },
   stopWorkflow: async (wfId) => {
     const { stopWorkflow: real } = await import('../engine/executor');
     real(wfId);
   },
-  ensureStageWorkflow: (_orchId, stage) => {
+  ensureStageWorkflow: (orchId, stage) => {
+    const orch = useWorkflowStore.getState().orchestrations.find((o) => o.id === orchId);
+    // 优先复用已固化的绑定（恢复/重试不重建）
+    const bound = orch?.stageWfIds?.[stage.id];
+    if (bound) return { ok: true, wfId: bound };
     if (stage.wfRef.kind === 'existing') {
       // existing：验证目标工作流存在
       const wf = useWorkflowStore.getState().workflows[stage.wfRef.wfId];
@@ -70,7 +85,16 @@ const defaultDeps: OrchestrationDeps = {
       },
       { activate: false, name: `编排阶段·${stage.label}` },
     );
+    // 固化绑定（P1 修复：恢复/重试复用同一 ID）
+    if (orch) {
+      updateOrchestration(orchId, { stageWfIds: { ...orch.stageWfIds, [stage.id]: id } });
+    }
     return { ok: true, wfId: id };
+  },
+  getWorkflow: (wfId) => {
+    const wf = useWorkflowStore.getState().workflows[wfId];
+    if (!wf) return undefined;
+    return { nodes: wf.nodes, name: wf.name };
   },
 };
 
@@ -111,7 +135,7 @@ export async function runOrchestration(
       const stage = draft.stages.find((s) => s.id === stageId);
       if (!stage) continue;
 
-      // P0 修复：真实绑定工作流（existing 验证存在 / new 注册）
+      // P0 修复：真实绑定工作流（existing 验证存在 / new 注册；复用已固化绑定）
       const bind = deps.ensureStageWorkflow(orchId, stage);
       if (!bind.ok) {
         updateStageLog(orchId, stageId, {
@@ -125,12 +149,12 @@ export async function runOrchestration(
       }
       const wfId = bind.wfId;
 
-      // 为空校验（可选）：工作流没有节点 → 阶段失败
-      const wf = deps.getWorkflow?.(wfId);
-      if (wf && (!wf.nodes || wf.nodes.length === 0)) {
+      // 空图校验（P0 修复：getWorkflow 为必需依赖，空工作流 → 阶段失败）
+      const wf = deps.getWorkflow(wfId);
+      if (!wf || !wf.nodes || wf.nodes.length === 0) {
         updateStageLog(orchId, stageId, {
           status: 'failed',
-          error: `阶段 ${stage.id} 的工作流为空（${wfId}）`,
+          error: `阶段 ${stage.id} 的工作流为空或无节点（${wfId}）：请先配置该阶段工作流`,
           finishedAt: new Date().toISOString(),
         });
         const failed = getOrchestration(orchId)!;
@@ -141,18 +165,19 @@ export async function runOrchestration(
       // 写 running 时即带 wfId——cancel 钩子据此停止当前阶段
       updateStageLog(orchId, stageId, { status: 'running', wfId, startedAt: new Date().toISOString() });
       try {
-        await deps.runWorkflow({ wfId });
+        const result = await deps.runWorkflow({ wfId });
         // P1 修复：cancel 后若 runWorkflow 返回，复查 cancelled——不得标 success
         const after = getOrchestration(orchId);
         if (!after || after.status === 'cancelled') break;
-        const runId = `run-${Date.now()}`;
+        // P1 修复：真实 runId（executor 运行记录 id），不伪造时间戳
+        const runId = result && typeof result === 'object' && 'runId' in result ? result.runId : undefined;
         updateStageLog(orchId, stageId, {
           status: 'success',
           wfId,
           runId,
           finishedAt: new Date().toISOString(),
         });
-        updateOrchestration(orchId, { cursor: stageId });
+        updateOrchestration(orchId, { cursor: stageId, runIds: runId ? [...after.runIds, runId] : after.runIds });
       } catch (e) {
         // 首次失败：标记该阶段 failed，编排转 failed，停止后续阶段
         updateStageLog(orchId, stageId, {

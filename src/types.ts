@@ -1153,6 +1153,8 @@ export interface Orchestration {
   cursor?: string;
   /** 只读模式：只产出草案不执行（constraints.readonly 固化到编排记录，运行路径无需 getRequest） */
   readonly?: boolean;
+  /** 阶段 → 真实 wfId 固化映射（首次绑定后写入，恢复/重试复用同一工作流，不重建） */
+  stageWfIds?: Record<string, string>;
   stageLogs: StageLog[];
   /** 关联运行 id（runEvents 重放） */
   runIds: string[];

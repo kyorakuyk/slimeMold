@@ -155,7 +155,7 @@ export function cancelOrchestration(orchId: string): Orchestration {
  */
 export function updateOrchestration(
   orchId: string,
-  patch: Partial<Pick<Orchestration, 'status' | 'cursor' | 'stageLogs' | 'runIds' | 'pipelineId'>>,
+  patch: Partial<Pick<Orchestration, 'status' | 'cursor' | 'stageLogs' | 'runIds' | 'pipelineId' | 'stageWfIds'>>,
 ): Orchestration | undefined {
   const st = useWorkflowStore.getState();
   const idx = st.orchestrations.findIndex((o) => o.id === orchId);

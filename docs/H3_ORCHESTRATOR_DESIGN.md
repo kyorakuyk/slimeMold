@@ -277,7 +277,7 @@ async function runOrchestration(orchId: string): Promise<void> {
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **H3a 类型 + 纯函数地基** ✅ | `src/orchestrator/types.ts`（Orchestration/PipelineDraft/StageLog）+ `generateDraft` 纯函数（模板 + AgentRouter 选 agent）+ `confirmDraft`/`discardDraft`/`cancelOrchestration`/`ALLOWED_TRANSITIONS`（store 收口） | 单测：generateDraft 不写 store；confirm 才落盘；discard 状态约束；迁移表强制 |
-| **H3b 编排执行器** ⚠️ 骨架完成 | `src/orchestrator/run.ts`：`runOrchestration`（ready→running→拓扑序执行→写 StageLog→首败即 failed→cancel 先 stopWorkflow 再 cancelled）；**每个阶段执行前真实绑定工作流**（existing 验证存在 / new 注册 activate:false，真实 wfId 写 StageLog）；readonly 固化在 Orchestration；写 success 前复查 cancelled。**待完成：pipeline 绑定持久化到 PipelineDef、orch.* 事件接入 runEvents、每阶段 checkpoint 落盘** | 单测（fake）：仅 ready/顺序/失败停/cancel/readonly/existing 不存在→失败/工作流为空→失败/cancel 后不标 success |
+| **H3b 编排执行器** ⚠️ 骨架完成 | `src/orchestrator/run.ts`：`runOrchestration`（ready→running→拓扑序执行→写 StageLog→首败即 failed→cancel 先 stopWorkflow 再 cancelled）；**每个阶段执行前真实绑定工作流**（existing 验证存在 / new 注册 activate:false，真实 wfId 固化到 `Orchestration.stageWfIds` 供恢复复用）；**空工作流 → 阶段失败（getWorkflow 为必需依赖，绝不运行空图标 success）**；**真实 runId 写 StageLog（从 executor 运行记录提取，不伪造）**；readonly 固化在 Orchestration；写 success 前复查 cancelled。**待完成：pipeline 绑定持久化到 PipelineDef、orch.* 事件接入 runEvents、每阶段 checkpoint 落盘** | 单测（fake）：仅 ready/顺序/失败停/cancel/readonly/existing 不存在→失败/空工作流→失败/cancel 后不标 success/stageWfIds 固化复用/真实 runId |
 | **H3c 编排面板 UI** ⏳ | 左栏「编排」入口：目标输入 → 草案预览（DAG+agent）→ 确认/废弃 → 进度展示 | GUI：目标→草案→确认→执行最小闭环 |
 | **H3d 阶段模板 + LLM 草案**（可选延后） | `stageForGoal` 模板化 → 后续接入 LLM 生成草案 | — |
 
