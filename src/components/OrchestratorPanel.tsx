@@ -88,8 +88,11 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
   const [err, setErr] = useState<string | null>(null);
   // 当前查看的编排 id（null=列表视图）
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // 执行中（防重复点击）
+  // 执行中（防重复点击执行）
   const [busy, setBusy] = useState(false);
+  // 取消中（防重复点击取消；注意不能用 busy——busy 在整个 runOrchestration 阻塞期都 true，
+  // 用它禁用取消按钮会导致运行期无法取消）
+  const [cancelling, setCancelling] = useState(false);
 
   const selected = orchestrations.find((o) => o.id === selectedId) ?? null;
   const allAgents = [...globalAgents, ...agents];
@@ -201,14 +204,19 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setCancelling(false);
     }
   };
 
-  /** 取消（先 stopWorkflow 当前阶段，再落 cancelled） */
+  /** 取消（先 stopWorkflow 当前阶段，再落 cancelled；点击后防重入） */
   const onCancel = (orchId: string) => {
+    if (cancelling) return;
+    setCancelling(true);
     try {
       cancelOrchestrationRun(orchId);
+      addLog('info', '已请求取消编排，正在停止当前阶段…');
     } catch (e) {
+      setCancelling(false);
       addLog('error', e instanceof Error ? e.message : String(e));
     }
   };
@@ -544,9 +552,9 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
               <button
                 className="sm-btn text-err hover:border-err"
                 onClick={() => onCancel(selected.id)}
-                disabled={busy}
+                disabled={cancelling}
               >
-                <XCircle size={13} /> {t('orchestrator.cancel')}
+                <XCircle size={13} /> {cancelling ? t('orchestrator.cancelling') : t('orchestrator.cancel')}
               </button>
             )}
             {['draft', 'awaiting-confirm', 'ready', 'failed'].includes(selected.status) && (

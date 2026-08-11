@@ -270,6 +270,7 @@
   <string name="orchestrator.running">执行中…</string>
   <string name="orchestrator.retry">重试</string>
   <string name="orchestrator.cancel">取消</string>
+  <string name="orchestrator.cancelling">取消中…</string>
   <string name="orchestrator.discardHint">废弃草案（不触碰任何用户工作流；运行中须先取消）</string>
   <string name="orchestrator.hint.readonly">只读编排不执行</string>
   <string name="orchestrator.hint.ready">所有阶段已绑定非空工作流，可以执行</string>
