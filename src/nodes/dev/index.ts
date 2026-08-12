@@ -10,7 +10,7 @@
 import type { NodeDefinition, PortType } from '../../types';
 import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator';
 import type { DevSession } from '../../dev/session';
-import type { EvidenceKind } from '../../dev/evidence';
+import { collectChangedProtectedPaths } from '../../dev/policy';
 
 const DEV_CATEGORY = '开发';
 
@@ -24,12 +24,6 @@ const J: PortType = 'json';
 function str(v: unknown): string {
   if (v == null) return '';
   return typeof v === 'string' ? v : String(v);
-}
-
-/** 从输入取数字（容错）。 */
-function num(v: unknown): number | undefined {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) ? n : undefined;
 }
 
 /** 从输入取字符串数组（支持数组 / JSON 数组字符串 / 逗号分隔）。 */
@@ -64,12 +58,21 @@ function nodeError(msg: string): Error {
   return new Error(`[dev] ${msg}`);
 }
 
+let resultSeq = 0;
+/** 生成宿主登记结果 ID。 */
+function nextResultId(): string {
+  resultSeq += 1;
+  return `hr-${Date.now().toString(36)}-${resultSeq.toString(36)}`;
+}
+
 /**
  * 生成开发节点定义（绑定到给定 session）。
  * 节点 execute 只做「薄封装」——安全检查全部下沉 service/manager/collector。
+ * P0 审计语义：执行节点把真实结果登记进 session.resultStore 并输出 resultId；
+ * evidence.add 只能引用这些宿主登记结果（不允许节点自填 status/summary/exitCode）。
  */
 export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
-  const { manager, service, collector } = session;
+  const { manager, service, collector, resultStore } = session;
 
   const worktreeCreate: NodeDefinition = {
     typeId: 'dev.worktree.create',
@@ -124,19 +127,21 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     name: '清理开发工作区',
     category: DEV_CATEGORY,
     role: 'orchestrator',
-    whenToUse: '自举任务收尾：人工验收通过后（confirm=true）清理 worktree。',
+    whenToUse: '自举任务收尾：宿主已批准清理（approveCleanup）时清理 worktree。',
     description:
-      '清理 worktree 并删除临时分支。必须显式传入 confirm=true（人工验收后），否则拒绝清理，防止误删未提交改动。',
-    inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }],
-    outputs: [{ id: 'cleaned', label: '已清理', type: 'any' }],
-    params: [
-      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
-      { key: 'confirm', label: '确认清理（须人工验收后置 true）', type: 'boolean', default: false },
+      '清理 worktree 并删除临时分支。P0 审计：确认只能由宿主 API approveCleanup 生成（仅 UI/宿主审批层），'
+      + '节点/工作流无法伪造 confirm——未批准一律拒绝清理，防误删未提交改动。',
+    inputs: [
+      { id: 'worktreePath', label: '工作区路径', type: T },
+      { id: 'after', label: '触发（忽略值，仅排序依赖）', type: T },
     ],
+    outputs: [{ id: 'cleaned', label: '已清理', type: 'any' }],
+    params: [{ key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' }],
     async execute(inputs, params) {
       const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
-      const cleaned = await manager.cleanup(path, { confirm: params.confirm === true });
+      // P0：确认状态只能由宿主 approveCleanup 设置，节点参数不可伪造
+      const cleaned = await manager.cleanup(path, { confirm: session.isCleanupApproved(path) });
       return { cleaned };
     },
   };
@@ -184,6 +189,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     outputs: [
       { id: 'ok', label: '应用成功', type: 'any' },
       { id: 'contentHash', label: '内容哈希', type: T },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
     ],
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
@@ -197,7 +203,16 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       if (!cwd || !path || !patch) throw nodeError('code.patch 需要 worktreePath / path / patch');
       const r = await service.codePatch(path, patch, { cwd });
       if (!r.ok) throw nodeError(`补丁应用失败：${r.error ?? '未知错误'}`);
-      return { ok: true, contentHash: r.contentHash ?? '' };
+      // P0：登记宿主 diff 结果（status=passed 由补丁成功这一事实决定），供 evidence.add 引用
+      const resultId = nextResultId();
+      resultStore.set(resultId, {
+        resultId,
+        kind: 'diff',
+        status: 'passed',
+        contentHash: r.contentHash,
+        summary: `已对 ${path} 应用受控 unified diff（${(patch.match(/^\+/gm) ?? []).length} 行新增）`,
+      });
+      return { ok: true, contentHash: r.contentHash ?? '', resultId };
     },
   };
 
@@ -216,6 +231,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'exitCode', label: '退出码', type: N },
       { id: 'stdout', label: '标准输出', type: T },
       { id: 'stderr', label: '标准错误', type: T },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
     ],
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
@@ -226,7 +242,17 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('shell.run 需要 worktreePath 与 cmd');
       const r = await service.shellRun(cmd, { cwd });
-      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+      // P0：登记宿主真实执行结果（status 由 exitCode 决定），供 evidence.add 引用
+      const resultId = nextResultId();
+      resultStore.set(resultId, {
+        resultId,
+        kind: 'command',
+        status: r.exitCode === 0 ? 'passed' : 'failed',
+        exitCode: r.exitCode,
+        command: cmd.join(' '),
+        summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
+      });
+      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
   };
 
@@ -245,6 +271,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'exitCode', label: '退出码', type: N },
       { id: 'stdout', label: '标准输出', type: T },
       { id: 'stderr', label: '标准错误', type: T },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
     ],
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
@@ -255,7 +282,17 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('test.run 需要 worktreePath 与 cmd');
       const r = await service.testRun(cmd, { cwd });
-      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+      // P0：登记宿主真实测试结果（status 由真实 exitCode 决定），供 evidence.add 引用
+      const resultId = nextResultId();
+      resultStore.set(resultId, {
+        resultId,
+        kind: 'test',
+        status: r.exitCode === 0 ? 'passed' : 'failed',
+        exitCode: r.exitCode,
+        command: cmd.join(' '),
+        summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
+      });
+      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
   };
 
@@ -267,13 +304,25 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     whenToUse: '查看 worktree 内 git 状态（只读）。',
     description: '返回 `git status --porcelain` 输出（只读）。',
     inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }],
-    outputs: [{ id: 'stdout', label: '状态输出', type: T }],
+    outputs: [
+      { id: 'stdout', label: '状态输出', type: T },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
+    ],
     params: [{ key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' }],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('git.status 需要 worktreePath');
       const r = await service.gitStatus({ cwd });
-      return { stdout: r.stdout };
+      const resultId = nextResultId();
+      resultStore.set(resultId, {
+        resultId,
+        kind: 'command',
+        status: 'passed',
+        exitCode: r.exitCode,
+        command: 'git status --porcelain',
+        summary: 'git status 执行完成',
+      });
+      return { stdout: r.stdout, resultId };
     },
   };
 
@@ -287,8 +336,12 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     inputs: [
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'baseRef', label: '基线（可空）', type: T },
+      { id: 'after', label: '触发（忽略值，仅排序依赖）', type: T },
     ],
-    outputs: [{ id: 'stdout', label: 'diff 输出', type: T }],
+    outputs: [
+      { id: 'stdout', label: 'diff 输出', type: T },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
+    ],
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'baseRef', label: '基线（兜底，可空）', type: 'text', default: '' },
@@ -298,7 +351,17 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       if (!cwd) throw nodeError('git.diff 需要 worktreePath');
       const baseRef = str(inputs.baseRef ?? params.baseRef) || undefined;
       const r = await service.gitDiff(baseRef, { cwd });
-      return { stdout: r.stdout };
+      // P0：登记宿主 diff 结果（真实执行），供 evidence.add 引用
+      const resultId = nextResultId();
+      resultStore.set(resultId, {
+        resultId,
+        kind: 'diff',
+        status: r.exitCode === 0 ? 'passed' : 'failed',
+        exitCode: r.exitCode,
+        command: `git diff ${baseRef ?? 'HEAD'}`,
+        summary: r.stdout.trim() ? '存在未提交 diff' : '无 diff 改动',
+      });
+      return { stdout: r.stdout, resultId };
     },
   };
 
@@ -307,39 +370,40 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     name: '采集证据',
     category: DEV_CATEGORY,
     role: 'verifier',
-    whenToUse: '自举任务每阶段完成时，把宿主采集的真实结果（测试退出码/diff/路径检查）写入 EvidenceStore。',
+    whenToUse: '自举任务每阶段完成时，把宿主登记的**真实执行结果**（resultId）写入 EvidenceStore。',
     description:
-      '向 EvidenceCollector 追加一条证据（capturedBy 恒为 host）。字段由上游节点提供真实结果——模型/节点不得伪造。',
+      '向 EvidenceCollector 追加一条证据（capturedBy 恒为 host）。P0 审计：只能引用宿主登记的 '
+      + 'resultId（dev.shell/test/git/code.patch 执行后登记），status/summary/exitCode 全部取自宿主'
+      + '真实结果——节点/工作流无法伪造「测试通过/diff 完成」证据。',
     inputs: [
       { id: 'orchestrationId', label: '编排 ID', type: T },
       { id: 'stageId', label: '阶段 ID', type: T },
-      { id: 'kind', label: '证据类型（test/diff/command/path-policy/artifact）', type: T },
-      { id: 'summary', label: '摘要', type: T },
-      { id: 'exitCode', label: '退出码（可空）', type: N },
-      { id: 'command', label: '命令（可空）', type: T },
+      { id: 'resultId', label: '宿主结果 ID（来自 dev.* 执行节点）', type: T },
     ],
     outputs: [{ id: 'evidenceId', label: '证据 ID', type: T }],
     params: [
       { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
-      { key: 'kind', label: '证据类型（兜底）', type: 'text', default: '' },
-      { key: 'summary', label: '摘要（兜底）', type: 'text', default: '' },
-      { key: 'exitCode', label: '退出码（兜底）', type: 'number', default: '' },
-      { key: 'command', label: '命令（兜底）', type: 'text', default: '' },
+      { key: 'resultId', label: '宿主结果 ID（兜底）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
-      const kind = str(inputs.kind ?? params.kind) as EvidenceKind;
-      if (!['command', 'test', 'diff', 'path-policy', 'artifact'].includes(kind)) {
-        throw nodeError(`非法证据类型：${str(inputs.kind ?? params.kind)}`);
-      }
+      const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
+      const stageId = str(inputs.stageId ?? params.stageId);
+      const resultId = str(inputs.resultId ?? params.resultId);
+      if (!orchestrationId || !stageId) throw nodeError('evidence.add 需要 orchestrationId 与 stageId');
+      if (!resultId) throw nodeError('evidence.add 需要引用宿主结果 resultId');
+      // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
+      const host = resultStore.get(resultId);
+      if (!host) throw nodeError(`引用的宿主结果不存在：${resultId}（证据必须来自真实执行）`);
       const rec = await collector.addAsync({
-        orchestrationId: str(inputs.orchestrationId ?? params.orchestrationId),
-        stageId: str(inputs.stageId ?? params.stageId),
-        kind,
-        status: 'passed',
-        summary: str(inputs.summary ?? params.summary),
-        command: str(inputs.command ?? params.command) || undefined,
-        exitCode: num(inputs.exitCode ?? params.exitCode),
+        orchestrationId,
+        stageId,
+        kind: host.kind,
+        status: host.status,
+        summary: host.summary,
+        command: host.command,
+        exitCode: host.exitCode,
+        contentHash: host.contentHash,
       });
       return { evidenceId: rec.id };
     },
@@ -350,14 +414,14 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     name: '确定性验收',
     category: DEV_CATEGORY,
     role: 'verifier',
-    whenToUse: '自举任务收尾：按验收规则 + 证据判定通过/失败（changedProtectedPaths 非空恒失败）。',
+    whenToUse: '自举任务收尾：按验收规则 + 宿主证据判定通过/失败（changedProtectedPaths 非空恒失败）。',
     description:
-      '运行 evaluateDevAcceptance：所有规则满足且未触碰保护路径 → passed；否则列出 failedChecks。保护路径变更恒失败，需人工 diff 审查。',
+      '运行 evaluateDevAcceptance。P0 审计：证据**只读 DevSession.collector 宿主采集的证据**（不接受外部'
+      + '覆盖）；changedProtectedPaths 由宿主根据真实 gitChangedFiles() + policy 计算（不接受输入伪造）。'
+      + '保护路径变更恒失败，需人工 diff 审查。',
     inputs: [
+      { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'rules', label: '验收规则（JSON 数组）', type: J },
-      { id: 'evidence', label: '证据（JSON 数组）', type: J },
-      { id: 'changedProtectedPaths', label: '触碰的保护路径（JSON 数组）', type: J },
-      { id: 'uncertainties', label: '不确定性（JSON 数组）', type: J },
     ],
     outputs: [
       { id: 'passed', label: '通过', type: 'any' },
@@ -366,25 +430,21 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'changedProtectedPaths', label: '保护路径变更', type: L },
     ],
     params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
-      { key: 'changedProtectedPaths', label: '保护路径变更（兜底）', type: 'textarea', default: '' },
-      { key: 'uncertainties', label: '不确定性（兜底）', type: 'textarea', default: '' },
     ],
     async execute(inputs, params) {
-      // evidence 缺省时用 DevSession collector 的宿主采集证据（保证真实，不靠模型自报）
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      if (!cwd) throw nodeError('accept 需要 worktreePath');
+      // P0：证据只读宿主采集（collector 保证 capturedBy='host'），不接受外部证据覆盖
+      const evidence = collector.toJSON();
       const rules = Array.isArray(inputs.rules) && inputs.rules.length > 0
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);
-      const evidence = Array.isArray(inputs.evidence) && inputs.evidence.length > 0
-        ? inputs.evidence
-        : collector.toJSON();
-      const changed = Array.isArray(inputs.changedProtectedPaths)
-        ? inputs.changedProtectedPaths.map(String)
-        : parseJson<string[]>(params.changedProtectedPaths, []).map(String);
-      const uncertainties = Array.isArray(inputs.uncertainties)
-        ? inputs.uncertainties.map(String)
-        : parseJson<string[]>(params.uncertainties, []).map(String);
-      const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed, uncertainties);
+      // P0：changedProtectedPaths 由宿主真实计算（gitChangedFiles × policy），不接受输入
+      const changedFiles = await service.gitChangedFiles({ cwd });
+      const changed = collectChangedProtectedPaths(session.policy, changedFiles);
+      const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed);
       return {
         passed: a.passed,
         failedChecks: a.failedChecks,

@@ -18,8 +18,14 @@ function fakeSession(): DevSession {
   const registry = { isTracked: (cwd: string) => manager.isTracked(cwd) };
   const files = new Map<string, string>([['src/components/A.tsx', 'export const a = 1;\n']]);
   const deps: NodeDevDeps = {
-    runCommand: async (cmd, _args) => {
-      if (cmd === 'git') return { exitCode: 0, stdout: ' M src/components/A.tsx\n', stderr: '', durationMs: 1 };
+    runCommand: async (cmd, args) => {
+      if (cmd === 'git') {
+        if (args[0] === 'diff' && args.includes('--name-only')) {
+          return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
+        }
+        if (args[0] === 'ls-files') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
+        return { exitCode: 0, stdout: ' M src/components/A.tsx\n', stderr: '', durationMs: 1 };
+      }
       return { exitCode: 0, stdout: 'PASS', stderr: '', durationMs: 1 };
     },
     // abs 是 resolve 后的绝对路径（Windows 盘符前缀），取 /wt/ 之后的相对部分做 key
@@ -38,7 +44,26 @@ function fakeSession(): DevSession {
   };
   const service = createNodeDevService(defaultDevPolicy, deps, registry);
   const collector = new EvidenceCollector();
-  return { policy: defaultDevPolicy, manager, service, collector, defs: [] };
+  const session: DevSession = {
+    policy: defaultDevPolicy,
+    manager,
+    service,
+    collector,
+    resultStore: new Map(),
+    approvedCleanups: new Set(),
+    defs: [],
+    registerResult(rec) {
+      this.resultStore.set(rec.resultId, rec);
+      return rec;
+    },
+    approveCleanup(path) {
+      this.approvedCleanups.add(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+    },
+    isCleanupApproved(path) {
+      return this.approvedCleanups.has(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+    },
+  };
+  return session;
 }
 
 describe('H4 dev nodes', () => {
@@ -120,48 +145,60 @@ describe('H4 dev nodes', () => {
     expect(t.exitCode).toBe(0);
   });
 
-  it('dev.evidence.add → dev.accept：证据满足规则则通过，触碰保护路径则失败', async () => {
+  it('dev.evidence.add → dev.accept：只能引用宿主登记结果，伪造 resultId 拒绝；验收只读宿主证据', async () => {
     const session = fakeSession();
     const defs = createDevNodeDefs(session);
     const byId = new Map(defs.map((d) => [d.typeId, d]));
+    // P0：伪造 resultId 拒绝（证据必须来自真实执行）
     const evAdd = byId.get('dev.evidence.add')!;
-    await evAdd.execute(
-      { orchestrationId: 'o1', stageId: 's1', kind: 'test', summary: 'tsc 通过', exitCode: 0, command: 'tsc --noEmit' },
+    await expect(
+      evAdd.execute({ orchestrationId: 'o1', stageId: 's1', resultId: 'fake' }, {}, {} as never),
+    ).rejects.toThrow(/宿主结果不存在/);
+    expect(session.collector.records).toHaveLength(0);
+
+    // P0：先经 test.run 登记宿主结果，再引用它 → 证据 status/summary/exitCode 全部来自宿主
+    const create = byId.get('dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/e1' }, {}, {} as never);
+    const test = byId.get('dev.test.run')!;
+    const t = await test.execute({ worktreePath: '/repo/wt/e1', cmd: ['tsc', '--noEmit'] }, {}, {} as never);
+    expect(t.resultId).toBeTruthy();
+    const ev = await evAdd.execute(
+      { orchestrationId: 'o1', stageId: 's1', resultId: t.resultId },
       {},
       {} as never,
     );
+    expect(ev.evidenceId).toBeTruthy();
     expect(session.collector.records).toHaveLength(1);
     expect(session.collector.records[0].capturedBy).toBe('host');
+    expect(session.collector.records[0].command).toBe('tsc --noEmit');
 
+    // accept：只读宿主 collector 证据 + 宿主计算 changedProtectedPaths（不接受输入覆盖）
     const accept = byId.get('dev.accept')!;
     const rules = [{ id: 'typecheck', kind: 'test', command: 'tsc --noEmit' }];
     const ok = await accept.execute(
-      { rules, evidence: session.collector.toJSON(), changedProtectedPaths: [], uncertainties: [] },
+      { worktreePath: '/repo/wt/e1', rules },
       {},
       {} as never,
     );
     expect(ok.passed).toBe(true);
-
-    const bad = await accept.execute(
-      { rules, evidence: session.collector.toJSON(), changedProtectedPaths: ['src/orchestrator/run.ts'], uncertainties: [] },
-      {},
-      {} as never,
-    );
-    expect(bad.passed).toBe(false);
-    expect(bad.changedProtectedPaths).toContain('src/orchestrator/run.ts');
+    // 伪造保护路径输入被忽略——宿主 gitChangedFiles 计算（fake 返回 docs/new.md，非 protected → 无触碰）
+    expect(ok.changedProtectedPaths).toEqual([]);
   });
 
-  it('dev.worktree.cleanup：未确认拒绝，确认后清理', async () => {
+  it('dev.worktree.cleanup：未经宿主审批拒绝（节点参数无法伪造 confirm）；审批后清理', async () => {
     const session = fakeSession();
     const defs = createDevNodeDefs(session);
     const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
     await create.execute({ path: '/repo/wt/t4' }, {}, {} as never);
     const cleanup = defs.find((d) => d.typeId === 'dev.worktree.cleanup')!;
-    const noConfirm = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, { confirm: false }, {} as never);
-    expect(noConfirm.cleaned).toBe(false);
+    // P0：即使 params 有 confirm:true 也无效——审批只认宿主 approveCleanup
+    const noApproval = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, { confirm: true }, {} as never);
+    expect(noApproval.cleaned).toBe(false);
     expect(session.manager.isTracked('/repo/wt/t4')).toBe(true);
-    const confirmed = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, { confirm: true }, {} as never);
-    expect(confirmed.cleaned).toBe(true);
+    // 宿主审批后清理
+    session.approveCleanup('/repo/wt/t4');
+    const approved = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, {}, {} as never);
+    expect(approved.cleaned).toBe(true);
     expect(session.manager.isTracked('/repo/wt/t4')).toBe(false);
   });
 });

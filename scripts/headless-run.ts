@@ -61,10 +61,22 @@ async function main() {
   const raw = readFileSync(resolve(file), 'utf8');
   const wf: WorkflowFile = JSON.parse(raw);
   const nodes = (wf.nodes as any[]).map(normalizeNode);
-  // H4 自举：工作流含 dev.* 节点时初始化 DevSession（worktree registry + 证据 + 开发能力）
+  // H4 自举：工作流含 dev.* 节点时初始化 DevSession（worktree registry + 证据 + 开发能力）。
+  // P0 审计：cleanup 的人工确认只能由宿主生成——CLI flag --dev-approve-cleanup=<path> 是 headless
+  // 场景的宿主审批入口（对应 GUI 的 approveCleanup），节点参数无法伪造。
   if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
-    const { initDevSession } = await import('../src/dev/session');
+    const { initDevSession, getDevSession } = await import('../src/dev/session');
     initDevSession({ baseRepoPath: process.cwd() });
+    // P0 审计：cleanup 的人工确认只能由宿主生成——CLI flag 是 headless 场景的宿主审批入口
+    // （对应 GUI 的 approveCleanup），节点参数无法伪造。
+    const flagIdx = process.argv.indexOf('--dev-approve-cleanup');
+    if (flagIdx >= 0 && process.argv[flagIdx + 1]) {
+      const s = getDevSession();
+      for (const p of process.argv[flagIdx + 1].split(',').map((s) => s.trim()).filter(Boolean)) {
+        s?.approveCleanup(resolve(p));
+        console.log(`  ✔ 宿主已批准清理 worktree：${p}`);
+      }
+    }
     console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集）');
   }
   const edges = (wf.edges as any[]).map((e) => ({

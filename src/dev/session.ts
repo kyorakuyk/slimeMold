@@ -15,12 +15,38 @@ import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry 
 import { WorktreeManager, createNodeGitRunner, type DevGitRunner } from './worktree';
 import { EvidenceCollector, type EvidencePersistence } from './evidence';
 import { createDevNodeDefs } from '../nodes/dev/index';
+import { normalizeAbsolutePath } from './path-utils';
+
+/**
+ * 宿主登记的真实执行结果（P0 审计修复）：
+ * 由 dev.* 节点在真实执行后登记，dev.evidence.add 只能**引用**这些结果构造证据——
+ * 节点/工作流无法自由填写 status/summary/exitCode，杜绝伪造「测试通过/diff 完成」证据。
+ */
+export interface HostResultRecord {
+  resultId: string;
+  kind: 'command' | 'test' | 'diff' | 'artifact';
+  /** 宿主根据真实执行结果判定（如 exitCode===0 → passed） */
+  status: 'passed' | 'failed';
+  exitCode?: number;
+  command?: string;
+  summary: string;
+  contentHash?: string;
+}
 
 export interface DevSession {
   policy: SelfDevelopmentPolicy;
   manager: WorktreeManager;
   service: DevCapabilityService;
   collector: EvidenceCollector;
+  /** 宿主登记的真实执行结果（P0：证据唯一事实来源） */
+  resultStore: Map<string, HostResultRecord>;
+  /** 宿主已批准清理的 worktree 路径（P0：cleanup 确认只能由宿主 API 生成） */
+  approvedCleanups: Set<string>;
+  /** 登记一次宿主真实执行结果。 */
+  registerResult(rec: HostResultRecord): HostResultRecord;
+  /** 宿主审批：批准清理某 worktree（仅 UI/宿主审批层调用，节点/工作流不可触达）。 */
+  approveCleanup(path: string): void;
+  isCleanupApproved(path: string): boolean;
   defs: NodeDefinition[];
 }
 
@@ -49,7 +75,19 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     manager,
     service,
     collector,
+    resultStore: new Map(),
+    approvedCleanups: new Set(),
     defs: [],
+    registerResult(rec) {
+      this.resultStore.set(rec.resultId, rec);
+      return rec;
+    },
+    approveCleanup(path) {
+      this.approvedCleanups.add(normalizeAbsolutePath(path));
+    },
+    isCleanupApproved(path) {
+      return this.approvedCleanups.has(normalizeAbsolutePath(path));
+    },
   };
   session.defs = createDevNodeDefs(session);
   _session = session;

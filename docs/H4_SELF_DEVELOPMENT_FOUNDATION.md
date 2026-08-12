@@ -266,6 +266,24 @@ docs/H4_*              # ✅ 本设计文档（随实现修订）
 已在真实 git 环境下跑通。下一步：Tauri 执行层分支（GUI 编排接入 dev 能力）或直接扩展
 自举任务到真实低风险代码修复。
 
+### P0 宿主信任边界修复（2026-08-12，✅ 已落地）
+
+审计发现 dev.evidence.add 可伪造通过证据（自填 status）、dev.accept 接受外部证据/保护路径覆盖、
+dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
+
+- **宿主结果登记表**：DevSession 新增 `resultStore`（HostResultRecord：kind/status/exitCode/command/
+  summary/contentHash）。dev.code.patch / shell.run / test.run / git.status / git.diff 执行后**登记真实结果**
+  并输出 `resultId`（status 由真实 exitCode/补丁结果决定）。
+- **dev.evidence.add 只引用 resultId**：不再接受 kind/summary/exitCode 自填；引用的 resultId 不在
+  登记表 → 拒绝（伪造证据不可行）。
+- **dev.accept 只读宿主证据**：证据固定取 `collector.toJSON()`（capturedBy 恒 host），不接受输入
+  evidence；`changedProtectedPaths` 由宿主根据 `gitChangedFiles()` × policy 真实计算，不接受输入覆盖。
+- **cleanup 宿主审批**：节点移除 `confirm` 参数；清理需 `session.isCleanupApproved(path)`（仅宿主
+  `approveCleanup()` 可设置）。headless 场景宿主审批入口 = CLI `--dev-approve-cleanup=<path>`；
+  示例运行：`npm run headless examples/self-dev-demo.workflow.json -- --dev-approve-cleanup .codebuddy/dev-wt-demo`。
+- 单测更新：伪造 resultId 拒、test.run 登记→evidence 引用→accept 通过、params confirm 无效仅宿主审批有效。
+  验证：tsc 0 / vitest 570 / build ✓ / headless 样例 7/7 ✓（worktree 清理无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*
