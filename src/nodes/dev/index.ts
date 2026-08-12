@@ -127,7 +127,16 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const path = str(inputs.path ?? params.path);
       if (!path) throw nodeError('worktree.create 需要 path');
       const info = await manager.create(path, path); // 登记 id 即路径（cleanup/status 按 path 引用）
-      if (!info) return { ok: false, path, branch: '', baseRevision: '' };
+      // 审计修复：create 失败（git worktree add 返回非零，如残留 worktree 冲突）必须**显式抛错**，
+      // 而不是返回 { ok:false } 被当作 success——否则后续节点会连锁报「不属于已登记 worktree」，
+      // 掩盖真实根因。fail-closed：未成功登记即节点失败。
+      if (!info) {
+        throw nodeError(
+          `worktree.create 失败：git worktree add 未成功（${path}）。` +
+            '可能原因：该路径已被占用（残留 worktree / 非空目录）、主仓库非 git 仓库或 git 不可用。' +
+            '清理残留：git worktree prune --expire now 或删除冲突路径后重试。',
+        );
+      }
       return { ok: true, path: info.path, branch: info.branch, baseRevision: info.baseRevision };
     },
   };

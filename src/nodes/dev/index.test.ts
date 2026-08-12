@@ -18,10 +18,21 @@ function memPersistence(): EvidencePersistence {
   };
 }
 
-function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean; noPersistence?: boolean } = {}): DevSession {
+function fakeSession(opts: {
+  failGitStatus?: boolean;
+  failAudit?: boolean;
+  noPersistence?: boolean;
+  failWorktreeAdd?: boolean;
+} = {}): DevSession {
   const git = async (args: string[], _cwd: string): Promise<CommandResult> => {
     if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
-    if (args[0] === 'worktree') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
+    if (args[0] === 'worktree') {
+      // 模拟残留 worktree 冲突：git worktree add 返回 128（manager.create → null）
+      if (opts.failWorktreeAdd) {
+        return { exitCode: 128, stdout: '', stderr: 'fatal: ... already exists', durationMs: 1 };
+      }
+      return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
+    }
     if (args[0] === 'ls-files') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
     return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
   };
@@ -562,6 +573,18 @@ describe('H4 dev nodes', () => {
     const ok = await session.confirmAndCleanup('/repo/wt/m1');
     expect(ok).toBe(true);
     expect(session.manager.isTracked('/repo/wt/m1')).toBe(false);
+  });
+
+  it('P1：worktree.create 失败（残留 worktree 冲突）→ 显式抛错，不静默 success', async () => {
+    const session = fakeSession({ failWorktreeAdd: true });
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    // git worktree add 返回 128 → manager.create 返回 null → 节点必须抛错（fail-closed）
+    await expect(create.execute({ path: '/repo/wt/residue' }, {}, {} as never)).rejects.toThrow(
+      /worktree\.create 失败/,
+    );
+    // 未登记 → 后续节点 fail-closed 也报「不属于已登记 worktree」，但 create 根因已可见
+    expect(session.manager.isTracked('/repo/wt/residue')).toBe(false);
   });
 
   it('P2：forceCleanup 审计落盘——reason 写入宿主证据', async () => {
