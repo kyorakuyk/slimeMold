@@ -328,6 +328,25 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
 - 单测 +5（缺失 scope 登记拒 / cleanup 绑定 acceptanceId 四态 / stateSignature 不一致拒 / 基线不匹配拒）。
   验证：tsc 0 / vitest 573（49 文件）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
 
+### P1 严格证据作用域 + acceptance 绑定 + 清理确认门补强（2026-08-13，✅ 已落地）
+
+- **byScope 严格匹配**：scope 指定某项时证据必须存在该字段且严格匹配，缺字段历史证据直接排除
+  （不得「没写就不校验」混入）；worktreePath 统一 normalizeAbsolutePath。
+- **acceptanceId 宿主生成唯一 + 禁覆盖**：dev.accept 移除 acceptanceId 输入/参数，改由
+  session.nextAcceptanceId()（时间戳+随机）生成；recordAcceptance 对已有 ID 抛错（禁覆盖，
+  重复执行产生新记录）；cleanup 校验 acceptance 时同时校验 orchestrationId/stageId/worktreePath。
+- **cleanup 正常清理必须三绑定**：acceptanceId + stateSignature + baseRevision 缺一不可；
+  仅 approve 无绑定 → 拒绝（防验收前强制删除未提交改动）。强制清理走宿主 `forceCleanup(path, reason)`
+  高风险 API（须人工 reason，节点不可触达）。
+- **状态签名纳入 untracked 内容**：computeWorktreeSignature 增加 untracked 文件内容 hash
+  （gitUntrackedFiles + readTextFile），审批后改同一 untracked 文件内容签名变化 → 拒绝清理。
+- **git.status 按 exitCode 判定**：失败登记 failed（不再无条件 passed）。
+- **headless CLI**：支持 `--dev-approve-cleanup=<path>` 等号与空格两种形式；审批改为**运行后**
+  宿主收尾（绑定通过验收 + 状态签名 + 基线），未找到通过验收的 worktree 拒绝清理并保留。
+- 单测 +4（无绑定审批拒 / accept 二次执行不覆盖 / git.status 失败登记 failed / byScope 缺字段排除）。
+  验证：tsc 0 / vitest 575（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓（等号参数 + 宿主收尾清理，
+  worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

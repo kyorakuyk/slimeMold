@@ -160,10 +160,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     name: '清理开发工作区',
     category: DEV_CATEGORY,
     role: 'orchestrator',
-    whenToUse: '自举任务收尾：宿主已批准清理（approveCleanup）时清理 worktree。',
+    whenToUse: '自举任务收尾：宿主已批准清理（approveCleanup 绑定验收+状态签名）时清理 worktree。',
     description:
-      '清理 worktree 并删除临时分支。P0 审计：确认只能由宿主 API approveCleanup 生成（仅 UI/宿主审批层），'
-      + '节点/工作流无法伪造 confirm——未批准一律拒绝清理，防误删未提交改动。',
+      '清理 worktree 并删除临时分支。P0/P1 审计：正常清理必须满足——① 审批存在未消费（仅宿主'
+      + ' approveCleanup 生成，节点不可伪造）；② 绑定 baseRevision 且与当前基线一致；③ 绑定 '
+      + 'stateSignature 且当前状态签名一致（防 worktree 被再次修改）；④ 绑定 acceptanceId 且对应'
+      + ' 验收 passed、worktreePath 一致。缺任一绑定或校验失败 → 拒绝（防验收前强制删除未提交改动）。'
+      + ' 强制清理走宿主 forceCleanup 高风险 API（须人工 reason），节点不可触达。',
     inputs: [
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'after', label: '触发（忽略值，仅排序依赖）', type: T },
@@ -173,26 +176,24 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
-      // P0/P1 确认门（全部满足才允许清理）：
-      // 1) 审批存在且未 consumed（仅宿主 approveCleanup 可生成，节点参数不可伪造）；
-      // 2) 绑定 baseRevision → 与当前 worktree 基线一致；
-      // 3) 绑定 stateSignature → 当前 worktree 状态签名一致（防 worktree 被再次修改后清理）；
-      // 4) 绑定 acceptanceId → 对应验收记录存在且 passed、worktreePath 一致。
-      let confirmed = false;
+      // P1（审计）确认门：全部绑定必须存在且校验通过，缺一不可。
       const approval = session.getCleanupApproval(path);
       const info = manager.get(path);
+      let confirmed = false;
       if (approval && !approval.consumed) {
-        confirmed = true;
-        if (approval.baseRevision && info?.baseRevision) {
-          confirmed &&= approval.baseRevision === info.baseRevision;
-        }
-        if (approval.stateSignature) {
-          const sig = await session.computeWorktreeSignature(path);
-          confirmed &&= sig === approval.stateSignature;
-        }
-        if (approval.acceptanceId) {
+        // 正常清理必须绑定 acceptanceId + stateSignature + baseRevision
+        if (approval.acceptanceId && approval.stateSignature && approval.baseRevision) {
           const acc = session.getAcceptance(approval.acceptanceId);
-          confirmed &&= !!acc && acc.passed && normalizePath(acc.worktreePath) === normalizePath(path);
+          const accOk =
+            !!acc &&
+            acc.passed &&
+            acc.orchestrationId === approval.orchestrationId &&
+            acc.stageId === approval.stageId &&
+            normalizePath(acc.worktreePath) === normalizePath(path);
+          const revOk = info?.baseRevision === approval.baseRevision;
+          const sig = await session.computeWorktreeSignature(path);
+          const sigOk = sig === approval.stateSignature;
+          confirmed = accOk && revOk && sigOk;
         }
       }
       const cleaned = await manager.cleanup(path, { confirm: confirmed });
@@ -393,13 +394,14 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const scope = scopeOf(inputs, params);
       const r = await service.gitStatus({ cwd });
       const resultId = nextResultId();
+      // P1（审计）：git 命令可能失败——status 按真实 exitCode 判定，不能无条件 passed
       resultStore.set(resultId, {
         resultId,
         kind: 'command',
-        status: 'passed',
+        status: r.exitCode === 0 ? 'passed' : 'failed',
         exitCode: r.exitCode,
         command: 'git status --porcelain',
-        summary: 'git status 执行完成',
+        summary: r.exitCode === 0 ? 'git status 执行完成' : `git status 失败（退出码 ${r.exitCode}）`,
         worktreePath: cwd,
         orchestrationId: scope.orchestrationId,
         stageId: scope.stageId,
@@ -546,15 +548,15 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
-      { key: 'acceptanceId', label: '验收记录 ID（兜底，可空→自动生成）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('accept 需要 worktreePath');
-      const acceptanceId =
-        str(inputs.acceptanceId ?? params.acceptanceId) || `acc-${orchestrationId || 'x'}-${stageId || 'x'}`;
+      // P1（审计）：验收 ID 始终由宿主生成（不可预测唯一），工作流/节点不可自填——
+      // 防止指定已有 ID 覆盖旧验收记录（recordAcceptance 亦禁止覆盖）。
+      const acceptanceId = session.nextAcceptanceId();
       const rules = Array.isArray(inputs.rules) && inputs.rules.length > 0
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);

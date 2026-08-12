@@ -18,6 +18,7 @@ import { WorktreeManager, createNodeGitRunner, type DevGitRunner } from './workt
 import { EvidenceCollector, type EvidencePersistence } from './evidence';
 import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath } from './path-utils';
+import { readTextFile, resolveInside } from './node-run';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -66,6 +67,9 @@ export interface CleanupApproval {
   baseRevision?: string;
   stateSignature?: string;
   acceptanceId?: string;
+  /** 绑定的验收所属任务/阶段（cleanup 校验 acceptance 三元组） */
+  orchestrationId?: string;
+  stageId?: string;
   approvedAt: string;
   consumed: boolean;
 }
@@ -83,7 +87,9 @@ export interface DevSession {
   approvedCleanups: Map<string, CleanupApproval>;
   /** 登记一次宿主真实执行结果（三项作用域必填，缺失即拒绝）。 */
   registerResult(rec: HostResultRecord): HostResultRecord;
-  /** 记录确定性验收结果（accept 节点 passed/failed 后由宿主登记）。 */
+  /** 宿主生成不可预测且唯一的验收记录 ID（P1：不接受工作流/节点自填）。 */
+  nextAcceptanceId(): string;
+  /** 记录确定性验收结果（P1：禁止覆盖已有 ID——重复执行产生新记录）。 */
   recordAcceptance(rec: AcceptanceRecord): AcceptanceRecord;
   getAcceptance(acceptanceId: string): AcceptanceRecord | undefined;
   /** 计算 worktree 当前状态签名（changedFiles + diff 哈希；供审批/清理校验）。 */
@@ -91,13 +97,25 @@ export interface DevSession {
   /** 宿主审批：批准清理某 worktree（仅 UI/宿主审批层调用，节点/工作流不可触达）。 */
   approveCleanup(
     path: string,
-    opts?: { baseRevision?: string; stateSignature?: string; acceptanceId?: string },
+    opts?: {
+      baseRevision?: string;
+      stateSignature?: string;
+      acceptanceId?: string;
+      orchestrationId?: string;
+      stageId?: string;
+    },
   ): void;
   isCleanupApproved(path: string): boolean;
   /** 读取清理审批记录（cleanup 确认门校验绑定字段用）。 */
   getCleanupApproval(path: string): CleanupApproval | undefined;
   /** 清理成功后消费审批（一次性）。 */
   consumeCleanup(path: string): void;
+  /**
+   * 强制清理（P1：高风险专用 API，仅 UI/宿主审批层人工触发）。
+   * 绕过「绑定验收/状态签名」的正常确认门，但必须显式给出 reason（记录审计）；
+   * 节点/工作流不可触达。返回是否清理成功。
+   */
+  forceCleanup(path: string, reason: string): Promise<boolean>;
   defs: NodeDefinition[];
 }
 
@@ -147,7 +165,16 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       this.resultStore.set(rec.resultId, rec);
       return rec;
     },
+    nextAcceptanceId() {
+      // 不可预测且唯一：时间戳 + 随机
+      const rand = Math.random().toString(36).slice(2, 10);
+      return `acc-${Date.now().toString(36)}-${rand}`;
+    },
     recordAcceptance(rec) {
+      // P1（审计）：禁止覆盖已有 ID——同一 ID 的验收记录不可被后续运行替换
+      if (this.acceptanceStore.has(rec.acceptanceId)) {
+        throw new Error(`验收记录 ID 已存在，禁止覆盖：${rec.acceptanceId}`);
+      }
       this.acceptanceStore.set(rec.acceptanceId, rec);
       return rec;
     },
@@ -155,10 +182,27 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       return this.acceptanceStore.get(acceptanceId);
     },
     async computeWorktreeSignature(path) {
-      // worktree 当前状态指纹：changedFiles（排序）+ diff 文本 → 哈希
+      // worktree 当前状态指纹：changedFiles（排序）+ diff 文本 + **untracked 文件内容哈希**
+      //（P1 审计：untracked 内容不在 git diff 中，只有文件名会被漏掉——审批后改同一
+      // untracked 文件内容须使签名变化，否则 cleanup 会误通过）。
       const files = await service.gitChangedFiles({ cwd: path });
       const diff = await service.gitDiff(undefined, { cwd: path });
-      return hash(`${files.sort().join('\n')}\n---\n${diff.stdout}`);
+      // untracked = gitChangedFiles 的 untracked 部分（再查一次 ls-files --others）
+      const untracked = await service.gitUntrackedFiles({ cwd: path });
+      const untrackedHashes: string[] = [];
+      for (const f of untracked) {
+        try {
+          const abs = await resolveInside(path, f);
+          const content = await readTextFile(abs);
+          untrackedHashes.push(`${f}:${hash(content)}`);
+        } catch {
+          // 读取失败（文件被删等）→ 视为已变化（签名带 marker，拒绝清理）
+          untrackedHashes.push(`${f}:<unreadable>`);
+        }
+      }
+      return hash(
+        `${files.sort().join('\n')}\n---\n${diff.stdout}\n---untracked---\n${untrackedHashes.sort().join('\n')}`,
+      );
     },
     approveCleanup(path, opts) {
       const key = normalizeAbsolutePath(path);
@@ -167,6 +211,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         baseRevision: opts?.baseRevision,
         stateSignature: opts?.stateSignature,
         acceptanceId: opts?.acceptanceId,
+        orchestrationId: opts?.orchestrationId,
+        stageId: opts?.stageId,
         approvedAt: new Date().toISOString(),
         consumed: false,
       });
@@ -182,6 +228,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       const key = normalizeAbsolutePath(path);
       const a = this.approvedCleanups.get(key);
       if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
+    },
+    async forceCleanup(path, reason) {
+      // 高风险：仅人工触发。reason 由调用方记入审计（CLI/GUI 确认框）。
+      if (!reason || !reason.trim()) {
+        throw new Error('forceCleanup 必须提供 reason（审计要求）');
+      }
+      const cleaned = await manager.cleanup(path, { confirm: true });
+      return cleaned;
     },
   };
   session.defs = createDevNodeDefs(session);

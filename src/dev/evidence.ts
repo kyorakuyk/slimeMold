@@ -214,14 +214,24 @@ export class EvidenceCollector {
     return this._records.filter((r) => r.stageId === stageId);
   }
 
-  /** 证据作用域过滤（P1 审计）：任务 + 阶段 + 可选 worktree——防跨任务/跨阶段/跨工作区串证据。 */
+  /**
+   * 证据作用域过滤（P1 审计：严格匹配）。
+   * 验收/引用时若 scope 指定了某项，证据**必须存在该字段且严格匹配**——缺字段的历史证据
+   * 直接排除（不得「没写就不校验」混入）。worktreePath 经 resolve 规范化比较。
+   */
   byScope(scope: { orchestrationId?: string; stageId?: string; worktreePath?: string }): EvidenceRecord[] {
     return this._records.filter((r) => {
-      if (scope.orchestrationId && r.orchestrationId !== scope.orchestrationId) return false;
-      if (scope.stageId && r.stageId !== scope.stageId) return false;
-      // P1（审计）：worktree 比较统一经 resolve 规范化（防 . / .. / Windows 分隔符差异误判）
-      if (scope.worktreePath && r.worktreePath) {
-        return normalizeAbsolutePath(r.worktreePath) === normalizeAbsolutePath(scope.worktreePath);
+      if (scope.orchestrationId !== undefined) {
+        if (r.orchestrationId !== scope.orchestrationId) return false;
+      }
+      if (scope.stageId !== undefined) {
+        if (r.stageId !== scope.stageId) return false;
+      }
+      if (scope.worktreePath !== undefined) {
+        if (!r.worktreePath) return false; // 缺 worktreePath 的证据排除
+        if (normalizeAbsolutePath(r.worktreePath) !== normalizeAbsolutePath(scope.worktreePath)) {
+          return false;
+        }
       }
       return true;
     });

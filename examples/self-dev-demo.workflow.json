@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "H4 自举演示：worktree 隔离建改查 + 宿主证据验收",
-  "description": "第一轮低风险自举任务样例：在隔离 worktree 中创建 docs/self-dev-demo.md（dev.code.patch），查 git 状态/diff、采集宿主登记结果证据、确定性验收、宿主批准后清理 worktree。运行：npm run headless examples/self-dev-demo.workflow.json -- --dev-approve-cleanup dev-wt-demo --dev-acceptance-id acc-self-dev-demo-patch",
+  "description": "第一轮低风险自举任务样例：在隔离 worktree 中创建 docs/self-dev-demo.md（dev.code.patch），查 git 状态/diff、采集宿主登记结果证据、确定性验收。运行后宿主自动批准清理（绑定通过验收+状态签名）。运行：npm run headless examples/self-dev-demo.workflow.json -- --dev-approve-cleanup=dev-wt-demo",
   "nodes": [
     {
       "id": "wt-create",
@@ -61,15 +61,8 @@
         "orchestrationId": "self-dev-demo",
         "stageId": "patch",
         "worktreePath": "dev-wt-demo",
-        "acceptanceId": "acc-self-dev-demo-patch",
         "rules": [{ "id": "diff-applied", "kind": "diff" }]
       }
-    },
-    {
-      "id": "wt-cleanup",
-      "type": "dev.worktree.cleanup",
-      "label": "清理工作区（宿主批准+验收通过后）",
-      "params": { "worktreePath": "dev-wt-demo" }
     }
   ],
   "edges": [
@@ -78,7 +71,6 @@
     { "id": "e3", "source": "code-patch", "sourceHandle": "resultId", "target": "git-status", "targetHandle": "after", "data": { "kind": "data" } },
     { "id": "e4", "source": "git-status", "sourceHandle": "resultId", "target": "git-diff", "targetHandle": "after", "data": { "kind": "data" } },
     { "id": "e5", "source": "git-diff", "sourceHandle": "resultId", "target": "evidence", "targetHandle": "after", "data": { "kind": "data" } },
-    { "id": "e6", "source": "evidence", "sourceHandle": "evidenceId", "target": "accept", "targetHandle": "after", "data": { "kind": "data" } },
-    { "id": "e7", "source": "accept", "sourceHandle": "passed", "target": "wt-cleanup", "targetHandle": "after", "data": { "kind": "data" } }
+    { "id": "e6", "source": "evidence", "sourceHandle": "evidenceId", "target": "accept", "targetHandle": "after", "data": { "kind": "data" } }
   ]
 }
