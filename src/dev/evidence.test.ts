@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { EvidenceCollector, createJsonlEvidenceStore, evidencePathFor } from './evidence';
+import {
+  EvidenceCollector,
+  createJsonlEvidenceStore,
+  createHostEvidenceStore,
+  evidencePathFor,
+} from './evidence';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -63,6 +68,15 @@ describe('H4 EvidenceCollector', () => {
     expect(() => evidencePathFor('/data/evidence', '../etc/passwd')).toThrow(/非法证据存储 key/);
     expect(() => evidencePathFor('/data/evidence', 'a/b')).toThrow(/非法证据存储 key/);
     expect(() => evidencePathFor('/data/evidence', 'a\\b')).toThrow(/非法证据存储 key/);
+
+    // P1：baseDir 与 worktree 相交 → 拒（EvidenceStore 必须在 worktree 外）
+    expect(() => createHostEvidenceStore('/repo/worktree', '/repo/worktree', 'k')).toThrow(/worktree 之外/);
+    expect(() => createHostEvidenceStore('/repo/worktree/.slimemold/evidence', '/repo/worktree', 'k')).toThrow(/worktree 之外/);
+    expect(() => createHostEvidenceStore('/repo', '/repo/worktree', 'k')).toThrow(/worktree 之外/); // evidence 根是 worktree 祖先
+    // 合法：evidence 根在 worktree 外且不相交 → 返回持久化实例
+    const ok = createHostEvidenceStore('/repo/.slimemold/evidence', '/repo/worktree', 'k1');
+    expect(typeof ok.append).toBe('function');
+    expect(typeof ok.load).toBe('function');
 
     // addAsync 等待落盘；flush 在落盘失败时 throw
     const tmp = `evidence-flush-${Date.now()}.jsonl`;

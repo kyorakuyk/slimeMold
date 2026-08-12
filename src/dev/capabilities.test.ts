@@ -116,19 +116,26 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['npm', 'run', 'build', '--extra'],
       ['cat', '/etc/passwd'],
       ['cat', '../secret'],
+      // P1：shell 路径参数越权——相对路径读受保护代码
+      ['cat', 'src/orchestrator/run.ts'],
+      ['head', 'src/orchestrator/run.ts'],
+      ['find', 'src/orchestrator', '-name', '*.ts'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
-      expect(r.stderr).toContain('白名单');
+      // 命令被白名单拒 或 路径参数被越权守卫拒
+      expect(r.stderr).toMatch(/白名单|路径参数越权/);
     }
-    // 只读命令放行
+    // 只读命令放行（allowed 内路径可通过 shell 读取）
     const ok1 = await svc.shellRun(['git', 'status', '--porcelain'], ctx);
     expect(ok1.exitCode).toBe(0);
     const ok2 = await svc.shellRun(['cat', 'src/components/A.tsx'], ctx);
     expect(ok2.exitCode).toBe(0);
     const ok3 = await svc.shellRun(['git', 'log', '--oneline', '-n', '5'], ctx);
     expect(ok3.exitCode).toBe(0);
+    const ok4 = await svc.shellRun(['find', 'src/components', '-name', '*.tsx'], ctx);
+    expect(ok4.exitCode).toBe(0);
     // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
     const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
     expect(t1.exitCode).toBe(0);

@@ -126,7 +126,9 @@ export function applyUnifiedPatch(original: string, patch: string): ApplyPatchRe
  * - argsPrefix：前缀匹配 + allowExtraArgs 限制额外参数个数；
  * - disallowDashExtra：额外参数不得以 `-` 开头（防 `--output=`/`--config` 等危险选项）；
  * - denyContain：任一参数包含这些子串 → 拒绝（防 `git diff --output=` 落盘越权、`--no-index` 等）；
- * - denyAbsPath：参数不得是绝对路径或含 `..` 段（防 `cat /etc/passwd`、`cat ../secret`）。
+ * - denyAbsPath：参数不得是绝对路径或含 `..` 段（防 `cat /etc/passwd`、`cat ../secret`）；
+ * - pathArgs：所有参数按「路径」处理——逐个 resolveInside + assertPathAllowed
+ *   （P1 审计：防 `cat src/orchestrator/run.ts` 经相对路径读取受保护代码）。
  */
 interface CommandRule {
   cmd: string;
@@ -138,6 +140,8 @@ interface CommandRule {
   disallowDashExtra?: boolean;
   denyContain?: string[];
   denyAbsPath?: boolean;
+  /** 参数全部按路径校验（allowedPaths 内 + 非 protected + worktree 内） */
+  pathArgs?: boolean;
 }
 
 /** 命令数组是否匹配规则（精确 / 前缀 + 受限额外参数 / 纯命令名）。 */
@@ -166,23 +170,28 @@ function matchesRule(rule: CommandRule, cmd: string[]): boolean {
   return true;
 }
 
+function findMatchingRule(rules: CommandRule[], cmd: string[]): CommandRule | null {
+  return rules.find((r) => matchesRule(r, cmd)) ?? null;
+}
+
 function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
-  return rules.some((r) => matchesRule(r, cmd));
+  return findMatchingRule(rules, cmd) !== null;
 }
 
 /**
- * shell 白名单（只读）：基础查询命令（禁绝对路径/..）+ 只读 git（精确参数）。
+ * shell 白名单（只读）：基础查询命令（pathArgs：参数按路径校验，禁读 protected 外代码）+ 只读 git（精确参数）。
  * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
  * git diff/log 的 --output= 与 --no-index 等。
+ * grep 不设 pathArgs（首个参数是正则 pattern 而非路径，避免误伤）。
  */
 const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'pwd' },
   { cmd: 'echo' },
-  { cmd: 'ls', denyAbsPath: true },
-  { cmd: 'cat', denyAbsPath: true },
-  { cmd: 'find', denyAbsPath: true },
-  { cmd: 'head', denyAbsPath: true },
-  { cmd: 'tail', denyAbsPath: true },
+  { cmd: 'ls', denyAbsPath: true, pathArgs: true },
+  { cmd: 'cat', denyAbsPath: true, pathArgs: true },
+  { cmd: 'find', denyAbsPath: true, pathArgs: true },
+  { cmd: 'head', denyAbsPath: true, pathArgs: true },
+  { cmd: 'tail', denyAbsPath: true, pathArgs: true },
   { cmd: 'grep', denyAbsPath: true },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
@@ -227,7 +236,6 @@ export interface NodeDevDeps {
   writeFile?: (abs: string, content: string) => Promise<void>;
   resolveInside?: (root: string, relPath: string) => Promise<string>;
   relativePath?: (root: string, abs: string) => Promise<string>;
-  shellAllow?: (cmd: string[]) => boolean;
   testAllow?: (cmd: string[]) => boolean;
 }
 
@@ -254,7 +262,6 @@ export function createNodeDevService(
   const write = deps.writeFile ?? writeTextFile;
   const resolveP = deps.resolveInside ?? resolveInside;
   const relP = deps.relativePath ?? relativePath;
-  const shellAllow = deps.shellAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_SHELL_RULES, cmd));
   const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
 
   /**
@@ -267,6 +274,26 @@ export function createNodeDevService(
     const rel = await relP(ctx.cwd, abs);
     assertPathAllowed(policy, rel);
     return abs;
+  };
+
+  /**
+   * P1 审计修复：shell 命令路径参数统一守卫。
+   * 命令白名单只约束「命令形式」，`cat src/orchestrator/run.ts` 这类相对路径参数仍可绕过
+   * codeRead/codePatch 的路径策略读取受保护代码。对 pathArgs 命令，每个参数：
+   * - 跳过选项（- 开头）与通配/模式参数（* ?）；
+   * - resolveInside 防 ../ 逃逸（逃逸即抛错）；
+   * - 转规范化相对路径后 assertPathAllowed（allowedPaths 内 + 非 protected）；
+   * - '.'（worktree 根）放行。
+   */
+  const guardPathArgs = async (args: string[], ctx: DevContext): Promise<void> => {
+    for (const a of args) {
+      if (!a || a.startsWith('-')) continue;
+      if (a.includes('*') || a.includes('?')) continue;
+      const abs = await resolveP(ctx.cwd, a);
+      const rel = await relP(ctx.cwd, abs);
+      if (rel === '.' || rel === '') continue;
+      assertPathAllowed(policy, rel);
+    }
   };
 
   return {
@@ -288,8 +315,21 @@ export function createNodeDevService(
     },
 
     async shellRun(cmd, ctx) {
-      if (cmd.length === 0 || !shellAllow(cmd)) {
+      const rule = findMatchingRule(DEFAULT_SHELL_RULES, cmd);
+      if (cmd.length === 0 || !rule) {
         return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
+      }
+      if (rule.pathArgs) {
+        try {
+          await guardPathArgs(cmd.slice(1), ctx);
+        } catch (e) {
+          return {
+            exitCode: -1,
+            stdout: '',
+            stderr: `路径参数越权：${e instanceof Error ? e.message : String(e)}`,
+            durationMs: 0,
+          };
+        }
       }
       const [c0, ...rest] = cmd;
       return run(c0, rest, ctx.cwd);

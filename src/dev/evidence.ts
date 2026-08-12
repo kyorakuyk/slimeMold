@@ -58,6 +58,11 @@ export interface EvidencePersistence {
   load(): Promise<EvidenceRecord[]>;
 }
 
+/** 规范化路径（POSIX 分隔符、去尾部 /；不解析 ..——相交判定用）。 */
+function normPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 /**
  * 宿主统一约束的 EvidenceStore 路径（审计修复）：
  * - baseDir 由宿主指定（如 `<项目根>/.slimemold/evidence/`，位于 worktree 之外）；
@@ -68,13 +73,40 @@ export function evidencePathFor(baseDir: string, key: string): string {
   if (!/^[\w.-]+$/.test(key) || key.includes('..')) {
     throw new Error(`非法证据存储 key：${key}（仅允许 [a-zA-Z0-9._-]，禁止路径分隔符/..）`);
   }
-  return `${baseDir.replace(/\\/g, '/').replace(/\/+$/, '')}/${key}.jsonl`;
+  return `${normPath(baseDir)}/${key}.jsonl`;
+}
+
+/**
+ * 校验 baseDir 与 worktree 路径不相交（P1 审计修复）：
+ * 任一方是另一方的祖先或等价 → 拒绝（EvidenceStore 必须位于 worktree 之外）。
+ */
+export function assertEvidenceOutsideWorktree(baseDir: string, worktreePath: string): void {
+  const b = normPath(baseDir);
+  const w = normPath(worktreePath);
+  if (b === w || w.startsWith(b + '/') || b.startsWith(w + '/')) {
+    throw new Error(`EvidenceStore 必须位于 worktree 之外：baseDir=${b}，worktree=${w}`);
+  }
+}
+
+/**
+ * 宿主构造 EvidenceStore（P1 审计修复）：
+ * - 不接受 Agent 提供的任意 baseDir——由宿主传入证据根（如 `.slimemold/evidence`）与 worktreePath；
+ * - 校验二者不相交（assertEvidenceOutsideWorktree）+ key 合法（evidencePathFor）；
+ * - 返回 JSONL 持久化实例。
+ */
+export function createHostEvidenceStore(
+  evidenceRoot: string,
+  worktreePath: string,
+  key: string,
+): EvidencePersistence {
+  assertEvidenceOutsideWorktree(evidenceRoot, worktreePath);
+  return createJsonlEvidenceStore(evidencePathFor(evidenceRoot, key));
 }
 
 /**
  * JSONL 证据存储（每行一条证据，追加写）。仅 Node 环境可用（动态 import fs）——
  * 浏览器/WebView 调用即 reject，由宿主在 headless/CI 或 Tauri Rust 通道侧使用。
- * 文件路径必须经 evidencePathFor 由宿主生成（不接受调用方任意 filePath）。
+ * 文件路径必须经 evidencePathFor/createHostEvidenceStore 由宿主生成（不接受调用方任意 filePath）。
  */
 export function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
   return {
