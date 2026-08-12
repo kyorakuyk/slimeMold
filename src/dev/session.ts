@@ -122,6 +122,7 @@ export interface DevSession {
   /**
    * 强制清理（P1：高风险专用 API，仅 UI/宿主审批层人工触发）。
    * 绕过「绑定验收/状态签名」的正常确认门，但必须显式给出 reason（记录审计）；
+   * 且要求 session 已注入宿主持久化（无 persistence 直接拒绝——审计必须落盘可追溯）。
    * 节点/工作流不可触达。返回是否清理成功。
    */
   forceCleanup(path: string, reason: string): Promise<boolean>;
@@ -243,6 +244,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
     async forceCleanup(path, reason) {
+      // P1（审计）：无宿主持久化 → 直接拒绝。forceCleanup 的审计必须落盘（addAsync 只在
+      // 未注入 persistence 时静默写内存）——内存审计进程退出即丢，等同无审计强制删除。
+      if (!this.collector.hasPersistence()) {
+        throw new Error('forceCleanup 需要宿主持久化（EvidenceStore）——无持久化不可执行强制清理');
+      }
       // P1（审计）：reason 必须提供并**持久化审计**（写宿主证据，capturedBy=host）。
       if (!reason || !reason.trim()) {
         throw new Error('forceCleanup 必须提供 reason（审计要求）');

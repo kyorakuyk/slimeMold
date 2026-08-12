@@ -4,10 +4,21 @@ import type { DevSession } from '../../dev/session';
 import { WorktreeManager } from '../../dev/worktree';
 import { createNodeDevService, type NodeDevDeps } from '../../dev/capabilities';
 import { defaultDevPolicy } from '../../dev/policy';
-import { EvidenceCollector } from '../../dev/evidence';
+import { EvidenceCollector, type EvidencePersistence } from '../../dev/evidence';
 import type { CommandResult } from '../../dev/node-run';
 
-function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean } = {}): DevSession {
+/** 内存持久化（测试默认注入：forceCleanup 要求宿主持久化，无则拒绝）。 */
+function memPersistence(): EvidencePersistence {
+  const mem: import('../../dev/evidence').EvidenceRecord[] = [];
+  return {
+    append: async (rec) => {
+      mem.push(rec);
+    },
+    load: async () => [...mem],
+  };
+}
+
+function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean; noPersistence?: boolean } = {}): DevSession {
   const git = async (args: string[], _cwd: string): Promise<CommandResult> => {
     if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
     if (args[0] === 'worktree') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
@@ -56,7 +67,9 @@ function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean } = {}
           },
           load: async () => [],
         }
-      : undefined,
+      : opts.noPersistence
+        ? undefined
+        : memPersistence(),
   );
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
   let accSeq = 0;
@@ -120,6 +133,10 @@ function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean } = {}
       if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
     async forceCleanup(path, reason) {
+      // P1（审计）：无宿主持久化 → 直接拒绝（审计必须落盘可追溯）
+      if (!this.collector.hasPersistence()) {
+        throw new Error('forceCleanup 需要宿主持久化（EvidenceStore）');
+      }
       if (!reason.trim()) throw new Error('forceCleanup 必须提供 reason');
       const key = norm(path);
       if (this.confirmCleanupInFlight.has(key)) return false;
@@ -571,5 +588,15 @@ describe('H4 dev nodes', () => {
     // addAsync 落盘失败 → forceCleanup 抛错，worktree 保留
     await expect(session.forceCleanup('/repo/wt/f2', '审计不可用')).rejects.toThrow(/audit disk full/);
     expect(session.manager.isTracked('/repo/wt/f2')).toBe(true);
+  });
+
+  it('P1：forceCleanup 无宿主持久化 → 拒绝清理（审计必须落盘可追溯）', async () => {
+    const session = fakeSession({ noPersistence: true });
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/f3' }, {}, {} as never);
+    // 未注入宿主持久化（内存态）→ forceCleanup 抛错，worktree 保留
+    await expect(session.forceCleanup('/repo/wt/f3', '无持久化场景')).rejects.toThrow(/宿主持久化/);
+    expect(session.manager.isTracked('/repo/wt/f3')).toBe(true);
   });
 });

@@ -376,6 +376,20 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
   验证：tsc 0 / vitest 577（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓
   （confirmAndCleanup 原子确认 + 互斥，worktree 无残留）。
 
+### forceCleanup 强制宿主持久化（2026-08-13，✅ 已落地）
+
+- **P1 forceCleanup 依赖可选 persistence 的边界**：审计落盘本依赖 `opts.persistence`——未注入时
+  `EvidenceCollector.addAsync()` 只写内存仍会继续强制清理，内存审计进程退出即丢，等同无审计强制删除。
+- **修复（宿主前提）**：
+  - `EvidenceCollector.hasPersistence()`（是否配置宿主持久化 EvidenceStore）；
+  - `DevSession.forceCleanup` 开头强制检查——无宿主持久化**直接拒绝（throw）**，不删除 worktree；
+  - headless `initDevSession` 注入宿主固定路径 EvidenceStore（`<项目根>/.slimemold/evidence/host.jsonl`，
+    经 `createHostEvidenceStore` 宿主构造，位于 worktree 外；无 `dev.worktree.create` 声明时不注入）——
+    证据与 forceCleanup 审计真实落盘，跨会话可追溯。
+- 单测 +2：EvidenceCollector.hasPersistence / forceCleanup 无宿主持久化 → 拒绝（worktree 保留）。
+  验证：tsc 0 / vitest 580（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓
+  （EvidenceStore 落盘 + confirmAndCleanup 原子确认 + 互斥，worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

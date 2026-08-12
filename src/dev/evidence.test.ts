@@ -28,6 +28,12 @@ describe('H4 EvidenceCollector', () => {
     expect(fake.capturedBy).toBe('host');
   });
 
+  it('hasPersistence：未注入 false / 注入 true（forceCleanup 高风险操作前提）', () => {
+    expect(new EvidenceCollector().hasPersistence()).toBe(false);
+    const store = createHostEvidenceStore('/repo/.slimemold/evidence', '/repo/wt', 'k');
+    expect(new EvidenceCollector(store).hasPersistence()).toBe(true);
+  });
+
   it('byStage 过滤、toJSON 快照、clear 清空', () => {
     const c = new EvidenceCollector();
     c.add({ orchestrationId: 'o1', stageId: 'a', kind: 'diff', status: 'passed', summary: 'd1' });

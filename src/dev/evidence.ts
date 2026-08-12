@@ -204,6 +204,11 @@ export class EvidenceCollector {
     return this._persistErrors;
   }
 
+  /** 是否配置了宿主持久化（EvidenceStore）。高风险操作（如 forceCleanup）的审计前提。 */
+  hasPersistence(): boolean {
+    return this.persistence !== undefined;
+  }
+
   /** 追加已构造好的证据（批量恢复用；仍强制 capturedBy='host'）。 */
   restore(rec: EvidenceRecord): void {
     this._records.push({ ...rec, capturedBy: 'host' });

@@ -66,8 +66,22 @@ async function main() {
   // 因为 acceptanceId 由 accept 节点运行时由宿主生成——运行前无法绑定。
   if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
     const { initDevSession } = await import('../src/dev/session');
-    initDevSession({ baseRepoPath: process.cwd() });
-    console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集）');
+    const { createHostEvidenceStore } = await import('../src/dev/evidence');
+    const { resolve } = await import('node:path');
+    // H4 审计（P1）：宿主固定路径 EvidenceStore（.slimemold/evidence/host.jsonl，位于 worktree 外）——
+    // forceCleanup 要求宿主持久化（无 persistence 拒绝强制清理），headless 宿主据此注入真实落盘；
+    // 找不到 dev.worktree.create 声明的工作区路径时不注入（forceCleanup 不可用，但工作流正常跑）。
+    const evidenceRoot = resolve(process.cwd(), '.slimemold', 'evidence');
+    const declaredWt = nodes
+      .map((n) =>
+        String(n.data?.typeId ?? '') === 'dev.worktree.create' ? n.data?.params?.path : undefined,
+      )
+      .find((p): p is string => typeof p === 'string' && p.length > 0);
+    const persistence = declaredWt
+      ? createHostEvidenceStore(evidenceRoot, resolve(process.cwd(), declaredWt), 'host')
+      : undefined;
+    initDevSession({ baseRepoPath: process.cwd(), persistence });
+    console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集，EvidenceStore=' + evidenceRoot + '）');
   }
   const edges = (wf.edges as any[]).map((e) => ({
     id: e.id ?? `e-${e.source}-${e.target}`,
