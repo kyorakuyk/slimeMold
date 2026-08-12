@@ -216,12 +216,15 @@ export class EvidenceCollector {
 
   /** 证据作用域过滤（P1 审计）：任务 + 阶段 + 可选 worktree——防跨任务/跨阶段/跨工作区串证据。 */
   byScope(scope: { orchestrationId?: string; stageId?: string; worktreePath?: string }): EvidenceRecord[] {
-    return this._records.filter(
-      (r) =>
-        (!scope.orchestrationId || r.orchestrationId === scope.orchestrationId) &&
-        (!scope.stageId || r.stageId === scope.stageId) &&
-        (!scope.worktreePath || r.worktreePath === scope.worktreePath),
-    );
+    return this._records.filter((r) => {
+      if (scope.orchestrationId && r.orchestrationId !== scope.orchestrationId) return false;
+      if (scope.stageId && r.stageId !== scope.stageId) return false;
+      // P1（审计）：worktree 比较统一经 resolve 规范化（防 . / .. / Windows 分隔符差异误判）
+      if (scope.worktreePath && r.worktreePath) {
+        return normalizeAbsolutePath(r.worktreePath) === normalizeAbsolutePath(scope.worktreePath);
+      }
+      return true;
+    });
   }
 
   /** 验收前强制 flush + 按作用域取证据（落盘失败 throw，未落盘的证据不作为验收依据）。 */

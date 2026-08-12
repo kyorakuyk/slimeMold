@@ -7,7 +7,7 @@
  * - 节点 execute 内不重复实现安全检查；
  * - GUI（WebView）下 DevSession 未初始化 → execute 抛错（shim/fail-closed 兜底），节点失败。
  */
-import type { NodeDefinition, PortType } from '../../types';
+import type { NodeDefinition, ParamType, PortType } from '../../types';
 import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator';
 import type { DevSession } from '../../dev/session';
 import { collectChangedProtectedPaths } from '../../dev/policy';
@@ -70,13 +70,31 @@ function nextResultId(): string {
   return `hr-${Date.now().toString(36)}-${resultSeq.toString(36)}`;
 }
 
-/** 从输入/参数读取可选的执行作用域（orchestrationId/stageId），用于登记宿主结果。 */
+/** 三个执行作用域端口的标准定义（登记宿主结果必须绑定任务/阶段/工作区）。 */
+const SCOPE_INPUTS: { id: string; label: string; type: PortType }[] = [
+  { id: 'orchestrationId', label: '编排 ID', type: T },
+  { id: 'stageId', label: '阶段 ID', type: T },
+];
+
+const SCOPE_PARAMS: { key: string; label: string; type: ParamType; default: string }[] = [
+  { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
+  { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
+];
+
+/**
+ * 从输入/参数读取执行作用域（orchestrationId/stageId）。
+ * P1（审计）：**必填**——登记宿主结果必须有任务与阶段身份，缺失即抛错，
+ * 保证无作用域的结果不存在（不可被任意编排/阶段引用）。
+ */
 function scopeOf(inputs: Record<string, unknown>, params: Record<string, unknown>): {
-  orchestrationId?: string;
-  stageId?: string;
+  orchestrationId: string;
+  stageId: string;
 } {
-  const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId) || undefined;
-  const stageId = str(inputs.stageId ?? params.stageId) || undefined;
+  const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
+  const stageId = str(inputs.stageId ?? params.stageId);
+  if (!orchestrationId || !stageId) {
+    throw nodeError('执行节点需要 orchestrationId 与 stageId（宿主结果必须绑定任务与阶段）');
+  }
   return { orchestrationId, stageId };
 }
 
@@ -155,11 +173,29 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
-      // P0：确认状态只能由宿主 approveCleanup 设置，节点参数不可伪造；
-      // P1：审批若绑定基线，须与当前 worktree 基线一致（防 worktree 被再次修改后清理）
+      // P0/P1 确认门（全部满足才允许清理）：
+      // 1) 审批存在且未 consumed（仅宿主 approveCleanup 可生成，节点参数不可伪造）；
+      // 2) 绑定 baseRevision → 与当前 worktree 基线一致；
+      // 3) 绑定 stateSignature → 当前 worktree 状态签名一致（防 worktree 被再次修改后清理）；
+      // 4) 绑定 acceptanceId → 对应验收记录存在且 passed、worktreePath 一致。
+      let confirmed = false;
+      const approval = session.getCleanupApproval(path);
       const info = manager.get(path);
-      const approved = session.isCleanupApprovedForRevision(path, info?.baseRevision);
-      const cleaned = await manager.cleanup(path, { confirm: approved });
+      if (approval && !approval.consumed) {
+        confirmed = true;
+        if (approval.baseRevision && info?.baseRevision) {
+          confirmed &&= approval.baseRevision === info.baseRevision;
+        }
+        if (approval.stateSignature) {
+          const sig = await session.computeWorktreeSignature(path);
+          confirmed &&= sig === approval.stateSignature;
+        }
+        if (approval.acceptanceId) {
+          const acc = session.getAcceptance(approval.acceptanceId);
+          confirmed &&= !!acc && acc.passed && normalizePath(acc.worktreePath) === normalizePath(path);
+        }
+      }
+      const cleaned = await manager.cleanup(path, { confirm: confirmed });
       // P1：审批一次性——清理成功后立即消费，防止宿主批准后重复清理
       if (cleaned) session.consumeCleanup(path);
       return { cleaned };
@@ -205,6 +241,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'path', label: '相对路径', type: T },
       { id: 'patch', label: 'unified diff', type: T },
+      ...SCOPE_INPUTS,
     ],
     outputs: [
       { id: 'ok', label: '应用成功', type: 'any' },
@@ -215,12 +252,15 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'path', label: '相对路径（兜底）', type: 'text', default: '' },
       { key: 'patch', label: 'unified diff（兜底）', type: 'textarea', default: '' },
+      ...SCOPE_PARAMS,
     ],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       const path = str(inputs.path ?? params.path);
       const patch = str(inputs.patch ?? params.patch);
       if (!cwd || !path || !patch) throw nodeError('code.patch 需要 worktreePath / path / patch');
+      // P1（审计）：登记前先校验作用域必填（缺任务/阶段 → 抛错，结果不可无归属）
+      const scope = scopeOf(inputs, params);
       const r = await service.codePatch(path, patch, { cwd });
       if (!r.ok) throw nodeError(`补丁应用失败：${r.error ?? '未知错误'}`);
       // P0：登记宿主 diff 结果（status=passed 由补丁成功这一事实决定），供 evidence.add 引用
@@ -232,7 +272,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         contentHash: r.contentHash,
         summary: `已对 ${path} 应用受控 unified diff（${(patch.match(/^\+/gm) ?? []).length} 行新增）`,
         worktreePath: cwd,
-        ...scopeOf(inputs, params),
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
       });
       return { ok: true, contentHash: r.contentHash ?? '', resultId };
     },
@@ -248,6 +289,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     inputs: [
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'cmd', label: '命令（数组，如 ["git","status","--porcelain"]）', type: L },
+      ...SCOPE_INPUTS,
     ],
     outputs: [
       { id: 'exitCode', label: '退出码', type: N },
@@ -258,11 +300,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'cmd', label: '命令数组 JSON（兜底，如 ["tsc","--noEmit"]）', type: 'textarea', default: '' },
+      ...SCOPE_PARAMS,
     ],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('shell.run 需要 worktreePath 与 cmd');
+      const scope = scopeOf(inputs, params);
       const r = await service.shellRun(cmd, { cwd });
       // P0：登记宿主真实执行结果（status 由 exitCode 决定），供 evidence.add 引用
       const resultId = nextResultId();
@@ -274,7 +318,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
         worktreePath: cwd,
-        ...scopeOf(inputs, params),
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -290,6 +335,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     inputs: [
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'cmd', label: '命令（数组，如 ["tsc","--noEmit"]）', type: L },
+      ...SCOPE_INPUTS,
     ],
     outputs: [
       { id: 'exitCode', label: '退出码', type: N },
@@ -300,11 +346,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'cmd', label: '命令数组 JSON（兜底）', type: 'textarea', default: '' },
+      ...SCOPE_PARAMS,
     ],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('test.run 需要 worktreePath 与 cmd');
+      const scope = scopeOf(inputs, params);
       const r = await service.testRun(cmd, { cwd });
       // P0：登记宿主真实测试结果（status 由真实 exitCode 决定），供 evidence.add 引用
       const resultId = nextResultId();
@@ -316,7 +364,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
         worktreePath: cwd,
-        ...scopeOf(inputs, params),
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -329,15 +378,19 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     role: 'worker',
     whenToUse: '查看 worktree 内 git 状态（只读）。',
     description: '返回 `git status --porcelain` 输出（只读）。',
-    inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }],
+    inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }, ...SCOPE_INPUTS],
     outputs: [
       { id: 'stdout', label: '状态输出', type: T },
       { id: 'resultId', label: '宿主结果 ID', type: T },
     ],
-    params: [{ key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' }],
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      ...SCOPE_PARAMS,
+    ],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('git.status 需要 worktreePath');
+      const scope = scopeOf(inputs, params);
       const r = await service.gitStatus({ cwd });
       const resultId = nextResultId();
       resultStore.set(resultId, {
@@ -348,7 +401,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: 'git status --porcelain',
         summary: 'git status 执行完成',
         worktreePath: cwd,
-        ...scopeOf(inputs, params),
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
       });
       return { stdout: r.stdout, resultId };
     },
@@ -365,6 +419,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'baseRef', label: '基线（可空）', type: T },
       { id: 'after', label: '触发（忽略值，仅排序依赖）', type: T },
+      ...SCOPE_INPUTS,
     ],
     outputs: [
       { id: 'stdout', label: 'diff 输出', type: T },
@@ -373,10 +428,12 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     params: [
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'baseRef', label: '基线（兜底，可空）', type: 'text', default: '' },
+      ...SCOPE_PARAMS,
     ],
     async execute(inputs, params) {
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('git.diff 需要 worktreePath');
+      const scope = scopeOf(inputs, params);
       const baseRef = str(inputs.baseRef ?? params.baseRef) || undefined;
       const r = await service.gitDiff(baseRef, { cwd });
       // P1 修复：git diff 无改动时退出码也是 0，但必须有实际变更才算 passed——
@@ -391,7 +448,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: `git diff ${baseRef ?? 'HEAD'}`,
         summary: hasChange ? '存在未提交 diff' : '无 diff 改动（空 diff 不通过验收）',
         worktreePath: cwd,
-        ...scopeOf(inputs, params),
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
       });
       return { stdout: r.stdout, resultId };
     },
@@ -430,19 +488,19 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
       const host = resultStore.get(resultId);
       if (!host) throw nodeError(`引用的宿主结果不存在：${resultId}（证据必须来自真实执行）`);
-      // P1（审计）：结果作用域三重校验——worktree + orchestrationId + stageId 全须一致，
-      // 防同 worktree 下跨编排/跨阶段借用 resultId 伪造自己证据。
-      if (host.worktreePath && normalizePath(host.worktreePath) !== normalizePath(worktreePath || '')) {
+      // P1（审计）：作用域必填 + 非条件式校验——host 三项必填（登记时已强制），
+      // 只要不一致即拒绝（无「可选字段跳过」路径）。
+      if (normalizePath(host.worktreePath) !== normalizePath(worktreePath || '')) {
         throw nodeError(
           `引用的宿主结果不属于当前 worktree：${host.worktreePath} ≠ ${worktreePath}`,
         );
       }
-      if (host.orchestrationId && host.orchestrationId !== orchestrationId) {
+      if (host.orchestrationId !== orchestrationId) {
         throw nodeError(
           `引用的宿主结果不属于当前编排：${host.orchestrationId} ≠ ${orchestrationId}（禁止跨任务引用证据）`,
         );
       }
-      if (host.stageId && host.stageId !== stageId) {
+      if (host.stageId !== stageId) {
         throw nodeError(`引用的宿主结果不属于当前阶段：${host.stageId} ≠ ${stageId}`);
       }
       const rec = await collector.addAsync({
@@ -481,18 +539,22 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'failedChecks', label: '失败项', type: L },
       { id: 'requiredChecks', label: '必检项', type: L },
       { id: 'changedProtectedPaths', label: '保护路径变更', type: L },
+      { id: 'acceptanceId', label: '验收记录 ID', type: T },
     ],
     params: [
       { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
+      { key: 'acceptanceId', label: '验收记录 ID（兜底，可空→自动生成）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('accept 需要 worktreePath');
+      const acceptanceId =
+        str(inputs.acceptanceId ?? params.acceptanceId) || `acc-${orchestrationId || 'x'}-${stageId || 'x'}`;
       const rules = Array.isArray(inputs.rules) && inputs.rules.length > 0
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);
@@ -502,11 +564,22 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const changedFiles = await service.gitChangedFiles({ cwd });
       const changed = collectChangedProtectedPaths(session.policy, changedFiles);
       const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed);
+      // P1（审计）：登记确定性验收记录（cleanup 确认门校验 passed + worktreePath 一致）
+      session.recordAcceptance({
+        acceptanceId,
+        orchestrationId,
+        stageId,
+        worktreePath: cwd,
+        passed: a.passed,
+        failedChecks: a.failedChecks,
+        at: new Date().toISOString(),
+      });
       return {
         passed: a.passed,
         failedChecks: a.failedChecks,
         requiredChecks: a.requiredChecks,
         changedProtectedPaths: a.changedProtectedPaths,
+        acceptanceId,
       };
     },
   };

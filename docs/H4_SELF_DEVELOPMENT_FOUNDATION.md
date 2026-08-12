@@ -310,6 +310,24 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
 - 单测 +4：跨编排引用拒 / 跨阶段引用拒 / 不同阶段无证据验收失败（不串旧证据）/ 审批基线不匹配拒。
   验证：tsc 0 / vitest 571（49 文件）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
 
+### P1 作用域必填 + acceptance 绑定（2026-08-13，✅ 已落地）
+
+- **结果作用域必填**：HostResultRecord 的 worktreePath/orchestrationId/stageId 改为必填；
+  registerResult 缺失即拒绝；执行节点（code.patch/shell/test/git.status/git.diff）登记前 scopeOf
+  校验必填并带 SCOPE_INPUTS/SCOPE_PARAMS 端口。evidence.add 校验改**非条件式**（三项直接比较，
+  无「可选字段跳过」路径）——无作用域结果不存在，不可被任意编排/阶段引用。
+- **acceptance 绑定**：新增 DevSession.acceptanceStore + recordAcceptance/getAcceptance；dev.accept
+  执行后登记确定性验收记录（acceptanceId 参数，缺省自动 acc-<orch>-<stage>）。cleanup 确认门：
+  审批存在未消费 +（若绑定 baseRevision 须一致）+（若绑定 stateSignature 须一致——worktree 被再次
+  修改则签名变化拒绝）+（若绑定 acceptanceId 须对应记录 passed 且 worktreePath 一致）。
+- **byScope 规范化**：EvidenceCollector.byScope 的 worktreePath 比较统一 normalizeAbsolutePath
+  （防 . / .. / Windows 分隔符差异误判）。
+- 样例：worktree 路径改用根目录 `dev-wt-demo`（`.codebuddy` 在 .gitignore 导致 git diff 看不到
+  新文件，会使 git-diff 空 diff 误判）；执行节点带 orchestrationId/stageId；accept 绑定
+  acceptanceId；headless CLI 新增 `--dev-acceptance-id` 绑定审批。
+- 单测 +5（缺失 scope 登记拒 / cleanup 绑定 acceptanceId 四态 / stateSignature 不一致拒 / 基线不匹配拒）。
+  验证：tsc 0 / vitest 573（49 文件）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

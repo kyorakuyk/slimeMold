@@ -67,14 +67,17 @@ async function main() {
   if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
     const { initDevSession, getDevSession } = await import('../src/dev/session');
     initDevSession({ baseRepoPath: process.cwd() });
-    // P0 审计：cleanup 的人工确认只能由宿主生成——CLI flag 是 headless 场景的宿主审批入口
-    // （对应 GUI 的 approveCleanup），节点参数无法伪造。
+    // P0/P1 审计：cleanup 的人工确认只能由宿主生成——CLI flag 是 headless 场景的宿主审批入口
+    // （对应 GUI 的 approveCleanup），节点参数无法伪造；可选 --dev-acceptance-id 绑定验收记录
+    // （cleanup 确认门校验：对应验收必须 passed 且 worktreePath 一致）。
     const flagIdx = process.argv.indexOf('--dev-approve-cleanup');
     if (flagIdx >= 0 && process.argv[flagIdx + 1]) {
       const s = getDevSession();
+      const accIdx = process.argv.indexOf('--dev-acceptance-id');
+      const acceptanceId = accIdx >= 0 && process.argv[accIdx + 1] ? process.argv[accIdx + 1] : undefined;
       for (const p of process.argv[flagIdx + 1].split(',').map((s) => s.trim()).filter(Boolean)) {
-        s?.approveCleanup(resolve(p));
-        console.log(`  ✔ 宿主已批准清理 worktree：${p}`);
+        s?.approveCleanup(resolve(p), acceptanceId ? { acceptanceId } : undefined);
+        console.log(`  ✔ 宿主已批准清理 worktree：${p}${acceptanceId ? `（绑定验收 ${acceptanceId}）` : ''}`);
       }
     }
     console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集）');
