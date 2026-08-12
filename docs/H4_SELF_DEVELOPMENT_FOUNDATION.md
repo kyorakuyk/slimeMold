@@ -361,6 +361,19 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
   GUI 接入时用证据 JSONL 持久化扩展。GUI 执行层接入（dev 节点 GUI 可用 + approveCleanup/
   forceCleanup 走 GUI 确认）仍是下一步。
 
+### 宿主级清理互斥锁 + forceCleanup 审计落盘（2026-08-13，✅ 已落地）
+
+- **P1 宿主级 mutex**：DevSession.confirmCleanupInFlight（per-worktree Set）——同一 worktree 的
+  confirmAndCleanup/forceCleanup 串行执行（并发确认直接拒绝）；确认链收口到锁内
+  （取审批 → 校验验收三元组 → 重算签名 → 校验基线 → **cleanup 前二次重算签名** → 删除 → 消费），
+  签名计算与删除窗口最小化（非严格事务，同 OS 用户外部进程物理不可防，文档明确）。
+- **P2 forceCleanup 审计落盘**：reason 必须提供且写入宿主证据（collector.addAsync，
+  kind=path-policy/status=failed，capturedBy=host，summary 含 reason）——跨会话可追溯；
+  与正常确认门共用互斥锁。
+- 单测 +2：confirmCleanupInFlight 锁占用拒 / forceCleanup 审计证据落盘（含 reason）。
+  验证：tsc 0 / vitest 577（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓
+  （confirmAndCleanup 原子确认 + 互斥，worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

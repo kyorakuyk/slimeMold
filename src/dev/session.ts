@@ -85,6 +85,8 @@ export interface DevSession {
   acceptanceStore: Map<string, AcceptanceRecord>;
   /** 宿主已批准清理的 worktree（P1：一次性、绑定 baseRevision/stateSignature/acceptanceId） */
   approvedCleanups: Map<string, CleanupApproval>;
+  /** 宿主级 per-worktree 清理互斥锁（P1：同一 worktree 的确认清理串行执行）。 */
+  confirmCleanupInFlight: Set<string>;
   /** 登记一次宿主真实执行结果（三项作用域必填，缺失即拒绝）。 */
   registerResult(rec: HostResultRecord): HostResultRecord;
   /** 宿主生成不可预测且唯一的验收记录 ID（P1：不接受工作流/节点自填）。 */
@@ -161,6 +163,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
+    confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
       // P1（审计）：作用域必填——无任务/阶段/工作区归属的结果拒绝登记
@@ -240,34 +243,63 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
     async forceCleanup(path, reason) {
-      // 高风险：仅人工触发。reason 由调用方记入审计（CLI/GUI 确认框）。
+      // P1（审计）：reason 必须提供并**持久化审计**（写宿主证据，capturedBy=host）。
       if (!reason || !reason.trim()) {
         throw new Error('forceCleanup 必须提供 reason（审计要求）');
       }
-      const cleaned = await manager.cleanup(path, { confirm: true });
-      return cleaned;
+      const key = normalizeAbsolutePath(path);
+      // 与正常确认门共用互斥锁，防并发清理同一 worktree
+      if (this.confirmCleanupInFlight.has(key)) return false;
+      this.confirmCleanupInFlight.add(key);
+      try {
+        // 审计落盘：强制清理事件写入宿主证据（含 reason），供跨会话审计
+        await this.collector.addAsync({
+          orchestrationId: 'host',
+          stageId: 'force-cleanup',
+          worktreePath: key,
+          kind: 'path-policy',
+          status: 'failed',
+          summary: `forceCleanup: ${reason}`,
+        }).catch(() => {});
+        const cleaned = await manager.cleanup(path, { confirm: true });
+        return cleaned;
+      } finally {
+        this.confirmCleanupInFlight.delete(key);
+      }
     },
     async confirmAndCleanup(path) {
-      // P1（审计）：原子确认门——取审批 → 重新校验验收三元组 + 重新计算状态签名 + 校验基线 →
-      // 全部通过立即 cleanup → 成功后消费审批。签名计算与删除之间不暴露窗口给外部。
-      const approval = this.approvedCleanups.get(normalizeAbsolutePath(path));
-      const info = this.manager.get(path);
-      if (!approval || approval.consumed) return false;
-      if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
-      const acc = this.getAcceptance(approval.acceptanceId);
-      const accOk =
-        !!acc &&
-        acc.passed &&
-        acc.orchestrationId === approval.orchestrationId &&
-        acc.stageId === approval.stageId &&
-        normalizeAbsolutePath(acc.worktreePath) === normalizeAbsolutePath(path);
-      const revOk = info?.baseRevision === approval.baseRevision;
-      const sig = await this.computeWorktreeSignature(path);
-      const sigOk = sig === approval.stateSignature;
-      if (!accOk || !revOk || !sigOk) return false;
-      const cleaned = await this.manager.cleanup(path, { confirm: true });
-      if (cleaned) this.consumeCleanup(path);
-      return cleaned;
+      // P1（审计）：宿主级互斥锁——同一 worktree 的确认清理串行，防并发窗口；
+      // 锁内完成「取审批 → 校验验收三元组 → 重新计算状态签名 → 校验基线 → cleanup」，
+      // 并在 cleanup 前**二次**重算签名（computeWorktreeSignature 与删除紧邻，窗口最小化）。
+      const key = normalizeAbsolutePath(path);
+      if (this.confirmCleanupInFlight.has(key)) return false;
+      this.confirmCleanupInFlight.add(key);
+      try {
+        const approval = this.approvedCleanups.get(key);
+        const info = this.manager.get(path);
+        if (!approval || approval.consumed) return false;
+        if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
+        const acc = this.getAcceptance(approval.acceptanceId);
+        const accOk =
+          !!acc &&
+          acc.passed &&
+          acc.orchestrationId === approval.orchestrationId &&
+          acc.stageId === approval.stageId &&
+          normalizeAbsolutePath(acc.worktreePath) === key;
+        const revOk = info?.baseRevision === approval.baseRevision;
+        // 第一次签名校验
+        const sig = await this.computeWorktreeSignature(path);
+        const sigOk = sig === approval.stateSignature;
+        if (!accOk || !revOk || !sigOk) return false;
+        // cleanup 前二次签名校验（与删除紧邻——window 内签名变化即拒绝）
+        const sig2 = await this.computeWorktreeSignature(path);
+        if (sig2 !== approval.stateSignature) return false;
+        const cleaned = await this.manager.cleanup(path, { confirm: true });
+        if (cleaned) this.consumeCleanup(path);
+        return cleaned;
+      } finally {
+        this.confirmCleanupInFlight.delete(key);
+      }
     },
   };
   session.defs = createDevNodeDefs(session);

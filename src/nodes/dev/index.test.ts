@@ -59,6 +59,7 @@ function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
+    confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
       if (!rec.resultId || !rec.worktreePath || !rec.orchestrationId || !rec.stageId) {
@@ -111,26 +112,50 @@ function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
     },
     async forceCleanup(path, reason) {
       if (!reason.trim()) throw new Error('forceCleanup 必须提供 reason');
-      return manager.cleanup(path, { confirm: true });
+      const key = norm(path);
+      if (this.confirmCleanupInFlight.has(key)) return false;
+      this.confirmCleanupInFlight.add(key);
+      try {
+        await this.collector
+          .addAsync({
+            orchestrationId: 'host',
+            stageId: 'force-cleanup',
+            worktreePath: key,
+            kind: 'path-policy',
+            status: 'failed',
+            summary: `forceCleanup: ${reason}`,
+          })
+          .catch(() => {});
+        return manager.cleanup(path, { confirm: true });
+      } finally {
+        this.confirmCleanupInFlight.delete(key);
+      }
     },
     async confirmAndCleanup(path) {
-      const approval = this.approvedCleanups.get(norm(path));
-      const info = manager.get(path);
-      if (!approval || approval.consumed) return false;
-      if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
-      const acc = this.acceptanceStore.get(approval.acceptanceId);
-      const accOk =
-        !!acc &&
-        acc.passed &&
-        acc.orchestrationId === approval.orchestrationId &&
-        acc.stageId === approval.stageId &&
-        norm(acc.worktreePath) === norm(path);
-      const revOk = info?.baseRevision === approval.baseRevision;
-      const sigOk = `sig-${norm(path)}` === approval.stateSignature;
-      if (!accOk || !revOk || !sigOk) return false;
-      const cleaned = await manager.cleanup(path, { confirm: true });
-      if (cleaned) this.consumeCleanup(path);
-      return cleaned;
+      const key = norm(path);
+      if (this.confirmCleanupInFlight.has(key)) return false;
+      this.confirmCleanupInFlight.add(key);
+      try {
+        const approval = this.approvedCleanups.get(key);
+        const info = manager.get(path);
+        if (!approval || approval.consumed) return false;
+        if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
+        const acc = this.acceptanceStore.get(approval.acceptanceId);
+        const accOk =
+          !!acc &&
+          acc.passed &&
+          acc.orchestrationId === approval.orchestrationId &&
+          acc.stageId === approval.stageId &&
+          norm(acc.worktreePath) === key;
+        const revOk = info?.baseRevision === approval.baseRevision;
+        const sigOk = `sig-${key}` === approval.stateSignature;
+        if (!accOk || !revOk || !sigOk) return false;
+        const cleaned = await manager.cleanup(path, { confirm: true });
+        if (cleaned) this.consumeCleanup(path);
+        return cleaned;
+      } finally {
+        this.confirmCleanupInFlight.delete(key);
+      }
     },
   };
   return session;
@@ -494,5 +519,39 @@ describe('H4 dev nodes', () => {
     const rec = session.resultStore.get(ok.resultId as string)!;
     expect(rec.status).toBe('failed');
     expect(rec.exitCode).toBe(128);
+  });
+
+  it('P1：confirmAndCleanup 宿主互斥——并发确认同一 worktree 只执行一次清理', async () => {
+    const session = fakeSession();
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/m1' }, {}, {} as never);
+    // 三绑定审批
+    await approveFull(session, '/repo/wt/m1', { orchestrationId: 'o', stageId: 's' });
+    // 模拟并发：先占用锁
+    session.confirmCleanupInFlight.add('/repo/wt/m1');
+    const blocked = await session.confirmAndCleanup('/repo/wt/m1');
+    expect(blocked).toBe(false); // 锁占用 → 拒绝
+    session.confirmCleanupInFlight.delete('/repo/wt/m1');
+    // 释放锁后正常清理
+    const ok = await session.confirmAndCleanup('/repo/wt/m1');
+    expect(ok).toBe(true);
+    expect(session.manager.isTracked('/repo/wt/m1')).toBe(false);
+  });
+
+  it('P2：forceCleanup 审计落盘——reason 写入宿主证据', async () => {
+    const session = fakeSession();
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/f1' }, {}, {} as never);
+    const cleaned = await session.forceCleanup('/repo/wt/f1', '人工强制清理：验收阻塞');
+    expect(cleaned).toBe(true);
+    // 审计证据已落盘
+    const audit = session.collector.records.find((r) => r.stageId === 'force-cleanup');
+    expect(audit).toBeDefined();
+    expect(audit!.capturedBy).toBe('host');
+    expect(audit!.summary).toContain('人工强制清理');
+    // 无 reason → 抛错
+    await expect(session.forceCleanup('/repo/wt/f1', '')).rejects.toThrow(/reason/);
   });
 });
