@@ -13,10 +13,16 @@ import {
   getCached,
 } from './nodeCache';
 import { builtinDefs } from '../nodes/builtin';
+import { getDevSession } from '../dev/session';
 
 function buildDefs(): Record<string, any> {
   const defs: Record<string, any> = {};
   for (const d of builtinDefs) defs[d.typeId] = d;
+  // H4：若 DevSession 已初始化（headless 自举工作流含 dev.* 节点时），合并开发节点定义
+  const session = getDevSession();
+  if (session) {
+    for (const d of session.defs) defs[d.typeId] = d;
+  }
   return defs;
 }
 

@@ -61,6 +61,12 @@ async function main() {
   const raw = readFileSync(resolve(file), 'utf8');
   const wf: WorkflowFile = JSON.parse(raw);
   const nodes = (wf.nodes as any[]).map(normalizeNode);
+  // H4 自举：工作流含 dev.* 节点时初始化 DevSession（worktree registry + 证据 + 开发能力）
+  if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
+    const { initDevSession } = await import('../src/dev/session');
+    initDevSession({ baseRepoPath: process.cwd() });
+    console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集）');
+  }
   const edges = (wf.edges as any[]).map((e) => ({
     id: e.id ?? `e-${e.source}-${e.target}`,
     source: e.source,

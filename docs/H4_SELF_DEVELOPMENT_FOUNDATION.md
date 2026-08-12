@@ -231,10 +231,24 @@ docs/H4_*              # ✅ 本设计文档（随实现修订）
 - vite alias `node:child_process` → shim（浏览器构建不炸；GUI 调用即抛错）。
 
 待落地（下一步）：
-- `src/nodes/dev/` 开发节点薄封装（把上述能力暴露为工作流节点，绑定到编排阶段）；
 - Tauri/浏览器执行层分支（MVP 仅 Node/headless 可真实执行；GUI 编排里的开发节点需显式
   降级/禁用并提示走 headless）；
 - 第一轮低风险自举任务（worktree → code.patch → test.run → Evidence → evaluate → 用户审查 diff）。
+
+### 开发节点薄封装（2026-08-12，✅ 已落地）
+
+`src/dev/session.ts` + `src/nodes/dev/index.ts`：
+- **DevSession 单例**：manager（WorktreeManager，兼作 service 的 WorktreeRegistry）+
+  service（DevCapabilityService，cwd fail-closed）+ collector（EvidenceCollector，可注入宿主持久化）+
+  defs（开发节点定义）。headless 启动时 `initDevSession()`；GUI 不初始化 → dev 节点 execute 抛错
+  （shim + fail-closed 双兜底）。
+- **11 个 dev.* 节点**（分类「开发」）：worktree.create/status/cleanup（cleanup 需 confirm）、
+  code.read、code.patch、shell.run、test.run、git.status、git.diff、evidence.add（capturedBy 恒 host）、
+  accept（确定性验收，protected 硬失败）。全部只是能力薄封装，安全检查下沉 service。
+- **headless 集成**：`headless.ts` buildDefs 合并 DevSession defs；`headless-run.ts` 检测到 `dev.*`
+  节点时自动 `initDevSession({ baseRepoPath: process.cwd() })`。
+- 单测 7 例（fake session：worktree 登记 → code.read/patch → shell/test 白名单 → evidence→accept →
+  cleanup 确认门）。验证：tsc 0 / vitest 570（49 文件，+7）/ build ✓。
 
 ---
 
