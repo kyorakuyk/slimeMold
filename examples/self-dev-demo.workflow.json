@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "name": "H4 自举演示：worktree 隔离建改查 + 证据验收",
+  "description": "第一轮低风险自举任务样例：在隔离 worktree 中创建 docs/self-dev-demo.md（dev.code.patch），读 docs 文件、查 git 状态/diff、采集证据、确定性验收、人工确认后清理 worktree。运行：npm run headless examples/self-dev-demo.workflow.json",
+  "nodes": [
+    {
+      "id": "wt-create",
+      "type": "dev.worktree.create",
+      "label": "创建隔离工作区",
+      "params": { "path": ".codebuddy/dev-wt-demo" }
+    },
+    {
+      "id": "code-read",
+      "type": "dev.code.read",
+      "label": "读取文档",
+      "params": { "worktreePath": ".codebuddy/dev-wt-demo", "path": "docs/H4_SELF_DEVELOPMENT_FOUNDATION.md" }
+    },
+    {
+      "id": "code-patch",
+      "type": "dev.code.patch",
+      "label": "创建新文档",
+      "params": {
+        "worktreePath": ".codebuddy/dev-wt-demo",
+        "path": "docs/self-dev-demo.md",
+        "patch": "--- /dev/null\n+++ b/docs/self-dev-demo.md\n@@ -0,0 +1,3 @@\n+# H4 自举演示\n+\n+由 dev.code.patch 在隔离 worktree 中创建（第一轮低风险自举任务）。\n"
+      }
+    },
+    {
+      "id": "git-status",
+      "type": "dev.git.status",
+      "label": "Git 状态",
+      "params": { "worktreePath": ".codebuddy/dev-wt-demo" }
+    },
+    {
+      "id": "git-diff",
+      "type": "dev.git.diff",
+      "label": "Git Diff",
+      "params": { "worktreePath": ".codebuddy/dev-wt-demo", "baseRef": "HEAD" }
+    },
+    {
+      "id": "evidence",
+      "type": "dev.evidence.add",
+      "label": "采集证据",
+      "params": {
+        "orchestrationId": "self-dev-demo",
+        "stageId": "patch",
+        "kind": "diff",
+        "summary": "docs/self-dev-demo.md 已在隔离 worktree 创建",
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "accept",
+      "type": "dev.accept",
+      "label": "确定性验收",
+      "params": {
+        "rules": [{ "id": "diff-applied", "kind": "diff" }],
+        "changedProtectedPaths": []
+      }
+    },
+    {
+      "id": "wt-cleanup",
+      "type": "dev.worktree.cleanup",
+      "label": "清理工作区",
+      "params": { "worktreePath": ".codebuddy/dev-wt-demo", "confirm": true }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "wt-create", "sourceHandle": "path", "target": "code-read", "data": { "kind": "data" } },
+    { "id": "e2", "source": "code-read", "sourceHandle": "content", "target": "code-patch", "data": { "kind": "data" } },
+    { "id": "e3", "source": "code-patch", "sourceHandle": "ok", "target": "git-status", "data": { "kind": "data" } },
+    { "id": "e4", "source": "git-status", "sourceHandle": "stdout", "target": "git-diff", "data": { "kind": "data" } },
+    { "id": "e5", "source": "git-diff", "sourceHandle": "stdout", "target": "evidence", "data": { "kind": "data" } },
+    { "id": "e6", "source": "evidence", "sourceHandle": "evidenceId", "target": "accept", "data": { "kind": "data" } },
+    { "id": "e7", "source": "accept", "sourceHandle": "passed", "target": "wt-cleanup", "data": { "kind": "data" } }
+  ]
+}

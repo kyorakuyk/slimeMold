@@ -32,10 +32,32 @@ function num(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** 从输入取字符串数组。 */
+/** 从输入取字符串数组（支持数组 / JSON 数组字符串 / 逗号分隔）。 */
 function strList(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.map((x) => (typeof x === 'string' ? x : String(x ?? '')));
+  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? x : String(x ?? '')));
+  if (typeof v === 'string' && v.trim()) {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      /* 逗号分隔回退 */
+    }
+    return v.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/** 从输入取 JSON（支持对象/数组/JSON 字符串）。 */
+function parseJson<T>(v: unknown, fallback: T): T {
+  if (Array.isArray(v) || (typeof v === 'object' && v !== null)) return v as T;
+  if (typeof v === 'string' && v.trim()) {
+    try {
+      return JSON.parse(v) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 function nodeError(msg: string): Error {
@@ -64,9 +86,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'branch', label: '分支', type: T },
       { id: 'baseRevision', label: '基线提交', type: T },
     ],
-    params: [],
-    async execute(inputs) {
-      const path = str(inputs.path);
+    params: [{ key: 'path', label: 'worktree 路径（兜底，输入端口缺省时用）', type: 'text', default: '' }],
+    async execute(inputs, params) {
+      const path = str(inputs.path ?? params.path);
       if (!path) throw nodeError('worktree.create 需要 path');
       const info = await manager.create(path, path); // 登记 id 即路径（cleanup/status 按 path 引用）
       if (!info) return { ok: false, path, branch: '', baseRevision: '' };
@@ -86,9 +108,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'tracked', label: '已登记', type: 'any' },
       { id: 'hasUncommitted', label: '有未提交改动', type: 'any' },
     ],
-    params: [],
-    async execute(inputs) {
-      const path = str(inputs.worktreePath);
+    params: [{ key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' }],
+    async execute(inputs, params) {
+      const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.status 需要 worktreePath');
       return {
         tracked: manager.isTracked(path),
@@ -107,9 +129,12 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       '清理 worktree 并删除临时分支。必须显式传入 confirm=true（人工验收后），否则拒绝清理，防止误删未提交改动。',
     inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }],
     outputs: [{ id: 'cleaned', label: '已清理', type: 'any' }],
-    params: [{ key: 'confirm', label: '确认清理（须人工验收后置 true）', type: 'boolean', default: false }],
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'confirm', label: '确认清理（须人工验收后置 true）', type: 'boolean', default: false },
+    ],
     async execute(inputs, params) {
-      const path = str(inputs.worktreePath);
+      const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
       const cleaned = await manager.cleanup(path, { confirm: params.confirm === true });
       return { cleaned };
@@ -131,10 +156,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'content', label: '内容', type: T },
       { id: 'lineCount', label: '行数', type: N },
     ],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
-      const path = str(inputs.path);
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'path', label: '相对路径（兜底）', type: 'text', default: '' },
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const path = str(inputs.path ?? params.path);
       if (!cwd || !path) throw nodeError('code.read 需要 worktreePath 与 path');
       const r = await service.codeRead(path, { cwd });
       return { content: r.content, lineCount: r.lineCount };
@@ -157,11 +185,15 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'ok', label: '应用成功', type: 'any' },
       { id: 'contentHash', label: '内容哈希', type: T },
     ],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
-      const path = str(inputs.path);
-      const patch = str(inputs.patch);
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'path', label: '相对路径（兜底）', type: 'text', default: '' },
+      { key: 'patch', label: 'unified diff（兜底）', type: 'textarea', default: '' },
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const path = str(inputs.path ?? params.path);
+      const patch = str(inputs.patch ?? params.patch);
       if (!cwd || !path || !patch) throw nodeError('code.patch 需要 worktreePath / path / patch');
       const r = await service.codePatch(path, patch, { cwd });
       if (!r.ok) throw nodeError(`补丁应用失败：${r.error ?? '未知错误'}`);
@@ -185,10 +217,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'stdout', label: '标准输出', type: T },
       { id: 'stderr', label: '标准错误', type: T },
     ],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
-      const cmd = strList(inputs.cmd);
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'cmd', label: '命令数组 JSON（兜底，如 ["tsc","--noEmit"]）', type: 'textarea', default: '' },
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('shell.run 需要 worktreePath 与 cmd');
       const r = await service.shellRun(cmd, { cwd });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
@@ -211,10 +246,13 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'stdout', label: '标准输出', type: T },
       { id: 'stderr', label: '标准错误', type: T },
     ],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
-      const cmd = strList(inputs.cmd);
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'cmd', label: '命令数组 JSON（兜底）', type: 'textarea', default: '' },
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const cmd = strList(inputs.cmd ?? params.cmd);
       if (!cwd || cmd.length === 0) throw nodeError('test.run 需要 worktreePath 与 cmd');
       const r = await service.testRun(cmd, { cwd });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
@@ -230,9 +268,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     description: '返回 `git status --porcelain` 输出（只读）。',
     inputs: [{ id: 'worktreePath', label: '工作区路径', type: T }],
     outputs: [{ id: 'stdout', label: '状态输出', type: T }],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
+    params: [{ key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' }],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('git.status 需要 worktreePath');
       const r = await service.gitStatus({ cwd });
       return { stdout: r.stdout };
@@ -251,11 +289,14 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'baseRef', label: '基线（可空）', type: T },
     ],
     outputs: [{ id: 'stdout', label: 'diff 输出', type: T }],
-    params: [],
-    async execute(inputs) {
-      const cwd = str(inputs.worktreePath);
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'baseRef', label: '基线（兜底，可空）', type: 'text', default: '' },
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('git.diff 需要 worktreePath');
-      const baseRef = str(inputs.baseRef) || undefined;
+      const baseRef = str(inputs.baseRef ?? params.baseRef) || undefined;
       const r = await service.gitDiff(baseRef, { cwd });
       return { stdout: r.stdout };
     },
@@ -278,20 +319,27 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'command', label: '命令（可空）', type: T },
     ],
     outputs: [{ id: 'evidenceId', label: '证据 ID', type: T }],
-    params: [],
-    async execute(inputs) {
-      const kind = str(inputs.kind) as EvidenceKind;
+    params: [
+      { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
+      { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
+      { key: 'kind', label: '证据类型（兜底）', type: 'text', default: '' },
+      { key: 'summary', label: '摘要（兜底）', type: 'text', default: '' },
+      { key: 'exitCode', label: '退出码（兜底）', type: 'number', default: '' },
+      { key: 'command', label: '命令（兜底）', type: 'text', default: '' },
+    ],
+    async execute(inputs, params) {
+      const kind = str(inputs.kind ?? params.kind) as EvidenceKind;
       if (!['command', 'test', 'diff', 'path-policy', 'artifact'].includes(kind)) {
-        throw nodeError(`非法证据类型：${str(inputs.kind)}`);
+        throw nodeError(`非法证据类型：${str(inputs.kind ?? params.kind)}`);
       }
       const rec = await collector.addAsync({
-        orchestrationId: str(inputs.orchestrationId),
-        stageId: str(inputs.stageId),
+        orchestrationId: str(inputs.orchestrationId ?? params.orchestrationId),
+        stageId: str(inputs.stageId ?? params.stageId),
         kind,
-        status: kind === 'path-policy' ? (str(inputs.summary) ? 'passed' : 'failed') : 'passed',
-        summary: str(inputs.summary),
-        command: str(inputs.command) || undefined,
-        exitCode: num(inputs.exitCode),
+        status: 'passed',
+        summary: str(inputs.summary ?? params.summary),
+        command: str(inputs.command ?? params.command) || undefined,
+        exitCode: num(inputs.exitCode ?? params.exitCode),
       });
       return { evidenceId: rec.id };
     },
@@ -317,12 +365,25 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'requiredChecks', label: '必检项', type: L },
       { id: 'changedProtectedPaths', label: '保护路径变更', type: L },
     ],
-    params: [],
-    async execute(inputs) {
-      const rules = Array.isArray(inputs.rules) ? (inputs.rules as AcceptanceRule[]) : [];
-      const evidence = Array.isArray(inputs.evidence) ? inputs.evidence : [];
-      const changed = Array.isArray(inputs.changedProtectedPaths) ? inputs.changedProtectedPaths.map(String) : [];
-      const uncertainties = Array.isArray(inputs.uncertainties) ? inputs.uncertainties.map(String) : [];
+    params: [
+      { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
+      { key: 'changedProtectedPaths', label: '保护路径变更（兜底）', type: 'textarea', default: '' },
+      { key: 'uncertainties', label: '不确定性（兜底）', type: 'textarea', default: '' },
+    ],
+    async execute(inputs, params) {
+      // evidence 缺省时用 DevSession collector 的宿主采集证据（保证真实，不靠模型自报）
+      const rules = Array.isArray(inputs.rules) && inputs.rules.length > 0
+        ? (inputs.rules as AcceptanceRule[])
+        : parseJson<AcceptanceRule[]>(params.rules, []);
+      const evidence = Array.isArray(inputs.evidence) && inputs.evidence.length > 0
+        ? inputs.evidence
+        : collector.toJSON();
+      const changed = Array.isArray(inputs.changedProtectedPaths)
+        ? inputs.changedProtectedPaths.map(String)
+        : parseJson<string[]>(params.changedProtectedPaths, []).map(String);
+      const uncertainties = Array.isArray(inputs.uncertainties)
+        ? inputs.uncertainties.map(String)
+        : parseJson<string[]>(params.uncertainties, []).map(String);
       const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed, uncertainties);
       return {
         passed: a.passed,

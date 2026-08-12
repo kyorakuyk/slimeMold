@@ -250,6 +250,22 @@ docs/H4_*              # ✅ 本设计文档（随实现修订）
 - 单测 7 例（fake session：worktree 登记 → code.read/patch → shell/test 白名单 → evidence→accept →
   cleanup 确认门）。验证：tsc 0 / vitest 570（49 文件，+7）/ build ✓。
 
+### 第一轮自举闭环（2026-08-12，✅ headless 真实跑通）
+
+`examples/self-dev-demo.workflow.json`：8 节点闭环
+（worktree.create → code.read → code.patch → git.status → git.diff → evidence.add → accept → worktree.cleanup），
+`npm run headless examples/self-dev-demo.workflow.json` 全部成功：
+- 真实 git worktree 创建（`.codebuddy/dev-wt-demo`）→ 读 docs → 受控 diff 创建新文档 →
+  git 校验 → 证据采集 → 确定性验收（diff 证据满足）→ 人工确认后清理（无残留）。
+- dev 节点支持「params 兜底输入」（ParamType：text/textarea/number/boolean，JSON 数组/对象用
+  textarea 字符串 + parseJson/strList 解析），工作流节点可用旧格式（顶层 type/params）独立运行。
+- 关键语义修正：evaluator 的 diff 规则改为「宿主采集的 diff 证据存在即满足」（worktree 未提交
+  修改不依赖 base/head commit）；codePatch 支持新增文件（read ENOENT → 空串）。
+
+**第一轮自举验证结论**：目标 → worktree → 修改 → 测试/证据 → 验收 → 清理 的受限执行链
+已在真实 git 环境下跑通。下一步：Tauri 执行层分支（GUI 编排接入 dev 能力）或直接扩展
+自举任务到真实低风险代码修复。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

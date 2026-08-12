@@ -74,16 +74,14 @@ describe('H4 DevEvaluator', () => {
     expect(clean.passed).toBe(true);
   });
 
-  it('diff 规则：headRevision ≠ baseRevision 通过；无 diff 证据失败', () => {
+  it('diff 规则：宿主采集的 diff 证据存在即通过（worktree 未提交修改不依赖 base/head）；无证据失败', () => {
     const rules: AcceptanceRule[] = [{ id: 'real-change', kind: 'diff' }];
     const ok = evaluateDevAcceptance(rules, [
-      ev({ kind: 'diff', status: 'passed', baseRevision: 'a1', headRevision: 'a2', summary: '有改动' }),
+      ev({ kind: 'diff', status: 'passed', summary: 'docs 补丁已应用' }),
     ], []);
     expect(ok.passed).toBe(true);
 
-    const noChange = evaluateDevAcceptance(rules, [
-      ev({ kind: 'diff', status: 'passed', baseRevision: 'a1', headRevision: 'a1', summary: '无改动' }),
-    ], []);
+    const noChange = evaluateDevAcceptance(rules, [], []);
     expect(noChange.passed).toBe(false);
   });
 

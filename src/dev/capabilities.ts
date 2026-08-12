@@ -328,7 +328,8 @@ export function createNodeDevService(
 
     async codePatch(relPath, unifiedDiff, ctx) {
       const abs = await guardedAbs(relPath, ctx);
-      const original = await read(abs);
+      // 新增文件：目标不存在时按空内容处理（unified diff 全 + 行创建新文件）
+      const original = await read(abs).catch(() => '');
       const applied = applyUnifiedPatch(original, unifiedDiff);
       if (!applied.ok) return { ok: false, error: applied.error };
       await write(abs, applied.result!);

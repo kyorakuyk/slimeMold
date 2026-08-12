@@ -36,7 +36,9 @@ function ruleSatisfied(rule: AcceptanceRule, evidence: readonly EvidenceRecord[]
     case 'path-policy':
       return matches.some((e) => e.status === 'passed');
     case 'diff':
-      return matches.some((e) => !!e.headRevision && e.headRevision !== e.baseRevision);
+      // diff 证据由宿主在「确认有改动」时采集；存在即视为满足。
+      // 注意：不依赖 headRevision/baseRevision（对 worktree 未提交修改不适用）。
+      return matches.some((e) => e.status === 'passed');
     case 'artifact':
       return matches.some((e) => e.status === 'passed' || !!e.contentHash);
     default:
