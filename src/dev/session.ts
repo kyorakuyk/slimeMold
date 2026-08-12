@@ -252,7 +252,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
       try {
-        // 审计落盘：强制清理事件写入宿主证据（含 reason），供跨会话审计
+        // P1（审计）：审计落盘失败 → 直接拒绝 forceCleanup，不得继续删除 worktree
+        //（高风险操作必须有可靠审计记录；addAsync 落盘失败会 throw）。
         await this.collector.addAsync({
           orchestrationId: 'host',
           stageId: 'force-cleanup',
@@ -260,7 +261,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           kind: 'path-policy',
           status: 'failed',
           summary: `forceCleanup: ${reason}`,
-        }).catch(() => {});
+        });
         const cleaned = await manager.cleanup(path, { confirm: true });
         return cleaned;
       } finally {

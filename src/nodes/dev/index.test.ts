@@ -7,7 +7,7 @@ import { defaultDevPolicy } from '../../dev/policy';
 import { EvidenceCollector } from '../../dev/evidence';
 import type { CommandResult } from '../../dev/node-run';
 
-function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
+function fakeSession(opts: { failGitStatus?: boolean; failAudit?: boolean } = {}): DevSession {
   const git = async (args: string[], _cwd: string): Promise<CommandResult> => {
     if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
     if (args[0] === 'worktree') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
@@ -48,7 +48,16 @@ function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
     relativePath: async (root, abs) => (await import('node:path')).relative(root, abs).replace(/\\/g, '/'),
   };
   const service = createNodeDevService(defaultDevPolicy, deps, registry);
-  const collector = new EvidenceCollector();
+  const collector = new EvidenceCollector(
+    opts.failAudit
+      ? {
+          append: async () => {
+            throw new Error('audit disk full');
+          },
+          load: async () => [],
+        }
+      : undefined,
+  );
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
   let accSeq = 0;
   const session: DevSession = {
@@ -116,16 +125,15 @@ function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
       if (this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
       try {
-        await this.collector
-          .addAsync({
-            orchestrationId: 'host',
-            stageId: 'force-cleanup',
-            worktreePath: key,
-            kind: 'path-policy',
-            status: 'failed',
-            summary: `forceCleanup: ${reason}`,
-          })
-          .catch(() => {});
+        // P1：审计落盘失败 → 拒绝清理（addAsync 失败 throw）
+        await this.collector.addAsync({
+          orchestrationId: 'host',
+          stageId: 'force-cleanup',
+          worktreePath: key,
+          kind: 'path-policy',
+          status: 'failed',
+          summary: `forceCleanup: ${reason}`,
+        });
         return manager.cleanup(path, { confirm: true });
       } finally {
         this.confirmCleanupInFlight.delete(key);
@@ -553,5 +561,15 @@ describe('H4 dev nodes', () => {
     expect(audit!.summary).toContain('人工强制清理');
     // 无 reason → 抛错
     await expect(session.forceCleanup('/repo/wt/f1', '')).rejects.toThrow(/reason/);
+  });
+
+  it('P1：forceCleanup 审计落盘失败 → 拒绝清理（不删除 worktree）', async () => {
+    const session = fakeSession({ failAudit: true });
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/f2' }, {}, {} as never);
+    // addAsync 落盘失败 → forceCleanup 抛错，worktree 保留
+    await expect(session.forceCleanup('/repo/wt/f2', '审计不可用')).rejects.toThrow(/audit disk full/);
+    expect(session.manager.isTracked('/repo/wt/f2')).toBe(true);
   });
 });

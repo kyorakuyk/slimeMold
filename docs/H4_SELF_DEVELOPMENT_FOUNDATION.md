@@ -370,6 +370,8 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
 - **P2 forceCleanup 审计落盘**：reason 必须提供且写入宿主证据（collector.addAsync，
   kind=path-policy/status=failed，capturedBy=host，summary 含 reason）——跨会话可追溯；
   与正常确认门共用互斥锁。
+- **P1 forceCleanup 审计落盘失败 → 拒绝清理**（2026-08-13 补充）：移除 `.catch(() => {})`——
+  addAsync 落盘失败（磁盘满等）直接 throw，**不删除 worktree**（高风险操作必须有可靠审计记录）。
 - 单测 +2：confirmCleanupInFlight 锁占用拒 / forceCleanup 审计证据落盘（含 reason）。
   验证：tsc 0 / vitest 577（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓
   （confirmAndCleanup 原子确认 + 互斥，worktree 无残留）。
