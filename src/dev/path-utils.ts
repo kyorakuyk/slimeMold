@@ -1,14 +1,66 @@
 /**
  * H4 路径规范化工具（审计修复）：
  * 相交判定 / 精确匹配统一使用 path.resolve（解析 . / ..，返回绝对路径）。
- * 用静态 import node:path：vite 构建经 alias 指向 shim（浏览器下仅构建不执行），
- * headless/CI/Node 下真实可用——本模块只在 Node 执行层被调用。
+ * headless/CI/Node 下走 node:path（真实文件系统语义）；
+ * GUI（Tauri WebView）下 node:path 被 vite shim 掉（resolve 退化为 join），
+ * 改用纯前端实现 normalizePathWeb（不依赖 node:path，供 Tauri deps 注入）。
  */
 import { resolve } from 'node:path';
 
 /** 规范化绝对路径：resolve 解析 . / .. 后统一 POSIX 分隔符、去尾部 /。 */
 export function normalizeAbsolutePath(p: string): string {
   return resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * 纯前端路径解析（GUI/浏览器环境，不依赖 node:path）：
+ * - 解析 . / .. 段；
+ * - 统一 POSIX 分隔符（Windows 盘符 `C:/...` 保留）；
+ * - 相对路径基于当前工作目录（Tauri WebView 无 process.cwd，仅用于 worktree 内相对解析）。
+ * 仅用于 Tauri deps 注入（resolveInside/relativePath 的替代实现），安全语义由
+ * capabilities 的 assertPathAllowed + worktree 登记校验兜底。
+ */
+export function resolveWeb(root: string, rel: string): string {
+  const norm = (s: string) => s.replace(/\\/g, '/');
+  const parts = (norm(root) + '/' + norm(rel)).split('/');
+  // 绝对路径判定：首段为空（POSIX 以 / 开头）或首段是 Windows 盘符（C:）
+  const isDrive = (s: string) => /^[A-Za-z]:$/.test(s);
+  const abs = parts[0] === '' || isDrive(parts[0]);
+  const out: string[] = [];
+  for (const seg of parts) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      // Windows 盘符（C:）与根目录不弹
+      if (out.length > 0 && out[out.length - 1] !== '..' && !isDrive(out[out.length - 1])) {
+        out.pop();
+      } else if (!abs) {
+        out.push('..');
+      }
+      continue;
+    }
+    out.push(seg);
+  }
+  let joined = out.join('/');
+  if (!abs && out.length === 0) joined = '.';
+  if (abs) {
+    // Windows 盘符段已进 out（如 'C:/repo/...'）；POSIX 补根 /
+    if (!isDrive(parts[0])) joined = '/' + joined;
+  }
+  return joined;
+}
+
+/** 计算 abs 相对 root 的规范化相对路径（POSIX 分隔符；GUI 用）。 */
+export function relativeWeb(root: string, abs: string): string {
+  const r = resolveWeb(root, '.').replace(/\/+$/, '');
+  const a = resolveWeb(abs, '.').replace(/\/+$/, '');
+  if (a === r) return '.';
+  if (a.startsWith(r + '/')) return a.slice(r.length + 1);
+  // 不共享前缀时逐级回溯
+  const rp = r.split('/').filter(Boolean);
+  const ap = a.split('/').filter(Boolean);
+  let i = 0;
+  while (i < rp.length && i < ap.length && rp[i] === ap[i]) i++;
+  return [...rp.slice(i).map(() => '..'), ...ap.slice(i)].join('/') || '.';
 }
 
 /** A 是否为 B 的祖先（或等价）。两者需先 normalizeAbsolutePath。 */

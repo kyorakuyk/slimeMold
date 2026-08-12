@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, Terminal, History, Variable, Eraser, Save, Power, Package } from 'lucide-react';
+import { ChevronDown, Terminal, History, Variable, Eraser, Save, Power, Package, GitBranch } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { stopWorkflow } from '../engine/executor';
 import { useT } from '../i18n/useT';
 import { ArtifactsPanel } from './ArtifactsPanel';
+import { DevSessionPanel } from './DevSessionPanel';
 
-type Tab = 'log' | 'history' | 'vars' | 'artifacts';
+type Tab = 'log' | 'history' | 'vars' | 'artifacts' | 'dev';
 
 /** 底部可停靠面板（VS Code Panel 风）：默认终端/日志流，附带历史与变量选项卡 */
 export default function StatusBar({
@@ -86,6 +87,13 @@ export default function StatusBar({
           onClick={() => setTab('artifacts')}
         >
           <Package size={12} /> {t('tab.artifacts')}
+        </button>
+        <button
+          className="sm-panel-tab"
+          data-active={tab === 'dev'}
+          onClick={() => setTab('dev')}
+        >
+          <GitBranch size={12} /> 开发（H4）
         </button>
 
         <div className="flex flex-1 items-center justify-end gap-3 px-3 text-[11px]">
@@ -218,6 +226,7 @@ export default function StatusBar({
             )
           )}
           {tab === 'artifacts' && <ArtifactsPanel />}
+          {tab === 'dev' && <DevSessionPanel />}
         </div>
       )}
     </footer>

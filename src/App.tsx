@@ -23,6 +23,7 @@ import { useWorkflowStore } from './store/workflowStore';
 import { useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
+import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
 
 registerBuiltins();
 
@@ -226,12 +227,20 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   useEffect(() => {
+    // Phase 1（H4 GUI）：跟踪当前项目 id，切换/关闭时卸载旧 DevSession，打开时初始化新 DevSession
+    let lastProjectId = useWorkflowStore.getState().projectId;
+    if (lastProjectId) ensureGuiDevSession(useWorkflowStore.getState().projectPath);
     return useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
       // 项目切换/关闭：先卸载旧项目级自定义节点（仅本项目生效），再扫描新项目级
       unloadProjectCustomNodes();
       if (s.projectId) void scanProjectCustomNodes().catch(() => {});
+      if (s.projectId !== lastProjectId) {
+        if (lastProjectId) teardownGuiDevSession();
+        if (s.projectId) ensureGuiDevSession(s.projectPath);
+        lastProjectId = s.projectId;
+      }
     });
   }, []);
 

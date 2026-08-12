@@ -13,10 +13,27 @@
 //! 注意：Rust 侧不再实现 LLM HTTP 客户端（原 chat_completion 已移除），所有 LLM 调用
 //! 由前端 provider 发起。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+
+/// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
+static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
+
+struct DevState {
+    base_repo: Option<String>,
+    worktrees: Vec<String>,
+}
+
+impl DevState {
+    const fn new() -> Self {
+        DevState { base_repo: None, worktrees: Vec::new() }
+    }
+}
 
 /// 密钥库 service 名（同机多 app 隔离用）。
 const KEYRING_SERVICE: &str = "com.slimemold.credentials";
@@ -521,6 +538,258 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/* ---------------- H4 GUI 宿主受控命令通道（Phase 1） ----------------
+ * GUI（WebView）无法直接执行系统命令/文件操作（node:child_process 经 vite shim 抛错）。
+ * 这里把 DevSession 的执行层下沉到 Rust 宿主：
+ * - dev_exec：命令名白名单 + cwd 必须属于「已登记 worktree 或主仓库根」+ 剥离凭据 env + 超时；
+ * - dev_read_file / dev_write_file：文件路径必须属于已登记 worktree（防任意读写宿主磁盘）；
+ * - dev_init_session / dev_register_worktree / dev_unregister_worktree：维护宿主登记态。
+ * 前端仍保留完整的参数级白名单（capabilities DEFAULT_SHELL_RULES/DEFAULT_TEST_RULES），
+ * Rust 侧命令名 + cwd 白名单作为纵深防御（WebView 被 XSS 也不能在 worktree 外执行命令）。
+ */
+
+#[derive(serde::Serialize)]
+struct DevExecResult {
+    stdout: String,
+    stderr: String,
+    code: i32,
+}
+
+/// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
+const DEV_ALLOWED_CMDS: &[&str] = &[
+    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx", "npm",
+];
+
+/// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
+fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(raw);
+    if p.is_absolute() {
+        return p
+            .canonicalize()
+            .map_err(|e| format!("无法解析路径（{raw}）：{e}"));
+    }
+    let state = DEV_STATE.lock().unwrap();
+    let base = state.base_repo.as_ref().ok_or_else(|| {
+        format!("路径是相对的，但未初始化主仓库根：{raw}")
+    })?;
+    std::path::Path::new(base)
+        .join(raw)
+        .canonicalize()
+        .map_err(|e| format!("无法解析相对路径（{raw}，基于 {base}）：{e}"))
+}
+
+/// cwd 是否属于主仓库根或已登记 worktree（或其子目录）。支持相对路径（基于主仓库根解析）。
+fn dev_cwd_allowed(cwd: &str) -> Result<(), String> {
+    let p = std::path::Path::new(cwd);
+    if p
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+    }
+    let canon = dev_abs_of(cwd)?; // 相对路径基于 base_repo 解析；绝对路径 canonicalize
+    if !canon.is_dir() {
+        return Err(format!("dev_exec: cwd 不存在或不是目录：{cwd}"));
+    }
+    let state = DEV_STATE.lock().unwrap();
+    if let Some(base) = &state.base_repo {
+        let bc = std::path::Path::new(base)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(base));
+        if canon == bc {
+            return Ok(());
+        }
+    }
+    for w in &state.worktrees {
+        let wc = std::path::Path::new(w)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(w));
+        if canon == wc || canon.starts_with(&wc) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "dev_exec: cwd 不属于已登记 worktree 或主仓库根：{cwd}"
+    ))
+}
+
+/// 剥离常见凭据环境变量 + 注入 git 非交互配置（与前端 sanitizeEnv 对齐）。
+fn dev_sanitized_env() -> HashMap<String, String> {
+    const DENY: &[&str] = &[
+        "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_KEY_1", "AZURE_OPENAI_API_KEY_2",
+        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "REPLICATE_API_TOKEN",
+    ];
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    for k in DENY {
+        env.remove(*k);
+    }
+    env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
+    env.insert("GIT_CONFIG_NOSYSTEM".into(), "1".into());
+    env
+}
+
+/// 带超时的子进程执行，返回 stdout/stderr/exitCode（非零退出码不视为错误）。
+fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResult, String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child: Child = cmd.spawn().map_err(|e| format!("命令启动失败：{e}"))?;
+    let start = Instant::now();
+    loop {
+        match child
+            .try_wait()
+            .map_err(|e| format!("等待子进程失败：{e}"))?
+        {
+            Some(_) => break,
+            None if start.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("dev_exec 执行超时（30s）".into());
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    use std::io::Read;
+    let mut out_buf = Vec::new();
+    let mut err_buf = Vec::new();
+    if let Some(mut o) = child.stdout.take() {
+        o.read_to_end(&mut out_buf).ok();
+    }
+    if let Some(mut e) = child.stderr.take() {
+        e.read_to_end(&mut err_buf).ok();
+    }
+    let status = child.wait().unwrap_or_default();
+    Ok(DevExecResult {
+        stdout: String::from_utf8_lossy(&out_buf).to_string(),
+        stderr: String::from_utf8_lossy(&err_buf).to_string(),
+        code: status.code().unwrap_or(-1),
+    })
+}
+
+/// H4 GUI 受控命令执行：命令名白名单 + cwd 归属校验 + 无凭据环境。
+#[tauri::command]
+fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
+    if args.is_empty() {
+        return Err("dev_exec: 空命令".into());
+    }
+    let name = args[0].as_str();
+    if !DEV_ALLOWED_CMDS.contains(&name) {
+        return Err(format!("dev_exec: 命令不在白名单内：{name}"));
+    }
+    dev_cwd_allowed(&cwd)?;
+    let mut cmd = Command::new(name);
+    cmd.current_dir(&cwd);
+    for a in &args[1..] {
+        cmd.arg(a);
+    }
+    cmd.env_clear();
+    for (k, v) in dev_sanitized_env() {
+        cmd.env(k, v);
+    }
+    run_with_timeout(&mut cmd, Duration::from_secs(30))
+}
+
+/// 初始化 H4 宿主登记态（GUI 打开项目 / DevSession 初始化时调用）。
+#[tauri::command]
+fn dev_init_session(base_repo: String) -> Result<(), String> {
+    let p = std::path::Path::new(&base_repo);
+    if !p.exists() || !p.is_dir() {
+        return Err(format!("dev_init_session: 主仓库不存在或不是目录：{base_repo}"));
+    }
+    let canon = p
+        .canonicalize()
+        .map_err(|e| format!("dev_init_session: 路径解析失败：{base_repo}（{e}）"))?;
+    let mut st = DEV_STATE.lock().unwrap();
+    st.base_repo = Some(canon.to_string_lossy().to_string());
+    st.worktrees.clear();
+    Ok(())
+}
+
+/// 登记一个 worktree（前端 dev.worktree.create 成功后调用；支持相对路径基于主仓库根解析）。
+#[tauri::command]
+fn dev_register_worktree(path: String) -> Result<(), String> {
+    let canon = dev_abs_of(&path)?;
+    if !canon.is_dir() {
+        return Err(format!("dev_register_worktree: worktree 不存在或不是目录：{path}"));
+    }
+    let c = canon.to_string_lossy().to_string();
+    let mut st = DEV_STATE.lock().unwrap();
+    if !st.worktrees.iter().any(|w| w == &c) {
+        st.worktrees.push(c);
+    }
+    Ok(())
+}
+
+/// 注销 worktree（前端清理成功后调用）。
+#[tauri::command]
+fn dev_unregister_worktree(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let canon = p
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+    let c = canon.to_string_lossy().to_string();
+    let mut st = DEV_STATE.lock().unwrap();
+    st.worktrees.retain(|w| w != &c);
+    Ok(())
+}
+
+/// 路径必须属于某个已登记 worktree（dev_read_file / dev_write_file 的前置校验）。
+fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
+    let state = DEV_STATE.lock().unwrap();
+    for w in &state.worktrees {
+        let wc = std::path::Path::new(w);
+        if abs.starts_with(wc) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "dev_file: 路径不属于任何已登记 worktree：{}",
+        abs.display()
+    ))
+}
+
+/// 读文件（仅 worktree 内；H4 节点 code.read / 状态签名等；相对路径基于主仓库根解析）。
+#[tauri::command]
+fn dev_read_file(path: String) -> Result<String, String> {
+    let abs = dev_abs_of(&path)?;
+    if !abs.is_file() {
+        return Err(format!("dev_read_file: 文件不存在：{path}"));
+    }
+    dev_path_allowed(&abs)?;
+    fs::read_to_string(&abs).map_err(|e| format!("dev_read_file: 读取失败：{path}（{e}）"))
+}
+
+/// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+#[tauri::command]
+fn dev_write_file(path: String, content: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("dev_write_file: 路径禁止包含 '..' 逃逸：{path}"));
+    }
+    // 相对路径基于 base_repo 解析；新文件需先规范化父目录再拼接文件名
+    let base_dir = {
+        let state = DEV_STATE.lock().unwrap();
+        state.base_repo.clone().unwrap_or_default()
+    };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::PathBuf::from(&base_dir).join(p)
+    };
+    let parent = joined.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let canon_parent = parent.canonicalize().map_err(|e| {
+        format!("dev_write_file: 无法解析父目录（{}）：{e}", parent.display())
+    })?;
+    let name = joined
+        .file_name()
+        .ok_or_else(|| "dev_write_file: 路径缺少文件名".to_string())?;
+    let abs = canon_parent.join(name);
+    dev_path_allowed(&abs)?;
+    fs::write(&abs, content).map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -543,7 +812,13 @@ pub fn run() {
             load_vault_key,
             delete_vault,
             run_git,
-            grant_project_access
+            grant_project_access,
+            dev_exec,
+            dev_init_session,
+            dev_register_worktree,
+            dev_unregister_worktree,
+            dev_read_file,
+            dev_write_file
         ])
         // 窗口默认可见（tauri.conf.json visible:true）。保留 on_page_load 作为兜底，
         // 万一某些环境初始未显示，页面加载完成后再确保 show 一次。

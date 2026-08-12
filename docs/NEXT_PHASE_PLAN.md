@@ -58,6 +58,17 @@
 
 ### Phase 1：H4 GUI 宿主接入
 
+> 状态：**代码已完成（2026-08-13，本地待提交），待 Windows + Tauri dev 人工验收**。
+> 实现内容：
+> - Rust 新增 H4 受控命令通道：`dev_exec`（命令名白名单 + cwd 必须属于主仓库根/已登记 worktree + 剥离凭据 env + 30s 超时）、`dev_read_file`/`dev_write_file`（路径必须属于已登记 worktree）、`dev_init_session`/`dev_register_worktree`/`dev_unregister_worktree`（宿主登记态，支持相对路径基于主仓库根解析）。
+> - 前端 Tauri 通道 `src/dev/tauri-run.ts`：`createTauriDeps`（runCommand/readFile/writeFile/resolveInside/relativePath 全部走 Rust）、`createTauriGitRunner`、`createTauriEvidenceStore`（plugin-fs JSONL）；纯前端路径工具 `resolveWeb`/`relativeWeb`（GUI 下 node:path 被 vite shim 掉的替代）。
+> - `createNodeDevService` 支持 `env` 参数（'node' | 'tauri'）+ `createTauriDevService`。
+> - `session.initDevSession` 支持 `env: 'tauri'`：worktree 创建/清理自动同步 Rust 登记态；动态 worktree 创建时惰性绑定宿主固定路径 EvidenceStore（`<项目根>/.slimemold/evidence`，位于 worktree 外）。
+> - GUI 生命周期 `src/dev/gui.ts`：打开项目时 `ensureGuiDevSession`（初始化 DevSession + 注册 dev.* 节点定义 + 同步 Rust 登记）；切换/关闭项目时 `teardownGuiDevSession`（卸载定义 + 重置单例，防污染其它项目）。
+> - GUI 验收面板 `DevSessionPanel`（StatusBar 新增「开发（H4）」Tab）：worktree 状态 / 证据绑定状态 / 验收记录展示；「批准并清理」（绑定本 worktree 最新通过验收 + 状态签名 + 基线，confirmAndCleanup 原子确认）与「强制清理」（必须填 reason，无宿主持久化拒绝，审计落盘失败拒绝，二次确认）确认入口。
+> - vite.config 增加 `node:fs/promises` alias（避免前缀替换拼出 ENOENT 路径）。
+> 验证：tsc 0 / vitest 587（50 文件，+7 tauri-run）/ build ✓ / cargo check ✓ / headless 样例 6/6 + worktree 无残留。
+
 目标：让 GUI 能安全运行 H4 开发节点，并让人工确认真正经过宿主层。
 
 工作项：

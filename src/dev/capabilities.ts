@@ -261,12 +261,13 @@ function hashContent(content: string): string {
 /**
  * 创建 Node/headless 真实 DevCapabilityService。
  * 命令/文件操作默认走 node-run；可通过 deps 注入（单测用 fake 避免真实执行）。
- * env 恒为 'node'（headless/CI）；GUI 环境应由上层使用 createDevServiceByEnv 分支。
+ * env 默认 'node'（headless/CI）；GUI（Tauri）由 createTauriDevService 传入 env='tauri'。
  */
 export function createNodeDevService(
   policy: SelfDevelopmentPolicy,
   deps: NodeDevDeps = {},
   registry?: WorktreeRegistry,
+  env: 'node' | 'tauri' = 'node',
 ): DevCapabilityService {
   const run = deps.runCommand ?? runCommand;
   const read = deps.readFile ?? readTextFile;
@@ -320,7 +321,7 @@ export function createNodeDevService(
   };
 
   return {
-    env: 'node',
+    env,
 
     async codeRead(relPath, ctx) {
       const abs = await guardedAbs(relPath, ctx);
@@ -406,4 +407,17 @@ export function createNodeDevService(
         .filter(Boolean);
     },
   };
+}
+
+/**
+ * Tauri GUI 版 DevCapabilityService：复用 createNodeDevService 的全部白名单/路径守卫，
+ * 仅把底层命令/文件/路径操作替换为 Tauri 通道（dev_exec / dev_read_file / dev_write_file
+ * 由 Rust 宿主执行，cwd 归属 + 命令名 + 路径归属均经 Rust 校验）。
+ */
+export function createTauriDevService(
+  policy: SelfDevelopmentPolicy,
+  deps: NodeDevDeps,
+  registry?: WorktreeRegistry,
+): DevCapabilityService {
+  return createNodeDevService(policy, deps, registry, 'tauri');
 }

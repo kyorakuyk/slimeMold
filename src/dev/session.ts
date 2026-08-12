@@ -19,6 +19,7 @@ import { EvidenceCollector, type EvidencePersistence } from './evidence';
 import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
+import { createTauriGitRunner, createTauriDeps } from './tauri-run';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -136,6 +137,15 @@ export interface DevSessionOptions {
   gitRunner?: DevGitRunner;
   /** 宿主证据持久化（位于 worktree 外，由宿主构造） */
   persistence?: EvidencePersistence;
+  /**
+   * 执行环境（Phase 1）：
+   * - 'node'（默认）：headless/CI，命令/文件走 node-run；
+   * - 'tauri'：GUI，命令/文件走 Rust 通道（dev_exec/dev_read_file/dev_write_file），
+   *   worktree 创建/清理自动同步 Rust 登记态。
+   */
+  env?: 'node' | 'tauri';
+  /** Tauri 宿主固定证据根（如 `<项目根>/.slimemold/evidence`）。worktree 创建时自动绑定宿主 EvidenceStore。 */
+  evidenceRoot?: string;
 }
 
 let _session: DevSession | null = null;
@@ -151,11 +161,62 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   if (_session) return _session;
   const policy = opts.policy ?? defaultDevPolicy;
   const baseRepoPath = opts.baseRepoPath ?? process.cwd();
-  const manager = new WorktreeManager(opts.gitRunner ?? createNodeGitRunner(), baseRepoPath);
+  const env: 'node' | 'tauri' = opts.env ?? 'node';
+
+  // Tauri（GUI）下的命令/文件/路径通道：全部走 Rust 宿主（dev_exec / dev_read_file / dev_write_file）。
+  // tauri-run 顶层无 @tauri-apps 运行时依赖（invoke 均延迟 import），静态 import 对浏览器构建安全。
+  const manager = new WorktreeManager(
+    opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner() : createNodeGitRunner()),
+    baseRepoPath,
+  );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
   const registry: WorktreeRegistry = { isTracked: (cwd) => manager.isTracked(cwd) };
-  const service = createNodeDevService(policy, {}, registry);
+  const service = env === 'tauri'
+    ? createNodeDevService(policy, createTauriDeps(), registry, 'tauri')
+    : createNodeDevService(policy, {}, registry);
   const collector = new EvidenceCollector(opts.persistence);
+  // 未跟踪文件内容读取/路径解析：Tauri 下走 Rust 通道（node-run 在 GUI 被 shim 掉）。
+  const tauriDeps = env === 'tauri' ? createTauriDeps() : undefined;
+  const readFileP = tauriDeps?.readFile ?? readTextFile;
+  const resolveP = tauriDeps?.resolveInside ?? resolveInside;
+  // Tauri 宿主固定证据根（worktree 创建后动态绑定；断言由 evidence.assertEvidenceOutsideWorktree 保证）
+  const evidenceRoot = env === 'tauri' ? opts.evidenceRoot : undefined;
+
+  // Tauri 下：worktree 创建/清理同步 Rust 登记态（dev_register_worktree / dev_unregister_worktree），
+  // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
+  const syncRust = async (fn: 'register' | 'unregister', path: string): Promise<void> => {
+    if (env !== 'tauri') return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', { path });
+    } catch {
+      // 同步失败不阻断执行（Rust 侧 cwd 校验会 fail-closed 兜底）
+    }
+  };
+  const rawCreate = manager.create.bind(manager);
+  const rawCleanup = manager.cleanup.bind(manager);
+  manager.create = async (id, path, opts) => {
+    const info = await rawCreate(id, path, opts);
+    if (info) {
+      // GUI 动态 worktree：宿主固定证据根 + 断言证据在 worktree 外 → 惰性绑定宿主 EvidenceStore
+      if (env === 'tauri' && evidenceRoot) {
+        const { createTauriEvidenceStore } = await import('./tauri-run');
+        try {
+          collector.attachPersistence(createTauriEvidenceStore(evidenceRoot, info.path, 'host'));
+        } catch {
+          // 证据根与 worktree 相交 → 拒绝持久化（forceCleanup 等依赖持久化的操作将不可用，fail-closed）
+        }
+      }
+      await syncRust('register', info.path);
+    }
+    return info;
+  };
+  manager.cleanup = async (id, opts) => {
+    const info = manager.get(id);
+    const cleaned = await rawCleanup(id, opts);
+    if (cleaned && info) await syncRust('unregister', info.path);
+    return cleaned;
+  };
   const session: DevSession = {
     policy,
     manager,
@@ -206,8 +267,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       const untrackedHashes: string[] = [];
       for (const f of untracked) {
         try {
-          const abs = await resolveInside(path, f);
-          const content = await readTextFile(abs);
+          const abs = await resolveP(path, f);
+          const content = await readFileP(abs);
           untrackedHashes.push(`${f}:${hash(content)}`);
         } catch {
           // 读取失败（文件被删等）→ 视为已变化（签名带 marker，拒绝清理）

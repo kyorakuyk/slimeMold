@@ -90,34 +90,75 @@ export function assertEvidenceOutsideWorktree(baseDir: string, worktreePath: str
  * 宿主构造 EvidenceStore（P1 审计修复）：
  * - 不接受 Agent 提供的任意 baseDir——由宿主传入证据根（如 `.slimemold/evidence`）与 worktreePath；
  * - 校验二者不相交（assertEvidenceOutsideWorktree）+ key 合法（evidencePathFor）；
- * - 返回 JSONL 持久化实例。
+ * - 返回 JSONL 持久化实例（Node 版默认；Tauri 走 createHostEvidenceStoreWithFs）。
  */
 export function createHostEvidenceStore(
   evidenceRoot: string,
   worktreePath: string,
   key: string,
 ): EvidencePersistence {
-  assertEvidenceOutsideWorktree(evidenceRoot, worktreePath);
-  return createJsonlEvidenceStore(evidencePathFor(evidenceRoot, key));
+  return createHostEvidenceStoreWithFs(evidenceRoot, worktreePath, key, createNodeJsonlFs());
 }
 
 /**
- * JSONL 证据存储（每行一条证据，追加写）。仅 Node 环境可用（动态 import fs）——
- * 浏览器/WebView 调用即 reject，由宿主在 headless/CI 或 Tauri Rust 通道侧使用。
- * 文件路径必须经 createHostEvidenceStore 由宿主生成——本函数**不导出**，
+ * 宿主构造 EvidenceStore（注入 JsonlFsOps——Tauri GUI 用 plugin-fs）。
+ * 与 createHostEvidenceStore 相同的断言约束；fs 实现由调用方（宿主）注入。
+ */
+export function createHostEvidenceStoreWithFs(
+  evidenceRoot: string,
+  worktreePath: string,
+  key: string,
+  fsOps: JsonlFsOps,
+): EvidencePersistence {
+  assertEvidenceOutsideWorktree(evidenceRoot, worktreePath);
+  return createJsonlEvidenceStore(evidencePathFor(evidenceRoot, key), fsOps);
+}
+
+/** JSONL 底层文件操作抽象：Node（headless）与 Tauri（GUI）各自注入实现。 */
+export interface JsonlFsOps {
+  mkdir(dir: string): Promise<void>;
+  append(abs: string, text: string): Promise<void>;
+  read(abs: string): Promise<string>;
+}
+
+/** Node 版 JsonlFsOps（headless/CI，动态 import node:fs；GUI 走 Tauri 通道不会调用）。 */
+export function createNodeJsonlFs(): JsonlFsOps {
+  return {
+    mkdir: async (dir) => {
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(dir, { recursive: true });
+    },
+    append: async (abs, text) => {
+      const { appendFile } = await import('node:fs/promises');
+      await appendFile(abs, text, 'utf8');
+    },
+    read: async (abs) => {
+      const { readFile } = await import('node:fs/promises');
+      return readFile(abs, 'utf8');
+    },
+  };
+}
+// 注：`node:fs/promises` 会被 vite 按 `node:fs` alias 前缀替换成 shim 路径而报错，
+// 故 createNodeJsonlFs 仅在 headless 使用；GUI 侧使用 createTauriJsonlFs（plugin-fs）。
+// 为避免 vite 构建解析 `node:fs/promises`，此文件不得被 GUI 模块静态 import ——
+// 实际由 session.ts 在 env==='tauri' 时改为走 tauri-run（见 session.initDevSession）。
+
+/**
+ * JSONL 证据存储（每行一条证据，追加写）。
+ * 文件路径必须经 createHostEvidenceStore / createHostEvidenceStoreWithFs 由宿主生成——
  * 调用方无法绕过 baseDir/worktree 约束传入任意 filePath（审计修复）。
  */
-function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
+function createJsonlEvidenceStore(filePath: string, fsOps: JsonlFsOps): EvidencePersistence {
+  const dirname = filePath.includes('/') || filePath.includes('\\')
+    ? filePath.slice(0, Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')))
+    : '.';
   return {
     async append(rec) {
-      const { appendFile, mkdir } = await import('node:fs/promises');
-      const { dirname } = await import('node:path');
-      await mkdir(dirname(filePath), { recursive: true }); // 宿主创建 store 时确保目录存在
-      await appendFile(filePath, `${JSON.stringify(rec)}\n`, 'utf8');
+      await fsOps.mkdir(dirname); // 宿主创建 store 时确保目录存在
+      await fsOps.append(filePath, `${JSON.stringify(rec)}\n`);
     },
     async load() {
-      const { readFile } = await import('node:fs/promises');
-      const text = await readFile(filePath, 'utf8').catch(() => '');
+      const text = await fsOps.read(filePath).catch(() => '');
       return text
         .split('\n')
         .filter((l) => l.trim().length > 0)
@@ -207,6 +248,17 @@ export class EvidenceCollector {
   /** 是否配置了宿主持久化（EvidenceStore）。高风险操作（如 forceCleanup）的审计前提。 */
   hasPersistence(): boolean {
     return this.persistence !== undefined;
+  }
+
+  /**
+   * 一次性注入宿主持久化（GUI 动态 worktree 场景：worktree 创建后才确定证据根，惰性绑定）。
+   * 已有 persistence 时拒绝覆盖（防运行期被替换——审计前提不可变）。
+   */
+  attachPersistence(p: EvidencePersistence): void {
+    if (this.persistence) {
+      throw new Error('EvidenceCollector 已配置宿主持久化，禁止运行期替换');
+    }
+    (this as unknown as { persistence?: EvidencePersistence }).persistence = p;
   }
 
   /** 追加已构造好的证据（批量恢复用；仍强制 capturedBy='host'）。 */
