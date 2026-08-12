@@ -578,8 +578,16 @@ fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
         .map_err(|e| format!("无法解析相对路径（{raw}，基于 {base}）：{e}"))
 }
 
-/// cwd 是否属于主仓库根或已登记 worktree（或其子目录）。支持相对路径（基于主仓库根解析）。
-fn dev_cwd_allowed(cwd: &str) -> Result<(), String> {
+/// cwd 归属：主仓库根 或 已登记 worktree（或其子目录）。
+/// 支持相对路径（基于主仓库根解析）。
+#[derive(PartialEq, Clone)]
+enum DevCwdKind {
+    MainRepo,
+    Worktree(std::path::PathBuf),
+}
+
+/// 判定 cwd 归属（主仓库根 / 已登记 worktree）。
+fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     let p = std::path::Path::new(cwd);
     if p
         .components()
@@ -597,7 +605,7 @@ fn dev_cwd_allowed(cwd: &str) -> Result<(), String> {
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(base));
         if canon == bc {
-            return Ok(());
+            return Ok(DevCwdKind::MainRepo);
         }
     }
     for w in &state.worktrees {
@@ -605,12 +613,35 @@ fn dev_cwd_allowed(cwd: &str) -> Result<(), String> {
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(w));
         if canon == wc || canon.starts_with(&wc) {
-            return Ok(());
+            return Ok(DevCwdKind::Worktree(wc));
         }
     }
     Err(format!(
         "dev_exec: cwd 不属于已登记 worktree 或主仓库根：{cwd}"
     ))
+}
+
+/// 主仓库根允许的 git 子命令（严格只读 / worktree 生命周期管理）。
+/// 主仓库根是宿主受保护目录——禁止 npm/tsx/写入型 git（apply/commit/push/reset 等），
+/// 防止 WebView 直接调 dev_exec 在主仓库执行修改文件的命令。
+fn dev_main_repo_git_allowed(args: &[String]) -> bool {
+    if args.first().map(|s| s.as_str()) != Some("git") {
+        return false;
+    }
+    match args.get(1).map(|s| s.as_str()) {
+        // 只读查询 / worktree 生命周期管理（WorktreeManager 创建/清理所需）
+        Some("rev-parse") => true,
+        Some("worktree") => matches!(
+            args.get(2).map(|s| s.as_str()),
+            Some("list") | Some("add") | Some("remove") | Some("prune") | Some("lock") | Some("unlock")
+        ),
+        Some("branch") => matches!(
+            args.get(2).map(|s| s.as_str()),
+            Some("-D") | Some("-d") | Some("--list") | Some("-a")
+        ),
+        Some("status") | Some("diff") | Some("log") | Some("show") | Some("ls-files") | Some("rev-list") => true,
+        _ => false,
+    }
 }
 
 /// 剥离常见凭据环境变量 + 注入 git 非交互配置（与前端 sanitizeEnv 对齐）。
@@ -666,17 +697,34 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
     })
 }
 
-/// H4 GUI 受控命令执行：命令名白名单 + cwd 归属校验 + 无凭据环境。
-#[tauri::command]
-fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
+/// 判定 dev_exec 是否放行（cwd 归属 + 命令 + 参数）。
+/// 纯函数，便于 Rust 单元测试覆盖主仓库根权限边界。
+fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
     if args.is_empty() {
-        return Err("dev_exec: 空命令".into());
+        return false;
     }
     let name = args[0].as_str();
     if !DEV_ALLOWED_CMDS.contains(&name) {
-        return Err(format!("dev_exec: 命令不在白名单内：{name}"));
+        return false;
     }
-    dev_cwd_allowed(&cwd)?;
+    match kind {
+        DevCwdKind::MainRepo => dev_main_repo_git_allowed(args),
+        DevCwdKind::Worktree(_) => true,
+    }
+}
+
+/// H4 GUI 受控命令执行：
+/// - 命令名白名单（DEV_ALLOWED_CMDS）；
+/// - cwd 归属分级——主仓库根**仅放行严格只读 git 管理命令**（rev-parse/worktree list 等），
+///   完整白名单（npm/tsx/写入型 git）仅在**已登记 worktree** 内可用；
+/// - 剥离凭据 env + 超时。
+#[tauri::command]
+fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
+    let kind = dev_cwd_kind(&cwd)?;
+    if !dev_exec_allowed(&kind, &args) {
+        return Err(format!("dev_exec: 命令在当前 cwd 不被允许：{}", args.join(" ")));
+    }
+    let name = args[0].clone();
     let mut cmd = Command::new(name);
     cmd.current_dir(&cwd);
     for a in &args[1..] {
@@ -701,6 +749,15 @@ fn dev_init_session(base_repo: String) -> Result<(), String> {
         .map_err(|e| format!("dev_init_session: 路径解析失败：{base_repo}（{e}）"))?;
     let mut st = DEV_STATE.lock().unwrap();
     st.base_repo = Some(canon.to_string_lossy().to_string());
+    st.worktrees.clear();
+    Ok(())
+}
+
+/// 清空 H4 宿主登记态（GUI 切换/关闭项目时先调用，避免旧项目登记态泄漏到新项目）。
+#[tauri::command]
+fn dev_clear_session() -> Result<(), String> {
+    let mut st = DEV_STATE.lock().unwrap();
+    st.base_repo = None;
     st.worktrees.clear();
     Ok(())
 }
@@ -815,6 +872,7 @@ pub fn run() {
             grant_project_access,
             dev_exec,
             dev_init_session,
+            dev_clear_session,
             dev_register_worktree,
             dev_unregister_worktree,
             dev_read_file,
@@ -1097,5 +1155,50 @@ mod vault_crypto_roundtrip_tests {
         let (nonce_raw, ct_bytes) = bytes.split_at(12);
         let pt = key.decrypt(Nonce::from_slice(nonce_raw), ct_bytes).unwrap();
         assert_eq!(String::from_utf8(pt).unwrap(), plain, "AES-GCM 往返应还原明文");
+    }
+}
+
+/* ---------------- dev_exec 主仓库根权限边界（P1 审计修复） ---------------- */
+#[cfg(test)]
+mod dev_exec_tests {
+    use super::*;
+
+    fn sv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn main_repo_allows_only_readonly_git() {
+        let main = DevCwdKind::MainRepo;
+        // 只读 git / worktree 生命周期管理 → 放行
+        assert!(dev_exec_allowed(&main, &sv(&["git", "rev-parse", "HEAD"])));
+        assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "list"])));
+        assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])));
+        assert!(dev_exec_allowed(&main, &sv(&["git", "status", "--porcelain"])));
+        assert!(dev_exec_allowed(&main, &sv(&["git", "diff", "--name-only"])));
+        // 非白名单命令名 → 拒绝
+        assert!(!dev_exec_allowed(&main, &sv(&["npm", "run", "build"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["tsx", "scripts/x.ts"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["tsc", "--noEmit"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["cat", "/etc/passwd"])));
+        // 写入型 git → 拒绝
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "apply", "patch.diff"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "commit", "-m", "x"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "push", "origin", "main"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "checkout", "main"])));
+        assert!(!dev_exec_allowed(&main, &sv(&["git", "add", "."])));
+    }
+
+    #[test]
+    fn worktree_allows_full_whitelist() {
+        let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
+        assert!(dev_exec_allowed(&wt, &sv(&["npm", "run", "build"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["tsx", "scripts/x.ts"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "apply", "patch.diff"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "status"])));
+        // 命令名不在白名单 → 仍拒绝
+        assert!(!dev_exec_allowed(&wt, &sv(&["rm", "-rf", "/"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["sudo", "x"])));
     }
 }

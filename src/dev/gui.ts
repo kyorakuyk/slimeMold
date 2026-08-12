@@ -1,9 +1,10 @@
 /**
- * H4 GUI（Tauri）生命周期桥接（Phase 1）：
- * - 打开项目时初始化 DevSession（env='tauri'，命令/文件走 Rust 通道）；
- * - 把 dev.* 节点定义注册进 registryStore（executor 通过 registry 解析执行）；
- * - 把主仓库根同步到 Rust 宿主（dev_init_session）；
- * - 关闭/切换项目时卸载 dev 节点定义并重置 session（防旧 session 污染其它项目）。
+ * H4 GUI（Tauri）生命周期桥接（Phase 1 + 审计 P1 修复）：
+ * - 打开项目时**先**同步 Rust 宿主登记态（await dev_init_session 成功），**之后才**注册 dev.*
+ *   节点定义并初始化 DevSession——避免「前端已注册但宿主未就绪」的窗口期；
+ * - 切换/关闭项目时先 `dev_clear_session` 清空旧登记态再 teardown（防旧项目登记泄漏到新项目）；
+ * - 初始化失败不静默吞掉：暴露 `devGuiStatus`（'idle'|'ready'|'unavailable'），
+ *   面板据此显示「开发能力不可用」。
  *
  * 安全边界：仅 Tauri 下生效（浏览器预览不初始化，dev 节点保持不可用）。
  */
@@ -26,6 +27,16 @@ const DEV_TYPE_IDS = [
   'dev.accept',
 ];
 
+/** GUI DevSession 就绪状态（审计 P1：初始化失败须显式可见，不静默吞异常）。 */
+export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
+let devGuiStatus: DevGuiStatus = 'idle';
+export function getDevGuiStatus(): DevGuiStatus {
+  return devGuiStatus;
+}
+export function setDevGuiStatus(s: DevGuiStatus): void {
+  devGuiStatus = s;
+}
+
 /** 宿主固定证据根：`<项目根>/.slimemold/evidence`（位于 worktree 外；worktree 创建时动态绑定）。 */
 function evidenceRootFor(projectPath: string): string {
   return `${projectPath.replace(/[/\\]+$/, '')}/.slimemold/evidence`;
@@ -33,30 +44,52 @@ function evidenceRootFor(projectPath: string): string {
 
 /**
  * 确保 GUI 下 DevSession 就绪（Tauri + 项目已打开）。
- * 返回 session；非 Tauri 或未打开项目返回 null。
+ * **同步链路**：await dev_init_session 成功 → 初始化 DevSession → 注册 dev.* 定义 → status=ready。
+ * 失败 → status=unavailable，不注册 dev 节点（fail-closed），返回 null。
  */
-export function ensureGuiDevSession(projectPath: string | null): ReturnType<typeof getDevSession> {
+export async function ensureGuiDevSession(projectPath: string | null): Promise<ReturnType<typeof getDevSession>> {
   if (!isTauri) return null;
   if (!projectPath) return null;
   const existing = getDevSession();
   if (existing) return existing;
 
+  // 1) 先同步 Rust 宿主登记态（主仓库根；失败则开发能力不可用）
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('dev_init_session', { baseRepo: projectPath });
+  } catch (e) {
+    // 审计 P1：不静默吞异常——显式标记不可用，GUI 面板提示
+    console.error('[H4] dev_init_session 失败：', e);
+    setDevGuiStatus('unavailable');
+    return null;
+  }
+
+  // 2) 宿主就绪后才初始化 DevSession + 注册 dev 节点
   const session = initDevSession({
     baseRepoPath: projectPath,
     env: 'tauri',
     evidenceRoot: evidenceRootFor(projectPath),
   });
-  // 注册 dev 节点定义（executor 经 registry 解析，与 headless buildDefs 同源）
   useRegistryStore.getState().register(session.defs);
-  // 同步 Rust 宿主登记态（dev_exec 的 cwd 归属校验依赖主仓库根）
-  void import('@tauri-apps/api/core')
-    .then(({ invoke }) => invoke('dev_init_session', { baseRepo: projectPath }))
-    .catch(() => {});
+  setDevGuiStatus('ready');
   return session;
 }
 
-/** 卸载 GUI DevSession：移除 dev 节点定义 + 重置单例（切换/关闭项目时调用）。 */
-export function teardownGuiDevSession(): void {
+/**
+ * 卸载 GUI DevSession：先清空 Rust 宿主登记态（防旧项目泄漏），再移除 dev 节点定义 + 重置单例。
+ * 返回 Promise（await dev_clear_session）。
+ */
+export async function teardownGuiDevSession(): Promise<void> {
+  // 先清空宿主登记态（切换/关闭项目时旧 worktree 登记不得泄漏到新项目）
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('dev_clear_session');
+    } catch (e) {
+      // 清空失败不阻断 teardown（前端 session 已重置；Rust 侧 dev_exec 会 fail-closed）
+      console.error('[H4] dev_clear_session 失败：', e);
+    }
+  }
   const session = getDevSession();
   const typeIds = new Set(
     DEV_TYPE_IDS.filter((id) => useRegistryStore.getState().defs[id]),
@@ -72,4 +105,5 @@ export function teardownGuiDevSession(): void {
       return { defs };
     });
   }
+  setDevGuiStatus('idle');
 }

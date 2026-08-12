@@ -227,9 +227,10 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   useEffect(() => {
-    // Phase 1（H4 GUI）：跟踪当前项目 id，切换/关闭时卸载旧 DevSession，打开时初始化新 DevSession
+    // Phase 1（H4 GUI）：跟踪当前项目 id，切换/关闭时先清 Rust 登记态再卸载旧 DevSession，
+    // 打开时先同步宿主再初始化（audit P1：dev_init_session 成功后才注册 dev 节点）
     let lastProjectId = useWorkflowStore.getState().projectId;
-    if (lastProjectId) ensureGuiDevSession(useWorkflowStore.getState().projectPath);
+    if (lastProjectId) void ensureGuiDevSession(useWorkflowStore.getState().projectPath);
     return useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
@@ -237,8 +238,8 @@ export default function App() {
       unloadProjectCustomNodes();
       if (s.projectId) void scanProjectCustomNodes().catch(() => {});
       if (s.projectId !== lastProjectId) {
-        if (lastProjectId) teardownGuiDevSession();
-        if (s.projectId) ensureGuiDevSession(s.projectPath);
+        if (lastProjectId) void teardownGuiDevSession();
+        if (s.projectId) void ensureGuiDevSession(s.projectPath);
         lastProjectId = s.projectId;
       }
     });

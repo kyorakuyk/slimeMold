@@ -68,6 +68,19 @@
 > - GUI 验收面板 `DevSessionPanel`（StatusBar 新增「开发（H4）」Tab）：worktree 状态 / 证据绑定状态 / 验收记录展示；「批准并清理」（绑定本 worktree 最新通过验收 + 状态签名 + 基线，confirmAndCleanup 原子确认）与「强制清理」（必须填 reason，无宿主持久化拒绝，审计落盘失败拒绝，二次确认）确认入口。
 > - vite.config 增加 `node:fs/promises` alias（避免前缀替换拼出 ENOENT 路径）。
 > 验证：tsc 0 / vitest 587（50 文件，+7 tauri-run）/ build ✓ / cargo check ✓ / headless 样例 6/6 + worktree 无残留。
+>
+> **审计 P1 修复（2026-08-13，二次提交）**：
+> - **Rust dev_exec 主仓库根 cwd 权限收紧**：主仓库根不再放行完整命令白名单——仅允许严格只读
+>   git 管理命令（`git rev-parse`/`git worktree list/add/remove/prune/lock/unlock`/
+>   `git branch -D/-d/--list/-a`/`git status/diff/log/show/ls-files/rev-list`）。
+>   `npm`/`tsx`/`tsc`/`vitest`/`cat` 等及**写入型 git**（apply/commit/push/reset/checkout/add）
+>   在主仓库根**一律拒绝**（fail-closed）；完整白名单仅限已登记 worktree cwd。
+>   新增 Rust 单测 `dev_exec_tests`（8 用例全过）：主仓库 npm/tsx/git apply/commit/push/reset 必须拒绝。
+> - **GUI 生命周期竞态修复**：`ensureGuiDevSession` 改为 **await `dev_init_session` 成功后才注册
+>   dev.* 节点定义**；失败标记 `devGuiStatus='unavailable'`（面板显示「H4 开发能力不可用」，
+>   不静默吞异常）；`teardownGuiDevSession` 先 `await dev_clear_session`（新增 Rust 命令）清空旧登记态，
+>   避免切换项目后旧登记泄漏到新项目。
+> 验证（二次）：tsc 0 / vitest 587 / build ✓ / cargo check ✓ / cargo test 8 ✓ / headless 6/6。
 
 目标：让 GUI 能安全运行 H4 开发节点，并让人工确认真正经过宿主层。
 

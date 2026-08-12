@@ -14,6 +14,7 @@ import { GitBranch, FileText, ShieldCheck, ShieldAlert, Trash2, Check } from 'lu
 import { getDevSession } from '../dev/session';
 import { isTauri, confirmDialog, alertDialog } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
+import { getDevGuiStatus } from '../dev/gui';
 import type { WorktreeInfo } from '../dev/worktree';
 import type { AcceptanceRecord } from '../dev/session';
 
@@ -48,6 +49,16 @@ export function DevSessionPanel() {
 
   const hasSession = !!getDevSession();
   const isReady = isTauri && hasSession;
+
+  // 审计 P1：宿主初始化失败 → 显式「开发能力不可用」，不静默吞异常
+  if (isTauri && getDevGuiStatus() === 'unavailable') {
+    return (
+      <div className="p-3 text-xs" style={{ color: 'var(--sm-err)' }}>
+        H4 开发能力不可用：宿主 DevSession 初始化失败（dev_init_session 未成功）。
+        请重新打开项目或查看日志后重试。
+      </div>
+    );
+  }
 
   const approve = useCallback(async (wt: WorktreeInfo) => {
     const s = getDevSession();
