@@ -1,11 +1,13 @@
 # H4 Self-Development Foundation —— SlimeMold 开发 SlimeMold 的能力层
 
-> 状态：**可执行设计稿**（2026-08-12）。Codex × CodeBuddy 共识：H4 是 H3d 的前提，
-> 不是与 H3d 并列推进；H3 让 SlimeMold 能**编排任务**，H4 让它能在隔离环境中
-> **修改代码并用独立证据验收结果**。
+> 状态：**核心已实现并通过多轮安全审计**（2026-08-13，main @ `00738ff`）。
+> Codex × CodeBuddy 共识：H4 是 H3d 的前提，不是与 H3d 并列推进；H3 让 SlimeMold 能**编排任务**，
+> H4 让它能在隔离环境中**修改代码并用独立证据验收结果**。
 >
-> 代码基线：main @ `c2f860c`（H3c 两项 P0 修复后）。
-> **暂不实现 H4**——本文档完成审查后，先从低风险自举任务开始实现 Foundation。
+> 实现路线：设计稿（c2f860c）→ H4 Foundation 实现（f253856 起）→ 12+ 轮 Codex 安全审计
+> （证据引用制/作用域隔离/cleanup 三重确认门/原子确认/互斥锁/审计落盘强制）→ 自举样例
+> headless 闭环跑通（e719e47 起，持续维护）。
+> 剩余均为 P2（文档整理 / GUI 执行层接入 / 内存态恢复），见文末「审计收口结论与遗留清单」。
 
 ---
 
@@ -170,11 +172,13 @@ autoPush: false,
 ## 8. 落地顺序（用户决策）
 
 ```
-① 人工 H3c 验收（含 failed retry / readonly / stageWfIds 三检查）  ← 进行中
-② 固化本 H4 设计文档并审查
+① 人工 H3c 验收（含 failed retry / readonly / stageWfIds 三检查）   ✅ 完成（2026-08-12）
+② 固化本 H4 设计文档并审查                                       ✅ 完成（f2bfd40）
 ③ 实现 H4 Foundation（DevCapabilityService + WorktreeManager + Evidence + Policy）
-④ 低风险任务第一次自举（闭环验证 + 成本报告）
-⑤ 受限主控 Agent（模板填充式 LLM 草案）→ 再逐步放开至 H3d
+                                                                ✅ 完成（f253856 起 + 12+ 轮审计）
+④ 低风险任务第一次自举（闭环验证 + 成本报告）                    ✅ headless 闭环跑通（e719e47 起）；
+                                                                    GUI 执行层接入后做真实代码修复验收
+⑤ 受限主控 Agent（模板填充式 LLM 草案）→ 再逐步放开至 H3d         ← 未开始（H3d 延后）
 ```
 
 ## 9. 复用清单（降低落地成本）
@@ -207,9 +211,10 @@ src/dev/
   node-run.ts          # ✅ Node 执行层（execFile 命令执行 + 动态 import fs/path）
   worktree.ts          # ✅ WorktreeManager（创建/保留/清理，git runner 可注入）
   shims/node-child-process.ts  # ✅ 浏览器构建占位（GUI 下开发节点禁止执行命令）
-  *.test.ts            # ✅ 各模块单测（23 例）
-src/nodes/dev/         # ⏳ 开发节点薄封装（code.read / code.patch / shell.run / test.run / git.status / git.diff）——下一步
-src/platform/env.ts    # ⏳ Tauri/浏览器执行层分支（MVP 仅 Node/headless；Tauri 复用 run_git，shell 走 Rust 命令待补）
+  *.test.ts            # ✅ 各模块单测
+  session.ts           # ✅ DevSession（resultStore/acceptanceStore/approvedCleanups/confirmAndCleanup/forceCleanup）
+src/nodes/dev/         # ✅ 11 个开发节点薄封装（worktree.*/code.*/shell/test/git.*/evidence/accept）——headless 已跑通
+src/platform/env.ts    # ⏳ Tauri GUI 执行层分支（headless/CI 已可用；GUI 编排里的 dev 节点暂禁用，走 GUI 接入）
 docs/H4_*              # ✅ 本设计文档（随实现修订）
 ```
 
@@ -230,10 +235,11 @@ docs/H4_*              # ✅ 本设计文档（随实现修订）
 - `worktree.ts`：`WorktreeManager`（rev-parse 校验、worktree add/remove/分支清理、清理失败保留现场）。
 - vite alias `node:child_process` → shim（浏览器构建不炸；GUI 调用即抛错）。
 
-待落地（下一步）：
-- Tauri/浏览器执行层分支（MVP 仅 Node/headless 可真实执行；GUI 编排里的开发节点需显式
-  降级/禁用并提示走 headless）；
-- 第一轮低风险自举任务（worktree → code.patch → test.run → Evidence → evaluate → 用户审查 diff）。
+待落地（GUI 接入）：
+- **Tauri GUI 执行层**：dev 节点 GUI 可用（当前 WebView 下经 shim 抛错禁用）；
+  approveCleanup / forceCleanup 走 GUI 确认框；证据 JSONL 持久化扩展恢复验收链。
+- **真实代码修复自举验收**：第一轮低风险自举任务已在 headless 闭环跑通（worktree → code.patch →
+  test.run → Evidence → evaluate → 宿主收尾清理），GUI 接入后对真实代码做一次完整验收。
 
 ### 开发节点薄封装（2026-08-12，✅ 已落地）
 
@@ -263,8 +269,9 @@ docs/H4_*              # ✅ 本设计文档（随实现修订）
   修改不依赖 base/head commit）；codePatch 支持新增文件（read ENOENT → 空串）。
 
 **第一轮自举验证结论**：目标 → worktree → 修改 → 测试/证据 → 验收 → 清理 的受限执行链
-已在真实 git 环境下跑通。下一步：Tauri 执行层分支（GUI 编排接入 dev 能力）或直接扩展
-自举任务到真实低风险代码修复。
+已在真实 git 环境下跑通（后续样例收敛为 6 节点，宿主收尾清理绑定验收，持续维护）。
+剩余为 GUI 执行层接入（dev 节点 GUI 可用 + approveCleanup/forceCleanup 走 GUI 确认框）与
+真实低风险代码修复验收。
 
 ### P0 宿主信任边界修复（2026-08-12，✅ 已落地）
 
@@ -359,7 +366,9 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
   （`--dev-approve-cleanup=dev-wt-demo` 等号形式 + confirmAndCleanup 原子确认，worktree 无残留）。
 - 遗留（次要）：resultStore/acceptanceStore 仍内存态，进程重启后 cleanup 审批链不可恢复——
   GUI 接入时用证据 JSONL 持久化扩展。GUI 执行层接入（dev 节点 GUI 可用 + approveCleanup/
-  forceCleanup 走 GUI 确认）仍是下一步。
+  forceCleanup 走 GUI 确认框）仍是下一步——**注意：宿主侧 forceCleanup 已实现**
+  （见下文「宿主级清理互斥锁 + forceCleanup 审计落盘」「forceCleanup 强制宿主持久化」），
+  尚未实现的是「GUI 人工触发入口」，不等同于 forceCleanup 未落地。
 
 ### 宿主级清理互斥锁 + forceCleanup 审计落盘（2026-08-13，✅ 已落地）
 
@@ -390,6 +399,25 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
   验证：tsc 0 / vitest 580（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓
   （EvidenceStore 落盘 + confirmAndCleanup 原子确认 + 互斥，worktree 无残留）。
 
+## 审计收口结论与遗留清单（2026-08-13，Codex × CodeBuddy 共识）
+
+**结论**：H4 核心安全边界已基本收口（远端 @ `00738ff` 复核通过）。当前无新的明显 P0/P1
+安全绕过；forceCleanup 无持久化拒绝、审计落盘失败拒绝、宿主互斥锁、cleanup 三重绑定
+（验收/基线/状态签名）均有效。**可进入 GUI 验收与产品流程整合；暂不再对 cleanup 做高风险改造。**
+
+剩余 P2（按优先级）：
+
+1. **headless EvidenceStore 路径静态推断**：headless 仅从 `dev.worktree.create` 的静态
+   `params.path` 推断 EvidenceStore 路径（`<项目根>/.slimemold/evidence/host.jsonl`）。
+   若工作流通过输入/变量**动态创建 worktree**，则安全失败（forceCleanup 拒绝、不误删），
+   但无法使用强制清理。→ 归属 GUI 接入时按实际 worktree 校验。
+2. **文档一致性**：本文档早期章节已同步为「核心已实现 + 剩余 GUI 接入」，消除
+   「forceCleanup 仍是下一步」类过时表述。✅ 本提交完成。
+3. **resultStore / acceptanceStore / cleanup approval 内存态**：进程重启后验收链
+   （resultId 引用、验收记录、审批）无法恢复。→ GUI 接入时用证据 JSONL 持久化扩展
+   （复用 EvidenceCollector persistence / createHostEvidenceStore，宿主独占路径 + 加载恢复）。
+
 ---
 
-*生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*
+*生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。
+最新实现基线：main @ 00738ff（2026-08-13，forceCleanup 强制宿主持久化）。*
