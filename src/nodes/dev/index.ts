@@ -176,29 +176,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
-      // P1（审计）确认门：全部绑定必须存在且校验通过，缺一不可。
-      const approval = session.getCleanupApproval(path);
-      const info = manager.get(path);
-      let confirmed = false;
-      if (approval && !approval.consumed) {
-        // 正常清理必须绑定 acceptanceId + stateSignature + baseRevision
-        if (approval.acceptanceId && approval.stateSignature && approval.baseRevision) {
-          const acc = session.getAcceptance(approval.acceptanceId);
-          const accOk =
-            !!acc &&
-            acc.passed &&
-            acc.orchestrationId === approval.orchestrationId &&
-            acc.stageId === approval.stageId &&
-            normalizePath(acc.worktreePath) === normalizePath(path);
-          const revOk = info?.baseRevision === approval.baseRevision;
-          const sig = await session.computeWorktreeSignature(path);
-          const sigOk = sig === approval.stateSignature;
-          confirmed = accOk && revOk && sigOk;
-        }
-      }
-      const cleaned = await manager.cleanup(path, { confirm: confirmed });
-      // P1：审批一次性——清理成功后立即消费，防止宿主批准后重复清理
-      if (cleaned) session.consumeCleanup(path);
+      // P1（审计）：收口到宿主原子确认 API——验收校验 + 签名重算 + 基线校验 + 清理 + 消费
+      // 全部在 confirmAndCleanup 内完成，消除「算签名→删除」之间的 TOCTOU 窗口。
+      const cleaned = await session.confirmAndCleanup(path);
       return { cleaned };
     },
   };

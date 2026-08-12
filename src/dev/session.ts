@@ -111,6 +111,13 @@ export interface DevSession {
   /** 清理成功后消费审批（一次性）。 */
   consumeCleanup(path: string): void;
   /**
+   * 原子式确认清理（P1 审计：消除签名计算与删除之间的 TOCTOU 窗口）。
+   * 单 API 内收口：取审批 → 重新校验验收三元组 + 重新计算状态签名 + 校验基线 →
+   * 全部通过后立即 cleanup → 成功后消费审批。
+   * 节点与 headless 收尾统一走这里，不在外部「先算签名再 cleanup」。
+   */
+  confirmAndCleanup(path: string): Promise<boolean>;
+  /**
    * 强制清理（P1：高风险专用 API，仅 UI/宿主审批层人工触发）。
    * 绕过「绑定验收/状态签名」的正常确认门，但必须显式给出 reason（记录审计）；
    * 节点/工作流不可触达。返回是否清理成功。
@@ -166,8 +173,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       return rec;
     },
     nextAcceptanceId() {
-      // 不可预测且唯一：时间戳 + 随机
-      const rand = Math.random().toString(36).slice(2, 10);
+      // P1（审计）：crypto.randomUUID 作为安全审计凭证（Math.random 仅普通唯一性）
+      const rand =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID().slice(0, 8)
+          : Math.random().toString(36).slice(2, 10);
       return `acc-${Date.now().toString(36)}-${rand}`;
     },
     recordAcceptance(rec) {
@@ -235,6 +245,28 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         throw new Error('forceCleanup 必须提供 reason（审计要求）');
       }
       const cleaned = await manager.cleanup(path, { confirm: true });
+      return cleaned;
+    },
+    async confirmAndCleanup(path) {
+      // P1（审计）：原子确认门——取审批 → 重新校验验收三元组 + 重新计算状态签名 + 校验基线 →
+      // 全部通过立即 cleanup → 成功后消费审批。签名计算与删除之间不暴露窗口给外部。
+      const approval = this.approvedCleanups.get(normalizeAbsolutePath(path));
+      const info = this.manager.get(path);
+      if (!approval || approval.consumed) return false;
+      if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
+      const acc = this.getAcceptance(approval.acceptanceId);
+      const accOk =
+        !!acc &&
+        acc.passed &&
+        acc.orchestrationId === approval.orchestrationId &&
+        acc.stageId === approval.stageId &&
+        normalizeAbsolutePath(acc.worktreePath) === normalizeAbsolutePath(path);
+      const revOk = info?.baseRevision === approval.baseRevision;
+      const sig = await this.computeWorktreeSignature(path);
+      const sigOk = sig === approval.stateSignature;
+      if (!accOk || !revOk || !sigOk) return false;
+      const cleaned = await this.manager.cleanup(path, { confirm: true });
+      if (cleaned) this.consumeCleanup(path);
       return cleaned;
     },
   };

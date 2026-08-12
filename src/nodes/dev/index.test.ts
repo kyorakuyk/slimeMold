@@ -113,6 +113,25 @@ function fakeSession(opts: { failGitStatus?: boolean } = {}): DevSession {
       if (!reason.trim()) throw new Error('forceCleanup 必须提供 reason');
       return manager.cleanup(path, { confirm: true });
     },
+    async confirmAndCleanup(path) {
+      const approval = this.approvedCleanups.get(norm(path));
+      const info = manager.get(path);
+      if (!approval || approval.consumed) return false;
+      if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
+      const acc = this.acceptanceStore.get(approval.acceptanceId);
+      const accOk =
+        !!acc &&
+        acc.passed &&
+        acc.orchestrationId === approval.orchestrationId &&
+        acc.stageId === approval.stageId &&
+        norm(acc.worktreePath) === norm(path);
+      const revOk = info?.baseRevision === approval.baseRevision;
+      const sigOk = `sig-${norm(path)}` === approval.stateSignature;
+      if (!accOk || !revOk || !sigOk) return false;
+      const cleaned = await manager.cleanup(path, { confirm: true });
+      if (cleaned) this.consumeCleanup(path);
+      return cleaned;
+    },
   };
   return session;
 }

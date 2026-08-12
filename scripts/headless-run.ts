@@ -159,9 +159,10 @@ async function hostCleanupApproval(argv: string[]): Promise<void> {
       stateSignature: sig,
       baseRevision: info.baseRevision,
     });
-    const cleaned = await s.manager.cleanup(p, { confirm: true });
+    // P1（审计）：收口到宿主原子确认 API——confirmAndCleanup 内部重新校验
+    // 验收三元组 + 重算状态签名 + 基线 + 清理 + 消费（消除 TOCTOU 窗口）。
+    const cleaned = await s.confirmAndCleanup(p);
     if (cleaned) {
-      s.consumeCleanup(p);
       console.log(`  ✔ 宿主批准并清理 worktree：${p}（绑定验收 ${acc.acceptanceId}）`);
     } else {
       console.log(`  ⊘ 清理失败：${p}`);

@@ -347,6 +347,20 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
   验证：tsc 0 / vitest 575（49 文件，+2）/ build ✓ / headless 样例 6/6 ✓（等号参数 + 宿主收尾清理，
   worktree 无残留）。
 
+### cleanup 原子确认 API + crypto 凭证（2026-08-13，✅ 已落地）
+
+- **P1 TOCTOU 收口**：新增 `DevSession.confirmAndCleanup(path)` 原子 API——单入口内
+  取审批 → 校验验收三元组 + **重新计算状态签名** + 校验基线 → 全部通过立即 cleanup → 成功后
+  消费审批。dev.worktree.cleanup 节点与 headless 宿主收尾均改走它，不再「外部先算签名再删除」，
+  消除签名计算与实际删除之间的窗口。
+- **P2 acceptanceId 用 crypto.randomUUID**：作为安全审计凭证（Math.random 仅普通唯一性），
+  Node/WebView 下优先 crypto.randomUUID（8 字符前缀），无则回退。
+- 验证：tsc 0 / vitest 575（49 文件）/ build ✓ / headless 样例 6/6 ✓
+  （`--dev-approve-cleanup=dev-wt-demo` 等号形式 + confirmAndCleanup 原子确认，worktree 无残留）。
+- 遗留（次要）：resultStore/acceptanceStore 仍内存态，进程重启后 cleanup 审批链不可恢复——
+  GUI 接入时用证据 JSONL 持久化扩展。GUI 执行层接入（dev 节点 GUI 可用 + approveCleanup/
+  forceCleanup 走 GUI 确认）仍是下一步。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*
