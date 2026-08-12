@@ -297,6 +297,19 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
 - 单测 +3（跨 worktree 拒 / 缺 worktreePath 拒 / 空 diff 登记 failed / 审批消费后不可重复清理）。
   验证：tsc 0 / vitest 571（49 文件，+1）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
 
+### P1 任务/阶段级证据隔离（2026-08-12，✅ 已落地）
+
+- **resultId 绑定 orchestrationId/stageId**：HostResultRecord 增加 orchestrationId/stageId；
+  执行节点登记时经 scopeOf 读取输入/参数携带任务与阶段身份；evidence.add 三重作用域校验
+  （worktree + orchestrationId + stageId 全须一致）——**同 worktree 跨编排/跨阶段借用 resultId 也拒绝**。
+- **accept 按作用域过滤证据**：改为 collector.flushAndByScope({ orchestrationId, stageId,
+  worktreePath })——验收前强制 flush（落盘失败 throw），且只采纳当前任务+阶段+工作区的宿主证据，
+  **旧任务/其他阶段的通过证据不满足当前验收规则**（跨任务串证据被杜绝）。
+- **cleanup 审批基线约束**：isCleanupApprovedForRevision 校验审批绑定的 baseRevision 与当前
+  worktree 基线一致（防 worktree 被再次修改后清理）；manager.get(path).baseRevision 提供当前基线。
+- 单测 +4：跨编排引用拒 / 跨阶段引用拒 / 不同阶段无证据验收失败（不串旧证据）/ 审批基线不匹配拒。
+  验证：tsc 0 / vitest 571（49 文件）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

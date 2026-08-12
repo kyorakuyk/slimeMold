@@ -70,6 +70,16 @@ function nextResultId(): string {
   return `hr-${Date.now().toString(36)}-${resultSeq.toString(36)}`;
 }
 
+/** 从输入/参数读取可选的执行作用域（orchestrationId/stageId），用于登记宿主结果。 */
+function scopeOf(inputs: Record<string, unknown>, params: Record<string, unknown>): {
+  orchestrationId?: string;
+  stageId?: string;
+} {
+  const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId) || undefined;
+  const stageId = str(inputs.stageId ?? params.stageId) || undefined;
+  return { orchestrationId, stageId };
+}
+
 /**
  * 生成开发节点定义（绑定到给定 session）。
  * 节点 execute 只做「薄封装」——安全检查全部下沉 service/manager/collector。
@@ -145,8 +155,11 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.worktreePath ?? params.worktreePath);
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
-      // P0：确认状态只能由宿主 approveCleanup 设置，节点参数不可伪造
-      const cleaned = await manager.cleanup(path, { confirm: session.isCleanupApproved(path) });
+      // P0：确认状态只能由宿主 approveCleanup 设置，节点参数不可伪造；
+      // P1：审批若绑定基线，须与当前 worktree 基线一致（防 worktree 被再次修改后清理）
+      const info = manager.get(path);
+      const approved = session.isCleanupApprovedForRevision(path, info?.baseRevision);
+      const cleaned = await manager.cleanup(path, { confirm: approved });
       // P1：审批一次性——清理成功后立即消费，防止宿主批准后重复清理
       if (cleaned) session.consumeCleanup(path);
       return { cleaned };
@@ -219,6 +232,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         contentHash: r.contentHash,
         summary: `已对 ${path} 应用受控 unified diff（${(patch.match(/^\+/gm) ?? []).length} 行新增）`,
         worktreePath: cwd,
+        ...scopeOf(inputs, params),
       });
       return { ok: true, contentHash: r.contentHash ?? '', resultId };
     },
@@ -260,6 +274,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
         worktreePath: cwd,
+        ...scopeOf(inputs, params),
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -301,6 +316,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
         worktreePath: cwd,
+        ...scopeOf(inputs, params),
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -332,6 +348,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: 'git status --porcelain',
         summary: 'git status 执行完成',
         worktreePath: cwd,
+        ...scopeOf(inputs, params),
       });
       return { stdout: r.stdout, resultId };
     },
@@ -374,6 +391,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: `git diff ${baseRef ?? 'HEAD'}`,
         summary: hasChange ? '存在未提交 diff' : '无 diff 改动（空 diff 不通过验收）',
         worktreePath: cwd,
+        ...scopeOf(inputs, params),
       });
       return { stdout: r.stdout, resultId };
     },
@@ -412,18 +430,25 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
       const host = resultStore.get(resultId);
       if (!host) throw nodeError(`引用的宿主结果不存在：${resultId}（证据必须来自真实执行）`);
-      // P1：结果作用域校验——引用结果必须属于当前 worktree，防跨编排/跨任务引用
-      if (host.worktreePath) {
-        const a = normalizePath(host.worktreePath);
-        if (!worktreePath || normalizePath(worktreePath) !== a) {
-          throw nodeError(
-            `引用的宿主结果不属于当前 worktree：result ${a} ≠ 输入 ${worktreePath}（禁止跨任务引用证据）`,
-          );
-        }
+      // P1（审计）：结果作用域三重校验——worktree + orchestrationId + stageId 全须一致，
+      // 防同 worktree 下跨编排/跨阶段借用 resultId 伪造自己证据。
+      if (host.worktreePath && normalizePath(host.worktreePath) !== normalizePath(worktreePath || '')) {
+        throw nodeError(
+          `引用的宿主结果不属于当前 worktree：${host.worktreePath} ≠ ${worktreePath}`,
+        );
+      }
+      if (host.orchestrationId && host.orchestrationId !== orchestrationId) {
+        throw nodeError(
+          `引用的宿主结果不属于当前编排：${host.orchestrationId} ≠ ${orchestrationId}（禁止跨任务引用证据）`,
+        );
+      }
+      if (host.stageId && host.stageId !== stageId) {
+        throw nodeError(`引用的宿主结果不属于当前阶段：${host.stageId} ≠ ${stageId}`);
       }
       const rec = await collector.addAsync({
         orchestrationId,
         stageId,
+        worktreePath,
         kind: host.kind,
         status: host.status,
         summary: host.summary,
@@ -442,10 +467,12 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     role: 'verifier',
     whenToUse: '自举任务收尾：按验收规则 + 宿主证据判定通过/失败（changedProtectedPaths 非空恒失败）。',
     description:
-      '运行 evaluateDevAcceptance。P0 审计：证据**只读 DevSession.collector 宿主采集的证据**（不接受外部'
-      + '覆盖）；changedProtectedPaths 由宿主根据真实 gitChangedFiles() + policy 计算（不接受输入伪造）。'
-      + '保护路径变更恒失败，需人工 diff 审查。',
+      '运行 evaluateDevAcceptance。P0/P1 审计：证据**只读当前任务/阶段/工作区作用域内**的宿主采集证据'
+      + '（flushAndByScope，不接受外部覆盖，防跨任务串证据）；changedProtectedPaths 由宿主真实'
+      + ' gitChangedFiles() × policy 计算（不接受输入伪造）。保护路径变更恒失败，需人工 diff 审查。',
     inputs: [
+      { id: 'orchestrationId', label: '编排 ID', type: T },
+      { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'worktreePath', label: '工作区路径', type: T },
       { id: 'rules', label: '验收规则（JSON 数组）', type: J },
     ],
@@ -456,17 +483,21 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'changedProtectedPaths', label: '保护路径变更', type: L },
     ],
     params: [
+      { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
+      { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
     ],
     async execute(inputs, params) {
+      const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
+      const stageId = str(inputs.stageId ?? params.stageId);
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
       if (!cwd) throw nodeError('accept 需要 worktreePath');
-      // P0：证据只读宿主采集（collector 保证 capturedBy='host'），不接受外部证据覆盖
-      const evidence = collector.toJSON();
       const rules = Array.isArray(inputs.rules) && inputs.rules.length > 0
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);
+      // P0/P1：证据按当前任务+阶段+工作区作用域过滤，且验收前强制 flush（落盘失败 throw）
+      const evidence = await collector.flushAndByScope({ orchestrationId, stageId, worktreePath: cwd });
       // P0：changedProtectedPaths 由宿主真实计算（gitChangedFiles × policy），不接受输入
       const changedFiles = await service.gitChangedFiles({ cwd });
       const changed = collectChangedProtectedPaths(session.policy, changedFiles);

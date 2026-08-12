@@ -34,6 +34,9 @@ export interface HostResultRecord {
   contentHash?: string;
   /** P1：结果所属 worktree（evidence.add 作用域校验） */
   worktreePath?: string;
+  /** P1（审计）：结果所属任务与阶段——同 worktree 跨编排引用也拒绝 */
+  orchestrationId?: string;
+  stageId?: string;
 }
 
 /**
@@ -62,6 +65,8 @@ export interface DevSession {
   /** 宿主审批：批准清理某 worktree（仅 UI/宿主审批层调用，节点/工作流不可触达）。 */
   approveCleanup(path: string, opts?: { baseRevision?: string; acceptanceId?: string }): void;
   isCleanupApproved(path: string): boolean;
+  /** 审批是否有效且（若绑定基线）与当前 worktree 基线一致。 */
+  isCleanupApprovedForRevision(path: string, currentBaseRevision?: string): boolean;
   /** 清理成功后消费审批（一次性）。 */
   consumeCleanup(path: string): void;
   defs: NodeDefinition[];
@@ -112,6 +117,16 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     isCleanupApproved(path) {
       const a = this.approvedCleanups.get(normalizeAbsolutePath(path));
       return !!a && !a.consumed;
+    },
+    isCleanupApprovedForRevision(path, currentBaseRevision) {
+      const a = this.approvedCleanups.get(normalizeAbsolutePath(path));
+      if (!a || a.consumed) return false;
+      // 审批绑定了基线时，当前 worktree 基线必须一致（防 worktree 被再次修改后清理）
+      if (a.baseRevision && currentBaseRevision) {
+        return a.baseRevision === currentBaseRevision;
+      }
+      // 无法取得基线（如不传）→ 视为有效（保守方仍要求未 consumed）
+      return true;
     },
     consumeCleanup(path) {
       const key = normalizeAbsolutePath(path);

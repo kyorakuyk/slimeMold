@@ -74,6 +74,12 @@ function fakeSession(): DevSession {
       const a = this.approvedCleanups.get(path.replace(/\\/g, '/').replace(/\/+$/, ''));
       return !!a && !a.consumed;
     },
+    isCleanupApprovedForRevision(path, currentBaseRevision) {
+      const a = this.approvedCleanups.get(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+      if (!a || a.consumed) return false;
+      if (a.baseRevision && currentBaseRevision) return a.baseRevision === currentBaseRevision;
+      return true;
+    },
     consumeCleanup(path) {
       const key = path.replace(/\\/g, '/').replace(/\/+$/, '');
       const a = this.approvedCleanups.get(key);
@@ -173,11 +179,15 @@ describe('H4 dev nodes', () => {
     ).rejects.toThrow(/宿主结果不存在/);
     expect(session.collector.records).toHaveLength(0);
 
-    // P0：先经 test.run 登记宿主结果，再引用它 → 证据 status/summary/exitCode 全部来自宿主
+    // P0：先经 test.run 登记宿主结果（带任务/阶段作用域），再引用它 → 证据全部来自宿主
     const create = byId.get('dev.worktree.create')!;
     await create.execute({ path: '/repo/wt/e1' }, {}, {} as never);
     const test = byId.get('dev.test.run')!;
-    const t = await test.execute({ worktreePath: '/repo/wt/e1', cmd: ['tsc', '--noEmit'] }, {}, {} as never);
+    const t = await test.execute(
+      { worktreePath: '/repo/wt/e1', cmd: ['tsc', '--noEmit'], orchestrationId: 'o1', stageId: 's1' },
+      {},
+      {} as never,
+    );
     expect(t.resultId).toBeTruthy();
     const ev = await evAdd.execute(
       { orchestrationId: 'o1', stageId: 's1', resultId: t.resultId, worktreePath: '/repo/wt/e1' },
@@ -188,7 +198,7 @@ describe('H4 dev nodes', () => {
     expect(session.collector.records).toHaveLength(1);
     expect(session.collector.records[0].capturedBy).toBe('host');
     expect(session.collector.records[0].command).toBe('tsc --noEmit');
-    // P1：跨 worktree 引用宿主结果 → 拒绝（证据不得跨任务/跨工作区）
+    // P1：跨 worktree 引用宿主结果 → 拒绝（证据不得跨工作区）
     await expect(
       evAdd.execute(
         { orchestrationId: 'o2', stageId: 's2', resultId: t.resultId, worktreePath: '/repo/wt/other' },
@@ -200,18 +210,42 @@ describe('H4 dev nodes', () => {
     await expect(
       evAdd.execute({ orchestrationId: 'o2', stageId: 's2', resultId: t.resultId }, {}, {} as never),
     ).rejects.toThrow(/不属于当前 worktree/);
+    // P1（审计）：同 worktree 跨编排引用 → 拒绝（host 绑定 o1/s1）
+    await expect(
+      evAdd.execute(
+        { orchestrationId: 'o2', stageId: 's1', resultId: t.resultId, worktreePath: '/repo/wt/e1' },
+        {},
+        {} as never,
+      ),
+    ).rejects.toThrow(/不属于当前编排/);
+    // P1（审计）：同编排跨阶段引用 → 拒绝
+    await expect(
+      evAdd.execute(
+        { orchestrationId: 'o1', stageId: 's2', resultId: t.resultId, worktreePath: '/repo/wt/e1' },
+        {},
+        {} as never,
+      ),
+    ).rejects.toThrow(/不属于当前阶段/);
 
-    // accept：只读宿主 collector 证据 + 宿主计算 changedProtectedPaths（不接受输入覆盖）
+    // accept：只读宿主 collector 按作用域过滤证据 + 宿主计算 changedProtectedPaths
     const accept = byId.get('dev.accept')!;
     const rules = [{ id: 'typecheck', kind: 'test', command: 'tsc --noEmit' }];
     const ok = await accept.execute(
-      { worktreePath: '/repo/wt/e1', rules },
+      { orchestrationId: 'o1', stageId: 's1', worktreePath: '/repo/wt/e1', rules },
       {},
       {} as never,
     );
     expect(ok.passed).toBe(true);
     // 伪造保护路径输入被忽略——宿主 gitChangedFiles 计算（fake 返回 docs/new.md，非 protected → 无触碰）
     expect(ok.changedProtectedPaths).toEqual([]);
+    // P1（审计）：不同阶段/编排的作用域无证据 → 验收失败（不串旧任务证据）
+    const otherStage = await accept.execute(
+      { orchestrationId: 'o1', stageId: 's9', worktreePath: '/repo/wt/e1', rules },
+      {},
+      {} as never,
+    );
+    expect(otherStage.passed).toBe(false);
+    expect(otherStage.failedChecks).toContain('typecheck');
   });
 
   it('dev.worktree.cleanup：未经宿主审批拒绝（节点参数无法伪造 confirm）；审批后清理', async () => {
@@ -224,7 +258,7 @@ describe('H4 dev nodes', () => {
     const noApproval = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, { confirm: true }, {} as never);
     expect(noApproval.cleaned).toBe(false);
     expect(session.manager.isTracked('/repo/wt/t4')).toBe(true);
-    // 宿主审批后清理
+    // 宿主审批后清理（未绑基线 → 有效）
     session.approveCleanup('/repo/wt/t4');
     const approved = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, {}, {} as never);
     expect(approved.cleaned).toBe(true);
@@ -235,6 +269,11 @@ describe('H4 dev nodes', () => {
     const second = await cleanup.execute({ worktreePath: '/repo/wt/t5' }, {}, {} as never);
     expect(second.cleaned).toBe(false); // 未审批
     expect(session.manager.isTracked('/repo/wt/t5')).toBe(true);
+    // P1（审计）：审批绑定基线后，当前 worktree 基线不一致 → 拒绝清理
+    session.approveCleanup('/repo/wt/t5', { baseRevision: 'rev-a', acceptanceId: 'acc-1' });
+    expect(session.isCleanupApprovedForRevision('/repo/wt/t5', 'rev-b')).toBe(false);
+    expect(session.isCleanupApprovedForRevision('/repo/wt/t5', 'rev-a')).toBe(true);
+    expect(session.isCleanupApprovedForRevision('/repo/wt/unknown', 'rev-a')).toBe(false);
   });
 
   it('P1：git.diff 无实际变更登记 failed——空 diff 不通过验收', async () => {

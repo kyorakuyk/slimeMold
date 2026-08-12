@@ -214,6 +214,24 @@ export class EvidenceCollector {
     return this._records.filter((r) => r.stageId === stageId);
   }
 
+  /** 证据作用域过滤（P1 审计）：任务 + 阶段 + 可选 worktree——防跨任务/跨阶段/跨工作区串证据。 */
+  byScope(scope: { orchestrationId?: string; stageId?: string; worktreePath?: string }): EvidenceRecord[] {
+    return this._records.filter(
+      (r) =>
+        (!scope.orchestrationId || r.orchestrationId === scope.orchestrationId) &&
+        (!scope.stageId || r.stageId === scope.stageId) &&
+        (!scope.worktreePath || r.worktreePath === scope.worktreePath),
+    );
+  }
+
+  /** 验收前强制 flush + 按作用域取证据（落盘失败 throw，未落盘的证据不作为验收依据）。 */
+  async flushAndByScope(
+    scope: { orchestrationId?: string; stageId?: string; worktreePath?: string },
+  ): Promise<EvidenceRecord[]> {
+    await this.flush();
+    return this.byScope(scope);
+  }
+
   clear(): void {
     this._records = [];
     this._pending = [];

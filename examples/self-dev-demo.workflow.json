@@ -46,6 +46,8 @@
       "type": "dev.accept",
       "label": "确定性验收",
       "params": {
+        "orchestrationId": "self-dev-demo",
+        "stageId": "patch",
         "worktreePath": ".codebuddy/dev-wt-demo",
         "rules": [{ "id": "diff-applied", "kind": "diff" }]
       }
