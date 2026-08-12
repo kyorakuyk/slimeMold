@@ -26,6 +26,11 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : String(v);
 }
 
+/** 规范化路径（POSIX 分隔符、去尾 /；作用域一致性比较用）。 */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 /** 从输入取字符串数组（支持数组 / JSON 数组字符串 / 逗号分隔）。 */
 function strList(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? x : String(x ?? '')));
@@ -142,6 +147,8 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       if (!path) throw nodeError('worktree.cleanup 需要 worktreePath');
       // P0：确认状态只能由宿主 approveCleanup 设置，节点参数不可伪造
       const cleaned = await manager.cleanup(path, { confirm: session.isCleanupApproved(path) });
+      // P1：审批一次性——清理成功后立即消费，防止宿主批准后重复清理
+      if (cleaned) session.consumeCleanup(path);
       return { cleaned };
     },
   };
@@ -211,6 +218,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         status: 'passed',
         contentHash: r.contentHash,
         summary: `已对 ${path} 应用受控 unified diff（${(patch.match(/^\+/gm) ?? []).length} 行新增）`,
+        worktreePath: cwd,
       });
       return { ok: true, contentHash: r.contentHash ?? '', resultId };
     },
@@ -251,6 +259,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         exitCode: r.exitCode,
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
+        worktreePath: cwd,
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -291,6 +300,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         exitCode: r.exitCode,
         command: cmd.join(' '),
         summary: `${cmd[0]} ${cmd.slice(1).join(' ')} 退出码 ${r.exitCode}`,
+        worktreePath: cwd,
       });
       return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, resultId };
     },
@@ -321,6 +331,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         exitCode: r.exitCode,
         command: 'git status --porcelain',
         summary: 'git status 执行完成',
+        worktreePath: cwd,
       });
       return { stdout: r.stdout, resultId };
     },
@@ -351,15 +362,18 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       if (!cwd) throw nodeError('git.diff 需要 worktreePath');
       const baseRef = str(inputs.baseRef ?? params.baseRef) || undefined;
       const r = await service.gitDiff(baseRef, { cwd });
-      // P0：登记宿主 diff 结果（真实执行），供 evidence.add 引用
+      // P1 修复：git diff 无改动时退出码也是 0，但必须有实际变更才算 passed——
+      // 空 diff 登记为 failed，evaluator 的 diff 规则（存在 passed 证据）才不会误通过。
+      const hasChange = r.stdout.trim().length > 0;
       const resultId = nextResultId();
       resultStore.set(resultId, {
         resultId,
         kind: 'diff',
-        status: r.exitCode === 0 ? 'passed' : 'failed',
+        status: hasChange ? 'passed' : 'failed',
         exitCode: r.exitCode,
         command: `git diff ${baseRef ?? 'HEAD'}`,
-        summary: r.stdout.trim() ? '存在未提交 diff' : '无 diff 改动',
+        summary: hasChange ? '存在未提交 diff' : '无 diff 改动（空 diff 不通过验收）',
+        worktreePath: cwd,
       });
       return { stdout: r.stdout, resultId };
     },
@@ -379,22 +393,34 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'orchestrationId', label: '编排 ID', type: T },
       { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'resultId', label: '宿主结果 ID（来自 dev.* 执行节点）', type: T },
+      { id: 'worktreePath', label: '工作区路径（作用域校验）', type: T },
     ],
     outputs: [{ id: 'evidenceId', label: '证据 ID', type: T }],
     params: [
       { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'resultId', label: '宿主结果 ID（兜底）', type: 'text', default: '' },
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const resultId = str(inputs.resultId ?? params.resultId);
+      const worktreePath = str(inputs.worktreePath ?? params.worktreePath);
       if (!orchestrationId || !stageId) throw nodeError('evidence.add 需要 orchestrationId 与 stageId');
       if (!resultId) throw nodeError('evidence.add 需要引用宿主结果 resultId');
       // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
       const host = resultStore.get(resultId);
       if (!host) throw nodeError(`引用的宿主结果不存在：${resultId}（证据必须来自真实执行）`);
+      // P1：结果作用域校验——引用结果必须属于当前 worktree，防跨编排/跨任务引用
+      if (host.worktreePath) {
+        const a = normalizePath(host.worktreePath);
+        if (!worktreePath || normalizePath(worktreePath) !== a) {
+          throw nodeError(
+            `引用的宿主结果不属于当前 worktree：result ${a} ≠ 输入 ${worktreePath}（禁止跨任务引用证据）`,
+          );
+        }
+      }
       const rec = await collector.addAsync({
         orchestrationId,
         stageId,

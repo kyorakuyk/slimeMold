@@ -284,6 +284,19 @@ dev.worktree.cleanup 的 confirm 可由节点参数伪造。修复：
 - 单测更新：伪造 resultId 拒、test.run 登记→evidence 引用→accept 通过、params confirm 无效仅宿主审批有效。
   验证：tsc 0 / vitest 570 / build ✓ / headless 样例 7/7 ✓（worktree 清理无残留）。
 
+### P1 证据作用域 / 空 diff / 审批一次性（2026-08-12，✅ 已落地）
+
+- **resultId 绑定 worktree**：HostResultRecord 增加 `worktreePath`（执行节点登记时带 cwd）；
+  evidence.add 新增 worktreePath 输入并校验与结果一致（normalize 比较）——跨 worktree/跨任务引用
+  宿主结果 → 拒绝（防另一编排拿 resultId 当自己证据）。
+- **git.diff 空改动不通过**：登记 status 改为 `hasChange ? 'passed' : 'failed'`（git diff 无改动时
+  exitCode 也是 0，仅凭退出码会误判）；空 diff 证据 status=failed → evaluator diff 规则不满足 → 验收失败。
+- **cleanup 审批一次性 + 绑定版本**：approvedCleanups 由 Set 改 Map<string, CleanupApproval>
+  （worktreePath/baseRevision/acceptanceId/approvedAt/consumed）；清理成功后 consumeCleanup 置
+  consumed=true，不可重复清理；批准可带 baseRevision/acceptanceId 绑定基线。
+- 单测 +3（跨 worktree 拒 / 缺 worktreePath 拒 / 空 diff 登记 failed / 审批消费后不可重复清理）。
+  验证：tsc 0 / vitest 571（49 文件，+1）/ build ✓ / headless 样例 7/7 ✓（worktree 无残留）。
+
 ---
 
 *生成日期：2026-08-12 · 代码基线 c2f860c（H3c P0 修复后）· 本文档为设计稿，按实现修正。*

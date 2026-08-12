@@ -37,7 +37,8 @@
       "label": "采集宿主证据",
       "params": {
         "orchestrationId": "self-dev-demo",
-        "stageId": "patch"
+        "stageId": "patch",
+        "worktreePath": ".codebuddy/dev-wt-demo"
       }
     },
     {

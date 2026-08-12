@@ -23,6 +23,10 @@ function fakeSession(): DevSession {
         if (args[0] === 'diff' && args.includes('--name-only')) {
           return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
         }
+        if (args[0] === 'diff') {
+          // git diff HEAD：空 stdout（无实际变更）
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
+        }
         if (args[0] === 'ls-files') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
         return { exitCode: 0, stdout: ' M src/components/A.tsx\n', stderr: '', durationMs: 1 };
       }
@@ -50,17 +54,30 @@ function fakeSession(): DevSession {
     service,
     collector,
     resultStore: new Map(),
-    approvedCleanups: new Set(),
+    approvedCleanups: new Map(),
     defs: [],
     registerResult(rec) {
       this.resultStore.set(rec.resultId, rec);
       return rec;
     },
-    approveCleanup(path) {
-      this.approvedCleanups.add(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+    approveCleanup(path, opts) {
+      const key = path.replace(/\\/g, '/').replace(/\/+$/, '');
+      this.approvedCleanups.set(key, {
+        worktreePath: key,
+        baseRevision: opts?.baseRevision,
+        acceptanceId: opts?.acceptanceId,
+        approvedAt: '2026-01-01T00:00:00.000Z',
+        consumed: false,
+      });
     },
     isCleanupApproved(path) {
-      return this.approvedCleanups.has(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+      const a = this.approvedCleanups.get(path.replace(/\\/g, '/').replace(/\/+$/, ''));
+      return !!a && !a.consumed;
+    },
+    consumeCleanup(path) {
+      const key = path.replace(/\\/g, '/').replace(/\/+$/, '');
+      const a = this.approvedCleanups.get(key);
+      if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
   };
   return session;
@@ -163,7 +180,7 @@ describe('H4 dev nodes', () => {
     const t = await test.execute({ worktreePath: '/repo/wt/e1', cmd: ['tsc', '--noEmit'] }, {}, {} as never);
     expect(t.resultId).toBeTruthy();
     const ev = await evAdd.execute(
-      { orchestrationId: 'o1', stageId: 's1', resultId: t.resultId },
+      { orchestrationId: 'o1', stageId: 's1', resultId: t.resultId, worktreePath: '/repo/wt/e1' },
       {},
       {} as never,
     );
@@ -171,6 +188,18 @@ describe('H4 dev nodes', () => {
     expect(session.collector.records).toHaveLength(1);
     expect(session.collector.records[0].capturedBy).toBe('host');
     expect(session.collector.records[0].command).toBe('tsc --noEmit');
+    // P1：跨 worktree 引用宿主结果 → 拒绝（证据不得跨任务/跨工作区）
+    await expect(
+      evAdd.execute(
+        { orchestrationId: 'o2', stageId: 's2', resultId: t.resultId, worktreePath: '/repo/wt/other' },
+        {},
+        {} as never,
+      ),
+    ).rejects.toThrow(/不属于当前 worktree/);
+    // P1：缺 worktreePath（无法验证作用域）→ 拒绝
+    await expect(
+      evAdd.execute({ orchestrationId: 'o2', stageId: 's2', resultId: t.resultId }, {}, {} as never),
+    ).rejects.toThrow(/不属于当前 worktree/);
 
     // accept：只读宿主 collector 证据 + 宿主计算 changedProtectedPaths（不接受输入覆盖）
     const accept = byId.get('dev.accept')!;
@@ -200,5 +229,27 @@ describe('H4 dev nodes', () => {
     const approved = await cleanup.execute({ worktreePath: '/repo/wt/t4' }, {}, {} as never);
     expect(approved.cleaned).toBe(true);
     expect(session.manager.isTracked('/repo/wt/t4')).toBe(false);
+    // P1：审批一次性——清理成功后已消费，不可重复清理（重新登记新 worktree 也须重新审批）
+    expect(session.isCleanupApproved('/repo/wt/t4')).toBe(false);
+    await create.execute({ path: '/repo/wt/t5' }, {}, {} as never);
+    const second = await cleanup.execute({ worktreePath: '/repo/wt/t5' }, {}, {} as never);
+    expect(second.cleaned).toBe(false); // 未审批
+    expect(session.manager.isTracked('/repo/wt/t5')).toBe(true);
+  });
+
+  it('P1：git.diff 无实际变更登记 failed——空 diff 不通过验收', async () => {
+    const session = fakeSession();
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/d1' }, {}, {} as never);
+    const diff = defs.find((d) => d.typeId === 'dev.git.diff')!;
+    // fake runCommand 对 git diff 返回空 stdout（无改动）→ 登记 failed
+    const r = (await diff.execute({ worktreePath: '/repo/wt/d1' }, {}, {} as never)) as {
+      resultId: string;
+    };
+    expect(r.resultId).toBeTruthy();
+    const rec = session.resultStore.get(r.resultId)!;
+    expect(rec.status).toBe('failed');
+    expect(rec.summary).toContain('空 diff');
   });
 });

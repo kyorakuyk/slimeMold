@@ -18,19 +18,34 @@ import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath } from './path-utils';
 
 /**
- * 宿主登记的真实执行结果（P0 审计修复）：
+ * 宿主登记的真实执行结果（P0/P1 审计修复）：
  * 由 dev.* 节点在真实执行后登记，dev.evidence.add 只能**引用**这些结果构造证据——
- * 节点/工作流无法自由填写 status/summary/exitCode，杜绝伪造「测试通过/diff 完成」证据。
+ * 节点/工作流无法自由填写 status/summary/exitCode。P1：结果绑定 worktreePath，
+ * evidence.add 校验引用结果属于同一 worktree（防跨编排/跨任务引用）。
  */
 export interface HostResultRecord {
   resultId: string;
   kind: 'command' | 'test' | 'diff' | 'artifact';
-  /** 宿主根据真实执行结果判定（如 exitCode===0 → passed） */
+  /** 宿主根据真实执行结果判定（如 exitCode===0 → passed；diff 还要求有实际变更） */
   status: 'passed' | 'failed';
   exitCode?: number;
   command?: string;
   summary: string;
   contentHash?: string;
+  /** P1：结果所属 worktree（evidence.add 作用域校验） */
+  worktreePath?: string;
+}
+
+/**
+ * 宿主清理审批（P1：一次性 + 绑定版本）。
+ * 批准后节点可清理该 worktree；清理成功立即消费（consumed=true），不可重复清理。
+ */
+export interface CleanupApproval {
+  worktreePath: string;
+  baseRevision?: string;
+  acceptanceId?: string;
+  approvedAt: string;
+  consumed: boolean;
 }
 
 export interface DevSession {
@@ -40,13 +55,15 @@ export interface DevSession {
   collector: EvidenceCollector;
   /** 宿主登记的真实执行结果（P0：证据唯一事实来源） */
   resultStore: Map<string, HostResultRecord>;
-  /** 宿主已批准清理的 worktree 路径（P0：cleanup 确认只能由宿主 API 生成） */
-  approvedCleanups: Set<string>;
+  /** 宿主已批准清理的 worktree（P1：一次性、绑定 baseRevision/acceptanceId） */
+  approvedCleanups: Map<string, CleanupApproval>;
   /** 登记一次宿主真实执行结果。 */
   registerResult(rec: HostResultRecord): HostResultRecord;
   /** 宿主审批：批准清理某 worktree（仅 UI/宿主审批层调用，节点/工作流不可触达）。 */
-  approveCleanup(path: string): void;
+  approveCleanup(path: string, opts?: { baseRevision?: string; acceptanceId?: string }): void;
   isCleanupApproved(path: string): boolean;
+  /** 清理成功后消费审批（一次性）。 */
+  consumeCleanup(path: string): void;
   defs: NodeDefinition[];
 }
 
@@ -76,17 +93,30 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     service,
     collector,
     resultStore: new Map(),
-    approvedCleanups: new Set(),
+    approvedCleanups: new Map(),
     defs: [],
     registerResult(rec) {
       this.resultStore.set(rec.resultId, rec);
       return rec;
     },
-    approveCleanup(path) {
-      this.approvedCleanups.add(normalizeAbsolutePath(path));
+    approveCleanup(path, opts) {
+      const key = normalizeAbsolutePath(path);
+      this.approvedCleanups.set(key, {
+        worktreePath: key,
+        baseRevision: opts?.baseRevision,
+        acceptanceId: opts?.acceptanceId,
+        approvedAt: new Date().toISOString(),
+        consumed: false,
+      });
     },
     isCleanupApproved(path) {
-      return this.approvedCleanups.has(normalizeAbsolutePath(path));
+      const a = this.approvedCleanups.get(normalizeAbsolutePath(path));
+      return !!a && !a.consumed;
+    },
+    consumeCleanup(path) {
+      const key = normalizeAbsolutePath(path);
+      const a = this.approvedCleanups.get(key);
+      if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
   };
   session.defs = createDevNodeDefs(session);
