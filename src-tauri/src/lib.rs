@@ -600,11 +600,12 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         return Err(format!("dev_exec: cwd 不存在或不是目录：{cwd}"));
     }
     let state = DEV_STATE.lock().unwrap();
+    let norm_canon = dev_strip_verbatim(&canon);
     if let Some(base) = &state.base_repo {
         let bc = std::path::Path::new(base)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(base));
-        if canon == bc {
+        if norm_canon == dev_strip_verbatim(&bc) {
             return Ok(DevCwdKind::MainRepo);
         }
     }
@@ -612,8 +613,9 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         let wc = std::path::Path::new(w)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(w));
-        if canon == wc || canon.starts_with(&wc) {
-            return Ok(DevCwdKind::Worktree(wc));
+        let norm_wc = dev_strip_verbatim(&wc);
+        if norm_canon == norm_wc || norm_canon.starts_with(&norm_wc) {
+            return Ok(DevCwdKind::Worktree(norm_wc));
         }
     }
     Err(format!(
@@ -697,6 +699,63 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
     })
 }
 
+/// worktree 内允许的命令参数白名单（与前端 capabilities DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES
+/// 对齐；P1 审计：Rust 侧也做完整参数校验，WebView 直调 dev_exec 无法执行白名单外的高风险操作）。
+fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    let name = args[0].as_str();
+    let rest = &args[1..];
+    let rest_eq = |want: &[&str]| rest.iter().map(|s| s.as_str()).eq(want.iter().copied());
+    match name {
+        // 只读查询命令（无写盘能力：pwd/echo/ls/cat/head/tail）
+        "pwd" => rest.is_empty(),
+        "echo" => true, // 直接 spawn 无 shell 重定向，echo 仅输出，无害
+        "ls" | "cat" | "head" | "tail" => true,
+        // find 禁 -delete/-exec/-execdir/>（防删除/执行）；grep 只读
+        "find" => !rest.iter().any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>')),
+        "grep" => true,
+        // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
+        "git" => {
+            rest_eq(&["status", "--porcelain"])
+                || rest_eq(&["status", "--short"])
+                || rest_eq(&["diff", "HEAD"])
+                || rest_eq(&["diff", "--name-only", "HEAD"])
+                || rest_eq(&["diff", "--stat", "HEAD"])
+                || rest_eq(&["diff", "--name-only"])
+                // 前端 `git diff <path>`：argsPrefix ['diff']，min/maxExtra=1，禁 dash 额外参数
+                || (rest.len() == 2
+                    && rest[0] == "diff"
+                    && !rest[1].starts_with('-')
+                    && !rest[1].contains("--output=")
+                    && !rest[1].contains("--no-index")
+                    && !rest[1].contains("--ext-diff"))
+                // 前端 `git log --oneline -n <num>`：argsPrefix ['log','--oneline','-n']，恰好 1 个数字参数
+                || (rest.len() == 4
+                    && rest[0] == "log"
+                    && rest[1] == "--oneline"
+                    && rest[2] == "-n"
+                    && rest[3].chars().all(|c| c.is_ascii_digit()))
+                || rest_eq(&["ls-files", "--others", "--exclude-standard"])
+                || rest_eq(&["rev-parse", "HEAD"])
+        }
+        // 测试命令（与前端 DEFAULT_TEST_RULES 一致）
+        "tsc" => rest_eq(&["--noEmit"]) || rest_eq(&["-b"]),
+        "vitest" => rest_eq(&["run"]),
+        "tsx" => {
+            // 仅本地脚本 scripts/ 前缀 + 最多 2 个额外参数
+            rest.len() >= 1
+                && rest[0].starts_with("scripts/")
+                && !rest[0].starts_with("scripts/../")
+                && rest.len() <= 3
+                && !rest[1..].iter().any(|a| a.starts_with('-'))
+        }
+        "npm" => rest_eq(&["run", "test"]) || rest_eq(&["run", "build"]) || rest_eq(&["run", "i18n:check"]),
+        _ => false,
+    }
+}
+
 /// 判定 dev_exec 是否放行（cwd 归属 + 命令 + 参数）。
 /// 纯函数，便于 Rust 单元测试覆盖主仓库根权限边界。
 fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
@@ -709,7 +768,7 @@ fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
     }
     match kind {
         DevCwdKind::MainRepo => dev_main_repo_git_allowed(args),
-        DevCwdKind::Worktree(_) => true,
+        DevCwdKind::Worktree(_) => dev_worktree_cmd_allowed(args),
     }
 }
 
@@ -790,12 +849,23 @@ fn dev_unregister_worktree(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows `\\?\` 扩展前缀（canonicalize 在长路径/UNC 下的产物）——比较前统一剥离。
+fn dev_strip_verbatim(p: &std::path::Path) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    #[cfg(windows)]
+    let s = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
+    std::path::PathBuf::from(s)
+}
+
 /// 路径必须属于某个已登记 worktree（dev_read_file / dev_write_file 的前置校验）。
+/// 两侧先剥离 Windows `\\?\` 前缀再组件级比较（`Path::starts_with`），
+/// 不受扩展前缀 / 大小写差异影响（P1 审计修复）。
 fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
+    let norm_abs = dev_strip_verbatim(abs);
     let state = DEV_STATE.lock().unwrap();
     for w in &state.worktrees {
-        let wc = std::path::Path::new(w);
-        if abs.starts_with(wc) {
+        let wc = dev_strip_verbatim(std::path::Path::new(w));
+        if norm_abs.starts_with(&wc) {
             return Ok(());
         }
     }
@@ -817,6 +887,10 @@ fn dev_read_file(path: String) -> Result<String, String> {
 }
 
 /// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+/// P1 审计修复：防符号链接绕过——
+/// - 目标已存在 → `fs::canonicalize` 解析到真实路径（跟随 symlink）后**重新校验**仍在 worktree 内；
+/// - 目标不存在 → 父目录已 canonicalize（真实目录），文件名不跨目录，用 O_EXCL 创建（不跟随已有符号链接）；
+/// - 目标已存在且是 symlink → 直接拒绝（不写入链接目标）。
 #[tauri::command]
 fn dev_write_file(path: String, content: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
@@ -843,8 +917,35 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
         .file_name()
         .ok_or_else(|| "dev_write_file: 路径缺少文件名".to_string())?;
     let abs = canon_parent.join(name);
+
+    // 目标已存在：先解析真实路径（跟随 symlink）并重新校验——防 worktree 内 symlink 指向外部
+    if let Ok(meta) = fs::symlink_metadata(&abs) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "dev_write_file: 拒绝写入符号链接目标（防 symlink 逃逸）：{}",
+                abs.display()
+            ));
+        }
+        let real = abs
+            .canonicalize()
+            .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
+        dev_path_allowed(&real)?;
+        fs::write(&real, content).map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
+        return Ok(());
+    }
+
+    // 目标不存在：父目录已 canonicalize（真实目录，无 symlink），文件名不跨目录；
+    // 用 create_new（O_CREAT|O_EXCL）避免跟随并发创建的符号链接
     dev_path_allowed(&abs)?;
-    fs::write(&abs, content).map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&abs)
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(content.as_bytes())
+        })
+        .map_err(|e| format!("dev_write_file: 创建失败：{path}（{e}）"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1142,7 +1243,7 @@ mod vault_crypto_roundtrip_tests {
         let plain = "sk-test-deepseek-abcdefghijklmnopqrstuvwxyz";
         let key = aes_gcm::Aes256Gcm::new_from_slice(&[7u8; 32]).unwrap();
         use aes_gcm::aead::Aead;
-        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use aes_gcm::{KeyInit, Nonce};
         let mut nonce_bytes = [0u8; 12];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -1193,12 +1294,126 @@ mod dev_exec_tests {
     #[test]
     fn worktree_allows_full_whitelist() {
         let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
+        // 前端 DEFAULT_TEST_RULES 对齐：npm 仅固定 script；tsx 仅 scripts/ 前缀
         assert!(dev_exec_allowed(&wt, &sv(&["npm", "run", "build"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["npm", "run", "test"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["npm", "run", "i18n:check"])));
         assert!(dev_exec_allowed(&wt, &sv(&["tsx", "scripts/x.ts"])));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "apply", "patch.diff"])));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "status"])));
-        // 命令名不在白名单 → 仍拒绝
+        assert!(dev_exec_allowed(&wt, &sv(&["tsc", "--noEmit"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["tsc", "-b"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["vitest", "run"])));
+        // 前端 DEFAULT_SHELL_RULES 对齐：只读查询
+        assert!(dev_exec_allowed(&wt, &sv(&["pwd"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["cat", "src/a.ts"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["ls", "src"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["grep", "foo", "src/a.ts"])));
+        // 只读 git 精确参数
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD"])));
+        assert!(dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard"])));
+    }
+
+    #[test]
+    fn worktree_rejects_high_risk_and_unbounded() {
+        let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
+        // 写入型 / 高风险 git → 拒绝
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "push", "origin", "main"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "commit", "-m", "x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "checkout", "main"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "clean", "-fd"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "merge", "main"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "apply", "patch.diff"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "add", "."])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "config", "user.email", "x@y.z"])));
+        // 无界 / 白名单外命令 / 危险参数 → 拒绝
+        assert!(!dev_exec_allowed(&wt, &sv(&["npm", "run", "evil"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["npm", "install", "lodash"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "src/outside.ts"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/x.ts", "--config"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-delete"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-exec", "rm", "{}", ";"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["rm", "-rf", "/"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["sudo", "x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["node", "-e", "x"])));
+        // 精确匹配语义：白名单参数不得被追加额外参数绕过
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain", "--extra"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD", "--output=x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "-x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD", "extra"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])));
+    }
+}
+
+/* ---------------- dev_write_file 符号链接逃逸（P1 审计修复） ---------------- */
+#[cfg(test)]
+mod dev_write_symlink_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// 在临时目录构造「worktree」，写入/读取经由公开函数走宿主登记态。
+    fn with_registered_worktree(f: impl FnOnce(PathBuf)) {
+        let tmp = std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let tmp_str = tmp.to_string_lossy().to_string();
+        // 登记为 worktree
+        {
+            let mut st = DEV_STATE.lock().unwrap();
+            st.base_repo = Some(tmp_str.clone());
+            st.worktrees.clear();
+            st.worktrees.push(tmp_str);
+        }
+        f(tmp);
+        let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id())));
+        {
+            let mut st = DEV_STATE.lock().unwrap();
+            st.base_repo = None;
+            st.worktrees.clear();
+        }
+    }
+
+    #[test]
+    fn symlink_escape_write_rejected() {
+        with_registered_worktree(|wt| {
+            // worktree 外创建目标文件（模拟宿主重要文件）
+            let outside = wt.parent().unwrap().join("sm_h4_outside.txt");
+            fs::write(&outside, "secret").unwrap();
+            // worktree 内创建指向外部的 symlink
+            let link = wt.join("link.txt");
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).unwrap();
+            }
+            #[cfg(windows)]
+            {
+                // Windows 创建 symlink 需管理员/开发者模式：无权限则跳过（代码路径已由 unix/CI 覆盖）
+                if std::os::windows::fs::symlink_file(&outside, &link).is_err() {
+                    eprintln!("[skip] Windows 无 symlink 权限，跳过 symlink 逃逸测试");
+                    return;
+                }
+            }
+            // 通过 dev_write_file 写 symlink → 必须拒绝
+            let res = dev_write_file(link.to_string_lossy().to_string(), "overwrite".into());
+            assert!(res.is_err(), "写入 symlink 应被拒绝（防逃逸）");
+            let content = fs::read_to_string(&outside).unwrap();
+            assert_eq!(content, "secret", "外部文件不得被篡改");
+        });
+    }
+
+    #[test]
+    fn normal_write_within_worktree_ok() {
+        with_registered_worktree(|wt| {
+            let target = wt.join("new_file.txt");
+            let res = dev_write_file(target.to_string_lossy().to_string(), "hello".into());
+            if let Err(e) = &res {
+                eprintln!("[diag] dev_write_file err = {e}");
+            }
+            assert!(res.is_ok(), "worktree 内普通新文件应可写");
+            assert_eq!(fs::read_to_string(&target).unwrap(), "hello");
+        });
     }
 }

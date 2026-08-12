@@ -81,6 +81,22 @@
 >   不静默吞异常）；`teardownGuiDevSession` 先 `await dev_clear_session`（新增 Rust 命令）清空旧登记态，
 >   避免切换项目后旧登记泄漏到新项目。
 > 验证（二次）：tsc 0 / vitest 587 / build ✓ / cargo check ✓ / cargo test 8 ✓ / headless 6/6。
+>
+> **审计 P1 修复（2026-08-13，三次提交）**：
+> - **Rust worktree 命令参数白名单**：`dev_worktree_cmd_allowed` 与前端 `DEFAULT_SHELL_RULES`/
+>   `DEFAULT_TEST_RULES` 对齐——worktree 内仅放行只读查询命令（pwd/echo/ls/cat/head/tail/grep，
+>   find 禁 `-delete`/`-exec`）、精确参数只读 git（status/diff/log/ls-files/rev-parse 全参数精确
+>   匹配，禁追加额外参数）、测试命令（tsc --noEmit/-b、vitest run、tsx 仅 scripts/ 前缀、
+>   npm run test/build/i18n:check 精确）。**明确拒绝** git push/commit/reset/checkout/clean/
+>   merge/apply/add/config、npm install/任意 run、node -e、find -delete 等。
+> - **dev_write_file 符号链接逃逸**：目标已存在 → canonicalize 解析真实路径后重新校验仍在
+>   worktree 内（symlink 直接拒绝）；目标不存在 → 父目录已 canonicalize + O_EXCL 创建
+>   （不跟随并发创建的符号链接）。路径校验统一剥离 Windows `\\?\` 前缀再组件级比较
+>   （`dev_strip_verbatim`，修复 canonicalize 带扩展前缀导致 starts_with 误判）。
+> - 新增 Rust 单测 3 组：worktree 白名单放行 / 高风险与无界命令拒绝（含精确匹配边界，
+>   如 `git status --porcelain --extra` 必须拒绝）/ symlink 逃逸写入拒绝（Windows 无 symlink
+>   权限时跳过）+ 普通 worktree 内写入。
+> 验证（三次）：tsc 0 / vitest 587 / build ✓ / cargo check 0 警告 / cargo test 11 ✓ / headless 6/6。
 
 目标：让 GUI 能安全运行 H4 开发节点，并让人工确认真正经过宿主层。
 
