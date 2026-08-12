@@ -68,6 +68,21 @@ export class WorktreeManager {
     return [...this.infos.values()];
   }
 
+  /** 路径是否为已登记且未清理的 worktree（规范化比较；P0 审计：能力层据此校验 cwd）。 */
+  isTracked(path: string): boolean {
+    const p = path.replace(/\\/g, '/').replace(/\/+$/, '');
+    return [...this.infos.values()].some(
+      (i) => i.status === 'created' && i.path.replace(/\\/g, '/').replace(/\/+$/, '') === p,
+    );
+  }
+
+  /** P0 审计：cwd 必须属于已登记 worktree，否则抛错（防指向主仓库/任意目录绕过隔离）。 */
+  assertTracked(path: string): void {
+    if (!this.isTracked(path)) {
+      throw new Error(`工作目录不属于任何已登记的 worktree：${path}`);
+    }
+  }
+
   /** worktree 是否还有未提交改动（tracked diff 或 untracked 文件）。 */
   async hasUncommittedChanges(id: string): Promise<boolean> {
     const info = this.infos.get(id);

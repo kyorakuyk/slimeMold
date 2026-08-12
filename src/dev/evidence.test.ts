@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  EvidenceCollector,
-  createJsonlEvidenceStore,
-  createHostEvidenceStore,
-  evidencePathFor,
-} from './evidence';
+import { EvidenceCollector, createHostEvidenceStore, evidencePathFor } from './evidence';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -43,14 +38,13 @@ describe('H4 EvidenceCollector', () => {
     expect(c.records).toHaveLength(0);
   });
 
-  it('P1 持久化：JSONL store 落盘 + loadPersisted 跨会话恢复', async () => {
-    const tmp = `evidence-test-${Date.now()}.jsonl`;
-    const store = createJsonlEvidenceStore(tmp);
+  it('P1 持久化：JSONL store 落盘 + loadPersisted 跨会话恢复（经宿主构造）', async () => {
+    const tmpRoot = `evidence-test-${Date.now()}`;
+    const store = createHostEvidenceStore(tmpRoot, '/some/worktree', 'case');
+    const tmp = `${tmpRoot}/case.jsonl`;
     const c1 = new EvidenceCollector(store);
-    c1.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'first' });
-    c1.add({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'second' });
-    // 等待 fire-and-forget 落盘完成
-    await new Promise((r) => setTimeout(r, 30));
+    await c1.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'first' });
+    await c1.addAsync({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'second' });
     // 新 collector 从同一 store 恢复（模拟重启）
     const c2 = new EvidenceCollector(store);
     const loaded = await c2.loadPersisted();
@@ -79,20 +73,25 @@ describe('H4 EvidenceCollector', () => {
     expect(typeof ok.load).toBe('function');
 
     // addAsync 等待落盘；flush 在落盘失败时 throw
-    const tmp = `evidence-flush-${Date.now()}.jsonl`;
-    const store = createJsonlEvidenceStore(tmp);
+    const flushRoot = `evidence-flush-${Date.now()}`;
+    const store = createHostEvidenceStore(flushRoot, '/some/worktree', 'case');
     const c = new EvidenceCollector(store);
     await c.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'sync' });
     await c.flush(); // 无失败 → 不抛
     expect(c.records).toHaveLength(1);
 
-    // 落盘失败（写不可用路径）→ flush throw（含证据 id 与失败原因），验收据此拒绝
-    const badStore = createJsonlEvidenceStore('/no/such/dir/evidence.jsonl');
-    const c2 = new EvidenceCollector(badStore);
+    // 落盘失败（mock persistence reject）→ flush throw（含证据 id 与失败原因），验收据此拒绝
+    const c2 = new EvidenceCollector({
+      append: async () => {
+        throw new Error('disk full');
+      },
+      load: async () => [],
+    });
     c2.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', summary: 'x' });
     await expect(c2.flush()).rejects.toThrow(/证据.*落盘失败/);
 
-    const { unlink } = await import('node:fs/promises');
-    await unlink(tmp).catch(() => {});
+    const { unlink, rm } = await import('node:fs/promises');
+    await unlink(`${flushRoot}/case.jsonl`).catch(() => {});
+    await rm(flushRoot, { recursive: true, force: true }).catch(() => {});
   });
 });

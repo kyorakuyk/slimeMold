@@ -142,6 +142,8 @@ interface CommandRule {
   denyAbsPath?: boolean;
   /** 参数全部按路径校验（allowedPaths 内 + 非 protected + worktree 内） */
   pathArgs?: boolean;
+  /** 从第 N 个参数（0-based，不含命令名）起按路径校验；grep 用 1 跳过 pattern 参数 */
+  pathArgsFrom?: number;
 }
 
 /** 命令数组是否匹配规则（精确 / 前缀 + 受限额外参数 / 纯命令名）。 */
@@ -192,7 +194,8 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'find', denyAbsPath: true, pathArgs: true },
   { cmd: 'head', denyAbsPath: true, pathArgs: true },
   { cmd: 'tail', denyAbsPath: true, pathArgs: true },
-  { cmd: 'grep', denyAbsPath: true },
+  // grep：跳过首参 pattern（pathArgsFrom=1），后续文件路径参数走守卫
+  { cmd: 'grep', denyAbsPath: true, pathArgsFrom: 1 },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
   { cmd: 'git', args: ['diff', 'HEAD'] },
@@ -239,6 +242,11 @@ export interface NodeDevDeps {
   testAllow?: (cmd: string[]) => boolean;
 }
 
+/** 已登记 worktree 的只读注册表（P0 审计：能力层据此校验 cwd 属于已登记 worktree）。 */
+export interface WorktreeRegistry {
+  isTracked(cwd: string): boolean;
+}
+
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
 function hashContent(content: string): string {
   let h = 5381;
@@ -256,6 +264,7 @@ function hashContent(content: string): string {
 export function createNodeDevService(
   policy: SelfDevelopmentPolicy,
   deps: NodeDevDeps = {},
+  registry?: WorktreeRegistry,
 ): DevCapabilityService {
   const run = deps.runCommand ?? runCommand;
   const read = deps.readFile ?? readTextFile;
@@ -265,11 +274,22 @@ export function createNodeDevService(
   const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
 
   /**
+   * P0 审计修复：cwd 必须属于已登记 worktree（fail-closed）。
+   * - 未提供 registry → 拒绝执行（不允许「无登记也可运行」的降级）；
+   * - 提供了 registry 但 cwd 未登记 → 拒绝（防把 cwd 指向主仓库/任意目录绕过隔离）。
+   */
+  const assertCwd = (cwd: string): void => {
+    if (!registry) throw new Error('未配置 worktree registry：拒绝执行开发能力');
+    if (!registry.isTracked(cwd)) throw new Error(`工作目录不属于已登记的 worktree：${cwd}`);
+  };
+
+  /**
    * P0 修复（审计）：路径必须先规范化再判定白名单/保护路径。
    * `src/components/../orchestrator/run.ts` 若先对原始串判定会过 components 白名单，
    * 随后才解析到受保护的 orchestrator——必须 resolve → 转相对 → 再 assertPathAllowed。
    */
   const guardedAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
+    assertCwd(ctx.cwd);
     const abs = await resolveP(ctx.cwd, relPath);
     const rel = await relP(ctx.cwd, abs);
     assertPathAllowed(policy, rel);
@@ -279,14 +299,15 @@ export function createNodeDevService(
   /**
    * P1 审计修复：shell 命令路径参数统一守卫。
    * 命令白名单只约束「命令形式」，`cat src/orchestrator/run.ts` 这类相对路径参数仍可绕过
-   * codeRead/codePatch 的路径策略读取受保护代码。对 pathArgs 命令，每个参数：
+   * codeRead/codePatch 的路径策略读取受保护代码。对 pathArgs/pathArgsFrom 命令，从
+   * fromIndex（默认 0）起的每个参数：
    * - 跳过选项（- 开头）与通配/模式参数（* ?）；
    * - resolveInside 防 ../ 逃逸（逃逸即抛错）；
    * - 转规范化相对路径后 assertPathAllowed（allowedPaths 内 + 非 protected）；
    * - '.'（worktree 根）放行。
    */
-  const guardPathArgs = async (args: string[], ctx: DevContext): Promise<void> => {
-    for (const a of args) {
+  const guardPathArgs = async (args: string[], ctx: DevContext, fromIndex = 0): Promise<void> => {
+    for (const a of args.slice(fromIndex)) {
       if (!a || a.startsWith('-')) continue;
       if (a.includes('*') || a.includes('?')) continue;
       const abs = await resolveP(ctx.cwd, a);
@@ -315,13 +336,15 @@ export function createNodeDevService(
     },
 
     async shellRun(cmd, ctx) {
+      assertCwd(ctx.cwd);
       const rule = findMatchingRule(DEFAULT_SHELL_RULES, cmd);
       if (cmd.length === 0 || !rule) {
         return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
-      if (rule.pathArgs) {
+      const fromIndex = rule.pathArgsFrom ?? (rule.pathArgs ? 0 : -1);
+      if (fromIndex >= 0) {
         try {
-          await guardPathArgs(cmd.slice(1), ctx);
+          await guardPathArgs(cmd.slice(1), ctx, fromIndex);
         } catch (e) {
           return {
             exitCode: -1,
@@ -336,6 +359,7 @@ export function createNodeDevService(
     },
 
     async testRun(cmd, ctx) {
+      assertCwd(ctx.cwd);
       if (cmd.length === 0 || !testAllow(cmd)) {
         return { exitCode: -1, stdout: '', stderr: `测试命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
@@ -344,15 +368,18 @@ export function createNodeDevService(
     },
 
     async gitStatus(ctx) {
+      assertCwd(ctx.cwd);
       return run('git', ['status', '--porcelain'], ctx.cwd);
     },
 
     async gitDiff(baseRef, ctx) {
+      assertCwd(ctx.cwd);
       const args = baseRef ? ['diff', baseRef] : ['diff', 'HEAD'];
       return run('git', args, ctx.cwd);
     },
 
     async gitChangedFiles(ctx) {
+      assertCwd(ctx.cwd);
       const [tracked, untracked] = await Promise.all([
         run('git', ['diff', '--name-only', 'HEAD'], ctx.cwd),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),

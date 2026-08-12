@@ -106,12 +106,15 @@ export function createHostEvidenceStore(
 /**
  * JSONL 证据存储（每行一条证据，追加写）。仅 Node 环境可用（动态 import fs）——
  * 浏览器/WebView 调用即 reject，由宿主在 headless/CI 或 Tauri Rust 通道侧使用。
- * 文件路径必须经 evidencePathFor/createHostEvidenceStore 由宿主生成（不接受调用方任意 filePath）。
+ * 文件路径必须经 createHostEvidenceStore 由宿主生成——本函数**不导出**，
+ * 调用方无法绕过 baseDir/worktree 约束传入任意 filePath（审计修复）。
  */
-export function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
+function createJsonlEvidenceStore(filePath: string): EvidencePersistence {
   return {
     async append(rec) {
-      const { appendFile } = await import('node:fs/promises');
+      const { appendFile, mkdir } = await import('node:fs/promises');
+      const { dirname } = await import('node:path');
+      await mkdir(dirname(filePath), { recursive: true }); // 宿主创建 store 时确保目录存在
       await appendFile(filePath, `${JSON.stringify(rec)}\n`, 'utf8');
     },
     async load() {

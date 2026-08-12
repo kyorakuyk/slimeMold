@@ -33,6 +33,11 @@ describe('H4 WorktreeManager（fake git runner）', () => {
 
     expect(m.get('t1')?.path).toBe('/wt/t1');
     expect(m.list()).toHaveLength(1);
+    // P0：isTracked/assertTracked——已登记放行，未登记/清理后拒绝
+    expect(m.isTracked('/wt/t1')).toBe(true);
+    expect(m.isTracked('/repo')).toBe(false);
+    expect(() => m.assertTracked('/wt/t1')).not.toThrow();
+    expect(() => m.assertTracked('/repo')).toThrow(/不属于任何已登记的 worktree/);
 
     // 审计确认门：未显式 confirm 拒绝清理（防误删未提交改动）
     expect(await m.cleanup('t1')).toBe(false);

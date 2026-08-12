@@ -75,9 +75,11 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   };
 
   const ctx = { cwd: '/repo/worktree' };
+  // P0 审计：registry 登记 ctx.cwd，未登记路径被拒
+  const registry = { isTracked: (cwd: string) => cwd === ctx.cwd };
 
   it('codeRead：允许路径可读，受保护路径拒绝', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const r = await svc.codeRead('src/components/A.tsx', ctx);
     expect(r.content).toBe('export const a = 1;\n');
     expect(r.lineCount).toBe(2);
@@ -86,7 +88,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   });
 
   it('P0 路径规范化：../ 穿越到受保护路径被拒（先解析再判定）', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     // 原始串含 src/components 前缀看似过白名单，但解析后落到受保护的 orchestrator
     await expect(svc.codeRead('src/components/../orchestrator/run.ts', ctx)).rejects.toThrow(/受保护/);
     await expect(svc.codePatch('src/components/../../package.json', '', ctx)).rejects.toThrow(/不在允许范围|受保护/);
@@ -96,7 +98,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   });
 
   it('P1 命令白名单收紧：危险/越界命令被拒，只读命令放行', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     // 危险命令全拒
     for (const bad of [
       ['node', '-e', 'process.exit(0)'],
@@ -120,6 +122,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['cat', 'src/orchestrator/run.ts'],
       ['head', 'src/orchestrator/run.ts'],
       ['find', 'src/orchestrator', '-name', '*.ts'],
+      // grep 越权：首参是 pattern，后续文件路径参数走守卫
+      ['grep', 'secret', 'src/orchestrator/run.ts'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
@@ -136,6 +140,9 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(ok3.exitCode).toBe(0);
     const ok4 = await svc.shellRun(['find', 'src/components', '-name', '*.tsx'], ctx);
     expect(ok4.exitCode).toBe(0);
+    // grep 允许路径在 allowed 内
+    const ok5 = await svc.shellRun(['grep', 'secret', 'src/components/A.tsx'], ctx);
+    expect(ok5.exitCode).toBe(0);
     // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
     const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
     expect(t1.exitCode).toBe(0);
@@ -144,7 +151,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   });
 
   it('codePatch：受控 diff 落盘 + contentHash；白名单外命令拒绝', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const patch = '--- a\n+++ b\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
     const r = await svc.codePatch('src/components/A.tsx', patch, ctx);
     expect(r.ok).toBe(true);
@@ -157,7 +164,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   });
 
   it('testRun/shellRun 白名单放行；gitStatus/gitDiff 走 git', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, fakeDeps);
+    const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const t = await svc.testRun(['npm', 'run', 'test'], ctx);
     expect(t.exitCode).toBe(0);
     expect(t.stdout).toContain('PASS');
@@ -169,20 +176,38 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
   });
 
   it('gitChangedFiles：合并 tracked diff 与 untracked', async () => {
-    const svc = createNodeDevService(defaultDevPolicy, {
-      ...fakeDeps,
-      runCommand: async (cmd, args, _cwd) => {
-        if (cmd === 'git' && args[0] === 'diff') {
-          return { exitCode: 0, stdout: 'src/components/A.tsx\n', stderr: '', durationMs: 1 };
-        }
-        if (cmd === 'git' && args[0] === 'ls-files') {
-          return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
-        }
-        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+    const svc = createNodeDevService(
+      defaultDevPolicy,
+      {
+        ...fakeDeps,
+        runCommand: async (cmd, args, _cwd) => {
+          if (cmd === 'git' && args[0] === 'diff') {
+            return { exitCode: 0, stdout: 'src/components/A.tsx\n', stderr: '', durationMs: 1 };
+          }
+          if (cmd === 'git' && args[0] === 'ls-files') {
+            return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
+          }
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+        },
       },
-    });
+      registry,
+    );
     const filesChanged = await svc.gitChangedFiles(ctx);
     expect(filesChanged).toContain('src/components/A.tsx');
     expect(filesChanged).toContain('docs/new.md');
+  });
+
+  it('P0 cwd 信任：未配置 registry fail-closed；未登记 cwd 拒绝；登记 cwd 放行', async () => {
+    // 无 registry → 任何操作都拒绝（fail-closed）
+    const noReg = createNodeDevService(defaultDevPolicy, fakeDeps);
+    await expect(noReg.codeRead('src/components/A.tsx', ctx)).rejects.toThrow(/未配置 worktree registry/);
+    // 有 registry 但 cwd 未登记（指向主仓库）→ 拒绝
+    const trackedSvc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
+    const evil = { cwd: '/repo' };
+    await expect(trackedSvc.codeRead('src/components/A.tsx', evil)).rejects.toThrow(/不属于已登记的 worktree/);
+    await expect(trackedSvc.testRun(['tsc', '--noEmit'], evil)).rejects.toThrow(/不属于已登记的 worktree/);
+    // 登记 cwd 放行
+    const ok = await trackedSvc.codeRead('src/components/A.tsx', ctx);
+    expect(ok.content).toBeTruthy();
   });
 });
