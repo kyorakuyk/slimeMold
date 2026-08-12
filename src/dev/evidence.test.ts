@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EvidenceCollector, createHostEvidenceStore, evidencePathFor } from './evidence';
+import { normalizeAbsolutePath } from './path-utils';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -58,7 +59,9 @@ describe('H4 EvidenceCollector', () => {
 
   it('审计：evidencePathFor 拒绝路径逃逸 key；flush/addAsync 等待落盘确认', async () => {
     // 路径约束：合法 key → <baseDir>/<key>.jsonl；非法 key（分隔符/..）→ 抛错
-    expect(evidencePathFor('/data/evidence', 'orch-20260812')).toBe('/data/evidence/orch-20260812.jsonl');
+    expect(evidencePathFor('/data/evidence', 'orch-20260812')).toBe(
+      `${normalizeAbsolutePath('/data/evidence')}/orch-20260812.jsonl`,
+    );
     expect(() => evidencePathFor('/data/evidence', '../etc/passwd')).toThrow(/非法证据存储 key/);
     expect(() => evidencePathFor('/data/evidence', 'a/b')).toThrow(/非法证据存储 key/);
     expect(() => evidencePathFor('/data/evidence', 'a\\b')).toThrow(/非法证据存储 key/);
@@ -67,6 +70,8 @@ describe('H4 EvidenceCollector', () => {
     expect(() => createHostEvidenceStore('/repo/worktree', '/repo/worktree', 'k')).toThrow(/worktree 之外/);
     expect(() => createHostEvidenceStore('/repo/worktree/.slimemold/evidence', '/repo/worktree', 'k')).toThrow(/worktree 之外/);
     expect(() => createHostEvidenceStore('/repo', '/repo/worktree', 'k')).toThrow(/worktree 之外/); // evidence 根是 worktree 祖先
+    // P1（审计）：resolve 规范化后仍拒——折返路径 baseDir 实际落在 worktree 内
+    expect(() => createHostEvidenceStore('/repo/worktree2/../worktree/evidence', '/repo/worktree', 'k')).toThrow(/worktree 之外/);
     // 合法：evidence 根在 worktree 外且不相交 → 返回持久化实例
     const ok = createHostEvidenceStore('/repo/.slimemold/evidence', '/repo/worktree', 'k1');
     expect(typeof ok.append).toBe('function');

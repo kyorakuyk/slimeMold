@@ -5,6 +5,8 @@
  * 两者职责分离。关键约束：capturedBy 恒为 'host'，Agent（模型/工作流节点）不能自报事实证据，
  * 只能写 uncertainties/agentSummary 辅助文本。
  */
+import { normalizeAbsolutePath } from './path-utils';
+
 export type EvidenceKind = 'command' | 'test' | 'diff' | 'path-policy' | 'artifact';
 
 export type EvidenceStatus = 'passed' | 'failed' | 'unknown';
@@ -58,31 +60,27 @@ export interface EvidencePersistence {
   load(): Promise<EvidenceRecord[]>;
 }
 
-/** 规范化路径（POSIX 分隔符、去尾部 /；不解析 ..——相交判定用）。 */
-function normPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '');
-}
-
 /**
  * 宿主统一约束的 EvidenceStore 路径（审计修复）：
  * - baseDir 由宿主指定（如 `<项目根>/.slimemold/evidence/`，位于 worktree 之外）；
  * - key 只允许 `[a-zA-Z0-9._-]`，**拒绝任何路径分隔符与 `..`**（防 `../` 逃逸到任意目录）；
- * - 返回 `<baseDir>/<key>.jsonl` 绝对路径。
+ * - 返回 `<baseDir>/<key>.jsonl` 绝对路径（baseDir 经 resolve 规范化）。
  */
 export function evidencePathFor(baseDir: string, key: string): string {
   if (!/^[\w.-]+$/.test(key) || key.includes('..')) {
     throw new Error(`非法证据存储 key：${key}（仅允许 [a-zA-Z0-9._-]，禁止路径分隔符/..）`);
   }
-  return `${normPath(baseDir)}/${key}.jsonl`;
+  return `${normalizeAbsolutePath(baseDir)}/${key}.jsonl`;
 }
 
 /**
  * 校验 baseDir 与 worktree 路径不相交（P1 审计修复）：
- * 任一方是另一方的祖先或等价 → 拒绝（EvidenceStore 必须位于 worktree 之外）。
+ * 统一经 resolve 规范化（解析 . / ..），防 `/repo/worktree2/../worktree/evidence`
+ * 这类折返绕过；任一方是另一方祖先/等价 → 拒绝。
  */
 export function assertEvidenceOutsideWorktree(baseDir: string, worktreePath: string): void {
-  const b = normPath(baseDir);
-  const w = normPath(worktreePath);
+  const b = normalizeAbsolutePath(baseDir);
+  const w = normalizeAbsolutePath(worktreePath);
   if (b === w || w.startsWith(b + '/') || b.startsWith(w + '/')) {
     throw new Error(`EvidenceStore 必须位于 worktree 之外：baseDir=${b}，worktree=${w}`);
   }

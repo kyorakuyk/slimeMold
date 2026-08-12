@@ -7,6 +7,7 @@
  */
 import type { CommandResult } from './node-run';
 import { runCommand } from './node-run';
+import { normalizeAbsolutePath } from './path-utils';
 
 export interface DevGitRunner {
   git(args: string[], cwd: string): Promise<CommandResult>;
@@ -68,11 +69,15 @@ export class WorktreeManager {
     return [...this.infos.values()];
   }
 
-  /** 路径是否为已登记且未清理的 worktree（规范化比较；P0 审计：能力层据此校验 cwd）。 */
+  /**
+   * 路径是否为已登记且未清理的 worktree。
+   * 统一经 path.resolve 规范化比较（解析 . / ..、Windows 分隔符）——审计修复：
+   * 避免不同路径表示导致合法 worktree 被拒，或折返路径（worktree2/../worktree）绕过。
+   */
   isTracked(path: string): boolean {
-    const p = path.replace(/\\/g, '/').replace(/\/+$/, '');
+    const p = normalizeAbsolutePath(path);
     return [...this.infos.values()].some(
-      (i) => i.status === 'created' && i.path.replace(/\\/g, '/').replace(/\/+$/, '') === p,
+      (i) => i.status === 'created' && normalizeAbsolutePath(i.path) === p,
     );
   }
 
