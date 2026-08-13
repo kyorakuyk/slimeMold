@@ -1538,6 +1538,41 @@ mod dev_exec_tests {
         // 清理临时目录
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    /// 回归：worktree 前缀碰撞不得误判。
+    /// `Path::starts_with` 是组件级判断，`C:\repo\wt2` 不视为 `C:\repo\wt` 的子路径。
+    /// 登记 worktree `wt` 后，cwd=`wt2` 必须被拒绝，而 `wt` 的真实子目录必须被允许。
+    #[test]
+    fn dev_cwd_kind_no_wt_prefix_collision() {
+        let base = std::env::temp_dir().join(format!("sm_wt_prefix_{}", std::process::id()));
+        let wt = base.join("wt");
+        let wt2 = base.join("wt2");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&wt2).unwrap();
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+
+        // 向全局 DEV_STATE 登记 wt（不含 wt2）
+        {
+            let mut st = DEV_STATE.lock().unwrap();
+            st.worktrees.push(wt.to_str().unwrap().to_string());
+        }
+        let wt_str = wt.to_str().unwrap().to_string();
+        let wt2_str = wt2.to_str().unwrap().to_string();
+
+        // wt 自身 → Worktree（命中）
+        assert!(matches!(dev_cwd_kind(&wt_str), Ok(DevCwdKind::Worktree(_))));
+        // wt 的真实子目录 → 仍属该 worktree（符合设计）
+        assert!(dev_cwd_kind(&wt.join("src").to_str().unwrap().to_string()).is_ok());
+        // wt2 → 不得误判为 wt 的子路径（前缀碰撞防护）
+        assert!(dev_cwd_kind(&wt2_str).is_err(), "wt2 不得误判为 wt 的子路径");
+
+        // 清理：从全局状态移除登记并删除临时目录
+        {
+            let mut st = DEV_STATE.lock().unwrap();
+            st.worktrees.retain(|w| w != &wt_str);
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 /* ---------------- dev_write_file 符号链接逃逸（P1 审计修复） ---------------- */
