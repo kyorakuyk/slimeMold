@@ -699,6 +699,107 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
     })
 }
 
+/// worktree 内命令的文件路径参数**词法级**校验（纯函数，无 IO，可单测）。
+/// 拦截：绝对路径（POSIX `/`、Windows `C:\`、UNC `\\`）、`..` 逃逸、`~`、shell 元字符重定向。
+/// 注意：词法校验不解析符号链接，symlink 逃逸由 dev_exec_validate_paths 的 canonicalize 层兜底。
+fn dev_arg_path_lexically_safe(arg: &str) -> bool {
+    if arg.is_empty() || arg == "." || arg == ".." {
+        return false;
+    }
+    let p = std::path::Path::new(arg);
+    // 绝对路径：POSIX 根 / Windows drive / UNC
+    if p.is_absolute() {
+        return false;
+    }
+    // Windows drive 前缀（如 `C:` / `C:\`）在 is_absolute 上未必为 true，需显式排除
+    let bytes = arg.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    if arg.starts_with("\\\\") || arg.starts_with("//") {
+        return false;
+    }
+    // `..` 任意位置的父目录逃逸
+    if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return false;
+    }
+    // 家目录展开符号
+    if arg == "~" || arg.starts_with("~/") || arg.starts_with("~\\") {
+        return false;
+    }
+    // shell 元字符（重定向 / 管道 / 命令拼接）——Command spawn 不经 shell，但保守拒绝
+    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '*', '?', '\'', '"', '(', ')', ' '];
+    if arg.chars().any(|c| META.contains(&c)) {
+        return false;
+    }
+    true
+}
+
+/// dev_exec 实际 spawn 前，对**文件路径参数**做 canonicalize 校验（解析符号链接），
+/// 确认其规范化后路径仍落在 cwd（worktree 根）之内。防止通过 symlink 读取 worktree 外文件。
+/// 仅对带路径参数的只读文件命令（cat/head/tail/ls/grep/find/git diff/tsx）生效。
+/// 规则：不存在的路径（canonicalize 失败）按"词法已通过"放行——只读命令读不存在文件无害；
+/// 但若路径存在且 canonicalize 后逃出 cwd，则拒绝。
+fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
+    let name = args.first().map(|s| s.as_str());
+    // 每个待校验参数：与 cwd 拼接后 canonicalize，确认落在 cwd 内
+    let check = |arg: &str| -> Result<(), String> {
+        let wt_root = dev_strip_verbatim(std::path::Path::new(cwd));
+        let joined = wt_root.join(arg);
+        if let Ok(canon) = joined.canonicalize() {
+            let norm = dev_strip_verbatim(&canon);
+            if !norm.starts_with(&wt_root) {
+                return Err(format!("dev_exec: 参数路径逃逸出 worktree：{arg}"));
+            }
+        }
+        Ok(())
+    };
+    match name {
+        Some("cat") | Some("head") | Some("tail") => {
+            // 单个文件参数（如 cat src/a.ts）；多个参数合并读也是允许的，逐个校验
+            for a in args.iter().skip(1) {
+                if !a.starts_with('-') {
+                    check(a)?;
+                }
+            }
+        }
+        Some("ls") | Some("grep") => {
+            // 相对路径参数逐个校验（跳过 - 开头选项）
+            for a in args.iter().skip(1) {
+                if !a.starts_with('-') {
+                    check(a)?;
+                }
+            }
+        }
+        Some("find") => {
+            // find <根> [-options] —— 根若是相对路径（非 - 开头且非 .）则校验
+            if let Some(root) = args.get(1) {
+                if !root.starts_with('-') && root != "." {
+                    check(root)?;
+                }
+            }
+        }
+        Some("git") => {
+            // git diff <path>：最后一个非选项参数为路径
+            if args.get(1).map(|s| s.as_str()) == Some("diff") {
+                if let Some(path) = args.get(2) {
+                    if !path.starts_with('-') {
+                        check(path)?;
+                    }
+                }
+            }
+        }
+        Some("tsx") => {
+            // tsx scripts/xxx.ts：第一个参数为脚本路径
+            if let Some(script) = args.get(1) {
+                check(script)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// worktree 内允许的命令参数白名单（与前端 capabilities DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES
 /// 对齐；P1 审计：Rust 侧也做完整参数校验，WebView 直调 dev_exec 无法执行白名单外的高风险操作）。
 fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
@@ -709,13 +810,28 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
     let rest = &args[1..];
     let rest_eq = |want: &[&str]| rest.iter().map(|s| s.as_str()).eq(want.iter().copied());
     match name {
-        // 只读查询命令（无写盘能力：pwd/echo/ls/cat/head/tail）
+        // 只读查询命令（无写盘能力：pwd/echo/ls/cat/head/tail）；文件路径参数须词法安全
         "pwd" => rest.is_empty(),
         "echo" => true, // 直接 spawn 无 shell 重定向，echo 仅输出，无害
-        "ls" | "cat" | "head" | "tail" => true,
-        // find 禁 -delete/-exec/-execdir/>（防删除/执行）；grep 只读
-        "find" => !rest.iter().any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>')),
-        "grep" => true,
+        "ls" | "cat" | "head" | "tail" => {
+            // 每个非选项参数都须为 worktree 内合法相对路径
+            rest.iter()
+                .filter(|a| !a.starts_with('-'))
+                .all(|a| dev_arg_path_lexically_safe(a))
+        }
+        // find 禁 -delete/-exec/-execdir/>（防删除/执行）；且搜索根必须合法（默认 . 或安全相对路径）
+        "find" => {
+            !rest.iter().any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>'))
+                && match rest.first().map(|s| s.as_str()) {
+                    None | Some(".") => true,
+                    Some(root) => dev_arg_path_lexically_safe(root),
+                }
+        }
+        // grep 只读；文件路径参数须词法安全
+        "grep" => rest
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .all(|a| dev_arg_path_lexically_safe(a)),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
         "git" => {
             rest_eq(&["status", "--porcelain"])
@@ -724,9 +840,11 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 || rest_eq(&["diff", "--name-only", "HEAD"])
                 || rest_eq(&["diff", "--stat", "HEAD"])
                 || rest_eq(&["diff", "--name-only"])
-                // 前端 `git diff <path>`：argsPrefix ['diff']，min/maxExtra=1，禁 dash 额外参数
+                // 前端 `git diff <path>`：argsPrefix ['diff']，min/maxExtra=1，禁 dash 额外参数；
+                // 且路径须词法安全（禁绝对路径 / .. / drive）
                 || (rest.len() == 2
                     && rest[0] == "diff"
+                    && dev_arg_path_lexically_safe(&rest[1])
                     && !rest[1].starts_with('-')
                     && !rest[1].contains("--output=")
                     && !rest[1].contains("--no-index")
@@ -744,10 +862,11 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "tsc" => rest_eq(&["--noEmit"]) || rest_eq(&["-b"]),
         "vitest" => rest_eq(&["run"]),
         "tsx" => {
-            // 仅本地脚本 scripts/ 前缀 + 最多 2 个额外参数
-            rest.len() >= 1
+            // 仅本地脚本 scripts/ 前缀 + 最多 2 个额外参数；脚本路径须词法安全
+            !rest.is_empty()
                 && rest[0].starts_with("scripts/")
                 && !rest[0].starts_with("scripts/../")
+                && dev_arg_path_lexically_safe(&rest[0])
                 && rest.len() <= 3
                 && !rest[1..].iter().any(|a| a.starts_with('-'))
         }
@@ -783,6 +902,8 @@ fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
     if !dev_exec_allowed(&kind, &args) {
         return Err(format!("dev_exec: 命令在当前 cwd 不被允许：{}", args.join(" ")));
     }
+    // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
+    dev_exec_validate_paths(&cwd, &args)?;
     let name = args[0].clone();
     let mut cmd = Command::new(name);
     cmd.current_dir(&cwd);
@@ -1344,6 +1465,78 @@ mod dev_exec_tests {
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "-x"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD", "extra"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])));
+    }
+
+    #[test]
+    fn worktree_rejects_path_escape_lexically() {
+        let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
+        // POSIX 绝对路径 → 拒绝（Unix 下 cat/head/ls 不得读取 worktree 外绝对路径）
+        #[cfg(unix)]
+        {
+            assert!(!dev_exec_allowed(&wt, &sv(&["cat", "/etc/passwd"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["head", "/var/log/syslog"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["tail", "/home/user/.ssh/id_rsa"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["ls", "/"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["grep", "SECRET", "/etc/secret"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "/etc/passwd"])));
+            assert!(!dev_exec_allowed(&wt, &sv(&["find", "/etc", "-name", "passwd"])));
+        }
+        // Windows drive 绝对路径 / UNC → 拒绝（跨平台均如此：C:\、D:\、\\server\）
+        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "C:\\Windows\\system32\\drivers\\etc\\hosts"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["ls", "D:\\secret"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "\\\\server\\share\\secret.txt"])));
+        // .. 父目录逃逸（含折返路径 scripts/foo/../..）→ 拒绝（跨平台）
+        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "../../outside.txt"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["head", "src/../../secret"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["ls", ".."])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["grep", "x", "a/../b/../../etc/x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/foo/../../../etc/x.ts"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "../../.git/config"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["find", "..", "-name", "*.ts"])));
+        // 家目录 / shell 元字符 → 拒绝（跨平台）
+        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "~/secret"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "a>file"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["ls", "src | xargs"])));
+    }
+
+    /// canonicalize 层：造真实目录 + symlink，验证路径解析后逃逸 worktree 被拦截。
+    #[test]
+    fn dev_exec_validate_paths_rejects_symlink_escape() {
+        let base = std::env::temp_dir().join(format!("sm_dev_exec_test_{}", std::process::id()));
+        let wt_root = base.join("wt");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&wt_root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        // worktree 内创建指向外部目录的符号链接
+        let link = wt_root.join("evil_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_dir;
+            if symlink_dir(&outside, &link).is_err() {
+                std::fs::write(&link, "dummy").unwrap(); // 无特权时降级：链接失效即视为安全
+            }
+        }
+        // 良性路径：worktree 内文件 → 放行
+        std::fs::write(wt_root.join("ok.txt"), "ok").unwrap();
+        assert!(dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "ok.txt"])).is_ok());
+        // symlink 逃逸：cat evil_link/secret.txt → canonicalize 后逃出 wt_root → 拒绝
+        #[cfg(unix)]
+        if std::fs::symlink_metadata(&link).is_ok() {
+            // 若符号链接真正生效（内部文件可经链接读到），canonicalize 后逃出 wt_root 必须拒绝；
+            // 无特权创建 symlink 时链接无效，文件不存在则放行
+            let inside = wt_root.join("evil_link/secret.txt");
+            if inside.exists() {
+                assert!(
+                    dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "evil_link/secret.txt"])).is_err(),
+                    "symlink 逃逸应被 canonicalize 层拦截"
+                );
+            }
+        }
+        // 清理临时目录
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
