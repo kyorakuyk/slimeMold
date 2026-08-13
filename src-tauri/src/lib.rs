@@ -1539,6 +1539,29 @@ mod dev_exec_tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// 回归：dev_exec_validate_paths 对命令参数路径的归属判断用组件级 Path::starts_with，
+    /// cwd=wt 时指向兄弟目录 wt2 的参数必须被拒绝，指向 wt 内部文件必须放行。
+    #[test]
+    fn dev_exec_validate_paths_no_wt_prefix_collision() {
+        let base = std::env::temp_dir().join(format!("sm_wt_args_{}", std::process::id()));
+        let wt = base.join("wt");
+        let wt2 = base.join("wt2");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&wt2).unwrap();
+        std::fs::write(wt.join("ok.txt"), "ok").unwrap();
+        std::fs::write(wt2.join("secret.txt"), "secret").unwrap();
+        let wt_str = wt.to_str().unwrap().to_string();
+
+        // cwd=wt 内文件 → 放行
+        assert!(dev_exec_validate_paths(&wt_str, &sv(&["cat", "ok.txt"])).is_ok());
+        // 指向兄弟目录 wt2 的文件（../wt2/secret.txt）→ 组件级判断拒绝
+        assert!(dev_exec_validate_paths(&wt_str, &sv(&["cat", "../wt2/secret.txt"])).is_err());
+        // 直接以 wt2 为参数路径（若它相对 wt 根不存在则放行，但 wt2/secret 经 ../ 逃逸必须拒绝）
+        assert!(dev_exec_validate_paths(&wt_str, &sv(&["head", "../wt2/secret.txt"])).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// 回归：worktree 前缀碰撞不得误判。
     /// `Path::starts_with` 是组件级判断，`C:\repo\wt2` 不视为 `C:\repo\wt` 的子路径。
     /// 登记 worktree `wt` 后，cwd=`wt2` 必须被拒绝，而 `wt` 的真实子目录必须被允许。
