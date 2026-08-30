@@ -51,10 +51,60 @@ function joinPath(root: string, ...parts: string[]): string {
 
 // ---------- 最近项目记录（localStorage 缓存） ----------
 
+/** 最近项目统一保存为项目根目录 + 正斜杠，避免 Windows 分隔符制造重复记录。 */
+function normalizeRecentPath(path: string): string {
+  return projectRootFromPath(path).replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/** Windows 驱动器/UNC 路径大小写不敏感，其它平台保留大小写语义。 */
+function recentPathKey(path: string): string {
+  const normalized = normalizeRecentPath(path);
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLocaleLowerCase()
+    : normalized;
+}
+
 function readRecent(): RecentProject[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? (JSON.parse(raw) as RecentProject[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    let changed = false;
+    const list: RecentProject[] = [];
+    for (const rawItem of parsed) {
+      if (typeof rawItem !== 'object' || rawItem === null) {
+        changed = true;
+        continue;
+      }
+      const item = rawItem as Partial<RecentProject>;
+      if (typeof item.path !== 'string' || !item.path) {
+        changed = true;
+        continue;
+      }
+      const entry: RecentProject = {
+        name: typeof item.name === 'string' && item.name ? item.name : item.path,
+        path: normalizeRecentPath(item.path),
+        openedAt: typeof item.openedAt === 'string' ? item.openedAt : '',
+      };
+      if (list.some((existing) => recentPathKey(existing.path) === recentPathKey(entry.path))) {
+        changed = true;
+        continue;
+      }
+      if (
+        entry.name !== item.name ||
+        entry.path !== item.path ||
+        entry.openedAt !== item.openedAt
+      ) {
+        changed = true;
+      }
+      list.push(entry);
+    }
+
+    const limited = list.slice(0, RECENT_MAX);
+    if (changed || limited.length !== list.length) writeRecent(limited);
+    return limited;
   } catch {
     return [];
   }
@@ -71,9 +121,17 @@ export function getRecentProjects(): RecentProject[] {
   return readRecent();
 }
 export function pushRecentProject(r: RecentProject) {
-  const list = readRecent().filter((x) => x.path !== r.path);
-  list.unshift(r);
+  const entry = { ...r, path: normalizeRecentPath(r.path) };
+  const key = recentPathKey(entry.path);
+  const list = readRecent().filter((x) => recentPathKey(x.path) !== key);
+  list.unshift(entry);
   writeRecent(list.slice(0, RECENT_MAX));
+}
+export function removeRecentProject(path: string) {
+  const key = recentPathKey(path);
+  const list = readRecent();
+  const next = list.filter((x) => recentPathKey(x.path) !== key);
+  if (next.length !== list.length) writeRecent(next);
 }
 export function clearRecentProjects() {
   writeRecent([]);

@@ -742,7 +742,7 @@ function WorkflowEditorInner({
   return (
     <CanvasWfIdContext.Provider value={isSplit ? wfId : undefined}>
     <div
-      className="sm-canvas-dot relative h-full w-full"
+      className="sm-pro-canvas sm-canvas-dot relative h-full w-full"
       onDrop={onDrop}
       onDragOverCapture={(e) => {
         e.preventDefault();

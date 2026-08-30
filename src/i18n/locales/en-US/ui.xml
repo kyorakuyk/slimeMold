@@ -80,4 +80,13 @@
   <string name="dialog.closeConfirmTitle">Close Project</string>
   <string name="dialog.closeConfirm">The current project has unsaved changes that will be lost if you close it. Close anyway?</string>
   <string name="log.legacyProject">Legacy .smproj project detected; it will be auto-converted to .slimemold/ on save</string>
+
+  <!-- Custom window title bar -->
+  <string name="window.title">SlimeMold window title bar</string>
+  <string name="window.context">Agent Workflow</string>
+  <string name="window.controls">Window controls</string>
+  <string name="window.minimize">Minimize window</string>
+  <string name="window.maximize">Maximize window</string>
+  <string name="window.restore">Restore window</string>
+  <string name="window.close">Close window</string>
 </resources>

@@ -284,7 +284,7 @@ interface WorkflowState {
   /** 引导式新建项目：可选从模板起步，可选立即落盘到指定位置 */
   createProject: (opts: { name: string; templateId?: string; location?: string }) => Promise<void>;
   /** 载入整个项目文件，并激活 activeId 对应工作流；path 为磁盘路径（Tauri）或项目名（浏览器） */
-  openProject: (file: ProjectFile, path?: string) => void;
+  openProject: (file: ProjectFile, path?: string) => boolean;
   /** 保存当前项目（返回保存的项目根路径/名称） */
   saveProject: () => Promise<string>;
   /** 项目级脏标记：内存态是否不同于最近一次落盘快照 */
@@ -1124,13 +1124,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         try {
           state = buildOpenProjectState(file, path ?? file.name, get().defaultAgentId);
         } catch {
-          return; // 无可用工作流，保持现状
+          return false; // 无可用工作流，保持现状
         }
         suppressDirty = true;
         set(state);
         finalizeLoaded();
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
+        return true;
       },
 
       saveProject: async () => {

@@ -38,6 +38,7 @@ import {
   Wand2,
   Bug,
   Boxes,
+  LayoutDashboard,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types';
@@ -45,6 +46,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { runWorkflow, stopWorkflow, resumeRun, rerunWorkflow } from '../engine/executor';
+import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
 import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
 import { alertDialog, confirmDialog, openDirDialog, isTauri } from '../platform/env';
 import { ask } from '@tauri-apps/plugin-dialog';
@@ -67,6 +69,7 @@ interface TopBarProps {
   onOpenShortcuts: () => void;
   onNewProject: () => void;
   onOpenWizard: () => void;
+  onOpenSimpleView: () => void;
 }
 
 interface MenuAction {
@@ -93,6 +96,7 @@ export default function TopBar({
   onOpenShortcuts,
   onNewProject,
   onOpenWizard,
+  onOpenSimpleView,
 }: TopBarProps) {
   const running = useWorkflowStore((s) => s.running);
   const resetStatuses = useWorkflowStore((s) => s.resetStatuses);
@@ -363,21 +367,23 @@ export default function TopBar({
 
   return (
     <header
-      className="flex shrink-0 flex-col border-b border-line"
+      className="sm-pro-topbar flex shrink-0 flex-col border-b border-line"
       style={{ background: 'var(--sm-bg-soft)' }}
     >
       {/* 菜单条 */}
-      <div ref={menuRef} className="flex h-8 items-center px-2">
-        <span className="mr-2 select-none px-2 text-[13px] font-semibold tracking-wide text-ink">
-          SlimeMold
+      <div ref={menuRef} className="sm-pro-menu-row flex h-8 items-center px-2">
+        <span className="sm-pro-brand mr-2 select-none px-2 text-[13px] font-semibold tracking-wide text-ink">
+          <img className="sm-pro-brand__icon" src={slimeMoldIcon} alt="" aria-hidden="true" />
+          <span>SlimeMold</span>
         </span>
         {menus.map((m, i) => (
           <div key={m.label} className="relative">
             <button
-              className={`rounded px-2.5 py-1 text-[12.5px] transition-colors ${
+              className={`sm-pro-menu-button rounded px-2.5 py-1 text-[12.5px] transition-colors ${
                 openMenu === i ? '' : 'text-ink-soft hover:bg-black/10'
               }`}
-              style={openMenu === i ? { background: 'var(--sm-accent)', color: '#fff' } : undefined}
+              data-active={openMenu === i}
+              style={openMenu === i ? { background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)', color: 'var(--sm-accent)' } : undefined}
               onClick={() => {
                 setOpenMenu(openMenu === i ? null : i);
                 setOpenSub(null);
@@ -388,7 +394,7 @@ export default function TopBar({
             </button>
             {openMenu === i && (
               <div
-                className="absolute left-0 top-full z-50 min-w-[210px] rounded-md border py-1 shadow-lg"
+                className="sm-pro-menu absolute left-0 top-full z-50 min-w-[210px] rounded-md border py-1 shadow-lg"
                 style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
               >
                 {m.items.map((it, j) => {
@@ -411,7 +417,7 @@ export default function TopBar({
                         </button>
                         {openSub === j && (
                           <div
-                            className="absolute left-full top-0 z-50 min-w-[200px] rounded-md border py-1 shadow-lg"
+                            className="sm-pro-menu absolute left-full top-0 z-50 min-w-[200px] rounded-md border py-1 shadow-lg"
                             style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)', marginLeft: 2 }}
                           >
                             {it.items.map((sub, k) => (
@@ -466,7 +472,15 @@ export default function TopBar({
         ))}
 
         {/* 面板开关（菜单条右上角）：左 / 底 / 右 */}
-        <div className="ml-auto flex items-center gap-1">
+        <div className="sm-pro-header-actions ml-auto flex items-center gap-1">
+          <button
+            className="sm-btn h-6 px-2"
+            title="切换到轻量工作台"
+            onClick={onOpenSimpleView}
+          >
+            <LayoutDashboard size={14} />
+            <span className="hidden xl:inline">轻量工作台</span>
+          </button>
           <button
             className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"
             title={t('topbar.toggleLeft')}
@@ -507,9 +521,9 @@ export default function TopBar({
       </div>
 
       {/* 工具条：工作流标签浏览器 */}
-      <div className="flex h-11 items-center gap-2 border-t px-3" style={{ borderColor: 'var(--sm-line)' }}>
+      <div className="sm-pro-workflow-bar flex h-11 items-center gap-2 border-t px-3" style={{ borderColor: 'var(--sm-line)' }}>
         {/* 项目名 + 脏标记 */}
-        <div className="flex shrink-0 items-center gap-1 pr-2" style={{ borderRight: '1px solid var(--sm-line)' }}>
+        <div className="sm-pro-project-crumb flex shrink-0 items-center gap-1 pr-2" style={{ borderRight: '1px solid var(--sm-line)' }}>
           <FolderOpen size={13} className="text-ink-faint" />
           <span className="max-w-[160px] truncate text-[12.5px] font-medium" title={projectName ?? t('topbar.untitledProject')}>
             {projectName ?? t('topbar.untitledProject')}
@@ -521,16 +535,17 @@ export default function TopBar({
           )}
         </div>
         {/* 标签条 + 新建加号 */}
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div className="sm-pro-workflow-tabs flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {wfList.map(([id, wf]) => {
             const active = id === activeWfId;
             return (
               <div
                 key={id}
-                className="group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md border-b-2 px-2.5"
+                className="sm-pro-workflow-tab group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md border-b-2 px-2.5"
+                data-active={active}
                 style={{
                   borderColor: active ? 'var(--sm-accent)' : 'transparent',
-                  background: active ? 'color-mix(in srgb, var(--sm-accent) 12%, transparent)' : 'transparent',
+                  background: active ? 'color-mix(in srgb, var(--sm-accent) 8%, transparent)' : 'transparent',
                   color: active ? 'var(--sm-accent)' : 'var(--sm-ink-soft)',
                 }}
                 onMouseEnter={(e) => {
@@ -600,7 +615,7 @@ export default function TopBar({
           </button>
         </div>
 
-        <span className="mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
+        <span className="sm-pro-workflow-divider mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
         {/* 拆分视图气泡 */}
         <button
           className="sm-btn px-1.5"
@@ -660,8 +675,9 @@ export default function TopBar({
             </button>
           </>
         ) : (
-          <button className="sm-btn sm-btn-primary px-1.5" title={t('topbar.run')} onClick={() => runWorkflow({ wfId: activeWfId })}>
-            <Play size={14} />
+          <button className="sm-pro-run-button sm-btn sm-btn-primary px-2" title={t('topbar.run')} onClick={() => runWorkflow({ wfId: activeWfId })}>
+          <Play size={14} />
+          <span className="sm-pro-run-label">{t('topbar.run')}</span>
           </button>
         )}
       </div>

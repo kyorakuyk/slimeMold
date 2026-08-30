@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Dense IC State</title>
+  <desc id="desc">An independent square integrated circuit covered with quiet gray traces, a few circular terminals and a small number of activated lime traces.</desc>
+  <defs>
+    <clipPath id="surface">
+      <rect x="156" y="156" width="712" height="712" rx="58"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="#0d1113"/>
+  <rect x="112" y="112" width="800" height="800" rx="96" fill="#182126" stroke="#637075" stroke-width="8"/>
+  <rect x="156" y="156" width="712" height="712" rx="58" fill="#252f33" stroke="#879397" stroke-width="7"/>
+  <g clip-path="url(#surface)" fill="none" stroke="#778387" stroke-linecap="round" stroke-linejoin="round" stroke-width="8" opacity=".58">
+    <path d="M168 218H258V258H344V218H430"/>
+    <path d="M168 286H226V338H302V306H376V352H442"/>
+    <path d="M168 374H258V410H328V378H408V432H446"/>
+    <path d="M168 464H238V438H318V484H394V454H448"/>
+    <path d="M168 548H274V516H338V566H420"/>
+    <path d="M168 632H236V594H304V644H378V612H446"/>
+    <path d="M168 730H256V686H326V726H398V690H448"/>
+    <path d="M578 222H674V260H758V218H856"/>
+    <path d="M580 304H646V348H724V314H856"/>
+    <path d="M578 392H640V430H732V386H856"/>
+    <path d="M576 478H628V522H718V486H856"/>
+    <path d="M578 568H638V534H710V594H856"/>
+    <path d="M578 656H628V706H708V664H856"/>
+    <path d="M576 752H650V716H744V778H856"/>
+    <path d="M226 160V244H270V314H242V390H282V462H254V548H294V624H268V710H306V864"/>
+    <path d="M356 160V230H396V292H370V360H410V424H384V492H424V560H398V636H438V710H418V864"/>
+    <path d="M512 160V232H480V300H522V370H496V440H538V508H510V578H550V650H526V730H566V864"/>
+    <path d="M672 160V240H638V308H680V374H650V438H694V506H666V576H708V644H682V720H724V864"/>
+    <path d="M804 160V246H766V294H812V382H778V448H816V526H788V606H822V688H792V764H836V864"/>
+  </g>
+  <g clip-path="url(#surface)" fill="none" stroke="#98a3a5" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" opacity=".28">
+    <path d="M184 338H278V382H350V350H432V392H462"/>
+    <path d="M184 450H246V492H310V462H378V502H454"/>
+    <path d="M184 606H236V662H298V634H364V676H452"/>
+    <path d="M182 706H252V748H326V710H386V754H458"/>
+    <path d="M568 270H632V306H688V268H758V302H852"/>
+    <path d="M568 446H614V478H674V446H742V474H850"/>
+    <path d="M568 610H630V646H688V612H752V646H850"/>
+    <path d="M300 168V228H326V282H306V342H340V400H320V458H354V516H334V576H370V634H350V692H386V842"/>
+    <path d="M744 168V226H718V280H750V340H730V398H766V456H746V514H782V572H762V630H798V688H778V746H814V842"/>
+  </g>
+  <g fill="#7a878b" opacity=".7">
+    <circle cx="258" cy="258" r="7"/><circle cx="302" cy="306" r="7"/><circle cx="328" cy="410" r="7"/><circle cx="338" cy="566" r="7"/><circle cx="326" cy="726" r="7"/>
+    <circle cx="674" cy="260" r="7"/><circle cx="724" cy="348" r="7"/><circle cx="718" cy="522" r="7"/><circle cx="710" cy="594" r="7"/><circle cx="708" cy="706" r="7"/>
+  </g>
+  <rect x="380" y="380" width="264" height="264" rx="30" fill="#1a262b" stroke="#6f7d81" stroke-width="7"/>
+  <g fill="none" stroke="#78878a" stroke-linecap="square" stroke-linejoin="miter" stroke-width="8" opacity=".72">
+    <path d="M414 442H472V414H538V446H606"/>
+    <path d="M414 502H448V546H510V520H574V566H610"/>
+    <path d="M438 604H490V574H548V612H606"/>
+    <path d="M472 414V466M538 446V498M448 546V594M574 520V574"/>
+  </g>
+  <path d="M170 754H244V706H318V660H392V614H486V570H544V520H588V450H650V394H720V334H856" fill="none" stroke="#62783b" stroke-linecap="round" stroke-linejoin="round" stroke-width="28" opacity=".42"/>
+  <path d="M170 754H244V706H318V660H392V614H486V570H544V520H588V450H650V394H720V334H856" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="15"/>
+  <path d="M170 754H244V706H318V660H392V614H486V570M544 520H588V450H650V394H720V334H856" fill="none" stroke="#efffc8" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" opacity=".8"/>
+  <path d="M170 252H246V298H316V344H384V372H482" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/>
+  <g fill="#27383d" stroke="#89979a" stroke-width="7">
+    <circle cx="302" cy="306" r="19"/><circle cx="328" cy="410" r="19"/><circle cx="338" cy="566" r="19"/>
+    <circle cx="718" cy="522" r="19"/><circle cx="710" cy="594" r="19"/><circle cx="708" cy="706" r="19"/>
+  </g>
+  <g fill="#c8f36a" stroke="#f0ffc8" stroke-width="7">
+    <circle cx="486" cy="570" r="25"/><circle cx="650" cy="394" r="25"/><circle cx="482" cy="372" r="23"/>
+  </g>
+  <g fill="none" stroke="#9aa6a8" stroke-linecap="square" stroke-width="12" opacity=".78">
+    <path d="M244 112V84M298 112V80M352 112V86M406 112V78M460 112V84M514 112V80M568 112V86M622 112V78M676 112V84M730 112V80M784 112V86"/>
+    <path d="M244 912V940M298 912V944M352 912V938M406 912V946M460 912V940M514 912V944M568 912V938M622 912V946M676 912V940M730 912V944M784 912V938"/>
+    <path d="M112 244H84M112 298H80M112 352H86M112 406H78M112 460H84M112 514H80M112 568H86M112 622H78M112 676H84M112 730H80M112 784H86"/>
+    <path d="M912 244H940M912 298H944M912 352H938M912 406H946M912 460H940M912 514H944M912 568H938M912 622H946M912 676H940M912 730H944M912 784H938"/>
+  </g>
+</svg>

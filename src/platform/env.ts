@@ -99,30 +99,20 @@ export async function defaultStandaloneDir(): Promise<string> {
 }
 
 /**
- * 打开项目：优先让用户选择项目根目录 / .slimemold 目录（新形态）；
- * 若取消，再退回到选择旧版 .smproj 单文件。
- * 返回项目根或 .smproj 路径；取消返回 null。
+ * 打开项目时只弹出一次项目根目录选择器。
+ * 旧版 .smproj 仍可通过最近项目路径打开，避免一次点击连续激活两个原生对话框。
+ * 返回项目根路径；取消返回 null。
  */
 export async function pickProjectFile(): Promise<string | null> {
   if (!isTauri) return null;
   try {
     const { open } = await import('@tauri-apps/plugin-dialog');
-    const dir = await open({
+    const selected = await open({
       directory: true,
       multiple: false,
       title: '选择项目文件夹（含 .slimemold 的目录）',
     });
-    if (dir) {
-      return Array.isArray(dir) ? dir[0] ?? null : dir;
-    }
-    // 退回旧版单文件
-    const file = await open({
-      directory: false,
-      multiple: false,
-      filters: [{ name: 'SlimeMold 项目', extensions: ['smproj'] }],
-      title: '打开旧版项目文件 (.smproj)',
-    });
-    return Array.isArray(file) ? file[0] ?? null : file;
+    return Array.isArray(selected) ? selected[0] ?? null : selected;
   } catch {
     return null;
   }

@@ -3,6 +3,12 @@ import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type LocaleCode = string;
+export type WorkspaceMode = 'simple' | 'advanced';
+
+/** 旧版欢迎遮罩只属于高级工作台，避免覆盖轻量工作台自己的入口。 */
+export function shouldRenderWelcomeModal(workspaceMode: WorkspaceMode, showWelcome: boolean): boolean {
+  return showWelcome && workspaceMode === 'advanced';
+}
 
 import i18n from '../i18n';
 import { setSelfImprove } from '../agents/reviewer';
@@ -43,6 +49,9 @@ namespace applyTheme {
 }
 
 interface ViewState {
+  /** 默认面向轻度用户的项目视图；高级模式保留原有节点画布 */
+  workspaceMode: WorkspaceMode;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
   showGrid: boolean;
   showMinimap: boolean;
   /** 颜色主题：dark / light / system（跟随系统），持久化，全局跟随 */
@@ -108,6 +117,8 @@ interface ViewState {
 export const useViewStore = create<ViewState>()(
   persist(
     (set, get) => ({
+      workspaceMode: 'simple',
+      setWorkspaceMode: (mode) => set({ workspaceMode: mode }),
       showGrid: true,
       showMinimap: false,
       theme: 'dark',

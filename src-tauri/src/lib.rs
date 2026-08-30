@@ -1076,7 +1076,19 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 自定义标题栏由 WebView 提供；窗口状态插件不能恢复旧的 native decorations，
+        // 否则 decorations:false 会被历史状态里的 decorated:true 覆盖，出现两层标题栏。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                        | tauri_plugin_window_state::StateFlags::VISIBLE
+                        | tauri_plugin_window_state::StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             set_credential,
             get_credential,
@@ -1104,12 +1116,15 @@ pub fn run() {
         // 万一某些环境初始未显示，页面加载完成后再确保 show 一次。
         .setup(|app| {
             if let Some(win) = app.get_webview_window("main") {
+                // 运行时再次关闭 native decorations，兼容旧的编译上下文/窗口状态缓存。
+                let _ = win.set_decorations(false);
                 let _ = win.show();
             }
             Ok(())
         })
         .on_page_load(|win, _payload| {
             // 页面初次加载完成即确保窗口可见（SPA 仅触发一次）
+            let _ = win.window().set_decorations(false);
             let _ = win.show();
         })
         .run(tauri::generate_context!())

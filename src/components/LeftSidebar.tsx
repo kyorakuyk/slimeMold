@@ -131,7 +131,8 @@ function IconButton({
     <button
       onClick={onClick}
       title={`${label}${shortcut ? ` (${shortcut})` : ''}`}
-      className="group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors"
+      className="sm-pro-rail-button group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors"
+      data-active={isActive}
       style={{
         color: isActive ? 'var(--sm-accent)' : 'var(--sm-ink-faint)',
         background: isActive ? 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' : 'transparent',
@@ -149,7 +150,7 @@ function IconButton({
     >
       <Icon size={18} />
       <span
-        className="pointer-events-none absolute left-11 z-50 flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs opacity-0 shadow-lg transition-opacity delay-150 group-hover:opacity-100"
+        className="sm-pro-tooltip pointer-events-none absolute left-11 z-50 flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs opacity-0 shadow-lg transition-opacity delay-150 group-hover:opacity-100"
         style={{ background: 'var(--sm-bg)', borderColor: 'var(--sm-line)', color: 'var(--sm-ink)' }}
       >
         {label}
@@ -193,11 +194,11 @@ export function SideRail({
 }: SideRailProps) {
   return (
     <nav
-      className="flex w-12 shrink-0 flex-col items-center justify-between border-r py-2"
+      className="sm-pro-rail flex w-12 shrink-0 flex-col items-center justify-between border-r py-2"
       style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg-deep)' }}
     >
       {/* 上半：展开面板类（示例库为独立次级窗口，单独处理） */}
-      <div className="flex flex-col items-center gap-1">
+      <div className="sm-pro-rail-section flex flex-col items-center gap-1">
         <IconButton
           label="示例库"
           icon={LayoutTemplate}
@@ -217,7 +218,7 @@ export function SideRail({
       </div>
 
       {/* 下半（从下到上）：帮助中心 / 底部面板 / 快捷键查看 / 深浅色 / 设置 */}
-      <div className="flex flex-col items-center gap-1">
+      <div className="sm-pro-rail-section sm-pro-rail-section-bottom flex flex-col items-center gap-1">
         <IconButton
           label="帮助中心"
           icon={HelpCircle}
@@ -257,18 +258,18 @@ export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) 
 
   return (
     <div
-      className="relative flex h-full min-h-0 shrink-0 flex-col border-r overflow-visible"
+      className="sm-pro-side-panel relative flex h-full min-h-0 shrink-0 flex-col border-r overflow-visible"
       style={{ width, background: 'var(--sm-bg)', borderColor: 'var(--sm-line)' }}
     >
       <div
-        className="flex h-9 shrink-0 items-center justify-between border-b px-3"
+        className="sm-pro-side-panel-header flex h-9 shrink-0 items-center justify-between border-b px-3"
         style={{ borderColor: 'var(--sm-line)' }}
       >
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+        <span className="sm-pro-side-panel-title text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
           {item.label}
         </span>
         <button
-          className="cursor-pointer"
+          className="sm-pro-side-panel-close cursor-pointer"
           style={{ color: 'var(--sm-ink-faint)' }}
           onClick={onClose}
           title="收起"
@@ -309,7 +310,7 @@ export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) 
 /** 兼容旧调用：左栏 = 图标条 + 展开面板（保留导出，App 现拆分为 SideRail / SidePanel） */
 export default function LeftSidebar(props: SideRailProps & { width: number; onResize: (w: number) => void }) {
   return (
-    <div className="flex h-full shrink-0" style={{ background: 'var(--sm-bg-soft)' }}>
+    <div className="sm-pro-sidebar flex h-full shrink-0" style={{ background: 'var(--sm-bg-soft)' }}>
       <SideRail {...props} />
       {props.active && (
         <SidePanel active={props.active} width={props.width} onResize={props.onResize} onClose={props.onClose} />

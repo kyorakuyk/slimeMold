@@ -12,6 +12,8 @@ import WorkflowWizard from './components/WorkflowWizard';
 import WelcomeModal from './components/WelcomeModal';
 import NewProjectModal from './components/NewProjectModal';
 import InterventionModal from './components/InterventionModal';
+import BeginnerExperience from './components/BeginnerExperience';
+import WindowTitleBar from './components/WindowTitleBar';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
@@ -20,7 +22,7 @@ import { isTauri } from './platform/env';
 import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
-import { useViewStore } from './store/viewStore';
+import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
@@ -115,6 +117,8 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const viewTheme = useViewStore((s) => s.theme);
   const setViewTheme = useViewStore((s) => s.setTheme);
+  const workspaceMode = useViewStore((s) => s.workspaceMode);
+  const setWorkspaceMode = useViewStore((s) => s.setWorkspaceMode);
   const [prompt, setPrompt] = useState<{ title: string; initial: string; onConfirm: (name: string) => void } | null>(null);
   const splitView = useViewStore((s) => s.splitView);
   const splitWfId = useViewStore((s) => s.splitWfId);
@@ -322,26 +326,36 @@ export default function App() {
   return (
     <ReactFlowProvider>
       <div
-        className="flex h-screen flex-col font-app"
+        className={`flex h-screen flex-col font-app ${workspaceMode === 'advanced' ? 'sm-pro-shell' : 'sm-simple-root'}`}
         style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink)' }}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <TopBar
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          panelOpen={panelOpen}
-          onTogglePanel={togglePanel}
-          inspectorOpen={inspectorOpen}
-          onToggleInspector={toggleInspector}
-          onOpenPanel={openPanel}
-          onOpenShortcuts={() => setShowShortcutsModal(true)}
-          onNewProject={() => setNewProjectOpen(true)}
-          onOpenWizard={() => setWizardOpen(true)}
-        />
-        <main className="flex flex-1 overflow-hidden">
+        <WindowTitleBar />
+        <div className="sm-app-content">
+          {workspaceMode === 'simple' ? (
+            <BeginnerExperience
+              onOpenAdvanced={() => setWorkspaceMode('advanced')}
+              onNewProject={() => setNewProjectOpen(true)}
+            />
+          ) : (
+            <>
+            <TopBar
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              panelOpen={panelOpen}
+              onTogglePanel={togglePanel}
+              inspectorOpen={inspectorOpen}
+              onToggleInspector={toggleInspector}
+              onOpenPanel={openPanel}
+              onOpenShortcuts={() => setShowShortcutsModal(true)}
+              onNewProject={() => setNewProjectOpen(true)}
+              onOpenWizard={() => setWizardOpen(true)}
+              onOpenSimpleView={() => setWorkspaceMode('simple')}
+            />
+            <main className="sm-pro-main flex flex-1 overflow-hidden">
           {/* 通栏图标条：贯穿整个高度，底部面板在其右侧打开，永不被遮盖 */}
           {sidebarOpen && (
             <SideRail
@@ -359,8 +373,8 @@ export default function App() {
             />
           )}
           {/* 内容区：展开面板 + 画布 + Inspector + 底部面板（均位于图标条右侧） */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-x-visible overflow-y-hidden">
-            <div className={`flex min-h-0 flex-1 ${activePanel === 'agents' ? 'overflow-visible' : 'overflow-hidden'}`}>
+          <div className="sm-pro-content flex min-w-0 flex-1 flex-col overflow-x-visible overflow-y-hidden">
+            <div className={`sm-pro-stage flex min-h-0 flex-1 ${activePanel === 'agents' ? 'overflow-visible' : 'overflow-hidden'}`}>
               {sidebarOpen && activePanel && (
                 <>
                   <SidePanel
@@ -370,14 +384,14 @@ export default function App() {
                     onClose={closePanel}
                   />
                   <div
-                    className="w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
+                    className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
                     style={{ background: 'var(--sm-line)' }}
                     onPointerDown={startResize('x', 'left', leftW)}
                     title="拖动调节展开面板宽度"
                   />
                 </>
               )}
-          <div className="flex min-w-0 flex-1">
+          <div className="sm-pro-canvas-region flex min-w-0 flex-1">
               {splitView ? (
                 <SplitCanvas
                   splitWfId={splitWfId}
@@ -394,7 +408,7 @@ export default function App() {
               <>
                 <Inspector width={rightW} />
                 <div
-                  className="w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
+                  className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
                   style={{ background: 'var(--sm-line)' }}
                   onPointerDown={startResize('x', 'right', rightW)}
                   title="拖动调节属性面板宽度"
@@ -406,7 +420,7 @@ export default function App() {
             {shortcutsOpen && (
               <>
                 <div
-                  className="h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
+                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
                   style={{ background: 'var(--sm-line)' }}
                   onPointerDown={startResize('y', 'bottom', shortcutsH)}
                   title="拖动调节快捷键面板高度"
@@ -434,7 +448,7 @@ export default function App() {
             {panelOpen && (
               <>
                 <div
-                  className="h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
+                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
                   style={{ background: 'var(--sm-line)' }}
                   onPointerDown={startResize('y', 'bottom', panelH)}
                   title="拖动调节底部面板高度"
@@ -443,23 +457,28 @@ export default function App() {
               </>
             )}
           </div>
-        </main>
-        {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
-        {showSettings && <SettingsCenter onClose={() => setShowSettings(false)} />}
-        {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
-        {wizardOpen && <WorkflowWizard onClose={() => setWizardOpen(false)} />}
-        {prompt && (
-          <NamePrompt
-            title={prompt.title}
-            initial={prompt.initial}
-            onConfirm={(name) => {
-              prompt.onConfirm(name);
-              setPrompt(null);
-            }}
-            onCancel={() => setPrompt(null)}
-          />
-        )}
-        {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} onNewProject={() => setNewProjectOpen(true)} />}
+            </main>
+            {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
+            {showSettings && <SettingsCenter onClose={() => setShowSettings(false)} />}
+            {examplesOpen && <ExamplesModal onClose={() => setExamplesOpen(false)} />}
+            {wizardOpen && <WorkflowWizard onClose={() => setWizardOpen(false)} />}
+            {prompt && (
+              <NamePrompt
+                title={prompt.title}
+                initial={prompt.initial}
+                onConfirm={(name) => {
+                  prompt.onConfirm(name);
+                  setPrompt(null);
+                }}
+                onCancel={() => setPrompt(null)}
+              />
+            )}
+            {shouldRenderWelcomeModal(workspaceMode, showWelcome) && (
+              <WelcomeModal onClose={() => setShowWelcome(false)} onNewProject={() => setNewProjectOpen(true)} />
+            )}
+            </>
+          )}
+        </div>
         {newProjectOpen && <NewProjectModal onClose={() => setNewProjectOpen(false)} />}
         {/* 阶段 D 实时接管：节点请求人工介入时浮出，提交/取消放行挂起的执行 */}
         <InterventionModal />
