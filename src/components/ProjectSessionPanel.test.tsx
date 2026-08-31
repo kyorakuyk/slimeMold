@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
 import type { MasterTurnResult } from '../projectControl/master';
+import { clearProjectEventBuffer, getPendingProjectEvents } from '../projectControl/eventBuffer';
 
 const mocks = vi.hoisted(() => {
   const session: ProjectSession = {
@@ -102,6 +103,7 @@ describe('ProjectSessionPanel', () => {
   let root: Root;
 
   beforeEach(() => {
+    clearProjectEventBuffer();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -446,8 +448,62 @@ describe('ProjectSessionPanel', () => {
     expect(mocks.store.setOrchestrations).toHaveBeenCalledTimes(1);
     const orchestrationCalls = mocks.store.setOrchestrations.mock.calls as unknown as Array<[Array<{ draft?: { stages: unknown[] } }>]>;
     expect(orchestrationCalls[0][0][0].draft?.stages).toHaveLength(2);
+    const pendingEvents = getPendingProjectEvents('project-1');
+    expect(pendingEvents).toHaveLength(2);
+    expect(pendingEvents.some((event) => event.eventType === 'ExecutionDraftCreated' && event.actor === 'runtime')).toBe(true);
+    expect(pendingEvents.some((event) => event.eventType === 'SessionOrchestrationLinked')).toBe(true);
     const controlCalls = mocks.store.setProjectControl.mock.calls as unknown as Array<[ProjectControlSnapshot]>;
     const next = controlCalls.at(-1)?.[0];
     expect(next?.sessions[0].orchestrationId).toBeDefined();
+  });
+
+  it('confirms an awaiting execution plan from the simple workspace without starting a run', async () => {
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'awaiting-confirm',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: [],
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{
+        ...mocks.session,
+        status: 'ready',
+        orchestrationId: 'orch-1',
+      }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+    };
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+        />,
+      );
+    });
+
+    const confirmButton = container.querySelector('[data-testid="beginner-session-confirm-execution-plan"]') as HTMLButtonElement;
+    expect(confirmButton).not.toBeNull();
+    await act(async () => {
+      confirmButton.click();
+    });
+
+    const orchestrationCalls = mocks.store.setOrchestrations.mock.calls as unknown as Array<[Array<{ id: string; status: string }>]>;
+    expect(orchestrationCalls.at(-1)?.[0]).toEqual([
+      expect.objectContaining({ id: 'orch-1', status: 'ready' }),
+    ]);
+    expect(getPendingProjectEvents('project-1')).toEqual([
+      expect.objectContaining({ eventType: 'ExecutionDraftApproved', actor: 'user' }),
+    ]);
   });
 });

@@ -174,6 +174,9 @@
   <string name="session.generateOrchestration">Generate execution orchestration</string>
   <string name="session.nextOrchestration">Execution orchestration created</string>
   <string name="session.nextOrchestrationHint">Open the professional view to inspect stage workflows and confirm before running.</string>
+  <string name="session.nextOrchestrationReview">Review and confirm the execution plan</string>
+  <string name="session.nextOrchestrationReviewHint">The execution draft is ready; confirm it before it becomes runnable.</string>
+  <string name="session.confirmExecutionPlan">Confirm execution plan</string>
   <string name="session.openOrchestration">Open execution orchestration</string>
   <string name="issue.back">Back to project</string>
   <string name="issue.openAdvanced">Open professional view</string>

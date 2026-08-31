@@ -26,9 +26,8 @@ import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
-import { createEmptyProjectControlSnapshot } from './projectControl/persistence';
-import { createIssue } from './projectControl/issue';
-import { createProjectSession } from './projectControl/state';
+import { startProjectSessionCommand } from './projectControl/commands';
+import { recordProjectEvents } from './projectControl/eventBuffer';
 
 registerBuiltins();
 
@@ -154,23 +153,16 @@ export default function App() {
     if (!projectId) return;
     const now = new Date().toISOString();
     const id = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const session = createProjectSession({ id, projectId, goal: normalizedGoal, now });
-    const issue = createIssue({
-      id: `issue-${id}`,
+    const { snapshot, events } = startProjectSessionCommand({
       projectId,
-      type: 'feature',
-      title: projectName,
-      description: normalizedGoal,
-      sourceSessionId: session.id,
-      createdAt: now,
+      sessionId: id,
+      issueId: `issue-${id}`,
+      projectName,
+      goal: normalizedGoal,
+      now,
     });
-    const projectControl = createEmptyProjectControlSnapshot();
-    useWorkflowStore.getState().setProjectControl({
-      ...projectControl,
-      activeSessionId: session.id,
-      sessions: [session],
-      issues: [issue],
-    });
+    recordProjectEvents(projectId, events);
+    useWorkflowStore.getState().setProjectControl(snapshot);
   };
 
   const toggleTheme = () => {

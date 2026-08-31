@@ -1344,6 +1344,28 @@ Issue 工作台采用四个面板：
 
 构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。本轮只建立了 canonical event/storage/migration/recovery 边界，尚未把旧控制面读写、项目驾驶舱或真实 Worker 执行切换到事件流。
 
+### 7.13 Phase 1a 项目入口与执行草案确认门
+
+本轮开始把 Phase 0b 的事件基础设施接入真实项目驾驶舱路径，而不是继续只维护独立领域模块：
+
+- `src/projectControl/commands.ts`：新增项目会话启动、主控回合、Brief/架构/任务图审批、任务图生成和 orchestration 关联 Command；Command 同时返回更新后的 `ProjectControlSnapshot` 与 `DomainEvent[]`；
+- `src/projectControl/eventBuffer.ts`：增加按项目隔离的 pending event buffer。事件写入按 eventId 幂等，flush 到已有事件流时重新计算 sequence/aggregateVersion；目标流需要修复或发生并发冲突时保留 pending，不静默丢弃；
+- `src/App.tsx`：入口“开始项目”改为调用 `startProjectSessionCommand`，同时记录 Project → Session → Issue 初始事实；
+- `src/components/ProjectSessionPanel.tsx`：主控回合、Brief/架构/任务图审批、执行草案生成和会话关联均接入 Command/event buffer；简单工作台新增 `awaiting-confirm → ready` 的“确认执行计划”门，但本轮没有启动 Run，也没有伪造 `RunCreated`；
+- `src/store/workflowStore.ts`：Tauri `saveProject` / `saveProjectAs` 在项目文件成功写入后 flush pending domain events；关闭或切换项目时清理对应未提交 buffer；浏览器模式不假装具备磁盘事件持久化；
+- 中英文 beginner locale 补齐执行草案审查和确认文案。
+
+本轮继续采用先 RED 后 GREEN 的测试方式，并验证了事件 buffer 在已有持久事件流上的重定位行为。验证结果：
+
+- `npm run test`：74 个测试文件、688 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 938 个 key 对齐；
+- `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`：19 个 Rust 测试通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `git diff --check`：无空白错误。
+
+构建仍有已有的动态/静态 import 和大 chunk warning。本轮完成的是项目入口到执行草案确认门的第一段真实接线；事件流还没有全面替换旧 `workflowStore`/executor，确认后自动 Worker、独立 worktree、Evidence 和失败恢复仍待下一阶段接入。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

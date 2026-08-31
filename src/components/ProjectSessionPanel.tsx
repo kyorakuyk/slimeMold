@@ -16,12 +16,19 @@ import {
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
-import { approveArchitecture, approveBrief, transitionSession } from '../projectControl/state';
-import { applyMasterTurn } from '../projectControl/session';
+import {
+  applyMasterTurnCommand,
+  approveArchitectureCommand,
+  approveBriefCommand,
+  approveTaskGraphCommand,
+  createExecutionDraftCreatedEvent,
+  generateTaskGraphCommand,
+  linkOrchestrationCommand,
+} from '../projectControl/commands';
+import { recordProjectEvents } from '../projectControl/eventBuffer';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
-import { approveTaskGraph, createTaskGraphFromArchitecture } from '../projectControl/taskGraph';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
-import { createOrchestration } from '../orchestrator/confirm';
+import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
 
@@ -134,7 +141,7 @@ export default function ProjectSessionPanel({
         onToken: (text) => setStreamingText((current) => current + text),
       });
       const latestSnapshot = useWorkflowStore.getState().projectControl;
-      const next = applyMasterTurn({
+      const next = applyMasterTurnCommand({
         snapshot: latestSnapshot,
         sessionId,
         userMessage: recordUserMessage ? userMessage : undefined,
@@ -142,7 +149,8 @@ export default function ProjectSessionPanel({
         now: new Date().toISOString(),
         createId: controlId,
       });
-      useWorkflowStore.getState().setProjectControl(next);
+      recordProjectEvents(currentSession.projectId, next.events);
+      useWorkflowStore.getState().setProjectControl(next.snapshot);
       setLocalResponse(result.response);
       if (recordUserMessage) setInput('');
     } catch (cause) {
@@ -178,13 +186,14 @@ export default function ProjectSessionPanel({
     if (!currentSession || !brief) return;
     try {
       const now = new Date().toISOString();
-      const approved = approveBrief(brief, 'user', now);
-      const nextSession = transitionSession(currentSession, 'architecture-review', now);
-      state.setProjectControl({
-        ...snapshot,
-        briefs: snapshot.briefs.map((item) => (item.id === approved.id ? approved : item)),
-        sessions: snapshot.sessions.map((item) => (item.id === nextSession.id ? nextSession : item)),
+      const next = approveBriefCommand({
+        snapshot,
+        sessionId,
+        approvedBy: 'user',
+        now,
       });
+      recordProjectEvents(currentSession.projectId, next.events);
+      state.setProjectControl(next.snapshot);
       setLocalResponse(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -207,13 +216,14 @@ export default function ProjectSessionPanel({
     if (!currentSession || !architecture) return;
     try {
       const now = new Date().toISOString();
-      const approved = approveArchitecture(architecture, 'user', now);
-      const nextSession = transitionSession(currentSession, 'plan-review', now);
-      state.setProjectControl({
-        ...snapshot,
-        architectures: snapshot.architectures.map((item) => (item.id === approved.id ? approved : item)),
-        sessions: snapshot.sessions.map((item) => (item.id === nextSession.id ? nextSession : item)),
+      const next = approveArchitectureCommand({
+        snapshot,
+        sessionId,
+        approvedBy: 'user',
+        now,
       });
+      recordProjectEvents(currentSession.projectId, next.events);
+      state.setProjectControl(next.snapshot);
       setLocalResponse(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -231,19 +241,14 @@ export default function ProjectSessionPanel({
     if (!currentSession || !architecture || architecture.approval !== 'approved' || currentSession.taskGraphId) return;
     try {
       const now = new Date().toISOString();
-      const graph = createTaskGraphFromArchitecture({
+      const next = generateTaskGraphCommand({
+        snapshot,
+        sessionId,
         id: controlId('task-graph'),
-        architecture,
         now,
       });
-      const nextSession = transitionSession(currentSession, 'plan-review', now);
-      state.setProjectControl({
-        ...snapshot,
-        taskGraphs: [...(snapshot.taskGraphs ?? []), graph],
-        sessions: snapshot.sessions.map((item) =>
-          item.id === nextSession.id ? { ...nextSession, taskGraphId: graph.id } : item,
-        ),
-      });
+      recordProjectEvents(currentSession.projectId, next.events);
+      state.setProjectControl(next.snapshot);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -260,13 +265,14 @@ export default function ProjectSessionPanel({
     if (!currentSession || !graph) return;
     try {
       const now = new Date().toISOString();
-      const approved = approveTaskGraph(graph, 'user', now);
-      const nextSession = transitionSession(currentSession, 'ready', now);
-      state.setProjectControl({
-        ...snapshot,
-        taskGraphs: (snapshot.taskGraphs ?? []).map((item) => (item.id === approved.id ? approved : item)),
-        sessions: snapshot.sessions.map((item) => (item.id === nextSession.id ? nextSession : item)),
+      const next = approveTaskGraphCommand({
+        snapshot,
+        sessionId,
+        approvedBy: 'user',
+        now,
       });
+      recordProjectEvents(currentSession.projectId, next.events);
+      state.setProjectControl(next.snapshot);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -314,14 +320,62 @@ export default function ProjectSessionPanel({
       });
       const orchestration = createOrchestration(brief?.goal ?? projectName ?? '项目执行', draft);
       const now = new Date().toISOString();
-      const nextSession = transitionSession(currentSession, 'ready', now);
-      state.setProjectControl({
-        ...snapshot,
-        sessions: snapshot.sessions.map((item) =>
-          item.id === nextSession.id ? { ...nextSession, orchestrationId: orchestration.id } : item,
-        ),
+      const next = linkOrchestrationCommand({
+        snapshot,
+        sessionId,
+        orchestrationId: orchestration.id,
+        now,
       });
+      recordProjectEvents(currentSession.projectId, [
+        createExecutionDraftCreatedEvent({
+          projectId: currentSession.projectId,
+          sessionId: currentSession.id,
+          orchestration,
+          taskGraphId: graph.id,
+          taskGraphVersion: graph.graphVersion,
+          now,
+        }),
+        ...next.events,
+      ]);
+      state.setProjectControl(next.snapshot);
       setLocalResponse(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const handleConfirmExecutionPlan = () => {
+    const state = useWorkflowStore.getState();
+    const snapshot = state.projectControl;
+    const currentSession = findSession(snapshot, sessionId);
+    const orchestrationId = currentSession?.orchestrationId;
+    const orchestration = orchestrationId
+      ? state.orchestrations.find((item) => item.id === orchestrationId)
+      : undefined;
+    if (!currentSession || !orchestration || orchestration.status !== 'awaiting-confirm') return;
+    try {
+      const now = new Date().toISOString();
+      const approved = confirmDraft(orchestration.id, 'approved');
+      recordProjectEvents(currentSession.projectId, [{
+        eventId: `${approved.id}:execution-draft-approved:${now}`,
+        streamId: currentSession.projectId,
+        aggregateType: 'Orchestration',
+        aggregateId: approved.id,
+        eventType: 'ExecutionDraftApproved',
+        schemaVersion: 1,
+        sequence: 1,
+        aggregateVersion: 1,
+        payload: {
+          orchestrationId: approved.id,
+          sessionId: currentSession.id,
+          draftStageIds: approved.draft?.stages.map((stage) => stage.id) ?? [],
+        },
+        actor: 'user',
+        occurredAt: now,
+        correlationId: currentSession.id,
+        source: { objectId: approved.id, objectVersion: 1 },
+        sensitivity: 'normal',
+      }]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -548,8 +602,10 @@ export default function ProjectSessionPanel({
             <section className="sm-beginner-session-next-card">
               <p className="sm-beginner-eyebrow">{t('session.nextEyebrow')}</p>
               <strong>
-                {currentOrchestration
-                  ? t('session.nextOrchestration')
+                {currentOrchestration?.status === 'awaiting-confirm'
+                  ? t('session.nextOrchestrationReview')
+                  : currentOrchestration
+                    ? t('session.nextOrchestration')
                   : currentTaskGraph?.approval === 'approved'
                     ? t('session.nextExecution')
                     : currentTaskGraph
@@ -563,8 +619,10 @@ export default function ProjectSessionPanel({
                             : t('session.nextQuestions')}
               </strong>
               <span>
-                {currentOrchestration
-                  ? t('session.nextOrchestrationHint')
+                {currentOrchestration?.status === 'awaiting-confirm'
+                  ? t('session.nextOrchestrationReviewHint')
+                  : currentOrchestration
+                    ? t('session.nextOrchestrationHint')
                   : currentTaskGraph?.approval === 'approved'
                     ? t('session.nextExecutionHint')
                     : currentTaskGraph
@@ -594,7 +652,12 @@ export default function ProjectSessionPanel({
                   {t('session.generateTaskGraph')}
                 </button>
               )}
-              {currentOrchestration && (
+              {currentOrchestration?.status === 'awaiting-confirm' && (
+                <button type="button" data-testid="beginner-session-confirm-execution-plan" className="sm-beginner-primary-button sm-beginner-session-approve" onClick={handleConfirmExecutionPlan}>
+                  <CheckCircle2 size={16} /> {t('session.confirmExecutionPlan')}
+                </button>
+              )}
+              {currentOrchestration && currentOrchestration.status !== 'awaiting-confirm' && (
                 <button type="button" className="sm-beginner-primary-button sm-beginner-session-approve" onClick={onOpenAdvanced}>
                   <ArrowRight size={16} /> {t('session.openOrchestration')}
                 </button>

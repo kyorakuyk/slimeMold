@@ -69,6 +69,12 @@ import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
+import { EventStreamRepository } from '../domain/eventStore';
+import {
+  clearProjectEventBuffer,
+  flushPendingProjectEvents,
+  getPendingProjectEvents,
+} from '../projectControl/eventBuffer';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
@@ -1044,6 +1050,8 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       newProject: (name) => {
         // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
+        const previousProjectId = get().projectId;
+        if (previousProjectId) clearProjectEventBuffer(previousProjectId);
         suppressDirty = true;
         set(buildNewProjectState(name));
         suppressDirty = false;
@@ -1140,6 +1148,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         suppressDirty = true;
         set(state);
         finalizeLoaded();
+        clearProjectEventBuffer(file.id);
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
         return true;
@@ -1151,6 +1160,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         const { saveProjectFile } = await import('../io/projectIO');
         // P0：已存盘则直接覆盖原路径，不再弹另存为
         const path = await saveProjectFile(file, s.projectPath ?? undefined);
+        if (isTauri && getPendingProjectEvents(file.id).length > 0) {
+          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          await flushPendingProjectEvents(
+            file.id,
+            new EventStreamRepository(createTauriEventStoreAdapter(path), path),
+          );
+        }
         set({
           projectId: file.id,
           projectCreatedAt: file.createdAt,
@@ -1460,6 +1476,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       closeProject: () => {
+        const currentProjectId = get().projectId;
+        if (currentProjectId) clearProjectEventBuffer(currentProjectId);
         suppressDirty = true;
         set({
           projectName: null,
@@ -1500,6 +1518,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         const { saveProjectFile } = await import('../io/projectIO');
         try {
           const root = await saveProjectFile(file, picked);
+          if (getPendingProjectEvents(file.id).length > 0) {
+            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+            await flushPendingProjectEvents(
+              file.id,
+              new EventStreamRepository(createTauriEventStoreAdapter(root), root),
+            );
+          }
           set({ projectPath: root, projectDirty: false, lastSavedSnapshot: JSON.stringify(file) });
           saveLastSession({ path: root, activeId: s.activeWfId || undefined });
           return root;
