@@ -67,6 +67,8 @@ import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
+import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
+import type { ProjectControlSnapshot } from '../projectControl/types';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
@@ -192,6 +194,8 @@ interface WorkflowState {
   pipelines: PipelineDef[];
   /** H3 Orchestrator：项目级编排记录（草案/进度/阶段日志），随 .slimemold 持久化 */
   orchestrations: Orchestration[];
+  /** 项目控制面快照：主控会话、Decision 和 Project Brief */
+  projectControl: ProjectControlSnapshot;
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 
@@ -330,6 +334,8 @@ interface WorkflowState {
   setPipelines: (defs: PipelineDef[]) => void;
   /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
   setOrchestrations: (orchs: Orchestration[]) => void;
+  /** 覆盖项目控制面快照（主控会话/Decision/Brief 更新时调用） */
+  setProjectControl: (snapshot: ProjectControlSnapshot) => void;
   /** 步骤 14.A：声明或更新单条 Pipeline 定义（随项目持久化，触发脏标记） */
   upsertPipeline: (def: PipelineDef) => void;
 
@@ -444,6 +450,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       agentRouteTable: {},
       pipelines: [],
       orchestrations: [],
+      projectControl: createEmptyProjectControlSnapshot(),
 
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
@@ -1097,6 +1104,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: wf.variables!,
           projectVariables: {},
           projectAssets: [],
+          projectControl: createEmptyProjectControlSnapshot(),
           selectedNodeId: null,
           logs: [],
         });
@@ -1469,6 +1477,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectAssets: [],
           subgraphs: {},
           groups: [],
+          projectControl: createEmptyProjectControlSnapshot(),
           selectedNodeId: null,
           logs: [],
         });
@@ -1540,6 +1549,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
       setOrchestrations: (orchs: Orchestration[]) => {
         set({ orchestrations: orchs });
+      },
+      setProjectControl: (snapshot: ProjectControlSnapshot) => {
+        set({ projectControl: parseProjectControlSnapshot(snapshot) });
       },
       /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
       upsertPipeline: (def: PipelineDef) => {
@@ -1920,6 +1932,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         agentRouteTable: s.agentRouteTable,
         pipelines: s.pipelines,
         orchestrations: s.orchestrations,
+        projectControl: s.projectControl,
       }),
       // 恢复持久化状态时，把拍平的 workflows 重新收口为内存态 FlowNode
       merge: (persisted, current) => {
@@ -1935,6 +1948,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           ...current,
           ...p,
           workflows: restoredWorkflows,
+          projectControl: parseProjectControlSnapshot(p.projectControl),
         } as WorkflowState;
       },
     },

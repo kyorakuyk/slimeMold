@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   CheckCircle2,
+  ClipboardList,
   ChevronRight,
   CircleDashed,
   Clock3,
@@ -38,13 +39,16 @@ import {
 import type { RunRecord } from '../types';
 import { useT } from '../i18n/useT';
 import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
+import ProjectSessionPanel from './ProjectSessionPanel';
+import IssueBoard from './IssueBoard';
 
 interface BeginnerExperienceProps {
   onOpenAdvanced: () => void;
   onNewProject: () => void;
+  onStartProjectSession: (goal: string) => void;
 }
 
-type BeginnerPage = 'home' | 'project';
+type BeginnerPage = 'home' | 'project' | 'session' | 'issues';
 type StatusTone = 'ready' | 'running' | 'attention' | 'paused' | 'unsaved';
 
 function formatDate(value: string): string {
@@ -86,7 +90,7 @@ function SimpleHeader({
   onOpenAdvanced,
   onBackHome,
 }: {
-  onOpenAdvanced: () => void;
+  onOpenAdvanced?: () => void;
   onBackHome?: () => void;
 }) {
   const t = useT('beginner');
@@ -116,29 +120,55 @@ function SimpleHeader({
             <span className="sm-beginner-local-dot" aria-hidden="true" />
             {t('local')}
           </span>
-          <button type="button" className="sm-beginner-nav-link" onClick={onOpenAdvanced}>
-            <LayoutDashboard size={15} aria-hidden="true" />
-            {t('advanced')}
-            <ArrowUpRight size={13} aria-hidden="true" />
-          </button>
+          {onOpenAdvanced && (
+            <button type="button" className="sm-beginner-nav-link" onClick={onOpenAdvanced}>
+              <LayoutDashboard size={15} aria-hidden="true" />
+              {t('advanced')}
+              <ArrowUpRight size={13} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </header>
   );
 }
 
-export default function BeginnerExperience({ onOpenAdvanced, onNewProject }: BeginnerExperienceProps) {
+export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onStartProjectSession }: BeginnerExperienceProps) {
   const projectId = useWorkflowStore((s) => s.projectId);
-  const [page, setPage] = useState<BeginnerPage>(() => (projectId ? 'project' : 'home'));
+  const activeSessionId = useWorkflowStore((s) => s.projectControl?.activeSessionId ?? null);
+  const [page, setPage] = useState<BeginnerPage>(() =>
+    projectId ? (activeSessionId ? 'session' : 'project') : 'home',
+  );
 
   useEffect(() => {
-    setPage(projectId ? 'project' : 'home');
-  }, [projectId]);
+    setPage(projectId ? (activeSessionId ? 'session' : 'project') : 'home');
+  }, [projectId, activeSessionId]);
+
+  if (page === 'session' && projectId && activeSessionId) {
+    return (
+      <ProjectSessionPanel
+        sessionId={activeSessionId}
+        onOpenAdvanced={onOpenAdvanced}
+        onOpenIssues={() => setPage('issues')}
+        onBackHome={() => setPage('project')}
+      />
+    );
+  }
+
+  if (page === 'issues' && projectId) {
+    return (
+      <IssueBoard
+        onOpenAdvanced={onOpenAdvanced}
+        onBack={() => setPage(activeSessionId ? 'session' : 'project')}
+      />
+    );
+  }
 
   if (page === 'project' && projectId) {
     return (
       <ProjectCockpit
         onOpenAdvanced={onOpenAdvanced}
+        onOpenIssues={() => setPage('issues')}
         onBackHome={() => setPage('home')}
       />
     );
@@ -146,26 +176,27 @@ export default function BeginnerExperience({ onOpenAdvanced, onNewProject }: Beg
 
   return (
     <WorkspaceHome
-      onOpenAdvanced={onOpenAdvanced}
       onNewProject={onNewProject}
-      onProjectOpened={() => setPage('project')}
+      onStartProjectSession={onStartProjectSession}
+      onProjectOpened={() => setPage(activeSessionId ? 'session' : 'project')}
     />
   );
 }
 
 function WorkspaceHome({
-  onOpenAdvanced,
   onNewProject,
+  onStartProjectSession,
   onProjectOpened,
 }: {
-  onOpenAdvanced: () => void;
   onNewProject: () => void;
+  onStartProjectSession: (goal: string) => void;
   onProjectOpened: () => void;
 }) {
   const t = useT('beginner');
   const [recents, setRecents] = useState<RecentProject[]>(() => getRecentProjects());
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [goal, setGoal] = useState('');
 
   const openLoadedProject = (file: Awaited<ReturnType<typeof openProjectByPath>>, path: string) => {
     if (!file) return false;
@@ -219,7 +250,7 @@ function WorkspaceHome({
 
   return (
     <div className="sm-beginner-shell">
-      <SimpleHeader onOpenAdvanced={onOpenAdvanced} />
+      <SimpleHeader />
       <main className="sm-beginner-main">
         <section className="sm-beginner-home-hero" aria-labelledby="beginner-home-title">
           <div className="sm-beginner-hero-copy">
@@ -233,12 +264,31 @@ function WorkspaceHome({
               <span>{t('home.titleLine2')}</span>
             </h1>
             <p className="sm-beginner-lede">{t('home.subtitle')}</p>
-            <div className="sm-beginner-action-row">
-              <button type="button" className="sm-beginner-primary-button" onClick={onNewProject}>
-                <FolderPlus size={17} aria-hidden="true" />
-                {t('home.newProject')}
+            <div className="sm-beginner-goal-box">
+              <label htmlFor="beginner-project-goal">{t('home.goalLabel')}</label>
+              <textarea
+                id="beginner-project-goal"
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                placeholder={t('home.goalPlaceholder')}
+                rows={3}
+              />
+              <button
+                type="button"
+                className="sm-beginner-primary-button"
+                onClick={() => {
+                  const value = goal.trim();
+                  if (!value) return;
+                  onStartProjectSession(value);
+                }}
+                disabled={!goal.trim()}
+              >
+                <Sparkles size={17} aria-hidden="true" />
+                {t('home.startSession')}
                 <ArrowRight size={15} aria-hidden="true" />
               </button>
+            </div>
+            <div className="sm-beginner-action-row">
               <button
                 type="button"
                 className="sm-beginner-secondary-button"
@@ -247,6 +297,9 @@ function WorkspaceHome({
               >
                 <FolderOpen size={17} aria-hidden="true" />
                 {loading === 'open' ? t('home.opening') : t('home.openProject')}
+              </button>
+              <button type="button" className="sm-beginner-text-button" onClick={onNewProject}>
+                <FolderPlus size={15} aria-hidden="true" /> {t('home.newProject')}
               </button>
             </div>
             <p className="sm-beginner-trust-note">
@@ -356,18 +409,6 @@ function WorkspaceHome({
           </div>
         </section>
 
-        <div className="sm-beginner-advanced-strip">
-          <div>
-            <span className="sm-beginner-strip-icon"><GitBranch size={16} /></span>
-            <span>
-              <strong>{t('home.advancedHint')}</strong>
-              <small>{t('project.advanced.body')}</small>
-            </span>
-          </div>
-          <button type="button" className="sm-beginner-text-button" onClick={onOpenAdvanced}>
-            {t('home.openAdvanced')} <ArrowUpRight size={14} />
-          </button>
-        </div>
       </main>
     </div>
   );
@@ -387,9 +428,11 @@ function BeginnerStep({ number, title, body }: { number: string; title: string; 
 
 function ProjectCockpit({
   onOpenAdvanced,
+  onOpenIssues,
   onBackHome,
 }: {
   onOpenAdvanced: () => void;
+  onOpenIssues?: () => void;
   onBackHome: () => void;
 }) {
   const t = useT('beginner');
@@ -459,6 +502,11 @@ function ProjectCockpit({
             </div>
           </div>
           <div className="sm-beginner-project-actions">
+            {onOpenIssues && (
+              <button type="button" className="sm-beginner-text-button" onClick={onOpenIssues}>
+                <ClipboardList size={16} /> {t('project.openIssues')}
+              </button>
+            )}
             <button type="button" className="sm-beginner-secondary-button" onClick={onOpenAdvanced}>
               <GitBranch size={16} /> {t('project.openAdvanced')}
             </button>

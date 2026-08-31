@@ -247,6 +247,41 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       expect(pf.variables).toEqual({ pv: 2 });
       expect((pf.runs ?? { history: [] }).history).toEqual([]);
     });
+
+    it('把项目级 orchestrations 写入 ProjectFile 并纳入稳定快照', () => {
+      const orchestration = {
+        id: 'orch-1',
+        goal: '完成项目',
+        status: 'ready',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        draft: { stages: [], edges: [] },
+        stageLogs: [],
+        runIds: [],
+      };
+      const input = { ...baseProject, orchestrations: [orchestration] } as never;
+      const pf = buildProjectFile(input) as unknown as { orchestrations?: unknown[] };
+      expect(pf.orchestrations).toEqual([orchestration]);
+
+      const snapshot = JSON.parse(projectSnapshot(input)) as { orchestrations?: unknown[] };
+      expect(snapshot.orchestrations).toEqual([orchestration]);
+    });
+
+    it('把项目控制面快照写入 ProjectFile', () => {
+      const control = {
+        version: 1,
+        activeSessionId: 'session-1',
+        sessions: [],
+        decisions: [],
+        briefs: [],
+        architectures: [],
+        issues: [],
+      };
+      const pf = buildProjectFile({ ...baseProject, projectControl: control } as never) as unknown as {
+        projectControl?: unknown;
+      };
+      expect(pf.projectControl).toEqual(control);
+    });
   });
 
   describe('projectSnapshot', () => {
@@ -295,7 +330,7 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
 
     it('覆盖核心落盘字段，且不含视图态/运行配置/运行态', () => {
       const keys = DIRTY_KEYS as readonly string[];
-      for (const k of ['nodes', 'edges', 'agents', 'groups', 'subgraphs', 'workflowName', 'projectVariables']) {
+      for (const k of ['nodes', 'edges', 'agents', 'groups', 'subgraphs', 'workflowName', 'projectVariables', 'projectControl']) {
         expect(keys).toContain(k);
       }
       // 视图态/运行配置/运行态不该进白名单：

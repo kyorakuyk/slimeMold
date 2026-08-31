@@ -26,6 +26,9 @@ import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
+import { createEmptyProjectControlSnapshot } from './projectControl/persistence';
+import { createIssue } from './projectControl/issue';
+import { createProjectSession } from './projectControl/state';
 
 registerBuiltins();
 
@@ -139,6 +142,36 @@ export default function App() {
 
   const openPanel = (key: SidePanelKey) => setActivePanel(key);
   const closePanel = () => setActivePanel(null);
+
+  const startProjectSession = (goal: string) => {
+    const normalizedGoal = goal.trim();
+    if (!normalizedGoal) return;
+    const firstLine = normalizedGoal.split(/[\n。！？!?]/)[0]?.trim() || normalizedGoal;
+    const projectName = firstLine.length > 36 ? `${firstLine.slice(0, 36)}…` : firstLine;
+    const state = useWorkflowStore.getState();
+    state.newProject(projectName || '未命名项目');
+    const projectId = useWorkflowStore.getState().projectId;
+    if (!projectId) return;
+    const now = new Date().toISOString();
+    const id = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const session = createProjectSession({ id, projectId, goal: normalizedGoal, now });
+    const issue = createIssue({
+      id: `issue-${id}`,
+      projectId,
+      type: 'feature',
+      title: projectName,
+      description: normalizedGoal,
+      sourceSessionId: session.id,
+      createdAt: now,
+    });
+    const projectControl = createEmptyProjectControlSnapshot();
+    useWorkflowStore.getState().setProjectControl({
+      ...projectControl,
+      activeSessionId: session.id,
+      sessions: [session],
+      issues: [issue],
+    });
+  };
 
   const toggleTheme = () => {
     // 三态循环：dark -> light -> system -> dark
@@ -339,6 +372,7 @@ export default function App() {
             <BeginnerExperience
               onOpenAdvanced={() => setWorkspaceMode('advanced')}
               onNewProject={() => setNewProjectOpen(true)}
+              onStartProjectSession={startProjectSession}
             />
           ) : (
             <>

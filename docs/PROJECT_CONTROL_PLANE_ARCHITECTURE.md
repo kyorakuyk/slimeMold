@@ -1,13 +1,13 @@
 ---
 title: SlimeMold 项目控制面架构：会话、Issue、任务与 DAG
 date: 2026-08-31
-status: design-decision
+status: partial-mvp
 ---
 
 # SlimeMold 项目控制面架构：会话、Issue、任务与 DAG
 
-> 本文记录 2026-08-31 形成的产品方向决策。它是架构设计稿，不代表所有能力已经实现。
-> 当前 SlimeMold 已经具备项目驾驶舱、H3 Orchestrator 的模板化编排闭环、Pipeline/Artifact、AgentRouter 和 H4 受控开发基础；项目级会话、Issue 工作台和真正的多轮主控规划仍需实现。
+> 本文记录 2026-08-31 形成的产品方向决策，以及随后完成的最小控制面实现。它不是完整自治能力的声明。
+> 当前 SlimeMold 已经具备项目驾驶舱、项目会话、受限主控 question/Brief/architecture 协议、Task Graph、Issue 四栏看板、H3 Orchestrator 草案和 H4 受控开发基础；真实模型验收、完整计划编译、漂移检测和长期运维仍需实现。
 
 ## 1. 问题与产品判断
 
@@ -383,14 +383,23 @@ Architecture 是否满足已批准的 Issue？
 - `runEvents`、checkpoint、RunHistory：运行可观测和恢复基础；
 - H4 的 worktree、受控 Patch、测试、Evidence 和确定性验收基础。
 
-### 尚未具备
+### 已实现的最小切片
 
-- 项目级 `ProjectSession` 和持久化会话；
-- `Decision`、`Issue`、`Task` 的正式项目级数据模型；
-- 主控 Agent 的多轮问询、摘要和确认状态机；
-- Brief → Architecture → Task Graph 的结构化生成链；
-- Issue、Task、Stage、Node 之间的稳定双向映射；
-- DAG 修改后的版本漂移和架构变更提案；
+- `ProjectSession`、`Decision`、`ProjectBrief`、`ProjectArchitecture`、`ProjectTaskGraph` 和 `ProjectIssue` 的最小类型与状态机；
+- 控制面快照随项目保存/打开，旧项目和损坏快照安全降级；
+- 主控 Agent 的严格 `question` / `brief` / `architecture` JSON 协议，最多每轮 3 个问题；
+- 简易工作台的目标输入、项目会话、Brief/架构/任务图批准门；
+- 从批准任务图自动生成施工/验收 Workflow 和 Orchestration 草案，不自动执行；
+- 当前项目与未认领 Issue 的四栏看板，以及项目 Issue 的显式批准/排队动作。
+
+### 仍未具备
+
+- Decision 从自然语言回答中的自动提炼、修改和历史 supersede UI；
+- Brief → Architecture → Task Graph 的完整多轮规划和严格项目类型模板；
+- Issue 的主控 triage、已有项目归类/新项目提案以及 Issue → Task 的正式关联；
+- Issue、Task、Stage、Node 之间的完整双向映射和版本漂移检测；
+- H3 `orch.*` 事件、阶段 checkpoint 和跨重启的完整编排恢复；
+- H4 所有 Windows/Tauri GUI 场景的人工验收与长期证据恢复；
 - 可恢复、可审计的长期运维运行时。
 
 ## 11. 分阶段落地顺序

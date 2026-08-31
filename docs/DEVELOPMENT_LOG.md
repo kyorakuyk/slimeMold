@@ -1202,23 +1202,26 @@ Issue 工作台采用四个面板：
 
 ### 7.6 这次转变的状态边界
 
-本次记录的是产品架构方向的收敛，不代表运行时代码已经完成：
+本次方向已经从纯设计推进到一个可测试的最小运行时切片，但仍不能把它描述成完整自治系统：
 
-**已有并有代码基础：**
+**本轮已实现并有自动化验证：**
 
-- 初级项目首页和项目驾驶舱；
-- H3 Orchestrator 的模板化草案、确认门、阶段绑定和执行；
-- Pipeline / Artifact / RunHistory / checkpoint；
-- AgentRouter、角色库和成本评分；
-- H4 worktree、受控 Patch、测试、Evidence 和确定性验收基础。
+- `ProjectSession`、`Decision`、`ProjectBrief`、`ProjectArchitecture`、`ProjectTaskGraph` 和 `ProjectIssue` 的最小类型与状态机；
+- 项目控制面快照的保存/打开、损坏数据降级和项目关闭清理；
+- 主控 Agent 的严格 `question` / `brief` / `architecture` JSON 协议与最多三问限制；
+- 简易工作台的一句话目标输入、主控会话、Brief/架构/任务图确认门；
+- 从已批准任务图自动生成施工/验收 Workflow 和 Orchestration 草案；
+- 当前项目与未认领 Issue 的四栏看板、Issue 创建、显式批准和排队动作。
 
-**本次决定、尚未实现：**
+**仍未实现或验证不完整：**
 
-- 项目级主控会话和持久化消息；
-- Decision、Issue、Task 的正式数据模型；
-- 主控多轮问询和 Brief → Architecture → Task Graph 编译链；
+- Decision 从自然语言中的自动提炼、修改和 supersede UI；
+- 真实模型下的连续多轮需求澄清和项目类型模板；
+- Issue 的主控 triage、项目归属建议、新项目提案和 Issue → Task 正式关联；
 - Issue、Task、Stage、Workflow、Run 的双向映射和漂移检测；
-- 初级用户无需手动绑定工作流的端到端项目流程。
+- H3 `orch.*` 事件、阶段 checkpoint 和跨重启的完整编排恢复；
+- H4 所有 Windows/Tauri GUI 场景的人工验收与长期证据恢复；
+- 初级用户从批准计划直接进入受控施工并完成真实交付的端到端流程。
 
 **明确仍属后续阶段：**
 
@@ -1230,15 +1233,25 @@ Issue 工作台采用四个面板：
 
 后续不先扩展更多 Agent 节点，而按以下顺序实现：
 
-1. `ProjectSession`、`Decision`、`ProjectBrief` 和会话状态机；
-2. 主控问询 → Brief → 用户确认的最小闭环；
-3. Brief → Architecture → Task Graph，并复用 H3 Orchestrator 生成执行计划；
-4. Issue 收件箱、项目归属、队列和 Run → Issue 反馈；
-5. Construction Manager、冲突分级、H4 证据和人工接管；
-6. Task Graph / Pipeline / Workflow DAG 的版本映射和漂移检测；
-7. 持久运行时稳定后再开放持续运维。
+1. 用真实可用的 Provider 在 Tauri GUI 中验收一句话 → 问询 → Brief → 架构 → 任务图流程；
+2. 完成 Decision/Issue 的主控提炼、项目归类建议和用户批准；
+3. 把已生成的 Orchestration 草案与 H3 事件、阶段 checkpoint、恢复和失败回流接通；
+4. 完成 Task Graph / Pipeline / Workflow DAG 的版本映射和漂移检测；
+5. 完成 Construction Manager 的冲突分级、H4 Evidence 和人工接管；
+6. 具备持久队列、预算、锁、通知和回滚后，再开放持续运维。
 
 这次方向调整的核心不是给 SlimeMold 增加一个聊天入口，而是确立一个控制面：让会话负责理解意图，让结构化项目资产保存事实，让 Issue 管理变化，让 DAG 执行已批准的计划。
+
+### 7.8 本轮实现验证
+
+本轮新增的控制面和 UI 改动已完成以下真实命令验证：
+
+- `npm run test`：66 个测试文件、646 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 881 个 key 对齐；
+- `git diff --check`：无空白错误。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，但没有新增构建失败。测试使用 fake chat 验证协议和状态迁移；真实 Provider 返回质量、真实 Tauri GUI 交互和持续运维仍未由本轮自动化证明。
 
 ## 八、适合拆成的博客系列
 

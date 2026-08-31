@@ -1,4 +1,5 @@
 import type { Node, Edge } from '@xyflow/react';
+import type { ProjectControlSnapshot } from './projectControl/types';
 
 /* ---------- 节点状态与协议 ---------- */
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
@@ -872,6 +873,10 @@ export interface ProjectFile {
   defaultAgentId?: string | null;
   /** 项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
   pipelines?: PipelineDef[];
+  /** 项目级编排记录（草案、阶段绑定、运行进度和失败信息），随 .slimemold 持久化 */
+  orchestrations?: Orchestration[];
+  /** 项目控制面快照（主控会话、用户决策和版本化 Brief），随 .slimemold 持久化 */
+  projectControl?: ProjectControlSnapshot;
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };
   /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目落盘 */
@@ -1104,6 +1109,10 @@ export interface DraftStage {
   goal: string;
   /** 建议绑定的工作流：新生成 或 复用已有（只读引用） */
   wfRef: { kind: 'new' } | { kind: 'existing'; wfId: string };
+  /** 来源任务图（供控制面与高级 DAG 互相追溯） */
+  sourceTaskGraphId?: string;
+  /** 该阶段负责的项目任务 id */
+  taskIds?: string[];
   /** AgentRouter 决策结果（选哪个 agent） */
   agentId?: string;
   /** 需要的上游产物 */

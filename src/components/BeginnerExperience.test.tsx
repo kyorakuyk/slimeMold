@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => {
     openedAt: '2026-08-30T02:12:00.000Z',
   }];
   const store = {
-    projectId: 'proj-1',
+    projectId: 'proj-1' as string | null,
     projectName: 'SMtest',
     projectPath: 'D:/Agents/SMtest',
     projectDirty: false,
@@ -44,8 +44,18 @@ const mocks = vi.hoisted(() => {
     runProgress: { layer: 0, totalLayers: 0 },
     runStates: {},
     artifacts: {},
+    projectControl: {
+      version: 1 as const,
+      activeSessionId: null,
+      sessions: [],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+    },
     openProject: vi.fn(() => true),
     switchWorkflow: vi.fn(),
+    setProjectControl: vi.fn(),
   };
   return {
     projectFile,
@@ -100,6 +110,18 @@ describe('BeginnerExperience project navigation', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    mocks.store.projectId = 'proj-1';
+    mocks.store.projectName = 'SMtest';
+    mocks.store.projectPath = 'D:/Agents/SMtest';
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: null,
+      sessions: [],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+    };
     mocks.store.openProject.mockClear();
     mocks.openProjectByPath.mockClear();
   });
@@ -115,6 +137,7 @@ describe('BeginnerExperience project navigation', () => {
         <BeginnerExperience
           onOpenAdvanced={vi.fn()}
           onNewProject={vi.fn()}
+          onStartProjectSession={vi.fn()}
         />,
       );
     });
@@ -137,5 +160,32 @@ describe('BeginnerExperience project navigation', () => {
       'D:/Agents/SMtest',
     );
     expect(container.querySelector('.sm-beginner-project-main')).not.toBeNull();
+  });
+
+  it('keeps advanced navigation out of the empty home and starts a project session from a goal', async () => {
+    mocks.store.projectId = null;
+    const onStartProjectSession = vi.fn();
+    await act(async () => {
+      root.render(
+        <BeginnerExperience
+          onOpenAdvanced={vi.fn()}
+          onNewProject={vi.fn()}
+          onStartProjectSession={onStartProjectSession}
+        />,
+      );
+    });
+
+    expect(container.querySelector('.sm-beginner-nav-link')).toBeNull();
+    const input = container.querySelector('#beginner-project-goal') as HTMLTextAreaElement;
+    const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    setNativeValue.call(input, '帮我做一个个人记账应用');
+    await act(async () => {
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      (container.querySelector('.sm-beginner-goal-box button') as HTMLButtonElement).click();
+    });
+
+    expect(onStartProjectSession).toHaveBeenCalledWith('帮我做一个个人记账应用');
   });
 });

@@ -16,6 +16,7 @@ import type {
   FlowNode,
   NodeGroup,
   NodeStatus,
+  Orchestration,
   ProjectFile,
   RoleTemplate,
   SubgraphDef,
@@ -26,6 +27,8 @@ import type {
   WorkflowFileNode,
   WorkflowNodeData,
 } from '../types';
+import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
+import type { ProjectControlSnapshot } from '../projectControl/types';
 
 /** 清洗节点，剔除运行期属性（status/error/durationMs/cached），使快照不携带运行态 */
 export function sanitizeNodes(nodes: FlowNode[]): FlowNode[] {
@@ -182,6 +185,8 @@ export function buildProjectFile(
     artifacts: import('../types').ProjectArtifacts;
     agentRouteTable: import('../types').AgentRouteTable;
     pipelines: import('../types').PipelineDef[];
+    orchestrations?: Orchestration[];
+    projectControl?: ProjectControlSnapshot;
     defaultAgentId?: string | null;
   },
   stable = false,
@@ -219,6 +224,8 @@ export function buildProjectFile(
     defaultAgentId: s.defaultAgentId ?? null,
     agentRouteTable: s.agentRouteTable,
     pipelines: s.pipelines,
+    orchestrations: s.orchestrations ?? [],
+    projectControl: s.projectControl ?? createEmptyProjectControlSnapshot(),
     runs: { history: s.runHistory },
     checkpoints: s.checkpoints ?? {},
     checkpointHistory: s.checkpointHistory ?? {},
@@ -255,6 +262,8 @@ export const DIRTY_KEYS = [
   'artifacts',
   'agentRouteTable',
   'pipelines',
+  'orchestrations',
+  'projectControl',
   'projectName',
   'workflowName',
 ] as const;

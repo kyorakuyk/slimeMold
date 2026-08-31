@@ -341,7 +341,7 @@ src-tauri/
 | 图执行引擎 | 已有基础 | 拓扑、分支、循环、并发、缓存、增量运行、失败续跑 |
 | Provider 与 AgentRouter | 已有基础 | OpenAI 兼容、Anthropic、Ollama、fallback 和初步成本评分 |
 | 管理层 Orchestrator | MVP | 草案、确认门、阶段绑定和执行；仍然是模板化编排，尚未成为项目会话背后的完整主控 |
-| 项目会话与 Issue 控制面 | 设计中 | 主控会话、Decision、Issue、Task Graph 和三种视图映射；尚未接入正式项目数据模型 |
+| 项目会话与 Issue 控制面 | 最小实现 | 已有项目会话、主控 question/Brief/architecture 协议、Task Graph、Issue 四栏看板和项目上下文入口；完整计划编译、漂移检测和自动回流仍在后续 |
 | 生产层 Worker | 已有基础 | 规划、派发、worker、冲突协调、交付物 |
 | H4 受控开发 | 实验阶段 | worktree、patch、测试、证据和验收；真实 GUI 场景仍需持续验收 |
 | 项目记忆与经验 | 部分实现 | 当前经验沉淀仍需更严格的证据、置信度和跨项目隔离 |

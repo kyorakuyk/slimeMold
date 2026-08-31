@@ -1,8 +1,10 @@
 # SlimeMold 下一阶段开发计划
 
-> 版本：2026-08-13
+> 版本：2026-08-31（状态更新）
 > 依据：远端 `origin/main` H4 审计收口状态
 > 目标：从「headless 安全能力已成型」推进到「GUI 可验收、可恢复、可受控自举」
+
+> **当前状态覆盖说明（2026-08-31）**：本文件保留 2026-08-13 的 H4/H3 计划作为历史基线；当前产品主线已经增加并完成最小控制面切片：`ProjectSession`、主控 question/Brief/architecture 协议、`ProjectTaskGraph`、Issue 四栏看板、Builder → Orchestration 草案。下一阶段应以 `docs/PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 和 `.hermes/plans/2026-08-31_021507-project-control-plane-next-step.md` 为准。
 
 ## 一、当前状态
 
@@ -22,11 +24,12 @@
 
 ### 当前边界
 
-- H4 开发节点尚未接入 Tauri GUI 执行层。
+- H4 开发节点已有 Tauri GUI 接入代码，但完整 Windows/Tauri 人工验收仍需逐项记录。
 - 动态输入创建的 worktree 尚不能自动获得对应 EvidenceStore。
 - `resultStore`、`acceptanceStore`、cleanup approval 仍是内存态。
 - H3 遗留：`orch.*` 事件、阶段级 checkpoint、结构化 `runIds`。
-- 主控 Agent 尚未进入自由生成 DAG 阶段。
+- 主控 Agent 已进入受限 MVP：支持 question/Brief/architecture 草案；自由生成 DAG 和完整计划编译仍未开放。
+- 项目控制面已有 Session/Decision/Brief/Architecture/TaskGraph/Issue 最小模型和 UI，但 Issue triage、漂移检测和真实 Provider GUI 验收仍待完成。
 
 ## 二、总体原则
 
