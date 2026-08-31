@@ -1253,6 +1253,73 @@ Issue 工作台采用四个面板：
 
 构建仍有既有的动态/静态 import 和大 chunk warning，但没有新增构建失败。测试使用 fake chat 验证协议和状态迁移；真实 Provider 返回质量、真实 Tauri GUI 交互和持续运维仍未由本轮自动化证明。
 
+### 7.9 主控 Agent 选择与快照字段的收尾修复
+
+`masterAgentId` 字段加入控制面快照后，`npm run build` 暴露了两处未使用变量，`npm run test` 暴露了三处快照期望未同步。本轮修复：
+
+- `MasterAgentPage.tsx`：删除未使用的 `Globe2` 导入和 `setProjectControl` hook 选择器（保存动作实际通过 `useWorkflowStore.getState()` 调用，组件内绑定是多余的）；
+- `workflowState.test.ts`：在「恢复项目级 orchestrations」「新建项目空快照」「损坏快照降级」三处期望中补齐 `masterAgentId: null`，与 `createEmptyProjectControlSnapshot` / `parseProjectControlSnapshot` 的实际输出保持一致。
+
+验证结果：
+
+- `npm run test`：67 个测试文件、648 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 907 个 key 对齐；
+- `git diff --check`：无空白错误。
+
+构建仍只有 7.8 节记录过的既有动态/静态 import 和大 chunk warning，无新增失败。
+
+### 7.10 全局主控设置与项目覆盖边界修正
+
+本轮 GUI 验收发现，原来的主控选择页把两个不同作用域混在了一起：`globalAgents` 是应用级、跨项目复用的 Agent 配置，但 `masterAgentId` 实际保存在项目控制面快照中，是当前项目的主控绑定。与此同时，设置页把随项目保存的 `defaultAgentId` 称为“全局默认”，也会误导用户。
+
+本轮将作用域明确为两层：
+
+- `viewStore.globalMasterAgentId`：新增真正的应用级全局默认主控，持久化在桌面端的应用设置中；
+- `projectControl.masterAgentId`：继续保留为项目级覆盖；为空时项目跟随全局主控，再回退到项目默认 Agent；
+- `设置 → 智能体`：增加全局默认主控选择器，只允许选择已提升到全局池且启用的 Agent；
+- 主控运行时解析顺序统一为：项目覆盖 → 全局主控 → 项目默认 → 第一个可用 Agent；
+- 删除全局 Agent 时自动清除指向它的全局主控设置；
+- 将“全局默认模型 / 智能体”更正为“项目默认模型 / 智能体”，避免把项目配置误称为全局配置；
+- 中英文界面和主控/会话测试同步覆盖继承与覆盖行为。
+
+订阅接入边界也得到确认：当前 `AgentConfig.subscription` 只是成本计算标记，不是订阅登录实现；当前 provider 仅支持 OpenAI 兼容 API、Anthropic API Key 和 Ollama。ChatGPT/Claude 的网页或桌面订阅不能直接当作通用 API Key 使用，后续若接入 Codex/Claude Code 等官方订阅，应使用厂商允许的官方登录/客户端协议，不读取网页 Cookie、不复制内部 token，并将刷新凭据交给宿主加密存储。
+
+验证结果：
+
+- `npm run test`：67 个测试文件、649 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 918 个 key 对齐；
+- `git diff --check`：无空白错误。
+
+本机检测到 `codex` CLI，可作为后续研究 OpenAI 官方订阅接入的客户端基础；但 SlimeMold 当前尚未把 Codex 订阅认证或 CLI 结构化调用封装成 provider。
+
+### 7.11 接入 ChatGPT 计划版 Codex provider
+
+用户确认目标是使用 ChatGPT 计划里的 Codex，而不是单独开通 OpenAI API 计费。本轮基于本机已安装的官方 `codex-cli 0.149.0` 完成第一版桌面接入：
+
+- 新增 `codex` 协议和官方 Codex Agent 预设；
+- Tauri 新增 `codex_login_status`、`codex_login`、`codex_logout` 和 `codex_exec` 命令；
+- 登录由官方 `codex login` 浏览器流程负责，SlimeMold 不读取 `~/.codex/auth.json`，不把 OAuth token 返回 WebView；
+- 执行使用 `codex exec --json --ephemeral --sandbox read-only --skip-git-repo-check --ignore-user-config --ignore-rules --output-last-message`，在临时目录运行，避免主控请求改动项目文件；
+- Tauri 侧会清除继承的 `CODEX_API_KEY`、`CODEX_ACCESS_TOKEN` 和 `OPENAI_API_KEY`，并强制要求 `codex login status` 的认证模式为 `chatgpt`，避免误走 API Key 计费；
+- Agent 设置中显示 Codex 登录状态，支持启动官方登录、刷新状态和退出登录；Codex Agent 的 Base URL 不再显示为可编辑 HTTP 地址，模型留空时使用 Codex CLI 默认模型；
+- 暂不桥接 SlimeMold 自己的 tool-call 规格，Codex provider 适合主控等纯文本结构化协议；带工具的节点继续使用 API provider；
+- 当前以单次最终响应回传，尚未实现 Codex JSONL 的增量 token 转发和运行中途进程取消，后续再补可恢复进程控制。
+
+实现过程中发现当前版本的 `codex exec` 不接受全局帮助中显示的 `--ask-for-approval` 参数，已根据实际子命令帮助移除，保留 `read-only` 沙箱作为权限边界。
+
+真实 smoke test：清除 API Key 环境变量后，用 ChatGPT 登录态执行固定提示，官方 CLI 返回 `CODEX_SMOKE_OK`，退出码为 0。
+
+最终验证结果：
+
+- `npm run test`：67 个测试文件、650 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 935 个 key 对齐；
+- `cargo test -- --test-threads=1`：17 个 Rust 测试通过；
+- `rustfmt --edition 2021 --check src/codex.rs`：通过；
+- `git diff --check`：无空白错误。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

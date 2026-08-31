@@ -239,6 +239,7 @@ export function resolveMasterAgent(input: {
   agents: AgentConfig[];
   globalAgents?: AgentConfig[];
   requestedAgentId?: string | null;
+  globalMasterAgentId?: string | null;
   defaultAgentId?: string | null;
 }): AgentConfig {
   const byId = new Map<string, AgentConfig>();
@@ -248,6 +249,8 @@ export function resolveMasterAgent(input: {
 
   const explicit = input.requestedAgentId ? byId.get(input.requestedAgentId) : undefined;
   if (enabled(explicit)) return explicit;
+  const globalMaster = input.globalMasterAgentId ? byId.get(input.globalMasterAgentId) : undefined;
+  if (enabled(globalMaster)) return globalMaster;
   const defaultAgent = input.defaultAgentId ? byId.get(input.defaultAgentId) : undefined;
   if (enabled(defaultAgent)) return defaultAgent;
   const first = [...byId.values()].find(enabled);

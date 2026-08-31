@@ -3,7 +3,7 @@ import type { ProjectControlSnapshot } from './projectControl/types';
 
 /* ---------- 节点状态与协议 ---------- */
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
-export type Protocol = 'openai' | 'anthropic' | 'ollama';
+export type Protocol = 'openai' | 'anthropic' | 'ollama' | 'codex';
 
 /* ---------- API 接入点（APIKEYS 分区集中管理的「网址 + 密钥」） ---------- */
 /** 一个 API 接入点：把 Base URL 与密钥绑定成可复用的配置单元（类似 cc-switch 的 API 路由）。
@@ -45,8 +45,8 @@ export interface AgentConfig {
   name: string;
   protocol: Protocol;
   baseUrl: string;
-  /** 明文 apiKey：仅在 headless / 本地 Ollama（无需 key）场景下使用。
-   *  桌面生产链路应通过 credentialKey 从系统密钥库取，UI 不编辑此字段。 */
+  /** 明文 apiKey：仅在 headless / 本地 Ollama / 受控测试场景下使用。
+   *  桌面 API provider 应通过 credentialKey 从系统密钥库取，Codex provider 不需要此字段。 */
   apiKey?: string;
   /** 系统密钥库中的凭据键；非空时 Rust 侧按此从 OS 密钥库取回真实 key（Step 0.5）。
    *  工作流文件只存此键，绝不存明文 key。 */

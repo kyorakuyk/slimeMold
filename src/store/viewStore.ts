@@ -62,6 +62,10 @@ interface ViewState {
   globalProxyUrl: string;
   /** 设置全局默认代理出口 */
   setGlobalProxyUrl: (url: string) => void;
+  /** 全局默认主控 Agent：应用级设置，项目未单独覆盖时生效 */
+  globalMasterAgentId: string | null;
+  /** 设置全局默认主控 Agent */
+  setGlobalMasterAgent: (id: string | null) => void;
   /** 拆分视图：画布右侧并排显示辅助面板 */
   splitView: boolean;
   /** 底侧边栏（底部面板）开关状态，持久化以记住上次选择 */
@@ -132,6 +136,7 @@ export const useViewStore = create<ViewState>()(
       inspectAssetId: null,
       debugMode: false,
       globalProxyUrl: '',
+      globalMasterAgentId: null,
       locale: (typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en-US' : 'zh-CN'),
       selfImprove: false,
       setSelfImprove: (v) => {
@@ -161,6 +166,7 @@ export const useViewStore = create<ViewState>()(
       setInspectAsset: (id) => set({ inspectAssetId: id }),
       toggleDebug: () => set((s) => ({ debugMode: !s.debugMode })),
       setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
+      setGlobalMasterAgent: (id: string | null) => set({ globalMasterAgentId: id }),
       setTheme: (t) => {
         applyTheme(t);
         set({ theme: t });

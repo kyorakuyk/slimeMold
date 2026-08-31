@@ -7,9 +7,9 @@
   <string name="settings.sec.general.label">General</string>
   <string name="settings.sec.general.desc">Canvas, LLM channel, global proxy</string>
   <string name="settings.sec.agent.label">Agents</string>
-  <string name="settings.sec.agent.desc">Credentials, presets, default switch, probe</string>
+  <string name="settings.sec.agent.desc">Global master, credentials, presets, probe</string>
   <string name="settings.sec.model.label">Models</string>
-  <string name="settings.sec.model.desc">Provider presets &amp; global default model</string>
+  <string name="settings.sec.model.desc">Provider presets &amp; project default model</string>
   <string name="settings.sec.mcp.label">MCP</string>
   <string name="settings.sec.mcp.desc">Plugin / MCP server management</string>
   <string name="settings.sec.flow.label">Conversation flow</string>
@@ -53,12 +53,19 @@
   <string name="settings.general.proxyPlaceholder">http://127.0.0.1:7890 (empty = per-agent proxy or direct)</string>
   <string name="settings.general.proxyHint">Global default egress. An agent's own proxyUrl takes precedence; if both empty, connect directly to the target Base URL. Unified relay / OpenAI-format egress; works on both backend and frontend channels.</string>
 
+  <!-- 智能体 -->
+  <string name="settings.agent.globalMasterTitle">Global default master Agent</string>
+  <string name="settings.agent.globalMasterDesc">Projects without a project-level override use this master. Only enabled Agents promoted to the global pool can be selected here.</string>
+  <string name="settings.agent.globalMasterUnset">(not set: use the project default Agent)</string>
+  <string name="settings.agent.globalMasterDisabled">Disabled</string>
+  <string name="settings.agent.globalMasterNoAgents">No global Agents yet. Add an Agent below, then use its pin in the list to promote it to the global pool.</string>
+
   <!-- 模型 -->
   <string name="settings.model.presetLib">Provider preset library</string>
   <string name="settings.model.presetLibDesc">When creating an agent in the "Agents" section, presets below can fill Base URL and default model in one click.</string>
   <string name="settings.model.custom">Custom (manual)</string>
-  <string name="settings.model.defaultModel">Global default model / agent</string>
-  <string name="settings.model.defaultModelDesc">Once set as default, new conversation-flow nodes prefer this agent (with its model and credentials).</string>
+  <string name="settings.model.defaultModel">Project default model / agent</string>
+  <string name="settings.model.defaultModelDesc">Once set as default, new conversation-flow nodes in the current project prefer this agent (with its model and credentials). This setting is saved with the project.</string>
   <string name="settings.model.unset">(not set)</string>
 
   <!-- 路由表 -->

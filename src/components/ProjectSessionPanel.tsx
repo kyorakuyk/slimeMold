@@ -14,6 +14,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { approveArchitecture, approveBrief, transitionSession } from '../projectControl/state';
 import { applyMasterTurn } from '../projectControl/session';
@@ -72,6 +73,7 @@ export default function ProjectSessionPanel({
   const projectDirty = useWorkflowStore((state) => state.projectDirty);
   const orchestrations = useWorkflowStore((state) => state.orchestrations);
   const projectControl = useWorkflowStore((state) => state.projectControl);
+  const globalMasterAgentId = useViewStore((state) => state.globalMasterAgentId);
 
   const session = findSession(projectControl, sessionId);
   const currentBrief = session?.briefId
@@ -117,6 +119,7 @@ export default function ProjectSessionPanel({
         agents: state.agents,
         globalAgents: state.globalAgents,
         requestedAgentId: state.projectControl.masterAgentId,
+        globalMasterAgentId,
         defaultAgentId: state.defaultAgentId,
       });
       const brief = currentSession.briefId

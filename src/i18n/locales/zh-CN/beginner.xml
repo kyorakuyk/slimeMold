@@ -217,6 +217,12 @@
   <string name="masterAgent.subtitle">主控负责澄清需求、整理方案和请求确认，不直接替你修改代码。</string>
   <string name="masterAgent.candidatesEyebrow">可用角色</string>
   <string name="masterAgent.candidates">Agent 候选</string>
+  <string name="masterAgent.followGlobal">跟随全局主控设置</string>
+  <string name="masterAgent.followGlobalSet">使用全局主控：{{id}}</string>
+  <string name="masterAgent.followGlobalFallback">全局未指定，将跟随项目默认 Agent：{{id}}</string>
+  <string name="masterAgent.followGlobalUnset">全局尚未设置主控 Agent</string>
+  <string name="masterAgent.followingGlobal">全局主控：{{id}}</string>
+  <string name="masterAgent.followingProjectDefault">项目默认 Agent：{{id}}</string>
   <string name="masterAgent.followDefault">跟随项目默认 Agent</string>
   <string name="masterAgent.followDefaultSet">当前会话将使用项目默认 Agent</string>
   <string name="masterAgent.followDefaultUnset">尚未设置项目默认 Agent</string>

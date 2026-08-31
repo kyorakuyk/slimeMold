@@ -39,6 +39,7 @@
   <string name="agent.field.model">Model</string>
   <string name="agent.field.modelLocal">(local Ollama)</string>
   <string name="agent.field.modelApi">(pullable from API)</string>
+  <string name="agent.field.modelCodex">(official Codex CLI)</string>
   <string name="agent.model.select">— Select model —</string>
   <string name="agent.model.pullLocal">Pull locally installed models</string>
   <string name="agent.model.pullApi">Pull available models from the API URL</string>
@@ -47,6 +48,10 @@
   <string name="agent.model.clickToPull">Click to pull the available model list from "{{url}}"</string>
   <string name="agent.model.placeholderLocal">Or type a model name, e.g. qwen2.5:3b</string>
   <string name="agent.model.placeholderApi">Or type a model name, e.g. deepseek-chat</string>
+  <string name="agent.model.placeholderCodex">Leave empty for the Codex CLI default model (or enter one)</string>
+  <string name="agent.model.codexDefault">Using the current Codex CLI default model; enter a model to pin one.</string>
+  <string name="agent.model.codexLoginFirst">Sign in to your ChatGPT plan before using Codex.</string>
+  <string name="agent.model.probeCodex">Check the official Codex CLI ChatGPT login status</string>
   <string name="agent.field.temperature">Temperature ({{temp}})</string>
   <string name="agent.advanced.title">Advanced: local proxy forwarding (see cc-switch routing)</string>
   <string name="agent.advanced.desc">Enter a local proxy address (e.g. http://127.0.0.1:7890) to reach Base URL through it — handy for unified relays / OpenAI format. Both backend and frontend channels apply; backend mode requires switching to "via Rust backend" in Settings. Leave empty to connect directly.</string>
@@ -77,6 +82,20 @@
   <string name="agent.apikey.unsaved">Not saved — the key cannot be retrieved at runtime</string>
   <string name="agent.apikey.clear">Clear</string>
   <string name="agent.apikey.failed">Save failed (use the desktop build, or check OS keychain permissions)</string>
+
+  <!-- CodexAuthField -->
+  <string name="agent.codex.title">OpenAI Codex (ChatGPT plan)</string>
+  <string name="agent.codex.desc">Uses your signed-in ChatGPT plan through the official Codex CLI — no API Key required. Requests run in a read-only sandbox.</string>
+  <string name="agent.codex.cliEndpoint">Managed by the official Codex CLI (no Base URL required)</string>
+  <string name="agent.codex.loggedIn">Signed in with ChatGPT</string>
+  <string name="agent.codex.notLoggedIn">Not signed in</string>
+  <string name="agent.codex.login">Sign in with ChatGPT</string>
+  <string name="agent.codex.loginStarted">The official sign-in flow has started. Finish it in your browser, then refresh the status.</string>
+  <string name="agent.codex.logout">Sign out</string>
+  <string name="agent.codex.refresh">Refresh Codex sign-in status</string>
+  <string name="agent.codex.connected">Codex CLI is signed in; the subscription connection is available</string>
+  <string name="agent.codex.loginRequired">No ChatGPT sign-in detected. Sign in first.</string>
+  <string name="agent.codex.otherAuth">Codex is using another sign-in method (not a ChatGPT plan)</string>
 
   <!-- RolesTab -->
   <string name="roles.title">Roles</string>

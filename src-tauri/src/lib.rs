@@ -10,8 +10,8 @@
 //! - set_credential / get_credential / delete_credential / list_credentials：基于 keyring crate，
 //!   落盘到 OS 密钥库（Windows Credential Manager / macOS Keychain / Linux secret-service）。
 //!
-//! 注意：Rust 侧不再实现 LLM HTTP 客户端（原 chat_completion 已移除），所有 LLM 调用
-//! 由前端 provider 发起。
+//! 注意：Rust 侧不实现 LLM HTTP 客户端（原 chat_completion 已移除）。普通 API provider
+//! 由前端发起；Codex provider 是受控例外，只通过官方 Codex CLI 的 Tauri 命令调用。
 
 use std::collections::HashMap;
 use std::fs;
@@ -20,6 +20,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+
+mod codex;
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
@@ -1102,6 +1104,10 @@ pub fn run() {
             list_vaults,
             load_vault_key,
             delete_vault,
+            codex::codex_login_status,
+            codex::codex_login,
+            codex::codex_logout,
+            codex::codex_exec,
             run_git,
             grant_project_access,
             dev_exec,
@@ -1131,9 +1137,9 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-// 注意：Rust 侧不再实现 LLM HTTP 调用（原 chat_completion 已移除，路线 A）。
-// 所有 LLM 请求由前端 provider（plugin-http）发起，带回 token usage 统计，
-// 且天然规避 CORS。密钥仅存于系统密钥库（keyring），前端按 name 引用、不直接持有明文。
+// 注意：Rust 侧不实现普通 LLM HTTP 调用（原 chat_completion 已移除，路线 A）。
+// OpenAI/Anthropic/Ollama 请求仍由前端 provider（plugin-http）发起；Codex provider
+// 仅在此处通过官方 CLI 受控调用，复用 Codex 自己的 ChatGPT 登录态，不把 token 返回前端。
 // 路线 B 若启用后端执行引擎，将复用此处的密钥/文件能力，而非重新实现 HTTP 客户端。
 
 /* ---------------- 接入点 apiKey 加密（AES-GCM，主密钥存于密钥库） ---------------- */

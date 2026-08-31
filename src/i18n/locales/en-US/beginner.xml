@@ -217,6 +217,12 @@
   <string name="masterAgent.subtitle">The master clarifies requirements, shapes the plan, and requests approval. It does not modify code for you.</string>
   <string name="masterAgent.candidatesEyebrow">AVAILABLE ROLES</string>
   <string name="masterAgent.candidates">Agent candidates</string>
+  <string name="masterAgent.followGlobal">Follow global master setting</string>
+  <string name="masterAgent.followGlobalSet">Using global master: {{id}}</string>
+  <string name="masterAgent.followGlobalFallback">No global master set; following project default: {{id}}</string>
+  <string name="masterAgent.followGlobalUnset">No global master Agent has been set</string>
+  <string name="masterAgent.followingGlobal">Global master: {{id}}</string>
+  <string name="masterAgent.followingProjectDefault">Project default Agent: {{id}}</string>
   <string name="masterAgent.followDefault">Follow project default Agent</string>
   <string name="masterAgent.followDefaultSet">This session will use the project default Agent</string>
   <string name="masterAgent.followDefaultUnset">No project default Agent has been set</string>

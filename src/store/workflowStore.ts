@@ -806,6 +806,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       removeGlobalAgent: (id) => {
         const next = get().globalAgents.filter((a) => a.id !== id);
         set({ globalAgents: next });
+        if (useViewStore.getState().globalMasterAgentId === id) {
+          useViewStore.getState().setGlobalMasterAgent(null);
+        }
         void saveGlobalAgents(next);
       },
 

@@ -2,6 +2,7 @@ import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLM
 import { chatOpenAI } from './providers/openai';
 import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';
+import { chatCodex } from './providers/codex';
 import { httpFetch } from '../platform/env';
 
 /** 内置角色库：作为 Agent 的"职业"预设，开箱即用。
@@ -91,6 +92,7 @@ const providers: Record<
   openai: chatOpenAI,
   anthropic: chatAnthropic,
   ollama: chatOllama,
+  codex: chatCodex,
 };
 
 /** 多协议路由：按 agent.protocol 分发到对应 provider。
@@ -128,6 +130,11 @@ export const protocolDefaults: Record<
     label: 'Ollama 本地',
     baseUrl: 'http://localhost:11434',
     model: 'qwen2.5:3b',
+  },
+  codex: {
+    label: 'OpenAI Codex（ChatGPT 订阅）',
+    baseUrl: 'codex://local',
+    model: '',
   },
 };
 
@@ -185,6 +192,14 @@ export const providerPresets: ProviderPreset[] = [
     baseUrl: '',
     defaultModel: '',
     editableBaseUrl: true,
+  },
+  {
+    id: 'codex',
+    name: 'OpenAI Codex（ChatGPT 订阅）',
+    protocol: 'codex',
+    baseUrl: 'codex://local',
+    defaultModel: '',
+    editableBaseUrl: false,
   },
 ];
 
@@ -297,6 +312,7 @@ export async function fetchModelsByProtocol(
   apiKey?: string,
   proxyUrl?: string,
 ): Promise<string[]> {
+  if (protocol === 'codex') return [];
   if (protocol === 'anthropic') {
     return fetchAnthropicModels(baseUrl, apiKey, proxyUrl);
   }

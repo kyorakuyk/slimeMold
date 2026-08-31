@@ -129,6 +129,7 @@ describe('buildOpenProjectState 项目装载状态构建', () => {
       projectControl: {
         version: 1,
         activeSessionId: null,
+        masterAgentId: null,
         sessions: [],
         decisions: [],
         briefs: [],
@@ -149,6 +150,7 @@ describe('buildOpenProjectState 项目装载状态构建', () => {
     expect(st.projectControl).toEqual({
       version: 1,
       activeSessionId: null,
+      masterAgentId: null,
       sessions: [],
       decisions: [],
       briefs: [],
@@ -182,6 +184,7 @@ describe('buildOpenProjectState 项目装载状态构建', () => {
     expect(st.projectControl).toEqual({
       version: 1,
       activeSessionId: null,
+      masterAgentId: null,
       sessions: [],
       decisions: [],
       briefs: [],

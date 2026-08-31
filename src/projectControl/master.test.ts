@@ -133,11 +133,13 @@ describe('parseMasterResponse', () => {
 });
 
 describe('resolveMasterAgent', () => {
-  it('prefers explicit, then project default, then first enabled agent', () => {
+  it('prefers project override, then global master, then project default, then first enabled agent', () => {
     const second = { ...agent, id: 'agent-2', name: '备用' };
 
     expect(resolveMasterAgent({ agents: [agent, second], defaultAgentId: 'agent-2' }).id).toBe('agent-2');
     expect(resolveMasterAgent({ agents: [agent, second], defaultAgentId: 'agent-2', requestedAgentId: 'agent-1' }).id).toBe('agent-1');
+    expect(resolveMasterAgent({ agents: [agent, second], globalMasterAgentId: 'agent-2', defaultAgentId: 'agent-1' }).id).toBe('agent-2');
+    expect(resolveMasterAgent({ agents: [agent, second], globalMasterAgentId: 'missing', defaultAgentId: 'agent-2' }).id).toBe('agent-2');
     expect(resolveMasterAgent({ agents: [{ ...agent, enabled: false }, second] }).id).toBe('agent-2');
     expect(() => resolveMasterAgent({ agents: [] })).toThrow(/没有可用/);
   });

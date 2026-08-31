@@ -56,9 +56,11 @@ const mocks = vi.hoisted(() => {
       options?.name?.includes('施工') ? 'wf-construction' : 'wf-acceptance',
     ),
   };
+  const viewStore = { globalMasterAgentId: null as string | null };
   return {
     session,
     store,
+    viewStore,
     runMasterTurn: vi.fn(async (..._args: unknown[]): Promise<MasterTurnResult> => ({
       response: {
         kind: 'question' as const,
@@ -76,6 +78,10 @@ vi.mock('../store/workflowStore', () => ({
     (selector: (state: typeof mocks.store) => unknown) => selector(mocks.store),
     { getState: () => mocks.store },
   ),
+}));
+
+vi.mock('../store/viewStore', () => ({
+  useViewStore: (selector: (state: typeof mocks.viewStore) => unknown) => selector(mocks.viewStore),
 }));
 
 vi.mock('../projectControl/master', async () => {
@@ -104,6 +110,7 @@ describe('ProjectSessionPanel', () => {
     mocks.store.setOrchestrations.mockClear();
     mocks.store.registerWorkflow.mockClear();
     mocks.store.orchestrations = [];
+    mocks.viewStore.globalMasterAgentId = null;
     mocks.store.projectControl = {
       version: 1,
       activeSessionId: 'session-1',

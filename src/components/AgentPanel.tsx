@@ -12,6 +12,7 @@ import {
   findProviderPreset,
   type ProbeResult,
 } from '../agents/agentManager';
+import { loginCodex, codexLoginStatus, logoutCodex } from '../agents/providers/codex';
 import { saveCredential, removeCredential, loadCredential, defaultCredentialKey, listVaults, loadVaultKey } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
@@ -186,7 +187,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     let alive = true;
     (async () => {
       for (const a of agents) {
-        if (a.protocol === 'ollama') continue;
+        if (a.protocol === 'ollama' || a.protocol === 'codex') continue;
         const existing = a.credentialKey;
         if (existing) {
           const v = await loadCredential(existing);
@@ -222,6 +223,15 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     setProbing(true);
     setProbe(null);
     try {
+      if (editing.protocol === 'codex') {
+        const status = await codexLoginStatus();
+        const result: ProbeResult = status.loggedIn && status.authMode === 'chatgpt'
+          ? { ok: true, stage: 'ok', message: t('agent.codex.connected') }
+          : { ok: false, stage: 'auth', message: status.loggedIn ? t('agent.codex.otherAuth') : t('agent.codex.loginRequired') };
+        setProbe(result);
+        setProbeStates((prev) => ({ ...prev, [editing.id]: result }));
+        return;
+      }
       const key =
         editing.protocol === 'ollama'
           ? undefined
@@ -261,6 +271,17 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     setModelHint('');
     try {
       let list: string[] = [];
+      if (editing.protocol === 'codex') {
+        const status = await codexLoginStatus();
+        setModelHint(
+          status.loggedIn && status.authMode === 'chatgpt'
+            ? t('agent.model.codexDefault')
+            : status.loggedIn
+              ? t('agent.codex.otherAuth')
+              : t('agent.model.codexLoginFirst'),
+        );
+        return;
+      }
       if (editing.protocol === 'ollama') {
         list = await fetchOllamaModels(editing.baseUrl || 'http://127.0.0.1:11434');
       } else {
@@ -532,20 +553,31 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
-              <input
-                className="sm-input"
-                value={editing.baseUrl}
-                onChange={(e) => patch({ baseUrl: e.target.value })}
-              />
-            </div>
+            {editing.protocol === 'codex' ? (
+              <div>
+                <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
+                <div className="rounded border border-line bg-paper-soft px-3 py-2 text-[11px] text-ink-faint">
+                  {t('agent.codex.cliEndpoint')}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
+                <input
+                  className="sm-input"
+                  value={editing.baseUrl}
+                  onChange={(e) => patch({ baseUrl: e.target.value })}
+                />
+              </div>
+            )}
             {editing.protocol === 'ollama' ? (
               <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
                 <p className="text-[11px] text-ink-faint">
                   {t('agent.ollamaHint')}
                 </p>
               </div>
+            ) : editing.protocol === 'codex' ? (
+              <CodexAuthField />
             ) : (
               <ApiKeyField
                 credentialKey={editing.credentialKey}
@@ -557,7 +589,11 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
                 {t('agent.field.model')}
-                {editing.protocol === 'ollama' ? t('agent.field.modelLocal') : t('agent.field.modelApi')}
+                {editing.protocol === 'ollama'
+                  ? t('agent.field.modelLocal')
+                  : editing.protocol === 'codex'
+                    ? t('agent.field.modelCodex')
+                    : t('agent.field.modelApi')}
               </label>
               <div className="space-y-1.5">
                 <div className="flex gap-1.5">
@@ -583,24 +619,26 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    className="sm-btn shrink-0 px-2"
-                    title={
-                      editing.protocol === 'ollama'
-                        ? t('agent.model.pullLocal')
-                        : t('agent.model.pullApi')
-                    }
-                    disabled={loadingModels}
-                    onClick={pullModels}
-                  >
-                    <RefreshCw size={13} className={loadingModels ? 'animate-spin' : ''} />
-                  </button>
+                  {editing.protocol !== 'codex' && (
+                    <button
+                      type="button"
+                      className="sm-btn shrink-0 px-2"
+                      title={
+                        editing.protocol === 'ollama'
+                          ? t('agent.model.pullLocal')
+                          : t('agent.model.pullApi')
+                      }
+                      disabled={loadingModels}
+                      onClick={pullModels}
+                    >
+                      <RefreshCw size={13} className={loadingModels ? 'animate-spin' : ''} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="sm-btn shrink-0 px-2.5"
-                    title={t('agent.model.probe')}
-                    disabled={probing || !editing.model}
+                    title={editing.protocol === 'codex' ? t('agent.model.probeCodex') : t('agent.model.probe')}
+                    disabled={probing || (editing.protocol !== 'codex' && !editing.model)}
                     onClick={runProbe}
                   >
                     {probing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
@@ -634,12 +672,12 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                     )}
                   </div>
                 )}
-                    {editing.protocol !== 'ollama' && remoteModels.length === 0 && !loadingModels && !editing.credentialKey && (
+                    {editing.protocol !== 'ollama' && editing.protocol !== 'codex' && remoteModels.length === 0 && !loadingModels && !editing.credentialKey && (
                   <p className="text-[11px] text-ink-faint">
                     {t('agent.model.tipSaveFirst', { url: editing.baseUrl })}
                   </p>
                 )}
-                {editing.protocol !== 'ollama' && remoteModels.length === 0 && !loadingModels && editing.credentialKey && !modelHint && (
+                {editing.protocol !== 'ollama' && editing.protocol !== 'codex' && remoteModels.length === 0 && !loadingModels && editing.credentialKey && !modelHint && (
                   <button
                     type="button"
                     className="text-[11px] text-accent hover:underline"
@@ -654,7 +692,9 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                   placeholder={
                     editing.protocol === 'ollama'
                       ? t('agent.model.placeholderLocal')
-                      : t('agent.model.placeholderApi')
+                      : editing.protocol === 'codex'
+                        ? t('agent.model.placeholderCodex')
+                        : t('agent.model.placeholderApi')
                   }
                   onChange={(e) => patch({ model: e.target.value })}
                 />
@@ -826,6 +866,91 @@ function ApiKeyField({
       {status === 'err' && (
         <p className="mt-1 text-[11px] text-err">{t('agent.apikey.failed')}</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Codex 订阅连接组件：只调用官方 CLI 的 login/status/logout 命令，
+ * 不读取或复制 Codex 的 OAuth 文件和 access token。
+ */
+function CodexAuthField() {
+  const t = useT('agents');
+  const [auth, setAuth] = useState<Awaited<ReturnType<typeof codexLoginStatus>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      setAuth(await codexLoginStatus());
+    } catch (error) {
+      setAuth(null);
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const handleLogin = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      await loginCodex();
+      setMessage(t('agent.codex.loginStarted'));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      await logoutCodex();
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
+      <p className="text-[12px] font-medium text-ink">{t('agent.codex.title')}</p>
+      <p className="mt-1 text-[11px] text-ink-faint">{t('agent.codex.desc')}</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className={`text-[11px] ${auth?.loggedIn ? 'text-ok' : 'text-ink-faint'}`}>
+          {auth?.loggedIn
+            ? auth.authMode === 'chatgpt'
+              ? t('agent.codex.loggedIn')
+              : t('agent.codex.otherAuth')
+            : t('agent.codex.notLoggedIn')}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {auth?.loggedIn ? (
+            <button type="button" className="sm-btn px-2 py-1 text-[11px]" onClick={handleLogout} disabled={busy}>
+              {t('agent.codex.logout')}
+            </button>
+          ) : (
+            <button type="button" className="sm-btn px-2 py-1 text-[11px]" onClick={handleLogin} disabled={busy || !isTauri}>
+              {t('agent.codex.login')}
+            </button>
+          )}
+          <button type="button" className="sm-btn px-2 py-1" onClick={() => void refresh()} disabled={busy} title={t('agent.codex.refresh')}>
+            <RefreshCw size={12} className={busy ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </div>
+      {auth?.detail && <p className="mt-1 text-[10px] text-ink-faint">{auth.detail}</p>}
+      {message && <p className="mt-1 text-[11px] text-ink-faint">{message}</p>}
     </div>
   );
 }
