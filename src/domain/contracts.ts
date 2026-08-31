@@ -107,6 +107,12 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
       case 'RunSucceeded':
         projection.runs[event.aggregateId] = { status: 'succeeded' };
         break;
+      case 'TaskQueued':
+        projection.tasks[event.aggregateId] = {
+          status: 'queued',
+          ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
+        };
+        break;
       case 'TaskStarted':
         projection.tasks[event.aggregateId] = {
           status: 'running',

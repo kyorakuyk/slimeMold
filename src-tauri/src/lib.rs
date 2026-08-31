@@ -626,6 +626,14 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     ))
 }
 
+/// Codex Worker 专用 cwd 守卫：只允许已登记 worktree，不允许主仓库根或任意子路径。
+pub(crate) fn assert_registered_worktree(cwd: &str) -> Result<PathBuf, String> {
+    match dev_cwd_kind(cwd)? {
+        DevCwdKind::Worktree(path) => Ok(path),
+        DevCwdKind::MainRepo => Err("Codex Worker 拒绝在主仓库根执行，必须使用已登记 worktree".into()),
+    }
+}
+
 /// 主仓库根允许的 git 子命令（严格只读 / worktree 生命周期管理）。
 /// 主仓库根是宿主受保护目录——禁止 npm/tsx/写入型 git（apply/commit/push/reset 等），
 /// 防止 WebView 直接调 dev_exec 在主仓库执行修改文件的命令。
@@ -1109,6 +1117,7 @@ pub fn run() {
             codex::codex_login,
             codex::codex_logout,
             codex::codex_exec,
+            codex::codex_worker_exec,
             event_store::event_lock_acquire,
             event_store::event_lock_release,
             run_git,
@@ -1618,6 +1627,26 @@ mod dev_exec_tests {
             let mut st = DEV_STATE.lock().unwrap();
             st.worktrees.retain(|w| w != &wt_str);
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn codex_worker_cwd_requires_a_registered_worktree() {
+        let base = std::env::temp_dir().join(format!("sm_codex_worker_cwd_{}", std::process::id()));
+        let wt = base.join("wt");
+        let child = wt.join("src");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&child).unwrap();
+        let base_str = base.to_str().unwrap().to_string();
+        let wt_str = wt.to_str().unwrap().to_string();
+
+        dev_init_session(base_str.clone()).unwrap();
+        dev_register_worktree(wt_str.clone()).unwrap();
+        let expected = dev_strip_verbatim(&wt.canonicalize().unwrap());
+        assert_eq!(assert_registered_worktree(&wt_str).unwrap(), expected);
+        assert_eq!(assert_registered_worktree(child.to_str().unwrap()).unwrap(), expected);
+        assert!(assert_registered_worktree(&base_str).is_err());
+        dev_clear_session().unwrap();
         let _ = std::fs::remove_dir_all(&base);
     }
 }

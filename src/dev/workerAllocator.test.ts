@@ -1,0 +1,75 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { ProjectTask } from '../projectControl/types';
+import type { WorktreeInfo } from './worktree';
+import { createWorktreeAllocator } from './workerAllocator';
+
+const task: ProjectTask = {
+  version: 1,
+  id: 'task/one',
+  architectureId: 'architecture-1',
+  title: '实现任务',
+  description: '完成实现',
+  moduleId: 'module-1',
+  scope: ['src'],
+  dependsOn: [],
+  acceptanceCriteria: ['测试通过'],
+  category: 'implementation',
+  status: 'approved',
+  createdAt: '2026-09-01T00:00:00.000Z',
+  updatedAt: '2026-09-01T00:00:00.000Z',
+};
+
+function info(id: string, path: string, branch: string): WorktreeInfo {
+  return {
+    id,
+    path,
+    branch,
+    baseRevision: 'base-1',
+    createdAt: '2026-09-01T00:00:01.000Z',
+    status: 'created',
+  };
+}
+
+describe('createWorktreeAllocator', () => {
+  it('creates one manager worktree per worker lease with safe generated identifiers', async () => {
+    const create = vi.fn(async (id: string, path: string, options?: { branch?: string }) =>
+      info(id, path, options?.branch ?? ''));
+    const allocator = createWorktreeAllocator(
+      { create },
+      ({ task: queuedTask, attempt }) => `C:/projects/worktrees/${queuedTask.id}/${attempt}`,
+    );
+
+    const assignment = await allocator.allocate({
+      projectId: 'project/one',
+      runId: 'run/one',
+      task,
+      attempt: 2,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      'worker-run-one-task-one-a2',
+      'C:/projects/worktrees/task/one/2',
+      { branch: 'worker/run-one/task-one/a2' },
+    );
+    expect(assignment).toEqual({
+      worktreeId: 'worker-run-one-task-one-a2',
+      path: 'C:/projects/worktrees/task/one/2',
+      branch: 'worker/run-one/task-one/a2',
+      baseRevision: 'base-1',
+    });
+  });
+
+  it('rejects worktree creation failure instead of returning a main-repo fallback', async () => {
+    const allocator = createWorktreeAllocator(
+      { create: vi.fn(async () => null) },
+      () => 'C:/projects/worktrees/task-one/1',
+    );
+
+    await expect(allocator.allocate({
+      projectId: 'project-1',
+      runId: 'run-1',
+      task,
+      attempt: 1,
+    })).rejects.toThrow(/创建 worktree 失败/);
+  });
+});

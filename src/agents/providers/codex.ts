@@ -104,3 +104,31 @@ export async function chatCodex(
       : undefined,
   };
 }
+
+/** 在 Rust 登记的独立 worktree 内调用可写 Codex Worker。 */
+export async function codexWorkerExec(
+  prompt: string,
+  model: string | undefined,
+  cwd: string,
+): Promise<LLMResponse> {
+  if (!isTauri) throw new Error('Codex Worker 需要 SlimeMold 桌面版。');
+  if (!prompt.trim()) throw new Error('Codex Worker 请求不能为空。');
+  if (!cwd.trim()) throw new Error('Codex Worker worktree 路径不能为空。');
+  const result = await invokeRaw<CodexExecResult>('codex_worker_exec', {
+    prompt,
+    model: model?.trim() || null,
+    cwd,
+  });
+  return {
+    text: result.text,
+    usage: result.usage
+      ? {
+          promptTokens: result.usage.prompt_tokens,
+          cachedPromptTokens: result.usage.cached_prompt_tokens,
+          completionTokens: result.usage.completion_tokens,
+          replyTokens: result.usage.completion_tokens,
+          totalTokens: result.usage.total_tokens,
+        }
+      : undefined,
+  };
+}

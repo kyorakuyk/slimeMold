@@ -199,10 +199,35 @@ fn parse_json_events(stdout: &str) -> (Option<String>, Option<CodexUsage>, Optio
     (last_message, usage, failure)
 }
 
+fn build_exec_args(sandbox_mode: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["exec", "--json", "--ephemeral"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if sandbox_mode == "workspace-write" {
+        args.push("--approve-for-me".to_string());
+    } else {
+        args.extend(["--sandbox".to_string(), sandbox_mode.to_string()]);
+    }
+    args.extend(
+        [
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--output-last-message",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+    args
+}
+
 fn run_exec(
     program: PathBuf,
     prompt: String,
     model: Option<String>,
+    cwd: Option<PathBuf>,
+    sandbox_mode: &str,
 ) -> Result<CodexExecResult, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -215,17 +240,7 @@ fn run_exec(
     ));
 
     let mut command = Command::new(program);
-    command.args([
-        "exec",
-        "--json",
-        "--ephemeral",
-        "--sandbox",
-        "read-only",
-        "--skip-git-repo-check",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--output-last-message",
-    ]);
+    command.args(build_exec_args(sandbox_mode));
     command.arg(&output_path);
     if let Some(model) = model.as_deref().filter(|value| !value.trim().is_empty()) {
         command.args(["--model", model]);
@@ -236,7 +251,7 @@ fn run_exec(
         command.env_remove(key);
     }
     command
-        .current_dir(env::temp_dir())
+        .current_dir(cwd.unwrap_or_else(env::temp_dir))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -293,14 +308,55 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
         return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
     }
     let program = codex_program()?;
-    tauri::async_runtime::spawn_blocking(move || run_exec(program, prompt, model))
-        .await
-        .map_err(|e| format!("Codex 后台任务失败：{e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_exec(program, prompt, model, None, "read-only")
+    })
+    .await
+    .map_err(|e| format!("Codex 后台任务失败：{e}"))?
+}
+
+/// 在宿主已登记的独立 worktree 内运行可写 Worker。
+///
+/// 这是与只读 master provider 分开的命令：cwd 必须属于 Rust 登记的
+/// worktree，且不接受主仓库根；Worker 失败时由调用方根据结果决定队列状态。
+#[tauri::command]
+pub async fn codex_worker_exec(
+    prompt: String,
+    model: Option<String>,
+    cwd: String,
+) -> Result<CodexExecResult, String> {
+    if prompt.trim().is_empty() {
+        return Err("Codex Worker 请求不能为空。".into());
+    }
+    let worktree = crate::assert_registered_worktree(&cwd)?;
+    let auth = codex_login_status()?;
+    if !auth.logged_in {
+        return Err("未检测到 Codex 的 ChatGPT 登录，请先登录。".into());
+    }
+    if auth.auth_mode != "chatgpt" {
+        return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
+    }
+    let program = codex_program()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_exec(program, prompt, model, Some(worktree), "workspace-write")
+    })
+    .await
+    .map_err(|e| format!("Codex Worker 后台任务失败：{e}"))?
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_json_events;
+    use super::{build_exec_args, parse_json_events};
+
+    #[test]
+    fn worker_exec_uses_workspace_write_without_full_access() {
+        let args = build_exec_args("workspace-write");
+        assert!(!args
+            .windows(2)
+            .any(|pair| pair == ["--sandbox", "workspace-write"]));
+        assert!(args.iter().any(|arg| arg == "--approve-for-me"));
+        assert!(!args.iter().any(|arg| arg == "danger-full-access"));
+    }
 
     #[test]
     fn selects_the_last_agent_message_and_turn_usage() {

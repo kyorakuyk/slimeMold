@@ -62,6 +62,29 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('replays TaskQueued so an enqueued worker run survives projection rebuild', () => {
+    const created = event({
+      eventId: 'evt-run-created-queued',
+      aggregateType: 'Run',
+      aggregateId: 'run-queued',
+      eventType: 'RunCreated',
+      payload: { runId: 'run-queued' },
+    });
+    const queued = event({
+      eventId: 'evt-task-queued',
+      sequence: 2,
+      aggregateType: 'Task',
+      aggregateId: 'task-queued',
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-queued' },
+    });
+
+    expect(replayDomainEvents([created, queued]).tasks['task-queued']).toEqual({
+      status: 'queued',
+      runId: 'run-queued',
+    });
+  });
+
   it('resolves global, project, and run policy without mutating the global preference', () => {
     const global = {
       sandboxMode: 'workspace-write' as const,

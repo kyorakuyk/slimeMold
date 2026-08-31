@@ -1366,6 +1366,30 @@ Issue 工作台采用四个面板：
 
 构建仍有已有的动态/静态 import 和大 chunk warning。本轮完成的是项目入口到执行草案确认门的第一段真实接线；事件流还没有全面替换旧 `workflowStore`/executor，确认后自动 Worker、独立 worktree、Evidence 和失败恢复仍待下一阶段接入。
 
+### 7.14 Phase 1b Worker 队列、独立 worktree 与 Codex 写入边界
+
+本轮继续把执行层从旧 executor 外围接起来，先完成一个可恢复、可注入、可审计的 Worker tracer bullet：
+
+- `src/domain/workerQueue.ts`：新增 `WorkerTaskQueue`。只允许已批准且非空、无循环依赖的任务图进入队列；无依赖任务并发 claim，依赖任务等待前置成功；独立任务失败不会阻塞其它分支，依赖失败会归约为 `blocked`；队列状态可 snapshot/restore，事件产生 `RunCreated`、`TaskQueued`、`TaskStarted`、`TaskSucceeded/Failed/Blocked` 及运行终态事实；
+- `src/dev/workerAllocator.ts`：把现有 `WorktreeManager` 适配为 Worker lease allocator。每次 claim 生成独立 worktree id/branch，路径由宿主显式提供；创建失败不回退主仓库；
+- `src/dev/codexWorkerExecutor.ts`：新增 Codex Worker executor。模型输出不能自报成功，必须经过宿主 acceptance，并且必须返回 Evidence ID 才能进入 succeeded；
+- `src/agents/providers/codex.ts` / `src-tauri/src/codex.rs`：增加 `codex_worker_exec`。它与只读 master provider 分离，只能在 Rust 登记的 worktree 执行，使用 CLI 的 `--approve-for-me` workspace-write 模式，继续拒绝 API key 环境变量和主仓库 cwd；
+- `src-tauri/src/lib.rs`：增加 canonical worktree 守卫及 command 注册；`replayDomainEvents` 增加 `TaskQueued` 归约，保证队列初始状态可重放。
+
+本轮验证包含一次真实 CLI workspace-write smoke。第一次调用未显式传入 `-C`，失败后确认没有把失败记为成功，并清理了误写入的临时标记文件；第二次显式传入隔离临时目录、清除 API key 环境变量后返回 `CODEX_WORKER_SMOKE_OK`，临时目录随后自动清理。
+
+验证结果：
+
+- `npm run test`：78 个测试文件、703 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 938 个 key 对齐；
+- `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`：21 个 Rust 测试通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `rustfmt --edition 2021 --check src-tauri/src/codex.rs`：通过；
+- `git diff --check`：无空白错误。
+
+构建仍有已有的动态/静态 import 和大 chunk warning。当前队列、worktree allocator 和 Codex Worker executor 已可独立测试，但尚未把它们绑定到“确认计划”按钮后的持久 Run registry，也尚未接入真实 acceptance 命令采集、Evidence 落盘和失败恢复 UI。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
