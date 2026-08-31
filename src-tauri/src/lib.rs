@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 mod codex;
+mod event_store;
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
@@ -1108,6 +1109,8 @@ pub fn run() {
             codex::codex_login,
             codex::codex_logout,
             codex::codex_exec,
+            event_store::event_lock_acquire,
+            event_store::event_lock_release,
             run_git,
             grant_project_access,
             dev_exec,

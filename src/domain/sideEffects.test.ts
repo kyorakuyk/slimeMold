@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+import { createSideEffect, startSideEffect, completeSideEffect } from './contracts';
+import {
+  SideEffectJournalRepository,
+  createEmptySideEffectJournal,
+  parseSideEffectJournal,
+  recoverInterruptedSideEffect,
+  recordSideEffect,
+  serializeSideEffectJournal,
+} from './sideEffects';
+import { InMemoryEventStoreAdapter } from './eventStore';
+
+const planned = createSideEffect({
+  idempotencyKey: 'push:task-1:commit-a',
+  kind: 'push',
+  target: 'refs/heads/feature/task-1',
+  inputHash: 'tree-a',
+});
+
+describe('side-effect journal', () => {
+  it('records idempotent progress and rejects key reuse for a different target or input', () => {
+    const initial = createEmptySideEffectJournal();
+    const started = startSideEffect(planned);
+    const journal = recordSideEffect(recordSideEffect(initial, planned), started);
+
+    expect(journal.entries).toEqual([started]);
+    expect(recordSideEffect(journal, started)).toBe(journal);
+    expect(() => recordSideEffect(journal, {
+      ...planned,
+      target: 'refs/heads/main',
+    })).toThrow(/idempotencyKey/);
+  });
+
+  it('marks an interrupted started effect unknown and lets a later receipt close it', () => {
+    const started = startSideEffect(planned);
+    const unknown = recoverInterruptedSideEffect(started);
+    expect(unknown).toMatchObject({ status: 'unknown', recovery: 'needs-user' });
+
+    const receipt = completeSideEffect(started, {
+      receiptId: 'push-receipt-1',
+      observedAt: '2026-09-01T00:03:00.000Z',
+      outputHash: 'remote-tree-a',
+    });
+    const journal = recordSideEffect(
+      recordSideEffect(createEmptySideEffectJournal(), unknown),
+      receipt,
+    );
+    expect(journal.entries[0]).toMatchObject({ status: 'receipt', recovery: 'skip', receipt: receipt.receipt });
+  });
+
+  it('preserves a malformed journal as needs-repair instead of returning an empty journal', () => {
+    const parsed = parseSideEffectJournal('{"schemaVersion":1,"entries":[{"idempotencyKey":"broken"}]}');
+    expect(parsed.status).toBe('needs-repair');
+    expect(parsed.journal.entries).toHaveLength(0);
+
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    return adapter.writeTextAtomic(repository.path, '{not-json').then(async () => {
+      await expect(repository.record(planned)).rejects.toMatchObject({ code: 'needs-repair' });
+    });
+  });
+
+  it('round-trips a valid journal through the adapter', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    await repository.record(planned);
+    await repository.record(startSideEffect(planned));
+    const raw = await adapter.readText(repository.path);
+    expect(parseSideEffectJournal(raw).status).toBe('ok');
+    expect(parseSideEffectJournal(raw).journal.entries).toHaveLength(1);
+    expect(raw).toBe(serializeSideEffectJournal(parseSideEffectJournal(raw).journal));
+  });
+});

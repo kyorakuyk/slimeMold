@@ -17,6 +17,12 @@ export interface DomainEvent<TPayload = unknown> {
   occurredAt: string;
   causationId?: string;
   correlationId?: string;
+  source?: {
+    objectId: string;
+    objectVersion: number;
+  };
+  sensitivity?: 'normal' | 'private';
+  synthetic?: boolean;
 }
 
 export type TaskProjectionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';

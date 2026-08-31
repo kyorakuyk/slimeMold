@@ -1320,6 +1320,30 @@ Issue 工作台采用四个面板：
 - `rustfmt --edition 2021 --check src/codex.rs`：通过；
 - `git diff --check`：无空白错误。
 
+### 7.12 Phase 0b 事件流、迁移基线与副作用恢复边界
+
+本轮沿实验分支继续推进大重构，但没有改写 `workflowStore` 或旧执行器。新增的 Phase 0b 基础设施把事件事实、投影恢复、旧控制面迁移和副作用恢复放到可独立测试的边界中：
+
+- `src/domain/eventStore.ts`：实现 JSONL 事件解析、sequence/aggregateVersion 校验、eventId 幂等、事件 checksum、尾部损坏隔离、snapshot hash 校验、replay，以及整批原子 append；
+- `NodeFileEventStoreAdapter`：使用临时文件 + rename 原子替换和独占创建锁，锁超时 fail-closed 并保留陈旧锁现场；
+- `src/domain/tauriEventStore.ts`：将项目目录授权、原子文件写入和 Tauri 宿主锁接到统一适配器接口；
+- `src-tauri/src/event_store.rs`：新增 Rust 宿主级跨进程事件锁命令，带路径校验、token 校验、sync_all 和显式释放；
+- `src/domain/migration.ts`：将旧 `projectControl` 快照转换为带 `synthetic` / `source` 标记的 legacy baseline 事件；旧的 approved 状态只作为导入元数据，不伪造新的用户批准历史，决策原值只保存 hash；
+- `src/domain/sideEffects.ts`：增加持久副作用账本、idempotency key 冲突保护、receipt 收口和进程重启后的 `unknown/needs-user` 恢复；
+- `src/domain/contracts.ts`：补齐事件来源、敏感级别和 synthetic baseline 元数据字段。
+
+本轮使用严格 TDD 先验证 RED，再实现 GREEN，并覆盖了真实临时文件系统和 Rust 锁测试。验证结果：
+
+- `npm run test`：72 个测试文件、673 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 935 个 key 对齐；
+- `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`：19 个 Rust 测试通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `rustfmt --edition 2021 --check src-tauri/src/event_store.rs`：通过；
+- `git diff --check`：无空白错误。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。本轮只建立了 canonical event/storage/migration/recovery 边界，尚未把旧控制面读写、项目驾驶舱或真实 Worker 执行切换到事件流。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
