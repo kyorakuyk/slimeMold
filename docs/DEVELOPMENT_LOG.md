@@ -1390,6 +1390,27 @@ Issue 工作台采用四个面板：
 
 构建仍有已有的动态/静态 import 和大 chunk warning。当前队列、worktree allocator 和 Codex Worker executor 已可独立测试，但尚未把它们绑定到“确认计划”按钮后的持久 Run registry，也尚未接入真实 acceptance 命令采集、Evidence 落盘和失败恢复 UI。
 
+### 7.15 确认计划后的 queued Run registry 持久化
+
+本轮把上一轮的 Worker queue 从独立能力进一步接到项目状态：
+
+- 新增 `src/projectControl/workerRun.ts` 的 `enqueueWorkerRunCommand`，确认执行计划时创建带 `projectId`、`orchestrationId`、`taskGraphId` 和版本绑定的 queued Run；相同 Run 重试幂等，绑定冲突拒绝；
+- `ProjectFile`、`workflowStore` 和 `workflowState` 增加 `workerRuns` registry。确认按钮现在同时完成 orchestration `ready`、Worker Run 入队、`RunCreated/TaskQueued` 事实写入和项目状态更新；
+- 项目序列化、dirty 快照、打开/新建/关闭生命周期均覆盖 `workerRuns`；损坏的非数组数据打开时 fail-closed 为空 registry；
+- 简单工作台在确认后显示“Worker 已入队，等待执行”，不把 queued 状态伪装成 running，也不自动调用旧 executor；
+- 中英文 beginner locale 增加 queued Run 状态提示。
+
+本轮补充了 Command 幂等、项目保存/重开恢复、损坏 registry、确认后入队和用户可见状态测试。验证结果：
+
+- `npm run test`：79 个测试文件、710 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 940 个 key 对齐；
+- `cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1`：21 个 Rust 测试通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `git diff --check`：无空白错误。
+
+构建仍有已有的动态/静态 import 和大 chunk warning。当前 queued Run 已进入项目持久状态，但尚未在打开项目后自动恢复成可执行队列对象，也尚未把宿主 acceptance 命令、Evidence 落盘、执行进程崩溃恢复和失败恢复 UI 接到 Run registry。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

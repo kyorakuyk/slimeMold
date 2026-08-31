@@ -68,4 +68,22 @@ describe('workflowStore project control lifecycle', () => {
 
     expect(getPendingProjectEvents('project-1')).toEqual([]);
   });
+
+  it('stores a worker run registry entry for project persistence', () => {
+    const workerRun = {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {},
+    } as never;
+    useWorkflowStore.getState().setWorkerRuns([workerRun]);
+    expect(useWorkflowStore.getState().workerRuns).toEqual([workerRun]);
+    useWorkflowStore.getState().setWorkerRuns([]);
+  });
 });

@@ -55,6 +55,7 @@ export interface WorkerRunQueueState {
   version: 1;
   projectId: string;
   runId: string;
+  orchestrationId?: string;
   taskGraphId: string;
   taskGraphVersion: number;
   status: RunProjectionStatus;
@@ -66,6 +67,7 @@ export interface WorkerRunQueueState {
 export interface CreateWorkerRunQueueInput {
   projectId: string;
   runId: string;
+  orchestrationId?: string;
   taskGraph: ProjectTaskGraph;
   now: string;
 }
@@ -169,6 +171,7 @@ export class WorkerTaskQueue {
     if (emitInitialEvents) {
       this.emitRun('RunCreated', {
         runId: this.state.runId,
+        orchestrationId: this.state.orchestrationId,
         taskGraphId: this.state.taskGraphId,
         taskGraphVersion: this.state.taskGraphVersion,
         taskIds: this.taskGraph.tasks.map((task) => task.id),
@@ -483,6 +486,7 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     version: 1,
     projectId,
     runId,
+    ...(input.orchestrationId ? { orchestrationId: input.orchestrationId } : {}),
     taskGraphId: input.taskGraph.id,
     taskGraphVersion: input.taskGraph.graphVersion,
     status: 'queued',

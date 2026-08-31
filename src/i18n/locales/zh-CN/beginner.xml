@@ -177,6 +177,8 @@
   <string name="session.nextOrchestrationReview">审查并确认执行计划</string>
   <string name="session.nextOrchestrationReviewHint">执行草案已经准备好；确认后才会进入可运行状态。</string>
   <string name="session.confirmExecutionPlan">确认执行计划</string>
+  <string name="session.workerRunQueued">Worker 已入队，等待执行</string>
+  <string name="session.workerRunQueuedHint">计划确认已记录；每个任务会在独立 worktree 中执行，并由宿主验收。</string>
   <string name="session.openOrchestration">打开执行编排</string>
   <string name="issue.back">返回项目</string>
   <string name="issue.openAdvanced">打开专业视图</string>

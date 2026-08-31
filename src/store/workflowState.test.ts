@@ -145,6 +145,38 @@ describe('buildOpenProjectState 项目装载状态构建', () => {
     expect(st.projectControl).toEqual(project.projectControl);
   });
 
+  it('恢复项目级 workerRuns，保留 queued 状态供继续执行', () => {
+    const workerRun = {
+      version: 1,
+      projectId: 'p1',
+      runId: 'run-1',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'queued',
+          attempt: 0,
+          evidenceIds: [],
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    };
+    const project = { ...mkProject(), workerRuns: [workerRun] } as ProjectFile;
+    const st = buildOpenProjectState(project, '/path/p1', null);
+    expect(st.workerRuns).toEqual([workerRun]);
+  });
+
+  it('workerRuns 损坏时安全降级为空 registry', () => {
+    const project = { ...mkProject(), workerRuns: 'damaged' } as unknown as ProjectFile;
+    const st = buildOpenProjectState(project, '/path/p1', null);
+    expect(st.workerRuns).toEqual([]);
+  });
+
   it('新建项目初始化空的项目控制面快照', () => {
     const st = buildNewProjectState('新项目') as unknown as { projectControl?: unknown };
     expect(st.projectControl).toEqual({

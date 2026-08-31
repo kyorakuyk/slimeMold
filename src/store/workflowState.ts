@@ -95,6 +95,7 @@ export interface OpenProjectState {
   artifacts: import('../types').ProjectArtifacts;
   pipelines: import('../types').PipelineDef[];
   orchestrations: import('../types').Orchestration[];
+  workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
   projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
   logs: never[];
@@ -156,6 +157,7 @@ export function buildOpenProjectState(
     artifacts: file.artifacts ?? {},
     pipelines: file.pipelines ?? [],
     orchestrations: file.orchestrations ?? [],
+    workerRuns: Array.isArray(file.workerRuns) ? file.workerRuns : [],
     projectControl: parseProjectControlSnapshot(file.projectControl),
     selectedNodeId: null,
     logs: [],
@@ -252,6 +254,7 @@ export interface NewProjectState {
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
   projectAssets: import('../types').AssetMeta[];
+  workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
   projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
   logs: never[];
@@ -296,6 +299,7 @@ export function buildNewProjectState(name: string): NewProjectState {
     variables: wf.variables!,
     projectVariables: {},
     projectAssets: [],
+    workerRuns: [],
     projectControl: createEmptyProjectControlSnapshot(),
     selectedNodeId: null,
     logs: [],

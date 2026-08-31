@@ -186,6 +186,7 @@ export function buildProjectFile(
     agentRouteTable: import('../types').AgentRouteTable;
     pipelines: import('../types').PipelineDef[];
     orchestrations?: Orchestration[];
+    workerRuns?: import('../domain/workerQueue').WorkerRunQueueState[];
     projectControl?: ProjectControlSnapshot;
     defaultAgentId?: string | null;
   },
@@ -225,6 +226,7 @@ export function buildProjectFile(
     agentRouteTable: s.agentRouteTable,
     pipelines: s.pipelines,
     orchestrations: s.orchestrations ?? [],
+    workerRuns: s.workerRuns ?? [],
     projectControl: s.projectControl ?? createEmptyProjectControlSnapshot(),
     runs: { history: s.runHistory },
     checkpoints: s.checkpoints ?? {},
@@ -263,6 +265,7 @@ export const DIRTY_KEYS = [
   'agentRouteTable',
   'pipelines',
   'orchestrations',
+  'workerRuns',
   'projectControl',
   'projectName',
   'workflowName',

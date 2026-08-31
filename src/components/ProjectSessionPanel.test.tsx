@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => {
     defaultAgentId: 'agent-1',
     agentRouteTable: {},
     orchestrations: [] as unknown[],
+    workerRuns: [] as unknown[],
     projectControl: {
       version: 1 as const,
       activeSessionId: 'session-1',
@@ -52,6 +53,9 @@ const mocks = vi.hoisted(() => {
     }),
     setOrchestrations: vi.fn((orchestrations: unknown[]) => {
       store.orchestrations = orchestrations;
+    }),
+    setWorkerRuns: vi.fn((workerRuns: unknown[]) => {
+      store.workerRuns = workerRuns;
     }),
     registerWorkflow: vi.fn((_workflow: unknown, options?: { name?: string }) =>
       options?.name?.includes('施工') ? 'wf-construction' : 'wf-acceptance',
@@ -110,8 +114,10 @@ describe('ProjectSessionPanel', () => {
     mocks.runMasterTurn.mockClear();
     mocks.store.setProjectControl.mockClear();
     mocks.store.setOrchestrations.mockClear();
+    mocks.store.setWorkerRuns.mockClear();
     mocks.store.registerWorkflow.mockClear();
     mocks.store.orchestrations = [];
+    mocks.store.workerRuns = [];
     mocks.viewStore.globalMasterAgentId = null;
     mocks.store.projectControl = {
       version: 1,
@@ -474,12 +480,40 @@ describe('ProjectSessionPanel', () => {
       sessions: [{
         ...mocks.session,
         status: 'ready',
+        taskGraphId: 'task-graph-1',
         orchestrationId: 'orch-1',
       }],
       decisions: [],
       briefs: [],
       architectures: [],
       issues: [],
+      taskGraphs: [{
+        version: 1,
+        id: 'task-graph-1',
+        sessionId: 'session-1',
+        architectureId: 'architecture-1',
+        graphVersion: 1,
+        tasks: [{
+          version: 1,
+          id: 'task-1',
+          architectureId: 'architecture-1',
+          title: '实现任务',
+          description: '完成实现',
+          moduleId: 'module-1',
+          scope: ['src'],
+          dependsOn: [],
+          acceptanceCriteria: ['测试通过'],
+          category: 'implementation',
+          status: 'approved',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        }],
+        approval: 'approved',
+        approvedBy: 'user',
+        approvedAt: '2026-09-01T00:00:00.000Z',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
     };
 
     await act(async () => {
@@ -502,8 +536,18 @@ describe('ProjectSessionPanel', () => {
     expect(orchestrationCalls.at(-1)?.[0]).toEqual([
       expect.objectContaining({ id: 'orch-1', status: 'ready' }),
     ]);
-    expect(getPendingProjectEvents('project-1')).toEqual([
-      expect.objectContaining({ eventType: 'ExecutionDraftApproved', actor: 'user' }),
+    const pendingEvents = getPendingProjectEvents('project-1');
+    expect(pendingEvents).toHaveLength(3);
+    expect(pendingEvents.some((event) => event.eventType === 'ExecutionDraftApproved' && event.actor === 'user')).toBe(true);
+    expect(pendingEvents.some((event) => event.eventType === 'RunCreated' && event.actor === 'runtime')).toBe(true);
+    expect(pendingEvents.some((event) => event.eventType === 'TaskQueued' && event.actor === 'runtime')).toBe(true);
+    expect(mocks.store.setWorkerRuns).toHaveBeenCalledTimes(1);
+    expect(mocks.store.workerRuns).toEqual([
+      expect.objectContaining({
+        orchestrationId: 'orch-1',
+        taskGraphId: 'task-graph-1',
+        status: 'queued',
+      }),
     ]);
   });
 });

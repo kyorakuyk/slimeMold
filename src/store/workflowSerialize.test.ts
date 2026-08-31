@@ -267,6 +267,35 @@ describe('workflowSerialize 纯函数（从 workflowStore 抽离，行为等价�
       expect(snapshot.orchestrations).toEqual([orchestration]);
     });
 
+    it('把项目级 workerRuns 写入 ProjectFile 并纳入稳定快照', () => {
+      const workerRun = {
+        version: 1,
+        projectId: 'pid',
+        runId: 'run-1',
+        orchestrationId: 'orch-1',
+        taskGraphId: 'graph-1',
+        taskGraphVersion: 2,
+        status: 'queued',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        tasks: {
+          'task-1': {
+            taskId: 'task-1',
+            status: 'queued',
+            attempt: 0,
+            evidenceIds: [],
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        },
+      };
+      const input = { ...baseProject, workerRuns: [workerRun] } as never;
+      const pf = buildProjectFile(input) as unknown as { workerRuns?: unknown[] };
+      expect(pf.workerRuns).toEqual([workerRun]);
+
+      const snapshot = JSON.parse(projectSnapshot(input)) as { workerRuns?: unknown[] };
+      expect(snapshot.workerRuns).toEqual([workerRun]);
+    });
+
     it('把项目控制面快照写入 ProjectFile', () => {
       const control = {
         version: 1,

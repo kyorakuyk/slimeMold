@@ -875,7 +875,9 @@ export interface ProjectFile {
   pipelines?: PipelineDef[];
   /** 项目级编排记录（草案、阶段绑定、运行进度和失败信息），随 .slimemold 持久化 */
   orchestrations?: Orchestration[];
-  /** 项目控制面快照（主控会话、用户决策和版本化 Brief），随 .slimemold 持久化 */
+  /** 项目级 Worker Run queue registry（状态可恢复，随 project.json 持久化） */
+  workerRuns?: import('./domain/workerQueue').WorkerRunQueueState[];
+  /** 项目控制面快照（主控会话、Decision、Issue 和版本化 Brief），随 .slimemold 持久化 */
   projectControl?: ProjectControlSnapshot;
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };

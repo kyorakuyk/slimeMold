@@ -26,6 +26,7 @@ import {
   linkOrchestrationCommand,
 } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
+import { enqueueWorkerRunCommand } from '../projectControl/workerRun';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
@@ -79,6 +80,7 @@ export default function ProjectSessionPanel({
   const projectName = useWorkflowStore((state) => state.projectName);
   const projectDirty = useWorkflowStore((state) => state.projectDirty);
   const orchestrations = useWorkflowStore((state) => state.orchestrations);
+  const workerRuns = useWorkflowStore((state) => state.workerRuns);
   const projectControl = useWorkflowStore((state) => state.projectControl);
   const globalMasterAgentId = useViewStore((state) => state.globalMasterAgentId);
 
@@ -94,6 +96,9 @@ export default function ProjectSessionPanel({
     : null;
   const currentOrchestration = session?.orchestrationId
     ? orchestrations.find((orchestration) => orchestration.id === session.orchestrationId) ?? null
+    : null;
+  const currentWorkerRun = session?.orchestrationId
+    ? workerRuns.find((run) => run.orchestrationId === session.orchestrationId) ?? null
     : null;
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -352,10 +357,22 @@ export default function ProjectSessionPanel({
     const orchestration = orchestrationId
       ? state.orchestrations.find((item) => item.id === orchestrationId)
       : undefined;
-    if (!currentSession || !orchestration || orchestration.status !== 'awaiting-confirm') return;
+    const taskGraph = currentSession?.taskGraphId
+      ? snapshot.taskGraphs?.find((item) => item.id === currentSession.taskGraphId)
+      : undefined;
+    if (!currentSession || !orchestration || !taskGraph || orchestration.status !== 'awaiting-confirm') return;
     try {
       const now = new Date().toISOString();
+      const queued = enqueueWorkerRunCommand({
+        projectId: currentSession.projectId,
+        orchestrationId: orchestration.id,
+        runId: controlId('run'),
+        taskGraph,
+        existingRuns: state.workerRuns,
+        now,
+      });
       const approved = confirmDraft(orchestration.id, 'approved');
+      state.setWorkerRuns([...state.workerRuns, queued.state]);
       recordProjectEvents(currentSession.projectId, [{
         eventId: `${approved.id}:execution-draft-approved:${now}`,
         streamId: currentSession.projectId,
@@ -375,7 +392,7 @@ export default function ProjectSessionPanel({
         correlationId: currentSession.id,
         source: { objectId: approved.id, objectVersion: 1 },
         sensitivity: 'normal',
-      }]);
+      }, ...queued.events]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -602,7 +619,9 @@ export default function ProjectSessionPanel({
             <section className="sm-beginner-session-next-card">
               <p className="sm-beginner-eyebrow">{t('session.nextEyebrow')}</p>
               <strong>
-                {currentOrchestration?.status === 'awaiting-confirm'
+                {currentWorkerRun?.status === 'queued'
+                  ? t('session.workerRunQueued')
+                  : currentOrchestration?.status === 'awaiting-confirm'
                   ? t('session.nextOrchestrationReview')
                   : currentOrchestration
                     ? t('session.nextOrchestration')
@@ -619,7 +638,9 @@ export default function ProjectSessionPanel({
                             : t('session.nextQuestions')}
               </strong>
               <span>
-                {currentOrchestration?.status === 'awaiting-confirm'
+                {currentWorkerRun?.status === 'queued'
+                  ? t('session.workerRunQueuedHint')
+                  : currentOrchestration?.status === 'awaiting-confirm'
                   ? t('session.nextOrchestrationReviewHint')
                   : currentOrchestration
                     ? t('session.nextOrchestrationHint')

@@ -177,6 +177,8 @@
   <string name="session.nextOrchestrationReview">Review and confirm the execution plan</string>
   <string name="session.nextOrchestrationReviewHint">The execution draft is ready; confirm it before it becomes runnable.</string>
   <string name="session.confirmExecutionPlan">Confirm execution plan</string>
+  <string name="session.workerRunQueued">Worker queued for execution</string>
+  <string name="session.workerRunQueuedHint">The plan approval is recorded; each task will run in its own worktree and be host-verified.</string>
   <string name="session.openOrchestration">Open execution orchestration</string>
   <string name="issue.back">Back to project</string>
   <string name="issue.openAdvanced">Open professional view</string>
