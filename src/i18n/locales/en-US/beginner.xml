@@ -55,6 +55,7 @@
   <string name="project.stop">Stop run</string>
   <string name="project.openAdvanced">Open advanced workspace</string>
   <string name="project.openIssues">View issues</string>
+  <string name="project.openMasterAgent">Choose master Agent</string>
   <string name="project.next.title">Next step</string>
   <string name="project.next.run">Run the current workflow</string>
   <string name="project.next.runHint">Run once with the current configuration.</string>
@@ -96,6 +97,7 @@
   <string name="session.back">Project overview</string>
   <string name="session.openAdvanced">Open professional view</string>
   <string name="session.openIssues">View issues</string>
+  <string name="session.openMasterAgent">Choose master Agent</string>
   <string name="session.eyebrow">PROJECT CONTROL SESSION</string>
   <string name="session.status.intake">Ready to begin</string>
   <string name="session.status.clarifying">Clarifying requirements</string>
@@ -207,4 +209,29 @@
   <string name="issue.approve">Approve for queue</string>
   <string name="issue.queue">Queue it</string>
   <string name="issue.triage">Ask the master to triage</string>
+
+  <string name="masterAgent.back">Back to project</string>
+  <string name="masterAgent.openAdvanced">Open advanced configuration</string>
+  <string name="masterAgent.eyebrow">PROJECT CONTROL PLANE</string>
+  <string name="masterAgent.title">Choose a master Agent</string>
+  <string name="masterAgent.subtitle">The master clarifies requirements, shapes the plan, and requests approval. It does not modify code for you.</string>
+  <string name="masterAgent.candidatesEyebrow">AVAILABLE ROLES</string>
+  <string name="masterAgent.candidates">Agent candidates</string>
+  <string name="masterAgent.followDefault">Follow project default Agent</string>
+  <string name="masterAgent.followDefaultSet">This session will use the project default Agent</string>
+  <string name="masterAgent.followDefaultUnset">No project default Agent has been set</string>
+  <string name="masterAgent.scopeProject">Project</string>
+  <string name="masterAgent.scopeGlobal">Global</string>
+  <string name="masterAgent.enabled">Enabled</string>
+  <string name="masterAgent.disabled">Disabled</string>
+  <string name="masterAgent.noAgents">No usable Agents yet</string>
+  <string name="masterAgent.noAgentsHint">Add and test an Agent in advanced configuration first.</string>
+  <string name="masterAgent.selectedEyebrow">CURRENT CHOICE</string>
+  <string name="masterAgent.selected">Master Agent</string>
+  <string name="masterAgent.following">Following default: {{id}}</string>
+  <string name="masterAgent.save">Save master choice</string>
+  <string name="masterAgent.saved">Master choice saved</string>
+  <string name="masterAgent.safetyTitle">Permission boundary</string>
+  <string name="masterAgent.safetyBody">The master can only ask questions and propose structured plans. Code changes, execution, merging, and release still require their approval gates.</string>
+  <string name="masterAgent.configureHint">Need to add a model, save credentials, or test a connection? Open the Agents section in advanced configuration.</string>
 </resources>

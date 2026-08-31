@@ -4453,6 +4453,330 @@ body:has(.sm-pro-shell) .sm-companion__bar {
   line-height: 1.5;
 }
 
+.sm-beginner-master-agent-main {
+  max-width: 1080px;
+  padding-top: 25px;
+}
+
+.sm-beginner-master-agent-topline {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sm-beginner-master-agent-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 34px 0 26px;
+}
+
+.sm-beginner-master-agent-heading-icon {
+  display: inline-flex;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: var(--sm-beginner-blue-soft);
+  color: var(--sm-beginner-blue);
+}
+
+.sm-beginner-master-agent-heading h1 {
+  margin: 5px 0 0;
+  color: var(--sm-beginner-ink);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 650;
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+}
+
+.sm-beginner-master-agent-heading p:last-child {
+  margin: 7px 0 0;
+  color: var(--sm-beginner-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sm-beginner-master-agent-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(300px, 0.82fr);
+  align-items: start;
+  gap: 18px;
+  padding-bottom: 24px;
+}
+
+.sm-beginner-master-agent-list-card,
+.sm-beginner-master-agent-summary-card,
+.sm-beginner-master-agent-note,
+.sm-beginner-master-agent-config-note {
+  min-width: 0;
+  border: 1px solid var(--sm-beginner-line);
+  border-radius: 18px;
+  background: var(--sm-beginner-surface);
+  box-shadow: 0 10px 28px rgba(24, 30, 40, 0.045);
+}
+
+.sm-beginner-master-agent-list-card,
+.sm-beginner-master-agent-summary-card {
+  padding: 18px;
+}
+
+.sm-beginner-master-agent-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sm-beginner-master-agent-card-heading h2 {
+  margin: 5px 0 0;
+  color: var(--sm-beginner-ink);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.sm-beginner-master-agent-card-heading > span {
+  min-width: 24px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--sm-beginner-bg);
+  color: var(--sm-beginner-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.sm-beginner-master-agent-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.sm-beginner-master-agent-option {
+  display: flex;
+  width: 100%;
+  min-height: 68px;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 11px;
+  border: 1px solid var(--sm-beginner-line);
+  border-radius: 13px;
+  background: var(--sm-beginner-bg);
+  color: var(--sm-beginner-ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.sm-beginner-master-agent-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--sm-beginner-blue) 48%, var(--sm-beginner-line));
+  transform: translateY(-1px);
+}
+
+.sm-beginner-master-agent-option.is-selected {
+  border-color: color-mix(in srgb, var(--sm-beginner-blue) 66%, var(--sm-beginner-line));
+  background: var(--sm-beginner-blue-soft);
+}
+
+.sm-beginner-master-agent-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.sm-beginner-master-agent-option-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--sm-beginner-surface);
+  color: var(--sm-beginner-blue);
+}
+
+.sm-beginner-master-agent-option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sm-beginner-master-agent-option-copy strong {
+  overflow: hidden;
+  color: var(--sm-beginner-ink);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sm-beginner-master-agent-option-copy small {
+  overflow: hidden;
+  color: var(--sm-beginner-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sm-beginner-master-agent-status {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--sm-beginner-muted);
+}
+
+.sm-beginner-master-agent-status > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2e9e5b;
+}
+
+.sm-beginner-master-agent-status.is-disabled {
+  color: var(--sm-beginner-muted);
+}
+
+.sm-beginner-master-agent-check {
+  flex: 0 0 auto;
+  color: var(--sm-beginner-blue);
+}
+
+.sm-beginner-master-agent-summary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sm-beginner-master-agent-selected {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 16px;
+  padding: 15px;
+  border-radius: 13px;
+  background: var(--sm-beginner-bg);
+}
+
+.sm-beginner-master-agent-selected-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 3px;
+  border-radius: 10px;
+  background: var(--sm-beginner-blue-soft);
+  color: var(--sm-beginner-blue);
+}
+
+.sm-beginner-master-agent-selected strong {
+  color: var(--sm-beginner-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.sm-beginner-master-agent-selected span {
+  color: var(--sm-beginner-muted);
+  font-size: 11px;
+}
+
+.sm-beginner-master-agent-save {
+  width: 100%;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.sm-beginner-master-agent-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 15px;
+  color: var(--sm-beginner-blue);
+}
+
+.sm-beginner-master-agent-note > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sm-beginner-master-agent-note strong {
+  color: var(--sm-beginner-ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.sm-beginner-master-agent-note span,
+.sm-beginner-master-agent-config-note span {
+  color: var(--sm-beginner-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.sm-beginner-master-agent-config-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 15px;
+  color: var(--sm-beginner-muted);
+}
+
+.sm-beginner-master-agent-empty {
+  display: flex;
+  min-height: 190px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--sm-beginner-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.sm-beginner-master-agent-empty strong {
+  color: var(--sm-beginner-ink);
+}
+
+@media (max-width: 820px) {
+  .sm-beginner-master-agent-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .sm-beginner-master-agent-topline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sm-beginner-master-agent-topline > .sm-beginner-text-button {
+    align-self: flex-end;
+  }
+
+  .sm-beginner-master-agent-heading {
+    padding-top: 24px;
+  }
+
+  .sm-beginner-master-agent-heading h1 {
+    font-size: 30px;
+  }
+}
+
 .sm-beginner-issue-board {
   max-width: 1280px;
   padding-top: 25px;

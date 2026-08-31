@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
+  Bot,
   CheckCircle2,
   ClipboardList,
   ChevronRight,
@@ -41,6 +42,7 @@ import { useT } from '../i18n/useT';
 import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
 import ProjectSessionPanel from './ProjectSessionPanel';
 import IssueBoard from './IssueBoard';
+import MasterAgentPage from './MasterAgentPage';
 
 interface BeginnerExperienceProps {
   onOpenAdvanced: () => void;
@@ -48,7 +50,7 @@ interface BeginnerExperienceProps {
   onStartProjectSession: (goal: string) => void;
 }
 
-type BeginnerPage = 'home' | 'project' | 'session' | 'issues';
+type BeginnerPage = 'home' | 'project' | 'session' | 'issues' | 'master-agent';
 type StatusTone = 'ready' | 'running' | 'attention' | 'paused' | 'unsaved';
 
 function formatDate(value: string): string {
@@ -150,7 +152,17 @@ export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onSta
         sessionId={activeSessionId}
         onOpenAdvanced={onOpenAdvanced}
         onOpenIssues={() => setPage('issues')}
+        onOpenMasterAgent={() => setPage('master-agent')}
         onBackHome={() => setPage('project')}
+      />
+    );
+  }
+
+  if (page === 'master-agent' && projectId) {
+    return (
+      <MasterAgentPage
+        onBack={() => setPage(activeSessionId ? 'session' : 'project')}
+        onOpenAdvanced={onOpenAdvanced}
       />
     );
   }
@@ -169,6 +181,7 @@ export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onSta
       <ProjectCockpit
         onOpenAdvanced={onOpenAdvanced}
         onOpenIssues={() => setPage('issues')}
+        onOpenMasterAgent={() => setPage('master-agent')}
         onBackHome={() => setPage('home')}
       />
     );
@@ -429,10 +442,12 @@ function BeginnerStep({ number, title, body }: { number: string; title: string; 
 function ProjectCockpit({
   onOpenAdvanced,
   onOpenIssues,
+  onOpenMasterAgent,
   onBackHome,
 }: {
   onOpenAdvanced: () => void;
   onOpenIssues?: () => void;
+  onOpenMasterAgent?: () => void;
   onBackHome: () => void;
 }) {
   const t = useT('beginner');
@@ -502,6 +517,11 @@ function ProjectCockpit({
             </div>
           </div>
           <div className="sm-beginner-project-actions">
+            {onOpenMasterAgent && (
+              <button type="button" className="sm-beginner-text-button" onClick={onOpenMasterAgent}>
+                <Bot size={16} /> {t('project.openMasterAgent')}
+              </button>
+            )}
             {onOpenIssues && (
               <button type="button" className="sm-beginner-text-button" onClick={onOpenIssues}>
                 <ClipboardList size={16} /> {t('project.openIssues')}

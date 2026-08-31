@@ -14,6 +14,7 @@ export function createEmptyProjectControlSnapshot(): ProjectControlSnapshot {
   return {
     version: CURRENT_VERSION,
     activeSessionId: null,
+    masterAgentId: null,
     sessions: [],
     decisions: [],
     briefs: [],
@@ -176,10 +177,15 @@ export function parseProjectControlSnapshot(input: unknown): ProjectControlSnaps
     typeof value.activeSessionId === 'string' && sessions.some((session) => session.id === value.activeSessionId)
       ? value.activeSessionId
       : null;
+  const masterAgentId =
+    typeof value.masterAgentId === 'string' && value.masterAgentId.trim()
+      ? value.masterAgentId
+      : null;
 
   const snapshot: ProjectControlSnapshot = {
     version: CURRENT_VERSION,
     activeSessionId,
+    masterAgentId,
     sessions,
     decisions,
     briefs,

@@ -55,6 +55,7 @@
   <string name="project.stop">停止执行</string>
   <string name="project.openAdvanced">打开高级工作台</string>
   <string name="project.openIssues">查看 Issue</string>
+  <string name="project.openMasterAgent">选择主控 Agent</string>
   <string name="project.next.title">下一步</string>
   <string name="project.next.run">运行当前工作流</string>
   <string name="project.next.runHint">让 SlimeMold 按当前配置执行一次。</string>
@@ -96,6 +97,7 @@
   <string name="session.back">项目概览</string>
   <string name="session.openAdvanced">打开专业视图</string>
   <string name="session.openIssues">查看 Issue</string>
+  <string name="session.openMasterAgent">选择主控 Agent</string>
   <string name="session.eyebrow">项目主控会话</string>
   <string name="session.status.intake">准备开始</string>
   <string name="session.status.clarifying">正在澄清需求</string>
@@ -207,4 +209,29 @@
   <string name="issue.approve">批准进入队列</string>
   <string name="issue.queue">加入待做</string>
   <string name="issue.triage">交给主控分析</string>
+
+  <string name="masterAgent.back">返回项目</string>
+  <string name="masterAgent.openAdvanced">打开高级配置</string>
+  <string name="masterAgent.eyebrow">项目控制面</string>
+  <string name="masterAgent.title">选择主控 Agent</string>
+  <string name="masterAgent.subtitle">主控负责澄清需求、整理方案和请求确认，不直接替你修改代码。</string>
+  <string name="masterAgent.candidatesEyebrow">可用角色</string>
+  <string name="masterAgent.candidates">Agent 候选</string>
+  <string name="masterAgent.followDefault">跟随项目默认 Agent</string>
+  <string name="masterAgent.followDefaultSet">当前会话将使用项目默认 Agent</string>
+  <string name="masterAgent.followDefaultUnset">尚未设置项目默认 Agent</string>
+  <string name="masterAgent.scopeProject">项目级</string>
+  <string name="masterAgent.scopeGlobal">全局通用</string>
+  <string name="masterAgent.enabled">已启用</string>
+  <string name="masterAgent.disabled">已禁用</string>
+  <string name="masterAgent.noAgents">还没有可用 Agent</string>
+  <string name="masterAgent.noAgentsHint">请先在高级配置中添加并检测一个 Agent。</string>
+  <string name="masterAgent.selectedEyebrow">当前选择</string>
+  <string name="masterAgent.selected">主控 Agent</string>
+  <string name="masterAgent.following">跟随默认配置：{{id}}</string>
+  <string name="masterAgent.save">保存主控选择</string>
+  <string name="masterAgent.saved">主控选择已保存</string>
+  <string name="masterAgent.safetyTitle">权限边界</string>
+  <string name="masterAgent.safetyBody">主控只能提出问题和结构化方案。代码修改、执行、合并与发布仍需经过对应确认门。</string>
+  <string name="masterAgent.configureHint">需要添加模型、保存密钥或检测连接？请进入高级配置的“智能体”分区。</string>
 </resources>

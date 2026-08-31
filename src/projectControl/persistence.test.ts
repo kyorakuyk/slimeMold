@@ -9,6 +9,7 @@ import {
 const valid: ProjectControlSnapshot = {
   version: 1,
   activeSessionId: 'session-1',
+  masterAgentId: 'agent-master',
   sessions: [
     {
       version: 1,
@@ -34,6 +35,7 @@ describe('ProjectControl persistence', () => {
     expect(createEmptyProjectControlSnapshot()).toEqual({
       version: 1,
       activeSessionId: null,
+      masterAgentId: null,
       sessions: [],
       decisions: [],
       briefs: [],
@@ -62,6 +64,7 @@ describe('ProjectControl persistence', () => {
     const restored = parseProjectControlSnapshot({ ...valid, activeSessionId: 'missing' });
 
     expect(restored.activeSessionId).toBeNull();
+    expect(restored.masterAgentId).toBe('agent-master');
     expect(restored.sessions).toHaveLength(1);
     expect(restored.architectures).toEqual([]);
   });

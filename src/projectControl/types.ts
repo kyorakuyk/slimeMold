@@ -212,6 +212,7 @@ export interface ProjectTaskGraph {
 export interface ProjectControlSnapshot {
   version: ProjectControlVersion;
   activeSessionId: string | null;
+  masterAgentId?: string | null;
   sessions: ProjectSession[];
   decisions: Decision[];
   briefs: ProjectBrief[];

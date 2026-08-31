@@ -29,6 +29,7 @@ interface ProjectSessionPanelProps {
   onBackHome: () => void;
   onOpenAdvanced: () => void;
   onOpenIssues?: () => void;
+  onOpenMasterAgent?: () => void;
 }
 
 function controlId(prefix: string): string {
@@ -64,6 +65,7 @@ export default function ProjectSessionPanel({
   onBackHome,
   onOpenAdvanced,
   onOpenIssues,
+  onOpenMasterAgent,
 }: ProjectSessionPanelProps) {
   const t = useT('beginner');
   const projectName = useWorkflowStore((state) => state.projectName);
@@ -114,6 +116,7 @@ export default function ProjectSessionPanel({
       const agent = resolveMasterAgent({
         agents: state.agents,
         globalAgents: state.globalAgents,
+        requestedAgentId: state.projectControl.masterAgentId,
         defaultAgentId: state.defaultAgentId,
       });
       const brief = currentSession.briefId
@@ -346,6 +349,11 @@ export default function ProjectSessionPanel({
           </button>
           <div className="sm-beginner-session-top-actions">
             {projectDirty && <span className="sm-beginner-session-dirty">{t('project.unsaved')}</span>}
+            {onOpenMasterAgent && (
+              <button type="button" className="sm-beginner-text-button" onClick={onOpenMasterAgent}>
+                {t('session.openMasterAgent')} <ArrowRight size={14} />
+              </button>
+            )}
             {onOpenIssues && (
               <button type="button" className="sm-beginner-text-button" onClick={onOpenIssues}>
                 {t('session.openIssues')} <ArrowRight size={14} />
