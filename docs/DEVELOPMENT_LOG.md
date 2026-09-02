@@ -1670,6 +1670,73 @@ Issue 工作台采用四个面板：
 - `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
 - 本轮只新增和修改 Markdown 文档，没有代码行为变更；没有 commit/push。
 
+### 7.33 以项目级元 Harness 视角审查代码结构并收拢插件生命周期
+
+- 基于 `40bfe0d` 重新审查 `domain`、`projectControl`、旧 `engine/orchestrator`、Zustand store、React Flow、Worker/Tauri 和插件边界；确认 Worker recovery MVP 的局部闭环已经可继续演进，但在直接实现三态 Graph、Boundary Contract、Context Pack 和 delivery 之前，必须先收口执行身份、Graph Command、ProjectControl 提交协议和事件投影边界。
+- 新增 `docs/CODEBASE_ARCHITECTURE_REVIEW.md`，记录当前真实依赖形态、P0/P1 结构风险和 Phase A-F 演进顺序：不做一次性重写，先建立 `TaskDefinition → Execution → Attempt → Evidence/Receipt` 身份链，再引入 Graph Command / Plan Revision、Published Graph Module、BoundaryContract/Host Lease 和统一 StartExecution。
+- 修复项目插件生命周期缺陷：此前 `App.tsx` 的无 selector store subscription 会在普通画布编辑、运行进度、日志和恢复状态变化时反复卸载/扫描项目节点；现在只在初始项目加载或 project id/path 变化时触发，并将 `projectId + projectPath` 传入扫描上下文，项目切换期间的旧异步扫描不得向新项目 Registry 注册节点。
+- 新增 `src/plugins/projectPluginLifecycle.ts` 及单测，覆盖同项目普通更新、项目打开、切换和关闭；项目作用域同时比较 `projectId + projectPath`；
+
+本轮最终验证结果：
+
+- `npm run test`：96 个测试文件、778 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮未 commit/push；项目原有未跟踪的设计、日志和图标素材未纳入改动。
+
+### 7.34 独立安全交叉审查与沙箱输入边界收紧
+
+- 三条独立审查分别复核了领域事实源、UI/图投影和 Tauri/Worker/插件边界；新增结论：在启用不可信 Graph Module 前，必须先解决完整事件 replay、双 Run 模型、BoundaryContract/Host Lease、插件 trust domain、Worker supervisor 以及 failed/unknown/receipt 语义，不能把当前 Web Worker PoC 当作进程级隔离。
+- 新增 `src/engine/sandboxPath.ts` 及单测，拒绝沙箱绝对路径、`..`、Windows drive/UNC、NUL、ADS、末尾点/空格、设备名和嵌套 node/lane id；`executor` 的 `writeFile/readFrom/list/commitLanes` 现在只接受安全相对路径，并限制为宿主声明的直接上游车道。
+- 项目上下文替换前调用 `terminatePluginRuntime()`，终止旧 sandbox worker 和 responder，避免全局 `pluginId` slot、模块状态和在途执行跨项目复用。该修正不改变非沙箱可信插件路径，也不宣称完成进程级隔离、symlink 防护或宿主 lease。
+- `docs/CODEBASE_ARCHITECTURE_REVIEW.md` 补充了插件信任、沙箱路径、Worktree 注册、Codex 进程生命周期和 Receipt 状态机的独立审查结果；后续仍按身份 → 提交协议 → Graph Command → Published Module → BoundaryContract/Lease → 统一执行 → Delivery 顺序推进。
+
+本轮最终验证结果：
+
+- `npm run test`：97 个测试文件、793 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮未 commit/push。
+
+### 7.35 结构审查后的生命周期、扫描与沙箱边界修正
+
+- 独立代码审查指出项目切换存在同步 store 重入、异步 session 交错、过期插件扫描、pending sandbox load Promise 悬挂和嵌套文件交付不完整问题；本轮将 `projectPluginLifecycle` 升级为带 epoch 的 scheduler，App 串行化 `teardown → ensure`，过期上下文不再恢复 Worker 或继续注册项目节点。
+- `pluginManager` 在 fs import、项目 scope grant、目录创建、目录读取、manifest/entry 读取和动态加载前后检查上下文，并跳过 symlink package；`manifest.entry` 经过 `src/plugins/pluginPath.ts` 的 `assertPluginRelativePath()` 校验，项目作用域由 `projectId + projectPath` 共同确定。
+- 新增 `src/engine/sandboxFs.ts` 及 fake-FS 单测：parent `lstat`、symlink 拒绝、`open(createNew)`、嵌套父目录和递归 commit；`src/engine/sandboxPath.ts` 继续拒绝 traversal、Windows 特殊路径、ADS、设备名和非法文件名，同时编码 `subgraph::node` 逻辑 ID。
+- `SandboxManager` 在 load 握手期间被 `terminateAll()` 时会 reject 等待中的 `ready` 并解绑 handler；Tauri capability 显式加入 `fs:allow-lstat` 与 `fs:allow-open`。这仍不是完整 host-level TOCTOU/no-follow 或不可信插件进程隔离，后者保留为 Graph Module 启用前门槛。
+
+本轮最终验证结果：
+
+- `npm run test`：99 个测试文件、806 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮未 commit/push；原有未跟踪的设计、日志和图标素材未纳入改动。
+
+### 7.36 记录独立审查结果边界
+
+- 第一轮独立 reviewer 针对修复前 diff 返回 `passed=false`，指出 sandbox lexical path、项目切换重入、过期插件扫描、pending load Promise 和嵌套交付问题；这些问题已在后续工作树中修正或收紧，不能把第一轮 verdict 当作最终代码 verdict。
+- 第二轮 reviewer 针对修复后 diff 已自行运行 targeted tests 和 build，但在返回最终 JSON 前因等待模型响应超时而中断；本轮没有独立 reviewer approval，最终结论只依据实际源码复核和质量门。
+- 仍未关闭的门槛包括 host-level TOCTOU/no-follow、第三方插件独立隔离、Worker/Worktree execution lease 与 supervisor、完整 ProjectControl replay/原子提交，以及统一 Execution/Attempt lineage、Artifact acceptance 和 Delivery Receipt。
+
+本轮最终验证结果：
+
+- `npm run test`：99 个测试文件、806 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮未 commit/push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

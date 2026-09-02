@@ -17,7 +17,8 @@ import WindowTitleBar from './components/WindowTitleBar';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
-import { scanPluginsDir, scanProgramCustomNodes, scanProjectCustomNodes, unloadProjectCustomNodes } from './plugins/pluginManager';
+import { scanPluginsDir, scanProgramCustomNodes, scanProjectCustomNodes, terminatePluginRuntime, unloadProjectCustomNodes } from './plugins/pluginManager';
+import { createProjectPluginLifecycleScheduler } from './plugins/projectPluginLifecycle';
 import { isTauri } from './platform/env';
 import { getLastSession } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
@@ -685,9 +686,8 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   useEffect(() => {
-    // Phase 1（H4 GUI）：跟踪当前项目 id，切换/关闭时先清 Rust 登记态再卸载旧 DevSession，
+    // Phase 1（H4 GUI）：项目切换时先清 Rust 登记态再卸载旧 DevSession，
     // 打开时先同步宿主再初始化（audit P1：dev_init_session 成功后才注册 dev 节点）
-    let lastProjectId = useWorkflowStore.getState().projectId;
     let lastRecoveryKey = '';
     let lastEvidencePath: string | null = null;
     const scheduleRecovery = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
@@ -710,34 +710,52 @@ export default function App() {
       lastEvidencePath = state.projectPath;
       void loadProjectWorkerEvidence(state.projectPath);
     };
+    let sessionTransition: Promise<void> = Promise.resolve();
+    const reloadProjectCustomNodes = (state: {
+      projectId: string | null;
+      projectPath: string | null;
+    }): void => {
+      terminatePluginRuntime();
+      unloadProjectCustomNodes();
+      if (state.projectId) {
+        void scanProjectCustomNodes({
+          projectId: state.projectId,
+          projectPath: state.projectPath,
+        }).catch(() => {});
+      }
+    };
+    let projectLifecycle: ReturnType<typeof createProjectPluginLifecycleScheduler>;
+    projectLifecycle = createProjectPluginLifecycleScheduler(({ previous, next, epoch }) => {
+      reloadProjectCustomNodes(next);
+      sessionTransition = sessionTransition
+        .catch(() => {})
+        .then(async () => {
+          if (previous?.projectId) await teardownGuiDevSession();
+          if (!projectLifecycle.isCurrent(epoch, next) || !next.projectId) return;
+          const session = await ensureGuiDevSession(next.projectPath);
+          if (!projectLifecycle.isCurrent(epoch, next)) return;
+          if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
+          await auditLoadedWorkerRunFacts(next.projectPath);
+        });
+    });
     const initialState = useWorkflowStore.getState();
-    if (lastProjectId) {
-      void ensureGuiDevSession(initialState.projectPath).then((session) => {
-        if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
-      });
-      void auditLoadedWorkerRunFacts(initialState.projectPath);
-    }
+    projectLifecycle.observe({
+      projectId: initialState.projectId,
+      projectPath: initialState.projectPath,
+    });
     scheduleRecovery(initialState);
     scheduleEvidence(initialState);
-    return useWorkflowStore.subscribe((s) => {
+    const unsubscribe = useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
-      // 项目切换/关闭：先卸载旧项目级自定义节点（仅本项目生效），再扫描新项目级
-      unloadProjectCustomNodes();
-      if (s.projectId) void scanProjectCustomNodes().catch(() => {});
-      if (s.projectId !== lastProjectId) {
-        if (lastProjectId) void teardownGuiDevSession();
-        if (s.projectId) {
-          void ensureGuiDevSession(s.projectPath).then((session) => {
-            if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
-          });
-          void auditLoadedWorkerRunFacts(s.projectPath);
-        }
-        lastProjectId = s.projectId;
-      }
+      projectLifecycle.observe({ projectId: s.projectId, projectPath: s.projectPath });
       scheduleRecovery(s);
       scheduleEvidence(s);
     });
+    return () => {
+      projectLifecycle.dispose();
+      unsubscribe();
+    };
   }, []);
 
   // 全局快捷键（与菜单标注一致）

@@ -398,6 +398,18 @@ describe('SandboxManager 沙箱执行链路', () => {
     expect(f.workers[0].terminated).toBe(true);
   });
 
+  it('加载握手期间 terminateAll → 等待中的 execute 立即 reject', async () => {
+    const p = mgr.execute('p1', ENTRY, mkParams());
+    await vi.waitFor(() => expect(f.workers.length).toBeGreaterThan(0));
+    const w = f.workers[0];
+
+    mgr.terminateAll();
+
+    await expect(p).rejects.toThrow('卸载/终止');
+    expect(w.terminated).toBe(true);
+    expect(mgr.activeCount).toBe(0);
+  });
+
   it('在途执行 → terminateAll → 立即 reject 且无残留 timer（生命周期泄漏修复）', async () => {
     // 短超时：若 timer 未被清理，会在 terminateAll 后仍触发超时 reject（双重 reject 无害但可观测）
     const fast = new SandboxManager({ workerFactory: f.factory, timeoutMs: 300, heartbeatIntervalMs: 5000 });
