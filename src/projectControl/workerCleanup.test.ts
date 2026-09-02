@@ -106,6 +106,25 @@ describe('worker cleanup proposal', () => {
     expect(computeWorktreeSignature).not.toHaveBeenCalled();
   });
 
+  it('blocks a legacy acceptance without lineage for a task with explicit lineage', async () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const task = {
+      ...run().tasks['task-1'],
+      taskExecutionId,
+      currentAttemptId: createAttemptId(taskExecutionId, 1),
+    };
+
+    await expect(buildWorkerCleanupProposal({
+      run: run(),
+      task,
+      acceptance: acceptance(),
+      computeWorktreeSignature: vi.fn(async () => 'never'),
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'blocked',
+      reason: 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt',
+    }));
+  });
+
   it('blocks cleanup when acceptance belongs to a different attempt', async () => {
     const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
     const task = {

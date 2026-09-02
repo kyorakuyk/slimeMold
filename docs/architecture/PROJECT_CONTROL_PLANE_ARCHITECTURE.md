@@ -696,11 +696,13 @@ TaskDefinitionId
     → AttemptId(taskExecutionId, attempt)
 ```
 
-`TaskExecutionId` 和 `AttemptId` 必须确定性生成，以便重启、事件 replay 和跨文件审计得到同一 identity。新 Worker 事件以 `TaskExecution` 作为 task aggregate，并在 payload 中携带 `runId`、`taskId`、`taskExecutionId`、`attempt` 和 `attemptId`；旧 `Task` aggregate 事件只在 reducer 边界派生兼容 identity。
+`TaskExecutionId` 和 `AttemptId` 必须确定性生成，以便重启、事件 replay 和跨文件审计得到同一 identity；ID 输入拒绝首尾空白，AttemptId 必须能被 canonical parser 反解。新 Worker 事件以 `TaskExecution` 作为 task aggregate，并在 payload 中携带 `runId`、`taskId`、`taskExecutionId`、`attempt` 和 `attemptId`；旧 `Task` aggregate 事件只在 reducer 边界派生兼容 identity。
 
-`DomainProjection.taskExecutions` 保存每次 Run/Task 的当前执行投影，`attempts` 保存不可覆盖的 `AttemptRecord` 历史；`tasks[taskId]` 只是旧 UI 的最后一次兼容 projection，不能用于跨 Run 审计。retry 的 queued 事件只声明 `nextAttempt`，真正 claim 时才生成新的 `AttemptId`；旧 attempt 的 Evidence、Acceptance、side-effect 和 cleanup receipt 不被覆盖。
+`DomainProjection.taskExecutions` 保存每次 Run/Task 的当前执行投影，`attempts` 保存不可覆盖的 `AttemptRecord` 历史；`tasks[taskId]` 只是旧 UI 的最后一次兼容 projection，不能用于跨 Run 审计。retry 的 queued 事件只声明连续的 `nextAttempt`，并清空旧 `currentAttemptId`；真正 claim 时才生成新的 `AttemptId`，completion 必须携带当前 attempt fencing token，旧 attempt 的 Evidence、Acceptance、side-effect 和 cleanup receipt 不被覆盖。
 
-Evidence、Acceptance、cleanup proposal/receipt 和 side-effect journal 可通过 execution/attempt 反查。新增 projection snapshot 缺少 execution/attempt 索引时必须回退事件 replay，不得把旧 snapshot 当作完整的新 schema。
+Evidence、Acceptance、cleanup proposal/receipt 和 side-effect journal 可通过 execution/attempt 反查；新写入的 host record 必须校验完整 lineage，旧 record 缺字段只在无法绑定新 lineage 的兼容读取路径中保留，不能作为显式当前 attempt 的 wildcard。Worker acceptance 只有在 EvidenceStore durable append/flush 成功后才能通过；side-effect receipt 记录 Worker 返回的 succeeded/failed outcome。
+
+旧事件流为空时，bootstrap 可将 ProjectFile 中观测到的 Worker Run/Task 当前状态导入为带 synthetic 标记的 baseline facts；这不是历史重建。projection snapshot 缺少 execution/attempt 索引时必须回退事件 replay，不得把旧 snapshot 当作完整的新 schema。同一 orchestration 的多个 Worker Run 通过 `stageLogsByRun` 保存独立阶段投影，active view 按最新更新时间选择，不能按 `taskId` 互相覆盖。
 
 ### 14.6 Fallback 必须保留已验证进度
 

@@ -1,7 +1,7 @@
 import type { AcceptanceRecord } from '../dev/session';
 import { normalizeAbsolutePath } from '../dev/path-utils';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
-import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 export interface WorkerCleanupProposalReady {
   status: 'ready';
@@ -63,6 +63,10 @@ export interface WorkerCleanupHost {
   confirmAndCleanup(path: string): Promise<boolean>;
 }
 
+export function workerCleanupEffectKey(_taskExecutionId: string, attemptId: string): string {
+  return `cleanup:${attemptId}`;
+}
+
 function blocked(runId: string, taskId: string, reason: string): WorkerCleanupProposalBlocked {
   return { status: 'blocked', runId, taskId, reason };
 }
@@ -75,11 +79,19 @@ function resolveTaskLineage(
   if (task.taskExecutionId && task.taskExecutionId !== taskExecutionId) {
     return { ok: false, reason: 'taskExecutionId 与 Run/Task 不一致，不能清理' };
   }
-  if (!Number.isInteger(task.attempt) || task.attempt < 1) {
+  if (!Number.isSafeInteger(task.attempt) || task.attempt < 1) {
     return { ok: false, reason: '任务缺少有效 attempt，不能生成清理提案' };
   }
   const attemptId = createAttemptId(taskExecutionId, task.attempt);
-  if (task.currentAttemptId && task.currentAttemptId !== attemptId) {
+  try {
+    assertTaskExecutionLineage({
+      runId: run.runId,
+      taskId: task.taskId,
+      taskExecutionId,
+      attemptId: task.currentAttemptId ?? attemptId,
+      attempt: task.attempt,
+    });
+  } catch {
     return { ok: false, reason: 'attemptId 与 Run/Task/attempt 不一致，不能清理' };
   }
   return { ok: true, taskExecutionId, attemptId };
@@ -124,14 +136,21 @@ export async function buildWorkerCleanupProposal(
 
   const orchestrationId = run.orchestrationId ?? run.runId;
   const path = normalizeAbsolutePath(task.worktreePath);
+  const taskHasExplicitLineage = Boolean(task.taskExecutionId || task.currentAttemptId);
+  const acceptanceLineageMatches = taskHasExplicitLineage
+    ? acceptance.runId === run.runId
+      && acceptance.taskId === taskId
+      && acceptance.taskExecutionId === lineage.taskExecutionId
+      && acceptance.attemptId === lineage.attemptId
+    : (!acceptance.taskExecutionId || acceptance.taskExecutionId === lineage.taskExecutionId)
+      && (!acceptance.attemptId || acceptance.attemptId === lineage.attemptId);
   const acceptanceMatches =
     acceptance.acceptanceId === task.acceptanceId &&
     acceptance.passed &&
     acceptance.orchestrationId === orchestrationId &&
     acceptance.stageId === taskId &&
     normalizeAbsolutePath(acceptance.worktreePath) === path &&
-    (!acceptance.taskExecutionId || acceptance.taskExecutionId === lineage.taskExecutionId) &&
-    (!acceptance.attemptId || acceptance.attemptId === lineage.attemptId);
+    acceptanceLineageMatches;
   if (!acceptanceMatches) {
     return blocked(run.runId, taskId, 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt');
   }

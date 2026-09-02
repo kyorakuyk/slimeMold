@@ -3,6 +3,7 @@ import type { DevSession } from './session';
 import { evaluateDevAcceptance, type AcceptanceRule } from './evaluator';
 import { collectChangedProtectedPaths, isPathAllowed } from './policy';
 import type { EvidenceRecord } from './evidence';
+import { assertTaskExecutionLineage } from '../domain/execution';
 
 export interface DevWorkerAcceptanceOptions {
   /** 默认使用项目现有测试入口；命令仍由 DevCapabilityService 的白名单校验。 */
@@ -39,9 +40,26 @@ export function createDevWorkerAcceptance(
 
   return {
     async evaluate({ lease }): Promise<WorkerAcceptanceResult> {
+      try {
+        assertTaskExecutionLineage({
+          runId: lease.runId,
+          taskId: lease.task.id,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+          attempt: lease.attempt,
+        });
+      } catch (cause) {
+        return { passed: false, evidenceIds: [], failureReason: `Worker lineage 无效：${errorMessage(cause)}` };
+      }
       const cwd = lease.assignment.path;
       const orchestrationId = lease.orchestrationId ?? lease.runId;
       const stageId = lease.task.id;
+      if (!host.collector.hasPersistence()) {
+        return {
+          passed: false,
+          failureReason: '宿主 EvidenceStore 未配置持久化，拒绝验收',
+        };
+      }
       const context = { cwd };
       const testLabel = commandLabel(testCommand);
 
@@ -63,6 +81,8 @@ export function createDevWorkerAcceptance(
           command: testLabel,
           exitCode: test.exitCode,
           summary: `宿主测试退出码 ${test.exitCode}`,
+          runId: lease.runId,
+          taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
           attemptId: lease.attemptId,
           worktreePath: cwd,
@@ -76,6 +96,8 @@ export function createDevWorkerAcceptance(
           summary: hasDiff
             ? `检测到 ${changedFiles.length} 个实际变更文件`
             : '未检测到可验收的实际变更',
+          runId: lease.runId,
+          taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
           attemptId: lease.attemptId,
           worktreePath: cwd,
@@ -89,6 +111,8 @@ export function createDevWorkerAcceptance(
           summary: pathPolicyPassed
             ? `路径策略通过（${changedFiles.length} 个变更文件）`
             : `路径策略拒绝（受保护 ${changedProtectedPaths.length} 个，越界 ${changedDisallowedPaths.length} 个）`,
+          runId: lease.runId,
+          taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
           attemptId: lease.attemptId,
           worktreePath: cwd,
@@ -121,6 +145,8 @@ export function createDevWorkerAcceptance(
           passed: verdict.passed,
           failedChecks: verdict.failedChecks,
           at: new Date().toISOString(),
+          runId: lease.runId,
+          taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
           attemptId: lease.attemptId,
         });

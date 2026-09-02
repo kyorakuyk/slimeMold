@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import type { EvidenceRecord } from '../dev/evidence';
+import type { AcceptanceRecord } from '../dev/session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { auditWorkerRunConsistency } from './workerRunConsistency';
 
@@ -47,18 +49,19 @@ function event(partial: Partial<DomainEvent> & Pick<DomainEvent, 'eventType' | '
 const events: DomainEvent[] = [
   event({ eventId: 'run-queued', aggregateType: 'Run', aggregateId: 'run-1', eventType: 'RunQueued', payload: { runId: 'run-1' } }),
   event({ eventId: 'task-queued', sequence: 2, aggregateType: 'Task', aggregateId: 'task-1', eventType: 'TaskQueued', payload: { runId: 'run-1' } }),
-  event({ eventId: 'run-started', sequence: 3, aggregateType: 'Run', aggregateId: 'run-1', eventType: 'RunStarted', payload: { runId: 'run-1' } }),
-  event({ eventId: 'task-started', sequence: 4, aggregateType: 'Task', aggregateId: 'task-1', eventType: 'TaskStarted', payload: { runId: 'run-1' } }),
+  event({ eventId: 'run-started', sequence: 3, aggregateType: 'Run', aggregateId: 'run-1', aggregateVersion: 2, eventType: 'RunStarted', payload: { runId: 'run-1' } }),
+  event({ eventId: 'task-started', sequence: 4, aggregateType: 'Task', aggregateId: 'task-1', aggregateVersion: 2, eventType: 'TaskStarted', payload: { runId: 'run-1' } }),
   event({
     eventId: 'task-succeeded',
     sequence: 5,
     aggregateType: 'Task',
     aggregateId: 'task-1',
+    aggregateVersion: 3,
     eventType: 'TaskSucceeded',
     payload: { runId: 'run-1', evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' },
   }),
-  event({ eventId: 'task-cleaned', sequence: 6, aggregateType: 'Task', aggregateId: 'task-1', eventType: 'TaskCleaned', payload: { runId: 'run-1', receiptId: 'cleanup-receipt-1' } }),
-  event({ eventId: 'run-succeeded', sequence: 7, aggregateType: 'Run', aggregateId: 'run-1', eventType: 'RunSucceeded', payload: { runId: 'run-1' } }),
+  event({ eventId: 'task-cleaned', sequence: 6, aggregateType: 'Task', aggregateId: 'task-1', aggregateVersion: 4, eventType: 'TaskCleaned', payload: { runId: 'run-1', receiptId: 'cleanup-receipt-1' } }),
+  event({ eventId: 'run-succeeded', sequence: 7, aggregateType: 'Run', aggregateId: 'run-1', aggregateVersion: 3, eventType: 'RunSucceeded', payload: { runId: 'run-1' } }),
 ];
 
 describe('worker run consistency audit', () => {
@@ -127,6 +130,7 @@ describe('worker run consistency audit', () => {
         sequence: 9,
         aggregateType: 'TaskExecution',
         aggregateId: run2ExecutionId,
+        aggregateVersion: 1,
         eventType: 'TaskStarted',
         payload: {
           runId: 'run-2',
@@ -141,6 +145,7 @@ describe('worker run consistency audit', () => {
         sequence: 10,
         aggregateType: 'TaskExecution',
         aggregateId: run2ExecutionId,
+        aggregateVersion: 2,
         eventType: 'TaskFailed',
         payload: {
           runId: 'run-2',
@@ -191,6 +196,7 @@ describe('worker run consistency audit', () => {
           sequence: 9,
           aggregateType: 'TaskExecution',
           aggregateId: orphanExecutionId,
+          aggregateVersion: 1,
           eventType: 'TaskStarted',
           payload: {
             runId: 'run-orphan',
@@ -205,6 +211,87 @@ describe('worker run consistency audit', () => {
 
     expect(result.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'orphaned-task-event', runId: 'run-orphan', taskId: 'task-1' }),
+    ]));
+  });
+
+  it('reports evidence that is bound to a future attempt instead of the task current attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const evidence: EvidenceRecord = {
+      id: 'evidence-1',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      kind: 'test',
+      status: 'passed',
+      summary: 'future attempt',
+      capturedBy: 'host',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 2),
+      worktreePath: 'C:/project-workers/run-1/task-1',
+      createdAt: '2026-09-01T00:01:00.000Z',
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence],
+    });
+
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'evidence-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
+    ]));
+  });
+
+  it('reports partial provenance even for a legacy task snapshot', () => {
+    const evidence: EvidenceRecord = {
+      id: 'evidence-1',
+      kind: 'test',
+      status: 'passed',
+      summary: 'legacy partial',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      capturedBy: 'host',
+      createdAt: '2026-09-01T00:01:00.000Z',
+      runId: 'other-run',
+      taskId: 'task-1',
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence],
+    });
+
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'evidence-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
+    ]));
+  });
+
+  it('reports acceptance that is bound to a future attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const acceptance: AcceptanceRecord = {
+      acceptanceId: 'acceptance-1',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: 'C:/project-workers/run-1/task-1',
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:01:00.000Z',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 2),
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      acceptances: [acceptance],
+    });
+
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'acceptance-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
     ]));
   });
 });

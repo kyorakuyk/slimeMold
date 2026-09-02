@@ -5,12 +5,14 @@ import {
   type ParsedEventStream,
 } from '../domain/eventStore';
 import { migrateLegacyProjectControl } from '../domain/migration';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectControlSnapshot } from './types';
 
 export interface EnsureProjectControlEventBaselineInput {
   repository: EventStreamRepository;
   projectId: string;
   snapshot: ProjectControlSnapshot;
+  workerRuns?: readonly WorkerRunQueueState[];
   now: string;
   migrationId?: string;
 }
@@ -42,6 +44,7 @@ export async function ensureProjectControlEventBaseline(
   await migrateLegacyProjectControl(input.repository, {
     projectId: input.projectId,
     snapshot: input.snapshot,
+    workerRuns: input.workerRuns,
     now: input.now,
     migrationId: input.migrationId,
   });

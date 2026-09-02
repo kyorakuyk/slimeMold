@@ -1,9 +1,11 @@
 import type { ProjectTask } from '../projectControl/types';
 import type { WorktreeInfo } from './worktree';
+import { normalizeAbsolutePath } from './path-utils';
 import type {
   WorkerWorktreeAllocator,
   WorkerWorktreeAssignment,
 } from '../domain/workerQueue';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, type AttemptId, type TaskExecutionId } from '../domain/execution';
 
 export interface WorktreeCreator {
   create(
@@ -18,15 +20,9 @@ export type WorkerWorktreePathFactory = (input: {
   runId: string;
   task: ProjectTask;
   attempt: number;
+  taskExecutionId?: TaskExecutionId;
+  attemptId?: AttemptId;
 }) => string;
-
-function safeSegment(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized || 'item';
-}
 
 function requiredText(value: string, field: string): string {
   const normalized = value.trim();
@@ -43,14 +39,38 @@ export function createWorktreeAllocator(
   creator: WorktreeCreator,
   pathFor: WorkerWorktreePathFactory,
 ): WorkerWorktreeAllocator {
+  const reservedPaths = new Map<string, string>();
   return {
-    async allocate({ projectId, runId, task, attempt }): Promise<WorkerWorktreeAssignment> {
-      const worktreeId = `worker-${safeSegment(runId)}-${safeSegment(task.id)}-a${attempt}`;
-      const path = requiredText(pathFor({ projectId, runId, task, attempt }), 'worktree 路径');
-      const branch = `worker/${safeSegment(runId)}/${safeSegment(task.id)}/a${attempt}`;
+    async allocate({ projectId, runId, task, attempt, taskExecutionId, attemptId }): Promise<WorkerWorktreeAssignment> {
+      const executionId = taskExecutionId ?? createTaskExecutionId(runId, task.id);
+      const executionAttemptId = attemptId ?? createAttemptId(executionId, attempt);
+      assertTaskExecutionLineage({
+        runId,
+        taskId: task.id,
+        taskExecutionId: executionId,
+        attemptId: executionAttemptId,
+        attempt,
+      });
+      const identitySegment = encodeURIComponent(executionAttemptId);
+      const worktreeId = `worker-${identitySegment}`;
+      const path = requiredText(pathFor({ projectId, runId, task, attempt, taskExecutionId: executionId, attemptId: executionAttemptId }), 'worktree 路径');
+      const pathKey = normalizeAbsolutePath(path);
+      const existingOwner = reservedPaths.get(pathKey);
+      if (existingOwner) {
+        throw new Error(`worktree 路径已被 Attempt ${existingOwner} 保留，拒绝复用：${path}`);
+      }
+      reservedPaths.set(pathKey, executionAttemptId);
+      const branch = `worker/${identitySegment}`;
       const info = await creator.create(worktreeId, path, { branch });
       if (!info || info.status !== 'created') {
         throw new Error(`创建 worktree 失败：${worktreeId}`);
+      }
+      if (
+        info.id !== worktreeId
+        || normalizeAbsolutePath(info.path) !== pathKey
+        || info.branch !== branch
+      ) {
+        throw new Error(`worktree creator 返回的身份与请求不一致：${worktreeId}`);
       }
       return {
         worktreeId: requiredText(info.id, 'worktree id'),

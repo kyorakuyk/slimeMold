@@ -180,6 +180,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 3,
         aggregateType: 'TaskExecution',
         aggregateId: firstExecutionId,
+        aggregateVersion: 2,
         eventType: 'TaskStarted',
         payload: {
           runId: 'run-a',
@@ -195,6 +196,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 4,
         aggregateType: 'TaskExecution',
         aggregateId: firstExecutionId,
+        aggregateVersion: 3,
         eventType: 'TaskFailed',
         payload: {
           runId: 'run-a',
@@ -226,6 +228,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 7,
         aggregateType: 'TaskExecution',
         aggregateId: secondExecutionId,
+        aggregateVersion: 2,
         eventType: 'TaskStarted',
         payload: {
           runId: 'run-b',
@@ -241,6 +244,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 8,
         aggregateType: 'TaskExecution',
         aggregateId: secondExecutionId,
+        aggregateVersion: 3,
         eventType: 'TaskSucceeded',
         payload: {
           runId: 'run-b',
@@ -300,6 +304,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 3,
         aggregateType: 'TaskExecution',
         aggregateId: taskExecutionId,
+        aggregateVersion: 2,
         eventType: 'TaskSucceeded',
         payload: {
           runId: 'run-retry',
@@ -316,6 +321,7 @@ describe('Phase 0a domain contracts', () => {
         sequence: 4,
         aggregateType: 'TaskExecution',
         aggregateId: taskExecutionId,
+        aggregateVersion: 3,
         eventType: 'TaskQueued',
         payload: {
           runId: 'run-retry',
@@ -330,6 +336,7 @@ describe('Phase 0a domain contracts', () => {
       status: 'queued',
       attemptIds: [attemptId],
     });
+    expect(projection.taskExecutions[taskExecutionId].currentAttemptId).toBeUndefined();
     expect(projection.taskExecutions[taskExecutionId].evidenceIds).toBeUndefined();
     expect(projection.taskExecutions[taskExecutionId].acceptanceId).toBeUndefined();
     expect(projection.attempts[attemptId]).toMatchObject({
@@ -353,6 +360,105 @@ describe('Phase 0a domain contracts', () => {
         taskExecutionId,
       },
     })])).toThrow(/aggregateId/);
+  });
+
+  it('rejects aggregate version gaps during direct projection replay', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'invalid-aggregate-version',
+      aggregateType: 'Task',
+      aggregateId: 'task-1',
+      aggregateVersion: 2,
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-1' },
+    })])).toThrow(/aggregate|版本/);
+  });
+
+  it('rejects conflicting terminal events for the same attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-conflict', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'conflict-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-conflict', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const succeeded = event({
+      eventId: 'conflict-succeeded',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskSucceeded',
+      payload: { runId: 'run-conflict', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const failed = event({
+      eventId: 'conflict-failed',
+      sequence: 3,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 3,
+      eventType: 'TaskFailed',
+      payload: { runId: 'run-conflict', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+
+    expect(() => replayDomainEvents([started, succeeded, failed])).toThrow(/Attempt|attempt|状态/);
+  });
+
+  it('rejects a retry queue event that skips the next attempt number', () => {
+    const taskExecutionId = createTaskExecutionId('run-jump', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'jump-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-jump', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const succeeded = event({
+      eventId: 'jump-succeeded',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskSucceeded',
+      payload: { runId: 'run-jump', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const queued = event({
+      eventId: 'jump-queued',
+      sequence: 3,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 3,
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-jump', taskId: 'task-1', taskExecutionId, nextAttempt: 3 },
+    });
+
+    expect(() => replayDomainEvents([started, succeeded, queued])).toThrow(/nextAttempt|attempt/);
+  });
+
+  it('rejects a new attempt while the previous attempt is still running', () => {
+    const taskExecutionId = createTaskExecutionId('run-overlap', 'task-1');
+    const firstAttemptId = createAttemptId(taskExecutionId, 1);
+    const secondAttemptId = createAttemptId(taskExecutionId, 2);
+    const first = event({
+      eventId: 'overlap-first',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-overlap', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId: firstAttemptId },
+    });
+    const second = event({
+      eventId: 'overlap-second',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-overlap', taskId: 'task-1', taskExecutionId, attempt: 2, attemptId: secondAttemptId },
+    });
+
+    expect(() => replayDomainEvents([first, second])).toThrow(/running|Attempt|attempt/);
   });
 
   it('resolves global, project, and run policy without mutating the global preference', () => {

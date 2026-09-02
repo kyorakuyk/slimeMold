@@ -9,6 +9,7 @@ import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
 import {
   createAttemptId,
   createTaskExecutionId,
+  parseAttemptId,
   type AttemptId,
   type TaskExecutionId,
 } from './execution';
@@ -158,7 +159,21 @@ function normalizeQueueTask(
   if (task.taskExecutionId && task.taskExecutionId !== expected) {
     throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
   }
-  return cloneQueueTask({ ...task, taskExecutionId: expected });
+  if ((task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
+    && (!Number.isSafeInteger(task.attempt) || task.attempt < 1)) {
+    throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
+  }
+  if (task.currentAttemptId) {
+    const parsed = parseAttemptId(task.currentAttemptId);
+    if (parsed.taskExecutionId !== expected || parsed.attempt !== task.attempt) {
+      throw new Error(`Worker Task currentAttemptId 与 execution/attempt 不一致：${task.taskId}`);
+    }
+  }
+  const currentAttemptId = task.currentAttemptId
+    ?? (task.status === 'running' && task.attempt > 0
+      ? createAttemptId(expected, task.attempt)
+      : undefined);
+  return cloneQueueTask({ ...task, taskExecutionId: expected, currentAttemptId });
 }
 
 function validateGraph(taskGraph: ProjectTaskGraph): void {
@@ -378,11 +393,12 @@ export class WorkerTaskQueue {
 
   markSucceeded(
     taskId: string,
-    evidenceIds: string[] = [],
-    now = new Date().toISOString(),
-    acceptanceId?: string,
+    evidenceIds: string[],
+    now: string,
+    acceptanceId: string | undefined,
+    expectedAttemptId: AttemptId,
   ): void {
-    const current = this.requireRunning(taskId);
+    const current = this.requireRunning(taskId, expectedAttemptId);
     const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
     this.state = {
       ...this.state,
@@ -418,11 +434,12 @@ export class WorkerTaskQueue {
   markFailed(
     taskId: string,
     error: string,
-    now = new Date().toISOString(),
-    evidenceIds: string[] = [],
-    acceptanceId?: string,
+    now: string,
+    evidenceIds: string[],
+    acceptanceId: string | undefined,
+    expectedAttemptId: AttemptId,
   ): void {
-    const current = this.requireRunning(taskId);
+    const current = this.requireRunning(taskId, expectedAttemptId);
     const message = requiredText(error, '失败原因');
     const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
     const normalizedAcceptanceId = acceptanceId?.trim()
@@ -459,11 +476,17 @@ export class WorkerTaskQueue {
     this.recomputeRunStatus(now);
   }
 
-  private requireRunning(taskId: string): WorkerQueueTask {
+  private requireRunning(taskId: string, expectedAttemptId: AttemptId): WorkerQueueTask {
     const current = this.state.tasks[taskId];
     if (!current) throw new Error(`队列中不存在任务：${taskId}`);
     if (current.status !== 'running') {
       throw new Error(`任务当前不是 running：${taskId} (${current.status})`);
+    }
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const currentAttemptId = current.currentAttemptId
+      ?? createAttemptId(taskExecutionId, current.attempt);
+    if (currentAttemptId !== expectedAttemptId) {
+      throw new Error(`拒绝过期 Worker Attempt completion：${taskId} (${expectedAttemptId})`);
     }
     return current;
   }
@@ -668,7 +691,7 @@ export async function runWorkerQueue(
         const result = await options.executor.execute(lease);
         if (sideEffect) await options.sideEffects!.complete(sideEffect, result);
         if (result.status === 'succeeded') {
-          queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId);
+          queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId, lease.attemptId);
         } else {
           queue.markFailed(
             taskId,
@@ -676,6 +699,7 @@ export async function runWorkerQueue(
             new Date().toISOString(),
             result.evidenceIds ?? [],
             result.acceptanceId,
+            lease.attemptId,
           );
         }
       } catch (cause) {
@@ -686,7 +710,7 @@ export async function runWorkerQueue(
             // Preserve the task failure; the journal remains an explicit recovery concern.
           }
         }
-        queue.markFailed(taskId, `Worker 执行异常：${errorMessage(cause)}`);
+        queue.markFailed(taskId, `Worker 执行异常：${errorMessage(cause)}`, new Date().toISOString(), [], undefined, lease.attemptId);
       }
     }));
     await flushTransition();

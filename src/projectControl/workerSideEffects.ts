@@ -17,6 +17,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { restoreWorkerRunQueue } from '../domain/workerQueue';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 
 export type WorkerRunRecoveryDecision = 'inspect' | 'retry' | 'skip';
@@ -24,6 +25,7 @@ export type WorkerRunRecoveryDecision = 'inspect' | 'retry' | 'skip';
 export interface WorkerRunRecoveryPlan {
   runId: string;
   effects: SideEffectRecord[];
+  recoverableEffects?: SideEffectRecord[];
   effectKeys: string[];
   requiresUser: boolean;
   allowedDecisions: readonly WorkerRunRecoveryDecision[];
@@ -57,10 +59,59 @@ function entryFor(journal: SideEffectJournal, idempotencyKey: string): SideEffec
 }
 
 function effectKeyFor(lease: WorkerTaskLease): string {
+  const lineage = assertTaskExecutionLineage({
+    runId: lease.runId,
+    taskId: lease.task.id,
+    taskExecutionId: lease.taskExecutionId,
+    attemptId: lease.attemptId,
+    attempt: lease.attempt,
+  });
+  return `worker-execution:${lineage.taskExecutionId}:attempt-${lineage.attempt}`;
+}
+
+function legacyEffectKeyFor(lease: WorkerTaskLease): string {
   return `worker-execution:${requiredText(lease.runId, 'run id')}:${requiredText(lease.task.id, 'task id')}:attempt-${lease.attempt}`;
 }
 
+function legacyAttemptForKey(idempotencyKey: string): number | undefined {
+  const match = idempotencyKey.match(/(?:attempt-|:a)(\d+)$/);
+  if (!match) return undefined;
+  const attempt = Number(match[1]);
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : undefined;
+}
+
+function effectBelongsToCurrentAttempt(
+  effect: SideEffectRecord,
+  state: WorkerRunQueueState,
+  taskId: string,
+): boolean {
+  const task = state.tasks[taskId];
+  if (!task || effect.runId !== state.runId) return false;
+  const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
+  if (effect.taskExecutionId && effect.taskExecutionId !== taskExecutionId) return false;
+  if (effect.attemptId) {
+    const currentAttemptId = task.currentAttemptId
+      ?? (task.status !== 'queued' && task.status !== 'blocked' && task.status !== 'cancelled' && task.attempt > 0
+        ? createAttemptId(taskExecutionId, task.attempt)
+        : undefined);
+    return currentAttemptId === effect.attemptId;
+  }
+  if (task.status === 'queued' || task.status === 'blocked' || task.status === 'cancelled') return false;
+  const attempt = legacyAttemptForKey(effect.idempotencyKey);
+  return attempt !== undefined && attempt === task.attempt;
+}
+
 function inputHashFor(lease: WorkerTaskLease): string {
+  return JSON.stringify([
+    lease.runId,
+    lease.task.id,
+    lease.task.version,
+    lease.attempt,
+    lease.assignment.baseRevision,
+  ]);
+}
+
+function legacyInputHashFor(lease: WorkerTaskLease): string {
   return [
     lease.runId,
     lease.task.id,
@@ -68,6 +119,38 @@ function inputHashFor(lease: WorkerTaskLease): string {
     lease.attempt,
     lease.assignment.baseRevision,
   ].join(':');
+}
+
+function assertExistingEffectMatchesLease(
+  existing: SideEffectRecord,
+  lease: WorkerTaskLease,
+  key: string,
+): void {
+  const expectedKey = effectKeyFor(lease);
+  const legacyKey = legacyEffectKeyFor(lease);
+  if (key !== expectedKey && key !== legacyKey) {
+    throw new Error(`Worker side effect key 与 lease 不一致：${key}`);
+  }
+  if (existing.runId !== lease.runId || existing.taskId !== lease.task.id) {
+    throw new Error(`Worker side effect 绑定的 run/task 不一致：${key}`);
+  }
+  if (existing.target !== lease.assignment.worktreeId) {
+    throw new Error(`Worker side effect 绑定的 worktree 不一致：${key}`);
+  }
+  const expectedInputHash = key === legacyKey ? legacyInputHashFor(lease) : inputHashFor(lease);
+  if (existing.inputHash !== expectedInputHash) {
+    throw new Error(`Worker side effect inputHash 不一致：${key}`);
+  }
+  if (!existing.taskExecutionId || !existing.attemptId) {
+    throw new Error(`旧 Worker side effect 缺少 lineage，拒绝安全恢复：${key}`);
+  }
+  assertTaskExecutionLineage({
+    runId: lease.runId,
+    taskId: lease.task.id,
+    taskExecutionId: existing.taskExecutionId,
+    attemptId: existing.attemptId,
+    attempt: lease.attempt,
+  });
 }
 
 /**
@@ -81,6 +164,7 @@ export function createWorkerSideEffectRecorder(
   return {
     async start(lease): Promise<SideEffectRecord> {
       const idempotencyKey = effectKeyFor(lease);
+      const legacyKey = legacyEffectKeyFor(lease);
       const parsed = await repository.read();
       if (parsed.status === 'needs-repair') {
         throw new SideEffectJournalError(
@@ -88,7 +172,9 @@ export function createWorkerSideEffectRecorder(
           `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`,
         );
       }
-      const existing = parsed.journal.entries.find((item) => item.idempotencyKey === idempotencyKey);
+      const existing = parsed.journal.entries.find((item) => item.idempotencyKey === idempotencyKey)
+        ?? parsed.journal.entries.find((item) => item.idempotencyKey === legacyKey);
+      if (existing) assertExistingEffectMatchesLease(existing, lease, existing.idempotencyKey);
       if (existing?.status === 'receipt') {
         throw new Error(`Worker side effect 已有 receipt，拒绝重复执行：${idempotencyKey}`);
       }
@@ -111,10 +197,12 @@ export function createWorkerSideEffectRecorder(
       return entryFor(await repository.record(started), idempotencyKey);
     },
 
-    async complete(record, _result: WorkerExecutionResult): Promise<SideEffectRecord> {
+    async complete(record, result: WorkerExecutionResult): Promise<SideEffectRecord> {
       const receipt = {
         receiptId: `${requiredText(record.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
+        outcome: result.status,
+        ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
       const completed = completeSideEffect(record, receipt);
       return entryFor(await repository.record(completed), record.idempotencyKey);
@@ -153,11 +241,13 @@ export function buildWorkerRunRecoveryPlan(
   const effects = journal.entries
     .filter((entry) => entry.runId === normalizedRunId)
     .map((entry) => ({ ...entry }));
+  const recoverableEffects = effects.filter((entry) => entry.status === 'started' || entry.status === 'unknown');
   return {
     runId: normalizedRunId,
     effects,
-    effectKeys: effects.map((entry) => entry.idempotencyKey),
-    requiresUser: effects.some((entry) => entry.status === 'started' || entry.status === 'unknown'),
+    recoverableEffects,
+    effectKeys: recoverableEffects.map((entry) => entry.idempotencyKey),
+    requiresUser: recoverableEffects.length > 0,
     allowedDecisions: ['inspect', 'retry', 'skip'],
   };
 }
@@ -191,10 +281,17 @@ export function applyWorkerRunRecoveryDecision(input: {
   const applied = decideWorkerRunRecovery(input.plan, input.decision, input.reason);
   if (applied.decision === 'inspect') return { ...input.state, tasks: { ...input.state.tasks } };
 
+  const recoverableEffects = input.plan.recoverableEffects
+    ?? input.plan.effects.filter((effect) => effect.status === 'started' || effect.status === 'unknown');
+  const scopedRecoverableEffects = recoverableEffects.filter((effect) => (
+    effect.taskId !== undefined
+    && effectBelongsToCurrentAttempt(effect, input.state, effect.taskId)
+  ));
   const effectTaskIds = new Set(
-    input.plan.effects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
+    scopedRecoverableEffects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
   );
-  if (effectTaskIds.size === 0) {
+  const hasTaskScopedRecoverableEffect = recoverableEffects.some((effect) => effect.taskId !== undefined);
+  if (effectTaskIds.size === 0 && !hasTaskScopedRecoverableEffect) {
     for (const [taskId, task] of Object.entries(input.state.tasks)) {
       if (task.status === 'running') effectTaskIds.add(taskId);
     }
@@ -213,6 +310,7 @@ export function applyWorkerRunRecoveryDecision(input: {
           branch: undefined,
           baseRevision: undefined,
           evidenceIds: [],
+          currentAttemptId: undefined,
           acceptanceId: undefined,
           cleanupStatus: undefined,
           cleanupReceiptId: undefined,

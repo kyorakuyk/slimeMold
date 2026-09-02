@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EvidenceCollector, createHostEvidenceStore, evidencePathFor } from './evidence';
 import { normalizeAbsolutePath } from './path-utils';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 describe('H4 EvidenceCollector', () => {
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
@@ -34,6 +35,21 @@ describe('H4 EvidenceCollector', () => {
     expect(new EvidenceCollector(store).hasPersistence()).toBe(true);
   });
 
+  it('rejects forged lineage when evidence declares execution identity', () => {
+    const collector = new EvidenceCollector();
+    expect(() => collector.add({
+      orchestrationId: 'o1',
+      stageId: 's1',
+      kind: 'test',
+      status: 'passed',
+      summary: 'forged',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('other-run', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('other-run', 'task-1'), 1),
+    })).toThrow(/lineage|execution|attempt/);
+  });
+
   it('byStage 过滤、toJSON 快照、clear 清空', () => {
     const c = new EvidenceCollector();
     c.add({ orchestrationId: 'o1', stageId: 'a', kind: 'diff', status: 'passed', summary: 'd1' });
@@ -57,8 +73,10 @@ describe('H4 EvidenceCollector', () => {
       status: 'passed',
       exitCode: 0,
       summary: 'first',
-      taskExecutionId: 'execution-1',
-      attemptId: 'attempt-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
     });
     await c1.addAsync({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'second' });
     // 新 collector 从同一 store 恢复（模拟重启）
@@ -66,8 +84,10 @@ describe('H4 EvidenceCollector', () => {
     const loaded = await c2.loadPersisted();
     expect(loaded).toHaveLength(2);
     expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
-    expect(loaded[0]).toMatchObject({ taskExecutionId: 'execution-1', attemptId: 'attempt-1' });
-    expect(c2.byScope({ taskExecutionId: 'execution-1', attemptId: 'attempt-1' })).toHaveLength(1);
+    const persistedTaskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const persistedAttemptId = createAttemptId(persistedTaskExecutionId, 1);
+    expect(loaded[0]).toMatchObject({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId });
+    expect(c2.byScope({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId })).toHaveLength(1);
     expect(c2.records).toHaveLength(2);
     // 清理临时文件
     const { unlink } = await import('node:fs/promises');

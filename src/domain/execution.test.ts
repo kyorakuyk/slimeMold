@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertTaskExecutionLineage,
   createAttemptId,
   createTaskExecutionId,
+  parseAttemptId,
 } from './execution';
 
 describe('execution identity', () => {
@@ -18,5 +20,24 @@ describe('execution identity', () => {
     expect(() => createTaskExecutionId('run-1', '  ')).toThrow(/task id/);
     expect(() => createAttemptId('task-execution:run-1:task-1', 0)).toThrow(/attempt/);
     expect(() => createAttemptId('task-execution:run-1:task-1', 1.5)).toThrow(/attempt/);
+    expect(() => createTaskExecutionId(' run-1', 'task-1')).toThrow(/canonical|空白/);
+    expect(() => createAttemptId('task-execution:run-1:task-1:extra', 1)).toThrow(/canonical|execution/);
+    expect(() => createAttemptId('task-execution:run-1:task-1', Number.MAX_SAFE_INTEGER + 1)).toThrow(/attempt/);
+  });
+
+  it('parses and validates the complete execution lineage', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 2);
+
+    expect(parseAttemptId(attemptId)).toEqual({ taskExecutionId, attempt: 2 });
+    expect(assertTaskExecutionLineage({ runId: 'run-1', taskId: 'task-1', taskExecutionId, attemptId, attempt: 2 }))
+      .toEqual({ taskExecutionId, attempt: 2 });
+    expect(() => assertTaskExecutionLineage({
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      attempt: 2,
+    })).toThrow(/lineage|attempt/);
   });
 });

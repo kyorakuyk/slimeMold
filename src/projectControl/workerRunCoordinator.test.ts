@@ -8,6 +8,7 @@ import type {
 } from '../domain/workerQueue';
 import { installWorkerRunRuntime, clearWorkerRunRuntime } from './workerRunRuntime';
 import { createProjectWorkerRunCoordinator, workerWorktreePathFor } from './workerRunCoordinator';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function graph(): ProjectTaskGraph {
   return {
@@ -85,8 +86,27 @@ describe('createProjectWorkerRunCoordinator', () => {
       attempt: 2,
     });
 
-    expect(path).toBe('C:/projects/slimeMold-workers/run-one-task-1-a2');
+    const taskExecutionId = createTaskExecutionId('run/one', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 2);
+    expect(path).toBe(`C:/projects/slimeMold-workers/${encodeURIComponent(attemptId)}`);
     expect(path.startsWith('C:/projects/slimeMold/')).toBe(false);
+  });
+
+  it('does not collide when run ids normalize to the same safe segment', () => {
+    const pathA = workerWorktreePathFor('C:/projects/slimeMold', {
+      projectId: 'project-1',
+      runId: 'run/a',
+      task: graph().tasks[0],
+      attempt: 1,
+    });
+    const pathB = workerWorktreePathFor('C:/projects/slimeMold', {
+      projectId: 'project-1',
+      runId: 'run-a',
+      task: graph().tasks[0],
+      attempt: 1,
+    });
+
+    expect(pathA).not.toBe(pathB);
   });
 
   it('runs a restored queue and persists each state/event transition together', async () => {

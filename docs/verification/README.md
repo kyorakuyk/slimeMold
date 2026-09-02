@@ -29,9 +29,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
 - `git diff --check`：通过。
 
-本轮 working tree 实测（2026-09-02，尚未 commit）：
+本轮修复实测（2026-09-02）：
 
-- `npm run test`：100 个测试文件、818 个测试通过；
+- `npm run test`：100 个测试文件、849 个测试通过；
 - `npm run build`：TypeScript/Vite 构建通过；保留既有 dynamic/static import 与大 chunk warning；
 - `npm run i18n:check`：991 个 key 对齐；
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；

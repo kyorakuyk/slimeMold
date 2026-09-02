@@ -6,6 +6,7 @@
  * 只能写 uncertainties/agentSummary 辅助文本。
  */
 import { normalizeAbsolutePath } from './path-utils';
+import { assertTaskExecutionLineage } from '../domain/execution';
 
 export type EvidenceKind = 'command' | 'test' | 'diff' | 'path-policy' | 'artifact';
 
@@ -26,6 +27,8 @@ export interface EvidenceRecord {
   /** 强制：仅宿主采集，Agent 不可自报 */
   capturedBy: 'host';
   /** 当前 Worker execution lineage；旧证据可能没有这些字段。 */
+  runId?: string;
+  taskId?: string;
   taskExecutionId?: string;
   attemptId?: string;
   worktreePath?: string;
@@ -185,6 +188,14 @@ export class EvidenceCollector {
   constructor(private readonly persistence?: EvidencePersistence) {}
 
   private makeRec(input: EvidenceInput): EvidenceRecord {
+    if (input.taskExecutionId !== undefined || input.attemptId !== undefined) {
+      assertTaskExecutionLineage({
+        runId: input.runId ?? '',
+        taskId: input.taskId ?? '',
+        taskExecutionId: input.taskExecutionId,
+        attemptId: input.attemptId,
+      });
+    }
     return {
       ...input,
       id: nextId(),

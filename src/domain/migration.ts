@@ -2,6 +2,7 @@ import {
   appendDomainEvent,
   type DomainEvent,
 } from './contracts';
+import { createAttemptId, createTaskExecutionId } from './execution';
 import { EventStoreError, integrityChecksum, type EventStreamRepository } from './eventStore';
 import type {
   Decision,
@@ -13,10 +14,12 @@ import type {
   ProjectTask,
   ProjectTaskGraph,
 } from '../projectControl/types';
+import type { WorkerRunQueueState } from './workerQueue';
 
 export interface SyntheticBaselineMigrationInput {
   projectId: string;
   snapshot: ProjectControlSnapshot;
+  workerRuns?: readonly WorkerRunQueueState[];
   now: string;
   migrationId?: string;
 }
@@ -155,6 +158,9 @@ export function createSyntheticBaselineEvents(
   }
   for (const issue of snapshot.issues) addIssue(add, projectId, migrationId, input.now, issue);
   for (const graph of taskGraphs) addTaskGraph(add, projectId, migrationId, input.now, graph);
+  for (const workerRun of input.workerRuns ?? []) {
+    addWorkerRun(add, projectId, migrationId, input.now, workerRun);
+  }
 
   return events;
 }
@@ -384,4 +390,174 @@ function addTask(
       updatedAt: task.updatedAt,
     },
   });
+}
+
+function runEventType(status: WorkerRunQueueState['status']): string {
+  switch (status) {
+    case 'queued': return 'RunQueued';
+    case 'running': return 'RunStarted';
+    case 'partial': return 'RunPartial';
+    case 'blocked': return 'RunBlocked';
+    case 'failed': return 'RunFailed';
+    case 'cancelled': return 'RunCancelled';
+    case 'succeeded': return 'RunSucceeded';
+  }
+}
+
+function taskEventType(status: WorkerRunQueueState['tasks'][string]['status']): string {
+  switch (status) {
+    case 'queued': return 'TaskQueued';
+    case 'running': return 'TaskStarted';
+    case 'succeeded': return 'TaskSucceeded';
+    case 'failed': return 'TaskFailed';
+    case 'blocked': return 'TaskBlocked';
+    case 'cancelled': return 'TaskCancelled';
+  }
+}
+
+function workerTaskLineage(run: WorkerRunQueueState, taskId: string): {
+  taskExecutionId: string;
+  attemptId?: string;
+} {
+  const task = run.tasks[taskId];
+  const taskExecutionId = createTaskExecutionId(run.runId, taskId);
+  if (task.taskExecutionId && task.taskExecutionId !== taskExecutionId) {
+    throw new Error(`legacy Worker taskExecutionId 不一致：${run.runId}/${taskId}`);
+  }
+  if (task.status === 'queued' || task.status === 'blocked' || task.status === 'cancelled') {
+    if (task.currentAttemptId) {
+      throw new Error(`legacy Worker inactive task 不能带 currentAttemptId：${run.runId}/${taskId}`);
+    }
+    return { taskExecutionId };
+  }
+  if (!Number.isSafeInteger(task.attempt) || task.attempt < 1) {
+    throw new Error(`legacy Worker task 缺少有效 attempt：${run.runId}/${taskId}`);
+  }
+  const attemptId = createAttemptId(taskExecutionId, task.attempt);
+  if (task.currentAttemptId && task.currentAttemptId !== attemptId) {
+    throw new Error(`legacy Worker attemptId 不一致：${run.runId}/${taskId}`);
+  }
+  return { taskExecutionId, attemptId };
+}
+
+function addWorkerRun(
+  add: AddEvent,
+  projectId: string,
+  migrationId: string,
+  now: string,
+  run: WorkerRunQueueState,
+): void {
+  add({
+    ...commonImportedFields(projectId, migrationId, 'workerRun', run.runId, now, run.updatedAt),
+    eventId: `${migrationId}:worker-run:${run.runId}`,
+    aggregateType: 'Run',
+    aggregateId: run.runId,
+    eventType: runEventType(run.status),
+    payload: {
+      runId: run.runId,
+      orchestrationId: run.orchestrationId ?? null,
+      taskGraphId: run.taskGraphId,
+      taskGraphVersion: run.taskGraphVersion,
+      taskIds: Object.keys(run.tasks),
+      status: run.status,
+    },
+  });
+  for (const [taskId, task] of Object.entries(run.tasks)) {
+    addWorkerTask(add, projectId, migrationId, now, run, taskId, task);
+  }
+}
+
+function addImportedAttempt(
+  add: AddEvent,
+  common: ReturnType<typeof commonImportedFields>,
+  migrationId: string,
+  run: WorkerRunQueueState,
+  taskId: string,
+  taskExecutionId: string,
+  attempt: number,
+): void {
+  const attemptId = createAttemptId(taskExecutionId, attempt);
+  add({
+    ...common,
+    eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskAttemptImported:${attempt}`,
+    aggregateType: 'TaskExecution',
+    aggregateId: taskExecutionId,
+    eventType: 'TaskAttemptImported',
+    payload: {
+      runId: run.runId,
+      taskId,
+      taskExecutionId,
+      attempt,
+      attemptId,
+      reason: 'legacy-worker-snapshot-without-attempt-history',
+    },
+  });
+}
+
+function addWorkerTask(
+  add: AddEvent,
+  projectId: string,
+  migrationId: string,
+  now: string,
+  run: WorkerRunQueueState,
+  taskId: string,
+  task: WorkerRunQueueState['tasks'][string],
+): void {
+  const { taskExecutionId, attemptId } = workerTaskLineage(run, taskId);
+  const common = commonImportedFields(projectId, migrationId, 'workerTask', `${run.runId}:${taskId}`, now, task.updatedAt);
+  if (!Number.isSafeInteger(task.attempt) || task.attempt < 0) {
+    throw new Error(`legacy Worker task attempt 无效：${run.runId}/${taskId}`);
+  }
+  const importedAttemptCount = task.status === 'queued' || task.status === 'blocked' || task.status === 'cancelled'
+    ? task.attempt
+    : Math.max(task.attempt - 1, 0);
+  for (let attempt = 1; attempt <= importedAttemptCount; attempt += 1) {
+    addImportedAttempt(add, common, migrationId, run, taskId, taskExecutionId, attempt);
+  }
+  const attemptPayload = attemptId
+    ? {
+        attempt: task.attempt,
+        attemptId,
+        ...(task.worktreeId ? { worktreeId: task.worktreeId } : {}),
+        ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
+        ...(task.branch ? { branch: task.branch } : {}),
+        ...(task.baseRevision ? { baseRevision: task.baseRevision } : {}),
+        ...(task.evidenceIds.length > 0 ? { evidenceIds: [...task.evidenceIds] } : {}),
+        ...(task.acceptanceId ? { acceptanceId: task.acceptanceId } : {}),
+        ...(task.error ? { error: task.error } : {}),
+      }
+    : {};
+  const payload = {
+    runId: run.runId,
+    taskId,
+    taskExecutionId,
+    ...attemptPayload,
+    ...(task.status === 'queued' && task.attempt > 0 ? { nextAttempt: task.attempt + 1 } : {}),
+  };
+  add({
+    ...common,
+    eventId: `${migrationId}:worker-task:${taskExecutionId}:${taskEventType(task.status)}`,
+    aggregateType: 'TaskExecution',
+    aggregateId: taskExecutionId,
+    eventType: taskEventType(task.status),
+    payload,
+  });
+  if (task.status === 'succeeded' && task.cleanupStatus === 'cleaned') {
+    add({
+      ...common,
+      eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskCleaned`,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskCleaned',
+      payload: {
+        runId: run.runId,
+        taskId,
+        taskExecutionId,
+        attempt: task.attempt,
+        attemptId,
+        receiptId: task.cleanupReceiptId,
+        cleanupStatus: 'cleaned',
+      },
+    });
+  }
 }

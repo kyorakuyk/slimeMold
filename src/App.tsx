@@ -44,6 +44,7 @@ import { auditProjectControlConsistency } from './projectControl/projectControlC
 import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunOrchestrationProjection';
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
+import type { AcceptanceRecord } from './dev/session';
 import type { DomainProjection } from './domain/contracts';
 import { EventStreamRepository } from './domain/eventStore';
 import {
@@ -241,7 +242,10 @@ export default function App() {
     }
   };
 
-  const auditLoadedWorkerRunFacts = async (projectPath: string | null): Promise<void> => {
+  const auditLoadedWorkerRunFacts = async (
+    projectPath: string | null,
+    acceptances?: readonly AcceptanceRecord[],
+  ): Promise<void> => {
     if (!isTauri || !projectPath) return;
     try {
       const { createTauriEventStoreAdapter } = await import('./domain/tauriEventStore');
@@ -255,6 +259,7 @@ export default function App() {
         repository,
         projectId: before.projectId,
         snapshot: before.projectControl,
+        workerRuns: before.workerRuns,
         now: new Date().toISOString(),
       });
       const parsed = bootstrapped.stream;
@@ -283,6 +288,9 @@ export default function App() {
           projectId: current.projectId,
           runs: current.workerRuns,
           events: parsed.events,
+          evidence: current.workerRunEvidence,
+          acceptances,
+          sideEffects: current.workerRunSideEffects,
         });
         controlReport = auditProjectControlConsistency({
           projectId: current.projectId,
@@ -588,6 +596,9 @@ export default function App() {
       state: run,
       taskId,
       receiptId: cleanupResult.sideEffect.receipt?.receiptId ?? '',
+      taskExecutionId: proposal.taskExecutionId,
+      attemptId: proposal.attemptId,
+      receipt: cleanupResult.sideEffect,
       decisionId: globalThis.crypto?.randomUUID?.() ?? `cleanup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       now: new Date().toISOString(),
     });
@@ -741,7 +752,12 @@ export default function App() {
           const session = await ensureGuiDevSession(next.projectPath);
           if (!projectLifecycle.isCurrent(epoch, next)) return;
           if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
-          await auditLoadedWorkerRunFacts(next.projectPath);
+          await loadProjectWorkerEvidence(next.projectPath);
+          if (!projectLifecycle.isCurrent(epoch, next)) return;
+          await auditLoadedWorkerRunFacts(
+            next.projectPath,
+            session ? [...session.acceptanceStore.values()] : undefined,
+          );
         });
     });
     const initialState = useWorkflowStore.getState();

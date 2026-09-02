@@ -1778,6 +1778,26 @@ Issue 工作台采用四个面板：
 - 隔离 Tauri E2E：fixture 生成与删除成功，Tauri 子进程启动但当前 GUI 驱动未能枚举其窗口，未将真实 Worker E2E 记为通过；
 - 本轮未 commit/push；未跟踪的设计、日志和图标素材未纳入改动。
 
+### 7.39 修复 Execution/Attempt lineage 审查阻塞项
+
+- 针对独立只读审查发现的 stale completion 根因，给 `WorkerTaskQueue.markSucceeded/markFailed` 增加必需的 attempt fencing token；retry 队列状态与 replay projection 都清空旧 `currentAttemptId`，旧 Worker 的迟到完成不能覆盖新 attempt；
+- 收紧 `TaskExecutionId`/`AttemptId` 的 canonical parser、完整 lineage assertion、safe integer 和任务图/队列恢复校验；worktree allocator、默认路径、Worker side-effect key 和 cleanup key 使用 collision-safe identity，并拒绝自定义 allocator 复用同一 normalized path；
+- recovery plan 区分全量历史与当前 started/unknown effects，只对当前 execution/attempt 执行 retry/skip；带 taskId 但 lineage 不匹配时 fail-closed，不 fallback 重置其它任务；side-effect journal 不再把已声明 lineage 的缺字段记录当 wildcard；
+- cleanup proposal/command/execution 校验当前 task execution、attempt、Acceptance、receipt record、receipt key 和 receiptId；Worker acceptance 在宿主 EvidenceStore 没有 durable persistence 时阻断；Worker 返回 failed 时 side-effect receipt 保存 `outcome/error`；
+- Evidence/Acceptance 增加 run/task provenance，consistency audit 可核验 Evidence、Acceptance、side-effect ledger 的实际归属；read model 隐藏其它 attempt 的记录；旧事件流为空时从 `workerRuns` 生成 synthetic Worker baseline facts，并以 `TaskAttemptImported(status=unknown)` 保留 queued retry 的已知 attempt 身份；同一 orchestration 的多 Run 用 `stageLogsByRun` 隔离并选择最新 Run；
+- replay 现在校验 aggregateVersion、Run/Task aggregate identity、attempt 单调性、终态冲突和连续 `nextAttempt`；本轮新增 stale completion、跨 task recovery、过期 cleanup receipt、伪造 lineage、delimiter collision、旧 Worker migration、多 Run projection 等回归覆盖。
+
+本轮最终验证结果：
+
+- `npm run test`：100 个测试文件、849 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过（保留 Windows 工作树的 LF→CRLF 提示，无 whitespace error）；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 新增行敏感模式扫描未发现凭据赋值、shell injection 或 eval/exec；
+- 仍未实现 ProjectCommandBus/commit protocol、完整 ProjectControl replay、PlanRevision、Boundary Contract、Host Lease、Artifact acceptance 和 DeliveryReceipt；真实 Tauri Worker E2E 仍受当前 GUI 窗口不可观测限制，未宣称通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

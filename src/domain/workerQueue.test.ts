@@ -101,7 +101,7 @@ describe('WorkerTaskQueue', () => {
     expect(firstLease).toMatchObject({ taskExecutionId, attempt: 1, attemptId: firstAttemptId });
     expect(firstStarted?.payload).toMatchObject({ taskExecutionId, attemptId: firstAttemptId, attempt: 1 });
 
-    queue.markFailed('a', '第一次失败', '2026-09-01T00:00:02.000Z');
+    queue.markFailed('a', '第一次失败', '2026-09-01T00:00:02.000Z', [], undefined, firstLease!.attemptId);
     queue.drainEvents();
     const failed = queue.snapshot();
     const restored = restoreWorkerRunQueue({
@@ -130,6 +130,46 @@ describe('WorkerTaskQueue', () => {
     expect(secondStarted?.eventId).not.toBe(firstStarted?.eventId);
   });
 
+  it('rejects stale completion from an older attempt', () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const taskExecutionId = createTaskExecutionId('run-fence', 'a');
+    const staleAttemptId = createAttemptId(taskExecutionId, 1);
+    const currentAttemptId = createAttemptId(taskExecutionId, 2);
+    const staleQueue = restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: {
+        ...queue.snapshot(),
+        status: 'running',
+        tasks: {
+          a: {
+            ...queue.snapshot().tasks.a,
+            status: 'running',
+            attempt: 2,
+            currentAttemptId,
+            worktreeId: 'worktree-attempt-2',
+            worktreePath: 'C:/worktrees/attempt-2',
+            branch: 'worker/attempt-2',
+            baseRevision: 'base-2',
+          },
+        },
+      },
+    });
+
+    expect(() => staleQueue.markSucceeded(
+      'a',
+      ['late-evidence'],
+      '2026-09-01T00:00:02.000Z',
+      'late-acceptance',
+      staleAttemptId,
+    )).toThrow(/Attempt|attempt|过期/);
+    expect(staleQueue.snapshot().tasks.a).toMatchObject({ status: 'running', attempt: 2, currentAttemptId });
+  });
+
   it('rebuilds execution and attempt projections from serialized Worker events', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -142,7 +182,7 @@ describe('WorkerTaskQueue', () => {
     const lease = await queue.claimTask('a', allocatorFor([]));
     expect(lease).not.toBeNull();
     recordProjectEvents('project-1', queue.drainEvents());
-    queue.markSucceeded('a', ['evidence-replay'], '2026-09-01T00:00:02.000Z', 'acceptance-replay');
+    queue.markSucceeded('a', ['evidence-replay'], '2026-09-01T00:00:02.000Z', 'acceptance-replay', lease!.attemptId);
     recordProjectEvents('project-1', queue.drainEvents());
 
     const eventLog = getPendingProjectEvents('project-1');
@@ -282,7 +322,7 @@ describe('WorkerTaskQueue', () => {
     });
     const lease = await queue.claimTask('a', allocatorFor(firstAllocations));
     expect(lease).not.toBeNull();
-    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z');
+    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z', undefined, lease!.attemptId);
 
     const restored = restoreWorkerRunQueue({
       taskGraph: graph([task('a'), task('b', ['a'])]),
@@ -476,6 +516,41 @@ describe('WorkerTaskQueue', () => {
       taskGraph: graph([task('a', ['b']), task('b', ['a'])]),
       now: '2026-09-01T00:00:01.000Z',
     })).toThrow(/循环依赖/);
+  });
+
+  it('rejects task ids whose whitespace normalization would collide', () => {
+    expect(() => createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-canonical',
+      taskGraph: graph([task('a'), task(' a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    })).toThrow(/canonical|空白/);
+  });
+
+  it('rejects a restored task whose attempt token belongs to another execution', () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-lineage-restore',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const wrongExecutionId = createTaskExecutionId('other-run', 'a');
+
+    expect(() => restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: {
+        ...queue.snapshot(),
+        status: 'running',
+        tasks: {
+          a: {
+            ...queue.snapshot().tasks.a,
+            status: 'running',
+            attempt: 1,
+            currentAttemptId: createAttemptId(wrongExecutionId, 1),
+          },
+        },
+      },
+    })).toThrow(/lineage|attempt/);
   });
 
   it('rejects an empty task graph instead of creating a no-op run', () => {

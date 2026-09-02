@@ -2,9 +2,13 @@ import {
   replayDomainEvents,
   type DomainEvent,
   type DomainProjection,
+  type SideEffectRecord,
 } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import type { EvidenceRecord } from '../dev/evidence';
+import type { AcceptanceRecord } from '../dev/session';
+
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 export type WorkerRunConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -18,6 +22,9 @@ export type WorkerRunConsistencyIssueCode =
   | 'task-evidence-drift'
   | 'task-acceptance-drift'
   | 'task-cleanup-drift'
+  | 'evidence-lineage-drift'
+  | 'acceptance-lineage-drift'
+  | 'side-effect-lineage-drift'
   | 'task-execution-lineage-drift'
   | 'attempt-lineage-drift'
   | 'missing-attempt-event'
@@ -53,6 +60,45 @@ function sameStringSet(left: readonly string[] | undefined, right: readonly stri
   return [...new Set(left ?? [])].sort().join('\u0000') === [...new Set(right ?? [])].sort().join('\u0000');
 }
 
+interface ExpectedTaskLineage {
+  runId: string;
+  taskId: string;
+  taskExecutionId: string;
+  currentAttempt: number;
+  explicit: boolean;
+}
+
+function recordMatchesTaskLineage(
+  record: {
+    runId?: string;
+    taskId?: string;
+    taskExecutionId?: string;
+    attemptId?: string;
+  },
+  expected: ExpectedTaskLineage,
+  currentOnly: boolean,
+): boolean {
+  const declaresLineage = record.runId !== undefined
+    || record.taskId !== undefined
+    || record.taskExecutionId !== undefined
+    || record.attemptId !== undefined;
+  if (!declaresLineage) return !expected.explicit;
+  if (!record.taskExecutionId || !record.attemptId) return false;
+  if (record.runId !== undefined && record.runId !== expected.runId) return false;
+  if (record.taskId !== undefined && record.taskId !== expected.taskId) return false;
+  try {
+    const parsed = assertTaskExecutionLineage({
+      runId: expected.runId,
+      taskId: expected.taskId,
+      taskExecutionId: record.taskExecutionId,
+      attemptId: record.attemptId,
+    });
+    return currentOnly ? parsed.attempt === expected.currentAttempt : parsed.attempt <= expected.currentAttempt;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Compare the persisted Worker registry with the durable Worker facts.
  *
@@ -64,6 +110,9 @@ export function auditWorkerRunConsistency(input: {
   projectId: string;
   runs: readonly WorkerRunQueueState[];
   events: readonly DomainEvent[];
+  evidence?: readonly EvidenceRecord[];
+  acceptances?: readonly AcceptanceRecord[];
+  sideEffects?: readonly SideEffectRecord[];
 }): WorkerRunConsistencyReport {
   const issues: WorkerRunConsistencyIssue[] = [];
   const projectEvents = input.events.filter((event) => event.streamId === input.projectId);
@@ -112,6 +161,13 @@ export function auditWorkerRunConsistency(input: {
         ));
       }
       const taskExecutionId = task.taskExecutionId ?? expectedTaskExecutionId;
+      const expectedLineage: ExpectedTaskLineage = {
+        runId: run.runId,
+        taskId,
+        taskExecutionId,
+        currentAttempt: task.attempt,
+        explicit: Boolean(task.taskExecutionId || task.currentAttemptId),
+      };
       const replayedExecution = projection.taskExecutions[taskExecutionId];
       const replayedTask = replayedExecution ?? projection.tasks[taskId];
       if (!replayedTask || (replayedTask.runId && replayedTask.runId !== run.runId)) {
@@ -204,6 +260,70 @@ export function auditWorkerRunConsistency(input: {
             { runId: run.runId, taskId },
           ));
         }
+      }
+
+      if (input.evidence) {
+        const evidenceById = new Map(input.evidence.map((record) => [record.id, record]));
+        for (const evidenceId of task.evidenceIds) {
+          const record = evidenceById.get(evidenceId);
+          if (!record || !recordMatchesTaskLineage(record, expectedLineage, false)) {
+            issues.push(issue(
+              'evidence-lineage-drift',
+              `Worker Task Evidence 未绑定当前 Run/Task/Attempt：${taskId}/${evidenceId}`,
+              { runId: run.runId, taskId },
+            ));
+          }
+        }
+      }
+      if (input.acceptances && task.acceptanceId) {
+        const acceptance = input.acceptances.find((record) => record.acceptanceId === task.acceptanceId);
+        if (!acceptance || !recordMatchesTaskLineage(acceptance, expectedLineage, true)) {
+          issues.push(issue(
+            'acceptance-lineage-drift',
+            `Worker Task Acceptance 未绑定当前 Run/Task/Attempt：${taskId}/${task.acceptanceId}`,
+            { runId: run.runId, taskId },
+          ));
+        }
+      }
+    }
+  }
+
+  if (input.sideEffects) {
+    const runsById = new Map(input.runs.map((run) => [run.runId, run]));
+    for (const effect of input.sideEffects) {
+      if (!effect.taskId) continue;
+      const effectTaskId = effect.taskId;
+      if (!effect.runId) {
+        issues.push(issue(
+          'side-effect-lineage-drift',
+          `side-effect 缺少 runId：${effect.idempotencyKey}`,
+          { taskId: effectTaskId },
+        ));
+        continue;
+      }
+      const run = runsById.get(effect.runId);
+      const task = run?.tasks[effectTaskId];
+      if (!run || !task) {
+        issues.push(issue(
+          'side-effect-lineage-drift',
+          `side-effect 未绑定 ProjectFile Worker Task：${effect.idempotencyKey}`,
+          { runId: effect.runId, taskId: effectTaskId },
+        ));
+        continue;
+      }
+      const expectedLineage: ExpectedTaskLineage = {
+        runId: run.runId,
+        taskId: effectTaskId,
+        taskExecutionId: task.taskExecutionId ?? createTaskExecutionId(run.runId, effectTaskId),
+        currentAttempt: task.attempt,
+        explicit: Boolean(task.taskExecutionId || task.currentAttemptId),
+      };
+      if (!recordMatchesTaskLineage(effect, expectedLineage, false)) {
+        issues.push(issue(
+          'side-effect-lineage-drift',
+          `side-effect 未绑定当前 Run/Task/Attempt：${effect.idempotencyKey}`,
+          { runId: run.runId, taskId: effectTaskId },
+        ));
       }
     }
   }

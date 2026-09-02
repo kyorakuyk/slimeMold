@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Orchestration } from '../types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { projectWorkerRunOntoOrchestration } from './workerRunOrchestrationProjection';
+import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from './workerRunOrchestrationProjection';
 
 function orchestration(): Orchestration {
   return {
@@ -95,5 +95,24 @@ describe('Worker Run → Orchestration projection', () => {
     expect(projected.runIds).toEqual(['run-1']);
     expect(projected.stageLogs.every((log) => log.status === 'failed')).toBe(true);
     expect(projected.stageLogs.every((log) => log.error === '宿主验收失败：tests')).toBe(true);
+  });
+
+  it('keeps stage logs isolated for multiple runs of one orchestration', () => {
+    const first = run('succeeded', 'succeeded');
+    const second = {
+      ...run('running', 'running'),
+      runId: 'run-2',
+      updatedAt: '2026-09-01T00:02:00.000Z',
+      tasks: {
+        'task-1': { ...run('running', 'running').tasks['task-1'], taskId: 'task-1', status: 'running' as const },
+      },
+    };
+    const [projected] = projectWorkerRunsOntoOrchestrations([orchestration()], [second, first]);
+
+    expect(projected.activeRunId).toBe('run-2');
+    expect(projected.stageLogs.every((log) => log.runId === 'run-2')).toBe(true);
+    expect(projected.stageLogsByRun?.['run-1']?.every((log) => log.runId === 'run-1')).toBe(true);
+    expect(projected.stageLogsByRun?.['run-2']?.every((log) => log.runId === 'run-2')).toBe(true);
+    expect(selectLatestWorkerRun([first, second], 'orch-1')).toBe(second);
   });
 });

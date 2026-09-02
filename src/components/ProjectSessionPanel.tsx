@@ -32,7 +32,7 @@ import { installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 import type { WorkerRunRecoveryDecision } from '../projectControl/workerSideEffects';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
-import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
+import { projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from '../projectControl/workerRunOrchestrationProjection';
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
@@ -118,7 +118,7 @@ export default function ProjectSessionPanel({
     ? orchestrations.find((orchestration) => orchestration.id === session.orchestrationId) ?? null
     : null;
   const currentWorkerRun = session?.orchestrationId
-    ? workerRuns.find((run) => run.orchestrationId === session.orchestrationId) ?? null
+    ? selectLatestWorkerRun(workerRuns, session.orchestrationId)
     : null;
   const currentWorkerRunRecovery = currentWorkerRun
     ? workerRunRecoveries.find((item) => item.runId === currentWorkerRun.runId) ?? null

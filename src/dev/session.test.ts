@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from './node-run';
 import { initDevSession, resetDevSession } from './session';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
@@ -51,5 +52,22 @@ describe('DevSession cleanup', () => {
     await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
+  });
+
+  it('rejects an acceptance that declares partial lineage provenance', () => {
+    const session = initDevSession({ baseRepoPath: '/repo' });
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+
+    expect(() => session.recordAcceptance({
+      acceptanceId: 'acc-partial-lineage',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: '/repo-workers/run-1/task-1',
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    })).toThrow(/runId|taskId|lineage/);
   });
 });

@@ -65,10 +65,18 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
   if (value.outputHash !== undefined && typeof value.outputHash !== 'string') {
     throw new Error('receipt.outputHash 无效');
   }
+  if (value.outcome !== undefined && value.outcome !== 'succeeded' && value.outcome !== 'failed') {
+    throw new Error('receipt.outcome 无效');
+  }
+  if (value.error !== undefined && typeof value.error !== 'string') {
+    throw new Error('receipt.error 无效');
+  }
   return {
     receiptId: value.receiptId,
     observedAt: value.observedAt,
     ...(typeof value.outputHash === 'string' ? { outputHash: value.outputHash } : {}),
+    ...(value.outcome === 'succeeded' || value.outcome === 'failed' ? { outcome: value.outcome } : {}),
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
   };
 }
 
@@ -166,9 +174,17 @@ export function serializeSideEffectJournal(journal: SideEffectJournal): string {
 }
 
 function sameIdentity(left: SideEffectRecord, right: SideEffectRecord): boolean {
-  const sameOptional = (leftValue: string | undefined, rightValue: string | undefined): boolean => (
-    leftValue === undefined || rightValue === undefined || leftValue === rightValue
-  );
+  const leftHasLineage = left.taskExecutionId !== undefined || left.attemptId !== undefined;
+  const rightHasLineage = right.taskExecutionId !== undefined || right.attemptId !== undefined;
+  const lineageSame = !leftHasLineage && !rightHasLineage
+    || (
+      left.taskExecutionId !== undefined
+      && right.taskExecutionId !== undefined
+      && left.attemptId !== undefined
+      && right.attemptId !== undefined
+      && left.taskExecutionId === right.taskExecutionId
+      && left.attemptId === right.attemptId
+    );
   return (
     left.idempotencyKey === right.idempotencyKey &&
     left.kind === right.kind &&
@@ -176,8 +192,7 @@ function sameIdentity(left: SideEffectRecord, right: SideEffectRecord): boolean 
     left.inputHash === right.inputHash &&
     left.runId === right.runId &&
     left.taskId === right.taskId &&
-    sameOptional(left.taskExecutionId, right.taskExecutionId) &&
-    sameOptional(left.attemptId, right.attemptId)
+    lineageSame
   );
 }
 

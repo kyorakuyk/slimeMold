@@ -1168,6 +1168,9 @@ export interface Orchestration {
   /** 阶段 → 真实 wfId 固化映射（首次绑定后写入，恢复/重试复用同一工作流，不重建） */
   stageWfIds?: Record<string, string>;
   stageLogs: StageLog[];
+  /** 每个 Worker Run 独立的阶段投影；stageLogs 是当前 activeRunId 的便捷视图。 */
+  stageLogsByRun?: Record<string, StageLog[]>;
+  activeRunId?: string | number;
   /** 关联运行 id（runEvents 重放；executor runId 数字代次） */
   runIds: (string | number)[];
 }

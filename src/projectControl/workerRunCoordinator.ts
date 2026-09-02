@@ -1,6 +1,7 @@
 import type { DomainEvent } from '../domain/contracts';
 import type { RunWorkerQueueOptions, WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTask } from './types';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { runActiveWorkerRun } from './workerRunRuntime';
 import { createWorktreeAllocator } from '../dev/workerAllocator';
 import { createCodexWorkerExecutor, createCodexWorkerInvoker } from '../dev/codexWorkerExecutor';
@@ -27,22 +28,30 @@ export interface ProjectWorkerRunCoordinator {
   run(runId: string): Promise<WorkerRunQueueState>;
 }
 
-function safeSegment(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized || 'item';
-}
-
 /** Host-owned worktree path factory; every worker path is a sibling of the project root. */
 export function workerWorktreePathFor(
   projectPath: string,
-  input: { projectId: string; runId: string; task: ProjectTask; attempt: number },
+  input: {
+    projectId: string;
+    runId: string;
+    task: ProjectTask;
+    attempt: number;
+    taskExecutionId?: string;
+    attemptId?: string;
+  },
 ): string {
   const root = projectPath.trim().replace(/[/\\]+$/, '');
   if (!root) throw new Error('项目路径不能为空');
-  return `${root}-workers/${safeSegment(input.runId)}-${safeSegment(input.task.id)}-a${Math.max(1, Math.floor(input.attempt))}`;
+  const taskExecutionId = input.taskExecutionId ?? createTaskExecutionId(input.runId, input.task.id);
+  const attemptId = input.attemptId ?? createAttemptId(taskExecutionId, input.attempt);
+  assertTaskExecutionLineage({
+    runId: input.runId,
+    taskId: input.task.id,
+    taskExecutionId,
+    attemptId,
+    attempt: input.attempt,
+  });
+  return `${root}-workers/${encodeURIComponent(attemptId)}`;
 }
 
 export interface GuiProjectWorkerRunCoordinatorOptions

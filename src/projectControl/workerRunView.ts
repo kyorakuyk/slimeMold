@@ -70,9 +70,20 @@ export function workerRunViewsFor(
       recovery: recoveries.find((item) => item.runId === run.runId),
       tasks: Object.values(run.tasks).map((task) => {
         const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(run.runId, task.taskId);
-        const attemptId = task.attempt > 0
+        const hasActiveAttempt = task.status === 'running'
+          || task.status === 'failed'
+          || task.status === 'succeeded';
+        const attemptId = task.attempt > 0 && hasActiveAttempt
           ? task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt)
           : undefined;
+        const taskHasExplicitLineage = Boolean(task.taskExecutionId || task.currentAttemptId);
+        const recordMatchesLineage = (record: {
+          taskExecutionId?: string;
+          attemptId?: string;
+        }): boolean => (
+          (!taskHasExplicitLineage && !record.taskExecutionId && !record.attemptId)
+          || (record.taskExecutionId === taskExecutionId && record.attemptId === attemptId)
+        );
         return {
           taskId: task.taskId,
           taskExecutionId,
@@ -82,9 +93,9 @@ export function workerRunViewsFor(
           error: task.error,
           evidenceIds: [...task.evidenceIds],
           evidence: task.evidenceIds.flatMap((id) => {
-          const record = evidenceRecords.find((item) => item.id === id);
-          return record
-            ? [{
+            const record = evidenceRecords.find((item) => item.id === id && recordMatchesLineage(item));
+            return record
+              ? [{
                 id: record.id,
                 kind: record.kind,
                 status: record.status,
@@ -95,12 +106,11 @@ export function workerRunViewsFor(
                 taskExecutionId: record.taskExecutionId,
                 attemptId: record.attemptId,
               }]
-            : [];
+              : [];
           }),
           sideEffects: sideEffectRecords
             .filter((record) => record.runId === run.runId && record.taskId === task.taskId)
-            .filter((record) => !record.taskExecutionId || record.taskExecutionId === taskExecutionId)
-            .filter((record) => !record.attemptId || record.attemptId === attemptId)
+            .filter(recordMatchesLineage)
             .map((record) => ({
             idempotencyKey: record.idempotencyKey,
             kind: record.kind,
@@ -114,8 +124,11 @@ export function workerRunViewsFor(
           cleanup: cleanupProposals.find((proposal) => (
             proposal.runId === run.runId
             && proposal.taskId === task.taskId
-            && (!('taskExecutionId' in proposal) || proposal.taskExecutionId === taskExecutionId)
-            && (!('attemptId' in proposal) || proposal.attemptId === attemptId)
+            && (!taskHasExplicitLineage
+              || ('taskExecutionId' in proposal
+                && 'attemptId' in proposal
+                && proposal.taskExecutionId === taskExecutionId
+                && proposal.attemptId === attemptId))
           )),
           worktreePath: task.worktreePath,
         };

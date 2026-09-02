@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventStoreAdapter } from '../domain/eventStore';
 import { SideEffectJournalRepository } from '../domain/sideEffects';
 import type { WorkerCleanupProposalReady } from './workerCleanup';
+import { workerCleanupEffectKey } from './workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './workerCleanupExecution';
+import type { SideEffectRecord } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function proposal(): WorkerCleanupProposalReady {
@@ -40,7 +42,7 @@ describe('worker cleanup execution', () => {
       taskExecutionId: proposal().taskExecutionId,
       attemptId: proposal().attemptId,
     });
-    expect(result.sideEffect.receipt?.receiptId).toBe('cleanup:run-1:task-1:a1:receipt');
+    expect(result.sideEffect.receipt?.receiptId).toBe(`${workerCleanupEffectKey(proposal().taskExecutionId, proposal().attemptId)}:receipt`);
     expect(confirmAndCleanup).toHaveBeenCalledWith(proposal().worktreePath);
     await expect(repository.read()).resolves.toMatchObject({
       status: 'ok',
@@ -59,5 +61,58 @@ describe('worker cleanup execution', () => {
     });
     await expect(executeWorkerCleanupWithReceipt(input)).rejects.toThrow(/需要人工核对/);
     expect(confirmAndCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an existing receipt whose lineage does not match the current proposal', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    const current = proposal();
+    const wrongExecutionId = createTaskExecutionId('run-other', 'task-1');
+    const wrongReceipt: SideEffectRecord = {
+      idempotencyKey: workerCleanupEffectKey(current.taskExecutionId, current.attemptId),
+      kind: 'worktree-cleanup',
+      target: current.worktreePath,
+      inputHash: `${current.baseRevision}:${current.stateSignature}`,
+      runId: current.runId,
+      taskId: current.taskId,
+      taskExecutionId: wrongExecutionId,
+      attemptId: createAttemptId(wrongExecutionId, 1),
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: { receiptId: 'wrong-receipt', observedAt: '2026-09-01T00:03:00.000Z' },
+    };
+    await repository.record(wrongReceipt);
+
+    await expect(executeWorkerCleanupWithReceipt({
+      proposal: current,
+      repository,
+      host: { confirmAndCleanup: vi.fn(async () => true) },
+      now: '2026-09-01T00:04:00.000Z',
+    })).rejects.toThrow(/lineage|receipt/);
+  });
+
+  it('rejects an existing cleanup receipt whose receipt id is not bound to its key', async () => {
+    const current = proposal();
+    const key = workerCleanupEffectKey(current.taskExecutionId, current.attemptId);
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    await repository.record({
+      idempotencyKey: key,
+      kind: 'worktree-cleanup',
+      target: current.worktreePath,
+      inputHash: `${current.baseRevision}:${current.stateSignature}`,
+      runId: current.runId,
+      taskId: current.taskId,
+      taskExecutionId: current.taskExecutionId,
+      attemptId: current.attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: { receiptId: 'wrong-receipt', observedAt: '2026-09-01T00:01:00.000Z' },
+    });
+
+    await expect(executeWorkerCleanupWithReceipt({
+      proposal: current,
+      repository,
+      host: { confirmAndCleanup: vi.fn(async () => true) },
+      now: '2026-09-01T00:02:00.000Z',
+    })).rejects.toThrow(/receipt/);
   });
 });

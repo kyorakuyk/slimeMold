@@ -58,7 +58,10 @@ function host(overrides: Partial<TestHost> = {}): TestHost {
       gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
       gitChangedFiles: vi.fn(async () => ['src/feature.ts']),
     },
-    collector: new EvidenceCollector(),
+    collector: new EvidenceCollector({
+      append: async () => {},
+      load: async () => [],
+    }),
     nextAcceptanceId: vi.fn(() => 'acceptance-1'),
     recordAcceptance: vi.fn(),
     ...overrides,
@@ -121,5 +124,33 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('diff');
+  });
+
+  it('rejects a forged lease lineage before running host checks', async () => {
+    const deps = host();
+    const forgedExecutionId = createTaskExecutionId('other-run', lease.task.id);
+    const forgedLease = {
+      ...lease,
+      taskExecutionId: forgedExecutionId,
+      attemptId: createAttemptId(forgedExecutionId, lease.attempt),
+    };
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    const result = await acceptance.evaluate({ lease: forgedLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toMatch(/lineage|execution|attempt/);
+    expect(deps.service.testRun).not.toHaveBeenCalled();
+  });
+
+  it('rejects acceptance when the host has no durable Evidence persistence', async () => {
+    const deps = host({ collector: new EvidenceCollector() });
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    const result = await acceptance.evaluate({ lease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toMatch(/持久化|Evidence/);
+    expect(deps.service.testRun).not.toHaveBeenCalled();
   });
 });

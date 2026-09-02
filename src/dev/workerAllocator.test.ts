@@ -39,25 +39,28 @@ describe('createWorktreeAllocator', () => {
       { create },
       ({ task: queuedTask, attempt }) => `C:/projects/worktrees/${queuedTask.id}/${attempt}`,
     );
+    const taskExecutionId = createTaskExecutionId('run/one', 'task/one');
+    const attemptId = createAttemptId(taskExecutionId, 2);
+    const identitySegment = encodeURIComponent(attemptId);
 
     const assignment = await allocator.allocate({
       projectId: 'project/one',
       runId: 'run/one',
       task,
       attempt: 2,
-      taskExecutionId: createTaskExecutionId('run/one', 'task/one'),
-      attemptId: createAttemptId(createTaskExecutionId('run/one', 'task/one'), 2),
+      taskExecutionId,
+      attemptId,
     });
 
     expect(create).toHaveBeenCalledWith(
-      'worker-run-one-task-one-a2',
+      `worker-${identitySegment}`,
       'C:/projects/worktrees/task/one/2',
-      { branch: 'worker/run-one/task-one/a2' },
+      { branch: `worker/${identitySegment}` },
     );
     expect(assignment).toEqual({
-      worktreeId: 'worker-run-one-task-one-a2',
+      worktreeId: `worker-${identitySegment}`,
       path: 'C:/projects/worktrees/task/one/2',
-      branch: 'worker/run-one/task-one/a2',
+      branch: `worker/${identitySegment}`,
       baseRevision: 'base-1',
     });
   });
@@ -76,5 +79,40 @@ describe('createWorktreeAllocator', () => {
       taskExecutionId: createTaskExecutionId('run-1', 'task/one'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task/one'), 1),
     })).rejects.toThrow(/创建 worktree 失败/);
+  });
+
+  it('rejects a lease whose supplied execution lineage is forged', async () => {
+    const allocator = createWorktreeAllocator(
+      { create: vi.fn(async (id: string, path: string, options?: { branch?: string }) => info(id, path, options?.branch ?? '')) },
+      () => 'C:/projects/worktrees/task-one/1',
+    );
+    const forgedExecutionId = createTaskExecutionId('other-run', task.id);
+
+    await expect(allocator.allocate({
+      projectId: 'project-1',
+      runId: 'run-1',
+      task,
+      attempt: 1,
+      taskExecutionId: forgedExecutionId,
+      attemptId: createAttemptId(forgedExecutionId, 1),
+    })).rejects.toThrow(/lineage|execution|attempt/);
+  });
+
+  it('rejects a custom path factory that reuses one path for different attempts', async () => {
+    const allocator = createWorktreeAllocator(
+      { create: vi.fn(async (id: string, path: string, options?: { branch?: string }) => info(id, path, options?.branch ?? '')) },
+      () => 'C:/projects/worktrees/shared',
+    );
+    const firstExecutionId = createTaskExecutionId('run-1', task.id);
+    const secondExecutionId = createTaskExecutionId('run-2', task.id);
+
+    await allocator.allocate({
+      projectId: 'project-1', runId: 'run-1', task, attempt: 1,
+      taskExecutionId: firstExecutionId, attemptId: createAttemptId(firstExecutionId, 1),
+    });
+    await expect(allocator.allocate({
+      projectId: 'project-1', runId: 'run-2', task, attempt: 1,
+      taskExecutionId: secondExecutionId, attemptId: createAttemptId(secondExecutionId, 1),
+    })).rejects.toThrow(/路径|复用|worktree/);
   });
 });

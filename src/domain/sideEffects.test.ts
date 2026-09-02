@@ -19,6 +19,20 @@ const planned = createSideEffect({
 });
 
 describe('side-effect journal', () => {
+  it('rejects a side-effect factory payload with forged run/task lineage', () => {
+    const wrongExecutionId = createTaskExecutionId('other-run', 'task-1');
+    expect(() => createSideEffect({
+      idempotencyKey: 'worker-execution:forged-factory',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'input-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: wrongExecutionId,
+      attemptId: createAttemptId(wrongExecutionId, 1),
+    })).toThrow(/lineage|execution|attempt/);
+  });
+
   it('records idempotent progress and rejects key reuse for a different target or input', () => {
     const initial = createEmptySideEffectJournal();
     const started = startSideEffect(planned);
@@ -67,6 +81,28 @@ describe('side-effect journal', () => {
     expect(() => recordSideEffect(journal, {
       ...started,
       attemptId: createAttemptId(taskExecutionId, 2),
+    })).toThrow(/idempotencyKey/);
+  });
+
+  it('rejects a same-key lifecycle record that drops lineage after it was declared', () => {
+    const taskExecutionId = createTaskExecutionId('run-side-effect-drop', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = startSideEffect(createSideEffect({
+      idempotencyKey: 'worker-execution:lineage-drop',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'input-1',
+      runId: 'run-side-effect-drop',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+    }));
+
+    const journal = recordSideEffect(createEmptySideEffectJournal(), started);
+    expect(() => recordSideEffect(journal, {
+      ...started,
+      taskExecutionId: undefined,
+      attemptId: undefined,
     })).toThrow(/idempotencyKey/);
   });
 

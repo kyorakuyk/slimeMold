@@ -60,8 +60,10 @@ const state: WorkerRunQueueState = {
   tasks: {
     'task-1': {
       taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       status: 'running',
       attempt: 1,
+      currentAttemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreeId: 'worktree-1',
       worktreePath: 'C:/worktrees/task-1',
       baseRevision: 'base-1',
@@ -109,6 +111,7 @@ describe('recoverWorkerRunCommand', () => {
 
     expect(result.state.status).toBe('queued');
     expect(result.state.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1 });
+    expect(result.state.tasks['task-1'].currentAttemptId).toBeUndefined();
     expect(result.state.tasks['task-1'].acceptanceId).toBeUndefined();
     expect(result.events.map((event) => event.eventType)).toEqual([
       'WorkerRunRecoveryDecided',

@@ -118,6 +118,115 @@ describe('workerRunViewsFor', () => {
     expect(source.tasks['task-1'].status).toBe('failed');
   });
 
+  it('does not show prior-attempt evidence or side effects for an explicit current attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const currentAttemptId = createAttemptId(taskExecutionId, 2);
+    const source = run({
+      tasks: {
+        ...run().tasks,
+        'task-1': {
+          ...run().tasks['task-1'],
+          taskExecutionId,
+          currentAttemptId,
+          attempt: 2,
+          evidenceIds: ['old-evidence', 'current-evidence'],
+        },
+      },
+    });
+    const evidence: EvidenceRecord[] = [
+      {
+        id: 'old-evidence',
+        orchestrationId: 'orch-1',
+        stageId: 'task-1',
+        kind: 'test',
+        status: 'failed',
+        summary: 'attempt 1',
+        capturedBy: 'host',
+        taskExecutionId,
+        attemptId: createAttemptId(taskExecutionId, 1),
+        worktreePath: 'C:/worktrees/task-1',
+        createdAt: '2026-09-01T00:00:01.000Z',
+      },
+      {
+        id: 'current-evidence',
+        orchestrationId: 'orch-1',
+        stageId: 'task-1',
+        kind: 'test',
+        status: 'passed',
+        summary: 'attempt 2',
+        capturedBy: 'host',
+        taskExecutionId,
+        attemptId: currentAttemptId,
+        worktreePath: 'C:/worktrees/task-1',
+        createdAt: '2026-09-01T00:00:02.000Z',
+      },
+    ];
+    const sideEffects: SideEffectRecord[] = [
+      {
+        idempotencyKey: 'effect-old',
+        kind: 'worker-execution',
+        target: 'worktree-1',
+        inputHash: 'old',
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId: createAttemptId(taskExecutionId, 1),
+        status: 'unknown',
+        recovery: 'needs-user',
+      },
+      {
+        idempotencyKey: 'effect-current',
+        kind: 'worker-execution',
+        target: 'worktree-2',
+        inputHash: 'current',
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId: currentAttemptId,
+        status: 'started',
+        recovery: 'retry',
+      },
+    ];
+    const views = workerRunViewsFor([source], [], 'orch-1', evidence, sideEffects, []);
+
+    expect(views[0].tasks[0].evidence.map((item) => item.id)).toEqual(['current-evidence']);
+    expect(views[0].tasks[0].sideEffects.map((item) => item.idempotencyKey)).toEqual(['effect-current']);
+  });
+
+  it('does not project an old attempt as active for a queued retry', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const queued = run({
+      status: 'queued',
+      tasks: {
+        ...run().tasks,
+        'task-1': {
+          ...run().tasks['task-1'],
+          status: 'queued',
+          attempt: 1,
+          evidenceIds: [],
+          currentAttemptId: undefined,
+          taskExecutionId,
+        },
+      },
+    });
+    const oldEffect: SideEffectRecord = {
+      idempotencyKey: 'old-attempt',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'old',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      status: 'unknown',
+      recovery: 'needs-user',
+    };
+
+    const views = workerRunViewsFor([queued], [], 'orch-1', [], [oldEffect], []);
+
+    expect(views[0].tasks[0].sideEffects).toEqual([]);
+  });
+
   it('filters runs to the selected orchestration and leaves missing recovery undefined', () => {
     const views = workerRunViewsFor([
       run(),

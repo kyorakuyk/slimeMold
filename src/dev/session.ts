@@ -20,6 +20,7 @@ import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
+import { assertTaskExecutionLineage } from '../domain/execution';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -57,6 +58,8 @@ export interface AcceptanceRecord {
   failedChecks: string[];
   at: string;
   /** 当前 Worker execution lineage；旧 acceptance 可没有这些字段。 */
+  runId?: string;
+  taskId?: string;
   taskExecutionId?: string;
   attemptId?: string;
 }
@@ -255,6 +258,21 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       // P1（审计）：禁止覆盖已有 ID——同一 ID 的验收记录不可被后续运行替换
       if (this.acceptanceStore.has(rec.acceptanceId)) {
         throw new Error(`验收记录 ID 已存在，禁止覆盖：${rec.acceptanceId}`);
+      }
+      const declaresLineage = rec.runId !== undefined
+        || rec.taskId !== undefined
+        || rec.taskExecutionId !== undefined
+        || rec.attemptId !== undefined;
+      if (declaresLineage) {
+        if (!rec.runId || !rec.taskId || !rec.taskExecutionId || !rec.attemptId) {
+          throw new Error('验收记录 lineage 不完整：runId/taskId/taskExecutionId/attemptId 均必填');
+        }
+        assertTaskExecutionLineage({
+          runId: rec.runId,
+          taskId: rec.taskId,
+          taskExecutionId: rec.taskExecutionId,
+          attemptId: rec.attemptId,
+        });
       }
       this.acceptanceStore.set(rec.acceptanceId, rec);
       return rec;

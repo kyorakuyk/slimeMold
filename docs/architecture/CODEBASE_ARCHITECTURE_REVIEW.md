@@ -35,13 +35,14 @@ authority: implementation-reality
 
 ### 1.1 MVP-2 当前实现进度
 
-本轮已完成第一条执行 lineage 切片：
+本轮已完成执行 lineage 的加固切片：
 
-- `src/domain/execution.ts` 提供确定性的 `TaskExecutionId(runId, taskId)` 和 `AttemptId(taskExecutionId, attempt)`，对分隔符做编码，重启后可稳定重建；
-- `WorkerTaskLease`、Worker queue 事件、recovery、cleanup 和 side-effect journal 携带 execution/attempt 标识；旧快照和旧 `Task` aggregate 事件仍可派生兼容 ID；
-- `DomainProjection.taskExecutions` 按 Run/Task 保存执行投影，`attempts` 按 `AttemptRecord` 保存不可变 attempt 历史；`tasks` 仅保留为兼容 UI projection；
-- host Evidence、Acceptance、cleanup proposal 和 cleanup receipt 可按 execution/attempt 反查；consistency audit 按 `(runId, taskId)` 检查 lineage 和孤立 execution；
-- retry 仍然只改变 queued 状态，真正 claim 时生成新 `AttemptId`，不会把尚未执行的 attempt 伪造为已开始。
+- `src/domain/execution.ts` 提供确定性的 `TaskExecutionId(runId, taskId)` 和 `AttemptId(taskExecutionId, attempt)`，拒绝首尾空白、非法编码和不安全 attempt；所有 host allocator/acceptance/evidence/side-effect/cleanup 入口复用完整 lineage assertion；
+- `WorkerTaskLease`、Worker queue 事件、recovery、cleanup proposal/command、side-effect journal、宿主 Evidence/Acceptance 和 Worker read model 携带 execution/attempt 标识；旧快照和旧 `Task` aggregate 事件仍可派生兼容 ID，但显式新 lineage 不再把缺字段记录当 wildcard；
+- completion 必须携带当前 attempt fencing token；retry 的队列状态与 replay projection 都清空旧 `currentAttemptId`，旧 Worker 的迟到成功/失败不能覆盖新 attempt；replay 同时校验 aggregateVersion、payload identity、attempt 单调性和终态冲突；
+- `DomainProjection.taskExecutions` 按 Run/Task 保存执行投影，`attempts` 按 `AttemptRecord` 保存不可变 attempt 历史；consistency audit 可核验 Evidence、Acceptance 和 side-effect ledger 的实际归属；
+- recovery 只处理当前 attempt 的 started/unknown effect，不重置同一 Run 的 receipt/其它任务；cleanup receipt/proposal 校验当前 execution、attempt、worktree 和 receipt key；Worker acceptance 要求 durable Evidence；
+- 旧事件流为空时，bootstrap 从旧 `workerRuns` 生成标记为 synthetic 的当前 Worker facts；同一 orchestration 的多个 Worker Run 通过 `stageLogsByRun` 隔离，UI 选择最新 Run；worktree/side-effect/cleanup identity 使用 collision-safe canonical key。
 
 尚未完成的边界仍包括完整 ProjectControl replay、ProjectCommandBus/commit protocol、PlanRevision、Boundary Contract、Host Lease、Artifact acceptance 和 DeliveryReceipt。
 

@@ -134,7 +134,7 @@ describe('EventStreamRepository', () => {
   it('replays legacy projection snapshots that lack execution indexes', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new EventStreamRepository(adapter, 'project-root');
-    const runCreated = event({ eventId: 'legacy-run-created', eventType: 'RunCreated', payload: { runId: 'run-legacy' } });
+    const runCreated = event({ eventId: 'legacy-run-created', aggregateId: 'run-legacy', eventType: 'RunCreated', payload: { runId: 'run-legacy' } });
     const taskStarted = event({
       eventId: 'legacy-task-started',
       sequence: 2,
@@ -147,6 +147,7 @@ describe('EventStreamRepository', () => {
     await repository.append(taskStarted, 1);
 
     const current = await repository.loadProjection();
+
     expect(current.projection).not.toBeNull();
     const legacyProjection = JSON.parse(JSON.stringify(current.projection)) as Record<string, unknown>;
     delete legacyProjection.taskExecutions;
