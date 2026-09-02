@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · Junction reworked</title>
+  <style>
+    :root { color-scheme: dark; --bg: #101315; --surface: #191e22; --ink: #f4f6f7; --muted: #9aa5ac; --line: #343e45; --life: #c8f36a; --blue: #52bce9; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--bg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    main { max-width: 1220px; margin: 0 auto; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.04em; }
+    header p { max-width: 760px; margin: 8px 0 0; color: var(--muted); }
+    .legend { color: var(--life); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+    .brief { margin: 0 0 22px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: #161a1d; }
+    .brief strong { color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    article { padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+    .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    h2 { margin: 0; font-size: 17px; }
+    .tag { color: var(--life); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; }
+    .hero-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .hero { display: grid; place-items: center; min-height: 170px; padding: 12px; border-radius: 12px; }
+    .hero img { display: block; width: 148px; height: 148px; }
+    .dark { background: #0b0d0f; }
+    .light { background: #f2f4f5; }
+    .copy { min-height: 74px; margin-top: 16px; color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 5px; color: var(--ink); font-size: 13px; }
+    .sizes { display: flex; align-items: end; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 5px; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); border-radius: calc(var(--size) * .2); }
+    .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+    .note { padding: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    .note strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    @media (max-width: 980px) { body { padding: 28px; } .grid { grid-template-columns: 1fr; } header { display: block; } .legend { margin-top: 14px; } .copy { min-height: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>SlimeMold · Junction, reworked</h1><p>基于附图中你选中的“一进二出” Junction 构图：保留输入、汇聚和双输出的工作流语义，把中心节点和连接线改成有生命的黏菌通道。</p></div>
+      <div class="legend">one input · two probes · one reinforced route</div>
+    </header>
+    <p class="brief"><strong>本轮不换拓扑：</strong>左侧仍是输入，中心仍是处理/汇聚，右侧仍有两个候选输出。变化集中在路径状态：绿色粗路代表被强化的短路，灰色细路代表试探后正在回缩的候选路径；深色侧影和高光只用于建立体积。</p>
+    <section class="grid">
+      <article>
+        <div class="head"><h2>01 · Organic Junction</h2><span class="tag">life first</span></div>
+        <div class="hero-pair"><div class="hero dark"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" alt="Organic Junction on dark background"></div><div class="hero light"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" alt="Organic Junction on light background"></div></div>
+        <div class="copy"><strong>保留原版最多</strong>中心蓝色节点仍在，但外层变成有机黏菌体；上方路径更有生命力，下方路径开始退化。适合继续沿用原版产品色。</div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:64px" alt="64px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:128px" alt="128px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-organic-junction.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+      <article>
+        <div class="head"><h2>02 · Shortest Junction</h2><span class="tag">optimize first</span></div>
+        <div class="hero-pair"><div class="hero dark"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" alt="Shortest Junction on dark background"></div><div class="hero light"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" alt="Shortest Junction on light background"></div></div>
+        <div class="copy"><strong>最直接表达自优化</strong>上方短路完整、粗亮并抵达目标；下方长路断续、变细并在中途回缩。最适合表达“试探—淘汰—强化”。</div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:64px" alt="64px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:128px" alt="128px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-shortest-junction.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+      <article>
+        <div class="head"><h2>03 · Perspective Junction</h2><span class="tag">depth first</span></div>
+        <div class="hero-pair"><div class="hero dark"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" alt="Perspective Junction on dark background"></div><div class="hero light"><img src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" alt="Perspective Junction on light background"></div></div>
+        <div class="copy"><strong>在原版拓扑上加入空间纵深</strong>主路径拆成近处粗段和远处细段，右上目标缩小并后退；保留两个输出，但让路径明显拥有远近秩序。</div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:64px" alt="64px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:128px" alt="128px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-6-junction/slimemold-perspective-junction.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+    </section>
+    <section class="notes"><div class="note"><strong>共同保留</strong>输入—中心—双输出的原始识别结构、深色圆角容器、白色输入节点、蓝色中心内核和右侧目标节点。</div><div class="note"><strong>共同删除</strong>机械等粗的蓝色连线、两个输出完全同权、没有状态差异的普通流程图观感。</div></section>
+  </main>
+</body>
+</html>

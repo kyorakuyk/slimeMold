@@ -1,3 +1,11 @@
+---
+title: H2 插件隔离 —— Web Worker 沙箱 PoC
+type: architecture-design
+status: design-poc
+reviewed_date: 2026-08-11
+authority: design-reference
+---
+
 # H2 插件隔离 —— 设计方案（Web Worker 沙箱 PoC 阶段，非全量迁移）
 
 > 状态：**设计稿 + PoC P0/P1**（2026-08-11）。经用户拍板：H2 不做全量插件进程隔离迁移，

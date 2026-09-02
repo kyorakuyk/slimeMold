@@ -1,7 +1,9 @@
 ---
 title: SlimeMold 代码结构审查与后续演进边界
+type: codebase-review
 date: 2026-09-02
 status: actionable-review
+authority: implementation-reality
 ---
 
 # SlimeMold 代码结构审查与后续演进边界
@@ -40,7 +42,7 @@ status: actionable-review
 - `src/engine/` 与 `src/orchestrator/`：旧工作流 executor、RunContext、Pipeline、旧编排执行；
 - `src/store/`、`src/App.tsx`、`src/components/`、`src/canvas/`：UI 状态、图编辑和 composition root；
 - `src/dev/`、`src/plugins/`、`src-tauri/`：Worker、worktree、host acceptance、插件和宿主边界；
-- `docs/SLIMEMOLD_PRODUCT_PHILOSOPHY.md` 及控制面、H2/H3/H4 和 roadmap 文档。
+- `docs/principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md` 及控制面、H2/H3/H4 和 roadmap 文档。
 
 规模信号：
 
@@ -184,7 +186,7 @@ DraftGraph
 
 证据：
 
-- `docs/H3_ORCHESTRATOR_DESIGN.md` 已描述 context、scope、capabilities、actions、acceptance、budget、recovery、delegation 和 risk；
+- `docs/architecture/modules/H3_ORCHESTRATOR_DESIGN.md` 已描述 context、scope、capabilities、actions、acceptance、budget、recovery、delegation 和 risk；
 - `src/projectControl/types.ts:177-210` 的 `ProjectTask` / `ProjectTaskGraph` 仍主要只有 `scope`、`dependsOn`、`acceptanceCriteria`；
 - `src/domain/workerQueue.ts` 的 lease 只携带 Task、Run 和 worktree assignment；
 - `src/dev/codexWorkerExecutor.ts` 主要把 `task.scope` 和 acceptance 文本装配进 prompt；

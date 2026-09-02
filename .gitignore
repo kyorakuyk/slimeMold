@@ -77,3 +77,7 @@ dev-i18n.log
 
 # Local verification outputs (tsc / vitest / build / headless logs)
 *.out
+
+# Sensitive documentation exports (SENSITIVE / DO NOT COMMIT)
+/docs/log/raw/
+/docs/log/codex-conversations/

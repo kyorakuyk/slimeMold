@@ -1,3 +1,11 @@
+---
+title: 08-07 项目分析对话 · 对照复核
+type: historical-review
+status: archived
+date: 2026-08-10
+authority: none
+---
+
 # 08-07 项目分析对话 · 对照复核（2026-08-10）
 
 > 依据：2026-08-07 的「帮我分析一下这个项目」对话（早期分析）。
@@ -54,6 +62,6 @@
 ## 附：与本项目其他文档的关系
 
 - 待办拆解见 Codex 设计评审 `CODEX_DESIGN_REVIEW.md` + 本文档 §三；执行顺序见 todo。
-- 验证清单见 `EXECUTION_PHASES_VERIFICATION.md`；架构重构历史见 `REFACTOR_SUMMARY.md`。
+- 验证清单见 `../verification/EXECUTION_PHASES_VERIFICATION.md`；架构重构历史见 `../refactors/REFACTOR_SUMMARY.md`。
 
 *生成日期：2026-08-10 · 基于 main @ `c9e25e6`；2026-08-11 更新至 main @ `917e13d`（executor 拆分完成，H1a–g + H1v）*

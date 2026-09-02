@@ -1,3 +1,11 @@
+---
+title: H3 Orchestrator —— 总控 Agent 设计方案
+type: architecture-design
+status: partial-implementation
+reviewed_date: 2026-08-11
+authority: design-reference
+---
+
 # H3 Orchestrator —— 总控 Agent 设计方案
 
 > 状态：**设计稿**（2026-08-11）。用户拍板：H2 收口后启动 H3，**先设计、后最小闭环实现**，

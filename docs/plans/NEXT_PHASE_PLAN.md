@@ -1,10 +1,18 @@
+---
+title: SlimeMold 下一阶段开发计划
+type: near-term-plan
+status: active
+updated: 2026-09-02
+authority: development-order
+---
+
 # SlimeMold 下一阶段开发计划
 
 > 版本：2026-08-31（状态更新）
 > 依据：远端 `origin/main` H4 审计收口状态
 > 目标：从「headless 安全能力已成型」推进到「GUI 可验收、可恢复、可受控自举」
 
-> **当前状态覆盖说明（2026-08-31）**：本文件保留 2026-08-13 的 H4/H3 计划作为历史基线；当前产品主线已经增加并完成最小控制面切片：`ProjectSession`、主控 question/Brief/architecture 协议、`ProjectTaskGraph`、Issue 四栏看板、Builder → Orchestration 草案。下一阶段应以 `docs/PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 和 `.hermes/plans/2026-08-31_021507-project-control-plane-next-step.md` 为准。
+> **当前状态覆盖说明（2026-08-31）**：本文件保留 2026-08-13 的 H4/H3 计划作为历史基线；当前产品主线已经增加并完成最小控制面切片：`ProjectSession`、主控 question/Brief/architecture 协议、`ProjectTaskGraph`、Issue 四栏看板、Builder → Orchestration 草案。下一阶段应以 `docs/architecture/PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 和 `.hermes/plans/2026-08-31_021507-project-control-plane-next-step.md` 为准。
 
 ## 一、当前状态
 

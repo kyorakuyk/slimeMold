@@ -1,7 +1,8 @@
 ---
 title: 我和 SlimeMold：当下项目架构与未来发展方向的共同审视
+type: decision-review
 date: 2026-09-01
-status: working-review
+status: historical-review
 ---
 
 # 我和 SlimeMold：当下项目架构与未来发展方向的共同审视
@@ -9,7 +10,7 @@ status: working-review
 > 这不是产品宣传稿，而是一次以项目当前代码、真实 smoke 结果和既定产品方向为依据的阶段性复盘。
 > 文档保留原始问题、专业化面试问题和回答，目的是同时审视：SlimeMold 现在到底完成了什么，以及它未来应该成为什么。
 
-本文的规范性产品原则见 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](SLIMEMOLD_PRODUCT_PHILOSOPHY.md)；本文只记录这些原则在产品、架构和当前实现中的阶段性转译与验证。
+本文的规范性产品原则见 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](../../principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md)；本文只记录这些原则在产品、架构和当前实现中的阶段性转译与验证。
 
 ## 0. 共同审视的基本立场
 
@@ -162,7 +163,7 @@ SlimeMold 关注：
 
 SlimeMold 不应该与竞品正面竞争模板数量和第三方集成数量，而应该在“真实代码项目的安全执行闭环”上建立差异化。
 
-补充竞品调研后，这一定位可以进一步精确为“项目级事实与执行保障层”，而不是另一个通用 Agent Runtime。调研将低代码平台、自动化引擎、LLM 组件和 Agent Runtime 的控制权边界区分开来；SlimeMold 应保留项目事件流、用户审批、策略、隔离 worktree、宿主 acceptance、Evidence/Receipt、恢复和交付的权威边界。详见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
+补充竞品调研后，这一定位可以进一步精确为“项目级事实与执行保障层”，而不是另一个通用 Agent Runtime。调研将低代码平台、自动化引擎、LLM 组件和 Agent Runtime 的控制权边界区分开来；SlimeMold 应保留项目事件流、用户审批、策略、隔离 worktree、宿主 acceptance、Evidence/Receipt、恢复和交付的权威边界。详见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](../../reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
 
 ---
 

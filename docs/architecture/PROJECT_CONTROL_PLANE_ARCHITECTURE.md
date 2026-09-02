@@ -1,7 +1,9 @@
 ---
 title: SlimeMold 项目控制面架构：会话、Issue、任务与 DAG
+type: architecture-contract
 date: 2026-08-31
 status: partial-mvp
+authority: contract
 ---
 
 # SlimeMold 项目控制面架构：会话、Issue、任务与 DAG
@@ -32,7 +34,7 @@ status: partial-mvp
 
 这不等同于承诺“一句话立即生成任意复杂且无需确认的完整软件”。对于无法确定的需求、环境、预算或验收条件，系统必须显式展示假设和未决问题。
 
-本架构遵循 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](SLIMEMOLD_PRODUCT_PHILOSOPHY.md) 定义的元 Harness 原则：用户拥有目标和最终决定权，Agent 拥有局部推理和执行权，Project Control 负责上下文、权限、事实、证据、恢复和视图投影之间的边界。
+本架构遵循 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](../principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md) 定义的元 Harness 原则：用户拥有目标和最终决定权，Agent 拥有局部推理和执行权，Project Control 负责上下文、权限、事实、证据、恢复和视图投影之间的边界。
 
 ## 2. 总体决策
 
@@ -735,7 +737,7 @@ Worker 的上下文应由 Context Pack 编译：任务目标、相关决策、�
 
 ## 15. 由全局审视与竞品调研共同调整的优先级
 
-竞品调研的结论不是继续补齐 Dify、n8n、Coze 或 LangGraph 的表面能力，而是把 SlimeMold 的控制权边界收敛为项目级事实、执行保障和安全交付。完整分析见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
+竞品调研的结论不是继续补齐 Dify、n8n、Coze 或 LangGraph 的表面能力，而是把 SlimeMold 的控制权边界收敛为项目级事实、执行保障和安全交付。完整分析见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](../reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
 
 下一阶段不应优先增加更多节点或更强自治，而应按以下顺序收敛风险：
 

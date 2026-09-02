@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · adaptive circuit</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0e1417; --surface: #172228; --surface-2: #1d2b31; --ink: #f2f5f1; --muted: #9eabae; --line: #33484e; --active: #c8f36a; --copper: #e5b76a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--bg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 25px; }
+    h1 { margin: 0; font-size: 32px; letter-spacing: -.04em; }
+    header p { max-width: 650px; margin: 9px 0 0; color: var(--muted); }
+    .eyebrow { margin-bottom: 8px; color: var(--active); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .principle { margin: 0 0 22px; padding: 15px 16px; border-left: 2px solid var(--active); color: var(--muted); background: color-mix(in srgb, var(--active) 6%, var(--surface)); }
+    .principle strong { color: var(--ink); }
+    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    article { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 19px 20px 0; }
+    h2 { margin: 0; font-size: 18px; }
+    .tag { color: var(--active); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; }
+    .hero { display: grid; place-items: center; min-height: 330px; margin: 18px 20px 0; padding: 26px; border-radius: 12px; background: #0b1114; }
+    .hero img { display: block; width: min(100%, 270px); height: auto; }
+    .copy { min-height: 68px; padding: 15px 20px 0; color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    .sizes { display: flex; align-items: end; gap: 13px; margin: 16px 20px 20px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 5px; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); }
+    .note { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); }
+    .note strong { color: var(--ink); }
+    @media (max-width: 760px) { body { padding: 25px; } header { display: block; } .compare { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div><div class="eyebrow">SlimeMold · circuit study 11</div><h1>Adaptive Circuit</h1><p>基于现有 v8 circuit-mycelium 草稿做一次克制的矢量重绘：先读到芯片和走线，再读到“自适应重布线”。</p></div><div class="eyebrow">die · traces · pads · converge</div></header>
+    <p class="principle"><strong>核心规则：</strong>中央 IC 是主角；铜色表示封装和焊盘，青灰表示候选线路，黄绿色只表示一条被强化的活动路径。没有泛滥霓虹，也没有无法解释的装饰节点。</p>
+    <section class="compare">
+      <article><div class="head"><h2>Existing v8 reference</h2><span class="tag">draft</span></div><div class="hero"><img src="../../src-tauri/icons/slimemold-app-icon-v8-circuit-mycelium.png" alt="Existing v8 circuit mycelium draft"></div><div class="copy"><strong>保留它的方向，不保留它的噪声</strong>中心芯片、菌丝式走线和金属触点是有价值的；霓虹光晕、巨大外围节点和多重回路需要收紧。</div></article>
+      <article><div class="head"><h2>Adaptive Circuit</h2><span class="tag">clean vector</span></div><div class="hero"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" alt="Clean adaptive circuit vector icon"></div><div class="copy"><strong>芯片先于网络，主路先于装饰</strong>中央 die、统一引脚、少量端子和唯一高亮路径组成清晰层级；被淘汰线路在靠近芯片前断开。</div><div class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:16px" alt="16px"><span>16</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:24px" alt="24px"><span>24</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:32px" alt="32px"><span>32</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:48px" alt="48px"><span>48</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:64px" alt="64px"><span>64</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-adaptive-circuit/slimemold-adaptive-circuit.svg" style="--size:128px" alt="128px"><span>128</span></div></div></article>
+    </section>
+    <p class="note"><strong>当前状态：</strong>这是新的概念母版，不会覆盖 `icon.png`、`icon.ico`、`icon.icns`、Android 或 iOS 资源。先确认“集成电路风格”本身，再决定是否继续做主图标、小尺寸专版和平台导出。</p>
+  </main>
+</body>
+</html>

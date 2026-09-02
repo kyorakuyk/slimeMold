@@ -1,3 +1,11 @@
+---
+title: Professional 路线规划
+type: long-term-roadmap
+status: active
+updated: 2026-09-02
+authority: advisory
+---
+
 # Professional 路线规划
 
 面向进阶 / 专业用户的能力储备。这里记录的是「已确认要做、但当前版本刻意不做」的事项，

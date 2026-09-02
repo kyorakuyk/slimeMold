@@ -1,3 +1,11 @@
+---
+title: 凭据分层模型
+type: security-model
+status: active
+updated: 2026-09-02
+authority: security-guidance
+---
+
 # 凭据分层模型（Credentials Layering）
 
 > 对应安全评审发现的 S6：明确「桌面端 / headless / 工作流文件」三处凭据的处理边界，

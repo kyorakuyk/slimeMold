@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · convergence mark prototype</title>
+  <style>
+    :root { color-scheme: light; --paper: #f5f4ed; --ivory: #faf9f5; --ink: #141413; --muted: #6d6b65; --line: #dedcd2; --mark: #b36f4e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 52px; color: var(--ink); background: var(--paper); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; }
+    .eyebrow { margin-bottom: 10px; color: var(--mark); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; max-width: 670px; font: 500 42px/1.1 Georgia, "Times New Roman", serif; letter-spacing: -.035em; }
+    header p { max-width: 690px; margin: 13px 0 30px; color: var(--muted); }
+    .rule { height: 1px; margin-bottom: 28px; background: var(--line); }
+    .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .panel { display: grid; place-items: center; min-height: 430px; padding: 34px; border: 1px solid var(--line); border-radius: 16px; }
+    .panel img { display: block; width: min(100%, 330px); height: auto; }
+    .light { background: #f5f4ed; }
+    .dark { background: #232321; }
+    .label { align-self: start; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; }
+    .sizes { display: flex; align-items: end; gap: 16px; margin-top: 26px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 7px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); }
+    .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; color: var(--muted); }
+    .notes strong { display: block; margin-bottom: 4px; color: var(--ink); font-weight: 600; }
+    @media (max-width: 700px) { body { padding: 28px; } h1 { font-size: 34px; } .stage { grid-template-columns: 1fr; } .panel { min-height: 300px; } .notes { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">SlimeMold · structure prototype 10</div>
+    <h1>Independent strokes, one living core.</h1>
+    <header><p>按你确认的 Claude 式线条语言重做：不是一笔软管，也不是节点网络，而是几条厚实、干净、略有差异的独立线段，在中心形成一个有秩序但不完全对称的核心。</p></header>
+    <div class="rule"></div>
+    <section class="stage">
+      <div class="panel light"><div class="label">warm clay / parchment</div><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" alt="SlimeMold convergence mark on parchment"></div>
+      <div class="panel dark"><div class="label">warm clay / near black</div><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" alt="SlimeMold convergence mark on dark"></div>
+    </section>
+    <section class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:16px" alt="16px"><span>16</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:24px" alt="24px"><span>24</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:32px" alt="32px"><span>32</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:48px" alt="48px"><span>48</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:64px" alt="64px"><span>64</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:128px" alt="128px"><span>128</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-claude-structure/slimemold-convergence-mark.svg" style="--size:256px" alt="256px"><span>256</span></div></section>
+    <section class="notes"><div><strong>保留的核心</strong>多次探触、中心汇聚、受控不对称，以及一个更稳定的主方向。</div><div><strong>刻意避免</strong>Claude 的具体臂数和轮廓、流程图节点、箭头、软管曲线、渐变和装饰性容器。</div></section>
+  </main>
+</body>
+</html>

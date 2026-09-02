@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · line spark refined</title>
+  <style>
+    :root { color-scheme: light; --paper: #f5f4ed; --ivory: #faf9f5; --ink: #141413; --muted: #6d6b65; --line: #dedcd2; --mark: #b56f4f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--paper); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 28px; margin-bottom: 26px; }
+    h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -0.03em; }
+    h1 { margin: 0; font-size: 38px; line-height: 1.1; }
+    header p { max-width: 660px; margin: 10px 0 0; color: var(--muted); }
+    .eyebrow { margin-bottom: 9px; color: var(--mark); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .rule { height: 1px; margin-bottom: 22px; background: var(--line); }
+    .brief { margin: 0 0 24px; color: var(--muted); }
+    .brief strong { color: var(--ink); font-weight: 600; }
+    .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    .hero-panel { display: grid; place-items: center; min-height: 300px; border-radius: 14px; }
+    .hero-panel img { display: block; width: 250px; height: 250px; }
+    .light { background: #f5f4ed; }
+    .dark { background: #232321; }
+    .strip { display: grid; grid-template-columns: repeat(7, 1fr); align-items: end; gap: 12px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); }
+    .size { display: grid; justify-items: center; gap: 7px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); }
+    .copy { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 4px; color: var(--ink); font-weight: 600; }
+    @media (max-width: 720px) { body { padding: 24px; } header { display: block; } .hero { grid-template-columns: 1fr; } .hero-panel { min-height: 230px; } .hero-panel img { width: 190px; height: 190px; } .strip { grid-template-columns: repeat(4, 1fr); } .copy { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><div class="eyebrow">SlimeMold · identity study 11</div><h1>One center. Seven gestures.</h1><p>在你确认的 Claude 式方向上收紧几何：圆头粗线、中心聚合、整体平衡、局部不规则；SlimeMold 只保留一个轻微的生长偏置。</p></div>
+      <div class="eyebrow">rounded line · warm clay · no fill</div>
+    </header>
+    <div class="rule"></div>
+    <p class="brief"><strong>这次不再画路径图。</strong>线条只作为品牌笔势存在，不表示输入、输出或节点。大尺寸使用主标志，16–32px 使用独立简化版，避免中心重叠和细线消失。</p>
+    <section class="hero"><div class="hero-panel light"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" alt="SlimeMold line spark on parchment"></div><div class="hero-panel dark"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" alt="SlimeMold line spark on dark"></div></section>
+    <section class="strip"><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark-small.svg" style="--size:16px" alt="16px small mark"><span>16px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark-small.svg" style="--size:24px" alt="24px small mark"><span>24px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark-small.svg" style="--size:32px" alt="32px small mark"><span>32px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" style="--size:48px" alt="48px master"><span>48px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" style="--size:64px" alt="64px master"><span>64px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" style="--size:128px" alt="128px master"><span>128px</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-11-starline/slimemold-line-spark.svg" style="--size:256px" alt="256px master"><span>256px</span></div></section>
+    <section class="copy"><div><strong>保留</strong>中心聚合、圆头线条、暖色单色、受控不对称和足够留白。</div><div><strong>删除</strong>节点、箭头、方框、网格、渐变、阴影和显式的流程图叙事。</div></section>
+  </main>
+</body>
+</html>

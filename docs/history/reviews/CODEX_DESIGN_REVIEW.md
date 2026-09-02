@@ -1,3 +1,11 @@
+---
+title: Codex 设计评审意见
+type: historical-review
+status: archived
+date: 2026-08-09
+authority: none
+---
+
 # Codex 设计评审意见
 
 本文整理当前 SlimeMold 架构在动态文件授权、成本感知路由、Checkpoint、事件流持久化和后续工程节奏方面的评审结论。

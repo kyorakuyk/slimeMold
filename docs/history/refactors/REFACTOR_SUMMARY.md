@@ -1,3 +1,11 @@
+---
+title: 上帝模块拆分工程 · 总结
+type: refactor-history
+status: archived
+date: 2026-08
+authority: none
+---
+
 # 上帝模块拆分工程 · 总结（for Codex Review）
 
 > 本文档记录 slimeMold 项目在 2026-08 期间进行的一轮「上帝模块（God Module）拆分」重构。
@@ -150,7 +158,7 @@ Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main
 ### 后续（2026-08-08）已落地
 
 - **执行内核六阶段（Codex 规划 A–E）+ 缓存隔离细粒度化**：见
-  `docs/EXECUTION_PHASES_VERIFICATION.md`，覆盖 RunContext/事件流（A1–A3）、
+  `docs/history/verification/EXECUTION_PHASES_VERIFICATION.md`，覆盖 RunContext/事件流（A1–A3）、
   AgentRouter 决策（B）、检查点持久化（C）、实时接管（D）、结构化经验库（E）。
 - **Codex 二轮评审修复（`8046674`）**：构建恢复全绿、收尾读最新节点状态、
   检查点独立原子落盘（tmp+rename）、Router 接通 category + 失败 fallback、

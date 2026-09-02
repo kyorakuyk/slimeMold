@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold icon directions · round 3</title>
+  <style>
+    :root { color-scheme: dark; --bg: #101214; --surface: #191c20; --ink: #f1f4f6; --muted: #9aa4ad; --line: #353c43; --slime: #c8f36a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--bg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.04em; }
+    header p { max-width: 680px; margin: 8px 0 0; color: var(--muted); }
+    .legend { color: var(--slime); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+    .principle { margin: 0 0 22px; padding: 14px 16px; border-left: 2px solid var(--slime); color: var(--muted); background: color-mix(in srgb, var(--slime) 6%, var(--surface)); }
+    .principle strong { color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    article { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h2 { margin: 0; font-size: 18px; }
+    .tag { color: var(--slime); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .concept { display: grid; grid-template-columns: 180px 1fr; gap: 20px; align-items: center; }
+    .hero { display: grid; place-items: center; padding: 18px; border-radius: 14px; background: #0b0d0f; }
+    .hero img { display: block; width: 144px; height: 144px; }
+    .copy { color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 14px; }
+    .sizes { display: flex; align-items: end; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 6px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); border-radius: calc(var(--size) * .2); }
+    .light { background: #f5f6f8; }
+    .dark { background: #0b0d0f; }
+    @media (max-width: 780px) { body { padding: 24px; } .grid { grid-template-columns: 1fr; } .concept { grid-template-columns: 128px 1fr; } .hero img { width: 104px; height: 104px; } header { display: block; } .legend { margin-top: 14px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>SlimeMold · living shortest path</h1><p>第三轮把图标的主角改成“活体黏菌”：它从资源点出发，伸出伪足试探，淘汰低效路线，把真正有效的通道逐渐强化。</p></div>
+      <div class="legend">life · search · converge</div>
+    </header>
+    <p class="principle"><strong>统一语法：</strong>炭黑是环境；浅灰圆点是资源/目标；灰色细线是被试探后回缩的路径；生命力绿的有机团块与粗路径，是正在生长并最终收敛的最短路。</p>
+    <section class="grid">
+      <article>
+        <div class="card-head"><h2>01 · Shortest Bloom</h2><span class="tag">strongest balance</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" alt="Shortest Bloom variant"></div><div class="copy"><strong>探索路径逐渐开花、收敛</strong>多个候选路径从同一活体出发，最终只有一条主干变粗并抵达目标，最完整地表达自优化。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-shortest-bloom.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>02 · Pseudopod Prune</h2><span class="tag">strongest life</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" alt="Pseudopod Prune variant"></div><div class="copy"><strong>伪足试探，失败后回缩</strong>主体有明确的活体体积，多个触须探索不同方向，只有成功路径保持连续和明亮。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-pseudopod-prune.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>03 · Adaptive Terrain</h2><span class="tag">strongest shortest route</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" alt="Adaptive Terrain variant"></div><div class="copy"><strong>在障碍中寻找并强化通道</strong>灰色障碍形成环境约束，灰色绕行是候选路径，绿色通道在中间收敛为高效路线。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-terrain.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>04 · Adaptive Trail</h2><span class="tag">small-size first</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" alt="Adaptive Trail variant"></div><div class="copy"><strong>最小尺寸仍保留活体和收敛</strong>减少细节，只保留黏菌团块、被放弃的旧路、被强化的新路和目标点。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-3/slimemold-adaptive-trail.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

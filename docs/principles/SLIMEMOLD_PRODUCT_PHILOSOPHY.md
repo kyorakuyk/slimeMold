@@ -1,7 +1,9 @@
 ---
 title: SlimeMold 产品哲学：项目级元 Harness
+type: product-philosophy
 date: 2026-09-02
 status: normative-principles
+authority: normative
 ---
 
 # SlimeMold 产品哲学：项目级元 Harness
@@ -572,8 +574,8 @@ Agent 可以聪明，但不能天然拥有权威。
 
 ## 相关文档
 
-- [全局产品与系统审视](SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md)
-- [项目控制面架构](PROJECT_CONTROL_PLANE_ARCHITECTURE.md)
-- [轻量界面研究稿](BEGINNER_UI_DESIGN.md)
-- [AI 编排与 Agent 工具局限性调研](reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)
-- [开发记录](DEVELOPMENT_LOG.md)
+- [全局产品与系统审视](../strategy/SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md)
+- [项目控制面架构](../architecture/PROJECT_CONTROL_PLANE_ARCHITECTURE.md)
+- [轻量界面研究稿](../product/BEGINNER_UI_DESIGN.md)
+- [AI 编排与 Agent 工具局限性调研](../reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)
+- [开发记录](../DEVELOPMENT_LOG.md)

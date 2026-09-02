@@ -1,5 +1,8 @@
 ---
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
+type: development-history
+status: active-history
+updated: 2026-09-02
 tags:
   - SlimeMold
   - Agent
@@ -1726,6 +1729,24 @@ Issue 工作台采用四个面板：
 - 第一轮独立 reviewer 针对修复前 diff 返回 `passed=false`，指出 sandbox lexical path、项目切换重入、过期插件扫描、pending load Promise 和嵌套交付问题；这些问题已在后续工作树中修正或收紧，不能把第一轮 verdict 当作最终代码 verdict。
 - 第二轮 reviewer 针对修复后 diff 已自行运行 targeted tests 和 build，但在返回最终 JSON 前因等待模型响应超时而中断；本轮没有独立 reviewer approval，最终结论只依据实际源码复核和质量门。
 - 仍未关闭的门槛包括 host-level TOCTOU/no-follow、第三方插件独立隔离、Worker/Worktree execution lease 与 supervisor、完整 ProjectControl replay/原子提交，以及统一 Execution/Attempt lineage、Artifact acceptance 和 Delivery Receipt。
+
+本轮最终验证结果：
+
+- `npm run test`：99 个测试文件、806 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮未 commit/push。
+
+### 7.37 重划分 docs 目录层级并保留历史资料
+
+- 将当前文档按职责分为 `principles/`、`strategy/`、`architecture/`、`product/`、`plans/`、`verification/`、`security/`、`reference/`、`history/`、`design/` 和 `log/`；`DEVELOPMENT_LOG.md` 继续留在 `docs/` 根目录作为时间线入口。
+- 当前规范、战略、架构、专题设计、产品 UI 和路线图文档均移动到对应目录；旧项目分析、早期 Codex 评审、God Module 重构总结、旧验证清单和长篇讨论稿移动到 `history/`，没有删除原文。
+- 新增 `docs/README.md` 作为文档地图，明确产品哲学、战略审视、控制面架构、代码结构审查、专题设计、计划、验证和历史资料的权威边界；新增各资料目录 README，避免原始对话、外部研究和视觉探索被误当作产品或架构事实。
+- `reference/2.md` 更名并移动到 `reference/archive/AI_ECOSYSTEM_GAPS_NOTES.md`；视觉 HTML 试稿移动到 `design/explorations/`；CodeBuddy JSON 导出移动到 `log/raw/`；凭据说明移动到 `security/CREDENTIALS_MODEL.md`。原始日志仍需脱敏后才适合提交或共享。
+- 为现行文档补充相对链接和基础 metadata；历史开发日志中的旧路径保持原样，迁移关系集中记录在 `docs/README.md`。
 
 本轮最终验证结果：
 

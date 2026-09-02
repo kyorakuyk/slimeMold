@@ -1,3 +1,11 @@
+---
+title: H4 Self-Development Foundation
+type: architecture-design
+status: foundation-implemented-with-open-gaps
+reviewed_date: 2026-08-13
+authority: design-reference
+---
+
 # H4 Self-Development Foundation —— SlimeMold 开发 SlimeMold 的能力层
 
 > 状态：**核心已实现并通过多轮安全审计**（2026-08-13，main @ `00738ff`）。
@@ -215,7 +223,7 @@ src/dev/
   session.ts           # ✅ DevSession（resultStore/acceptanceStore/approvedCleanups/confirmAndCleanup/forceCleanup）
 src/nodes/dev/         # ✅ 11 个开发节点薄封装（worktree.*/code.*/shell/test/git.*/evidence/accept）——headless 已跑通
 src/platform/env.ts    # ⏳ Tauri GUI 执行层分支（headless/CI 已可用；GUI 编排里的 dev 节点暂禁用，走 GUI 接入）
-docs/H4_*              # ✅ 本设计文档（随实现修订）
+docs/architecture/modules/H4_SELF_DEVELOPMENT_FOUNDATION.md  # ✅ 本设计文档（随实现修订）
 ```
 
 ### 实现状态（2026-08-12，H4 Foundation 第一刀 + 审计加固 f47c3c0/f4ed3a8）

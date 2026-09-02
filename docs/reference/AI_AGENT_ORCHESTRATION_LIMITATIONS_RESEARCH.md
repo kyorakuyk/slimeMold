@@ -1,7 +1,9 @@
 ---
 title: AI 编排与 Agent 工具局限性调研分析
+type: external-research
 date: 2026-09-02
 status: strategic-reference
+authority: evidence-input
 source: https://chatgpt.com/s/t_6a97c340526c81918e54cd9ba30886b0
 ---
 

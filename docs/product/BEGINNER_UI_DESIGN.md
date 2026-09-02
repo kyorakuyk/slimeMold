@@ -1,3 +1,11 @@
+---
+title: SlimeMold 轻量界面研究稿
+type: product-ui-design
+status: active-design
+updated: 2026-09-02
+authority: translation
+---
+
 # SlimeMold 轻量界面研究稿
 
 ## 目标
@@ -6,7 +14,7 @@
 
 本轮方向调整会触及项目会话、Issue、Decision 和 Task 的数据模型，因此不再坚持“只增加一层 UI、完全不改变项目模型”的旧假设。执行器和 H4 宿主安全边界仍然复用现有实现，不为初级页面复制一套执行逻辑。
 
-本稿是 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](SLIMEMOLD_PRODUCT_PHILOSOPHY.md) 的界面转译：默认只暴露当前用户需要理解的信息，同时保留从驾驶舱、Issue 和专业 DAG 向下溯源的能力；专业工作台解释内部数据流，但不成为任务执行的事实源。
+本稿是 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](../principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md) 的界面转译：默认只暴露当前用户需要理解的信息，同时保留从驾驶舱、Issue 和专业 DAG 向下溯源的能力；专业工作台解释内部数据流，但不成为任务执行的事实源。
 
 ## 页面结构
 

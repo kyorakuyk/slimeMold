@@ -1,7 +1,9 @@
 ---
 title: 我们共同对 SlimeMold 的全局审视：产品本质、系统风险与未来方向
+type: strategic-review
 date: 2026-09-01
 status: strategic-review
+authority: advisory
 ---
 
 # 我们共同对 SlimeMold 的全局审视：产品本质、系统风险与未来方向
@@ -25,7 +27,7 @@ status: strategic-review
 
 代码、测试和当前运行结果只作为证据，不作为最终结论。一个功能“已经写出来”，不等于产品选择正确；一个测试“通过”，也不等于长期用户体验已经成立。
 
-本审视稿之上的规范性原则见 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](SLIMEMOLD_PRODUCT_PHILOSOPHY.md)。该文档定义用户、Agent、项目事实和可视化投影之间的权威关系；本文负责将这些原则放入产品定位、系统风险和发展路线中讨论。
+本审视稿之上的规范性原则见 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](../principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md)。该文档定义用户、Agent、项目事实和可视化投影之间的权威关系；本文负责将这些原则放入产品定位、系统风险和发展路线中讨论。
 
 ---
 
@@ -177,7 +179,7 @@ SlimeMold 可以占据的空位是：
 
 ### 3.4 竞品调研后的定位校正
 
-补充调研显示，Dify、n8n、Coze、LangChain 和 LangGraph 不应被当作同一层面的直接替代品。更有解释力的比较方式不是节点数量，而是两个维度：运行时控制权在平台还是用户，以及任务是一次性确定性自动化还是长期开放式软件项目执行。完整的证据边界、竞品分层和指标建议见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
+补充调研显示，Dify、n8n、Coze、LangChain 和 LangGraph 不应被当作同一层面的直接替代品。更有解释力的比较方式不是节点数量，而是两个维度：运行时控制权在平台还是用户，以及任务是一次性确定性自动化还是长期开放式软件项目执行。完整的证据边界、竞品分层和指标建议见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](../reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
 
 由此，SlimeMold 的差异化需要进一步收窄为：
 
