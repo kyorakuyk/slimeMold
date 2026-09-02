@@ -42,6 +42,8 @@ import {
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
 import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
+import { workerRunViewsFor } from '../projectControl/workerRunView';
+import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 
 /** 编排整体状态徽标配色 */
 const statusCls: Record<string, string> = {
@@ -65,6 +67,16 @@ const logStatusCls: Record<string, string> = {
   cancelled: 'text-warn',
 };
 
+const workerStatusCls: Record<string, string> = {
+  queued: 'text-ink-faint',
+  running: 'text-accent',
+  succeeded: 'text-ok',
+  failed: 'text-err',
+  partial: 'text-warn',
+  blocked: 'text-warn',
+  cancelled: 'text-ink-faint',
+};
+
 /** 阶段职能角色徽标 */
 const roleLabel: Record<string, string> = {
   builder: 'builder',
@@ -75,13 +87,26 @@ const roleLabel: Record<string, string> = {
 /** 可绑定/配置的工作流状态：awaiting-confirm（确认前）与 ready（确认后执行前） */
 const BINDABLE_STATUSES: ReadonlySet<OrchestrationStatus> = new Set(['awaiting-confirm', 'ready']);
 
-export default function OrchestratorPanel({ embedded = false }: { embedded?: boolean }) {
+export default function OrchestratorPanel({
+  embedded = false,
+  onRecoverWorkerRun,
+  onCleanupWorkerRun,
+}: {
+  embedded?: boolean;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+  onCleanupWorkerRun?: (runId: string, taskId: string, action: 'approve' | 'cleanup') => Promise<void> | void;
+}) {
   const t = useT('panels');
   const orchestrations = useWorkflowStore((s) => s.orchestrations);
   const workflows = useWorkflowStore((s) => s.workflows);
   const agents = useWorkflowStore((s) => s.agents);
   const globalAgents = useWorkflowStore((s) => s.globalAgents);
   const addLog = useWorkflowStore((s) => s.addLog);
+  const workerRuns = useWorkflowStore((s) => s.workerRuns);
+  const workerRunRecoveries = useWorkflowStore((s) => s.workerRunRecoveries ?? []);
+  const workerRunEvidence = useWorkflowStore((s) => s.workerRunEvidence ?? []);
+  const workerRunSideEffects = useWorkflowStore((s) => s.workerRunSideEffects ?? []);
+  const workerCleanupProposals = useWorkflowStore((s) => s.workerCleanupProposals ?? []);
 
   // 目标输入与约束
   const [goal, setGoal] = useState('');
@@ -95,8 +120,13 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
   // 取消中（防重复点击取消；注意不能用 busy——busy 在整个 runOrchestration 阻塞期都 true，
   // 用它禁用取消按钮会导致运行期无法取消）
   const [cancelling, setCancelling] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
 
   const selected = orchestrations.find((o) => o.id === selectedId) ?? null;
+  const selectedWorkerRuns = selected
+    ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals)
+    : [];
   const allAgents = [...globalAgents, ...agents];
   const workflowsList = Object.entries(workflows).map(([id, w]) => ({
     id,
@@ -188,6 +218,13 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
     const st = useWorkflowStore.getState();
     const orch = st.orchestrations.find((o) => o.id === orchId);
     if (!orch) return;
+    const legacyDecision = canStartLegacyOrchestration(orchId, st.workerRuns);
+    if (!legacyDecision.allowed) {
+      const msg = legacyDecision.reason ?? t('orchestrator.hint.workerRunOwnsExecution');
+      setErr(msg);
+      addLog('warn', msg);
+      return;
+    }
     if (orch.readonly) {
       setErr(t('orchestrator.hint.readonly'));
       return;
@@ -247,6 +284,35 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
     } else {
       addLog('warn', `工作流不存在：${wfId}（请先固化工作流）`);
     }
+  };
+
+  const onRecover = (runId: string, decision: 'retry' | 'skip') => {
+    if (!onRecoverWorkerRun || recoveryBusy) return;
+    setRecoveryBusy(true);
+    const reason = `用户在专业编排中选择 ${decision}`;
+    void (async () => {
+      try {
+        await onRecoverWorkerRun(runId, decision, reason);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRecoveryBusy(false);
+      }
+    })();
+  };
+
+  const onCleanup = (runId: string, taskId: string, action: 'approve' | 'cleanup') => {
+    if (!onCleanupWorkerRun || cleanupBusy) return;
+    setCleanupBusy(true);
+    void (async () => {
+      try {
+        await onCleanupWorkerRun(runId, taskId, action);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setCleanupBusy(false);
+      }
+    })();
   };
 
   const inner = (
@@ -505,6 +571,154 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                 {selected.draft.edges.map((e) => `${e.from} → ${e.to}（${e.artifactKind}）`).join('  ·  ')}
               </div>
             )}
+
+            {selectedWorkerRuns.length > 0 && (
+              <section className="rounded border border-line px-2.5 py-2" data-testid="orchestrator-worker-runs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11.5px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
+                    {t('orchestrator.workerRuns.title')}
+                  </span>
+                  <span className="text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                    {selectedWorkerRuns.length}
+                  </span>
+                </div>
+                <div className="mt-1.5 space-y-2">
+                  {selectedWorkerRuns.map((run) => (
+                    <div key={run.runId} className="rounded border border-dashed border-line px-2 py-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10.5px] font-medium ${workerStatusCls[run.status] ?? 'text-ink-faint'}`}>
+                          {t(`orchestrator.worker.status.${run.status}`)}
+                        </span>
+                        <span className="truncate font-mono text-[10px]" style={{ color: 'var(--sm-ink-faint)' }} title={run.runId}>
+                          {run.runId}
+                        </span>
+                      </div>
+                      {run.recovery && (
+                        <div className="mt-1 space-y-1">
+                          <p className="break-all text-[10.5px] text-warn">
+                            {t('orchestrator.worker.recovery')}: {run.recovery.message}
+                          </p>
+                          {onRecoverWorkerRun && (
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                data-testid={`orchestrator-worker-retry-${run.runId}`}
+                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
+                                disabled={recoveryBusy}
+                                onClick={() => onRecover(run.runId, 'retry')}
+                              >
+                                {t('orchestrator.worker.recovery.retryAction')}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`orchestrator-worker-skip-${run.runId}`}
+                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
+                                disabled={recoveryBusy}
+                                onClick={() => onRecover(run.runId, 'skip')}
+                              >
+                                {t('orchestrator.worker.recovery.skipAction')}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <ul className="mt-1 space-y-1">
+                        {run.tasks.map((task) => (
+                          <li key={task.taskId} className="rounded bg-paper px-1.5 py-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-[10.5px]" style={{ color: 'var(--sm-ink)' }} title={task.taskId}>
+                                {task.taskId}
+                              </span>
+                              <span className={`shrink-0 text-[10px] ${workerStatusCls[task.status] ?? 'text-ink-faint'}`}>
+                                {t(`orchestrator.worker.task.${task.status}`)} · a{task.attempt}
+                              </span>
+                            </div>
+                            {task.error && (
+                              <p className="mt-0.5 break-all text-[10px] text-err">{task.error}</p>
+                            )}
+                            {task.worktreePath && (
+                              <p className="mt-0.5 truncate font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }} title={task.worktreePath}>
+                                {t('orchestrator.worker.worktree')}: {task.worktreePath}
+                              </p>
+                            )}
+                            {task.evidenceIds.length > 0 && (
+                              <p className="mt-0.5 break-all font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                                {t('orchestrator.worker.evidence')}: {task.evidenceIds.join(', ')}
+                              </p>
+                            )}
+                            {task.evidence.length > 0 && (
+                              <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-evidence-${task.taskId}`}>
+                                {task.evidence.map((record) => (
+                                  <li key={record.id} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
+                                    <span className={record.status === 'passed' ? 'text-ok' : record.status === 'failed' ? 'text-err' : 'text-warn'}>
+                                      {record.kind} · {record.status}
+                                    </span>
+                                    {' · '}{record.summary}
+                                    {record.command ? ` · ${record.command}` : ''}
+                                    {record.exitCode !== undefined ? ` · ${t('orchestrator.worker.exitCode')}: ${record.exitCode}` : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {task.sideEffects.length > 0 && (
+                              <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-receipts-${task.taskId}`}>
+                                {task.sideEffects.map((effect) => (
+                                  <li key={effect.idempotencyKey} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
+                                    <span className={effect.status === 'receipt' ? 'text-ok' : effect.status === 'unknown' ? 'text-warn' : 'text-accent'}>
+                                      {t('orchestrator.worker.receipt')}: {effect.kind} · {effect.status}
+                                    </span>
+                                    {effect.receiptId ? ` · ${effect.receiptId}` : ''}
+                                    {effect.unknownReason ? ` · ${effect.unknownReason}` : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {task.cleanup && (
+                              task.cleanup.status === 'ready' ? (
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px]" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
+                                  <span className="break-all text-ok">
+                                    {t('orchestrator.worker.cleanup')}: {task.cleanup.approvalStatus === 'approved' ? t('orchestrator.worker.cleanup.approved') : t('orchestrator.worker.cleanup.ready')} · {task.cleanup.acceptanceId}
+                                  </span>
+                                  {onCleanupWorkerRun && (
+                                    <button
+                                      type="button"
+                                      data-testid={`orchestrator-worker-cleanup-action-${task.taskId}`}
+                                      className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
+                                      disabled={cleanupBusy}
+                                      onClick={() => {
+                                        const proposal = task.cleanup;
+                                        if (!proposal || proposal.status !== 'ready') return;
+                                        onCleanup(
+                                          proposal.runId,
+                                          task.taskId,
+                                          proposal.approvalStatus === 'approved' ? 'cleanup' : 'approve',
+                                        );
+                                      }}
+                                    >
+                                      {task.cleanup.approvalStatus === 'approved'
+                                        ? t('orchestrator.worker.cleanup.executeAction')
+                                        : t('orchestrator.worker.cleanup.approveAction')}
+                                    </button>
+                                  )}
+                                </div>
+                              ) : task.cleanup.status === 'cleaned' ? (
+                                <p className="mt-0.5 break-all text-[9.5px] text-ok" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
+                                  {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.cleaned')} · {task.cleanup.receiptId}
+                                </p>
+                              ) : (
+                                <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
+                                  {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.blocked')}: {task.cleanup.reason}
+                                </p>
+                              )
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
 
           {/* 操作栏 */}
@@ -536,14 +750,17 @@ export default function OrchestratorPanel({ embedded = false }: { embedded?: boo
                 // 审计建议：执行前检查所有阶段已绑定非空工作流，未就绪禁用并提示
                 const runnable = stagesReadyToRun(selected, workflows);
                 const isRetry = selected.status === 'failed';
+                const workerOwnsExecution = selectedWorkerRuns.length > 0;
                 return (
                   <button
                     className="sm-btn justify-center hover:border-accent hover:text-accent"
                     onClick={() => onRun(selected.id)}
-                    disabled={busy || !!selected.readonly || !runnable}
+                    disabled={busy || !!selected.readonly || !runnable || workerOwnsExecution}
                     title={
                       selected.readonly
                         ? t('orchestrator.hint.readonly')
+                        : workerOwnsExecution
+                          ? t('orchestrator.hint.workerRunOwnsExecution')
                         : runnable
                           ? t('orchestrator.hint.ready')
                           : t('orchestrator.hint.notReady')

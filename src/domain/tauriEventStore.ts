@@ -1,9 +1,5 @@
 import { isTauri } from '../platform/env';
-import {
-  EVENT_LOCK_RELATIVE_PATH,
-  type EventStoreAdapter,
-  type EventStoreLock,
-} from './eventStore';
+import { type EventStoreAdapter, type EventStoreLock } from './eventStore';
 
 export type TauriInvoke = <T>(
   command: string,
@@ -62,6 +58,18 @@ function dirname(path: string): string {
   return index <= 0 ? '.' : path.slice(0, index);
 }
 
+function relativeLockPath(root: string, path: string): string {
+  const normalizedPath = normalize(path);
+  const prefix = `${root}/`;
+  const relative = normalizedPath.startsWith(prefix)
+    ? normalizedPath.slice(prefix.length)
+    : normalizedPath;
+  if (!relative.startsWith('.slimemold/') || !relative.endsWith('.lock')) {
+    throw new Error(`事件存储锁路径无效：${path}`);
+  }
+  return relative;
+}
+
 /**
  * Tauri adapter for the domain event store. The host owns the lock; plugin-fs
  * only performs scoped text I/O after the project directory is authorized.
@@ -86,8 +94,6 @@ export function createTauriEventStoreAdapter(
     accessPromise ??= deps.invoke<void>('grant_project_access', { path: normalizedRoot });
     await accessPromise;
   };
-  const expectedLockPath = `${normalizedRoot}/${EVENT_LOCK_RELATIVE_PATH}`;
-
   return {
     async readText(path: string): Promise<string | null> {
       assertInsideRoot(normalizedRoot, path);
@@ -119,12 +125,13 @@ export function createTauriEventStoreAdapter(
 
     async acquireLock(path: string): Promise<EventStoreLock> {
       assertInsideRoot(normalizedRoot, path);
-      if (comparisonPath(path) !== comparisonPath(expectedLockPath)) {
-        throw new Error(`事件存储只能使用项目锁：${path}`);
-      }
+      const lockRelativePath = relativeLockPath(normalizedRoot, path);
       const deps = await getDeps();
       await ensureAccess(deps);
-      const token = await deps.invoke<string>('event_lock_acquire', { root: normalizedRoot });
+      const token = await deps.invoke<string>('event_lock_acquire', {
+        root: normalizedRoot,
+        relativePath: lockRelativePath,
+      });
       let released = false;
       return {
         release: async () => {
@@ -133,6 +140,7 @@ export function createTauriEventStoreAdapter(
           await deps.invoke<void>('event_lock_release', {
             root: normalizedRoot,
             token,
+            relativePath: lockRelativePath,
           });
         },
       };

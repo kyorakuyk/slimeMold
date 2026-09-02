@@ -104,6 +104,19 @@ interface PipelineDraft {
   edges: DraftEdge[];             // 有向边 + artifactKind + backflow?
 }
 
+/** 目标设计：用户界面可表现为勾选项，落盘时必须是可验证契约。 */
+interface BoundaryContract {
+  context?: { facts?: string[]; artifacts?: string[]; maxTokens?: number };
+  scope?: { paths?: string[]; symbols?: string[]; artifactKinds?: ArtifactKind[] };
+  capabilities?: string[];        // 能力、工具、Provider
+  actions?: string[];              // read/write/execute/network/delegate 等
+  acceptance?: string[];           // 宿主必须执行的检查
+  budget?: { tokens?: number; durationMs?: number; calls?: number };
+  recovery?: string[];             // inspect/retry/skip/resume/cleanup 等
+  delegation?: { allowed: boolean };
+  risk?: { level: 'low' | 'medium' | 'high' | 'critical'; reasons: string[] };
+}
+
 interface DraftStage {
   id: string;
   label: string;
@@ -115,6 +128,7 @@ interface DraftStage {
   agentId?: string;
   artifactIn?: ArtifactKind[];   // 需要的上游产物
   artifactOut?: ArtifactKind[];  // 产出的交付物
+  boundary?: BoundaryContract;   // 上级派发给本阶段的边界契约
 }
 
 interface StageLog {
@@ -192,6 +206,22 @@ type OrchestrationEventKind =
 6. 异常路径：任何阶段失败不自动回流（需用户确认「重试/回流/停止」三选一），
    避免 Orchestrator 自说自话改写用户工程。
 
+### 6.1 灵活的子任务边界契约
+
+H3 不应把任务拆分成固定的“轻量/标准/严格”流程。上级 Agent 派发阶段或子任务时，应根据目标、影响范围和风险，勾选需要传递的上下文、能力、动作、Artifact、验收、预算和恢复选项；勾选项只是 UI 表达，实际必须落成 `BoundaryContract`。
+
+边界契约遵循单向收窄规则：
+
+```text
+Child Contract ⊆ Parent Contract
+```
+
+下级 Agent 不能因为推理需要而自行扩大路径、工具、网络、委派或副作用权限。若确实需要未授予能力，应产生结构化 `CapabilityRequest`，暂停当前阶段，交回控制面和必要的用户确认。
+
+模板只提供常用边界的默认勾选集合，例如“只读分析”“局部代码修改”“文档生成”“外部写入”或“发布”；模板不能规定唯一的任务流程，也不能替代每次任务的影响评估。
+
+系统应从 Boundary Contract 推导最低安全控制：小范围、可逆、无外部副作用的任务可以减少用户确认仪式，但仍保留事实记录、权限约束和宿主验收；跨模块、长时间、多 Worker 或高影响任务自动增加计划版本、lease、Evidence、Receipt 和 recovery。实际执行一旦触及未勾选边界，只能升级或阻塞，不能静默放行。
+
 ---
 
 ## 7. 最小闭环（MVP）
@@ -205,7 +235,8 @@ type OrchestrationEventKind =
    ↓
 [1] 草案生成（generateDraft）
    - 用 AgentRouter 决策「分几个阶段、每阶段谁负责」（复用 decideAgentCall）
-   - 产出 PipelineDraft（阶段/边/agent/产物 in-out）
+   - 产出 PipelineDraft（阶段/边/agent/产物 in-out/boundary）
+   - 为每个阶段评估 Boundary Contract 和最低安全控制
    - 纯函数：不落盘、不改用户工作流
    ↓  emit orch.draft.created
 [2] UI 展示草案（编排面板：DAG 预览 + 每阶段 agent/产物说明）

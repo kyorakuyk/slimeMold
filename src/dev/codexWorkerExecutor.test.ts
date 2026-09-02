@@ -67,7 +67,12 @@ describe('Codex Worker executor', () => {
   });
 
   it('returns failed when host acceptance rejects the model result', async () => {
-    const evaluate = vi.fn(async () => ({ passed: false, failureReason: '测试失败' }));
+    const evaluate = vi.fn(async () => ({
+      passed: false,
+      evidenceIds: ['evidence-test', 'evidence-diff', 'evidence-policy'],
+      acceptanceId: 'acceptance-1',
+      failureReason: '测试失败',
+    }));
     const executor = createCodexWorkerExecutor({
       invoker: { execute: async () => ({ text: '模型声称完成' }) },
       acceptance: { evaluate },
@@ -75,6 +80,8 @@ describe('Codex Worker executor', () => {
 
     await expect(executor.execute(lease)).resolves.toEqual({
       status: 'failed',
+      evidenceIds: ['evidence-test', 'evidence-diff', 'evidence-policy'],
+      acceptanceId: 'acceptance-1',
       error: '测试失败',
     });
   });

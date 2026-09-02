@@ -2,6 +2,7 @@ import {
   appendDomainEvent,
   type DomainEvent,
   type RunProjectionStatus,
+  type SideEffectRecord,
   type TaskProjectionStatus,
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
@@ -24,6 +25,7 @@ export interface WorkerWorktreeAllocator {
 
 export interface WorkerTaskLease {
   runId: string;
+  orchestrationId?: string;
   task: ProjectTask;
   assignment: WorkerWorktreeAssignment;
   attempt: number;
@@ -33,10 +35,18 @@ export interface WorkerExecutionResult {
   status: 'succeeded' | 'failed';
   error?: string;
   evidenceIds?: string[];
+  acceptanceId?: string;
 }
 
 export interface WorkerExecutor {
   execute(lease: WorkerTaskLease): Promise<WorkerExecutionResult>;
+}
+
+/** Host-owned receipt boundary around a Worker execution side effect. */
+export interface WorkerSideEffectRecorder {
+  start(lease: WorkerTaskLease): Promise<SideEffectRecord>;
+  complete(record: SideEffectRecord, result: WorkerExecutionResult): Promise<SideEffectRecord>;
+  markUnknown?(record: SideEffectRecord, reason: string): Promise<SideEffectRecord>;
 }
 
 export interface WorkerQueueTask {
@@ -45,8 +55,12 @@ export interface WorkerQueueTask {
   attempt: number;
   worktreeId?: string;
   worktreePath?: string;
+  branch?: string;
   baseRevision?: string;
   evidenceIds: string[];
+  acceptanceId?: string;
+  cleanupStatus?: 'cleaned';
+  cleanupReceiptId?: string;
   error?: string;
   updatedAt: string;
 }
@@ -82,6 +96,10 @@ export interface RunWorkerQueueOptions {
   executor: WorkerExecutor;
   /** 并发 worker 数；缺省为所有当前可运行任务。 */
   concurrency?: number;
+  /** 每个并发 batch 完成后，把最新状态与新事实交给持久层。 */
+  onTransition?: (update: { state: WorkerRunQueueState; events: DomainEvent[] }) => Promise<void> | void;
+  /** 可选：在 executor 前后记录 Worker side-effect receipt。 */
+  sideEffects?: WorkerSideEffectRecorder;
 }
 
 function requiredText(value: string, field: string): string {
@@ -262,6 +280,7 @@ export class WorkerTaskQueue {
             attempt,
             worktreeId: requiredText(assignment.worktreeId, 'worktree id'),
             worktreePath: requiredText(assignment.path, 'worktree 路径'),
+            branch: requiredText(assignment.branch, 'worktree 分支'),
             baseRevision: requiredText(assignment.baseRevision, 'worktree 基线'),
             updatedAt: now,
           },
@@ -274,11 +293,13 @@ export class WorkerTaskQueue {
         runId: this.state.runId,
         worktreeId: assignment.worktreeId,
         worktreePath: assignment.path,
+        branch: assignment.branch,
         baseRevision: assignment.baseRevision,
         attempt,
       }, now);
       return {
         runId: this.state.runId,
+        orchestrationId: this.state.orchestrationId,
         task: cloneTask(task),
         assignment,
         attempt,
@@ -303,7 +324,12 @@ export class WorkerTaskQueue {
     }
   }
 
-  markSucceeded(taskId: string, evidenceIds: string[] = [], now = new Date().toISOString()): void {
+  markSucceeded(
+    taskId: string,
+    evidenceIds: string[] = [],
+    now = new Date().toISOString(),
+    acceptanceId?: string,
+  ): void {
     const current = this.requireRunning(taskId);
     const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
     this.state = {
@@ -315,6 +341,7 @@ export class WorkerTaskQueue {
           ...current,
           status: 'succeeded',
           evidenceIds: uniqueEvidenceIds,
+          ...(acceptanceId ? { acceptanceId: requiredText(acceptanceId, 'acceptance id') } : {}),
           error: undefined,
           updatedAt: now,
         },
@@ -323,24 +350,48 @@ export class WorkerTaskQueue {
     this.emitTask('TaskSucceeded', taskId, {
       runId: this.state.runId,
       evidenceIds: uniqueEvidenceIds,
+      ...(acceptanceId ? { acceptanceId } : {}),
       worktreeId: current.worktreeId,
     }, now);
     this.reconcileBlocked(now);
     this.recomputeRunStatus(now);
   }
 
-  markFailed(taskId: string, error: string, now = new Date().toISOString()): void {
+  markFailed(
+    taskId: string,
+    error: string,
+    now = new Date().toISOString(),
+    evidenceIds: string[] = [],
+    acceptanceId?: string,
+  ): void {
     const current = this.requireRunning(taskId);
     const message = requiredText(error, '失败原因');
+    const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
+    const normalizedAcceptanceId = acceptanceId?.trim()
+      ? requiredText(acceptanceId, 'acceptance id')
+      : undefined;
     this.state = {
       ...this.state,
       updatedAt: now,
       tasks: {
         ...this.state.tasks,
-        [taskId]: { ...current, status: 'failed', error: message, updatedAt: now },
+        [taskId]: {
+          ...current,
+          status: 'failed',
+          evidenceIds: uniqueEvidenceIds,
+          ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
+          error: message,
+          updatedAt: now,
+        },
       },
     };
-    this.emitTask('TaskFailed', taskId, { runId: this.state.runId, error: message, attempt: current.attempt }, now);
+    this.emitTask('TaskFailed', taskId, {
+      runId: this.state.runId,
+      error: message,
+      attempt: current.attempt,
+      ...(uniqueEvidenceIds.length > 0 ? { evidenceIds: uniqueEvidenceIds } : {}),
+      ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
+    }, now);
     this.reconcileBlocked(now);
     this.recomputeRunStatus(now);
   }
@@ -417,7 +468,7 @@ export class WorkerTaskQueue {
 
   private emitRun(eventType: string, payload: unknown, occurredAt: string): void {
     this.emit({
-      eventId: `${this.state.runId}:${eventType}:${this.events.length + 1}`,
+      eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
       streamId: this.state.projectId,
       aggregateType: 'Run',
       aggregateId: this.state.runId,
@@ -434,7 +485,7 @@ export class WorkerTaskQueue {
 
   private emitTask(eventType: string, taskId: string, payload: unknown, occurredAt: string): void {
     this.emit({
-      eventId: `${this.state.runId}:${taskId}:${eventType}:${this.events.length + 1}`,
+      eventId: `${this.state.runId}:${taskId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
       streamId: this.state.projectId,
       aggregateType: 'Task',
       aggregateId: taskId,
@@ -447,6 +498,13 @@ export class WorkerTaskQueue {
       source: { objectId: this.state.taskGraphId, objectVersion: this.state.taskGraphVersion },
       sensitivity: 'normal',
     });
+  }
+
+  private maxAttempt(): number {
+    return Object.values(this.state.tasks).reduce(
+      (max, task) => Math.max(max, task.attempt),
+      0,
+    );
   }
 
   private emit(event: Omit<DomainEvent, 'sequence' | 'aggregateVersion'>): void {
@@ -509,23 +567,54 @@ export async function runWorkerQueue(
   const concurrency = options.concurrency === undefined
     ? Number.MAX_SAFE_INTEGER
     : Math.max(1, Math.floor(options.concurrency));
+  const flushTransition = async (): Promise<void> => {
+    if (!options.onTransition) return;
+    const events = queue.drainEvents();
+    if (events.length > 0) await options.onTransition({ state: queue.snapshot(), events });
+  };
   while (true) {
     const runnable = queue.runnableTaskIds();
-    if (runnable.length === 0) return queue.snapshot();
+    if (runnable.length === 0) {
+      await flushTransition();
+      return queue.snapshot();
+    }
     const batch = runnable.slice(0, concurrency);
+    const leases: WorkerTaskLease[] = [];
     await Promise.all(batch.map(async (taskId) => {
       const lease = await queue.claimTask(taskId, options.allocator);
-      if (!lease) return;
+      if (lease) leases.push(lease);
+    }));
+    // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
+    await flushTransition();
+    await Promise.all(leases.map(async (lease) => {
+      const taskId = lease.task.id;
+      let sideEffect: SideEffectRecord | undefined;
       try {
+        sideEffect = await options.sideEffects?.start(lease);
         const result = await options.executor.execute(lease);
+        if (sideEffect) await options.sideEffects!.complete(sideEffect, result);
         if (result.status === 'succeeded') {
-          queue.markSucceeded(taskId, result.evidenceIds ?? []);
+          queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId);
         } else {
-          queue.markFailed(taskId, result.error ?? 'Worker 未提供失败原因');
+          queue.markFailed(
+            taskId,
+            result.error ?? 'Worker 未提供失败原因',
+            new Date().toISOString(),
+            result.evidenceIds ?? [],
+            result.acceptanceId,
+          );
         }
       } catch (cause) {
+        if (sideEffect && options.sideEffects?.markUnknown) {
+          try {
+            await options.sideEffects.markUnknown(sideEffect, 'worker-execution-failed-before-receipt');
+          } catch {
+            // Preserve the task failure; the journal remains an explicit recovery concern.
+          }
+        }
         queue.markFailed(taskId, `Worker 执行异常：${errorMessage(cause)}`);
       }
     }));
+    await flushTransition();
   }
 }

@@ -112,7 +112,7 @@ function fakeDeps(over: Partial<OrchestrationDeps> = {}): {
 }
 
 beforeEach(() => {
-  useWorkflowStore.setState({ orchestrations: [] } as never);
+  useWorkflowStore.setState({ orchestrations: [], workerRuns: [] } as never);
   vi.restoreAllMocks();
 });
 
@@ -121,6 +121,17 @@ describe('runOrchestration 编排执行器', () => {
     const orch = makeReadyOrch();
     updateOrchestration(orch.id, { status: 'running' }); // 模拟已被占用
     await expect(runOrchestration(orch.id, fakeDeps().deps)).rejects.toThrow(/仅 ready/);
+  });
+
+  it('linked Worker Run 存在时拒绝直接启动旧 executor', async () => {
+    const orch = makeReadyOrch();
+    useWorkflowStore.setState({
+      workerRuns: [{ runId: 'run-1', orchestrationId: orch.id }],
+    } as never);
+    const { deps: f, runs } = fakeDeps();
+
+    await expect(runOrchestration(orch.id, f)).rejects.toThrow(/Worker Run/);
+    expect(runs).toHaveLength(0);
   });
 
   it('ready → running → done：按拓扑序执行所有阶段并写 StageLog（真实 wfId + runId）', async () => {

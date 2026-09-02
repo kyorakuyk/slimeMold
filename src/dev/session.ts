@@ -344,7 +344,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       this.confirmCleanupInFlight.add(key);
       try {
         const approval = this.approvedCleanups.get(key);
-        const info = this.manager.get(path);
+        const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
         const acc = this.getAcceptance(approval.acceptanceId);
@@ -362,7 +362,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         // cleanup 前二次签名校验（与删除紧邻——window 内签名变化即拒绝）
         const sig2 = await this.computeWorktreeSignature(path);
         if (sig2 !== approval.stateSignature) return false;
-        const cleaned = await this.manager.cleanup(path, { confirm: true });
+        const cleaned = await this.manager.cleanup(info.id, { confirm: true });
         if (cleaned) this.consumeCleanup(path);
         return cleaned;
       } finally {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
 import type { MasterTurnResult } from '../projectControl/master';
 import { clearProjectEventBuffer, getPendingProjectEvents } from '../projectControl/eventBuffer';
+import { clearWorkerRunRuntime, getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 
 const mocks = vi.hoisted(() => {
   const session: ProjectSession = {
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => {
   };
   const store = {
     projectName: '记账应用',
+    projectPath: 'C:/projects/project-1',
     projectDirty: true,
     agents: [{
       id: 'agent-1',
@@ -39,6 +41,7 @@ const mocks = vi.hoisted(() => {
     agentRouteTable: {},
     orchestrations: [] as unknown[],
     workerRuns: [] as unknown[],
+    workerRunRecoveries: [] as unknown[],
     projectControl: {
       version: 1 as const,
       activeSessionId: 'session-1',
@@ -57,6 +60,10 @@ const mocks = vi.hoisted(() => {
     setWorkerRuns: vi.fn((workerRuns: unknown[]) => {
       store.workerRuns = workerRuns;
     }),
+    setWorkerRunRecoveries: vi.fn((recoveries: unknown[]) => {
+      store.workerRunRecoveries = recoveries;
+    }),
+    saveProject: vi.fn(async () => store.projectPath),
     registerWorkflow: vi.fn((_workflow: unknown, options?: { name?: string }) =>
       options?.name?.includes('施工') ? 'wf-construction' : 'wf-acceptance',
     ),
@@ -108,6 +115,7 @@ describe('ProjectSessionPanel', () => {
 
   beforeEach(() => {
     clearProjectEventBuffer();
+    clearWorkerRunRuntime();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -115,9 +123,12 @@ describe('ProjectSessionPanel', () => {
     mocks.store.setProjectControl.mockClear();
     mocks.store.setOrchestrations.mockClear();
     mocks.store.setWorkerRuns.mockClear();
+    mocks.store.setWorkerRunRecoveries.mockClear();
+    mocks.store.saveProject.mockClear();
     mocks.store.registerWorkflow.mockClear();
     mocks.store.orchestrations = [];
     mocks.store.workerRuns = [];
+    mocks.store.workerRunRecoveries = [];
     mocks.viewStore.globalMasterAgentId = null;
     mocks.store.projectControl = {
       version: 1,
@@ -186,6 +197,21 @@ describe('ProjectSessionPanel', () => {
         expect.objectContaining({ role: 'assistant', content: '我先确认同步范围。' }),
       ]),
     );
+  });
+
+  it('saves structured control facts immediately for a saved project', async () => {
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(mocks.store.saveProject).toHaveBeenCalled();
   });
 
   it('requires explicit user approval before advancing a draft brief', async () => {
@@ -463,7 +489,8 @@ describe('ProjectSessionPanel', () => {
     expect(next?.sessions[0].orchestrationId).toBeDefined();
   });
 
-  it('confirms an awaiting execution plan from the simple workspace without starting a run', async () => {
+  it('confirms an awaiting execution plan and hands the queued Run to the outer runner', async () => {
+    const onRunWorker = vi.fn();
     mocks.store.orchestrations = [{
       id: 'orch-1',
       goal: '目标',
@@ -522,6 +549,7 @@ describe('ProjectSessionPanel', () => {
           sessionId="session-1"
           onBackHome={vi.fn()}
           onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
         />,
       );
     });
@@ -549,5 +577,83 @@ describe('ProjectSessionPanel', () => {
         status: 'queued',
       }),
     ]);
+    expect(getActiveWorkerRunRuntime()?.queues.size).toBe(1);
+    expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/));
+  });
+
+  it('shows a failed Worker Run as the next recovery action', async () => {
+    const onRecoverWorkerRun = vi.fn();
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-1'],
+    }];
+    mocks.store.workerRuns = [{
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'task-graph-1',
+      taskGraphVersion: 1,
+      status: 'partial',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'failed',
+          attempt: 1,
+          evidenceIds: [],
+          error: '宿主验收失败',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-1',
+      projectId: 'project-1',
+      reason: 'unfinished-worker-lease',
+      message: '检测到未闭合 Worker lease',
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-1', taskGraphId: 'task-graph-1' }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain('session.workerRun.recovery');
+    expect(container.textContent).toContain('session.workerRun.recoveryHint');
+    expect(container.querySelector('[data-testid="beginner-session-worker-recovery"]')).not.toBeNull();
+    expect(container.textContent).toContain('session.workerRun.recovery.inspect');
+    expect(container.textContent).toContain('session.workerRun.recovery.retry');
+    expect(container.textContent).toContain('session.workerRun.recovery.skip');
+    expect(container.querySelector('[data-testid="beginner-session-worker-retry"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="beginner-session-worker-skip"]')).not.toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="beginner-session-worker-retry"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String));
   });
 });

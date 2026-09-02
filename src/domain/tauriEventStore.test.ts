@@ -57,6 +57,29 @@ describe('Tauri event store adapter', () => {
     expect(deps.calls.some((call) => call.includes('.tmp'))).toBe(true);
   });
 
+  it('supports a second project-local lock through the host', async () => {
+    const deps = fakeDeps();
+    const adapter = createTauriEventStoreAdapter('D:/repo', deps);
+    const lock = await adapter.acquireLock('D:/repo/.slimemold/runs/side-effects.json.lock');
+
+    await lock.release();
+
+    expect(
+      deps.calls.some(
+        (call) =>
+          call.includes('event_lock_acquire:') &&
+          call.includes('"relativePath":".slimemold/runs/side-effects.json.lock"'),
+      ),
+    ).toBe(true);
+    expect(
+      deps.calls.some(
+        (call) =>
+          call.includes('event_lock_release:') &&
+          call.includes('"relativePath":".slimemold/runs/side-effects.json.lock"'),
+      ),
+    ).toBe(true);
+  });
+
   it('fails closed for paths outside the adapter root', async () => {
     const adapter = createTauriEventStoreAdapter('D:/repo', fakeDeps());
     await expect(adapter.readText('D:/other/.slimemold/events/events.jsonl')).rejects.toThrow(/逃逸/);

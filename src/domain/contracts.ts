@@ -31,7 +31,14 @@ export type RunProjectionStatus = 'queued' | 'running' | 'partial' | 'blocked' |
 export interface DomainProjection {
   lastSequence: number;
   runs: Record<string, { status: RunProjectionStatus }>;
-  tasks: Record<string, { status: TaskProjectionStatus; runId?: string }>;
+  tasks: Record<string, {
+    status: TaskProjectionStatus;
+    runId?: string;
+    evidenceIds?: string[];
+    acceptanceId?: string;
+    cleanupStatus?: 'cleaned';
+    cleanupReceiptId?: string;
+  }>;
 }
 
 /**
@@ -87,6 +94,7 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
     const payload = event.payload as Record<string, unknown>;
     switch (event.eventType) {
       case 'RunCreated':
+      case 'RunQueued':
         projection.runs[event.aggregateId] = { status: 'queued' };
         break;
       case 'RunStarted':
@@ -123,12 +131,40 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
         projection.tasks[event.aggregateId] = {
           status: 'succeeded',
           ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
+          ...(Array.isArray(payload.evidenceIds)
+            ? { evidenceIds: payload.evidenceIds.filter((id): id is string => typeof id === 'string') }
+            : {}),
+          ...(typeof payload.acceptanceId === 'string' && payload.acceptanceId.trim()
+            ? { acceptanceId: payload.acceptanceId }
+            : {}),
+        };
+        break;
+      case 'TaskCleaned':
+        projection.tasks[event.aggregateId] = {
+          status: 'succeeded',
+          ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
+          ...(projection.tasks[event.aggregateId]?.evidenceIds
+            ? { evidenceIds: projection.tasks[event.aggregateId].evidenceIds }
+            : {}),
+          ...(projection.tasks[event.aggregateId]?.acceptanceId
+            ? { acceptanceId: projection.tasks[event.aggregateId].acceptanceId }
+            : {}),
+          cleanupStatus: 'cleaned',
+          ...(typeof payload.receiptId === 'string' && payload.receiptId.trim()
+            ? { cleanupReceiptId: payload.receiptId }
+            : {}),
         };
         break;
       case 'TaskFailed':
         projection.tasks[event.aggregateId] = {
           status: 'failed',
           ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
+          ...(Array.isArray(payload.evidenceIds)
+            ? { evidenceIds: payload.evidenceIds.filter((id): id is string => typeof id === 'string') }
+            : {}),
+          ...(typeof payload.acceptanceId === 'string' && payload.acceptanceId.trim()
+            ? { acceptanceId: payload.acceptanceId }
+            : {}),
         };
         break;
       case 'TaskBlocked':
@@ -391,6 +427,9 @@ export interface SideEffectRecord {
   kind: string;
   target: string;
   inputHash: string;
+  /** 可选执行上下文；旧账本记录没有这些字段仍可解析。 */
+  runId?: string;
+  taskId?: string;
   status: SideEffectStatus;
   recovery: SideEffectRecovery;
   receipt?: SideEffectReceipt;

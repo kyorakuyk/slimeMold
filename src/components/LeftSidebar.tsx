@@ -64,7 +64,13 @@ const PANEL_ITEMS: PanelItem[] = [
 // 下半部分：帮助中心（展开面板）/ 底部面板 / 快捷键查看 / 设置（从下到上）
 
 /** 按面板 key 渲染对应内嵌内容（embedded 模式，去掉各自弹层） */
-export function renderSidePanel(key: SidePanelKey) {
+export type WorkerRecoveryHandler = (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+export type WorkerCleanupHandler = (runId: string, taskId: string, action: 'approve' | 'cleanup') => Promise<void> | void;
+
+export function renderSidePanel(
+  key: SidePanelKey,
+  actions: { onRecoverWorkerRun?: WorkerRecoveryHandler; onCleanupWorkerRun?: WorkerCleanupHandler } = {},
+) {
   switch (key) {
     case 'nodes':
       return (
@@ -90,7 +96,13 @@ export function renderSidePanel(key: SidePanelKey) {
     case 'groups':
       return <GroupsPanel embedded />;
     case 'orchestrator':
-      return <OrchestratorPanel embedded />;
+      return (
+        <OrchestratorPanel
+          embedded
+          onRecoverWorkerRun={actions.onRecoverWorkerRun}
+          onCleanupWorkerRun={actions.onCleanupWorkerRun}
+        />
+      );
     case 'help':
       return (
         <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -249,10 +261,19 @@ interface SidePanelProps {
   width: number;
   onResize: (w: number) => void;
   onClose: () => void;
+  onRecoverWorkerRun?: WorkerRecoveryHandler;
+  onCleanupWorkerRun?: WorkerCleanupHandler;
 }
 
 /** 展开面板内容（位于图标条右侧的内容区第一行） */
-export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) {
+export function SidePanel({
+  active,
+  width,
+  onResize,
+  onClose,
+  onRecoverWorkerRun,
+  onCleanupWorkerRun,
+}: SidePanelProps) {
   const item = PANEL_ITEMS.find((i) => i.key === active) ?? null;
   if (!item) return null;
 
@@ -278,7 +299,9 @@ export function SidePanel({ active, width, onResize, onClose }: SidePanelProps) 
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">{renderSidePanel(item.key)}</div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {renderSidePanel(item.key, { onRecoverWorkerRun, onCleanupWorkerRun })}
+      </div>
 
       {/* 拖拽调节宽度：智能体面板（agents）内部已是「列表 + 编辑配置」两栏固定布局，
           其「编辑配置」次级子菜单不应被左右缩放，故禁用手柄 */}

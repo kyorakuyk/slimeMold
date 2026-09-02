@@ -27,6 +27,16 @@ mod event_store;
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
 
+#[cfg(test)]
+static DEV_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+fn lock_dev_state_tests() -> std::sync::MutexGuard<'static, ()> {
+    DEV_STATE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 struct DevState {
     base_repo: Option<String>,
     worktrees: Vec<String>,
@@ -34,7 +44,10 @@ struct DevState {
 
 impl DevState {
     const fn new() -> Self {
-        DevState { base_repo: None, worktrees: Vec::new() }
+        DevState {
+            base_repo: None,
+            worktrees: Vec::new(),
+        }
     }
 }
 
@@ -309,7 +322,11 @@ fn load_vault_key(app: AppHandle, key: String) -> Result<Option<String>, String>
     if let Some(ref s) = raw {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
             if let Some(k) = v.get("apiKey").and_then(|x| x.as_str()) {
-                eprintln!("[vault] load_vault_key decrypted apiKey len={} prefix={}", k.len(), &k.chars().take(6).collect::<String>());
+                eprintln!(
+                    "[vault] load_vault_key decrypted apiKey len={} prefix={}",
+                    k.len(),
+                    &k.chars().take(6).collect::<String>()
+                );
             }
         }
     }
@@ -497,10 +514,11 @@ struct GitResult {
 fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_dir() {
-        return Err(format!("grant_project_access: 路径不存在或不是目录：{path}"));
+        return Err(format!(
+            "grant_project_access: 路径不存在或不是目录：{path}"
+        ));
     }
-    if p
-        .components()
+    if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!(
@@ -518,8 +536,7 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     //（曾致 Rust 主线程死循环、CPU 打满、WebView 输入事件冻结——每条 capability 都会
     //  参与每次 fs 操作的权限校验，列表越滚越长越慢）。
     use std::time::{Duration, Instant};
-    static LAST_GRANT: std::sync::Mutex<Option<(String, Instant)>> =
-        std::sync::Mutex::new(None);
+    static LAST_GRANT: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
     {
         let mut last = LAST_GRANT.lock().unwrap();
         if let Some((prev, at)) = &*last {
@@ -560,8 +577,51 @@ struct DevExecResult {
 
 /// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
 const DEV_ALLOWED_CMDS: &[&str] = &[
-    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx", "npm",
+    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx",
+    "npm",
 ];
+
+/// Windows 下 PATH 中的 npm/tsx/tsc/vitest 通常是 `.cmd` shim，
+/// `std::process::Command::new("npm")` 不会像 shell 一样自动补全扩展名。
+/// 命令名已经先经过 DEV_ALLOWED_CMDS 白名单，因此这里只负责确定真实可执行文件。
+#[cfg(windows)]
+fn resolve_dev_program_from_path(
+    name: &str,
+    search_path: Option<&std::ffi::OsStr>,
+) -> std::path::PathBuf {
+    let raw = std::path::PathBuf::from(name);
+    if raw.components().count() > 1 || raw.extension().is_some() {
+        return raw;
+    }
+
+    if let Some(search_path) = search_path {
+        for dir in std::env::split_paths(search_path) {
+            for extension in [".com", ".exe", ".bat", ".cmd"] {
+                let candidate = dir.join(format!("{name}{extension}"));
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+            let direct = dir.join(name);
+            if direct.is_file() {
+                return direct;
+            }
+        }
+    }
+    raw
+}
+
+#[cfg(not(windows))]
+fn resolve_dev_program_from_path(
+    name: &str,
+    _search_path: Option<&std::ffi::OsStr>,
+) -> std::path::PathBuf {
+    std::path::PathBuf::from(name)
+}
+
+fn resolve_dev_program(name: &str) -> std::path::PathBuf {
+    resolve_dev_program_from_path(name, std::env::var_os("PATH").as_deref())
+}
 
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
 fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
@@ -572,9 +632,10 @@ fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
             .map_err(|e| format!("无法解析路径（{raw}）：{e}"));
     }
     let state = DEV_STATE.lock().unwrap();
-    let base = state.base_repo.as_ref().ok_or_else(|| {
-        format!("路径是相对的，但未初始化主仓库根：{raw}")
-    })?;
+    let base = state
+        .base_repo
+        .as_ref()
+        .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
     std::path::Path::new(base)
         .join(raw)
         .canonicalize()
@@ -592,8 +653,7 @@ enum DevCwdKind {
 /// 判定 cwd 归属（主仓库根 / 已登记 worktree）。
 fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     let p = std::path::Path::new(cwd);
-    if p
-        .components()
+    if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
@@ -630,7 +690,9 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
 pub(crate) fn assert_registered_worktree(cwd: &str) -> Result<PathBuf, String> {
     match dev_cwd_kind(cwd)? {
         DevCwdKind::Worktree(path) => Ok(path),
-        DevCwdKind::MainRepo => Err("Codex Worker 拒绝在主仓库根执行，必须使用已登记 worktree".into()),
+        DevCwdKind::MainRepo => {
+            Err("Codex Worker 拒绝在主仓库根执行，必须使用已登记 worktree".into())
+        }
     }
 }
 
@@ -646,13 +708,19 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
         Some("rev-parse") => true,
         Some("worktree") => matches!(
             args.get(2).map(|s| s.as_str()),
-            Some("list") | Some("add") | Some("remove") | Some("prune") | Some("lock") | Some("unlock")
+            Some("list")
+                | Some("add")
+                | Some("remove")
+                | Some("prune")
+                | Some("lock")
+                | Some("unlock")
         ),
         Some("branch") => matches!(
             args.get(2).map(|s| s.as_str()),
             Some("-D") | Some("-d") | Some("--list") | Some("-a")
         ),
-        Some("status") | Some("diff") | Some("log") | Some("show") | Some("ls-files") | Some("rev-list") => true,
+        Some("status") | Some("diff") | Some("log") | Some("show") | Some("ls-files")
+        | Some("rev-list") => true,
         _ => false,
     }
 }
@@ -660,10 +728,20 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
 /// 剥离常见凭据环境变量 + 注入 git 非交互配置（与前端 sanitizeEnv 对齐）。
 fn dev_sanitized_env() -> HashMap<String, String> {
     const DENY: &[&str] = &[
-        "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_KEY_1", "AZURE_OPENAI_API_KEY_2",
-        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "REPLICATE_API_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITLAB_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_KEY_1",
+        "AZURE_OPENAI_API_KEY_2",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "REPLICATE_API_TOKEN",
     ];
     let mut env: HashMap<String, String> = std::env::vars().collect();
     for k in DENY {
@@ -731,7 +809,9 @@ fn dev_arg_path_lexically_safe(arg: &str) -> bool {
         return false;
     }
     // `..` 任意位置的父目录逃逸
-    if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return false;
     }
     // 家目录展开符号
@@ -739,7 +819,9 @@ fn dev_arg_path_lexically_safe(arg: &str) -> bool {
         return false;
     }
     // shell 元字符（重定向 / 管道 / 命令拼接）——Command spawn 不经 shell，但保守拒绝
-    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '*', '?', '\'', '"', '(', ')', ' '];
+    const META: &[char] = &[
+        '>', '<', '|', '&', ';', '`', '$', '*', '?', '\'', '"', '(', ')', ' ',
+    ];
     if arg.chars().any(|c| META.contains(&c)) {
         return false;
     }
@@ -832,7 +914,9 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         }
         // find 禁 -delete/-exec/-execdir/>（防删除/执行）；且搜索根必须合法（默认 . 或安全相对路径）
         "find" => {
-            !rest.iter().any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>'))
+            !rest
+                .iter()
+                .any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>'))
                 && match rest.first().map(|s| s.as_str()) {
                     None | Some(".") => true,
                     Some(root) => dev_arg_path_lexically_safe(root),
@@ -881,7 +965,11 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 && rest.len() <= 3
                 && !rest[1..].iter().any(|a| a.starts_with('-'))
         }
-        "npm" => rest_eq(&["run", "test"]) || rest_eq(&["run", "build"]) || rest_eq(&["run", "i18n:check"]),
+        "npm" => {
+            rest_eq(&["run", "test"])
+                || rest_eq(&["run", "build"])
+                || rest_eq(&["run", "i18n:check"])
+        }
         _ => false,
     }
 }
@@ -911,12 +999,15 @@ fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
 fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
     let kind = dev_cwd_kind(&cwd)?;
     if !dev_exec_allowed(&kind, &args) {
-        return Err(format!("dev_exec: 命令在当前 cwd 不被允许：{}", args.join(" ")));
+        return Err(format!(
+            "dev_exec: 命令在当前 cwd 不被允许：{}",
+            args.join(" ")
+        ));
     }
     // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
     dev_exec_validate_paths(&cwd, &args)?;
-    let name = args[0].clone();
-    let mut cmd = Command::new(name);
+    let program = resolve_dev_program(&args[0]);
+    let mut cmd = Command::new(program);
     cmd.current_dir(&cwd);
     for a in &args[1..] {
         cmd.arg(a);
@@ -933,7 +1024,9 @@ fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
 fn dev_init_session(base_repo: String) -> Result<(), String> {
     let p = std::path::Path::new(&base_repo);
     if !p.exists() || !p.is_dir() {
-        return Err(format!("dev_init_session: 主仓库不存在或不是目录：{base_repo}"));
+        return Err(format!(
+            "dev_init_session: 主仓库不存在或不是目录：{base_repo}"
+        ));
     }
     let canon = p
         .canonicalize()
@@ -958,7 +1051,9 @@ fn dev_clear_session() -> Result<(), String> {
 fn dev_register_worktree(path: String) -> Result<(), String> {
     let canon = dev_abs_of(&path)?;
     if !canon.is_dir() {
-        return Err(format!("dev_register_worktree: worktree 不存在或不是目录：{path}"));
+        return Err(format!(
+            "dev_register_worktree: worktree 不存在或不是目录：{path}"
+        ));
     }
     let c = canon.to_string_lossy().to_string();
     let mut st = DEV_STATE.lock().unwrap();
@@ -1043,7 +1138,10 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
     };
     let parent = joined.parent().unwrap_or_else(|| std::path::Path::new("."));
     let canon_parent = parent.canonicalize().map_err(|e| {
-        format!("dev_write_file: 无法解析父目录（{}）：{e}", parent.display())
+        format!(
+            "dev_write_file: 无法解析父目录（{}）：{e}",
+            parent.display()
+        )
     })?;
     let name = joined
         .file_name()
@@ -1062,7 +1160,8 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
             .canonicalize()
             .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
         dev_path_allowed(&real)?;
-        fs::write(&real, content).map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
+        fs::write(&real, content)
+            .map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
         return Ok(());
     }
 
@@ -1303,11 +1402,8 @@ mod fs_atomic_replace_tests {
     use std::path::PathBuf;
 
     fn tmpdir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "slime_fs_atomic_{}_{}",
-            name,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("slime_fs_atomic_{}_{}", name, std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1362,11 +1458,21 @@ mod fs_atomic_replace_tests {
         fs::write(&tmp, "new").unwrap();
         fs::write(&target, "old").unwrap();
         // 独占共享模式打开目标（share_mode=0：拒绝其它进程读写/删除）
-        let handle = OpenOptions::new().read(true).share_mode(0).open(&target).unwrap();
+        let handle = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&target)
+            .unwrap();
         // 1) 目标被锁时直接 rename 应失败
-        assert!(fs::rename(&tmp, &target).is_err(), "锁定目标时 rename 应失败");
+        assert!(
+            fs::rename(&tmp, &target).is_err(),
+            "锁定目标时 rename 应失败"
+        );
         // 2) remove 被锁目标也应失败 → saveCheckpoints 走「保留 tmp」分支
-        assert!(fs::remove_file(&target).is_err(), "锁定目标时 remove 应失败");
+        assert!(
+            fs::remove_file(&target).is_err(),
+            "锁定目标时 remove 应失败"
+        );
         // 3) tmp 保留（内容完整，供下次覆盖）
         assert_eq!(fs::read_to_string(&tmp).unwrap(), "new");
         drop(handle);
@@ -1409,7 +1515,11 @@ mod vault_crypto_roundtrip_tests {
         let bytes = base64_decode(&b64).unwrap();
         let (nonce_raw, ct_bytes) = bytes.split_at(12);
         let pt = key.decrypt(Nonce::from_slice(nonce_raw), ct_bytes).unwrap();
-        assert_eq!(String::from_utf8(pt).unwrap(), plain, "AES-GCM 往返应还原明文");
+        assert_eq!(
+            String::from_utf8(pt).unwrap(),
+            plain,
+            "AES-GCM 往返应还原明文"
+        );
     }
 }
 
@@ -1428,19 +1538,37 @@ mod dev_exec_tests {
         // 只读 git / worktree 生命周期管理 → 放行
         assert!(dev_exec_allowed(&main, &sv(&["git", "rev-parse", "HEAD"])));
         assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "list"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "status", "--porcelain"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "diff", "--name-only"])));
+        assert!(dev_exec_allowed(
+            &main,
+            &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])
+        ));
+        assert!(dev_exec_allowed(
+            &main,
+            &sv(&["git", "status", "--porcelain"])
+        ));
+        assert!(dev_exec_allowed(
+            &main,
+            &sv(&["git", "diff", "--name-only"])
+        ));
         // 非白名单命令名 → 拒绝
         assert!(!dev_exec_allowed(&main, &sv(&["npm", "run", "build"])));
         assert!(!dev_exec_allowed(&main, &sv(&["tsx", "scripts/x.ts"])));
         assert!(!dev_exec_allowed(&main, &sv(&["tsc", "--noEmit"])));
         assert!(!dev_exec_allowed(&main, &sv(&["cat", "/etc/passwd"])));
         // 写入型 git → 拒绝
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "apply", "patch.diff"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "apply", "patch.diff"])
+        ));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "commit", "-m", "x"])));
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "push", "origin", "main"])));
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "push", "origin", "main"])
+        ));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "reset", "--hard", "HEAD"])
+        ));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "checkout", "main"])));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "add", "."])));
     }
@@ -1462,42 +1590,75 @@ mod dev_exec_tests {
         assert!(dev_exec_allowed(&wt, &sv(&["ls", "src"])));
         assert!(dev_exec_allowed(&wt, &sv(&["grep", "foo", "src/a.ts"])));
         // 只读 git 精确参数
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&["git", "status", "--porcelain"])
+        ));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD"])));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD"])));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&["git", "ls-files", "--others", "--exclude-standard"])
+        ));
     }
 
     #[test]
     fn worktree_rejects_high_risk_and_unbounded() {
         let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
         // 写入型 / 高风险 git → 拒绝
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "push", "origin", "main"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "push", "origin", "main"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "commit", "-m", "x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "reset", "--hard", "HEAD"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "checkout", "main"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "clean", "-fd"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "merge", "main"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "apply", "patch.diff"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "add", "."])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "config", "user.email", "x@y.z"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "config", "user.email", "x@y.z"])
+        ));
         // 无界 / 白名单外命令 / 危险参数 → 拒绝
         assert!(!dev_exec_allowed(&wt, &sv(&["npm", "run", "evil"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["npm", "install", "lodash"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "src/outside.ts"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/x.ts", "--config"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["tsx", "scripts/x.ts", "--config"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-delete"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-exec", "rm", "{}", ";"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["find", ".", "-exec", "rm", "{}", ";"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["rm", "-rf", "/"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["sudo", "x"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["node", "-e", "x"])));
         // 精确匹配语义：白名单参数不得被追加额外参数绕过
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain", "--extra"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD", "--output=x"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "status", "--porcelain", "--extra"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "HEAD", "--output=x"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "-x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD", "extra"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "rev-parse", "HEAD", "extra"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])
+        ));
     }
 
     #[test]
@@ -1508,24 +1669,51 @@ mod dev_exec_tests {
         {
             assert!(!dev_exec_allowed(&wt, &sv(&["cat", "/etc/passwd"])));
             assert!(!dev_exec_allowed(&wt, &sv(&["head", "/var/log/syslog"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["tail", "/home/user/.ssh/id_rsa"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["tail", "/home/user/.ssh/id_rsa"])
+            ));
             assert!(!dev_exec_allowed(&wt, &sv(&["ls", "/"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["grep", "SECRET", "/etc/secret"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["grep", "SECRET", "/etc/secret"])
+            ));
             assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "/etc/passwd"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["find", "/etc", "-name", "passwd"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["find", "/etc", "-name", "passwd"])
+            ));
         }
         // Windows drive 绝对路径 / UNC → 拒绝（跨平台均如此：C:\、D:\、\\server\）
-        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "C:\\Windows\\system32\\drivers\\etc\\hosts"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["cat", "C:\\Windows\\system32\\drivers\\etc\\hosts"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["ls", "D:\\secret"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "\\\\server\\share\\secret.txt"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["cat", "\\\\server\\share\\secret.txt"])
+        ));
         // .. 父目录逃逸（含折返路径 scripts/foo/../..）→ 拒绝（跨平台）
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "../../outside.txt"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["head", "src/../../secret"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["ls", ".."])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["grep", "x", "a/../b/../../etc/x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/foo/../../../etc/x.ts"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "../../.git/config"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["find", "..", "-name", "*.ts"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["grep", "x", "a/../b/../../etc/x"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["tsx", "scripts/foo/../../../etc/x.ts"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "../../.git/config"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["find", "..", "-name", "*.ts"])
+        ));
         // 家目录 / shell 元字符 → 拒绝（跨平台）
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "~/secret"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "a>file"])));
@@ -1554,7 +1742,9 @@ mod dev_exec_tests {
         }
         // 良性路径：worktree 内文件 → 放行
         std::fs::write(wt_root.join("ok.txt"), "ok").unwrap();
-        assert!(dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "ok.txt"])).is_ok());
+        assert!(
+            dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "ok.txt"])).is_ok()
+        );
         // symlink 逃逸：cat evil_link/secret.txt → canonicalize 后逃出 wt_root → 拒绝
         #[cfg(unix)]
         if std::fs::symlink_metadata(&link).is_ok() {
@@ -1563,7 +1753,11 @@ mod dev_exec_tests {
             let inside = wt_root.join("evil_link/secret.txt");
             if inside.exists() {
                 assert!(
-                    dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "evil_link/secret.txt"])).is_err(),
+                    dev_exec_validate_paths(
+                        wt_root.to_str().unwrap(),
+                        &sv(&["cat", "evil_link/secret.txt"])
+                    )
+                    .is_err(),
                     "symlink 逃逸应被 canonicalize 层拦截"
                 );
             }
@@ -1600,6 +1794,7 @@ mod dev_exec_tests {
     /// 登记 worktree `wt` 后，cwd=`wt2` 必须被拒绝，而 `wt` 的真实子目录必须被允许。
     #[test]
     fn dev_cwd_kind_no_wt_prefix_collision() {
+        let _test_guard = lock_dev_state_tests();
         let base = std::env::temp_dir().join(format!("sm_wt_prefix_{}", std::process::id()));
         let wt = base.join("wt");
         let wt2 = base.join("wt2");
@@ -1620,7 +1815,10 @@ mod dev_exec_tests {
         // wt 的真实子目录 → 仍属该 worktree（符合设计）
         assert!(dev_cwd_kind(&wt.join("src").to_str().unwrap().to_string()).is_ok());
         // wt2 → 不得误判为 wt 的子路径（前缀碰撞防护）
-        assert!(dev_cwd_kind(&wt2_str).is_err(), "wt2 不得误判为 wt 的子路径");
+        assert!(
+            dev_cwd_kind(&wt2_str).is_err(),
+            "wt2 不得误判为 wt 的子路径"
+        );
 
         // 清理：从全局状态移除登记并删除临时目录
         {
@@ -1632,6 +1830,7 @@ mod dev_exec_tests {
 
     #[test]
     fn codex_worker_cwd_requires_a_registered_worktree() {
+        let _test_guard = lock_dev_state_tests();
         let base = std::env::temp_dir().join(format!("sm_codex_worker_cwd_{}", std::process::id()));
         let wt = base.join("wt");
         let child = wt.join("src");
@@ -1644,9 +1843,31 @@ mod dev_exec_tests {
         dev_register_worktree(wt_str.clone()).unwrap();
         let expected = dev_strip_verbatim(&wt.canonicalize().unwrap());
         assert_eq!(assert_registered_worktree(&wt_str).unwrap(), expected);
-        assert_eq!(assert_registered_worktree(child.to_str().unwrap()).unwrap(), expected);
+        assert_eq!(
+            assert_registered_worktree(child.to_str().unwrap()).unwrap(),
+            expected
+        );
         assert!(assert_registered_worktree(&base_str).is_err());
         dev_clear_session().unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn resolves_windows_command_shim_before_spawning() {
+        let base = std::env::temp_dir().join(format!("sm_dev_program_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // Windows 的 Node 安装可能同时包含无扩展名 npm 脚本和可启动的 npm.cmd。
+        std::fs::write(base.join("npm"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(base.join("npm.cmd"), "@echo off\r\n").unwrap();
+
+        let resolved = resolve_dev_program_from_path("npm", Some(base.as_os_str()));
+
+        #[cfg(windows)]
+        assert_eq!(resolved, base.join("npm.cmd"));
+        #[cfg(not(windows))]
+        assert_eq!(resolved, std::path::PathBuf::from("npm"));
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }
@@ -1660,7 +1881,12 @@ mod dev_write_symlink_tests {
 
     /// 在临时目录构造「worktree」，写入/读取经由公开函数走宿主登记态。
     fn with_registered_worktree(f: impl FnOnce(PathBuf)) {
-        let tmp = std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id()));
+        let _test_guard = lock_dev_state_tests();
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir().join(format!("sm_h4_wt_{}_{}", std::process::id(), suffix));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let tmp_str = tmp.to_string_lossy().to_string();
@@ -1671,8 +1897,9 @@ mod dev_write_symlink_tests {
             st.worktrees.clear();
             st.worktrees.push(tmp_str);
         }
+        let cleanup = tmp.clone();
         f(tmp);
-        let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id())));
+        let _ = fs::remove_dir_all(&cleanup);
         {
             let mut st = DEV_STATE.lock().unwrap();
             st.base_repo = None;

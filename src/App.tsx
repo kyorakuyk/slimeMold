@@ -28,6 +28,29 @@ import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents } from './projectControl/eventBuffer';
+import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
+import { recoverWorkerRunCommand } from './projectControl/workerRecoveryCommand';
+import { installWorkerRunRuntime } from './projectControl/workerRunRuntime';
+import {
+  approveWorkerCleanupProposal,
+  buildWorkerCleanupProposal,
+} from './projectControl/workerCleanup';
+import { executeWorkerCleanupWithReceipt } from './projectControl/workerCleanupExecution';
+import { markWorkerTaskCleaned } from './projectControl/workerCleanupCommand';
+import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency';
+import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
+import { auditProjectControlConsistency } from './projectControl/projectControlConsistency';
+import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunOrchestrationProjection';
+import type { WorkerRunQueueState } from './domain/workerQueue';
+import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
+import type { DomainProjection } from './domain/contracts';
+import { EventStreamRepository } from './domain/eventStore';
+import {
+  loadWorkerEvidence,
+  loadWorkerSideEffects,
+  mergeWorkerEvidence,
+  mergeWorkerSideEffects,
+} from './projectControl/workerEvidence';
 
 registerBuiltins();
 
@@ -165,6 +188,412 @@ export default function App() {
     useWorkflowStore.getState().setProjectControl(snapshot);
   };
 
+  const refreshWorkerCleanupProposals = async (
+    session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
+    runId: string,
+  ): Promise<void> => {
+    const current = useWorkflowStore.getState();
+    const run = current.workerRuns.find((item) => item.runId === runId);
+    if (!run) return;
+    const proposals = await Promise.all(
+      Object.values(run.tasks)
+        .filter((task) => task.worktreePath)
+        .map((task) => buildWorkerCleanupProposal({
+          run,
+          task,
+          acceptance: task.acceptanceId ? session.getAcceptance(task.acceptanceId) : undefined,
+          isWorktreeTracked: (path) => session.manager.isTracked(path),
+          computeWorktreeSignature: (path) => session.computeWorktreeSignature(path),
+        })),
+    );
+    const latest = useWorkflowStore.getState();
+    if (latest.projectId !== run.projectId) return;
+    latest.setWorkerCleanupProposals([
+      ...latest.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
+      ...proposals,
+    ]);
+  };
+
+  const restoreWorkerWorktrees = async (
+    session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
+    runs: readonly WorkerRunQueueState[],
+  ): Promise<void> => {
+    for (const run of runs) {
+      for (const task of Object.values(run.tasks)) {
+        if (task.cleanupStatus === 'cleaned') continue;
+        if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) continue;
+        const restored = await session.manager.restore({
+          id: task.worktreeId,
+          path: task.worktreePath,
+          branch: task.branch,
+          baseRevision: task.baseRevision,
+          createdAt: task.updatedAt,
+          status: 'created',
+        });
+        if (!restored) {
+          useWorkflowStore.getState().addLog(
+            'warn',
+            `Worker worktree 未能从 git 恢复登记：${task.taskId}`,
+          );
+        }
+      }
+    }
+  };
+
+  const auditLoadedWorkerRunFacts = async (projectPath: string | null): Promise<void> => {
+    if (!isTauri || !projectPath) return;
+    try {
+      const { createTauriEventStoreAdapter } = await import('./domain/tauriEventStore');
+      const repository = new EventStreamRepository(
+        createTauriEventStoreAdapter(projectPath),
+        projectPath,
+      );
+      const before = useWorkflowStore.getState();
+      if (!before.projectId || before.projectPath !== projectPath) return;
+      const bootstrapped = await ensureProjectControlEventBaseline({
+        repository,
+        projectId: before.projectId,
+        snapshot: before.projectControl,
+        now: new Date().toISOString(),
+      });
+      const parsed = bootstrapped.stream;
+      const current = useWorkflowStore.getState();
+      if (!current.projectId || current.projectPath !== projectPath) return;
+      let report: WorkerRunConsistencyReport;
+      let controlReport: ReturnType<typeof auditProjectControlConsistency> | null = null;
+      if (parsed.status === 'needs-repair') {
+        const projection: DomainProjection = { lastSequence: 0, runs: {}, tasks: {} };
+        report = {
+          ok: false,
+          projection,
+          issues: [{
+            code: 'invalid-event-stream',
+            message: `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+          }],
+        };
+      } else {
+        report = auditWorkerRunConsistency({
+          projectId: current.projectId,
+          runs: current.workerRuns,
+          events: parsed.events,
+        });
+        controlReport = auditProjectControlConsistency({
+          projectId: current.projectId,
+          snapshot: current.projectControl,
+          events: parsed.events,
+        });
+        if (!controlReport.ok && current.workerRuns.length > 0) {
+          report = {
+            ...report,
+            ok: false,
+            issues: [
+              ...report.issues,
+              ...controlReport.issues.map((item) => ({
+                code: 'control-state-drift' as const,
+                message: `控制面事实审计未通过：${item.message}`,
+              })),
+            ],
+          };
+        }
+      }
+      const runtime = installWorkerRunRuntime({
+        projectId: current.projectId,
+        taskGraphs: current.projectControl.taskGraphs ?? [],
+        runs: current.workerRuns,
+        consistency: report,
+      });
+      current.setWorkerRunRecoveries(runtime.recoveries);
+      if (current.workerRuns.length > 0) {
+        current.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
+        );
+      }
+      if (!report.ok) {
+        current.addLog(
+          'warn',
+          `Worker 事实源审计未通过：${report.issues.map((item) => item.message).join('；')}`,
+        );
+      }
+      if (controlReport && !controlReport.ok) {
+        current.addLog(
+          'warn',
+          `ProjectControl 事实审计未通过：${controlReport.issues.map((item) => item.message).join('；')}`,
+        );
+      }
+    } catch (cause) {
+      useWorkflowStore.getState().addLog(
+        'warn',
+        `Worker 事件流无法审计：${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  };
+
+  const runQueuedWorker = async (runId: string): Promise<void> => {
+    if (!isTauri) throw new Error('Worker 自动执行需要桌面端项目环境');
+    const beforeSave = useWorkflowStore.getState();
+    const projectId = beforeSave.projectId;
+    const projectPath = beforeSave.projectPath;
+    if (!projectId || !projectPath) throw new Error('项目必须先保存，Worker 才能创建隔离 worktree');
+
+    // queued 状态和 RunCreated/TaskQueued 事实先落盘；进程若在 Codex 启动前退出，重开仍能恢复该 Run。
+    await beforeSave.saveProject();
+    const session = await ensureGuiDevSession(projectPath);
+    if (!session) throw new Error('开发宿主不可用，Worker 未启动');
+    const current = useWorkflowStore.getState();
+    if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');
+    const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+      import('./domain/tauriEventStore'),
+      import('./domain/sideEffects'),
+      import('./projectControl/workerSideEffects'),
+    ]);
+    const sideEffectRepository = new sideEffectsModule.SideEffectJournalRepository(
+      createTauriEventStoreAdapter(projectPath),
+      projectPath,
+    );
+    const sideEffects = workerSideEffectsModule.createWorkerSideEffectRecorder(sideEffectRepository);
+    const eventRepository = new EventStreamRepository(
+      createTauriEventStoreAdapter(projectPath),
+      projectPath,
+    );
+
+    const coordinator = createGuiProjectWorkerRunCoordinator({
+      projectId,
+      projectPath,
+      runs: current.workerRuns,
+      session,
+      concurrency: current.maxConcurrency,
+      sideEffects,
+      assertConsistency: async () => {
+        const parsed = await eventRepository.readStream();
+        if (parsed.status === 'needs-repair') {
+          throw new Error(
+            `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+          );
+        }
+        const current = useWorkflowStore.getState();
+        const report = auditWorkerRunConsistency({
+          projectId,
+          runs: current.workerRuns,
+          events: parsed.events,
+        });
+        if (!report.ok) {
+          throw new Error(`Worker 事实源不一致：${report.issues.map((item) => item.message).join('；')}`);
+        }
+        const controlReport = auditProjectControlConsistency({
+          projectId,
+          snapshot: current.projectControl,
+          events: parsed.events,
+        });
+        if (!controlReport.ok) {
+          throw new Error(`ProjectControl 事实源不一致：${controlReport.issues.map((item) => item.message).join('；')}`);
+        }
+      },
+      persistTransition: async ({ state, events }) => {
+        const latest = useWorkflowStore.getState();
+        if (latest.projectId !== projectId) throw new Error('Worker 执行期间项目发生切换');
+        recordProjectEvents(projectId, events);
+        const nextRuns = latest.workerRuns.map((run) => run.runId === state.runId ? state : run);
+        latest.setWorkerRuns(nextRuns);
+        latest.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(latest.orchestrations, nextRuns),
+        );
+        latest.setWorkerRunEvidence(mergeWorkerEvidence(latest.workerRunEvidence, session.collector.records));
+        const effectRecords = await loadWorkerSideEffects(sideEffectRepository);
+        latest.setWorkerRunSideEffects(mergeWorkerSideEffects(latest.workerRunSideEffects, effectRecords));
+        await latest.saveProject();
+      },
+    });
+    await coordinator.run(runId);
+    await refreshWorkerCleanupProposals(session, runId);
+  };
+
+  const recoverInterruptedWorkerEffects = async (
+    projectPath: string | null,
+    runIds: string[],
+  ): Promise<void> => {
+    if (!isTauri || !projectPath || runIds.length === 0) return;
+    try {
+      const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+        import('./domain/tauriEventStore'),
+        import('./domain/sideEffects'),
+        import('./projectControl/workerSideEffects'),
+      ]);
+      const recorder = workerSideEffectsModule.createWorkerSideEffectRecorder(
+        new sideEffectsModule.SideEffectJournalRepository(
+          createTauriEventStoreAdapter(projectPath),
+          projectPath,
+        ),
+      );
+      for (const runId of runIds) await recorder.recoverInterruptedRun(runId);
+    } catch (cause) {
+      // Recovery is fail-closed: keep the visible recovery record when the journal cannot be read/repaired.
+      useWorkflowStore.getState().addLog(
+        'warn',
+        `Worker 副作用账本无法完成恢复核对：${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  };
+
+  const loadProjectWorkerEvidence = async (projectPath: string | null): Promise<void> => {
+    if (!isTauri || !projectPath) return;
+    try {
+      const [{ createTauriEvidenceStore }, { createTauriEventStoreAdapter }, sideEffectsModule] = await Promise.all([
+        import('./dev/tauri-run'),
+        import('./domain/tauriEventStore'),
+        import('./domain/sideEffects'),
+      ]);
+      const persistence = createTauriEvidenceStore(
+        `${projectPath}/.slimemold/evidence`,
+        `${projectPath}-workers`,
+        'host',
+      );
+      const sideEffectRepository = new sideEffectsModule.SideEffectJournalRepository(
+        createTauriEventStoreAdapter(projectPath),
+        projectPath,
+      );
+      const records = await loadWorkerEvidence(persistence);
+      const effects = await loadWorkerSideEffects(sideEffectRepository);
+      const current = useWorkflowStore.getState();
+      if (current.projectPath === projectPath) {
+        current.setWorkerRunEvidence(mergeWorkerEvidence(current.workerRunEvidence, records));
+        current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, effects));
+      }
+    } catch (cause) {
+      useWorkflowStore.getState().addLog(
+        'warn',
+        `Worker Evidence 无法加载：${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  };
+
+  const recoverWorkerRun = async (
+    runId: string,
+    decision: 'retry' | 'skip',
+    reason: string,
+  ): Promise<void> => {
+    if (!isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
+    const current = useWorkflowStore.getState();
+    const projectId = current.projectId;
+    const projectPath = current.projectPath;
+    const run = current.workerRuns.find((item) => item.runId === runId);
+    const taskGraph = run
+      ? current.projectControl.taskGraphs?.find((item) => item.id === run.taskGraphId)
+      : undefined;
+    if (!projectId || !projectPath) throw new Error('项目必须先保存，才能恢复 Worker Run');
+    if (!run || !taskGraph) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
+
+    const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+      import('./domain/tauriEventStore'),
+      import('./domain/sideEffects'),
+      import('./projectControl/workerSideEffects'),
+    ]);
+    const recorder = workerSideEffectsModule.createWorkerSideEffectRecorder(
+      new sideEffectsModule.SideEffectJournalRepository(
+        createTauriEventStoreAdapter(projectPath),
+        projectPath,
+      ),
+    );
+    const journal = await recorder.recoverInterruptedRun(runId);
+    current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
+    const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const result = recoverWorkerRunCommand({
+      projectId,
+      state: run,
+      taskGraph,
+      journal,
+      decision,
+      reason,
+      decisionId,
+      now: new Date().toISOString(),
+    });
+    recordProjectEvents(projectId, result.events);
+    const nextRuns = current.workerRuns.map((item) => item.runId === runId ? result.state : item);
+    current.setWorkerRuns(nextRuns);
+    current.setOrchestrations(
+      projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
+    );
+    current.setWorkerCleanupProposals(current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId));
+    const runtime = installWorkerRunRuntime({
+      projectId,
+      taskGraphs: current.projectControl.taskGraphs ?? [],
+      runs: current.workerRuns.map((item) => item.runId === runId ? result.state : item),
+    });
+    current.setWorkerRunRecoveries(runtime.recoveries);
+    await current.saveProject();
+    if (decision === 'retry') await runQueuedWorker(runId);
+  };
+
+  const cleanupWorkerRun = async (
+    runId: string,
+    taskId: string,
+    action: 'approve' | 'cleanup',
+  ): Promise<void> => {
+    if (!isTauri) throw new Error('Worker cleanup 需要桌面端项目环境');
+    const current = useWorkflowStore.getState();
+    const projectId = current.projectId;
+    const projectPath = current.projectPath;
+    const proposal = current.workerCleanupProposals.find(
+      (item) => item.runId === runId && item.taskId === taskId,
+    );
+    if (!projectId || !projectPath) throw new Error('项目必须先保存，才能清理 Worker worktree');
+    if (!proposal || proposal.status !== 'ready') throw new Error(`清理提案不可用：${runId}/${taskId}`);
+    const session = await ensureGuiDevSession(projectPath);
+    if (!session) throw new Error('开发宿主不可用，Worker cleanup 未执行');
+
+    if (action === 'approve') {
+      approveWorkerCleanupProposal(proposal, session);
+      current.setWorkerCleanupProposals(current.workerCleanupProposals.map((item) => (
+        item.runId === runId && item.taskId === taskId && item.status === 'ready'
+          ? { ...item, approvalStatus: 'approved' }
+          : item
+      )));
+      return;
+    }
+    if (proposal.approvalStatus !== 'approved') {
+      throw new Error('清理前必须先完成显式批准');
+    }
+
+    const [{ createTauriEventStoreAdapter }, sideEffectsModule] = await Promise.all([
+      import('./domain/tauriEventStore'),
+      import('./domain/sideEffects'),
+    ]);
+    const repository = new sideEffectsModule.SideEffectJournalRepository(
+      createTauriEventStoreAdapter(projectPath),
+      projectPath,
+    );
+    const cleanupResult = await executeWorkerCleanupWithReceipt({
+      proposal,
+      repository,
+      host: session,
+      now: new Date().toISOString(),
+    });
+    current.setWorkerRunSideEffects(
+      mergeWorkerSideEffects(current.workerRunSideEffects, [cleanupResult.sideEffect]),
+    );
+    if (!cleanupResult.cleaned) {
+      await current.saveProject();
+      throw new Error('宿主 cleanup 未完成，副作用已标记为 unknown，需要人工核对');
+    }
+
+    const run = current.workerRuns.find((item) => item.runId === runId);
+    if (!run) throw new Error(`找不到 Worker Run：${runId}`);
+    const cleaned = markWorkerTaskCleaned({
+      state: run,
+      taskId,
+      receiptId: cleanupResult.sideEffect.receipt?.receiptId ?? '',
+      decisionId: globalThis.crypto?.randomUUID?.() ?? `cleanup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      now: new Date().toISOString(),
+    });
+    recordProjectEvents(projectId, cleaned.events);
+    const nextRuns = current.workerRuns.map((item) => item.runId === runId ? cleaned.state : item);
+    current.setWorkerRuns(nextRuns);
+    current.setOrchestrations(
+      projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
+    );
+    await current.saveProject();
+    await refreshWorkerCleanupProposals(session, runId);
+  };
+
   const toggleTheme = () => {
     // 三态循环：dark -> light -> system -> dark
     const next = viewTheme === 'dark' ? 'light' : viewTheme === 'light' ? 'system' : 'dark';
@@ -259,7 +688,37 @@ export default function App() {
     // Phase 1（H4 GUI）：跟踪当前项目 id，切换/关闭时先清 Rust 登记态再卸载旧 DevSession，
     // 打开时先同步宿主再初始化（audit P1：dev_init_session 成功后才注册 dev 节点）
     let lastProjectId = useWorkflowStore.getState().projectId;
-    if (lastProjectId) void ensureGuiDevSession(useWorkflowStore.getState().projectPath);
+    let lastRecoveryKey = '';
+    let lastEvidencePath: string | null = null;
+    const scheduleRecovery = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
+      if (!state.projectId) {
+        lastRecoveryKey = '';
+        return;
+      }
+      const runIds = state.workerRunRecoveries.map((item) => item.runId);
+      const key = `${state.projectId}:${runIds.join(',')}`;
+      if (key === lastRecoveryKey) return;
+      lastRecoveryKey = key;
+      void recoverInterruptedWorkerEffects(state.projectPath, runIds);
+    };
+    const scheduleEvidence = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
+      if (!state.projectId || !state.projectPath) {
+        lastEvidencePath = null;
+        return;
+      }
+      if (state.projectPath === lastEvidencePath) return;
+      lastEvidencePath = state.projectPath;
+      void loadProjectWorkerEvidence(state.projectPath);
+    };
+    const initialState = useWorkflowStore.getState();
+    if (lastProjectId) {
+      void ensureGuiDevSession(initialState.projectPath).then((session) => {
+        if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
+      });
+      void auditLoadedWorkerRunFacts(initialState.projectPath);
+    }
+    scheduleRecovery(initialState);
+    scheduleEvidence(initialState);
     return useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
@@ -268,9 +727,16 @@ export default function App() {
       if (s.projectId) void scanProjectCustomNodes().catch(() => {});
       if (s.projectId !== lastProjectId) {
         if (lastProjectId) void teardownGuiDevSession();
-        if (s.projectId) void ensureGuiDevSession(s.projectPath);
+        if (s.projectId) {
+          void ensureGuiDevSession(s.projectPath).then((session) => {
+            if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
+          });
+          void auditLoadedWorkerRunFacts(s.projectPath);
+        }
         lastProjectId = s.projectId;
       }
+      scheduleRecovery(s);
+      scheduleEvidence(s);
     });
   }, []);
 
@@ -365,6 +831,8 @@ export default function App() {
               onOpenAdvanced={() => setWorkspaceMode('advanced')}
               onNewProject={() => setNewProjectOpen(true)}
               onStartProjectSession={startProjectSession}
+              onRunWorker={isTauri ? runQueuedWorker : undefined}
+              onRecoverWorkerRun={isTauri ? recoverWorkerRun : undefined}
             />
           ) : (
             <>
@@ -408,6 +876,8 @@ export default function App() {
                     width={leftW}
                     onResize={setLeftW}
                     onClose={closePanel}
+                    onRecoverWorkerRun={isTauri ? recoverWorkerRun : undefined}
+                    onCleanupWorkerRun={isTauri ? cleanupWorkerRun : undefined}
                   />
                   <div
                     className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"

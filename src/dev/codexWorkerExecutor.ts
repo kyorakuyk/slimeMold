@@ -21,6 +21,7 @@ export interface CodexWorkerInvoker {
 export interface WorkerAcceptanceResult {
   passed: boolean;
   evidenceIds?: readonly string[];
+  acceptanceId?: string;
   failureReason?: string;
 }
 
@@ -83,17 +84,23 @@ export function createCodexWorkerExecutor(options: CodexWorkerExecutorOptions): 
       }
 
       const verdict = await options.acceptance.evaluate({ lease, response });
+      const evidenceIds = [...new Set((verdict.evidenceIds ?? []).map((id) => id.trim()).filter(Boolean))];
       if (!verdict.passed) {
         return {
           status: 'failed',
+          ...(evidenceIds.length > 0 ? { evidenceIds } : {}),
+          ...(verdict.acceptanceId ? { acceptanceId: verdict.acceptanceId } : {}),
           error: verdict.failureReason?.trim() || '宿主验收失败',
         };
       }
-      const evidenceIds = [...new Set((verdict.evidenceIds ?? []).map((id) => id.trim()).filter(Boolean))];
       if (evidenceIds.length === 0) {
         return { status: 'failed', error: '宿主验收通过但没有 Evidence ID' };
       }
-      return { status: 'succeeded', evidenceIds };
+      return {
+        status: 'succeeded',
+        evidenceIds,
+        ...(verdict.acceptanceId ? { acceptanceId: verdict.acceptanceId } : {}),
+      };
     },
   };
 }

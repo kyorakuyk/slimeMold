@@ -65,6 +65,50 @@ export class WorktreeManager {
     return this.infos.get(id);
   }
 
+  /** 按规范化后的 worktree 路径查找仍在使用中的登记。 */
+  getByPath(path: string): WorktreeInfo | undefined {
+    const normalized = normalizeAbsolutePath(path);
+    return [...this.infos.values()].find(
+      (info) => info.status === 'created' && normalizeAbsolutePath(info.path) === normalized,
+    );
+  }
+
+  /**
+   * Restore a worktree after a process restart only when git still reports it as live.
+   * ProjectFile metadata is treated as a hint; the host's git worktree list is authoritative.
+   */
+  async restore(info: WorktreeInfo): Promise<boolean> {
+    if (info.status !== 'created') return false;
+    const path = normalizeAbsolutePath(info.path);
+    const base = normalizeAbsolutePath(this.baseRepoPath);
+    if (path === base) return false;
+
+    const existing = this.infos.get(info.id);
+    if (existing) return normalizeAbsolutePath(existing.path) === path && existing.status === 'created';
+    const pathConflict = this.list().find(
+      (item) => item.status === 'created' && normalizeAbsolutePath(item.path) === path,
+    );
+    if (pathConflict) return false;
+
+    const listed = await this.runner.git(['worktree', 'list', '--porcelain'], this.baseRepoPath);
+    if (listed.exitCode !== 0) return false;
+    const blocks = listed.stdout.split(/\n\s*\n/);
+    const live = blocks.some((block) => {
+      const lines = block.split('\n').map((line) => line.trim());
+      const worktreeLine = lines.find((line) => line.startsWith('worktree '));
+      const branchLine = lines.find((line) => line.startsWith('branch '));
+      return (
+        !!worktreeLine &&
+        normalizeAbsolutePath(worktreeLine.slice('worktree '.length)) === path &&
+        branchLine === `branch refs/heads/${info.branch}`
+      );
+    });
+    if (!live) return false;
+
+    this.infos.set(info.id, { ...info, path, status: 'created' });
+    return true;
+  }
+
   list(): WorktreeInfo[] {
     return [...this.infos.values()];
   }

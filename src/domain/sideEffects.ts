@@ -80,6 +80,12 @@ function decodeRecord(value: unknown): SideEffectRecord {
   if (typeof value.kind !== 'string' || !value.kind.trim()) throw new Error('kind 无效');
   if (typeof value.target !== 'string' || !value.target.trim()) throw new Error('target 无效');
   if (typeof value.inputHash !== 'string' || !value.inputHash.trim()) throw new Error('inputHash 无效');
+  if (value.runId !== undefined && (typeof value.runId !== 'string' || !value.runId.trim())) {
+    throw new Error('runId 无效');
+  }
+  if (value.taskId !== undefined && (typeof value.taskId !== 'string' || !value.taskId.trim())) {
+    throw new Error('taskId 无效');
+  }
   if (!isStatus(value.status)) throw new Error('status 无效');
   if (!isRecovery(value.recovery)) throw new Error('recovery 无效');
   if (value.unknownReason !== undefined && typeof value.unknownReason !== 'string') {
@@ -95,6 +101,8 @@ function decodeRecord(value: unknown): SideEffectRecord {
     kind: value.kind,
     target: value.target,
     inputHash: value.inputHash,
+    ...(typeof value.runId === 'string' ? { runId: value.runId } : {}),
+    ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}),
     status: value.status,
     recovery: value.recovery,
     ...(receipt ? { receipt } : {}),
@@ -154,7 +162,9 @@ function sameIdentity(left: SideEffectRecord, right: SideEffectRecord): boolean 
     left.idempotencyKey === right.idempotencyKey &&
     left.kind === right.kind &&
     left.target === right.target &&
-    left.inputHash === right.inputHash
+    left.inputHash === right.inputHash &&
+    left.runId === right.runId &&
+    left.taskId === right.taskId
   );
 }
 

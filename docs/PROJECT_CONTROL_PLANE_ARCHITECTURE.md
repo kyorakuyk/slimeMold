@@ -32,6 +32,8 @@ status: partial-mvp
 
 这不等同于承诺“一句话立即生成任意复杂且无需确认的完整软件”。对于无法确定的需求、环境、预算或验收条件，系统必须显式展示假设和未决问题。
 
+本架构遵循 [`SLIMEMOLD_PRODUCT_PHILOSOPHY.md`](SLIMEMOLD_PRODUCT_PHILOSOPHY.md) 定义的元 Harness 原则：用户拥有目标和最终决定权，Agent 拥有局部推理和执行权，Project Control 负责上下文、权限、事实、证据、恢复和视图投影之间的边界。
+
 ## 2. 总体决策
 
 ### 2.1 增加项目级主控会话
@@ -329,6 +331,47 @@ Issue 看板应提供：
 
 专业用户修改影响接口、数据模型或模块边界时，不应静默写回 PRD，而应生成架构变更提案。
 
+专业 DAG 是执行解释、调试、审查和溯源面，不是任务执行的唯一事实源。图上的编辑必须转化为领域命令或新的计划 revision，不能绕过控制面直接修改运行事实。
+
+### 8.4 双向映射与三态图
+
+DAG 与内部实现应形成双向映射，但中间必须经过可验证的语义计划层，而不是让画布状态直接写入运行时：
+
+```text
+项目事实 / Decision / Task
+        ↓
+Plan IR / Semantic Workflow
+        ↓
+静态图、动态图和用户视图
+
+用户图上操作
+        ↓
+语义意图 / Domain Command
+        ↓
+Plan IR 或 Plan Revision
+        ↓
+事件流与内部状态
+        ↓
+重新生成各类视图
+```
+
+为了同时支持编辑、复用和运行，图需要区分三个生命周期：
+
+```text
+Draft Graph
+  → 用户或 Agent 编辑、试验、审查
+  → publish
+Static / Published Graph
+  → 按固定版本引用和组合
+  → instantiate
+Dynamic Runtime Graph
+  → 某次 Run 的实际展开、分支、重试和证据投影
+```
+
+Static Graph 是带有输入输出、能力、权限、副作用和验收契约的可复用 Graph Module。它可以在父图中作为黑盒节点，但必须保留按权限下钻的溯源入口；“黑盒”表示组合时封装复杂度，不表示隐藏结果和证据。Dynamic Runtime Graph 主要用于观察、调试和溯源，不应被直接当作新的源计划。
+
+运行时展开的节点应保留 `moduleId/moduleVersion`、来源图和节点 ID、运行实例 ID、attempt 以及 Evidence/Receipt 的来源链。图上移动、分组等纯布局变化只更新视图投影；增加节点、修改参数或调整连线则产生计划草案变更或新的计划 revision。
+
 ## 9. 版本与映射规则
 
 推荐映射链：
@@ -372,6 +415,47 @@ Architecture 是否满足已批准的 Issue？
 
 如果不满足，标记为 drift，要求重新规划或用户确认，而不是继续静默执行。
 
+### 9.1 图操作的领域语义
+
+图操作不能统一解释为“修改节点”。控制面应按操作是否影响执行语义进行分类：
+
+| 图上操作 | 领域语义 | 结果 |
+|---|---|---|
+| 移动、缩放、分组、颜色 | 视图投影修改 | 不改变 Task、Run 或执行计划 |
+| 增加节点、修改参数、调整连线 | 计划草案或计划变更 | 通过 Domain Command 和版本化计划后才影响执行 |
+| 修改 Agent、能力、权限、Artifact 或验收 | Decision / Policy / Acceptance 变更 | 需要影响评估和更高等级确认 |
+| 修改已执行或历史图 | 新 Plan Revision / override | 不覆盖旧 Run、旧 Evidence 或旧事实 |
+
+执行中的动态图不允许被静默修改。用户需要改变运行路线时，应暂停受影响范围、生成变更提案，并在确认后创建新的 Run 或 attempt。
+
+### 9.2 上下级任务的 Boundary Contract
+
+Task / Run 的安全边界应由可验证的 Boundary Contract 表达。用户界面可以把它表现为勾选项，但勾选结果必须落成结构化契约，而不是仅存为展示标签。
+
+目标模型（当前仍属于设计契约，不等同于已经存在的 TypeScript API）至少包含：
+
+```text
+context       → 可以接收哪些项目事实和上下文
+scope         → 可以访问哪些文件、符号和 Artifact
+capabilities  → 可以使用哪些能力、工具和 Provider
+actions       → 可以读取、写入、执行、联网、委派什么
+artifacts     → 可以产生或修改哪些产物类型
+acceptance    → 必须由哪些宿主检查证明
+budget        → 时间、Token、调用次数和费用边界
+recovery      → 失败、未知副作用和重试处理
+delegation    → 是否允许继续派发子任务
+```
+
+上级 Agent 派发子任务时，应确定子任务触及的范围、能力、动作、验收和风险，并把对应选项传给下一级。子任务契约只能收窄上级契约：
+
+```text
+Child Contract ⊆ Parent Contract
+```
+
+下级如果需要未授予的能力，必须产生 Capability Request 并暂停等待控制面决定，不能自行扩大边界。模板只是 Boundary Contract 的默认勾选集合，不应规定唯一的任务流程。
+
+系统应根据契约推导最低控制集合，而不是只依据项目大小或节点数量。小范围、可逆、无外部副作用的任务可以减少用户仪式，但仍保留基础事实、权限和宿主验收；跨模块、长时间、多 Worker 或高影响任务则自动启用更完整的计划版本、lease、Evidence、Receipt 和 recovery。执行中发现边界扩大时只能升级，不能静默降级。
+
 ## 10. 与当前代码的关系
 
 ### 已有基础
@@ -398,6 +482,8 @@ Architecture 是否满足已批准的 Issue？
 - Brief → Architecture → Task Graph 的完整多轮规划和严格项目类型模板；
 - Issue 的主控 triage、已有项目归类/新项目提案以及 Issue → Task 的正式关联；
 - Issue、Task、Stage、Node 之间的完整双向映射和版本漂移检测；
+- Draft Graph、Static / Published Graph、Dynamic Runtime Graph 的统一来源链和版本化模块模型；
+- Task / Run 的 Boundary Contract、上下级契约收窄校验和契约驱动的最低控制集合；
 - H3 `orch.*` 事件、阶段 checkpoint 和跨重启的完整编排恢复；
 - H4 所有 Windows/Tauri GUI 场景的人工验收与长期证据恢复；
 - 可恢复、可审计的长期运维运行时。
@@ -418,6 +504,7 @@ Architecture 是否满足已批准的 Issue？
 - Brief → PRD / Architecture；
 - Architecture → Module / Interface；
 - Module → Task Graph；
+- 同时生成或校验 Task / Run 的 Boundary Contract，并根据契约推导最低安全控制；
 - 用户确认计划后，复用现有 H3 Orchestrator 创建 Pipeline 和工作流绑定；
 - 初级用户不手动配置每个阶段的工作流。
 
@@ -436,14 +523,17 @@ Architecture 是否满足已批准的 Issue？
 - scope 预检和冲突分级；
 - worktree 与 Evidence；
 - 阶段测试和确定性验收；
+- 根据 Boundary Contract 执行能力、路径、Artifact 和副作用边界；
 - 失败升级与人工接管。
 
 ### Phase E：DAG 映射
 
 - Task Graph / Pipeline / Workflow 的版本关系；
+- Draft Graph → Static / Published Graph → Dynamic Runtime Graph 的来源和版本关系；
 - Issue、Task、Stage、Node 的互链；
 - 漂移检测；
 - 架构变更提案；
+- 图上语义编辑到 Domain Command / Plan Revision 的转换；
 - DAG 运行结果反馈到 Issue。
 
 ### Phase F：持续运维
@@ -461,7 +551,9 @@ Architecture 是否满足已批准的 Issue？
 5. 运行失败能回到 Issue 和主控会话，而不是只留在节点日志里；
 6. Agent 的职责隔离带来可测的质量、成本或上下文收益；
 7. 所有代码修改、测试、合并、发布和清理仍然经过既有安全与证据边界；
-8. 持续运维不会在没有持久运行时和用户批准的情况下伪装成已完成能力。
+8. 图上编辑可以区分视图变化、计划变化和策略变化，并且可以追溯到领域命令；
+9. 子任务 Boundary Contract 只能收窄上级边界，越权请求会暂停而不会静默放行；
+10. 持续运维不会在没有持久运行时和用户批准的情况下伪装成已完成能力。
 
 ## 13. 非目标
 
@@ -473,3 +565,222 @@ Architecture 是否满足已批准的 Issue？
 - 自动 push、自动发布或无限循环重试；
 - 完整云端团队协作；
 - 用漂亮的角色、徽章和动画替代真实的质量、成本和证据。
+
+## 14. 全局产品与系统审视补充（2026-09-01）
+
+本节补充前述 MVP 设计，记录对边缘场景和长期方向的共同审视。它不是单纯的实现清单；当本节与早期“仍未具备”描述发生冲突时，以当前代码、开发日志和本节标注的阶段边界为准。
+
+### 14.1 产品基本单位：可暂停、可验收的项目任务
+
+SlimeMold 的基本单位不应是一次 LLM 请求，而应是：
+
+```text
+有目标、有边界、有依赖、有版本、有验收标准、可以暂停和恢复的项目任务。
+```
+
+因此产品闭环应保持为：
+
+```text
+Intent
+→ Project Control
+→ Plan / Decision
+→ Execution
+→ Evidence
+→ Recovery / Delivery
+→ New Project Facts
+```
+
+UI 的默认认知顺序应是：
+
+```text
+我想做什么？
+→ 系统理解了什么？
+→ 还有什么需要我决定？
+→ 系统准备怎么做？
+→ 现在做到哪一步？
+→ 如果失败，下一步怎么办？
+```
+
+简单驾驶舱、Issue 工作台和专业 DAG 应继续作为同一项目状态的不同投影，不能各自维护独立事实。
+
+### 14.2 Agent 路由：从静态 category 映射升级为能力发现
+
+`ui → Gemini` 这类静态映射只能覆盖预设场景，不能表达 Unity 3D 建模、媒体处理或特定工程工具等复合需求。
+
+路由模型应逐步升级为：
+
+```text
+能力声明
+→ 需求提取
+→ 硬性能力过滤
+→ 项目 / 全局路由
+→ 成本、成功率、质量、延迟评分
+→ fallback chain
+```
+
+Agent/Model 应声明领域、工具、Artifact 类型、平台环境、权限、质量档位和成本档位。Planner 应将用户目标转换为 `requiredCapabilities`、`requiredArtifacts` 和环境约束。
+
+没有满足硬性能力的候选时，系统应报告 `capability gap`，提出注册 Agent、Provider 或可信插件的建议，而不是静默把不具备能力的模型当作可用模型。
+
+当前已有显式 `agentId`、任意 category、项目 route table、fallback chain 和成本感知评分；capability registry、能力验证和 capability-gap UX 属于下一阶段基础设施。
+
+### 14.3 Task 与 Artifact 必须使用类型化验收
+
+Worker 成功不应统一等价于“有代码 diff”。不同任务应使用不同 acceptance contract：
+
+```text
+代码       → 编译、测试、diff、路径策略
+文档       → 文件、格式、结构、引用
+配置       → schema、环境兼容性、安全策略
+设计资产   → 格式、尺寸、预览、引用
+3D 资产    → 引擎导入、格式导出、工具验证
+```
+
+模型文本只能是候选结果；结构化解析、宿主检查、Evidence 和 receipt 才能推动状态迁移。
+
+### 14.4 计划变化必须产生新 revision
+
+执行中的 Brief、Architecture、TaskGraph 和 Orchestration 不应被静默修改。
+
+```text
+旧计划 revision 1
+→ 新 Decision / 变更提案
+→ 新计划 revision 2
+→ 用户确认影响范围
+→ 新 Orchestration / Run
+```
+
+已经验收的 Task 保留，仍然有效的 Artifact 可以复用，受影响任务暂停或重新规划。旧 Run 不被覆盖，新的路线通过新的版本和关联关系表达。
+
+### 14.5 长任务、断电与致命错误的恢复原则
+
+恢复系统的第一目标是保留现场，而不是强行修复：
+
+```text
+先保留原始事实
+→ 再验证 snapshot / checkpoint
+→ 再决定可恢复状态
+→ 最后才允许继续执行
+```
+
+状态处理应遵循：
+
+```text
+queued 且没有 lease
+→ 一致性通过后可恢复
+
+running 或 lease 未闭合
+→ recovery-required
+
+side effect started 但没有 receipt
+→ unknown，禁止自动重跑
+
+succeeded 且有 Evidence
+→ 保留，不重复执行
+
+cleanup started 但无 receipt
+→ inspect，不假设清理成功
+```
+
+事件流损坏时不能降级为空状态；snapshot 无效时可以 replay；跨文件状态不一致时必须 fail-closed。最终还需要 backup rotation、manifest/commit marker、只读安全模式和诊断导出，解决 ProjectFile、event stream、Evidence、checkpoint 不是一个物理事务的问题。
+
+### 14.6 Fallback 必须保留已验证进度
+
+模型不可用时，已经由宿主验证的 Task、Artifact、Evidence 和 checkpoint 应继续保留。未经验证的模型自报只能作为候选材料。
+
+```text
+保留旧 attempt
+→ 检查实际 diff / 测试 / receipt
+→ 生成新 attempt
+→ 新 Worker 消费已验证产物
+```
+
+普通只读调用可以沿候选链 fallback；代码 Worker 不应无条件让另一个模型接管可能已被修改的 worktree。当前 Worker queue 已保留旧 attempt 并为 retry 创建新 attempt、worktree 和副作用 key；部分修改自动形成结构化 checkpoint 仍待实现。
+
+### 14.7 事实源与跨进程竞争
+
+跨层状态的主事实源是：
+
+> 以 `projectId` 为边界的 durable DomainEvent stream。
+
+事件通过 `eventId`、`sequence`、`aggregateId`、`aggregateVersion`、`source.objectVersion`、`correlationId` 和 `causationId` 连接对象。
+
+但权威需要分层：
+
+```text
+DomainEvent stream       → 状态迁移事实
+Host Evidence / Receipt  → 执行与副作用事实
+Git revision / worktree  → 代码状态事实
+ProjectFile / snapshot   → 投影与缓存
+Agent text               → 建议和解释
+```
+
+文件锁只能防止事件流写坏，不能单独防止两个应用实例同时启动同一个 Run。长期方案需要项目级 execution lease，并让第二个实例进入只读或观察模式。
+
+### 14.8 Context Pack 与记忆边界
+
+项目记忆可以保存经验和原则，但不能覆盖当前用户确认的 Decision。建议的优先级是：
+
+```text
+当前 Decision
+> 已批准 Architecture / TaskGraph
+> 宿主 Evidence
+> 当前 Task 输入
+> 项目记忆
+> 历史经验
+> Agent 推测
+```
+
+Worker 的上下文应由 Context Pack 编译：任务目标、相关决策、影响文件/符号、必要文档、依赖接口、验收规则和允许路径。当前 Harness 的历史裁剪不是完整 Context Pack；文件/符号索引、文档分块、引用和硬预算仍是未来工作。
+
+## 15. 由全局审视与竞品调研共同调整的优先级
+
+竞品调研的结论不是继续补齐 Dify、n8n、Coze 或 LangGraph 的表面能力，而是把 SlimeMold 的控制权边界收敛为项目级事实、执行保障和安全交付。完整分析见 [`docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`](reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md)。
+
+下一阶段不应优先增加更多节点或更强自治，而应按以下顺序收敛风险：
+
+1. Evidence → 用户查看 diff → 用户批准交付/合并 → 交付 receipt → Issue/项目事实更新；
+2. 面向普通用户的失败、等待和 recovery UX，明确已经发生的副作用与下一步可逆动作；
+3. Context Pack 编译器、文件/符号索引和结构化 Artifact 引用；
+4. capability registry、capability gap、类型化 Artifact acceptance；
+5. quota/rate-limit/暂停恢复状态与项目级 execution lease；
+6. 为 Run 绑定完整 graph/policy/plugin/input/provider/tool-schema hash；
+7. 完成 ProjectControl event source 与旧 workflowStore/executor 的 cutover，最后再扩大持续运维和外部自动化范围。
+
+最终验收不应只问“代码是否运行”，还应问：
+
+```text
+用户能理解
+系统能暂停
+状态能恢复
+结果能验证
+事实不分裂
+路线不漂移
+```
+
+## 16. MVP 垂直切片实测状态（2026-09-02）
+
+当前已经有一条可复现的受控 MVP 垂直切片：
+
+```text
+简单驾驶舱确认
+→ durable RunQueued / Worker event
+→ 独立 worktree + branch
+→ Codex Worker
+→ 宿主测试、diff、path-policy
+→ host Evidence
+→ Orchestration 投影为 done
+→ 用户批准 cleanup
+→ cleanup receipt + TaskCleaned
+→ 从 ProjectFile + event stream 重启恢复
+```
+
+真实 smoke 使用隔离 Git fixture 完成了上述路径，并验证了三个重要边界：
+
+- Windows 命令 shim（`npm.cmd` 等）由宿主解析，不放宽命令白名单；
+- cleanup 以 worktree path 查询、以登记 ID 执行删除，且保留 acceptance、base revision、state signature 和 live registration 二次校验；
+- Worker Run 与 Orchestration 共享同一项目投影，专业视图不会在 Worker 已完成后继续显示“待执行”。
+
+失败/恢复边界也已在独立 fixture 中实测：宿主测试失败会产生 failed Evidence、保留 worktree 且不生成可执行 cleanup；重启时未闭合 lease 会进入 recovery-required，用户选择 skip 不启动新 Run，选择 retry 则创建新的 attempt、worktree 和副作用 key。事件流对不同 attempt 使用不同事件 ID，避免从空内存队列恢复时与旧事实冲突。
+
+这仍然只是单任务、当前 Codex provider、受控命令和代码文件 acceptance 的 MVP 证明。通用语言/Artifact acceptance、事件独立重放、quota、execution lease、Context Pack、用户交付和多实例竞争仍属于后续阶段；不应把本节解释成产品已完成发布。

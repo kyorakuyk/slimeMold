@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 const LOCK_POLL: Duration = Duration::from_millis(10);
+const EVENT_LOCK_RELATIVE_PATH: &str = ".slimemold/events/events.jsonl.lock";
 
 struct HeldLock {
     token: String,
@@ -28,7 +29,10 @@ fn held_locks() -> &'static Mutex<HashMap<String, HeldLock>> {
     HELD_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn lock_path_for_root(raw_root: &str) -> Result<(PathBuf, String), String> {
+fn lock_path_for_root(
+    raw_root: &str,
+    raw_relative_path: Option<&str>,
+) -> Result<(PathBuf, String), String> {
     let raw = raw_root.trim();
     if raw.is_empty() {
         return Err("event_lock: 项目根目录不能为空".into());
@@ -47,10 +51,27 @@ fn lock_path_for_root(raw_root: &str) -> Result<(PathBuf, String), String> {
         return Err(format!("event_lock: 项目根目录不是目录：{raw}"));
     }
 
-    let lock_path = root
-        .join(".slimemold")
-        .join("events")
-        .join("events.jsonl.lock");
+    let relative_path = raw_relative_path.unwrap_or(EVENT_LOCK_RELATIVE_PATH).trim();
+    let normalized_relative_path = relative_path.replace('\\', "/");
+    let relative = Path::new(&normalized_relative_path);
+    if normalized_relative_path.is_empty()
+        || !normalized_relative_path.starts_with(".slimemold/")
+        || !normalized_relative_path.ends_with(".lock")
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::Prefix(_)
+                    | Component::RootDir
+                    | Component::ParentDir
+                    | Component::CurDir
+            )
+        })
+    {
+        return Err(format!(
+            "event_lock: 锁路径必须是项目内 .slimemold/*.lock：{relative_path}"
+        ));
+    }
+    let lock_path = root.join(relative);
     let key = lock_path.to_string_lossy().to_string();
     Ok((lock_path, key))
 }
@@ -65,8 +86,8 @@ fn new_token() -> String {
 }
 
 #[tauri::command]
-pub fn event_lock_acquire(root: String) -> Result<String, String> {
-    let (lock_path, key) = lock_path_for_root(&root)?;
+pub fn event_lock_acquire(root: String, relative_path: Option<String>) -> Result<String, String> {
+    let (lock_path, key) = lock_path_for_root(&root, relative_path.as_deref())?;
     if held_locks()
         .lock()
         .map_err(|_| "event_lock: 锁表 poisoned".to_string())?
@@ -123,8 +144,12 @@ pub fn event_lock_acquire(root: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn event_lock_release(root: String, token: String) -> Result<(), String> {
-    let (lock_path, key) = lock_path_for_root(&root)?;
+pub fn event_lock_release(
+    root: String,
+    token: String,
+    relative_path: Option<String>,
+) -> Result<(), String> {
+    let (lock_path, key) = lock_path_for_root(&root, relative_path.as_deref())?;
     let held = {
         let mut locks = held_locks()
             .lock()
@@ -167,18 +192,37 @@ mod tests {
 
     #[test]
     fn rejects_parent_path_before_canonicalization() {
-        let error = lock_path_for_root("./a/../b").unwrap_err();
+        let error = lock_path_for_root("./a/../b", None).unwrap_err();
         assert!(error.contains("禁止包含 '..'"));
     }
 
     #[test]
     fn acquire_and_release_creates_and_removes_exclusive_lock() {
         let root = temp_root("roundtrip");
-        let token = event_lock_acquire(root.to_string_lossy().to_string()).unwrap();
-        let (path, _) = lock_path_for_root(root.to_string_lossy().as_ref()).unwrap();
+        let token = event_lock_acquire(root.to_string_lossy().to_string(), None).unwrap();
+        let (path, _) = lock_path_for_root(root.to_string_lossy().as_ref(), None).unwrap();
         assert!(path.exists());
-        assert!(event_lock_acquire(root.to_string_lossy().to_string()).is_err());
-        event_lock_release(root.to_string_lossy().to_string(), token).unwrap();
+        assert!(event_lock_acquire(root.to_string_lossy().to_string(), None).is_err());
+        event_lock_release(root.to_string_lossy().to_string(), token, None).unwrap();
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn acquire_and_release_supports_a_project_local_secondary_lock() {
+        let root = temp_root("side_effects");
+        let relative = ".slimemold/runs/side-effects.json.lock";
+        let token =
+            event_lock_acquire(root.to_string_lossy().to_string(), Some(relative.into())).unwrap();
+        let (path, _) =
+            lock_path_for_root(root.to_string_lossy().as_ref(), Some(relative)).unwrap();
+        assert!(path.exists());
+        event_lock_release(
+            root.to_string_lossy().to_string(),
+            token,
+            Some(relative.into()),
+        )
+        .unwrap();
         assert!(!path.exists());
         let _ = fs::remove_dir_all(root);
     }

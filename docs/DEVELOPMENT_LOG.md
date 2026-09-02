@@ -8,7 +8,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-08-31
+period: 2026-07-29 至 2026-09-02
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -1410,6 +1410,265 @@ Issue 工作台采用四个面板：
 - `git diff --check`：无空白错误。
 
 构建仍有已有的动态/静态 import 和大 chunk warning。当前 queued Run 已进入项目持久状态，但尚未在打开项目后自动恢复成可执行队列对象，也尚未把宿主 acceptance 命令、Evidence 落盘、执行进程崩溃恢复和失败恢复 UI 接到 Run registry。
+
+### 7.16 Phase 1b runtime 恢复、宿主验收与自动 Worker 接线
+
+本轮把上一轮持久化的 queued Run 接成可恢复、可执行但不盲目重跑副作用的 runtime，并将真实宿主验收接到简单工作台：
+
+- `src/projectControl/workerRunRuntime.ts`：项目打开时按 `projectId`、`taskGraphId` 和 `taskGraphVersion` 重建 `WorkerTaskQueue`；缺失任务图、版本漂移、重复 Run、状态损坏和重启后残留 running lease 均进入 recovery-required，不静默恢复，也不自动重放可能已经发生的副作用；派生 recovery record 写入运行态 store，驾驶舱不会把残留 lease 误报为正常施工；
+- `src/domain/workerQueue.ts` / `src/projectControl/workerRunRuntime.ts`：增加每个执行 batch 的 `{state, events}` 持久化回调和同一 Run 的并发启动保护；claim 后先持久化 running lease，成功后才调用 Worker executor，完成后再持久化 succeeded/failed/blocked；queue 原有无回调 API 保持事件不被意外清空，连无 runnable 的 blocked 归约 event 也会 flush；lease 同时携带 `orchestrationId`，使 Evidence 能绑定到项目执行上下文；
+- `src/projectControl/workerRunCoordinator.ts`：新增项目级 coordinator，将 runtime queue、allocator、executor 和“状态+事件同批持久化”回调连接起来；GUI factory 使用项目根同级的 `<project>-workers` 路径，禁止把 Worker worktree 放回主仓库；
+- `src/dev/workerAcceptance.ts`：新增宿主确定性验收。Worker 返回后由宿主在对应 worktree 运行 `npm run test`，采集真实变更、diff 和 allowed/protected path 结果，三条 Evidence 逐条等待落盘并 flush 后才交给 evaluator；模型最终文本不参与成功判定；
+- `src/App.tsx` / `src/components/BeginnerExperience.tsx` / `src/components/ProjectSessionPanel.tsx`：确认计划后先保存 queued Run，再在 Tauri 项目中确保 DevSession，调用独立 worktree → Codex workspace-write → host acceptance 链路；每个 transition 持久化最新 `workerRuns` 和 DomainEvent。浏览器环境或未保存项目不会假装启动可写 Worker；
+- simple workspace 的下一步卡片现在直接显示 queued/running/succeeded/partial/blocked/failed/cancelled 的真实状态，并把失败/阻塞引导到专业编排入口；中英文 locale 保持一致。
+
+本轮继续采用先 RED 后 GREEN 的测试方式，覆盖 runtime 恢复、版本漂移/lease fail-closed、真实 acceptance 规则、并发启动保护、coordinator transition 以及驾驶舱状态显示。验证结果：
+
+- `npm run test`：82 个测试文件、724 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 956 个 key 对齐；
+- `git diff --check`：通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。本轮完成了“项目重开 → 可执行 queue → 宿主验收 → 状态/事件持久化”的代码闭环；进程在 Codex 执行中途退出时仍需下一轮结合 side-effect receipt 做可恢复 lease 核对，失败/blocked 的可操作恢复动作也仍待补齐。
+
+### 7.17 Worker side-effect receipt 与重启恢复决策门
+
+本轮继续收紧“running lease 可能已经产生副作用”的恢复语义：
+
+- `src/domain/contracts.ts` / `src/domain/sideEffects.ts`：副作用记录可选绑定 `runId`、`taskId`，旧账本仍兼容；绑定不同执行上下文的同一 idempotency key 会冲突；
+- `src/projectControl/workerSideEffects.ts`：新增 Worker execution recorder。每次 lease 先写 `planned → started`，executor 返回后由宿主写 receipt；executor 异常时尝试写 `unknown/needs-user`；项目重开可把同一 Run 的残留 started 记录安全归约为 unknown；
+- recovery 决策只允许显式 `inspect`、`retry`、`skip`。`retry` 只返回新 attempt 所需状态，保留旧 attempt 和 effect key，不复用可能已经发生的副作用；`skip` 将任务收口为 failed 并让依赖任务进入 blocked；`inspect` 不改状态；
+- `src/projectControl/workerRecoveryCommand.ts` / `src/domain/contracts.ts`：将 recovery 决策写成 `WorkerRunRecoveryDecided`、`RunQueued`、`TaskFailed`、`TaskBlocked` 等 DomainEvents，并补齐 `RunQueued` replay；retry 事件只改变可恢复状态，不直接执行；
+- `src/domain/workerQueue.ts`：把 side-effect recorder 接在 running lease barrier 与 executor 之间；receipt 完成后才标记任务 succeeded；无 runnable task 时产生的 blocked event 也会 flush；
+- `src/App.tsx`：Tauri 项目执行使用 worktree 外部的项目级 side-effect journal；项目重开后自动读取并归约残留 started 记录，但不会自动 retry/skip；用户确认 retry 后才安装新 queue 并启动新 attempt，skip 不启动；
+- `ProjectSessionPanel`：简单驾驶舱将 recovery-required 与普通 running 区分，展示检查、创建新 attempt、跳过三种路径，并提供明确的 retry/skip 决策回调；
+
+验证结果：
+
+- `npm run test`：84 个测试文件、733 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 962 个 key 对齐；
+- `git diff --check`：通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。当前恢复决策模型已经能安全地产生新 attempt 状态，但专业视图中的实际 inspect/retry/skip 操作、receipt 结果与 worktree 清理审批的完整 UI 事务仍待接入。
+
+### 7.18 专业编排视图接入 Worker Run recovery 投影
+
+- 新增 `src/projectControl/workerRunView.ts` 与测试：按 `orchestrationId` 从同一 `workerRuns` registry 生成只读 view model，保留 Run/Task 状态、attempt、失败原因、blocked 影响、worktree 路径、Evidence ID 和 recovery record，不复制状态。
+- `OrchestratorPanel` 展示 queued/running/succeeded/partial/blocked/failed/cancelled 的真实 Worker 状态，并在 Task 级别列出错误、worktree 与 Evidence。
+- `SidePanel` → `OrchestratorPanel` → App 复用同一个 `recoverWorkerRun` handler；专业视图的 retry/skip 与简单项目驾驶舱一致，retry 明确创建新 attempt，不复用旧副作用 key，skip 只收口失败及依赖阻塞。
+- 专业视图没有接入旧 `runOrchestration` 作为第二执行路径；旧编排按钮和新 Worker registry 仍保持边界。
+- 验证：`npm run test` 通过，85 个测试文件、735 个测试通过；`npm run build` 通过；`npm run i18n:check` 通过，中英文 981 个 key 对齐；`git diff --check` 通过。build 仍只有既有动态/静态 import 与大 chunk warning。
+
+### 7.19 Evidence/receipt projection 与 worktree cleanup proposal
+
+- 新增 `src/projectControl/workerEvidence.ts`：从宿主 Evidence JSONL 与 side-effect journal 加载运行态事实；Evidence 只接受 `capturedBy: 'host'`，损坏 journal fail-closed，两个 projection 均按稳定 ID 去重。
+- `workerRunView.ts` 现在按 Run/Task 关联测试、diff、path-policy Evidence 详情，以及 `started/receipt/unknown` side-effect receipt 摘要；UI 不展示原始 stdout/stderr、target 或 input 指纹。
+- `WorkerQueueTask`/`TaskSucceeded` event 保留 `acceptanceId` 与 Evidence IDs；cleanup proposal 绑定 `runId/taskId/orchestrationId/stageId/baseRevision/stateSignature/acceptanceId`，只有 succeeded + host acceptance passed 才能进入 ready。
+- 新增 `workerCleanup.ts` 的显式 `approveWorkerCleanupProposal` 与二次 `cleanupApprovedWorker` 边界；项目运行结束后仅生成 proposal，专业视图显示 ready/blocked，绝不自动删除或强制清理 worktree。
+- 验证：`npm run test` 通过，87 个测试文件、741 个测试通过；`npm run build` 通过；`npm run i18n:check` 通过，中英文 986 个 key 对齐；`git diff --check` 通过。build 仍只有既有动态/静态 import 与大 chunk warning。
+
+### 7.20 重启后 worktree live restore 与 cleanup 安全前置检查
+
+- `WorkerQueueTask` 持久化 worktree branch；`TaskStarted` event 同步记录 branch，避免重启后只凭路径猜测分支。
+- `WorktreeManager.restore` 查询宿主 `git worktree list --porcelain`，只恢复 live path + branch 匹配的登记；主仓库、缺失 worktree、ID/path 冲突和旧缺 branch 元数据均拒绝恢复。
+- App 项目切换/启动后恢复 WorktreeManager 登记；cleanup proposal 生成前额外检查 worktree 仍被当前宿主登记，未登记时显示 blocked，不计算签名也不批准删除。
+- 验证：`npm run test` 通过，87 个测试文件、744 个测试通过；`npm run build` 通过；`npm run i18n:check` 通过，中英文 986 个 key 对齐；`git diff --check` 通过。build 仍只有既有动态/静态 import 与大 chunk warning。
+- 尚未自动执行 cleanup：显式 proposal/approve/二次签名 API 已存在，下一轮仍需把批准、实际清理、cleaned 状态和 cleanup receipt 接入宿主事务与 UI。
+
+### 7.21 Worktree cleanup 批准、receipt 与 cleaned 状态闭环
+
+- `WorktreeManager.restore` 从宿主 `git worktree list --porcelain` 恢复 live worktree；`WorkerQueueTask` 保留 branch/baseRevision，已清理任务在重启时跳过 restore。
+- `workerCleanup.ts` 生成绑定 acceptance/signature 的 ready proposal；专业编排区提供两步操作：先显式批准，再执行清理。未批准、漂移、缺 acceptance、缺 live registration 或失败任务均不允许删除。
+- `workerCleanupExecution.ts` 为 cleanup 写 `started → receipt/unknown` side-effect journal；重复 receipt 幂等返回，unknown 不自动重试。
+- `workerCleanupCommand.ts` 将成功清理写入 `cleanupStatus:'cleaned'`、`cleanupReceiptId` 和 `TaskCleaned` DomainEvent；replay/ProjectFile serializer 保留 receipt 绑定。
+- 验证：`npm run test` 通过，89 个测试文件、750 个测试通过；`npm run build` 通过；`npm run i18n:check` 通过，中英文 990 个 key 对齐；`git diff --check` 通过。build 仍只有既有动态/静态 import 与大 chunk warning。
+
+### 7.22 Worker 事实源审计与旧 executor 接管边界
+
+- 新增 `src/projectControl/workerRunConsistency.ts`：将 ProjectFile 中的 `workerRuns` 与 durable event stream replay 结果逐 Run/Task 比较，覆盖状态、所属 Run、Evidence ID、acceptance ID、cleanup 状态和 cleanup receipt；事件流缺失、损坏、跨项目混入或存在孤立事实时返回明确问题，不静默选择某一侧。
+- 新增 `src/projectControl/eventSourceBootstrap.ts`：已有项目首次打开且事件流为空时，通过既有 migration contract 写入一次 synthetic control baseline，并生成 projection snapshot；非空流不重复迁移，损坏流直接保持 `needs-repair`。
+- `src/projectControl/workerRunRuntime.ts`：重开项目时，审计不通过的 Run 不再安装 executable queue，转为 `event-stream-invalid` 或 `event-stream-drift` recovery；已有 recovery UI 因此能显示并阻止继续施工。
+- `src/projectControl/workerRunCoordinator.ts`：增加执行前 `assertConsistency` 门，审计失败时在 worktree 分配和 Codex executor 之前 fail-closed；GUI coordinator 保证转发该门。
+- `src/App.tsx`：项目启动/切换时读取 `.slimemold/events/events.jsonl` 并安装带审计结果的 runtime；真实 Worker 启动前再次审计，防止项目状态在异步期间发生事实源漂移。
+- `src/projectControl/eventBuffer.ts`：pending facts flush 后写入可校验 projection snapshot；重复 flush/首次 snapshot 写入失败后重试时，会先重放已落盘事件修复 snapshot，再清除 pending，避免只清 pending 不留 checkpoint。
+- `src/components/ProjectSessionPanel.tsx`：主控回合、Brief、Architecture、TaskGraph、Orchestration 和执行计划确认统一经过持久化 helper；已保存项目在结构化事实更新后立即保存，避免 pending event 只存在内存中。
+- `src/components/OrchestratorPanel.tsx` / `src/orchestrator/run.ts`：同一 orchestration 一旦存在 linked Worker Run，旧 executor 的按钮、panel callback 和底层 API 均被阻断，避免旧 executor 与 Worker Run 并行启动。
+
+本轮继续采用先 RED 后 GREEN 的测试方式，覆盖一致状态、状态漂移、缺少 Run 事实、非法事件流、runtime fail-closed 和 coordinator 执行前阻断。验证结果：
+
+- `npm run test`：92 个测试文件、764 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。本轮还实际启动了当前工作树的 Tauri dev（Vite ready、Rust 编译完成、`slime-mold.exe` 启动），但 Windows 窗口枚举未暴露该窗口，因此没有把 UI 点击链路冒充为已验证。旧 `workflowStore`/executor 的完整双写迁移、事件重放重建完整 ProjectControl snapshot，以及真实 Tauri UI 端到端执行仍待后续阶段。
+
+### 7.23 ProjectControl 结构事实审计
+
+- 新增 `src/projectControl/projectControlConsistency.ts`：对 Project/Session/Brief/Architecture/TaskGraph/Issue/Decision 的 durable facts 与 ProjectFile 结构投影做 ID、project scope、版本、审批、状态和关联关系校验；事件 payload 只有摘要时只做可验证字段比较，不伪造完整私有对象重建。
+- `src/App.tsx`：项目启动/切换时同时执行 Worker Run 与 ProjectControl 审计；已有 Worker Run 且控制面事实漂移时，统一转为 `control-state-drift` recovery，执行前二次审计也会阻断 worktree/Codex。
+- normal Command facts 与 synthetic legacy baseline 均有测试覆盖；孤立控制面事件、缺失实体事实、状态漂移和非法 sequence 均 fail-closed。
+
+验证结果：
+
+- `npm run test`：93 个测试文件、768 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。当前控制面已经具备“事件源 + ProjectFile snapshot + 启动/执行前审计”的可验证边界，但完整 ProjectControl 从事件独立重建仍不实现，因为当前事件契约只保存摘要；真实 Tauri UI 端到端 Worker 链路仍待窗口可见性与宿主 smoke 条件满足后验证。
+
+### 7.24 Tauri 可见窗口启动 smoke
+
+- 重新启动当前 `research/experimental-refactor` 工作树的 `npm run tauri dev`，Vite 在 `http://localhost:1420/` 就绪，Rust dev profile 编译完成，Windows 原生窗口成功枚举为 `SlimeMold · Agent 工作流`。
+- 只读捕获确认项目驾驶舱正常渲染：项目状态、工作流/运行统计、交付物入口和高级工作台入口均可见；本次没有点击执行、保存或 cleanup。
+- 启动后的只读文件核对确认上次项目 event stream 有 1 条 synthetic baseline，projection snapshot 已生成；其目录不是 Git worktree，因此没有代码工作树可被误报为修改。
+- smoke 结束后已终止本轮启动的 Tauri/Vite 子进程，未留下运行服务。
+
+本轮没有新增代码改动；代码验证沿用 7.23 的 `npm run test`（93 个测试文件、768 个测试）、`npm run build`、`npm run i18n:check`（991 keys）和 `git diff --check` 结果。完整“确认计划 → Worker → acceptance/Evidence → cleanup”仍需在隔离测试项目中执行，避免对用户项目产生副作用。
+
+### 7.25 真实 Tauri Worker smoke 暴露并修复项目内副作用锁适配问题
+
+- 在 `D:/Temp/slimemold-worker-e2e` 创建隔离 Git fixture，包含已批准 Task Graph、待确认 Orchestration 和可运行的 `npm test`；没有修改用户项目或当前仓库中的无关未跟踪资产。
+- 通过真实 Tauri WebView 加载隔离项目并点击“确认执行计划”，确认按钮确实进入 queued Run → runtime → Worker 路径；ProjectFile 和 durable event stream 写入了 Run/Task 事实，`WorktreeManager` 也成功创建了独立 worktree 和 Worker branch。
+- 首次真实 Worker 执行在 Codex/宿主 acceptance 之前失败，错误为：`事件存储只能使用项目锁：D:/Temp/slimemold-worker-e2e/.slimemold/runs/side-effects.json.lock`。根因是 `src/domain/tauriEventStore.ts` 只允许固定的 event stream lock，而 `SideEffectJournalRepository` 需要项目根目录下第二把 side-effect lock；不是 worktree、queue 或事件 replay 的失败。
+- `src/domain/tauriEventStore.ts` 现在对项目内 `.slimemold/**/*.lock` 生成相对路径，并将其传给宿主；`src-tauri/src/event_store.rs` 的 `event_lock_acquire/release` 保留默认 event lock，同时校验并支持项目内 `.lock` 路径，拒绝绝对路径、`..`、项目外和非 `.slimemold` lock。
+- 新增 adapter 第二把锁回归测试和 Rust 宿主 secondary-lock 测试。修复后的 targeted 验证：`src/domain/tauriEventStore.test.ts` 3/3 通过；`cargo test --manifest-path src-tauri/Cargo.toml event_store` 3/3 通过。
+
+本轮完整验证结果：
+
+- `npm run test`：93 个测试文件、769 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml event_store`：3 个 Rust 宿主锁测试通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。当前已证明真实 Tauri UI 能加载隔离项目、确认计划、入队并创建独立 Worker worktree；修复后的 Codex 修改、宿主 acceptance、Evidence 和 cleanup 全链路尚未重跑，因此不能记录为 E2E 成功。当前 `research/experimental-refactor` 修改仍未 commit/push。
+
+### 7.26 从维护型实现说明转向全局产品与系统审视
+
+- 新建 `docs/SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md`，将前几轮关于 UI、竞品、Agent 协作、长期任务、记忆、上下文、路线一致性、能力路由、灾难恢复、断电、fallback 和唯一事实源的讨论整理为全局战略审视；文档不再采用面试问答结构，而是按问题本质、当前假设、结构性矛盾、失败模式、候选方向、推荐路线和待验证事实组织。
+- 在全局审视稿中追加一组边缘情形问答：用户与 Worker 并行修改主仓库、同一文件非重叠变更、文档/设计/3D Artifact 验收、执行中改变目标、非 Git 项目、多实例并发、模型格式错误、flaky test、大型二进制、记忆冲突、保留 worktree、Provider 静默升级、能力缺口和重复 retry；这些场景统一收敛为“事实分层、状态可暂停、结果可验证、副作用可追踪、未知状态不自动重跑”。
+- 更新 `docs/PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 第 14–15 节，补充产品基本单位、能力型 Agent 路由、类型化 Artifact acceptance、计划 revision、断电/致命错误恢复、fallback 进度保留、跨进程 execution lease、Context Pack 和新的风险收敛优先级。
+- 本轮形成的架构判断是：SlimeMold 不应继续以“更多节点/更多 Agent/更强自治”为首要目标，而应优先成为面向长期软件任务的 Agent 项目操作系统；`DomainEvent` 是状态迁移事实，宿主 Evidence/receipt 是执行事实，Git revision/worktree 是代码事实，ProjectFile/UI 只是投影；静态 `category → model` 应逐步升级为 capability registry；事件流和 ProjectFile 的跨文件事务、Context Pack、quota-aware 调度、Artifact acceptance 和完整 hash 封套仍是后续工作。
+- 这轮文档审视没有把战略建议伪装成已完成能力；真实 Tauri Worker 的 Codex → acceptance → Evidence → cleanup 全链路仍需后续验证，当前代码工作树仍未 commit/push。
+
+本轮完整验证结果：
+
+- `npm run test`：93 个测试文件、769 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml event_store`：3 个 Rust 宿主锁测试通过。
+
+构建仍有既有的动态/静态 import 和大 chunk warning，无新增构建失败。本轮完成的是产品/架构文档沉淀和风险优先级校准，不代表 Context Pack、capability registry、灾难恢复向导、quota 状态或完整 Tauri Worker E2E 已经交付。
+
+### 7.27 真实 Tauri Worker MVP 垂直切片闭环
+
+- 在隔离 Git fixture `D:/Temp/slimemold-worker-e2e` 中通过可见 Tauri WebView 点击“确认执行计划”，真实走通 `queued → running → succeeded`：Worker 使用独立 worktree 和 branch，未修改当前仓库或用户项目。
+- Codex Worker 实际创建 `docs/WORKER_E2E_OK.txt`；宿主 `npm run test` 退出码为 0，diff 和默认 `allowedPaths` 均通过，写入 3 条 host Evidence（测试、diff、path-policy），再将 Run/Task 收口为 succeeded。
+- 专业编排视图从同一个 Worker registry 展示 Run/Task、Evidence 和 cleanup proposal；两步批准后，宿主重新校验 acceptance、base revision、state signature 和 live registration，写入 cleanup receipt，删除 worktree，并记录 `TaskCleaned`。
+- 修复真实 smoke 暴露的三个 MVP 缺口：Windows `dev_exec` 解析 npm/tsx/tsc/vitest 的 `.cmd` shim；cleanup 按 worktree path 查询登记并按真实 ID 删除；Worker Run 状态投影回 Orchestration 的 `runIds/status/stageLogs`，避免专业视图仍显示“待执行”。
+- 启动审计从 `project.json + events.jsonl` 重建后，Run 保持 succeeded、Task 保持 cleaned、Orchestration 保持 done，Evidence/receipt 不重复执行，且 UI 没有误报“有未保存改动”。
+- 为共享 Rust `DEV_STATE` 测试增加串行保护并消除临时目录 PID 碰撞，默认并行 `cargo test` 不再受测试竞争影响。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、773 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 真实 Tauri E2E：确认计划 → Codex Worker → worktree → host acceptance → 3 条 Evidence → Orchestration done → 两步 cleanup receipt → `TaskCleaned` → 重启恢复，通过。
+
+这证明的是单任务、单 fixture、受控命令和当前 Codex provider 的 MVP 垂直切片，不等于通用项目已具备所有语言/Artifact 的 acceptance、完整事件独立重建、quota、execution lease、Context Pack 或自动交付能力；当前修改仍未 commit/push。
+
+### 7.28 acceptance 失败与 recovery retry 的真实 Tauri 验证
+
+- 新建隔离 Git fixture `D:/Temp/slimemold-worker-e2e-failure`，基线 `npm test` 固定返回退出码 1；通过真实 Tauri WebView 确认执行计划后，Codex 仍在独立 worktree 创建目标文件，宿主将 Run 收口为 `partial`、Task 收口为 `failed`，而不是接受模型自报成功。
+- 失败验收的 test/diff/path-policy 三条 host Evidence 均落盘并回写到失败 Task 的 `evidenceIds`，专业视图能显示失败命令、退出码 1、Evidence 和副作用状态；失败任务没有可执行 cleanup proposal，worktree 保留供复查。
+- 将 fixture 模拟为停在 `TaskStarted` 且 side-effect 为 `unknown/needs-user` 的重启现场后，启动审计显示 recovery-required，明确列出 inspect/retry/skip 原则，不自动重跑。真实选择 skip 只追加 recovery events，attempt 保持 1、没有新的 `TaskStarted/RunStarted`，未知副作用仍保留。
+- 真实选择 retry 后创建 attempt 2 和全新 worktree；旧副作用 key 保持 unknown，新 attempt 使用独立 key 并得到 receipt。故意失败的 acceptance 再次收口为 failed，两个 attempt 的 `TaskStarted` eventId 分别包含 `attempt-1`/`attempt-2`，无事件漂移告警。
+- 修复了失败 Evidence 在 executor/queue/replay 链路中丢失的问题，以及恢复队列因从空内存 event buffer 重编号而复用旧 eventId 的问题；新增 executor、queue、domain replay 和跨 attempt 回归测试。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、776 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 真实 Tauri failure/recovery smoke：失败 acceptance → failed Evidence → recovery-required → skip → 重启 retry → attempt 2 新 worktree/副作用 receipt → 再次 failed，通过。
+
+测试结束后已删除 failure fixture 的临时 worktree，并恢复当前 Tauri 到 `D:/Agents/SMtest`；没有修改用户项目，也没有 commit/push。通用 Artifact acceptance、跨 provider 恢复和完整事件独立重放仍未交付。
+
+### 7.29 将 AI 编排工具调研转化为产品定位与路线约束
+
+- 读取用户提供的 Dify、n8n、Coze、LangChain、LangGraph 局限性调研，并将其整理为 `docs/reference/AI_AGENT_ORCHESTRATION_LIMITATIONS_RESEARCH.md`；报告明确区分原始调研、战略归纳和仍需验证的事实，保留共享调研页作为来源。
+- 调研的核心结论不是竞品星级排名，而是不同工具对控制权的分配：平台化产品降低应用组合成本，自动化引擎连接外部系统，代码框架提供组件或 Runtime；复杂 Agent 系统真正的生产难题集中在状态、权限、预算、Evidence、外部副作用、恢复和交付。
+- 将 SlimeMold 的定位进一步收窄为“面向真实软件项目的 Agent 控制面与执行保障层”，明确不以更多节点、模板、连接器或更强但不可解释的自治作为近期核心竞争指标。第三方 Runtime 可以作为局部执行能力，但不能取代 SlimeMold 的项目事件流、审批、策略、Evidence、Receipt 和交付边界。
+- 将调研结论合并到 `SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md`、`SLIMEMOLD_ARCHITECTURE_DIRECTION_REVIEW.md` 和 `PROJECT_CONTROL_PLANE_ARCHITECTURE.md`：下一阶段优先完成 Evidence → 用户查看 diff → 批准交付/合并 → 交付 receipt → 项目事实更新，其次建设普通用户 recovery UX、Context Pack、capability registry、quota/lease 和类型化 Artifact acceptance。
+- 明确调研证据边界：GitHub issue、Reddit、G2 和公开文章适合发现痛点，不足以单独证明问题普遍性；云端、自托管、社区版、企业版和不同 Runtime 层次必须拆开验证。后续产品判断应使用真实任务指标，而不是主观星级。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、776 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮只新增和修改 Markdown 文档，没有代码行为变更；没有 commit/push。
+
+### 7.30 建立项目级元 Harness 产品哲学文档
+
+- 根据用户对产品哲学的进一步定义，新建 `docs/SLIMEMOLD_PRODUCT_PHILOSOPHY.md`，将 SlimeMold 明确为同时约束用户、Agent、项目事实和可视化投影关系的项目级元 Harness，而不是单纯的 Agent Runtime 或节点编排器。
+- 文档固化按需暴露、信息/行动/解释最小权限、用户与 Agent 的通信契约、Agent 间结构化事实交换、Agent 无事实定义权、宿主 acceptance、失败现场保留、渐进式透明和用户溯源权等产品不变量。
+- 明确高级 DAG 工作台的定位：它是内部数据流、领域状态和项目事实的执行解释、调试、审查与溯源投影，不是任务执行的唯一事实源；图上编辑必须转化为领域命令或新的计划 revision。
+- 将产品文档职责分层：产品哲学解释“为什么”，全局审视讨论战略判断，控制面架构定义实现契约，轻量界面研究稿负责界面转译，`docs/reference/` 保存外部研究，开发日志保存历史变化，避免同一原则在多个文档中各自演化。
+- 将哲学文档链接接入 `SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md`、`SLIMEMOLD_ARCHITECTURE_DIRECTION_REVIEW.md`、`PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 和 `BEGINNER_UI_DESIGN.md`；本轮不新增代码行为。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、776 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 文档目标文件、内部链接、引用账本和 Markdown 空白扫描均通过；没有 commit/push。
+
+### 7.31 分离用户哲学、助手判断与共同共识
+
+- 根据用户要求，在 `docs/SLIMEMOLD_PRODUCT_PHILOSOPHY.md` 增加“来源、归属与共识状态”章节，明确区分用户直接提出的元 Harness、按需暴露、溯源权和视图投影原则，助手独立提出的受托执行、系统证明、失败一等状态和风险自适应确认判断，以及当前双方已经确认的共同设计基线。
+- 明确产品哲学正文是三类内容的工程化转译，不把助手的解释冒充用户原话；未来新增原则必须先标注来源，只有双方确认后才进入共同共识。
+- 同步保留既有文档的单向引用关系和产品哲学作为规范性入口，未将用户原始表述重复复制到战略、架构和 UI 文档中。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、776 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 产品哲学文档来源边界、内部链接和 Markdown 空白扫描通过；没有 commit/push。
+
+### 7.32 双向图映射、静态模块与契约驱动安全分层
+
+- 根据用户对 DAG 与内部实现关系的进一步定义，将图明确为内部数据流和语义计划的双向映射：图上操作先转换为语义意图或 Domain Command，再进入 Plan IR、计划 revision 和事件流，不能直接把画布局部状态写入运行时。
+- 将图的生命周期从“静态/动态”细化为 Draft Graph、Static / Published Graph 和 Dynamic Runtime Graph：草案可编辑和试验，静态图作为带版本的可复用 Graph Module，动态图表示某次 Run 的实际展开、分支、重试、Worker 和 Evidence。
+- 明确静态图对父图默认封装、对拥有权限的用户可下钻；插件节点是 Graph Module 的安装、分发、manifest 和实现包装，不是另一套事实源。模块引用需要保留版本和运行 lineage，展开后的临时节点不能反向静默修改源定义。
+- 在 `PROJECT_CONTROL_PLANE_ARCHITECTURE.md` 和 `H3_ORCHESTRATOR_DESIGN.md` 中加入目标 `BoundaryContract`：用户界面以勾选项表达上下文、scope、capability、action、Artifact、acceptance、budget、recovery 和 delegation，实际执行以结构化契约校验。
+- 确立上下级契约只能收窄（`Child Contract ⊆ Parent Contract`），模板只提供默认边界而不规定固定流程；系统依据契约而非节点数量推导最低安全控制，边界扩大时只能升级或阻塞。
+- 在 `BEGINNER_UI_DESIGN.md` 和 `PROFESSIONAL_ROADMAP.md` 中补充用户拖拽/修改节点的语义，以及 Draft/Static/Dynamic 图和插件模块的界面与路线约束。小任务减少用户仪式但不移除事实、权限和宿主验收底线。
+
+本轮最终验证结果：
+
+- `npm run test`：95 个测试文件、776 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 本轮只新增和修改 Markdown 文档，没有代码行为变更；没有 commit/push。
 
 ## 八、适合拆成的博客系列
 

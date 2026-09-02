@@ -59,6 +59,11 @@ describe('project event buffer', () => {
     expect(getPendingProjectEvents('project-1')).toEqual([]);
     expect(getPendingProjectEvents('project-2')).toHaveLength(1);
     expect((await repository.readStream()).events).toEqual(pending);
+    await expect(repository.loadProjection()).resolves.toMatchObject({
+      status: 'ok',
+      source: 'snapshot',
+      projection: { lastSequence: 2 },
+    });
   });
 
   it('keeps pending events when the destination stream needs repair', async () => {
@@ -87,5 +92,22 @@ describe('project event buffer', () => {
       expect.objectContaining({ eventId: 'session-started', sequence: 2, aggregateVersion: 1 }),
     ]);
     expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
+
+  it('repairs a missing projection snapshot when all pending facts are already present', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    const existing = event({ eventId: 'project-created', eventType: 'ProjectCreated', payload: {} });
+    await repository.append(existing, 0);
+    recordProjectEvents('project-1', [existing]);
+
+    await expect(flushPendingProjectEvents('project-1', repository)).resolves.toMatchObject({
+      status: 'already-present',
+    });
+    await expect(repository.loadProjection()).resolves.toMatchObject({
+      status: 'ok',
+      source: 'snapshot',
+      projection: { lastSequence: 1 },
+    });
   });
 });

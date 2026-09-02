@@ -113,6 +113,74 @@ describe('WorkerTaskQueue', () => {
     expect(eventTypes).toContain('RunPartial');
   });
 
+  it('keeps host Evidence bindings when acceptance fails', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-failed-acceptance',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+
+    const state = await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: {
+        execute: async () => ({
+          status: 'failed' as const,
+          error: '宿主验收失败：tests',
+          evidenceIds: ['evidence-test', 'evidence-diff', 'evidence-policy'],
+          acceptanceId: 'acceptance-failed-1',
+        }),
+      },
+    });
+
+    expect(state.tasks.a).toMatchObject({
+      status: 'failed',
+      evidenceIds: ['evidence-test', 'evidence-diff', 'evidence-policy'],
+      acceptanceId: 'acceptance-failed-1',
+    });
+    const failedEvent = queue.drainEvents().find((event) => event.eventType === 'TaskFailed');
+    expect(failedEvent?.payload).toMatchObject({
+      evidenceIds: ['evidence-test', 'evidence-diff', 'evidence-policy'],
+      acceptanceId: 'acceptance-failed-1',
+    });
+  });
+
+  it('uses distinct event ids when a restored Run starts a new attempt', async () => {
+    const first = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-retry-event-ids',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    first.drainEvents();
+    await first.claimTask('a', allocatorFor([]));
+    const firstTaskStarted = first.drainEvents().find((event) => event.eventType === 'TaskStarted');
+    expect(firstTaskStarted).toBeDefined();
+
+    const restored = restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: {
+        ...first.snapshot(),
+        status: 'queued',
+        tasks: {
+          a: {
+            ...first.snapshot().tasks.a,
+            status: 'queued',
+            worktreeId: undefined,
+            worktreePath: undefined,
+            branch: undefined,
+            baseRevision: undefined,
+          },
+        },
+      },
+    });
+    await restored.claimTask('a', allocatorFor([]));
+    const retryTaskStarted = restored.drainEvents().find((event) => event.eventType === 'TaskStarted');
+
+    expect(retryTaskStarted).toBeDefined();
+    expect(retryTaskStarted?.eventId).not.toBe(firstTaskStarted?.eventId);
+  });
+
   it('restores a queue snapshot and resumes only the remaining runnable task', async () => {
     const firstAllocations: string[] = [];
     const queue = createWorkerRunQueue({
@@ -140,6 +208,174 @@ describe('WorkerTaskQueue', () => {
     expect(state.tasks.a.status).toBe('succeeded');
     expect(state.tasks.b.status).toBe('succeeded');
     expect(state.status).toBe('succeeded');
+  });
+
+  it('flushes blocked events discovered during a no-runnable recovery check', async () => {
+    const source = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-blocked-recovery',
+      taskGraph: graph([task('a'), task('b', ['a'])]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const state = source.snapshot();
+    state.status = 'partial';
+    state.tasks.a = {
+      ...state.tasks.a,
+      status: 'failed',
+      attempt: 1,
+      error: '失败',
+    };
+    const restored = restoreWorkerRunQueue({ taskGraph: graph([task('a'), task('b', ['a'])]), state });
+    const updates: string[][] = [];
+
+    const result = await runWorkerQueue(restored, {
+      allocator: allocatorFor([]),
+      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['unused'] }) },
+      onTransition: ({ events }) => {
+        updates.push(events.map((event) => event.eventType));
+      },
+    });
+
+    expect(result.tasks.b.status).toBe('blocked');
+    expect(updates).toEqual([expect.arrayContaining(['TaskBlocked'])]);
+  });
+
+  it('persists a running lease before invoking the Worker executor', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-lease-barrier',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const transitions: Array<{ status: string; taskStatus: string; events: string[] }> = [];
+    let executorStarted = false;
+
+    await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: {
+        execute: async () => {
+          executorStarted = true;
+          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+        },
+      },
+      onTransition: ({ state, events }) => {
+        transitions.push({
+          status: state.status,
+          taskStatus: state.tasks.a.status,
+          events: events.map((event) => event.eventType),
+        });
+      },
+    });
+
+    expect(transitions[0]).toEqual(expect.objectContaining({ status: 'running', taskStatus: 'running' }));
+    expect(transitions[0].events).toEqual(expect.arrayContaining(['RunStarted', 'TaskStarted']));
+    expect(transitions[1]).toEqual(expect.objectContaining({ status: 'succeeded', taskStatus: 'succeeded' }));
+    expect(executorStarted).toBe(true);
+  });
+
+  it('persists the assigned branch so the host can restore the worktree safely', async () => {
+    const queue = createWorkerRunQueue({ projectId: 'project-1', runId: 'run-branch', taskGraph: graph([task('task-a')]), now: '2026-09-01T00:00:01.000Z' });
+    const lease = await queue.claimTask('task-a', allocatorFor([]));
+
+    expect(lease).not.toBeNull();
+    expect(queue.snapshot().tasks['task-a']).toEqual(expect.objectContaining({
+      worktreeId: 'worktree-task-a',
+      worktreePath: 'C:/worktrees/task-a',
+      branch: 'worker/task-a',
+    }));
+  });
+
+  it('starts and closes the Worker side-effect receipt around executor execution', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-side-effect',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const order: string[] = [];
+    const receiptRecord = {
+      idempotencyKey: 'worker-execution:run-side-effect:a:attempt-1',
+      kind: 'worker-execution',
+      target: 'worktree-a',
+      inputHash: 'run-side-effect:a:1:base-revision-1',
+      runId: 'run-side-effect',
+      taskId: 'a',
+      status: 'started' as const,
+      recovery: 'retry' as const,
+    };
+
+    await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      sideEffects: {
+        start: async () => {
+          order.push('effect-start');
+          return receiptRecord;
+        },
+        complete: async () => {
+          order.push('effect-receipt');
+          return {
+            ...receiptRecord,
+            status: 'receipt' as const,
+            recovery: 'skip' as const,
+            receipt: { receiptId: `${receiptRecord.idempotencyKey}:receipt`, observedAt: '2026-09-01T00:00:01.000Z' },
+          };
+        },
+      },
+      executor: {
+        execute: async () => {
+          order.push('executor');
+          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+        },
+      },
+      onTransition: ({ state }) => {
+        order.push(state.status === 'running' ? 'persist-running' : 'persist-succeeded');
+      },
+    });
+
+    expect(order).toEqual([
+      'persist-running',
+      'effect-start',
+      'executor',
+      'effect-receipt',
+      'persist-succeeded',
+    ]);
+  });
+
+  it('marks a started side effect unknown when the Worker executor throws', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-side-effect-error',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const started = {
+      idempotencyKey: 'worker-execution:run-side-effect-error:a:attempt-1',
+      kind: 'worker-execution',
+      target: 'worktree-a',
+      inputHash: 'input-a',
+      runId: 'run-side-effect-error',
+      taskId: 'a',
+      status: 'started' as const,
+      recovery: 'retry' as const,
+    };
+    const unknownReasons: string[] = [];
+
+    const state = await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      sideEffects: {
+        start: async () => started,
+        complete: async () => ({ ...started, status: 'receipt' as const, recovery: 'skip' as const }),
+        markUnknown: async (_record, reason) => {
+          unknownReasons.push(reason);
+          return { ...started, status: 'unknown' as const, recovery: 'needs-user' as const, unknownReason: reason };
+        },
+      },
+      executor: { execute: async () => { throw new Error('Codex 进程异常退出'); } },
+    });
+
+    expect(state.status).toBe('partial');
+    expect(state.tasks.a.status).toBe('failed');
+    expect(unknownReasons).toEqual(['worker-execution-failed-before-receipt']);
   });
 
   it('rejects cyclic task graphs before creating a queue', () => {

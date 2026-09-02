@@ -32,6 +32,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(calls).toContainEqual(['worktree', 'add', '-q', '/wt/t1', '-b', info!.branch, 'HEAD']);
 
     expect(m.get('t1')?.path).toBe('/wt/t1');
+    expect(m.getByPath('/wt/t1')?.id).toBe('t1');
     expect(m.list()).toHaveLength(1);
     // P0：isTracked/assertTracked——已登记放行，未登记/清理后拒绝
     expect(m.isTracked('/wt/t1')).toBe(true);
@@ -92,5 +93,29 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const r = await runner.git(['--version'], process.cwd());
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('git version');
+  });
+
+  it('restore：只接受 git worktree list 中、且不等于主仓库的 worktree', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+    const mainRepoInfo = {
+      id: 'wt-1',
+      path: 'C:/repo',
+      branch: 'worker/task-1',
+      baseRevision: 'abc123',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'created' as const,
+    };
+    const liveInfo = { ...mainRepoInfo, path: 'C:/repo-workers/run-1/task-1' };
+
+    await expect(m.restore(mainRepoInfo)).resolves.toBe(false);
+    await expect(m.restore(liveInfo)).resolves.toBe(true);
+    expect(m.isTracked(liveInfo.path)).toBe(true);
+    expect(git).toHaveBeenCalledWith(['worktree', 'list', '--porcelain'], 'C:/repo');
   });
 });

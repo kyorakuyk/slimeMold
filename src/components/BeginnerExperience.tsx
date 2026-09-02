@@ -48,6 +48,8 @@ interface BeginnerExperienceProps {
   onOpenAdvanced: () => void;
   onNewProject: () => void;
   onStartProjectSession: (goal: string) => void;
+  onRunWorker?: (runId: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
 }
 
 type BeginnerPage = 'home' | 'project' | 'session' | 'issues' | 'master-agent';
@@ -135,7 +137,7 @@ function SimpleHeader({
   );
 }
 
-export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onStartProjectSession }: BeginnerExperienceProps) {
+export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onStartProjectSession, onRunWorker, onRecoverWorkerRun }: BeginnerExperienceProps) {
   const projectId = useWorkflowStore((s) => s.projectId);
   const activeSessionId = useWorkflowStore((s) => s.projectControl?.activeSessionId ?? null);
   const [page, setPage] = useState<BeginnerPage>(() =>
@@ -154,6 +156,8 @@ export default function BeginnerExperience({ onOpenAdvanced, onNewProject, onSta
         onOpenIssues={() => setPage('issues')}
         onOpenMasterAgent={() => setPage('master-agent')}
         onBackHome={() => setPage('project')}
+        onRunWorker={onRunWorker}
+        onRecoverWorkerRun={onRecoverWorkerRun}
       />
     );
   }

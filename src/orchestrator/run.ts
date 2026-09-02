@@ -21,6 +21,7 @@
 import { useWorkflowStore } from '../store/workflowStore';
 import type { DraftStage, Orchestration, StageLog } from '../types';
 import { cancelOrchestration, getOrchestration, updateOrchestration } from './confirm';
+import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 
 /** 阶段工作流绑定结果：真实 wfId（运行 runWorkflow 用） */
 export type StageWfBind =
@@ -129,6 +130,13 @@ export async function runOrchestration(
 ): Promise<Orchestration> {
   const orch = getOrchestration(orchId);
   if (!orch) throw new Error(`编排记录不存在：${orchId}`);
+  const legacyDecision = canStartLegacyOrchestration(
+    orchId,
+    useWorkflowStore.getState().workerRuns,
+  );
+  if (!legacyDecision.allowed) {
+    throw new Error(legacyDecision.reason ?? '该编排已由 Worker Run 接管，不能启动旧 executor');
+  }
   // H3c：failed 可重试（failed → running 迁移表合法）；其余状态拒绝启动
   if (orch.status !== 'ready' && orch.status !== 'failed') {
     throw new Error(

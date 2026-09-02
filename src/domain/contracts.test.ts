@@ -85,6 +85,74 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('replays RunQueued after an explicit Worker recovery retry decision', () => {
+    const queued = event({
+      eventId: 'evt-run-requeued',
+      aggregateType: 'Run',
+      aggregateId: 'run-requeued',
+      eventType: 'RunQueued',
+      payload: { runId: 'run-requeued', recoveryDecisionId: 'decision-1' },
+    });
+
+    expect(replayDomainEvents([queued]).runs['run-requeued']).toEqual({ status: 'queued' });
+  });
+
+  it('replays host evidence and acceptance ids needed by cleanup proposals', () => {
+    const succeeded = event({
+      eventId: 'evt-task-succeeded-accepted',
+      aggregateId: 'task-accepted',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-accepted',
+        evidenceIds: ['ev-1'],
+        acceptanceId: 'acc-1',
+      },
+    });
+
+    expect(replayDomainEvents([succeeded]).tasks['task-accepted']).toEqual({
+      status: 'succeeded',
+      runId: 'run-accepted',
+      evidenceIds: ['ev-1'],
+      acceptanceId: 'acc-1',
+    });
+  });
+
+  it('replays failed host evidence and acceptance ids for recovery review', () => {
+    const failed = event({
+      eventId: 'evt-task-failed-accepted',
+      aggregateId: 'task-failed-accepted',
+      eventType: 'TaskFailed',
+      payload: {
+        runId: 'run-failed-accepted',
+        evidenceIds: ['ev-test', 'ev-diff', 'ev-policy'],
+        acceptanceId: 'acc-failed-1',
+      },
+    });
+
+    expect(replayDomainEvents([failed]).tasks['task-failed-accepted']).toEqual({
+      status: 'failed',
+      runId: 'run-failed-accepted',
+      evidenceIds: ['ev-test', 'ev-diff', 'ev-policy'],
+      acceptanceId: 'acc-failed-1',
+    });
+  });
+
+  it('replays TaskCleaned without losing the cleanup receipt binding', () => {
+    const cleaned = event({
+      eventId: 'evt-task-cleaned',
+      aggregateId: 'task-cleaned',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-cleaned', receiptId: 'cleanup-receipt-1' },
+    });
+
+    expect(replayDomainEvents([cleaned]).tasks['task-cleaned']).toEqual({
+      status: 'succeeded',
+      runId: 'run-cleaned',
+      cleanupStatus: 'cleaned',
+      cleanupReceiptId: 'cleanup-receipt-1',
+    });
+  });
+
   it('resolves global, project, and run policy without mutating the global preference', () => {
     const global = {
       sandboxMode: 'workspace-write' as const,

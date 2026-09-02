@@ -16,6 +16,7 @@ import {
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
+import type { DomainEvent } from '../domain/contracts';
 import {
   applyMasterTurnCommand,
   approveArchitectureCommand,
@@ -27,8 +28,11 @@ import {
 } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
 import { enqueueWorkerRunCommand } from '../projectControl/workerRun';
+import { installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import type { WorkerRunRecoveryDecision } from '../projectControl/workerSideEffects';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
+import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
@@ -39,6 +43,8 @@ interface ProjectSessionPanelProps {
   onOpenAdvanced: () => void;
   onOpenIssues?: () => void;
   onOpenMasterAgent?: () => void;
+  onRunWorker?: (runId: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string) => Promise<void> | void;
 }
 
 function controlId(prefix: string): string {
@@ -52,6 +58,17 @@ function sessionStatusKey(status: ProjectSession['status']): string {
 
 function findSession(snapshot: ProjectControlSnapshot, sessionId: string): ProjectSession | null {
   return snapshot.sessions.find((session) => session.id === sessionId) ?? null;
+}
+
+async function persistControlMutation(
+  projectId: string,
+  snapshot: ProjectControlSnapshot,
+  events: readonly DomainEvent[],
+): Promise<void> {
+  recordProjectEvents(projectId, events);
+  const store = useWorkflowStore.getState();
+  store.setProjectControl(snapshot);
+  if (store.projectPath) await store.saveProject();
 }
 
 function responseQuestions(
@@ -75,6 +92,8 @@ export default function ProjectSessionPanel({
   onOpenAdvanced,
   onOpenIssues,
   onOpenMasterAgent,
+  onRunWorker,
+  onRecoverWorkerRun,
 }: ProjectSessionPanelProps) {
   const t = useT('beginner');
   const projectName = useWorkflowStore((state) => state.projectName);
@@ -82,6 +101,7 @@ export default function ProjectSessionPanel({
   const orchestrations = useWorkflowStore((state) => state.orchestrations);
   const workerRuns = useWorkflowStore((state) => state.workerRuns);
   const projectControl = useWorkflowStore((state) => state.projectControl);
+  const workerRunRecoveries = useWorkflowStore((state) => state.workerRunRecoveries ?? []);
   const globalMasterAgentId = useViewStore((state) => state.globalMasterAgentId);
 
   const session = findSession(projectControl, sessionId);
@@ -100,9 +120,24 @@ export default function ProjectSessionPanel({
   const currentWorkerRun = session?.orchestrationId
     ? workerRuns.find((run) => run.orchestrationId === session.orchestrationId) ?? null
     : null;
+  const currentWorkerRunRecovery = currentWorkerRun
+    ? workerRunRecoveries.find((item) => item.runId === currentWorkerRun.runId) ?? null
+    : null;
+  const workerRunCopy = currentWorkerRunRecovery
+    ? {
+        title: t('session.workerRun.recovery'),
+        hint: t('session.workerRun.recoveryHint'),
+      }
+    : currentWorkerRun
+    ? {
+        title: t(`session.workerRun.${currentWorkerRun.status}`),
+        hint: t(`session.workerRun.${currentWorkerRun.status}Hint`),
+      }
+    : null;
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [localResponse, setLocalResponse] = useState<MasterResponse | null>(null);
   const initialTurnStarted = useRef(false);
@@ -154,8 +189,7 @@ export default function ProjectSessionPanel({
         now: new Date().toISOString(),
         createId: controlId,
       });
-      recordProjectEvents(currentSession.projectId, next.events);
-      useWorkflowStore.getState().setProjectControl(next.snapshot);
+      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
       setLocalResponse(result.response);
       if (recordUserMessage) setInput('');
     } catch (cause) {
@@ -182,7 +216,24 @@ export default function ProjectSessionPanel({
     void runTurn(message, true);
   };
 
-  const handleApproveBrief = () => {
+  const handleWorkerRecovery = (decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>) => {
+    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy) return;
+    const runId = currentWorkerRun.runId;
+    const reason = `用户在项目驾驶舱选择 ${decision}`;
+    setRecoveryBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        await onRecoverWorkerRun(runId, decision, reason);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setRecoveryBusy(false);
+      }
+    })();
+  };
+
+  const handleApproveBrief = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -197,8 +248,7 @@ export default function ProjectSessionPanel({
         approvedBy: 'user',
         now,
       });
-      recordProjectEvents(currentSession.projectId, next.events);
-      state.setProjectControl(next.snapshot);
+      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
       setLocalResponse(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -210,7 +260,7 @@ export default function ProjectSessionPanel({
     void runTurn('请基于已批准的 Brief 生成架构、模块、接口、施工任务和风险。', false);
   };
 
-  const handleApproveArchitecture = () => {
+  const handleApproveArchitecture = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -227,15 +277,14 @@ export default function ProjectSessionPanel({
         approvedBy: 'user',
         now,
       });
-      recordProjectEvents(currentSession.projectId, next.events);
-      state.setProjectControl(next.snapshot);
+      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
       setLocalResponse(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleGenerateTaskGraph = () => {
+  const handleGenerateTaskGraph = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -252,14 +301,13 @@ export default function ProjectSessionPanel({
         id: controlId('task-graph'),
         now,
       });
-      recordProjectEvents(currentSession.projectId, next.events);
-      state.setProjectControl(next.snapshot);
+      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleApproveTaskGraph = () => {
+  const handleApproveTaskGraph = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -276,14 +324,13 @@ export default function ProjectSessionPanel({
         approvedBy: 'user',
         now,
       });
-      recordProjectEvents(currentSession.projectId, next.events);
-      state.setProjectControl(next.snapshot);
+      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleCreateOrchestration = () => {
+  const handleCreateOrchestration = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -331,7 +378,7 @@ export default function ProjectSessionPanel({
         orchestrationId: orchestration.id,
         now,
       });
-      recordProjectEvents(currentSession.projectId, [
+      await persistControlMutation(currentSession.projectId, next.snapshot, [
         createExecutionDraftCreatedEvent({
           projectId: currentSession.projectId,
           sessionId: currentSession.id,
@@ -342,14 +389,13 @@ export default function ProjectSessionPanel({
         }),
         ...next.events,
       ]);
-      state.setProjectControl(next.snapshot);
       setLocalResponse(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleConfirmExecutionPlan = () => {
+  const handleConfirmExecutionPlan = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
     const currentSession = findSession(snapshot, sessionId);
@@ -372,8 +418,21 @@ export default function ProjectSessionPanel({
         now,
       });
       const approved = confirmDraft(orchestration.id, 'approved');
-      state.setWorkerRuns([...state.workerRuns, queued.state]);
-      recordProjectEvents(currentSession.projectId, [{
+      const nextWorkerRuns = [...state.workerRuns, queued.state];
+      state.setWorkerRuns(nextWorkerRuns);
+      state.setOrchestrations(
+        projectWorkerRunsOntoOrchestrations(
+          useWorkflowStore.getState().orchestrations,
+          nextWorkerRuns,
+        ),
+      );
+      const runtime = installWorkerRunRuntime({
+        projectId: currentSession.projectId,
+        taskGraphs: snapshot.taskGraphs ?? [],
+        runs: [...state.workerRuns, queued.state],
+      });
+      state.setWorkerRunRecoveries(runtime.recoveries);
+      await persistControlMutation(currentSession.projectId, snapshot, [{
         eventId: `${approved.id}:execution-draft-approved:${now}`,
         streamId: currentSession.projectId,
         aggregateType: 'Orchestration',
@@ -393,6 +452,11 @@ export default function ProjectSessionPanel({
         source: { objectId: approved.id, objectVersion: 1 },
         sensitivity: 'normal',
       }, ...queued.events]);
+      if (onRunWorker) {
+        void Promise.resolve(onRunWorker(queued.state.runId)).catch((cause) => {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        });
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -619,8 +683,8 @@ export default function ProjectSessionPanel({
             <section className="sm-beginner-session-next-card">
               <p className="sm-beginner-eyebrow">{t('session.nextEyebrow')}</p>
               <strong>
-                {currentWorkerRun?.status === 'queued'
-                  ? t('session.workerRunQueued')
+                {workerRunCopy
+                  ? workerRunCopy.title
                   : currentOrchestration?.status === 'awaiting-confirm'
                   ? t('session.nextOrchestrationReview')
                   : currentOrchestration
@@ -638,8 +702,8 @@ export default function ProjectSessionPanel({
                             : t('session.nextQuestions')}
               </strong>
               <span>
-                {currentWorkerRun?.status === 'queued'
-                  ? t('session.workerRunQueuedHint')
+                {workerRunCopy
+                  ? workerRunCopy.hint
                   : currentOrchestration?.status === 'awaiting-confirm'
                   ? t('session.nextOrchestrationReviewHint')
                   : currentOrchestration
@@ -656,6 +720,38 @@ export default function ProjectSessionPanel({
                             ? t('session.nextArchitectureHint')
                             : t('session.nextQuestionsHint')}
               </span>
+              {currentWorkerRunRecovery && (
+                <div className="sm-beginner-session-recovery" data-testid="beginner-session-worker-recovery">
+                  <strong>{t('session.workerRun.recoveryChoices')}</strong>
+                  <ul>
+                    <li>{t('session.workerRun.recovery.inspect')}</li>
+                    <li>{t('session.workerRun.recovery.retry')}</li>
+                    <li>{t('session.workerRun.recovery.skip')}</li>
+                  </ul>
+                  {onRecoverWorkerRun && (
+                    <div className="sm-beginner-session-recovery-actions">
+                      <button
+                        type="button"
+                        data-testid="beginner-session-worker-retry"
+                        className="sm-beginner-small-button"
+                        disabled={recoveryBusy}
+                        onClick={() => handleWorkerRecovery('retry')}
+                      >
+                        {t('session.workerRun.recovery.retryAction')}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="beginner-session-worker-skip"
+                        className="sm-beginner-small-button"
+                        disabled={recoveryBusy}
+                        onClick={() => handleWorkerRecovery('skip')}
+                      >
+                        {t('session.workerRun.recovery.skipAction')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               {currentBrief?.approval === 'approved' && !currentArchitecture && (
                 <button type="button" data-testid="beginner-session-generate-architecture" className="sm-beginner-primary-button sm-beginner-session-approve" onClick={handleGenerateArchitecture} disabled={busy}>
                   {busy ? <Loader2 size={16} className="sm-beginner-spin" /> : <Sparkles size={16} />}

@@ -1,0 +1,75 @@
+import { describe, expect, it } from 'vitest';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { markWorkerTaskCleaned } from './workerCleanupCommand';
+
+function state(): WorkerRunQueueState {
+  return {
+    version: 1,
+    projectId: 'project-1',
+    runId: 'run-1',
+    orchestrationId: 'orch-1',
+    taskGraphId: 'graph-1',
+    taskGraphVersion: 1,
+    status: 'succeeded',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:01:00.000Z',
+    tasks: {
+      'task-1': {
+        taskId: 'task-1',
+        status: 'succeeded',
+        attempt: 1,
+        evidenceIds: ['ev-1'],
+        acceptanceId: 'acc-1',
+        worktreeId: 'wt-1',
+        worktreePath: 'C:/project-workers/run-1/task-1',
+        branch: 'worker/task-1',
+        baseRevision: 'abc123',
+        updatedAt: '2026-09-01T00:01:00.000Z',
+      },
+    },
+  };
+}
+
+describe('worker cleanup command', () => {
+  it('marks a host-cleaned task and emits an auditable TaskCleaned event', () => {
+    const result = markWorkerTaskCleaned({
+      state: state(),
+      taskId: 'task-1',
+      receiptId: 'receipt-cleanup-1',
+      decisionId: 'cleanup-decision-1',
+      now: '2026-09-01T00:02:00.000Z',
+    });
+
+    expect(result.state.tasks['task-1']).toEqual(expect.objectContaining({
+      cleanupStatus: 'cleaned',
+      cleanupReceiptId: 'receipt-cleanup-1',
+    }));
+    expect(result.events).toEqual([expect.objectContaining({
+      eventId: 'cleanup-decision-1:task-cleaned:task-1',
+      eventType: 'TaskCleaned',
+      aggregateType: 'Task',
+      aggregateId: 'task-1',
+      payload: expect.objectContaining({
+        runId: 'run-1',
+        receiptId: 'receipt-cleanup-1',
+      }),
+    })]);
+  });
+
+  it('rejects cleanup for a non-succeeded task or a missing receipt id', () => {
+    expect(() => markWorkerTaskCleaned({
+      state: { ...state(), tasks: { ...state().tasks, 'task-1': { ...state().tasks['task-1'], status: 'failed' } } },
+      taskId: 'task-1',
+      receiptId: 'receipt-cleanup-1',
+      decisionId: 'cleanup-decision-1',
+      now: '2026-09-01T00:02:00.000Z',
+    })).toThrow(/只有 succeeded 任务才能标记清理完成/);
+    expect(() => markWorkerTaskCleaned({
+      state: state(),
+      taskId: 'task-1',
+      receiptId: ' ',
+      decisionId: 'cleanup-decision-1',
+      now: '2026-09-01T00:02:00.000Z',
+    })).toThrow(/receipt id 不能为空/);
+  });
+});

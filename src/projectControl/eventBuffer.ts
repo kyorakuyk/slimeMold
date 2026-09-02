@@ -6,6 +6,7 @@ import {
   EventStoreError,
   type EventStreamRepository,
 } from '../domain/eventStore';
+import { replayDomainEvents } from '../domain/contracts';
 
 const pendingByProject = new Map<string, DomainEvent[]>();
 
@@ -121,11 +122,15 @@ export async function flushPendingProjectEvents(
   }
 
   if (newEvents.length === 0) {
+    await repository.writeProjectionSnapshot(replayDomainEvents(working));
     clearProjectEventBuffer(normalizedProjectId);
     return { status: 'already-present', count: pending.length };
   }
 
-  await repository.appendBatch(newEvents, parsed.lastSequence);
+  const appended = await repository.appendBatch(newEvents, parsed.lastSequence);
+  // Keep a verifiable replay checkpoint beside the append-only facts. If this
+  // second write fails, pending events remain available for an idempotent retry.
+  await repository.writeProjectionSnapshot(replayDomainEvents(appended.events));
   clearProjectEventBuffer(normalizedProjectId);
   return { status: 'flushed', count: newEvents.length };
 }
