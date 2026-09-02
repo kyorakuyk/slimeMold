@@ -1,6 +1,7 @@
 import type { DomainEvent } from '../domain/contracts';
 import type { SideEffectJournal } from '../domain/sideEffects';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 import {
   applyWorkerRunRecoveryDecision,
@@ -97,20 +98,31 @@ function createEvents(
     const before = input.state.tasks[task.id];
     const after = next.tasks[task.id];
     if (!before || !after || before.status === after.status) continue;
+    const taskExecutionId = after.taskExecutionId ?? createTaskExecutionId(next.runId, task.id);
+    const attemptId = after.currentAttemptId
+      ?? (after.attempt > 0 ? createAttemptId(taskExecutionId, after.attempt) : undefined);
     if (after.status === 'queued') {
-      emit('TaskQueued', 'Task', task.id, {
+      emit('TaskQueued', 'TaskExecution', taskExecutionId, {
         runId: next.runId,
+        taskId: task.id,
+        taskExecutionId,
+        nextAttempt: Math.max(after.attempt + 1, 1),
         recoveryDecisionId: input.decisionId,
       });
     } else if (after.status === 'failed') {
-      emit('TaskFailed', 'Task', task.id, {
+      emit('TaskFailed', 'TaskExecution', taskExecutionId, {
         runId: next.runId,
+        taskId: task.id,
+        taskExecutionId,
         error: after.error ?? '恢复决策导致任务跳过',
         attempt: after.attempt,
+        ...(attemptId ? { attemptId } : {}),
       });
     } else if (after.status === 'blocked') {
-      emit('TaskBlocked', 'Task', task.id, {
+      emit('TaskBlocked', 'TaskExecution', taskExecutionId, {
         runId: next.runId,
+        taskId: task.id,
+        taskExecutionId,
         blockedBy: task.dependsOn,
         reason: after.error ?? '依赖任务被跳过',
       });

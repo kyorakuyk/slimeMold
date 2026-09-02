@@ -42,6 +42,9 @@ export interface HostResultRecord {
   orchestrationId: string;
   /** 结果所属阶段（必填——防跨阶段引用） */
   stageId: string;
+  /** 当前 Worker execution lineage；旧宿主结果可没有这些字段。 */
+  taskExecutionId?: string;
+  attemptId?: string;
 }
 
 /** 确定性验收记录（cleanup 确认门校验）。 */
@@ -53,6 +56,9 @@ export interface AcceptanceRecord {
   passed: boolean;
   failedChecks: string[];
   at: string;
+  /** 当前 Worker execution lineage；旧 acceptance 可没有这些字段。 */
+  taskExecutionId?: string;
+  attemptId?: string;
 }
 
 /**

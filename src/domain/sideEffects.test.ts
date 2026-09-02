@@ -9,6 +9,7 @@ import {
   serializeSideEffectJournal,
 } from './sideEffects';
 import { InMemoryEventStoreAdapter } from './eventStore';
+import { createAttemptId, createTaskExecutionId } from './execution';
 
 const planned = createSideEffect({
   idempotencyKey: 'push:task-1:commit-a',
@@ -46,6 +47,27 @@ describe('side-effect journal', () => {
       receipt,
     );
     expect(journal.entries[0]).toMatchObject({ status: 'receipt', recovery: 'skip', receipt: receipt.receipt });
+  });
+
+  it('rejects a same-key lifecycle record that changes execution lineage', () => {
+    const taskExecutionId = createTaskExecutionId('run-side-effect', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = startSideEffect(createSideEffect({
+      idempotencyKey: 'worker-execution:lineage-key',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'input-1',
+      runId: 'run-side-effect',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+    }));
+
+    const journal = recordSideEffect(createEmptySideEffectJournal(), started);
+    expect(() => recordSideEffect(journal, {
+      ...started,
+      attemptId: createAttemptId(taskExecutionId, 2),
+    })).toThrow(/idempotencyKey/);
   });
 
   it('preserves a malformed journal as needs-repair instead of returning an empty journal', () => {

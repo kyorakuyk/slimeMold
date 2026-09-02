@@ -8,15 +8,15 @@ authority: implementation-reality
 
 # SlimeMold 代码结构审查与后续演进边界
 
-> 本文是对 `research/experimental-refactor` 分支 HEAD `40bfe0d` 的代码结构审查，不是新功能设计稿。
+> 本文初版基于 `research/experimental-refactor` 分支 HEAD `40bfe0d`；后续 MVP-2 状态以本文件的进度补充和最新开发日志为准，不是新功能设计稿。
 > 目标是判断现有 MVP 是否适合继续承载项目级元 Harness、双向图映射、三态 Graph、Boundary Contract 和交付闭环。
 > 本轮修复项目生命周期、插件扫描、manifest 入口和沙箱文件操作等可局部验证的边界缺陷；其余问题先记录为演进边界，避免没有语义契约的“大拆分”。
 
 ## 1. 结论先行
 
-当前 Worker recovery MVP 已经具备继续开发的基础，但还不适合直接在现有结构上叠加完整的 Graph Module、Boundary Contract、Context Pack 或 delivery。主要原因不是代码行数，而是以下四个语义边界尚未成为代码的一等结构：
+当前 Worker recovery MVP 已经具备继续开发的基础；本轮 MVP-2 又完成了执行身份与 attempt replay 的第一条垂直切片，但还不适合直接在现有结构上叠加完整的 Graph Module、Boundary Contract、Context Pack 或 delivery。主要原因不是代码行数，而是以下四个语义边界仍未全部成为代码的一等结构：
 
-1. **事实身份**：Task、Run、Attempt、Runtime Instance、Evidence 和 Receipt 还没有一套统一的、可重放的执行身份链。
+1. **事实身份**：`TaskExecutionId`、`AttemptId`、Worker、Evidence 和 Receipt 的基础链已经可重放；`PlanRevision`、Boundary Contract、Runtime Instance 和 Delivery 仍未接入。
 2. **命令入口**：画布编辑、编排确认、Worker 启动和项目持久化仍有多条入口，部分路径直接写 Zustand store。
 3. **投影边界**：ProjectFile、Zustand、DomainEvent、旧 `runEvents`、Checkpoint、Artifact 和 side-effect journal 并行存在，当前事件流不能独立重建完整 ProjectControl。
 4. **能力授权**：文档中的 Boundary Contract、模块 manifest 和 capability 约束还没有成为 Worker lease、宿主调用和验收的机器可验证输入。
@@ -32,6 +32,18 @@ authority: implementation-reality
 ```
 
 不建议现在做一次性重写 `App.tsx`、`workflowStore.ts` 或 `executor.ts`，也不建议为了“看起来分层”而建立第二套项目任务系统。
+
+### 1.1 MVP-2 当前实现进度
+
+本轮已完成第一条执行 lineage 切片：
+
+- `src/domain/execution.ts` 提供确定性的 `TaskExecutionId(runId, taskId)` 和 `AttemptId(taskExecutionId, attempt)`，对分隔符做编码，重启后可稳定重建；
+- `WorkerTaskLease`、Worker queue 事件、recovery、cleanup 和 side-effect journal 携带 execution/attempt 标识；旧快照和旧 `Task` aggregate 事件仍可派生兼容 ID；
+- `DomainProjection.taskExecutions` 按 Run/Task 保存执行投影，`attempts` 按 `AttemptRecord` 保存不可变 attempt 历史；`tasks` 仅保留为兼容 UI projection；
+- host Evidence、Acceptance、cleanup proposal 和 cleanup receipt 可按 execution/attempt 反查；consistency audit 按 `(runId, taskId)` 检查 lineage 和孤立 execution；
+- retry 仍然只改变 queued 状态，真正 claim 时生成新 `AttemptId`，不会把尚未执行的 attempt 伪造为已开始。
+
+尚未完成的边界仍包括完整 ProjectControl replay、ProjectCommandBus/commit protocol、PlanRevision、Boundary Contract、Host Lease、Artifact acceptance 和 DeliveryReceipt。
 
 ## 2. 本轮审查范围与基线
 
@@ -56,7 +68,7 @@ authority: implementation-reality
 
 这些数字本身不是拆分依据，只说明需要优先保护语义边界，而不是继续把新职责加入几个中心文件。
 
-本轮基线验证：
+初始结构审查基线验证（MVP-1）：
 
 - `npm run test`：95 个测试文件、776 个测试通过；
 - `npm run build`：通过；
@@ -256,15 +268,15 @@ interface StartExecutionCommand {
 
 旧 executor 暂时保留为 `LegacyWorkflowExecutionAdapter`，但新功能不能再直接依赖旧 `runWorkflow()`。
 
-### 5.2 Task replay key 仍可能跨 Run/attempt 覆盖
+### 5.2 Task replay key：Worker execution lineage 已接入，兼容 task projection 仍会覆盖
 
 证据：
 
-- `src/domain/contracts.ts:31-42` 的 `DomainProjection.tasks` 以裸 `taskId` 为 key；
-- `src/domain/contracts.ts:118-169` 的 `replayDomainEvents()` 对 `TaskQueued/Started/Succeeded/Failed/Cleaned` 都直接写 `projection.tasks[event.aggregateId]`；
-- `src/domain/workerQueue.ts` 当前保存当前 task 的 attempt 状态，但没有一个独立的、可查询的历史 `AttemptRecord[]` 作为投影实体。
+- `src/domain/contracts.ts` 的 `DomainProjection.tasks` 仍以裸 `taskId` 为 key，这是为现有 UI 保留的兼容 projection；
+- `DomainProjection.taskExecutions` 现在以 `TaskExecutionId` 为 key，`attempts` 以 `AttemptId` 为 key；新 Worker 事件使用 `TaskExecution` aggregate，并在 payload 中保留 task/run 映射；
+- `src/domain/workerQueue.ts` 的旧快照缺少 lineage 字段时，会按 `runId + taskId + attempt` 派生稳定 ID；新 retry 在 claim 时替换 `currentAttemptId`，旧 attempt 不被覆盖。
 
-同一个任务图被重新执行或 retry 时，事件中的 Task aggregate 仍可能复用 task id，后一次运行会覆盖前一次投影。当前 consistency 检查已经能发现部分 run-status drift，但这不是历史身份模型。
+同一个任务图被重新执行或 retry 时，兼容的 `tasks[taskId]` 仍只代表最后一次 legacy view；需要历史或审计时必须使用 `taskExecutions`/`attempts`。当前 consistency audit 已按 execution 维度比较并报告孤立 execution，但完整 ProjectControl 仍不是从 Worker projection 自动重建。
 
 最小演进：
 
@@ -275,11 +287,11 @@ TaskDefinitionId
           → worktree / Evidence / Acceptance / Receipt
 ```
 
-可以先保留旧 `taskId` 作为业务定义 id，新增 `executionKey` / `attemptId`，再让 reducer、recovery UI 和 Evidence query 逐步使用新 key。
+当前已经保留旧 `taskId` 作为业务定义 id，并新增 `taskExecutionId` / `attemptId`；reducer、recovery、Evidence/Acceptance 和 cleanup query 已使用新 key，UI 大结构仍待后续 read model 迁移。
 
-### 5.3 Worker retry 没有一等的 attempt 历史对象
+### 5.3 Worker retry 已有 AttemptRecord，仍缺计划/契约级 lineage
 
-当前 retry 会创建新 attempt、worktree 和 side-effect key，这是 MVP 的正确行为；但队列状态主要保存“当前 task 状态”，旧 attempt 的完整 worktree、contract、plan revision、Evidence 集合和 cleanup 状态仍依赖事件、Evidence store 和 side-effect journal 交叉查询。
+当前 retry 会创建新 attempt、worktree 和 side-effect key；`DomainProjection.attempts` 已成为可查询的 `AttemptRecord` 投影，保存 attempt 状态、worktree、Evidence、acceptance 和 cleanup receipt。旧 attempt 仍由事件/Evidence/side-effect durable records 提供细节，队列快照只保存当前 task 状态。
 
 后续 delivery 或人工审计需要直接回答：
 
@@ -288,7 +300,7 @@ TaskDefinitionId
 - 两个 attempt 是否使用相同的 plan revision 和 contract？
 - 哪些 Evidence 属于失败现场，哪些属于重试结果？
 
-因此应引入不可变 `AttemptRecord` 投影，而不是继续给当前 `WorkerQueueTask` 增字段。
+下一步不是再给 `WorkerQueueTask` 堆字段，而是把 `planRevisionId`、`boundaryContractHash`、host lease 和完整 Runtime Instance 关联到现有 `AttemptRecord`，并建立独立 ProjectControl commit protocol。
 
 ### 5.4 Artifact 还不是可验收的交付事实
 
@@ -432,7 +444,7 @@ unknown / needs-user
 - `src/components/IssueBoard.tsx` 和 `src/components/MasterAgentPage.tsx` 可以直接调用 `setProjectControl` 覆盖快照；
 - `src/components/ProjectSessionPanel.tsx` 的部分路径则通过 command/event buffer 持久化；
 - `src/dev/session.ts` 中的 `resultStore`、`acceptanceStore` 和 cleanup approval 主要是当前进程内 Map，项目重开时 App 加载 Evidence/side-effect journal，但不完整恢复这些实体；
-- 当前 consistency audit 主要比较 ID 和摘要，不能证明 Evidence、Acceptance、Receipt 真正存在、内容匹配且属于同一 attempt。
+- 当前 consistency audit 已能按 `TaskExecutionId`/`AttemptId` 比较 Worker 状态、Evidence、acceptance、cleanup 和孤立 execution；但仍不能证明所有 Evidence、Acceptance、Receipt 的内容都来自同一份完整的宿主 durable ledger。
 
 因此 `setProjectControl` 应逐步限制为 hydrate/replay 专用；Issue、Master Agent、Orchestration 等写入必须统一产出 DomainEvent。Evidence、Acceptance、Result 和 Receipt 则应进入统一的 durable host ledger，至少以 `projectId/runId/taskId/attempt` 做引用完整性校验。
 
@@ -467,15 +479,15 @@ unloadProjectCustomNodes()
 
 ## 7. 推荐的实现顺序
 
-### Phase A：身份和投影先行
+### Phase A：身份和投影先行（MVP-2 已完成基础切片）
 
-1. 建立 `ProjectId / PlanRevisionId / GraphNodeId / TaskDefinitionId / ExecutionId / AttemptId / EvidenceId / ReceiptId`；
-2. 为 Worker Task 增加 `taskExecutionId` 和 `attemptId`，保留旧字段兼容；
-3. 让 DomainProjection 按 execution/attempt 维度存储；
-4. 增加“双 Run、同 Task id、retry、restart、replay”测试；
-5. 让 Artifact/Evidence/Receipt 统一引用 execution lineage。
+1. `TaskExecutionId(runId, taskId)` 和 `AttemptId(taskExecutionId, attempt)` 已建立；`PlanRevisionId`、`GraphNodeId` 等未接入 Worker；
+2. Worker Task、lease、事件、recovery、cleanup 和 side-effect 已增加 `taskExecutionId`/`attemptId`，旧字段保持兼容；
+3. `DomainProjection` 已按 execution/attempt 维度保存 `TaskExecutionProjection` 和 `AttemptRecord`；
+4. 已覆盖双 Run、同 Task id、retry、restart、序列化 replay、Evidence/Receipt readback 和 orphan audit；
+5. Evidence、Acceptance、side-effect 和 cleanup receipt 已能引用基础 execution lineage；Artifact 仍待后续统一。
 
-**完成标准**：相同 Task 定义在两个 Run 中不会互相覆盖，重启和完整 replay 得到同一结果。
+**本轮完成标准**：相同 Task 定义在两个 Run 中不会互相覆盖，重启和 Worker 事件 replay 得到同一 execution/attempt 结果。完整 ProjectControl replay 仍未完成。
 
 ### Phase B：应用命令与持久化提交
 

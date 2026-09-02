@@ -103,6 +103,8 @@ export function createWorkerSideEffectRecorder(
         inputHash: inputHashFor(lease),
         runId: lease.runId,
         taskId: lease.task.id,
+        taskExecutionId: lease.taskExecutionId,
+        attemptId: lease.attemptId,
       });
       const afterPlanned = await repository.record(planned);
       const started = startSideEffect(entryFor(afterPlanned, idempotencyKey));
@@ -208,8 +210,12 @@ export function applyWorkerRunRecoveryDecision(input: {
           status: 'queued' as const,
           worktreeId: undefined,
           worktreePath: undefined,
+          branch: undefined,
           baseRevision: undefined,
           evidenceIds: [],
+          acceptanceId: undefined,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
           error: undefined,
           updatedAt: input.now,
         }];

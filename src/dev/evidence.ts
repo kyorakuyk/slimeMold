@@ -25,6 +25,9 @@ export interface EvidenceRecord {
   summary: string;
   /** 强制：仅宿主采集，Agent 不可自报 */
   capturedBy: 'host';
+  /** 当前 Worker execution lineage；旧证据可能没有这些字段。 */
+  taskExecutionId?: string;
+  attemptId?: string;
   worktreePath?: string;
   baseRevision?: string;
   headRevision?: string;
@@ -276,13 +279,25 @@ export class EvidenceCollector {
    * 验收/引用时若 scope 指定了某项，证据**必须存在该字段且严格匹配**——缺字段的历史证据
    * 直接排除（不得「没写就不校验」混入）。worktreePath 经 resolve 规范化比较。
    */
-  byScope(scope: { orchestrationId?: string; stageId?: string; worktreePath?: string }): EvidenceRecord[] {
+  byScope(scope: {
+    orchestrationId?: string;
+    stageId?: string;
+    taskExecutionId?: string;
+    attemptId?: string;
+    worktreePath?: string;
+  }): EvidenceRecord[] {
     return this._records.filter((r) => {
       if (scope.orchestrationId !== undefined) {
         if (r.orchestrationId !== scope.orchestrationId) return false;
       }
       if (scope.stageId !== undefined) {
         if (r.stageId !== scope.stageId) return false;
+      }
+      if (scope.taskExecutionId !== undefined && r.taskExecutionId !== scope.taskExecutionId) {
+        return false;
+      }
+      if (scope.attemptId !== undefined && r.attemptId !== scope.attemptId) {
+        return false;
       }
       if (scope.worktreePath !== undefined) {
         if (!r.worktreePath) return false; // 缺 worktreePath 的证据排除
@@ -296,7 +311,13 @@ export class EvidenceCollector {
 
   /** 验收前强制 flush + 按作用域取证据（落盘失败 throw，未落盘的证据不作为验收依据）。 */
   async flushAndByScope(
-    scope: { orchestrationId?: string; stageId?: string; worktreePath?: string },
+    scope: {
+      orchestrationId?: string;
+      stageId?: string;
+      taskExecutionId?: string;
+      attemptId?: string;
+      worktreePath?: string;
+    },
   ): Promise<EvidenceRecord[]> {
     await this.flush();
     return this.byScope(scope);

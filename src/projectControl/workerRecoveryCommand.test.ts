@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SideEffectJournal } from '../domain/sideEffects';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 import { recoverWorkerRunCommand } from './workerRecoveryCommand';
 
@@ -65,6 +66,7 @@ const state: WorkerRunQueueState = {
       worktreePath: 'C:/worktrees/task-1',
       baseRevision: 'base-1',
       evidenceIds: [],
+      acceptanceId: 'acceptance-old',
       updatedAt: '2026-09-01T00:01:00.000Z',
     },
     'task-2': {
@@ -107,12 +109,24 @@ describe('recoverWorkerRunCommand', () => {
 
     expect(result.state.status).toBe('queued');
     expect(result.state.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1 });
+    expect(result.state.tasks['task-1'].acceptanceId).toBeUndefined();
     expect(result.events.map((event) => event.eventType)).toEqual([
       'WorkerRunRecoveryDecided',
       'RunQueued',
       'TaskQueued',
     ]);
     expect(result.events[0].payload).toMatchObject({ decision: 'retry', effectKeys: [unknownJournal.entries[0].idempotencyKey] });
+    const queuedEvent = result.events.find((event) => event.eventType === 'TaskQueued');
+    expect(queuedEvent).toMatchObject({
+      aggregateType: 'TaskExecution',
+      aggregateId: createTaskExecutionId('run-1', 'task-1'),
+      payload: {
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+        nextAttempt: 2,
+      },
+    });
   });
 
   it('records skip as failed/blocked facts and leaves inspect as a non-mutating decision', () => {
@@ -135,6 +149,22 @@ describe('recoverWorkerRunCommand', () => {
       'TaskFailed',
       'TaskBlocked',
     ]);
+    expect(skipped.events.find((event) => event.eventType === 'TaskFailed')).toMatchObject({
+      aggregateType: 'TaskExecution',
+      aggregateId: createTaskExecutionId('run-1', 'task-1'),
+      payload: {
+        taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+        attempt: 1,
+        attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      },
+    });
+    expect(skipped.events.find((event) => event.eventType === 'TaskBlocked')).toMatchObject({
+      aggregateType: 'TaskExecution',
+      aggregateId: createTaskExecutionId('run-1', 'task-2'),
+      payload: {
+        taskExecutionId: createTaskExecutionId('run-1', 'task-2'),
+      },
+    });
 
     const inspected = recoverWorkerRunCommand({
       projectId: 'project-1',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkerExecutionResult, WorkerTaskLease } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 import { InMemoryEventStoreAdapter } from '../domain/eventStore';
 import { SideEffectJournalRepository } from '../domain/sideEffects';
@@ -35,6 +36,8 @@ const lease: WorkerTaskLease = {
     baseRevision: 'base-1',
   },
   attempt: 1,
+  taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+  attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
 };
 
 const succeeded: WorkerExecutionResult = {
@@ -55,6 +58,8 @@ describe('worker side-effect recorder', () => {
       target: 'worktree-1',
       runId: 'run-1',
       taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       status: 'started',
       recovery: 'retry',
     });

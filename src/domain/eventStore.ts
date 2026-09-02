@@ -414,6 +414,8 @@ export function parseProjectionSnapshot(text: string | null | undefined): Projec
       projection.lastSequence !== value.lastSequence ||
       !isRecord(projection.runs) ||
       !isRecord(projection.tasks) ||
+      !isRecord(projection.taskExecutions) ||
+      !isRecord(projection.attempts) ||
       projectionHash(projection) !== value.projectionHash
     ) {
       return null;

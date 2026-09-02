@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DomainEvent } from './contracts';
+import type { DomainEvent, DomainProjection } from './contracts';
 import {
   EventStoreError,
   EventStreamRepository,
   InMemoryEventStoreAdapter,
   NodeFileEventStoreAdapter,
   parseEventStream,
+  projectionHash,
   serializeEventStream,
 } from './eventStore';
 
@@ -128,6 +129,44 @@ describe('EventStreamRepository', () => {
     const damaged = await repository.loadProjection();
     expect(damaged.status).toBe('needs-repair');
     expect(damaged.projection).toBeNull();
+  });
+
+  it('replays legacy projection snapshots that lack execution indexes', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    const runCreated = event({ eventId: 'legacy-run-created', eventType: 'RunCreated', payload: { runId: 'run-legacy' } });
+    const taskStarted = event({
+      eventId: 'legacy-task-started',
+      sequence: 2,
+      aggregateType: 'Task',
+      aggregateId: 'task-legacy',
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-legacy' },
+    });
+    await repository.append(runCreated, 0);
+    await repository.append(taskStarted, 1);
+
+    const current = await repository.loadProjection();
+    expect(current.projection).not.toBeNull();
+    const legacyProjection = JSON.parse(JSON.stringify(current.projection)) as Record<string, unknown>;
+    delete legacyProjection.taskExecutions;
+    delete legacyProjection.attempts;
+    const legacy = legacyProjection as unknown as DomainProjection;
+    await adapter.writeTextAtomic(
+      repository.snapshotPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        lastSequence: 2,
+        projectionHash: projectionHash(legacy),
+        projection: legacy,
+      }),
+    );
+
+    const reopened = await repository.loadProjection();
+    expect(reopened.source).toBe('replay');
+    expect(reopened.projection?.taskExecutions).toBeDefined();
+    expect(reopened.projection?.attempts).toBeDefined();
+    expect(Object.keys(reopened.projection?.attempts ?? {})).toHaveLength(1);
   });
 
   it('fails closed when appending to a stream that needs repair', async () => {

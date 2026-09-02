@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { EvidenceCollector } from './evidence';
 import { createDevWorkerAcceptance } from './workerAcceptance';
 import type { WorkerTaskLease } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 type AcceptanceHost = Parameters<typeof createDevWorkerAcceptance>[0];
 type TestHost = Omit<AcceptanceHost, 'service' | 'recordAcceptance'> & {
@@ -38,6 +39,8 @@ const lease: WorkerTaskLease = {
     baseRevision: 'base-1',
   },
   attempt: 1,
+  taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+  attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
 };
 
 function host(overrides: Partial<TestHost> = {}): TestHost {
@@ -71,6 +74,12 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(true);
     expect(result.evidenceIds).toHaveLength(3);
+    expect(deps.collector.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        taskExecutionId: lease.taskExecutionId,
+        attemptId: lease.attemptId,
+      }),
+    ]));
     expect(deps.service.testRun).toHaveBeenCalledWith(['npm', 'run', 'test'], { cwd: lease.assignment.path });
     expect(deps.service.gitDiff).toHaveBeenCalledWith('base-1', { cwd: lease.assignment.path });
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
@@ -79,6 +88,8 @@ describe('createDevWorkerAcceptance', () => {
       stageId: 'task-1',
       passed: true,
       worktreePath: lease.assignment.path,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
     }));
   });
 

@@ -1758,6 +1758,26 @@ Issue 工作台采用四个面板：
 - `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
 - 本轮未 commit/push。
 
+### 7.38 建立 Execution/Attempt lineage 与 replay projection
+
+- 在 `src/domain/execution.ts` 新增确定性的 `TaskExecutionId(runId, taskId)` 与 `AttemptId(taskExecutionId, attempt)`；对 ID 组成部分做编码，重启和 replay 不依赖随机值。
+- `WorkerTaskLease`、WorkerQueue 事件、recovery、cleanup proposal/command、side-effect journal、宿主 Evidence/Acceptance 和 Worker read model 现在携带 execution/attempt lineage；旧 `Task` aggregate 事件与旧快照仍在 reducer/snapshot 边界派生兼容 ID。
+- `DomainProjection` 新增 `taskExecutions` 与 `attempts`：同一 `taskId` 在不同 Run 中不再互相覆盖，retry 的 `TaskQueued(nextAttempt)` 只清理 execution 当前结果，真正 claim 时生成新的 `AttemptId`；旧 `AttemptRecord` 的 Evidence、Acceptance、worktree 和 receipt 保留。
+- consistency audit 改为按 `(runId, taskId)` 读取 execution，并报告 lineage drift、缺失 attempt 和孤立 execution；projection snapshot 缺少新索引时回退事件 replay，不信任旧 schema 的半完整投影。
+- cleanup acceptance 增加 execution/attempt 绑定校验；retry 同时清除旧 acceptance、cleanup receipt 和 worktree branch，避免新 attempt 继承旧 attempt 的当前结果。
+- 新增 identity、双 Run、retry replay、snapshot migration、worker lease、Evidence JSONL、cleanup lineage 和 read-model 回归覆盖；未实现 ProjectCommandBus、PlanRevision、Boundary Contract、Host Lease、Artifact acceptance 或 DeliveryReceipt。
+
+本轮最终验证结果：
+
+- `npm run test`：100 个测试文件、818 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- 隔离 Tauri E2E：fixture 生成与删除成功，Tauri 子进程启动但当前 GUI 驱动未能枚举其窗口，未将真实 Worker E2E 记为通过；
+- 本轮未 commit/push；未跟踪的设计、日志和图标素材未纳入改动。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

@@ -686,6 +686,22 @@ cleanup started 但无 receipt
 
 事件流损坏时不能降级为空状态；snapshot 无效时可以 replay；跨文件状态不一致时必须 fail-closed。最终还需要 backup rotation、manifest/commit marker、只读安全模式和诊断导出，解决 ProjectFile、event stream、Evidence、checkpoint 不是一个物理事务的问题。
 
+### 14.5.1 执行身份与 retry lineage（MVP-2）
+
+Worker 执行不再只用 `taskId` 关联当前状态，身份链固定为：
+
+```text
+TaskDefinitionId
+  → TaskExecutionId(runId, taskId)
+    → AttemptId(taskExecutionId, attempt)
+```
+
+`TaskExecutionId` 和 `AttemptId` 必须确定性生成，以便重启、事件 replay 和跨文件审计得到同一 identity。新 Worker 事件以 `TaskExecution` 作为 task aggregate，并在 payload 中携带 `runId`、`taskId`、`taskExecutionId`、`attempt` 和 `attemptId`；旧 `Task` aggregate 事件只在 reducer 边界派生兼容 identity。
+
+`DomainProjection.taskExecutions` 保存每次 Run/Task 的当前执行投影，`attempts` 保存不可覆盖的 `AttemptRecord` 历史；`tasks[taskId]` 只是旧 UI 的最后一次兼容 projection，不能用于跨 Run 审计。retry 的 queued 事件只声明 `nextAttempt`，真正 claim 时才生成新的 `AttemptId`；旧 attempt 的 Evidence、Acceptance、side-effect 和 cleanup receipt 不被覆盖。
+
+Evidence、Acceptance、cleanup proposal/receipt 和 side-effect journal 可通过 execution/attempt 反查。新增 projection snapshot 缺少 execution/attempt 索引时必须回退事件 replay，不得把旧 snapshot 当作完整的新 schema。
+
 ### 14.6 Fallback 必须保留已验证进度
 
 模型不可用时，已经由宿主验证的 Task、Artifact、Evidence 和 checkpoint 应继续保留。未经验证的模型自报只能作为候选材料。

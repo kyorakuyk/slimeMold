@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { auditWorkerRunConsistency } from './workerRunConsistency';
 
 const run: WorkerRunQueueState = {
@@ -99,5 +100,111 @@ describe('worker run consistency audit', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.issues[0]).toMatchObject({ code: 'invalid-event-stream' });
+  });
+
+  it('audits two executions of the same task definition independently', () => {
+    const run2ExecutionId = createTaskExecutionId('run-2', 'task-1');
+    const run2AttemptId = createAttemptId(run2ExecutionId, 1);
+    const run2: WorkerRunQueueState = {
+      ...run,
+      runId: 'run-2',
+      status: 'partial',
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          status: 'failed',
+          evidenceIds: ['evidence-2'],
+          acceptanceId: undefined,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+        },
+      },
+    };
+    const run2Events: DomainEvent[] = [
+      event({ eventId: 'run-2-partial', sequence: 8, aggregateType: 'Run', aggregateId: 'run-2', eventType: 'RunPartial', payload: { runId: 'run-2' } }),
+      event({
+        eventId: 'run-2-task-started',
+        sequence: 9,
+        aggregateType: 'TaskExecution',
+        aggregateId: run2ExecutionId,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-2',
+          taskId: 'task-1',
+          taskExecutionId: run2ExecutionId,
+          attempt: 1,
+          attemptId: run2AttemptId,
+        },
+      }),
+      event({
+        eventId: 'run-2-task-failed',
+        sequence: 10,
+        aggregateType: 'TaskExecution',
+        aggregateId: run2ExecutionId,
+        eventType: 'TaskFailed',
+        payload: {
+          runId: 'run-2',
+          taskId: 'task-1',
+          taskExecutionId: run2ExecutionId,
+          attempt: 1,
+          attemptId: run2AttemptId,
+          evidenceIds: ['evidence-2'],
+        },
+      }),
+    ];
+
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run, run2],
+      events: [...events, ...run2Events],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.projection.taskExecutions[createTaskExecutionId('run-1', 'task-1')]).toMatchObject({
+      status: 'succeeded',
+    });
+    expect(result.projection.taskExecutions[run2ExecutionId]).toMatchObject({
+      status: 'failed',
+      currentAttemptId: run2AttemptId,
+    });
+  });
+
+  it('reports an unregistered task execution even when its task definition exists in another Run', () => {
+    const orphanExecutionId = createTaskExecutionId('run-orphan', 'task-1');
+    const orphanAttemptId = createAttemptId(orphanExecutionId, 1);
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events: [
+        ...events,
+        event({
+          eventId: 'orphan-run-started',
+          sequence: 8,
+          aggregateType: 'Run',
+          aggregateId: 'run-orphan',
+          eventType: 'RunStarted',
+          payload: { runId: 'run-orphan' },
+        }),
+        event({
+          eventId: 'orphan-task-started',
+          sequence: 9,
+          aggregateType: 'TaskExecution',
+          aggregateId: orphanExecutionId,
+          eventType: 'TaskStarted',
+          payload: {
+            runId: 'run-orphan',
+            taskId: 'task-1',
+            taskExecutionId: orphanExecutionId,
+            attempt: 1,
+            attemptId: orphanAttemptId,
+          },
+        }),
+      ],
+    });
+
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'orphaned-task-event', runId: 'run-orphan', taskId: 'task-1' }),
+    ]));
   });
 });

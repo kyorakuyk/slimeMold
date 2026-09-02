@@ -5,6 +5,7 @@ import {
   createCodexWorkerExecutor,
 } from './codexWorkerExecutor';
 import type { WorkerTaskLease } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTask } from '../projectControl/types';
 
 const task: ProjectTask = {
@@ -33,6 +34,8 @@ const lease: WorkerTaskLease = {
     baseRevision: 'base-1',
   },
   attempt: 1,
+  taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+  attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
 };
 
 describe('Codex Worker executor', () => {

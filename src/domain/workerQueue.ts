@@ -6,6 +6,12 @@ import {
   type TaskProjectionStatus,
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
+import {
+  createAttemptId,
+  createTaskExecutionId,
+  type AttemptId,
+  type TaskExecutionId,
+} from './execution';
 
 export interface WorkerWorktreeAssignment {
   worktreeId: string;
@@ -20,6 +26,8 @@ export interface WorkerWorktreeAllocator {
     runId: string;
     task: ProjectTask;
     attempt: number;
+    taskExecutionId: TaskExecutionId;
+    attemptId: AttemptId;
   }): Promise<WorkerWorktreeAssignment>;
 }
 
@@ -29,6 +37,8 @@ export interface WorkerTaskLease {
   task: ProjectTask;
   assignment: WorkerWorktreeAssignment;
   attempt: number;
+  taskExecutionId: TaskExecutionId;
+  attemptId: AttemptId;
 }
 
 export interface WorkerExecutionResult {
@@ -51,8 +61,12 @@ export interface WorkerSideEffectRecorder {
 
 export interface WorkerQueueTask {
   taskId: string;
+  /** Stable identity of this task definition within the current Run. */
+  taskExecutionId?: TaskExecutionId;
   status: TaskProjectionStatus;
   attempt: number;
+  /** Stable identity of the latest attempt; old snapshots may omit it. */
+  currentAttemptId?: AttemptId;
   worktreeId?: string;
   worktreePath?: string;
   branch?: string;
@@ -121,9 +135,10 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function taskState(taskId: string, now: string): WorkerQueueTask {
+function taskState(taskId: string, runId: string, now: string): WorkerQueueTask {
   return {
     taskId,
+    taskExecutionId: createTaskExecutionId(runId, taskId),
     status: 'queued',
     attempt: 0,
     evidenceIds: [],
@@ -133,6 +148,17 @@ function taskState(taskId: string, now: string): WorkerQueueTask {
 
 function cloneQueueTask(task: WorkerQueueTask): WorkerQueueTask {
   return { ...task, evidenceIds: [...task.evidenceIds] };
+}
+
+function normalizeQueueTask(
+  task: WorkerQueueTask,
+  runId: string,
+): WorkerQueueTask {
+  const expected = createTaskExecutionId(runId, task.taskId);
+  if (task.taskExecutionId && task.taskExecutionId !== expected) {
+    throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
+  }
+  return cloneQueueTask({ ...task, taskExecutionId: expected });
 }
 
 function validateGraph(taskGraph: ProjectTaskGraph): void {
@@ -182,7 +208,7 @@ export class WorkerTaskQueue {
     this.state = {
       ...initialState,
       tasks: Object.fromEntries(
-        Object.entries(initialState.tasks).map(([id, task]) => [id, cloneQueueTask(task)]),
+        Object.entries(initialState.tasks).map(([id, task]) => [id, normalizeQueueTask(task, initialState.runId)]),
       ),
     };
     this.validateState();
@@ -252,12 +278,16 @@ export class WorkerTaskQueue {
     if (this.claiming.has(taskId)) throw new Error(`任务正在 claim：${taskId}`);
     this.claiming.add(taskId);
     const attempt = current.attempt + 1;
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const attemptId = createAttemptId(taskExecutionId, attempt);
     try {
       const assignment = await allocator.allocate({
         projectId: this.state.projectId,
         runId: this.state.runId,
         task: cloneTask(task),
         attempt,
+        taskExecutionId,
+        attemptId,
       });
       const reusedBy = Object.values(this.state.tasks).find(
         (item) => item.taskId !== taskId
@@ -276,6 +306,8 @@ export class WorkerTaskQueue {
           ...this.state.tasks,
           [taskId]: {
             ...current,
+            taskExecutionId,
+            currentAttemptId: attemptId,
             status: 'running',
             attempt,
             worktreeId: requiredText(assignment.worktreeId, 'worktree id'),
@@ -291,6 +323,9 @@ export class WorkerTaskQueue {
       }
       this.emitTask('TaskStarted', taskId, {
         runId: this.state.runId,
+        taskId,
+        taskExecutionId,
+        attemptId,
         worktreeId: assignment.worktreeId,
         worktreePath: assignment.path,
         branch: assignment.branch,
@@ -303,6 +338,8 @@ export class WorkerTaskQueue {
         task: cloneTask(task),
         assignment,
         attempt,
+        taskExecutionId,
+        attemptId,
       };
     } catch (cause) {
       const now = new Date().toISOString();
@@ -312,10 +349,25 @@ export class WorkerTaskQueue {
         updatedAt: now,
         tasks: {
           ...this.state.tasks,
-          [taskId]: { ...current, status: 'failed', attempt, error: message, updatedAt: now },
+          [taskId]: {
+            ...current,
+            taskExecutionId,
+            currentAttemptId: attemptId,
+            status: 'failed',
+            attempt,
+            error: message,
+            updatedAt: now,
+          },
         },
       };
-      this.emitTask('TaskFailed', taskId, { runId: this.state.runId, error: message, attempt }, now);
+      this.emitTask('TaskFailed', taskId, {
+        runId: this.state.runId,
+        taskId,
+        taskExecutionId,
+        attemptId,
+        error: message,
+        attempt,
+      }, now);
       this.reconcileBlocked(now);
       this.recomputeRunStatus(now);
       return null;
@@ -347,8 +399,14 @@ export class WorkerTaskQueue {
         },
       },
     };
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const attemptId = current.currentAttemptId ?? createAttemptId(taskExecutionId, current.attempt);
     this.emitTask('TaskSucceeded', taskId, {
       runId: this.state.runId,
+      taskId,
+      taskExecutionId,
+      attemptId,
+      attempt: current.attempt,
       evidenceIds: uniqueEvidenceIds,
       ...(acceptanceId ? { acceptanceId } : {}),
       worktreeId: current.worktreeId,
@@ -385,8 +443,13 @@ export class WorkerTaskQueue {
         },
       },
     };
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const attemptId = current.currentAttemptId ?? createAttemptId(taskExecutionId, current.attempt);
     this.emitTask('TaskFailed', taskId, {
       runId: this.state.runId,
+      taskId,
+      taskExecutionId,
+      attemptId,
       error: message,
       attempt: current.attempt,
       ...(uniqueEvidenceIds.length > 0 ? { evidenceIds: uniqueEvidenceIds } : {}),
@@ -428,6 +491,8 @@ export class WorkerTaskQueue {
         };
         this.emitTask('TaskBlocked', task.id, {
           runId: this.state.runId,
+          taskId: task.id,
+          taskExecutionId: this.state.tasks[task.id].taskExecutionId,
           blockedBy,
           reason: message,
         }, now);
@@ -484,14 +549,23 @@ export class WorkerTaskQueue {
   }
 
   private emitTask(eventType: string, taskId: string, payload: unknown, occurredAt: string): void {
+    const current = this.state.tasks[taskId];
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const payloadRecord = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    const enrichedPayload = { ...payloadRecord, taskId, taskExecutionId } as Record<string, unknown>;
+    const attemptId = typeof payloadRecord.attemptId === 'string'
+      ? payloadRecord.attemptId
+      : 'none';
     this.emit({
-      eventId: `${this.state.runId}:${taskId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
+      eventId: `${taskExecutionId}:${eventType}:${attemptId}:${this.events.length + 1}`,
       streamId: this.state.projectId,
-      aggregateType: 'Task',
-      aggregateId: taskId,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
       eventType,
       schemaVersion: 1,
-      payload,
+      payload: enrichedPayload,
       actor: 'runtime',
       occurredAt,
       correlationId: this.state.runId,
@@ -550,7 +624,7 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     status: 'queued',
     createdAt: now,
     updatedAt: now,
-    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [task.id, taskState(task.id, now)])),
+    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [task.id, taskState(task.id, runId, now)])),
   };
   return new WorkerTaskQueue(input.taskGraph, state, true);
 }

@@ -86,6 +86,12 @@ function decodeRecord(value: unknown): SideEffectRecord {
   if (value.taskId !== undefined && (typeof value.taskId !== 'string' || !value.taskId.trim())) {
     throw new Error('taskId 无效');
   }
+  if (value.taskExecutionId !== undefined && (typeof value.taskExecutionId !== 'string' || !value.taskExecutionId.trim())) {
+    throw new Error('taskExecutionId 无效');
+  }
+  if (value.attemptId !== undefined && (typeof value.attemptId !== 'string' || !value.attemptId.trim())) {
+    throw new Error('attemptId 无效');
+  }
   if (!isStatus(value.status)) throw new Error('status 无效');
   if (!isRecovery(value.recovery)) throw new Error('recovery 无效');
   if (value.unknownReason !== undefined && typeof value.unknownReason !== 'string') {
@@ -103,6 +109,8 @@ function decodeRecord(value: unknown): SideEffectRecord {
     inputHash: value.inputHash,
     ...(typeof value.runId === 'string' ? { runId: value.runId } : {}),
     ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}),
+    ...(typeof value.taskExecutionId === 'string' ? { taskExecutionId: value.taskExecutionId } : {}),
+    ...(typeof value.attemptId === 'string' ? { attemptId: value.attemptId } : {}),
     status: value.status,
     recovery: value.recovery,
     ...(receipt ? { receipt } : {}),
@@ -158,13 +166,18 @@ export function serializeSideEffectJournal(journal: SideEffectJournal): string {
 }
 
 function sameIdentity(left: SideEffectRecord, right: SideEffectRecord): boolean {
+  const sameOptional = (leftValue: string | undefined, rightValue: string | undefined): boolean => (
+    leftValue === undefined || rightValue === undefined || leftValue === rightValue
+  );
   return (
     left.idempotencyKey === right.idempotencyKey &&
     left.kind === right.kind &&
     left.target === right.target &&
     left.inputHash === right.inputHash &&
     left.runId === right.runId &&
-    left.taskId === right.taskId
+    left.taskId === right.taskId &&
+    sameOptional(left.taskExecutionId, right.taskExecutionId) &&
+    sameOptional(left.attemptId, right.attemptId)
   );
 }
 

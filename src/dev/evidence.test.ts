@@ -50,13 +50,24 @@ describe('H4 EvidenceCollector', () => {
     const store = createHostEvidenceStore(tmpRoot, '/some/worktree', 'case');
     const tmp = `${tmpRoot}/case.jsonl`;
     const c1 = new EvidenceCollector(store);
-    await c1.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'first' });
+    await c1.addAsync({
+      orchestrationId: 'o1',
+      stageId: 's1',
+      kind: 'test',
+      status: 'passed',
+      exitCode: 0,
+      summary: 'first',
+      taskExecutionId: 'execution-1',
+      attemptId: 'attempt-1',
+    });
     await c1.addAsync({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'second' });
     // 新 collector 从同一 store 恢复（模拟重启）
     const c2 = new EvidenceCollector(store);
     const loaded = await c2.loadPersisted();
     expect(loaded).toHaveLength(2);
     expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
+    expect(loaded[0]).toMatchObject({ taskExecutionId: 'execution-1', attemptId: 'attempt-1' });
+    expect(c2.byScope({ taskExecutionId: 'execution-1', attemptId: 'attempt-1' })).toHaveLength(1);
     expect(c2.records).toHaveLength(2);
     // 清理临时文件
     const { unlink } = await import('node:fs/promises');

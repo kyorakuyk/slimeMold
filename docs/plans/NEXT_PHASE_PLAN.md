@@ -16,6 +16,13 @@ authority: development-order
 
 ## 一、当前状态
 
+### 2026-09-02：MVP-2 execution/attempt lineage 已完成基础切片
+
+- `TaskExecutionId(runId, taskId)` 与 `AttemptId(taskExecutionId, attempt)` 已进入 Worker lease、事件、recovery、cleanup、side-effect、Evidence 和 Acceptance；旧快照/旧 `Task` aggregate 事件可派生兼容 ID；
+- `DomainProjection.taskExecutions` 与 `attempts` 现在保留双 Run、retry 和 restart replay 历史，`tasks` 只作为兼容 UI projection；
+- consistency audit 已按 execution/attempt 比对并检查孤立 execution；retry 队列事件记录 `nextAttempt`，真正 claim 时才创建新 attempt；
+- 下一条主线改为 `ProjectCommandBus / commit protocol`，然后再进入 `GraphCommand / PlanRevision`；不因本轮 lineage 完成而提前开放 Graph Module、Boundary Contract 或不可信插件。
+
 ### 已完成
 
 - H2 插件 Worker/UI/IPC 隔离基础已完成。

@@ -92,7 +92,7 @@ describe('rehydrateWorkerRunRegistry', () => {
       runs: [run()],
       consistency: {
         ok: false,
-        projection: { lastSequence: 3, runs: {}, tasks: {} },
+        projection: { lastSequence: 3, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} },
         issues: [{
           code: 'run-status-drift',
           runId: 'run-1',

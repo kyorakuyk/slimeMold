@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { markWorkerTaskCleaned } from './workerCleanupCommand';
 
 function state(): WorkerRunQueueState {
@@ -32,6 +33,7 @@ function state(): WorkerRunQueueState {
 
 describe('worker cleanup command', () => {
   it('marks a host-cleaned task and emits an auditable TaskCleaned event', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
     const result = markWorkerTaskCleaned({
       state: state(),
       taskId: 'task-1',
@@ -45,12 +47,16 @@ describe('worker cleanup command', () => {
       cleanupReceiptId: 'receipt-cleanup-1',
     }));
     expect(result.events).toEqual([expect.objectContaining({
-      eventId: 'cleanup-decision-1:task-cleaned:task-1',
+      eventId: `cleanup-decision-1:task-cleaned:${taskExecutionId}`,
       eventType: 'TaskCleaned',
-      aggregateType: 'Task',
-      aggregateId: 'task-1',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
       payload: expect.objectContaining({
         runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId: createAttemptId(taskExecutionId, 1),
         receiptId: 'receipt-cleanup-1',
       }),
     })]);

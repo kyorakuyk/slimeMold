@@ -4,6 +4,7 @@ import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from './workerCleanup';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { workerRunViewsFor } from './workerRunView';
 
 function run(overrides: Partial<WorkerRunQueueState> = {}): WorkerRunQueueState {
@@ -60,6 +61,8 @@ describe('workerRunViewsFor', () => {
       exitCode: 0,
       summary: '宿主测试通过',
       capturedBy: 'host',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: 'C:/worktrees/task-1',
       createdAt: '2026-09-01T00:01:00.000Z',
     }];
@@ -70,6 +73,8 @@ describe('workerRunViewsFor', () => {
       inputHash: 'task-1:1:1',
       runId: 'run-1',
       taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       status: 'receipt',
       recovery: 'skip',
       receipt: { receiptId: 'receipt-1', observedAt: '2026-09-01T00:01:00.000Z' },
@@ -87,7 +92,13 @@ describe('workerRunViewsFor', () => {
       status: 'partial',
       recovery,
       tasks: [
-        expect.objectContaining({ status: 'failed', error: '测试失败', evidenceIds: ['evidence-1'] }),
+        expect.objectContaining({
+          status: 'failed',
+          error: '测试失败',
+          evidenceIds: ['evidence-1'],
+          taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+          attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+        }),
         expect.objectContaining({ status: 'blocked', error: '依赖 task-1 未完成' }),
       ],
     })]);
@@ -99,6 +110,8 @@ describe('workerRunViewsFor', () => {
         idempotencyKey: 'worker-exec:run-1:task-1:attempt-1',
         status: 'receipt',
         receiptId: 'receipt-1',
+        taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+        attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       }),
     ]);
     expect(views[0].tasks[0].cleanup).toEqual(cleanupProposals[0]);

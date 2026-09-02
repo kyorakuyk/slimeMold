@@ -1,5 +1,6 @@
 import type { DomainEvent } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 export interface MarkWorkerTaskCleanedInput {
   state: WorkerRunQueueState;
@@ -32,6 +33,9 @@ export function markWorkerTaskCleaned(
   if (!task) throw new Error(`队列中不存在任务：${taskId}`);
   if (task.status !== 'succeeded') throw new Error('只有 succeeded 任务才能标记清理完成');
   if (task.cleanupStatus === 'cleaned') throw new Error(`任务已经标记清理完成：${taskId}`);
+  if (!Number.isInteger(task.attempt) || task.attempt < 1) throw new Error('任务缺少有效 attempt');
+  const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(input.state.runId, taskId);
+  const attemptId = task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt);
 
   const state: WorkerRunQueueState = {
     ...input.state,
@@ -40,6 +44,8 @@ export function markWorkerTaskCleaned(
       ...input.state.tasks,
       [taskId]: {
         ...task,
+        taskExecutionId,
+        currentAttemptId: attemptId,
         cleanupStatus: 'cleaned',
         cleanupReceiptId: receiptId,
         updatedAt: now,
@@ -47,17 +53,20 @@ export function markWorkerTaskCleaned(
     },
   };
   const event: DomainEvent = {
-    eventId: `${decisionId}:task-cleaned:${taskId}`,
+    eventId: `${decisionId}:task-cleaned:${taskExecutionId}`,
     streamId: input.state.projectId,
     sequence: 1,
-    aggregateType: 'Task',
-    aggregateId: taskId,
+    aggregateType: 'TaskExecution',
+    aggregateId: taskExecutionId,
     aggregateVersion: 1,
     eventType: 'TaskCleaned',
     schemaVersion: 1,
     payload: {
       runId: input.state.runId,
       taskId,
+      taskExecutionId,
+      attempt: task.attempt,
+      attemptId,
       receiptId,
       cleanupStatus: 'cleaned',
     },

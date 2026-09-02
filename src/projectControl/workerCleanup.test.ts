@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AcceptanceRecord } from '../dev/session';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { buildWorkerCleanupProposal } from './workerCleanup';
 
 function run(): WorkerRunQueueState {
@@ -57,6 +58,8 @@ describe('worker cleanup proposal', () => {
       runId: 'run-1',
       taskId: 'task-1',
       attempt: 1,
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: 'C:/project-workers/run-1/task-1',
       baseRevision: 'abc123',
       stateSignature: 'sig-1',
@@ -103,6 +106,31 @@ describe('worker cleanup proposal', () => {
     expect(computeWorktreeSignature).not.toHaveBeenCalled();
   });
 
+  it('blocks cleanup when acceptance belongs to a different attempt', async () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const task = {
+      ...run().tasks['task-1'],
+      attempt: 2,
+      taskExecutionId,
+      currentAttemptId: createAttemptId(taskExecutionId, 2),
+    };
+    const oldAcceptance = {
+      ...acceptance(),
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    };
+
+    await expect(buildWorkerCleanupProposal({
+      run: run(),
+      task,
+      acceptance: oldAcceptance,
+      computeWorktreeSignature: vi.fn(async () => 'never'),
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'blocked',
+      reason: 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt',
+    }));
+  });
+
   it('projects a cleaned task as a terminal proposal instead of asking to clean it again', async () => {
     const cleanedTask = { ...run().tasks['task-1'], cleanupStatus: 'cleaned' as const, cleanupReceiptId: 'receipt-cleanup-1' };
 
@@ -117,6 +145,8 @@ describe('worker cleanup proposal', () => {
       runId: 'run-1',
       taskId: 'task-1',
       attempt: 1,
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       receiptId: 'receipt-cleanup-1',
     });
   });

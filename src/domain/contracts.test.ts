@@ -13,6 +13,7 @@ import {
   validateWorkerCapability,
   type DomainEvent,
 } from './contracts';
+import { createAttemptId, createTaskExecutionId } from './execution';
 
 const event = <TPayload>(partial: Partial<DomainEvent<TPayload>> & Pick<DomainEvent<TPayload>, 'eventType' | 'payload'>): DomainEvent<TPayload> => ({
   eventId: partial.eventId ?? `evt-${partial.sequence ?? 1}`,
@@ -151,6 +152,207 @@ describe('Phase 0a domain contracts', () => {
       cleanupStatus: 'cleaned',
       cleanupReceiptId: 'cleanup-receipt-1',
     });
+  });
+
+  it('keeps separate task executions and attempts when one task runs twice', () => {
+    const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
+    const secondExecutionId = createTaskExecutionId('run-b', 'task-1');
+    const firstAttemptId = createAttemptId(firstExecutionId, 1);
+    const secondAttemptId = createAttemptId(secondExecutionId, 1);
+    const projection = replayDomainEvents([
+      event({
+        eventId: 'run-a-queued',
+        aggregateType: 'Run',
+        aggregateId: 'run-a',
+        eventType: 'RunQueued',
+        payload: { runId: 'run-a' },
+      }),
+      event({
+        eventId: 'run-a-task-queued',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: firstExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-a', taskId: 'task-1', taskExecutionId: firstExecutionId },
+      }),
+      event({
+        eventId: 'run-a-task-started',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: firstExecutionId,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-a',
+          taskId: 'task-1',
+          taskExecutionId: firstExecutionId,
+          attemptId: firstAttemptId,
+          attempt: 1,
+          worktreeId: 'worktree-a',
+        },
+      }),
+      event({
+        eventId: 'run-a-task-failed',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: firstExecutionId,
+        eventType: 'TaskFailed',
+        payload: {
+          runId: 'run-a',
+          taskId: 'task-1',
+          taskExecutionId: firstExecutionId,
+          attemptId: firstAttemptId,
+          attempt: 1,
+          evidenceIds: ['evidence-a'],
+        },
+      }),
+      event({
+        eventId: 'run-b-queued',
+        sequence: 5,
+        aggregateType: 'Run',
+        aggregateId: 'run-b',
+        eventType: 'RunQueued',
+        payload: { runId: 'run-b' },
+      }),
+      event({
+        eventId: 'run-b-task-queued',
+        sequence: 6,
+        aggregateType: 'TaskExecution',
+        aggregateId: secondExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-b', taskId: 'task-1', taskExecutionId: secondExecutionId },
+      }),
+      event({
+        eventId: 'run-b-task-started',
+        sequence: 7,
+        aggregateType: 'TaskExecution',
+        aggregateId: secondExecutionId,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-b',
+          taskId: 'task-1',
+          taskExecutionId: secondExecutionId,
+          attemptId: secondAttemptId,
+          attempt: 1,
+          worktreeId: 'worktree-b',
+        },
+      }),
+      event({
+        eventId: 'run-b-task-succeeded',
+        sequence: 8,
+        aggregateType: 'TaskExecution',
+        aggregateId: secondExecutionId,
+        eventType: 'TaskSucceeded',
+        payload: {
+          runId: 'run-b',
+          taskId: 'task-1',
+          taskExecutionId: secondExecutionId,
+          attemptId: secondAttemptId,
+          attempt: 1,
+          evidenceIds: ['evidence-b'],
+        },
+      }),
+    ]);
+
+    expect(Object.keys(projection.taskExecutions)).toEqual([firstExecutionId, secondExecutionId]);
+    expect(projection.taskExecutions[firstExecutionId]).toMatchObject({
+      taskId: 'task-1',
+      runId: 'run-a',
+      status: 'failed',
+      attemptIds: [firstAttemptId],
+      currentAttemptId: firstAttemptId,
+    });
+    expect(projection.attempts[firstAttemptId]).toMatchObject({
+      taskExecutionId: firstExecutionId,
+      taskId: 'task-1',
+      runId: 'run-a',
+      attempt: 1,
+      status: 'failed',
+      evidenceIds: ['evidence-a'],
+    });
+    expect(projection.taskExecutions[secondExecutionId]).toMatchObject({
+      taskId: 'task-1',
+      runId: 'run-b',
+      status: 'succeeded',
+      attemptIds: [secondAttemptId],
+    });
+    expect(projection.tasks['task-1']).toMatchObject({
+      status: 'succeeded',
+      runId: 'run-b',
+      evidenceIds: ['evidence-b'],
+    });
+  });
+
+  it('does not carry the previous attempt acceptance into a queued retry', () => {
+    const taskExecutionId = createTaskExecutionId('run-retry', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const projection = replayDomainEvents([
+      event({ eventId: 'retry-run-queued', aggregateType: 'Run', aggregateId: 'run-retry', eventType: 'RunQueued', payload: { runId: 'run-retry' } }),
+      event({
+        eventId: 'retry-task-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskStarted',
+        payload: { runId: 'run-retry', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      }),
+      event({
+        eventId: 'retry-task-succeeded',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskSucceeded',
+        payload: {
+          runId: 'run-retry',
+          taskId: 'task-1',
+          taskExecutionId,
+          attempt: 1,
+          attemptId,
+          evidenceIds: ['old-evidence'],
+          acceptanceId: 'old-acceptance',
+        },
+      }),
+      event({
+        eventId: 'retry-task-queued',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: {
+          runId: 'run-retry',
+          taskId: 'task-1',
+          taskExecutionId,
+          nextAttempt: 2,
+        },
+      }),
+    ]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({
+      status: 'queued',
+      attemptIds: [attemptId],
+    });
+    expect(projection.taskExecutions[taskExecutionId].evidenceIds).toBeUndefined();
+    expect(projection.taskExecutions[taskExecutionId].acceptanceId).toBeUndefined();
+    expect(projection.attempts[attemptId]).toMatchObject({
+      status: 'succeeded',
+      evidenceIds: ['old-evidence'],
+      acceptanceId: 'old-acceptance',
+    });
+  });
+
+  it('rejects a TaskExecution event whose aggregate id disagrees with its lineage', () => {
+    const taskExecutionId = createTaskExecutionId('run-lineage', 'task-1');
+
+    expect(() => replayDomainEvents([event({
+      eventId: 'mismatched-task-execution',
+      aggregateType: 'TaskExecution',
+      aggregateId: 'task-execution:wrong',
+      eventType: 'TaskQueued',
+      payload: {
+        runId: 'run-lineage',
+        taskId: 'task-1',
+        taskExecutionId,
+      },
+    })])).toThrow(/aggregateId/);
   });
 
   it('resolves global, project, and run policy without mutating the global preference', () => {

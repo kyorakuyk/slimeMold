@@ -263,7 +263,13 @@ export default function App() {
       let report: WorkerRunConsistencyReport;
       let controlReport: ReturnType<typeof auditProjectControlConsistency> | null = null;
       if (parsed.status === 'needs-repair') {
-        const projection: DomainProjection = { lastSequence: 0, runs: {}, tasks: {} };
+        const projection: DomainProjection = {
+          lastSequence: 0,
+          runs: {},
+          tasks: {},
+          taskExecutions: {},
+          attempts: {},
+        };
         report = {
           ok: false,
           projection,

@@ -4,6 +4,7 @@ import {
   type DomainProjection,
 } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 export type WorkerRunConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -17,6 +18,9 @@ export type WorkerRunConsistencyIssueCode =
   | 'task-evidence-drift'
   | 'task-acceptance-drift'
   | 'task-cleanup-drift'
+  | 'task-execution-lineage-drift'
+  | 'attempt-lineage-drift'
+  | 'missing-attempt-event'
   | 'orphaned-run-event'
   | 'orphaned-task-event';
 
@@ -34,7 +38,7 @@ export interface WorkerRunConsistencyReport {
 }
 
 function emptyProjection(): DomainProjection {
-  return { lastSequence: 0, runs: {}, tasks: {} };
+  return { lastSequence: 0, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} };
 }
 
 function issue(
@@ -99,14 +103,35 @@ export function auditWorkerRunConsistency(input: {
     }
 
     for (const [taskId, task] of Object.entries(run.tasks)) {
-      const replayedTask = projection.tasks[taskId];
-      if (!replayedTask) {
+      const expectedTaskExecutionId = createTaskExecutionId(run.runId, taskId);
+      if (task.taskExecutionId && task.taskExecutionId !== expectedTaskExecutionId) {
+        issues.push(issue(
+          'task-execution-lineage-drift',
+          `Worker Task 的 taskExecutionId 与 Run/Task 定义不一致：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
+      }
+      const taskExecutionId = task.taskExecutionId ?? expectedTaskExecutionId;
+      const replayedExecution = projection.taskExecutions[taskExecutionId];
+      const replayedTask = replayedExecution ?? projection.tasks[taskId];
+      if (!replayedTask || (replayedTask.runId && replayedTask.runId !== run.runId)) {
         issues.push(issue(
           'missing-task-event',
           `ProjectFile 中存在 Worker Task，但事件流没有对应事实：${taskId}`,
           { runId: run.runId, taskId },
         ));
         continue;
+      }
+      if (replayedExecution && (
+        replayedExecution.taskExecutionId !== taskExecutionId
+        || replayedExecution.taskId !== taskId
+        || replayedExecution.runId !== run.runId
+      )) {
+        issues.push(issue(
+          'task-execution-lineage-drift',
+          `Worker Task execution lineage 与事件重放不一致：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
       }
       if (replayedTask.status !== task.status) {
         issues.push(issue(
@@ -150,6 +175,36 @@ export function auditWorkerRunConsistency(input: {
           { runId: run.runId, taskId },
         ));
       }
+
+      if (task.attempt > 0) {
+        const expectedAttemptId = task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt);
+        const replayedAttempt = projection.attempts[expectedAttemptId];
+        if (!replayedAttempt) {
+          issues.push(issue(
+            'missing-attempt-event',
+            `ProjectFile 中存在 Worker Attempt，但事件流没有对应事实：${taskId}/a${task.attempt}`,
+            { runId: run.runId, taskId },
+          ));
+        } else if (
+          replayedAttempt.taskExecutionId !== taskExecutionId
+          || replayedAttempt.taskId !== taskId
+          || replayedAttempt.runId !== run.runId
+          || replayedAttempt.attempt !== task.attempt
+        ) {
+          issues.push(issue(
+            'attempt-lineage-drift',
+            `Worker Attempt lineage 与事件重放不一致：${taskId}/a${task.attempt}`,
+            { runId: run.runId, taskId },
+          ));
+        }
+        if (task.currentAttemptId && replayedExecution?.currentAttemptId !== task.currentAttemptId) {
+          issues.push(issue(
+            'attempt-lineage-drift',
+            `Worker Task 当前 Attempt 与事件重放不一致：${taskId}`,
+            { runId: run.runId, taskId },
+          ));
+        }
+      }
     }
   }
 
@@ -159,6 +214,18 @@ export function auditWorkerRunConsistency(input: {
         'orphaned-run-event',
         `事件流存在 ProjectFile 未登记的 Worker Run：${runId}`,
         { runId },
+      ));
+    }
+  }
+  const taskExecutionKeys = new Set(
+    input.runs.flatMap((run) => Object.keys(run.tasks).map((taskId) => `${run.runId}\u0000${taskId}`)),
+  );
+  for (const execution of Object.values(projection.taskExecutions)) {
+    if (!taskExecutionKeys.has(`${execution.runId}\u0000${execution.taskId}`)) {
+      issues.push(issue(
+        'orphaned-task-event',
+        `事件流存在 ProjectFile 未登记的 Worker Task Execution：${execution.taskExecutionId}`,
+        { runId: execution.runId, taskId: execution.taskId },
       ));
     }
   }

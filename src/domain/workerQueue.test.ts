@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
+import { replayDomainEvents, type DomainEvent } from './contracts';
+import { clearProjectEventBuffer, getPendingProjectEvents, recordProjectEvents } from '../projectControl/eventBuffer';
 import {
   createWorkerRunQueue,
   restoreWorkerRunQueue,
@@ -8,6 +10,7 @@ import {
   type WorkerTaskLease,
   type WorkerWorktreeAllocator,
 } from './workerQueue';
+import { createAttemptId, createTaskExecutionId } from './execution';
 
 function task(id: string, dependsOn: string[] = []): ProjectTask {
   return {
@@ -74,6 +77,94 @@ describe('WorkerTaskQueue', () => {
       'TaskQueued',
       'TaskQueued',
     ]);
+  });
+
+  it('assigns stable task execution and attempt ids across retries', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-lineage',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const taskExecutionId = createTaskExecutionId('run-lineage', 'a');
+    const queuedEvent = queue.drainEvents().find((event) => event.eventType === 'TaskQueued');
+
+    expect(queuedEvent?.payload).toMatchObject({
+      runId: 'run-lineage',
+      taskId: 'a',
+      taskExecutionId,
+    });
+
+    const firstLease = await queue.claimTask('a', allocatorFor([]));
+    const firstAttemptId = createAttemptId(taskExecutionId, 1);
+    const firstStarted = queue.drainEvents().find((event) => event.eventType === 'TaskStarted');
+    expect(firstLease).toMatchObject({ taskExecutionId, attempt: 1, attemptId: firstAttemptId });
+    expect(firstStarted?.payload).toMatchObject({ taskExecutionId, attemptId: firstAttemptId, attempt: 1 });
+
+    queue.markFailed('a', '第一次失败', '2026-09-01T00:00:02.000Z');
+    queue.drainEvents();
+    const failed = queue.snapshot();
+    const restored = restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: {
+        ...failed,
+        status: 'queued',
+        tasks: {
+          a: {
+            ...failed.tasks.a,
+            status: 'queued',
+            worktreeId: undefined,
+            worktreePath: undefined,
+            branch: undefined,
+            baseRevision: undefined,
+          },
+        },
+      },
+    });
+
+    const secondLease = await restored.claimTask('a', allocatorFor([]));
+    const secondAttemptId = createAttemptId(taskExecutionId, 2);
+    const secondStarted = restored.drainEvents().find((event) => event.eventType === 'TaskStarted');
+    expect(secondLease).toMatchObject({ taskExecutionId, attempt: 2, attemptId: secondAttemptId });
+    expect(secondStarted?.payload).toMatchObject({ taskExecutionId, attemptId: secondAttemptId, attempt: 2 });
+    expect(secondStarted?.eventId).not.toBe(firstStarted?.eventId);
+  });
+
+  it('rebuilds execution and attempt projections from serialized Worker events', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-replay',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    clearProjectEventBuffer('project-1');
+    recordProjectEvents('project-1', queue.drainEvents());
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    expect(lease).not.toBeNull();
+    recordProjectEvents('project-1', queue.drainEvents());
+    queue.markSucceeded('a', ['evidence-replay'], '2026-09-01T00:00:02.000Z', 'acceptance-replay');
+    recordProjectEvents('project-1', queue.drainEvents());
+
+    const eventLog = getPendingProjectEvents('project-1');
+    const replayed = replayDomainEvents(JSON.parse(JSON.stringify(eventLog)) as DomainEvent[]);
+    clearProjectEventBuffer('project-1');
+    const taskExecutionId = createTaskExecutionId('run-replay', 'a');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(replayed.taskExecutions[taskExecutionId]).toMatchObject({
+      status: 'succeeded',
+      currentAttemptId: attemptId,
+      attemptIds: [attemptId],
+      evidenceIds: ['evidence-replay'],
+      acceptanceId: 'acceptance-replay',
+    });
+    expect(replayed.attempts[attemptId]).toMatchObject({
+      taskExecutionId,
+      attempt: 1,
+      status: 'succeeded',
+      evidenceIds: ['evidence-replay'],
+      acceptanceId: 'acceptance-replay',
+    });
   });
 
   it('gives every claimed task its own worktree and continues independent tasks after failure', async () => {

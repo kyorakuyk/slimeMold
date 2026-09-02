@@ -20,7 +20,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-最近一次已记录的基线（checkpoint `509e070`）：
+最近一次已记录的 checkpoint 基线（`509e070`）：
 
 - `npm run test`：99 个测试文件、806 个测试通过；
 - `npm run build`：TypeScript/Vite 构建通过；保留既有 dynamic/static import 与大 chunk warning；
@@ -28,6 +28,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
 - `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
 - `git diff --check`：通过。
+
+本轮 working tree 实测（2026-09-02，尚未 commit）：
+
+- `npm run test`：100 个测试文件、818 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；保留既有 dynamic/static import 与大 chunk warning；
+- `npm run i18n:check`：991 个 key 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
+- `git diff --check`：通过；
+- 隔离 Tauri fixture 已生成/清理，但当前 GUI 驱动未能枚举新启动窗口，真实 Worker E2E 未通过也未宣称通过。
 
 ## 人工验收范围
 

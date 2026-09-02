@@ -3,6 +3,7 @@ import { InMemoryEventStoreAdapter } from '../domain/eventStore';
 import { SideEffectJournalRepository } from '../domain/sideEffects';
 import type { WorkerCleanupProposalReady } from './workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './workerCleanupExecution';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function proposal(): WorkerCleanupProposalReady {
   return {
@@ -10,6 +11,8 @@ function proposal(): WorkerCleanupProposalReady {
     runId: 'run-1',
     taskId: 'task-1',
     attempt: 1,
+    taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+    attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
     worktreePath: 'C:/project-workers/run-1/task-1',
     baseRevision: 'abc123',
     stateSignature: 'sig-1',
@@ -33,6 +36,10 @@ describe('worker cleanup execution', () => {
 
     expect(result.cleaned).toBe(true);
     expect(result.sideEffect.status).toBe('receipt');
+    expect(result.sideEffect).toMatchObject({
+      taskExecutionId: proposal().taskExecutionId,
+      attemptId: proposal().attemptId,
+    });
     expect(result.sideEffect.receipt?.receiptId).toBe('cleanup:run-1:task-1:a1:receipt');
     expect(confirmAndCleanup).toHaveBeenCalledWith(proposal().worktreePath);
     await expect(repository.read()).resolves.toMatchObject({

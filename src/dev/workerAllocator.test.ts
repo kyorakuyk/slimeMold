@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectTask } from '../projectControl/types';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { WorktreeInfo } from './worktree';
 import { createWorktreeAllocator } from './workerAllocator';
 
@@ -44,6 +45,8 @@ describe('createWorktreeAllocator', () => {
       runId: 'run/one',
       task,
       attempt: 2,
+      taskExecutionId: createTaskExecutionId('run/one', 'task/one'),
+      attemptId: createAttemptId(createTaskExecutionId('run/one', 'task/one'), 2),
     });
 
     expect(create).toHaveBeenCalledWith(
@@ -70,6 +73,8 @@ describe('createWorktreeAllocator', () => {
       runId: 'run-1',
       task,
       attempt: 1,
+      taskExecutionId: createTaskExecutionId('run-1', 'task/one'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task/one'), 1),
     })).rejects.toThrow(/创建 worktree 失败/);
   });
 });

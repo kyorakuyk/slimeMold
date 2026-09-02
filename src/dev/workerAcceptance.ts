@@ -63,6 +63,8 @@ export function createDevWorkerAcceptance(
           command: testLabel,
           exitCode: test.exitCode,
           summary: `宿主测试退出码 ${test.exitCode}`,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
@@ -74,6 +76,8 @@ export function createDevWorkerAcceptance(
           summary: hasDiff
             ? `检测到 ${changedFiles.length} 个实际变更文件`
             : '未检测到可验收的实际变更',
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
@@ -85,12 +89,23 @@ export function createDevWorkerAcceptance(
           summary: pathPolicyPassed
             ? `路径策略通过（${changedFiles.length} 个变更文件）`
             : `路径策略拒绝（受保护 ${changedProtectedPaths.length} 个，越界 ${changedDisallowedPaths.length} 个）`,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
 
         // addAsync 已等待单条落盘；flush 仍是验收前的统一持久化屏障，防止其它在途证据混入未落盘状态。
-        await host.collector.flushAndByScope({ orchestrationId, stageId, worktreePath: cwd });
+        const persistedEvidence = await host.collector.flushAndByScope({
+          orchestrationId,
+          stageId,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+          worktreePath: cwd,
+        });
+        if (!freshEvidence.every((record) => persistedEvidence.some((item) => item.id === record.id))) {
+          throw new Error('Worker acceptance 的 Evidence lineage 未完成持久化');
+        }
         const rules: AcceptanceRule[] = [
           { id: 'tests', kind: 'test', command: testLabel },
           { id: 'diff', kind: 'diff' },
@@ -106,6 +121,8 @@ export function createDevWorkerAcceptance(
           passed: verdict.passed,
           failedChecks: verdict.failedChecks,
           at: new Date().toISOString(),
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
         });
         return {
           passed: verdict.passed,

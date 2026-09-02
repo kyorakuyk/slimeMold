@@ -71,6 +71,8 @@ export async function executeWorkerCleanupWithReceipt(
     inputHash: `${proposal.baseRevision}:${proposal.stateSignature}`,
     runId: proposal.runId,
     taskId: proposal.taskId,
+    taskExecutionId: proposal.taskExecutionId,
+    attemptId: proposal.attemptId,
   });
   const started = startSideEffect(existing?.status === 'planned' ? existing : planned);
   const startedJournal = await input.repository.record(started);
