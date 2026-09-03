@@ -2,6 +2,7 @@ import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { workerCleanupEffectKey } from './workerCleanup';
+import { pathComparisonKey } from '../dev/path-utils';
 
 export interface MarkWorkerTaskCleanedInput {
   state: WorkerRunQueueState;
@@ -9,6 +10,7 @@ export interface MarkWorkerTaskCleanedInput {
   receiptId: string;
   taskExecutionId: string;
   attemptId: string;
+  stateSignature: string;
   receipt: SideEffectRecord;
   decisionId: string;
   now: string;
@@ -31,6 +33,7 @@ export function markWorkerTaskCleaned(
 ): MarkWorkerTaskCleanedResult {
   const taskId = requiredText(input.taskId, 'task id');
   const receiptId = requiredText(input.receiptId, 'receipt id');
+  const stateSignature = requiredText(input.stateSignature, 'state signature');
   const decisionId = requiredText(input.decisionId, 'decision id');
   const now = requiredText(input.now, '时间');
   const task = input.state.tasks[taskId];
@@ -55,11 +58,20 @@ export function markWorkerTaskCleaned(
   }
   if (
     input.receipt.status !== 'receipt'
+    || input.receipt.kind !== 'worktree-cleanup'
     || input.receipt.receipt?.receiptId !== receiptId
+    || input.receipt.receipt?.receiptId !== `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:receipt`
+    || input.receipt.receipt?.outcome !== 'succeeded'
+    || input.receipt.receipt?.outputHash !== stateSignature
+    || input.receipt.recovery !== 'skip'
     || input.receipt.runId !== input.state.runId
     || input.receipt.taskId !== taskId
     || input.receipt.taskExecutionId !== expectedTaskExecutionId
     || input.receipt.attemptId !== expectedAttemptId
+    || !task.worktreePath
+    || pathComparisonKey(input.receipt.target) !== pathComparisonKey(task.worktreePath)
+    || !task.baseRevision
+    || input.receipt.inputHash !== `${task.baseRevision}:${stateSignature}`
     || input.receipt.idempotencyKey !== workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)
   ) {
     throw new Error(`cleanup receipt 与当前 Task execution/attempt 不一致：${taskId}`);

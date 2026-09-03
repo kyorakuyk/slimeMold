@@ -25,6 +25,11 @@ describe('resolveWeb（GUI 纯前端路径解析）', () => {
     expect(resolveWeb('C:/repo/wt', 'src\\a.ts')).toBe('C:/repo/wt/src/a.ts');
   });
 
+  it('preserves UNC roots and compares them case-insensitively', () => {
+    expect(resolveWeb('//Server/Share/repo', 'wt/file.ts')).toBe('//Server/Share/repo/wt/file.ts');
+    expect(relativeWeb('//Server/Share/repo', '//server/share/repo/wt/file.ts')).toBe('wt/file.ts');
+  });
+
   it('relativeWeb：同前缀 → 相对子路径；跨前缀 → 回溯 ..', () => {
     expect(relativeWeb('/repo/wt', '/repo/wt/src/a.ts')).toBe('src/a.ts');
     expect(relativeWeb('/repo/wt', '/repo/other/b.ts')).toBe('../other/b.ts');

@@ -110,14 +110,17 @@ export async function codexWorkerExec(
   prompt: string,
   model: string | undefined,
   cwd: string,
+  operationId: string,
 ): Promise<LLMResponse> {
   if (!isTauri) throw new Error('Codex Worker 需要 SlimeMold 桌面版。');
   if (!prompt.trim()) throw new Error('Codex Worker 请求不能为空。');
   if (!cwd.trim()) throw new Error('Codex Worker worktree 路径不能为空。');
+  if (!operationId.trim()) throw new Error('Codex Worker operation id 不能为空。');
   const result = await invokeRaw<CodexExecResult>('codex_worker_exec', {
     prompt,
     model: model?.trim() || null,
     cwd,
+    operationId,
   });
   return {
     text: result.text,
@@ -131,4 +134,10 @@ export async function codexWorkerExec(
         }
       : undefined,
   };
+}
+
+/** 请求宿主终止一个由当前前端 operation id 注册的 Codex Worker child。 */
+export async function cancelCodexWorker(operationId: string): Promise<void> {
+  if (!isTauri || !operationId.trim()) return;
+  await invokeRaw<void>('codex_worker_cancel', { operationId });
 }

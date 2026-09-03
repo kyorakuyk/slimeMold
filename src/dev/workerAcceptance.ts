@@ -12,7 +12,7 @@ export interface DevWorkerAcceptanceOptions {
 
 type DevWorkerAcceptanceHost = Pick<
   DevSession,
-  'policy' | 'service' | 'collector' | 'nextAcceptanceId' | 'recordAcceptance'
+  'policy' | 'service' | 'collector' | 'nextAcceptanceId' | 'recordAcceptance' | 'persistAcceptance'
 >;
 
 function commandLabel(command: readonly string[]): string {
@@ -21,6 +21,13 @@ function commandLabel(command: readonly string[]): string {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Worker acceptance 已取消');
+  error.name = 'AbortError';
+  throw error;
 }
 
 /**
@@ -39,7 +46,8 @@ export function createDevWorkerAcceptance(
   }
 
   return {
-    async evaluate({ lease }): Promise<WorkerAcceptanceResult> {
+    async evaluate({ lease, signal }): Promise<WorkerAcceptanceResult> {
+      throwIfAborted(signal);
       try {
         assertTaskExecutionLineage({
           runId: lease.runId,
@@ -65,8 +73,11 @@ export function createDevWorkerAcceptance(
 
       try {
         const test = await host.service.testRun(testCommand, context);
+        throwIfAborted(signal);
         const diff = await host.service.gitDiff(lease.assignment.baseRevision, context);
+        throwIfAborted(signal);
         const changedFiles = await host.service.gitChangedFiles(context);
+        throwIfAborted(signal);
         const changedProtectedPaths = collectChangedProtectedPaths(host.policy, changedFiles);
         const changedDisallowedPaths = changedFiles.filter((file) => !isPathAllowed(host.policy, file));
         const hasDiff = diff.exitCode === 0 && changedFiles.length > 0;
@@ -88,6 +99,7 @@ export function createDevWorkerAcceptance(
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
+        throwIfAborted(signal);
         freshEvidence.push(await host.collector.addAsync({
           orchestrationId,
           stageId,
@@ -103,6 +115,7 @@ export function createDevWorkerAcceptance(
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
+        throwIfAborted(signal);
         freshEvidence.push(await host.collector.addAsync({
           orchestrationId,
           stageId,
@@ -118,6 +131,7 @@ export function createDevWorkerAcceptance(
           worktreePath: cwd,
           baseRevision: lease.assignment.baseRevision,
         }));
+        throwIfAborted(signal);
 
         // addAsync 已等待单条落盘；flush 仍是验收前的统一持久化屏障，防止其它在途证据混入未落盘状态。
         const persistedEvidence = await host.collector.flushAndByScope({
@@ -127,6 +141,7 @@ export function createDevWorkerAcceptance(
           attemptId: lease.attemptId,
           worktreePath: cwd,
         });
+        throwIfAborted(signal);
         if (!freshEvidence.every((record) => persistedEvidence.some((item) => item.id === record.id))) {
           throw new Error('Worker acceptance 的 Evidence lineage 未完成持久化');
         }
@@ -136,8 +151,9 @@ export function createDevWorkerAcceptance(
           { id: 'path-policy', kind: 'path-policy' },
         ];
         const verdict = evaluateDevAcceptance(rules, freshEvidence, changedProtectedPaths);
+        throwIfAborted(signal);
         const acceptanceId = host.nextAcceptanceId();
-        host.recordAcceptance({
+        const acceptance = host.recordAcceptance({
           acceptanceId,
           orchestrationId,
           stageId,
@@ -150,6 +166,9 @@ export function createDevWorkerAcceptance(
           taskExecutionId: lease.taskExecutionId,
           attemptId: lease.attemptId,
         });
+        throwIfAborted(signal);
+        await host.persistAcceptance(acceptance);
+        throwIfAborted(signal);
         return {
           passed: verdict.passed,
           evidenceIds: freshEvidence.map((record) => record.id),
@@ -157,6 +176,7 @@ export function createDevWorkerAcceptance(
           failureReason: verdict.passed ? undefined : `宿主验收失败：${verdict.failedChecks.join(', ')}`,
         };
       } catch (cause) {
+        if (signal?.aborted) throwIfAborted(signal);
         return {
           passed: false,
           failureReason: `宿主验收无法完成：${errorMessage(cause)}`,

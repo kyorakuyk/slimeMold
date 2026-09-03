@@ -15,9 +15,16 @@ import type { NodeDefinition } from '../types';
 import { defaultDevPolicy, type SelfDevelopmentPolicy } from './policy';
 import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry } from './capabilities';
 import { WorktreeManager, createNodeGitRunner, type DevGitRunner } from './worktree';
-import { EvidenceCollector, type EvidencePersistence } from './evidence';
+import {
+  assertEvidenceOutsideWorktree,
+  EvidenceCollector,
+  evidencePathFor,
+  isMissingFileError,
+  type EvidencePersistence,
+  type JsonlFsOps,
+} from './evidence';
 import { createDevNodeDefs } from '../nodes/dev/index';
-import { normalizeAbsolutePath } from './path-utils';
+import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
 import { assertTaskExecutionLineage } from '../domain/execution';
@@ -64,6 +71,108 @@ export interface AcceptanceRecord {
   attemptId?: string;
 }
 
+export interface AcceptancePersistence {
+  append(record: AcceptanceRecord): Promise<void>;
+  load(): Promise<AcceptanceRecord[]>;
+}
+
+export function createHostAcceptanceStoreWithFs(
+  acceptanceRoot: string,
+  worktreePath: string,
+  key: string,
+  fsOps: JsonlFsOps,
+): AcceptancePersistence {
+  assertEvidenceOutsideWorktree(acceptanceRoot, worktreePath);
+  return createJsonlAcceptanceStore(evidencePathFor(acceptanceRoot, key), fsOps);
+}
+
+function createJsonlAcceptanceStore(filePath: string, fsOps: JsonlFsOps): AcceptancePersistence {
+  const dirname = filePath.includes('/') || filePath.includes('\\')
+    ? filePath.slice(0, Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')))
+    : '.';
+  let appendChain = Promise.resolve();
+  return {
+    async append(record) {
+      const operation = appendChain.then(async () => {
+        decodeAcceptanceRecord(record);
+        await fsOps.mkdir(dirname);
+        await fsOps.append(filePath, `${JSON.stringify(record)}\n`);
+      });
+      appendChain = operation.catch(() => {});
+      await operation;
+    },
+    async load() {
+      let text = '';
+      try {
+        text = await fsOps.read(filePath);
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error;
+      }
+      const records: AcceptanceRecord[] = [];
+      for (const line of text.split('\n').filter((item) => item.trim())) {
+        const value = decodeAcceptanceRecord(JSON.parse(line));
+        const existing = records.find((record) => record.acceptanceId === value.acceptanceId);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(value)) {
+          throw new Error(`Acceptance ID 内容冲突：${value.acceptanceId}`);
+        }
+        if (!existing) records.push(value);
+      }
+      return records;
+    },
+  };
+}
+
+export function decodeAcceptanceRecord(value: unknown): AcceptanceRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Acceptance JSONL 记录必须是对象');
+  const record = value as Partial<AcceptanceRecord>;
+  if (
+    typeof record.acceptanceId !== 'string'
+    || !record.acceptanceId.trim()
+    || typeof record.orchestrationId !== 'string'
+    || typeof record.stageId !== 'string'
+    || typeof record.worktreePath !== 'string'
+    || typeof record.passed !== 'boolean'
+    || !Array.isArray(record.failedChecks)
+    || !record.failedChecks.every((item) => typeof item === 'string')
+    || typeof record.at !== 'string'
+    || !record.orchestrationId.trim()
+    || !record.stageId.trim()
+    || !record.worktreePath.trim()
+    || !record.at.trim()
+  ) throw new Error('Acceptance JSONL 基础字段无效');
+  const hasLineage = record.runId !== undefined
+    || record.taskId !== undefined
+    || record.taskExecutionId !== undefined
+    || record.attemptId !== undefined;
+  if (!hasLineage) return { ...record } as AcceptanceRecord;
+  if (
+    typeof record.runId !== 'string'
+    || typeof record.taskId !== 'string'
+    || typeof record.taskExecutionId !== 'string'
+    || typeof record.attemptId !== 'string'
+  ) throw new Error('Acceptance lineage 不完整');
+  try {
+    assertTaskExecutionLineage({
+      runId: record.runId,
+      taskId: record.taskId,
+      taskExecutionId: record.taskExecutionId,
+      attemptId: record.attemptId,
+    });
+    return { ...record } as AcceptanceRecord;
+  } catch {
+    throw new Error('Acceptance lineage 无效');
+  }
+}
+
+function isAcceptanceRecord(value: unknown): value is AcceptanceRecord {
+  try {
+    decodeAcceptanceRecord(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 宿主清理审批（P1：一次性 + 绑定版本/状态/验收）。
  * cleanup 确认门校验（全部满足才允许清理）：
@@ -103,6 +212,10 @@ export interface DevSession {
   nextAcceptanceId(): string;
   /** 记录确定性验收结果（P1：禁止覆盖已有 ID——重复执行产生新记录）。 */
   recordAcceptance(rec: AcceptanceRecord): AcceptanceRecord;
+  /** 把已登记的 acceptance 写入宿主持久化；失败不得把它当作可清理依据。 */
+  persistAcceptance(rec: AcceptanceRecord): Promise<void>;
+  /** 从宿主持久化加载 acceptance（项目启动/恢复前调用）。 */
+  loadAcceptances(): Promise<void>;
   getAcceptance(acceptanceId: string): AcceptanceRecord | undefined;
   /** 计算 worktree 当前状态签名（changedFiles + diff 哈希；供审批/清理校验）。 */
   computeWorktreeSignature(path: string): Promise<string>;
@@ -128,7 +241,7 @@ export interface DevSession {
    * 全部通过后立即 cleanup → 成功后消费审批。
    * 节点与 headless 收尾统一走这里，不在外部「先算签名再 cleanup」。
    */
-  confirmAndCleanup(path: string): Promise<boolean>;
+  confirmAndCleanup(path: string, signal?: AbortSignal): Promise<boolean>;
   /**
    * 强制清理（P1：高风险专用 API，仅 UI/宿主审批层人工触发）。
    * 绕过「绑定验收/状态签名」的正常确认门，但必须显式给出 reason（记录审计）；
@@ -146,6 +259,8 @@ export interface DevSessionOptions {
   gitRunner?: DevGitRunner;
   /** 宿主证据持久化（位于 worktree 外，由宿主构造） */
   persistence?: EvidencePersistence;
+  /** 宿主 acceptance 持久化（位于 worktree 外，由宿主构造）。 */
+  acceptancePersistence?: AcceptancePersistence;
   /**
    * 执行环境（Phase 1）：
    * - 'node'（默认）：headless/CI，命令/文件走 node-run；
@@ -167,10 +282,17 @@ function hash(s: string): string {
 }
 
 export function initDevSession(opts: DevSessionOptions = {}): DevSession {
-  if (_session) return _session;
+  const requestedBaseRepoPath = opts.baseRepoPath ?? process.cwd();
+  if (_session) {
+    if (pathComparisonKey(_session.manager.getBaseRepoPath()) !== pathComparisonKey(requestedBaseRepoPath)) {
+      throw new Error('DevSession 已绑定另一个项目，必须先 teardown 后切换');
+    }
+    return _session;
+  }
   const policy = opts.policy ?? defaultDevPolicy;
-  const baseRepoPath = opts.baseRepoPath ?? process.cwd();
+  const baseRepoPath = requestedBaseRepoPath;
   const env: 'node' | 'tauri' = opts.env ?? 'node';
+  const acceptancePersistence = opts.acceptancePersistence;
 
   // Tauri（GUI）下的命令/文件/路径通道：全部走 Rust 宿主（dev_exec / dev_read_file / dev_write_file）。
   // tauri-run 顶层无 @tauri-apps 运行时依赖（invoke 均延迟 import），静态 import 对浏览器构建安全。
@@ -195,14 +317,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
   const syncRust = async (fn: 'register' | 'unregister', path: string): Promise<void> => {
     if (env !== 'tauri') return;
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', { path });
-    } catch {
-      // 同步失败不阻断执行（Rust 侧 cwd 校验会 fail-closed 兜底）
-    }
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', { path });
   };
   const rawCreate = manager.create.bind(manager);
+  const rawRestore = manager.restore.bind(manager);
   const rawCleanup = manager.cleanup.bind(manager);
   manager.create = async (id, path, opts) => {
     const info = await rawCreate(id, path, opts);
@@ -216,14 +335,31 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           // 证据根与 worktree 相交 → 拒绝持久化（forceCleanup 等依赖持久化的操作将不可用，fail-closed）
         }
       }
-      await syncRust('register', info.path);
+      try {
+        await syncRust('register', info.path);
+      } catch (error) {
+        await rawCleanup(id, { confirm: true, signal: opts?.signal }).catch(() => false);
+        manager.forget(id);
+        throw error;
+      }
     }
     return info;
+  };
+  manager.restore = async (info, opts) => {
+    const restored = await rawRestore(info, opts);
+    if (!restored) return false;
+    try {
+      await syncRust('register', info.path);
+      return true;
+    } catch {
+      manager.forget(info.id);
+      return false;
+    }
   };
   manager.cleanup = async (id, opts) => {
     const info = manager.get(id);
     const cleaned = await rawCleanup(id, opts);
-    if (cleaned && info) await syncRust('unregister', info.path);
+    if ((cleaned || manager.get(id)?.status === 'orphaned') && info) await syncRust('unregister', info.path);
     return cleaned;
   };
   const session: DevSession = {
@@ -259,23 +395,47 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (this.acceptanceStore.has(rec.acceptanceId)) {
         throw new Error(`验收记录 ID 已存在，禁止覆盖：${rec.acceptanceId}`);
       }
-      const declaresLineage = rec.runId !== undefined
-        || rec.taskId !== undefined
-        || rec.taskExecutionId !== undefined
-        || rec.attemptId !== undefined;
-      if (declaresLineage) {
-        if (!rec.runId || !rec.taskId || !rec.taskExecutionId || !rec.attemptId) {
-          throw new Error('验收记录 lineage 不完整：runId/taskId/taskExecutionId/attemptId 均必填');
-        }
-        assertTaskExecutionLineage({
-          runId: rec.runId,
-          taskId: rec.taskId,
-          taskExecutionId: rec.taskExecutionId,
-          attemptId: rec.attemptId,
-        });
+      if (!isAcceptanceRecord(rec)) {
+        throw new Error('验收记录格式或 lineage 无效');
       }
       this.acceptanceStore.set(rec.acceptanceId, rec);
       return rec;
+    },
+    async persistAcceptance(rec) {
+      const current = this.acceptanceStore.get(rec.acceptanceId);
+      if (!current || JSON.stringify(current) !== JSON.stringify(rec)) {
+        throw new Error(`验收记录未在当前 session 登记：${rec.acceptanceId}`);
+      }
+      if (!acceptancePersistence) {
+        this.acceptanceStore.delete(rec.acceptanceId);
+        throw new Error('AcceptancePersistence 未配置，拒绝把验收当作 durable 事实');
+      }
+      try {
+        await acceptancePersistence.append({ ...rec });
+        const persisted = (await acceptancePersistence.load()).find((item) => item.acceptanceId === rec.acceptanceId);
+        if (!persisted || JSON.stringify(persisted) !== JSON.stringify(rec)) {
+          this.acceptanceStore.delete(rec.acceptanceId);
+          throw new Error(`Acceptance 持久化 read-back 不一致：${rec.acceptanceId}`);
+        }
+      } catch (error) {
+        this.acceptanceStore.delete(rec.acceptanceId);
+        throw error;
+      }
+    },
+    async loadAcceptances() {
+      if (!acceptancePersistence) return;
+      const loaded = await acceptancePersistence.load();
+      const next = new Map(this.acceptanceStore);
+      for (const record of loaded) {
+        if (!isAcceptanceRecord(record)) throw new Error('Acceptance 记录无效');
+        const existing = next.get(record.acceptanceId);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+          throw new Error(`Acceptance ID 内容冲突：${record.acceptanceId}`);
+        }
+        next.set(record.acceptanceId, { ...record });
+      }
+      this.acceptanceStore.clear();
+      for (const [id, record] of next) this.acceptanceStore.set(id, record);
     },
     getAcceptance(acceptanceId) {
       return this.acceptanceStore.get(acceptanceId);
@@ -304,9 +464,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       );
     },
     approveCleanup(path, opts) {
-      const key = normalizeAbsolutePath(path);
+      const normalizedPath = normalizeAbsolutePath(path);
+      const key = pathComparisonKey(path);
       this.approvedCleanups.set(key, {
-        worktreePath: key,
+        worktreePath: normalizedPath,
         baseRevision: opts?.baseRevision,
         stateSignature: opts?.stateSignature,
         acceptanceId: opts?.acceptanceId,
@@ -317,14 +478,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       });
     },
     isCleanupApproved(path) {
-      const a = this.approvedCleanups.get(normalizeAbsolutePath(path));
+      const a = this.approvedCleanups.get(pathComparisonKey(path));
       return !!a && !a.consumed;
     },
     getCleanupApproval(path) {
-      return this.approvedCleanups.get(normalizeAbsolutePath(path));
+      return this.approvedCleanups.get(pathComparisonKey(path));
     },
     consumeCleanup(path) {
-      const key = normalizeAbsolutePath(path);
+      const key = pathComparisonKey(path);
       const a = this.approvedCleanups.get(key);
       if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
     },
@@ -338,7 +499,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (!reason || !reason.trim()) {
         throw new Error('forceCleanup 必须提供 reason（审计要求）');
       }
-      const key = normalizeAbsolutePath(path);
+      const normalizedPath = normalizeAbsolutePath(path);
+      const key = pathComparisonKey(path);
       // 与正常确认门共用互斥锁，防并发清理同一 worktree
       if (this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
@@ -348,7 +510,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         await this.collector.addAsync({
           orchestrationId: 'host',
           stageId: 'force-cleanup',
-          worktreePath: key,
+          worktreePath: normalizedPath,
           kind: 'path-policy',
           status: 'failed',
           summary: `forceCleanup: ${reason}`,
@@ -359,12 +521,12 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         this.confirmCleanupInFlight.delete(key);
       }
     },
-    async confirmAndCleanup(path) {
+    async confirmAndCleanup(path, signal) {
       // P1（审计）：宿主级互斥锁——同一 worktree 的确认清理串行，防并发窗口；
       // 锁内完成「取审批 → 校验验收三元组 → 重新计算状态签名 → 校验基线 → cleanup」，
       // 并在 cleanup 前**二次**重算签名（computeWorktreeSignature 与删除紧邻，窗口最小化）。
-      const key = normalizeAbsolutePath(path);
-      if (this.confirmCleanupInFlight.has(key)) return false;
+      const key = pathComparisonKey(path);
+      if (signal?.aborted || this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
       try {
         const approval = this.approvedCleanups.get(key);
@@ -377,16 +539,19 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           acc.passed &&
           acc.orchestrationId === approval.orchestrationId &&
           acc.stageId === approval.stageId &&
-          normalizeAbsolutePath(acc.worktreePath) === key;
+          pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
         // 第一次签名校验
         const sig = await this.computeWorktreeSignature(path);
+        if (signal?.aborted) return false;
         const sigOk = sig === approval.stateSignature;
         if (!accOk || !revOk || !sigOk) return false;
         // cleanup 前二次签名校验（与删除紧邻——window 内签名变化即拒绝）
         const sig2 = await this.computeWorktreeSignature(path);
+        if (signal?.aborted) return false;
         if (sig2 !== approval.stateSignature) return false;
-        const cleaned = await this.manager.cleanup(info.id, { confirm: true });
+        const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
+        if (signal?.aborted) return false;
         if (cleaned) this.consumeCleanup(path);
         return cleaned;
       } finally {

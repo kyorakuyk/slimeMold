@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-02
+updated: 2026-09-03
 tags:
   - SlimeMold
   - Agent
@@ -1797,6 +1797,34 @@ Issue 工作台采用四个面板：
 - `cargo test --manifest-path src-tauri/Cargo.toml`：23 个 Rust 测试通过；
 - 新增行敏感模式扫描未发现凭据赋值、shell injection 或 eval/exec；
 - 仍未实现 ProjectCommandBus/commit protocol、完整 ProjectControl replay、PlanRevision、Boundary Contract、Host Lease、Artifact acceptance 和 DeliveryReceipt；真实 Tauri Worker E2E 仍受当前 GUI 窗口不可观测限制，未宣称通过。
+
+### 7.40 加固宿主边界、恢复凭据隔离与项目切换取消
+
+- 针对第二轮独立审查，统一 TypeScript/Tauri/Rust 的 Windows path comparison key 和 component boundary 检查；Evidence、Worktree、allocator、queue、GUI session 以及 Rust worktree registration 都拒绝大小写变体绕过、前缀碰撞和主仓库外的 worktree 生命周期命令；allocator 在 creator 失败或身份不一致时释放 reservation；
+- 将 Node/Rust/Codex command 环境收紧为最小执行 allowlist，并叠加 credential-family suffix 拒绝；Node/Rust Worker 使用临时 HOME/USERPROFILE/APPDATA/LOCALAPPDATA 与隔离 npm 配置/cache，Codex 登录/Worker CLI 仅保留 credential-filtered ChatGPT auth 路径并使用 `--ignore-user-config`/`--ignore-rules`；
+- replay 增加 pending next-attempt fence、terminal/reopen 检查、strict identity/safe integer 和 synthetic migration provenance；legacy Worker snapshot 对已明确为终态的任务补出最小 Started 边界，多 attempt 先补 queued fence，不伪造未知结果；foreign project Worker facts 和非 migration 的 TaskAttemptImported 事件拒绝导入；
+- recovery plan 统一从真实 effects 推导 recoverable set，忽略篡改的 effectKeys/requiresUser；partial/unscoped/stale/非当前 running attempt 不再参与 retry/skip；cleanup receipt 校验 kind、target、inputHash、outputHash、outcome、recovery、receiptId 和当前 lineage，并将经过完整匹配的旧 key 迁移为 canonical key；
+- Acceptance 新增宿主持久化与启动 reload，Evidence JSONL 只忽略明确的 missing-file，权限/损坏读取失败中断审计；consistency audit 对当前 attempt 的 Evidence/Acceptance/side-effect 做精确匹配并报告无 taskId 的记录；
+- 项目切换建立 project operation cancellation fencing：旧 operation 不再 restore/register/persist，WorktreeManager 在 create/restore/cleanup 边界检查取消，Codex Worker 通过 operation id、process-tree kill 和 30 分钟 timeout 支持取消，DevSession singleton 不跨项目复用；
+
+本轮最终验证结果：
+
+- `npm run test`：101 个测试文件、880 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有动态/静态 import 与大 chunk warning）；
+- `npm run i18n:check`：中英文 991 个 key 对齐；
+- `git diff --check`：通过（保留 Windows 工作树的 LF→CRLF 提示，无 whitespace error）；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：28 个 Rust 测试通过；
+- 新增行安全扫描：hardcoded secret assignment、shell injection、eval/exec、unsafe deserialization 均为 0；
+- 真实 Tauri Worker E2E 仍受当前 GUI 窗口不可观测限制，未宣称通过；OS 级 no-follow/TOCTOU、第三方不可信插件进程隔离和真正的网络/文件系统沙箱仍是后续安全阶段；本轮仅建立本地 checkpoint，不 push。
+
+### 7.41 第三轮审查后的宿主隔离与生命周期收敛
+
+- 针对第三轮 reviewer 的失败项，补齐真实 Git worktree registration：登记路径必须属于当前 `<baseRepo>-workers/<attempt>`，branch 必须是对应 `worker/<attempt>`，并通过 `git worktree list --porcelain` 交叉验证；主仓库 `git diff/status/worktree/branch` 和 worktree 内 `find/grep` 参数改为显式只读白名单，实际 spawn 使用 canonical cwd/路径 operand。
+- 修复浏览器 `node:path` shim 的 `.`/`..`/UNC 解析、Windows verbatim path comparison、JSONL 真实换行与并发 append；Evidence/Acceptance/side-effect 持久化入口统一做 schema、lineage、receipt outcome 的 fail-closed decode。
+- Worker queue、Acceptance、Codex pending login/child、Worktree restore/create/cleanup、plugin scan 和 ProjectFile save 均加入 cancellation/generation fencing；取消不再伪装成 TaskFailed，transition callback 失败不会丢事件，迟到 completion 不能提升 unknown effect。
+- 验证结果：`npm run test` 101 个测试文件、880 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 28 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
+- 仍未宣称完整不可信代码沙箱：OS 级 no-follow/TOCTOU、第三方插件进程/网络隔离和真实 Tauri Worker E2E 仍待后续安全阶段；本轮不 push。
 
 ## 八、适合拆成的博客系列
 

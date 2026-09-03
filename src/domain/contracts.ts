@@ -43,6 +43,7 @@ export interface TaskExecutionProjection {
   status: TaskProjectionStatus;
   attemptIds: AttemptId[];
   currentAttemptId?: AttemptId;
+  pendingAttempt?: number;
   evidenceIds?: string[];
   acceptanceId?: string;
   cleanupStatus?: 'cleaned';
@@ -143,10 +144,20 @@ function payloadText(payload: EventPayload, key: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function payloadIdentityText(payload: EventPayload, key: string): string | undefined {
+  const value = payload[key];
+  if (typeof value !== 'string') return undefined;
+  if (!value) return undefined;
+  if (value.trim() !== value) {
+    throw new Error(`${key} 必须使用 canonical 形式，不能包含首尾空白`);
+  }
+  return value;
+}
+
 function payloadPositiveInteger(payload: EventPayload, key: string): number | undefined {
   if (!Object.prototype.hasOwnProperty.call(payload, key)) return undefined;
   const value = payload[key];
-  if (!Number.isInteger(value) || (value as number) < 1) {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new Error(`${key} 必须是大于 0 的整数：${String(value)}`);
   }
   return value as number;
@@ -162,7 +173,7 @@ function payloadEvidenceIds(payload: EventPayload): string[] | undefined {
 }
 
 function taskIdFor(event: DomainEvent, payload: EventPayload): string | undefined {
-  return payloadText(payload, 'taskId')
+  return payloadIdentityText(payload, 'taskId')
     ?? (event.aggregateType === 'Task' ? event.aggregateId : undefined);
 }
 
@@ -171,7 +182,7 @@ function taskLineageFor(
   payload: EventPayload,
   projection: DomainProjection,
 ): TaskLineage | undefined {
-  const runId = payloadText(payload, 'runId');
+  const runId = payloadIdentityText(payload, 'runId');
   const taskId = taskIdFor(event, payload);
   if (!runId || !taskId) {
     if (event.aggregateType === 'TaskExecution') {
@@ -181,7 +192,7 @@ function taskLineageFor(
   }
 
   const derivedTaskExecutionId = createTaskExecutionId(runId, taskId);
-  const suppliedTaskExecutionId = payloadText(payload, 'taskExecutionId');
+  const suppliedTaskExecutionId = payloadIdentityText(payload, 'taskExecutionId');
   if (suppliedTaskExecutionId && suppliedTaskExecutionId !== derivedTaskExecutionId) {
     throw new Error(`taskExecutionId 与 runId/taskId 不一致：${suppliedTaskExecutionId}`);
   }
@@ -189,22 +200,24 @@ function taskLineageFor(
   if (event.aggregateType === 'TaskExecution' && event.aggregateId !== taskExecutionId) {
     throw new Error(`TaskExecution aggregateId 与 taskExecutionId 不一致：${event.eventId}`);
   }
+  const suppliedAttemptId = payloadIdentityText(payload, 'attemptId');
+  const isAttemptLifecycleEvent = event.eventType === 'TaskStarted'
+    || event.eventType === 'TaskSucceeded'
+    || event.eventType === 'TaskFailed'
+    || event.eventType === 'TaskCleaned';
+  const execution = projection.taskExecutions[taskExecutionId];
+  const currentAttempt = execution?.currentAttemptId
+    ? projection.attempts[execution.currentAttemptId]
+    : undefined;
   const attempt = payloadAttempt(payload)
-    ?? (event.eventType === 'TaskStarted'
-      || event.eventType === 'TaskSucceeded'
-      || event.eventType === 'TaskFailed'
-      || event.eventType === 'TaskCleaned'
-      ? projection.taskExecutions[taskExecutionId]?.currentAttemptId
-        ? projection.attempts[projection.taskExecutions[taskExecutionId].currentAttemptId!]?.attempt
-        : undefined
-      : undefined)
-    ?? (event.eventType === 'TaskStarted'
-      || event.eventType === 'TaskSucceeded'
-      || event.eventType === 'TaskFailed'
-      || event.eventType === 'TaskCleaned'
-      ? 1
-      : undefined);
-  const suppliedAttemptId = payloadText(payload, 'attemptId');
+    ?? (isAttemptLifecycleEvent ? currentAttempt?.attempt : undefined)
+    ?? (isAttemptLifecycleEvent && event.aggregateType !== 'TaskExecution' ? 1 : undefined);
+  if (event.aggregateType === 'TaskExecution' && isAttemptLifecycleEvent && !suppliedAttemptId) {
+    throw new Error(`TaskExecution 生命周期事件必须携带 attemptId：${event.eventId}`);
+  }
+  if (event.aggregateType === 'TaskExecution' && isAttemptLifecycleEvent && attempt === undefined) {
+    throw new Error(`TaskExecution 生命周期事件缺少可验证 attempt：${event.eventId}`);
+  }
   if (suppliedAttemptId && attempt === undefined) {
     throw new Error(`attemptId 缺少可验证的 attempt：${suppliedAttemptId}`);
   }
@@ -286,12 +299,17 @@ function applyLegacyTaskProjection(
   projection.tasks[taskId] = base;
 }
 
+function isTerminalAttemptStatus(status: AttemptRecord['status']): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+}
+
 function applyTaskLineageProjection(
   projection: DomainProjection,
   lineage: TaskLineage,
   status: TaskProjectionStatus,
   eventType: string,
   payload: EventPayload,
+  event: DomainEvent,
 ): void {
   const previous = projection.taskExecutions[lineage.taskExecutionId];
   const previousAttempt = lineage.attemptId ? projection.attempts[lineage.attemptId] : undefined;
@@ -300,48 +318,92 @@ function applyTaskLineageProjection(
   const nextAttempt = eventType === 'TaskQueued'
     ? payloadPositiveInteger(payload, 'nextAttempt')
     : undefined;
-  const isQueuedRetry = nextAttempt !== undefined
-    && (previous?.attemptIds.length ?? 0) > 0;
   const maxAttempt = previous?.attemptIds
     .map((attemptId) => projection.attempts[attemptId]?.attempt ?? 0)
     .reduce((max, attempt) => Math.max(max, attempt), 0) ?? 0;
-  if (lineage.attempt !== undefined && maxAttempt > 0) {
-    if (lineage.attempt < maxAttempt || lineage.attempt > maxAttempt + 1) {
-      throw new Error(`Attempt 顺序不连续：已有 ${maxAttempt}，实际 ${lineage.attempt}`);
+  const currentAttempt = previous?.currentAttemptId
+    ? projection.attempts[previous.currentAttemptId]
+    : undefined;
+  const latestAttempt = attemptIds
+    .map((attemptId) => projection.attempts[attemptId])
+    .filter((attempt): attempt is AttemptRecord => !!attempt)
+    .sort((left, right) => right.attempt - left.attempt)[0];
+  const hasExplicitAttemptIdentity = Object.prototype.hasOwnProperty.call(payload, 'attempt')
+    || Object.prototype.hasOwnProperty.call(payload, 'attemptId');
+  const strictAttemptLifecycle = event.aggregateType === 'TaskExecution' || hasExplicitAttemptIdentity;
+  const isCompletion = eventType === 'TaskSucceeded'
+    || eventType === 'TaskFailed'
+    || eventType === 'TaskCleaned';
+
+  if (eventType === 'TaskQueued'
+    && nextAttempt === undefined
+    && previous
+    && (previous.attemptIds.length > 0 || previous.status !== 'queued')) {
+    throw new Error(`重复 TaskQueued 缺少 retry fence：${lineage.taskExecutionId}`);
+  }
+
+  if (nextAttempt !== undefined) {
+    if (maxAttempt < 1 || nextAttempt !== maxAttempt + 1) {
+      throw new Error(`nextAttempt 不是连续的下一次 attempt：期望 ${maxAttempt + 1}，实际 ${nextAttempt}`);
     }
-    if (lineage.attempt === maxAttempt + 1) {
-      const currentAttempt = previous?.currentAttemptId
-        ? projection.attempts[previous.currentAttemptId]
-        : undefined;
-      if (currentAttempt?.status === 'running') {
-        throw new Error(`前一个 Attempt 仍在 running，拒绝并发新 Attempt：${lineage.taskExecutionId}`);
+    if (previous?.pendingAttempt !== undefined) {
+      throw new Error(`TaskExecution 已有 pending retry：${lineage.taskExecutionId}`);
+    }
+    const latest = currentAttempt ?? latestAttempt;
+    if (latest && !isTerminalAttemptStatus(latest.status) && latest.status !== 'unknown') {
+      throw new Error(`前一个 Attempt 不是 terminal/unknown，拒绝排队 retry：${lineage.taskExecutionId}`);
+    }
+  }
+
+  if (lineage.attempt !== undefined) {
+    if (maxAttempt === 0 && lineage.attempt !== 1) {
+      throw new Error(`首次 Attempt 必须从 1 开始：${lineage.attempt}`);
+    }
+    if (maxAttempt > 0) {
+      if (lineage.attempt < maxAttempt || lineage.attempt > maxAttempt + 1) {
+        throw new Error(`Attempt 顺序不连续：已有 ${maxAttempt}，实际 ${lineage.attempt}`);
+      }
+      if (lineage.attempt === maxAttempt + 1) {
+        if (previous?.pendingAttempt !== lineage.attempt) {
+          throw new Error(`新 Attempt 缺少对应的 queued retry fence：${lineage.attempt}`);
+        }
+        const active = currentAttempt ?? latestAttempt;
+        if (active && !isTerminalAttemptStatus(active.status) && active.status !== 'unknown') {
+          throw new Error(`前一个 Attempt 仍未结束，拒绝新 Attempt：${lineage.taskExecutionId}`);
+        }
       }
     }
   }
-  if (nextAttempt !== undefined) {
-    if (nextAttempt !== maxAttempt + 1) {
-      throw new Error(`nextAttempt 不是连续的下一次 attempt：期望 ${maxAttempt + 1}，实际 ${nextAttempt}`);
-    }
-  }
+
   if (previousAttempt) {
-    const previousIsTerminal = previousAttempt.status === 'succeeded'
-      || previousAttempt.status === 'failed'
-      || previousAttempt.status === 'cancelled';
-    if (previousIsTerminal && (eventType === 'TaskSucceeded' || eventType === 'TaskFailed')) {
-      throw new Error(`Attempt 已有终态，拒绝重复完成：${lineage.attemptId}`);
+    if (eventType === 'TaskStarted' && (previousAttempt.status === 'running' || isTerminalAttemptStatus(previousAttempt.status) || previousAttempt.status === 'unknown')) {
+      throw new Error(`Attempt 不能重复启动或从终态 reopen：${lineage.attemptId}`);
+    }
+    if (isCompletion && eventType !== 'TaskCleaned' && previousAttempt.status !== 'running') {
+      throw new Error(`completion 只能来自 running Attempt：${lineage.attemptId}`);
     }
     if (eventType === 'TaskCleaned' && previousAttempt.status !== 'succeeded') {
       throw new Error(`只有 succeeded Attempt 可以清理：${lineage.attemptId}`);
     }
   }
-  projection.taskExecutions[lineage.taskExecutionId] = {
+
+  if (strictAttemptLifecycle && isCompletion) {
+    if (!previousAttempt || previous?.currentAttemptId !== lineage.attemptId) {
+      throw new Error(`completion 不匹配当前 Attempt fencing token：${lineage.attemptId ?? '<missing>'}`);
+    }
+  }
+  if (strictAttemptLifecycle && eventType === 'TaskStarted' && maxAttempt > 0 && lineage.attempt === maxAttempt) {
+    throw new Error(`已存在的 Attempt 不能重新启动：${lineage.attemptId}`);
+  }
+
+  const nextExecution: TaskExecutionProjection = {
     ...previous,
     taskExecutionId: lineage.taskExecutionId,
     taskId: lineage.taskId,
     runId: lineage.runId,
     status,
     attemptIds,
-    ...(isQueuedRetry
+    ...(nextAttempt !== undefined
       ? {
           evidenceIds: undefined,
           acceptanceId: undefined,
@@ -349,11 +411,14 @@ function applyTaskLineageProjection(
           cleanupReceiptId: undefined,
           error: undefined,
           currentAttemptId: undefined,
+          pendingAttempt: nextAttempt,
         }
       : {}),
     ...(lineage.attemptId ? { currentAttemptId: lineage.attemptId } : {}),
     ...taskExecutionPatch(payload, eventType),
   };
+  if (eventType === 'TaskStarted') delete nextExecution.pendingAttempt;
+  projection.taskExecutions[lineage.taskExecutionId] = nextExecution;
 
   if (!lineage.attemptId || lineage.attempt === undefined) return;
   projection.attempts[lineage.attemptId] = {
@@ -373,9 +438,30 @@ function applyImportedAttemptProjection(
   event: DomainEvent,
 ): void {
   const payload = payloadRecord(event.payload);
+  const sourceRunId = payloadIdentityText(payload, 'runId');
+  const sourceTaskId = payloadIdentityText(payload, 'taskId');
+  if (
+    event.aggregateType !== 'TaskExecution'
+    || event.actor !== 'system'
+    || event.synthetic !== true
+    || !event.source
+    || !event.source.objectId
+    || event.source.objectId.trim() !== event.source.objectId
+    || !event.correlationId?.trim()
+    || !sourceRunId
+    || !sourceTaskId
+    || event.source.objectId !== `${event.streamId}:workerTask:${sourceRunId}:${sourceTaskId}`
+    || !Number.isSafeInteger(event.source.objectVersion)
+    || event.source.objectVersion < 1
+  ) {
+    throw new Error(`TaskAttemptImported 必须来自 synthetic system migration：${event.eventId}`);
+  }
   const lineage = taskLineageFor(event, payload, projection);
   if (!lineage?.attemptId || lineage.attempt === undefined) {
     throw new Error(`TaskAttemptImported 事件缺少可验证 lineage：${event.eventId}`);
+  }
+  if (event.aggregateId !== lineage.taskExecutionId) {
+    throw new Error(`TaskAttemptImported aggregateId 与 lineage 不一致：${event.eventId}`);
   }
   if (projection.attempts[lineage.attemptId]) {
     throw new Error(`TaskAttemptImported 重复 attempt：${lineage.attemptId}`);
@@ -412,10 +498,10 @@ function applyTaskEvent(
 ): void {
   const payload = payloadRecord(event.payload);
   const taskId = taskIdFor(event, payload);
-  const runId = payloadText(payload, 'runId');
+  const runId = payloadIdentityText(payload, 'runId');
   if (taskId) applyLegacyTaskProjection(projection, taskId, runId, status, event.eventType, payload);
   const lineage = taskLineageFor(event, payload, projection);
-  if (lineage) applyTaskLineageProjection(projection, lineage, status, event.eventType, payload);
+  if (lineage) applyTaskLineageProjection(projection, lineage, status, event.eventType, payload, event);
 }
 
 /** Replay stable run facts plus immutable execution/attempt lineage. */
@@ -440,11 +526,11 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
     }
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
     const payload = payloadRecord(event.payload);
-    const payloadRunId = payloadText(payload, 'runId');
+    const payloadRunId = payloadIdentityText(payload, 'runId');
     if (event.aggregateType === 'Run' && payloadRunId && payloadRunId !== event.aggregateId) {
       throw new Error(`Run aggregateId 与 runId 不一致：${event.eventId}`);
     }
-    const payloadTaskId = payloadText(payload, 'taskId');
+    const payloadTaskId = payloadIdentityText(payload, 'taskId');
     if (event.aggregateType === 'Task' && payloadTaskId && payloadTaskId !== event.aggregateId) {
       throw new Error(`Task aggregateId 与 taskId 不一致：${event.eventId}`);
     }

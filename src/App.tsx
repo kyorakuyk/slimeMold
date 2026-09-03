@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { X, Keyboard } from 'lucide-react';
 import TopBar from './components/TopBar';
@@ -159,6 +159,38 @@ export default function App() {
   const panelH = useViewStore((s) => s.panelH);
   const setPanelH = useViewStore((s) => s.setPanelH);
 
+  type ProjectOperation = {
+    projectId: string | null;
+    projectPath: string | null;
+    controller: AbortController;
+  };
+  const projectOperationRef = useRef<ProjectOperation | null>(null);
+  const getProjectOperation = (projectId: string | null, projectPath: string | null): ProjectOperation => {
+    const existing = projectOperationRef.current;
+    if (
+      existing
+      && existing.projectId === projectId
+      && existing.projectPath === projectPath
+      && !existing.controller.signal.aborted
+    ) return existing;
+    existing?.controller.abort();
+    const next = { projectId, projectPath, controller: new AbortController() };
+    projectOperationRef.current = next;
+    return next;
+  };
+  const assertProjectOperation = (operation: ProjectOperation): void => {
+    if (operation.controller.signal.aborted) {
+      const error = new Error('项目 operation 已取消');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const current = useWorkflowStore.getState();
+    if (current.projectId !== operation.projectId || current.projectPath !== operation.projectPath) {
+      operation.controller.abort();
+      throw new Error('项目在异步 operation 期间发生切换');
+    }
+  };
+
   // 面板尺寸（可拖拽调节）
   const [leftW, setLeftW] = useState(248);
   const [rightW, setRightW] = useState(288);
@@ -193,7 +225,9 @@ export default function App() {
   const refreshWorkerCleanupProposals = async (
     session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
     runId: string,
+    signal?: AbortSignal,
   ): Promise<void> => {
+    if (signal?.aborted) return;
     const current = useWorkflowStore.getState();
     const run = current.workerRuns.find((item) => item.runId === runId);
     if (!run) return;
@@ -204,10 +238,12 @@ export default function App() {
           run,
           task,
           acceptance: task.acceptanceId ? session.getAcceptance(task.acceptanceId) : undefined,
+          sideEffects: current.workerRunSideEffects,
           isWorktreeTracked: (path) => session.manager.isTracked(path),
           computeWorktreeSignature: (path) => session.computeWorktreeSignature(path),
         })),
     );
+    if (signal?.aborted) return;
     const latest = useWorkflowStore.getState();
     if (latest.projectId !== run.projectId) return;
     latest.setWorkerCleanupProposals([
@@ -219,9 +255,11 @@ export default function App() {
   const restoreWorkerWorktrees = async (
     session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
     runs: readonly WorkerRunQueueState[],
+    signal?: AbortSignal,
   ): Promise<void> => {
     for (const run of runs) {
       for (const task of Object.values(run.tasks)) {
+        if (signal?.aborted) return;
         if (task.cleanupStatus === 'cleaned') continue;
         if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) continue;
         const restored = await session.manager.restore({
@@ -231,7 +269,8 @@ export default function App() {
           baseRevision: task.baseRevision,
           createdAt: task.updatedAt,
           status: 'created',
-        });
+        }, { signal });
+        if (signal?.aborted) return;
         if (!restored) {
           useWorkflowStore.getState().addLog(
             'warn',
@@ -245,8 +284,9 @@ export default function App() {
   const auditLoadedWorkerRunFacts = async (
     projectPath: string | null,
     acceptances?: readonly AcceptanceRecord[],
+    signal?: AbortSignal,
   ): Promise<void> => {
-    if (!isTauri || !projectPath) return;
+    if (!isTauri || !projectPath || signal?.aborted) return;
     try {
       const { createTauriEventStoreAdapter } = await import('./domain/tauriEventStore');
       const repository = new EventStreamRepository(
@@ -262,6 +302,7 @@ export default function App() {
         workerRuns: before.workerRuns,
         now: new Date().toISOString(),
       });
+      if (signal?.aborted) return;
       const parsed = bootstrapped.stream;
       const current = useWorkflowStore.getState();
       if (!current.projectId || current.projectPath !== projectPath) return;
@@ -311,6 +352,7 @@ export default function App() {
           };
         }
       }
+      if (signal?.aborted) return;
       const runtime = installWorkerRunRuntime({
         projectId: current.projectId,
         taskGraphs: current.projectControl.taskGraphs ?? [],
@@ -336,6 +378,7 @@ export default function App() {
         );
       }
     } catch (cause) {
+      if (signal?.aborted) return;
       useWorkflowStore.getState().addLog(
         'warn',
         `Worker 事件流无法审计：${cause instanceof Error ? cause.message : String(cause)}`,
@@ -349,11 +392,15 @@ export default function App() {
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
     if (!projectId || !projectPath) throw new Error('项目必须先保存，Worker 才能创建隔离 worktree');
+    const operation = getProjectOperation(projectId, projectPath);
+    assertProjectOperation(operation);
 
     // queued 状态和 RunCreated/TaskQueued 事实先落盘；进程若在 Codex 启动前退出，重开仍能恢复该 Run。
-    await beforeSave.saveProject();
-    const session = await ensureGuiDevSession(projectPath);
+    await beforeSave.saveProject({ projectId, projectPath, signal: operation.controller.signal });
+    assertProjectOperation(operation);
+    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
     if (!session) throw new Error('开发宿主不可用，Worker 未启动');
+    assertProjectOperation(operation);
     const current = useWorkflowStore.getState();
     if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');
     const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
@@ -366,6 +413,7 @@ export default function App() {
       projectPath,
     );
     const sideEffects = workerSideEffectsModule.createWorkerSideEffectRecorder(sideEffectRepository);
+    assertProjectOperation(operation);
     const eventRepository = new EventStreamRepository(
       createTauriEventStoreAdapter(projectPath),
       projectPath,
@@ -378,18 +426,25 @@ export default function App() {
       session,
       concurrency: current.maxConcurrency,
       sideEffects,
+      signal: operation.controller.signal,
       assertConsistency: async () => {
+        assertProjectOperation(operation);
         const parsed = await eventRepository.readStream();
+        assertProjectOperation(operation);
         if (parsed.status === 'needs-repair') {
           throw new Error(
             `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
           );
         }
         const current = useWorkflowStore.getState();
+        assertProjectOperation(operation);
         const report = auditWorkerRunConsistency({
           projectId,
           runs: current.workerRuns,
           events: parsed.events,
+          evidence: current.workerRunEvidence,
+          acceptances: [...session.acceptanceStore.values()],
+          sideEffects: current.workerRunSideEffects,
         });
         if (!report.ok) {
           throw new Error(`Worker 事实源不一致：${report.issues.map((item) => item.message).join('；')}`);
@@ -404,8 +459,9 @@ export default function App() {
         }
       },
       persistTransition: async ({ state, events }) => {
+        assertProjectOperation(operation);
         const latest = useWorkflowStore.getState();
-        if (latest.projectId !== projectId) throw new Error('Worker 执行期间项目发生切换');
+        assertProjectOperation(operation);
         recordProjectEvents(projectId, events);
         const nextRuns = latest.workerRuns.map((run) => run.runId === state.runId ? state : run);
         latest.setWorkerRuns(nextRuns);
@@ -414,19 +470,24 @@ export default function App() {
         );
         latest.setWorkerRunEvidence(mergeWorkerEvidence(latest.workerRunEvidence, session.collector.records));
         const effectRecords = await loadWorkerSideEffects(sideEffectRepository);
+        assertProjectOperation(operation);
         latest.setWorkerRunSideEffects(mergeWorkerSideEffects(latest.workerRunSideEffects, effectRecords));
-        await latest.saveProject();
+        await latest.saveProject({ projectId, projectPath, signal: operation.controller.signal });
+        assertProjectOperation(operation);
       },
     });
+    assertProjectOperation(operation);
     await coordinator.run(runId);
-    await refreshWorkerCleanupProposals(session, runId);
+    assertProjectOperation(operation);
+    await refreshWorkerCleanupProposals(session, runId, operation.controller.signal);
   };
 
   const recoverInterruptedWorkerEffects = async (
     projectPath: string | null,
     runIds: string[],
+    signal?: AbortSignal,
   ): Promise<void> => {
-    if (!isTauri || !projectPath || runIds.length === 0) return;
+    if (!isTauri || !projectPath || runIds.length === 0 || signal?.aborted) return;
     try {
       const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
         import('./domain/tauriEventStore'),
@@ -439,8 +500,12 @@ export default function App() {
           projectPath,
         ),
       );
-      for (const runId of runIds) await recorder.recoverInterruptedRun(runId);
+      for (const runId of runIds) {
+        if (signal?.aborted) return;
+        await recorder.recoverInterruptedRun(runId, { signal });
+      }
     } catch (cause) {
+      if (signal?.aborted) return;
       // Recovery is fail-closed: keep the visible recovery record when the journal cannot be read/repaired.
       useWorkflowStore.getState().addLog(
         'warn',
@@ -449,8 +514,8 @@ export default function App() {
     }
   };
 
-  const loadProjectWorkerEvidence = async (projectPath: string | null): Promise<void> => {
-    if (!isTauri || !projectPath) return;
+  const loadProjectWorkerEvidence = async (projectPath: string | null, signal?: AbortSignal): Promise<void> => {
+    if (!isTauri || !projectPath || signal?.aborted) return;
     try {
       const [{ createTauriEvidenceStore }, { createTauriEventStoreAdapter }, sideEffectsModule] = await Promise.all([
         import('./dev/tauri-run'),
@@ -466,18 +531,23 @@ export default function App() {
         createTauriEventStoreAdapter(projectPath),
         projectPath,
       );
+      if (signal?.aborted) return;
       const records = await loadWorkerEvidence(persistence);
+      if (signal?.aborted) return;
       const effects = await loadWorkerSideEffects(sideEffectRepository);
+      if (signal?.aborted) return;
       const current = useWorkflowStore.getState();
       if (current.projectPath === projectPath) {
         current.setWorkerRunEvidence(mergeWorkerEvidence(current.workerRunEvidence, records));
         current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, effects));
       }
     } catch (cause) {
+      if (signal?.aborted) return;
       useWorkflowStore.getState().addLog(
         'warn',
         `Worker Evidence 无法加载：${cause instanceof Error ? cause.message : String(cause)}`,
       );
+      throw cause;
     }
   };
 
@@ -496,6 +566,8 @@ export default function App() {
       : undefined;
     if (!projectId || !projectPath) throw new Error('项目必须先保存，才能恢复 Worker Run');
     if (!run || !taskGraph) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
+    const operation = getProjectOperation(projectId, projectPath);
+    assertProjectOperation(operation);
 
     const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
       import('./domain/tauriEventStore'),
@@ -508,7 +580,9 @@ export default function App() {
         projectPath,
       ),
     );
+    assertProjectOperation(operation);
     const journal = await recorder.recoverInterruptedRun(runId);
+    assertProjectOperation(operation);
     current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
     const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const result = recoverWorkerRunCommand({
@@ -521,6 +595,7 @@ export default function App() {
       decisionId,
       now: new Date().toISOString(),
     });
+    assertProjectOperation(operation);
     recordProjectEvents(projectId, result.events);
     const nextRuns = current.workerRuns.map((item) => item.runId === runId ? result.state : item);
     current.setWorkerRuns(nextRuns);
@@ -534,7 +609,9 @@ export default function App() {
       runs: current.workerRuns.map((item) => item.runId === runId ? result.state : item),
     });
     current.setWorkerRunRecoveries(runtime.recoveries);
-    await current.saveProject();
+    assertProjectOperation(operation);
+    await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
+    assertProjectOperation(operation);
     if (decision === 'retry') await runQueuedWorker(runId);
   };
 
@@ -552,11 +629,15 @@ export default function App() {
     );
     if (!projectId || !projectPath) throw new Error('项目必须先保存，才能清理 Worker worktree');
     if (!proposal || proposal.status !== 'ready') throw new Error(`清理提案不可用：${runId}/${taskId}`);
-    const session = await ensureGuiDevSession(projectPath);
+    const operation = getProjectOperation(projectId, projectPath);
+    assertProjectOperation(operation);
+    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
     if (!session) throw new Error('开发宿主不可用，Worker cleanup 未执行');
+    assertProjectOperation(operation);
 
     if (action === 'approve') {
       approveWorkerCleanupProposal(proposal, session);
+      assertProjectOperation(operation);
       current.setWorkerCleanupProposals(current.workerCleanupProposals.map((item) => (
         item.runId === runId && item.taskId === taskId && item.status === 'ready'
           ? { ...item, approvalStatus: 'approved' }
@@ -576,40 +657,49 @@ export default function App() {
       createTauriEventStoreAdapter(projectPath),
       projectPath,
     );
+    assertProjectOperation(operation);
     const cleanupResult = await executeWorkerCleanupWithReceipt({
       proposal,
       repository,
       host: session,
       now: new Date().toISOString(),
+      signal: operation.controller.signal,
     });
+    assertProjectOperation(operation);
     current.setWorkerRunSideEffects(
       mergeWorkerSideEffects(current.workerRunSideEffects, [cleanupResult.sideEffect]),
     );
     if (!cleanupResult.cleaned) {
-      await current.saveProject();
+      assertProjectOperation(operation);
+      await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
       throw new Error('宿主 cleanup 未完成，副作用已标记为 unknown，需要人工核对');
     }
 
     const run = current.workerRuns.find((item) => item.runId === runId);
     if (!run) throw new Error(`找不到 Worker Run：${runId}`);
+    assertProjectOperation(operation);
     const cleaned = markWorkerTaskCleaned({
       state: run,
       taskId,
       receiptId: cleanupResult.sideEffect.receipt?.receiptId ?? '',
       taskExecutionId: proposal.taskExecutionId,
       attemptId: proposal.attemptId,
+      stateSignature: proposal.stateSignature,
       receipt: cleanupResult.sideEffect,
       decisionId: globalThis.crypto?.randomUUID?.() ?? `cleanup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       now: new Date().toISOString(),
     });
+    assertProjectOperation(operation);
     recordProjectEvents(projectId, cleaned.events);
     const nextRuns = current.workerRuns.map((item) => item.runId === runId ? cleaned.state : item);
     current.setWorkerRuns(nextRuns);
     current.setOrchestrations(
       projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
     );
-    await current.saveProject();
-    await refreshWorkerCleanupProposals(session, runId);
+    assertProjectOperation(operation);
+    await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
+    assertProjectOperation(operation);
+    await refreshWorkerCleanupProposals(session, runId, operation.controller.signal);
   };
 
   const toggleTheme = () => {
@@ -676,12 +766,13 @@ export default function App() {
         // 工作区信任：在任何 fs 访问之前，先把项目根目录动态注入 fs:scope
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('grant_project_access', { path: sess.path }).catch(() => {});
+        if (cancelled || useWorkflowStore.getState().projectId) return;
         const fs = await import('@tauri-apps/plugin-fs');
         const ok = await fs.exists(sess.path);
-        if (!ok || cancelled) return;
+        if (!ok || cancelled || useWorkflowStore.getState().projectId) return;
         const { openProjectByPath } = await import('./io/projectIO');
         const file = await openProjectByPath(sess.path);
-        if (!file || cancelled) return;
+        if (!file || cancelled || useWorkflowStore.getState().projectId) return;
         // 优先恢复会话里记录的激活工作流
         if (sess.activeId && file.workflows[sess.activeId]) {
           file.activeId = sess.activeId;
@@ -713,10 +804,15 @@ export default function App() {
         return;
       }
       const runIds = state.workerRunRecoveries.map((item) => item.runId);
-      const key = `${state.projectId}:${runIds.join(',')}`;
+      const key = `${state.projectId}:${state.projectPath}:${runIds.join(',')}`;
       if (key === lastRecoveryKey) return;
       lastRecoveryKey = key;
-      void recoverInterruptedWorkerEffects(state.projectPath, runIds);
+      const operation = getProjectOperation(state.projectId, state.projectPath);
+      void recoverInterruptedWorkerEffects(state.projectPath, runIds, operation.controller.signal).catch((cause) => {
+        if (!operation.controller.signal.aborted) {
+          useWorkflowStore.getState().addLog('warn', `Worker recovery 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      });
     };
     const scheduleEvidence = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
       if (!state.projectId || !state.projectPath) {
@@ -725,42 +821,59 @@ export default function App() {
       }
       if (state.projectPath === lastEvidencePath) return;
       lastEvidencePath = state.projectPath;
-      void loadProjectWorkerEvidence(state.projectPath);
+      const operation = getProjectOperation(state.projectId, state.projectPath);
+      void loadProjectWorkerEvidence(state.projectPath, operation.controller.signal).catch((cause) => {
+        if (!operation.controller.signal.aborted) {
+          useWorkflowStore.getState().addLog('warn', `Worker Evidence 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      });
     };
     let sessionTransition: Promise<void> = Promise.resolve();
     const reloadProjectCustomNodes = (state: {
       projectId: string | null;
       projectPath: string | null;
-    }): void => {
+    }, signal?: AbortSignal): void => {
       terminatePluginRuntime();
       unloadProjectCustomNodes();
       if (state.projectId) {
         void scanProjectCustomNodes({
           projectId: state.projectId,
           projectPath: state.projectPath,
+          signal,
         }).catch(() => {});
       }
     };
     let projectLifecycle: ReturnType<typeof createProjectPluginLifecycleScheduler>;
     projectLifecycle = createProjectPluginLifecycleScheduler(({ previous, next, epoch }) => {
-      reloadProjectCustomNodes(next);
+      const operation = getProjectOperation(next.projectId, next.projectPath);
+      reloadProjectCustomNodes(next, operation.controller.signal);
       sessionTransition = sessionTransition
         .catch(() => {})
         .then(async () => {
+          if (operation.controller.signal.aborted) return;
           if (previous?.projectId) await teardownGuiDevSession();
-          if (!projectLifecycle.isCurrent(epoch, next) || !next.projectId) return;
-          const session = await ensureGuiDevSession(next.projectPath);
-          if (!projectLifecycle.isCurrent(epoch, next)) return;
-          if (session) void restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns);
-          await loadProjectWorkerEvidence(next.projectPath);
-          if (!projectLifecycle.isCurrent(epoch, next)) return;
+          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next) || !next.projectId) return;
+          const session = await ensureGuiDevSession(next.projectPath, operation.controller.signal);
+          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
+          if (!session) return;
+          await restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns, operation.controller.signal);
+          if (operation.controller.signal.aborted) return;
+          await loadProjectWorkerEvidence(next.projectPath, operation.controller.signal);
+          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
           await auditLoadedWorkerRunFacts(
             next.projectPath,
             session ? [...session.acceptanceStore.values()] : undefined,
+            operation.controller.signal,
           );
+        })
+        .catch((cause) => {
+          if (!operation.controller.signal.aborted) {
+            useWorkflowStore.getState().addLog('warn', `项目生命周期切换失败：${cause instanceof Error ? cause.message : String(cause)}`);
+          }
         });
     });
     const initialState = useWorkflowStore.getState();
+    getProjectOperation(initialState.projectId, initialState.projectPath);
     projectLifecycle.observe({
       projectId: initialState.projectId,
       projectPath: initialState.projectPath,
@@ -770,11 +883,14 @@ export default function App() {
     const unsubscribe = useWorkflowStore.subscribe((s) => {
       // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
       setShowWelcome(!s.projectId);
+      getProjectOperation(s.projectId, s.projectPath);
       projectLifecycle.observe({ projectId: s.projectId, projectPath: s.projectPath });
       scheduleRecovery(s);
       scheduleEvidence(s);
     });
     return () => {
+      projectOperationRef.current?.controller.abort();
+      projectOperationRef.current = null;
       projectLifecycle.dispose();
       unsubscribe();
     };

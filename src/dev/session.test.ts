@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from './node-run';
-import { initDevSession, resetDevSession } from './session';
+import { createHostAcceptanceStoreWithFs, initDevSession, resetDevSession } from './session';
+import type { AcceptanceRecord, AcceptancePersistence } from './session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function ok(stdout = ''): CommandResult {
@@ -69,5 +70,68 @@ describe('DevSession cleanup', () => {
       taskExecutionId,
       attemptId: createAttemptId(taskExecutionId, 1),
     })).toThrow(/runId|taskId|lineage/);
+  });
+
+  it('persists and reloads acceptance records with exact lineage across session restart', async () => {
+    const stored: AcceptanceRecord[] = [];
+    const persistence: AcceptancePersistence = {
+      append: async (record) => {
+        stored.push({ ...record });
+      },
+      load: async () => stored.map((record) => ({ ...record })),
+    };
+    const taskExecutionId = createTaskExecutionId('run-restart', 'task-1');
+    const acceptance: AcceptanceRecord = {
+      acceptanceId: 'acc-restart',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: '/repo-workers/run-restart/task-1',
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+      runId: 'run-restart',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    };
+    const first = initDevSession({ baseRepoPath: '/repo', acceptancePersistence: persistence });
+    const recorded = first.recordAcceptance(acceptance);
+    await first.persistAcceptance(recorded);
+    resetDevSession();
+
+    const second = initDevSession({ baseRepoPath: '/repo', acceptancePersistence: persistence });
+    await second.loadAcceptances();
+    expect(second.getAcceptance(acceptance.acceptanceId)).toEqual(acceptance);
+  });
+
+  it('round-trips acceptance JSONL records whose fields contain newlines', async () => {
+    const files = new Map<string, string>();
+    const persistence = createHostAcceptanceStoreWithFs('/tmp/acceptance', '/tmp/workers/run-1', 'records', {
+      mkdir: async () => {},
+      append: async (path, text) => {
+        files.set(path, `${files.get(path) ?? ''}${text}`);
+      },
+      read: async (path) => files.get(path) ?? '',
+    });
+    const taskExecutionId = createTaskExecutionId('run-newline', 'task-1');
+    const acceptance: AcceptanceRecord = {
+      acceptanceId: 'acceptance-newline',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: '/repo-workers/run-newline/task-1',
+      passed: false,
+      failedChecks: ['line one\nline two'],
+      at: '2026-09-01T00:00:00.000Z',
+      runId: 'run-newline',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    };
+    const first = initDevSession({ baseRepoPath: '/repo', acceptancePersistence: persistence });
+    await first.persistAcceptance(first.recordAcceptance(acceptance));
+    resetDevSession();
+    const second = initDevSession({ baseRepoPath: '/repo', acceptancePersistence: persistence });
+    await second.loadAcceptances();
+    expect(second.getAcceptance(acceptance.acceptanceId)).toEqual(acceptance);
   });
 });

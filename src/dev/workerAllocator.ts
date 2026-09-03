@@ -1,6 +1,6 @@
 import type { ProjectTask } from '../projectControl/types';
 import type { WorktreeInfo } from './worktree';
-import { normalizeAbsolutePath } from './path-utils';
+import { pathComparisonKey } from './path-utils';
 import type {
   WorkerWorktreeAllocator,
   WorkerWorktreeAssignment,
@@ -11,7 +11,7 @@ export interface WorktreeCreator {
   create(
     id: string,
     path: string,
-    options?: { branch?: string },
+    options?: { branch?: string; signal?: AbortSignal },
   ): Promise<WorktreeInfo | null>;
 }
 
@@ -41,7 +41,8 @@ export function createWorktreeAllocator(
 ): WorkerWorktreeAllocator {
   const reservedPaths = new Map<string, string>();
   return {
-    async allocate({ projectId, runId, task, attempt, taskExecutionId, attemptId }): Promise<WorkerWorktreeAssignment> {
+    async allocate({ projectId, runId, task, attempt, taskExecutionId, attemptId, signal }): Promise<WorkerWorktreeAssignment> {
+      if (signal?.aborted) throw new Error('Worker worktree 分配已取消');
       const executionId = taskExecutionId ?? createTaskExecutionId(runId, task.id);
       const executionAttemptId = attemptId ?? createAttemptId(executionId, attempt);
       assertTaskExecutionLineage({
@@ -54,30 +55,36 @@ export function createWorktreeAllocator(
       const identitySegment = encodeURIComponent(executionAttemptId);
       const worktreeId = `worker-${identitySegment}`;
       const path = requiredText(pathFor({ projectId, runId, task, attempt, taskExecutionId: executionId, attemptId: executionAttemptId }), 'worktree 路径');
-      const pathKey = normalizeAbsolutePath(path);
+      const pathKey = pathComparisonKey(path);
       const existingOwner = reservedPaths.get(pathKey);
       if (existingOwner) {
         throw new Error(`worktree 路径已被 Attempt ${existingOwner} 保留，拒绝复用：${path}`);
       }
       reservedPaths.set(pathKey, executionAttemptId);
       const branch = `worker/${identitySegment}`;
-      const info = await creator.create(worktreeId, path, { branch });
-      if (!info || info.status !== 'created') {
-        throw new Error(`创建 worktree 失败：${worktreeId}`);
+      try {
+        const info = await creator.create(worktreeId, path, { branch, signal });
+        if (signal?.aborted) throw new Error('Worker worktree 分配已取消');
+        if (!info || info.status !== 'created') {
+          throw new Error(`创建 worktree 失败：${worktreeId}`);
+        }
+        if (
+          info.id !== worktreeId
+          || pathComparisonKey(info.path) !== pathKey
+          || info.branch !== branch
+        ) {
+          throw new Error(`worktree creator 返回的身份与请求不一致：${worktreeId}`);
+        }
+        return {
+          worktreeId: requiredText(info.id, 'worktree id'),
+          path: requiredText(info.path, 'worktree 路径'),
+          branch: requiredText(info.branch, 'worktree 分支'),
+          baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
+        };
+      } catch (error) {
+        reservedPaths.delete(pathKey);
+        throw error;
       }
-      if (
-        info.id !== worktreeId
-        || normalizeAbsolutePath(info.path) !== pathKey
-        || info.branch !== branch
-      ) {
-        throw new Error(`worktree creator 返回的身份与请求不一致：${worktreeId}`);
-      }
-      return {
-        worktreeId: requiredText(info.id, 'worktree id'),
-        path: requiredText(info.path, 'worktree 路径'),
-        branch: requiredText(info.branch, 'worktree 分支'),
-        baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
-      };
     },
   };
 }

@@ -32,6 +32,7 @@ function run(): WorkerRunQueueState {
 }
 
 function acceptance(): AcceptanceRecord {
+  const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
   return {
     acceptanceId: 'acc-1',
     orchestrationId: 'orch-1',
@@ -40,6 +41,10 @@ function acceptance(): AcceptanceRecord {
     passed: true,
     failedChecks: [],
     at: '2026-09-01T00:01:00.000Z',
+    runId: 'run-1',
+    taskId: 'task-1',
+    taskExecutionId,
+    attemptId: createAttemptId(taskExecutionId, 1),
   };
 }
 
@@ -51,6 +56,7 @@ describe('worker cleanup proposal', () => {
       task: run().tasks['task-1'],
       acceptance: acceptance(),
       computeWorktreeSignature,
+      sideEffects: [],
     });
 
     expect(proposal).toEqual({
@@ -80,12 +86,14 @@ describe('worker cleanup proposal', () => {
       task: incomplete,
       acceptance: acceptance(),
       computeWorktreeSignature,
+      sideEffects: [],
     })).resolves.toEqual(expect.objectContaining({ status: 'blocked' }));
     await expect(buildWorkerCleanupProposal({
       run: run(),
       task: run().tasks['task-1'],
       acceptance: failedAcceptance,
       computeWorktreeSignature,
+      sideEffects: [],
     })).resolves.toEqual(expect.objectContaining({ status: 'blocked' }));
     expect(computeWorktreeSignature).not.toHaveBeenCalled();
   });
@@ -99,6 +107,7 @@ describe('worker cleanup proposal', () => {
       acceptance: acceptance(),
       isWorktreeTracked: () => false,
       computeWorktreeSignature,
+      sideEffects: [],
     })).resolves.toEqual(expect.objectContaining({
       status: 'blocked',
       reason: 'worktree 未被当前宿主登记，不能清理',
@@ -117,8 +126,15 @@ describe('worker cleanup proposal', () => {
     await expect(buildWorkerCleanupProposal({
       run: run(),
       task,
-      acceptance: acceptance(),
+      acceptance: {
+        ...acceptance(),
+        runId: undefined,
+        taskId: undefined,
+        taskExecutionId: undefined,
+        attemptId: undefined,
+      },
       computeWorktreeSignature: vi.fn(async () => 'never'),
+      sideEffects: [],
     })).resolves.toEqual(expect.objectContaining({
       status: 'blocked',
       reason: 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt',
@@ -144,6 +160,7 @@ describe('worker cleanup proposal', () => {
       task,
       acceptance: oldAcceptance,
       computeWorktreeSignature: vi.fn(async () => 'never'),
+      sideEffects: [],
     })).resolves.toEqual(expect.objectContaining({
       status: 'blocked',
       reason: 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt',
@@ -151,7 +168,16 @@ describe('worker cleanup proposal', () => {
   });
 
   it('projects a cleaned task as a terminal proposal instead of asking to clean it again', async () => {
-    const cleanedTask = { ...run().tasks['task-1'], cleanupStatus: 'cleaned' as const, cleanupReceiptId: 'receipt-cleanup-1' };
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const cleanupKey = `cleanup:${attemptId}`;
+    const cleanedTask = {
+      ...run().tasks['task-1'],
+      taskExecutionId,
+      currentAttemptId: attemptId,
+      cleanupStatus: 'cleaned' as const,
+      cleanupReceiptId: `${cleanupKey}:receipt`,
+    };
 
     await expect(buildWorkerCleanupProposal({
       run: run(),
@@ -159,6 +185,19 @@ describe('worker cleanup proposal', () => {
       acceptance: acceptance(),
       isWorktreeTracked: () => false,
       computeWorktreeSignature: vi.fn(async () => 'never'),
+      sideEffects: [{
+        idempotencyKey: cleanupKey,
+        kind: 'worktree-cleanup',
+        target: 'wt-1',
+        inputHash: 'abc123:sig-1',
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId,
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: { receiptId: `${cleanupKey}:receipt`, observedAt: '2026-09-01T00:02:00.000Z', outcome: 'succeeded', outputHash: 'sig-1' },
+      }],
     })).resolves.toEqual({
       status: 'cleaned',
       runId: 'run-1',
@@ -166,7 +205,7 @@ describe('worker cleanup proposal', () => {
       attempt: 1,
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
-      receiptId: 'receipt-cleanup-1',
+      receiptId: `${cleanupKey}:receipt`,
     });
   });
 });

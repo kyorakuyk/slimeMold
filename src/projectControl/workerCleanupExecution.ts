@@ -10,10 +10,11 @@ import {
   SideEffectJournalRepository,
 } from '../domain/sideEffects';
 import { workerCleanupEffectKey, type WorkerCleanupProposal } from './workerCleanup';
+import { pathComparisonKey } from '../dev/path-utils';
 
 export interface WorkerCleanupExecutionHost {
   /** Host method must re-check approval, acceptance, baseline, and state signature. */
-  confirmAndCleanup(path: string): Promise<boolean>;
+  confirmAndCleanup(path: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 export interface WorkerCleanupExecutionInput {
@@ -21,6 +22,7 @@ export interface WorkerCleanupExecutionInput {
   repository: SideEffectJournalRepository;
   host: WorkerCleanupExecutionHost;
   now: string;
+  signal?: AbortSignal;
 }
 
 export interface WorkerCleanupExecutionResult {
@@ -32,6 +34,13 @@ function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} 不能为空`);
   return normalized;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Worker cleanup 已取消');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function effectKey(proposal: Extract<WorkerCleanupProposal, { status: 'ready' }>): string {
@@ -54,15 +63,18 @@ function matchesProposal(
   proposal: Extract<WorkerCleanupProposal, { status: 'ready' }>,
   isLegacyKey: boolean,
 ): boolean {
+  const hasLineage = entry.taskExecutionId !== undefined || entry.attemptId !== undefined;
   const lineageMatches = isLegacyKey
-    ? entry.taskExecutionId === undefined && entry.attemptId === undefined
-      || (entry.taskExecutionId === proposal.taskExecutionId && entry.attemptId === proposal.attemptId)
+    ? (!hasLineage
+      || (entry.taskExecutionId !== undefined && entry.attemptId !== undefined
+        && entry.taskExecutionId === proposal.taskExecutionId
+        && entry.attemptId === proposal.attemptId))
     : entry.taskExecutionId === proposal.taskExecutionId && entry.attemptId === proposal.attemptId;
   return (
     entry.kind === 'worktree-cleanup' &&
     entry.runId === proposal.runId &&
     entry.taskId === proposal.taskId &&
-    entry.target === proposal.worktreePath &&
+    pathComparisonKey(entry.target) === pathComparisonKey(proposal.worktreePath) &&
     entry.inputHash === `${proposal.baseRevision}:${proposal.stateSignature}` &&
     lineageMatches
   );
@@ -78,7 +90,9 @@ export async function executeWorkerCleanupWithReceipt(
   const now = requiredText(input.now, '时间');
   const key = effectKey(proposal);
   const legacyKey = legacyEffectKey(proposal);
+  throwIfAborted(input.signal);
   const parsed = await input.repository.read();
+  throwIfAborted(input.signal);
   if (parsed.status === 'needs-repair') {
     throw new SideEffectJournalError(
       'needs-repair',
@@ -86,15 +100,38 @@ export async function executeWorkerCleanupWithReceipt(
     );
   }
   const existing = findEntry(parsed.journal.entries, [key, legacyKey]);
+  const isLegacyKey = existing?.idempotencyKey === legacyKey;
   if (existing) {
-    const isLegacyKey = existing.idempotencyKey === legacyKey;
     if (!matchesProposal(existing, proposal, isLegacyKey)) {
       throw new Error(`已有 cleanup receipt 与当前 execution/attempt 不一致：${existing.idempotencyKey}`);
     }
   }
   if (existing?.status === 'receipt') {
-    if (existing.receipt?.receiptId !== `${existing.idempotencyKey}:receipt`) {
-      throw new Error(`已有 cleanup receipt 的 receiptId 未绑定其 key：${existing.idempotencyKey}`);
+    if (
+      existing.receipt?.receiptId !== `${existing.idempotencyKey}:receipt`
+      || existing.recovery !== 'skip'
+      || existing.receipt.outcome !== 'succeeded'
+      || existing.receipt.outputHash !== proposal.stateSignature
+    ) {
+      throw new Error(`已有 cleanup receipt 的 outcome/receiptId 未绑定其 key：${existing.idempotencyKey}`);
+    }
+    if (isLegacyKey) {
+      const canonicalKey = key;
+      const migrated: SideEffectRecord = {
+        ...existing,
+        idempotencyKey: canonicalKey,
+        taskExecutionId: proposal.taskExecutionId,
+        attemptId: proposal.attemptId,
+        receipt: {
+          ...existing.receipt,
+          receiptId: `${canonicalKey}:receipt`,
+        },
+      };
+      const migratedJournal = await input.repository.migrateLegacyRecord(legacyKey, migrated);
+      return {
+        cleaned: true,
+        sideEffect: findEntry(migratedJournal.entries, [canonicalKey]) ?? migrated,
+      };
     }
     return { cleaned: true, sideEffect: existing };
   }
@@ -102,6 +139,16 @@ export async function executeWorkerCleanupWithReceipt(
     throw new Error(`清理副作用需要人工核对：${key}`);
   }
 
+  let currentEntry = existing;
+  if (existing?.status === 'planned' && isLegacyKey) {
+    const migratedJournal = await input.repository.migrateLegacyRecord(legacyKey, {
+      ...existing,
+      idempotencyKey: key,
+      taskExecutionId: proposal.taskExecutionId,
+      attemptId: proposal.attemptId,
+    });
+    currentEntry = findEntry(migratedJournal.entries, [key]);
+  }
   const planned = createSideEffect({
     idempotencyKey: key,
     kind: 'worktree-cleanup',
@@ -112,12 +159,17 @@ export async function executeWorkerCleanupWithReceipt(
     taskExecutionId: proposal.taskExecutionId,
     attemptId: proposal.attemptId,
   });
-  const started = startSideEffect(existing?.status === 'planned' ? existing : planned);
+  const started = startSideEffect(currentEntry?.status === 'planned' ? currentEntry : planned);
   const startedJournal = await input.repository.record(started);
-  const startedRecord = findEntry(startedJournal.entries, [key, legacyKey]) ?? started;
+  throwIfAborted(input.signal);
+  const startedRecord = findEntry(startedJournal.entries, [key]) ?? started;
 
   try {
-    const cleaned = await input.host.confirmAndCleanup(proposal.worktreePath);
+    throwIfAborted(input.signal);
+    const cleaned = input.signal
+      ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal)
+      : await input.host.confirmAndCleanup(proposal.worktreePath);
+    throwIfAborted(input.signal);
     if (!cleaned) {
       const unknown = markSideEffectUnknown(startedRecord, 'cleanup-host-gate-rejected-or-drifted');
       const journal = await input.repository.record(unknown);
@@ -130,6 +182,7 @@ export async function executeWorkerCleanupWithReceipt(
       receiptId: `${key}:receipt`,
       observedAt: now,
       outputHash: proposal.stateSignature,
+      outcome: 'succeeded',
     });
     const journal = await input.repository.record(receipt);
     return {

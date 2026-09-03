@@ -112,6 +112,8 @@ function fakeSession(opts: {
       this.acceptanceStore.set(rec.acceptanceId, rec);
       return rec;
     },
+    persistAcceptance: async () => {},
+    loadAcceptances: async () => {},
     getAcceptance(id) {
       return this.acceptanceStore.get(id);
     },

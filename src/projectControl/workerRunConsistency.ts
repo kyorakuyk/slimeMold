@@ -7,6 +7,7 @@ import {
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
+import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 
@@ -82,10 +83,9 @@ function recordMatchesTaskLineage(
     || record.taskId !== undefined
     || record.taskExecutionId !== undefined
     || record.attemptId !== undefined;
-  if (!declaresLineage) return !expected.explicit;
-  if (!record.taskExecutionId || !record.attemptId) return false;
-  if (record.runId !== undefined && record.runId !== expected.runId) return false;
-  if (record.taskId !== undefined && record.taskId !== expected.taskId) return false;
+  if (!declaresLineage) return false;
+  if (!record.runId || !record.taskId || !record.taskExecutionId || !record.attemptId) return false;
+  if (record.runId !== expected.runId || record.taskId !== expected.taskId) return false;
   try {
     const parsed = assertTaskExecutionLineage({
       runId: expected.runId,
@@ -115,6 +115,15 @@ export function auditWorkerRunConsistency(input: {
   sideEffects?: readonly SideEffectRecord[];
 }): WorkerRunConsistencyReport {
   const issues: WorkerRunConsistencyIssue[] = [];
+  if (input.runs.length > 0 && input.evidence === undefined) {
+    issues.push(issue('evidence-lineage-drift', 'Worker Evidence 尚未加载，拒绝在不完整事实上通过审计'));
+  }
+  if (
+    input.runs.some((run) => Object.values(run.tasks).some((task) => !!task.acceptanceId))
+    && input.acceptances === undefined
+  ) {
+    issues.push(issue('acceptance-lineage-drift', 'Worker Acceptance 尚未加载，拒绝在不完整事实上通过审计'));
+  }
   const projectEvents = input.events.filter((event) => event.streamId === input.projectId);
   if (projectEvents.length !== input.events.length) {
     issues.push(issue(
@@ -266,7 +275,17 @@ export function auditWorkerRunConsistency(input: {
         const evidenceById = new Map(input.evidence.map((record) => [record.id, record]));
         for (const evidenceId of task.evidenceIds) {
           const record = evidenceById.get(evidenceId);
-          if (!record || !recordMatchesTaskLineage(record, expectedLineage, false)) {
+          const expectedOrchestrationId = run.orchestrationId ?? run.runId;
+          const evidenceScopeMatches = !!record
+            && record.capturedBy === 'host'
+            && record.orchestrationId === expectedOrchestrationId
+            && record.stageId === taskId
+            && (!task.worktreePath
+              || (record.worktreePath !== undefined
+                && pathComparisonKey(record.worktreePath) === pathComparisonKey(task.worktreePath)))
+            && (!task.baseRevision || record.baseRevision === task.baseRevision)
+            && (task.status !== 'succeeded' || record.status === 'passed');
+          if (!evidenceScopeMatches || !record || !recordMatchesTaskLineage(record, expectedLineage, true)) {
             issues.push(issue(
               'evidence-lineage-drift',
               `Worker Task Evidence 未绑定当前 Run/Task/Attempt：${taskId}/${evidenceId}`,
@@ -277,7 +296,13 @@ export function auditWorkerRunConsistency(input: {
       }
       if (input.acceptances && task.acceptanceId) {
         const acceptance = input.acceptances.find((record) => record.acceptanceId === task.acceptanceId);
-        if (!acceptance || !recordMatchesTaskLineage(acceptance, expectedLineage, true)) {
+        const acceptanceScopeMatches = !!acceptance
+          && acceptance.passed === (task.status === 'succeeded')
+          && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
+          && acceptance.stageId === taskId
+          && (!task.worktreePath
+            || pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(task.worktreePath));
+        if (!acceptanceScopeMatches || !acceptance || !recordMatchesTaskLineage(acceptance, expectedLineage, true)) {
           issues.push(issue(
             'acceptance-lineage-drift',
             `Worker Task Acceptance 未绑定当前 Run/Task/Attempt：${taskId}/${task.acceptanceId}`,
@@ -291,16 +316,15 @@ export function auditWorkerRunConsistency(input: {
   if (input.sideEffects) {
     const runsById = new Map(input.runs.map((run) => [run.runId, run]));
     for (const effect of input.sideEffects) {
-      if (!effect.taskId) continue;
-      const effectTaskId = effect.taskId;
-      if (!effect.runId) {
+      if (!effect.runId || !effect.taskId || !effect.taskExecutionId || !effect.attemptId) {
         issues.push(issue(
           'side-effect-lineage-drift',
-          `side-effect 缺少 runId：${effect.idempotencyKey}`,
-          { taskId: effectTaskId },
+          `side-effect 缺少完整 Run/Task/Execution/Attempt lineage：${effect.idempotencyKey}`,
+          { runId: effect.runId, taskId: effect.taskId },
         ));
         continue;
       }
+      const effectTaskId = effect.taskId;
       const run = runsById.get(effect.runId);
       const task = run?.tasks[effectTaskId];
       if (!run || !task) {
@@ -316,12 +340,32 @@ export function auditWorkerRunConsistency(input: {
         taskId: effectTaskId,
         taskExecutionId: task.taskExecutionId ?? createTaskExecutionId(run.runId, effectTaskId),
         currentAttempt: task.attempt,
-        explicit: Boolean(task.taskExecutionId || task.currentAttemptId),
+        explicit: true,
       };
-      if (!recordMatchesTaskLineage(effect, expectedLineage, false)) {
+      if (!recordMatchesTaskLineage(effect, expectedLineage, true)) {
         issues.push(issue(
           'side-effect-lineage-drift',
           `side-effect 未绑定当前 Run/Task/Attempt：${effect.idempotencyKey}`,
+          { runId: run.runId, taskId: effectTaskId },
+        ));
+      }
+      const isCleanup = effect.idempotencyKey.startsWith('cleanup:');
+      const expectedTarget = isCleanup ? task.worktreePath : task.worktreeId;
+      const expectedInputHash = isCleanup
+        ? `${task.baseRevision ?? ''}:${effect.receipt?.outputHash ?? ''}`
+        : effect.inputHash.trim();
+      const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
+        && expectedTarget !== undefined
+        && effect.target === expectedTarget
+        && (isCleanup
+          ? effect.inputHash === expectedInputHash
+          : effect.inputHash === expectedInputHash)
+        && (effect.status !== 'receipt'
+          || (effect.receipt?.outcome !== undefined && effect.receipt.receiptId === `${effect.idempotencyKey}:receipt`));
+      if (!lifecycleMatches) {
+        issues.push(issue(
+          'side-effect-lineage-drift',
+          `side-effect kind/target/inputHash/status/receipt 与当前任务不一致：${effect.idempotencyKey}`,
           { runId: run.runId, taskId: effectTaskId },
         ));
       }

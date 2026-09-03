@@ -20,14 +20,15 @@ function evidence(id: string, summary: string): EvidenceRecord {
 }
 
 describe('worker evidence projection', () => {
-  it('loads only host evidence and merges by stable evidence id', async () => {
-    const loaded = await loadWorkerEvidence({
+  it('rejects forged non-host evidence before merging', async () => {
+    await expect(loadWorkerEvidence({
       load: async () => [
         evidence('ev-1', '旧摘要'),
         { ...evidence('ev-agent', '模型自报'), capturedBy: 'agent' as never },
       ],
-    });
+    })).rejects.toThrow(/capturedBy/);
 
+    const loaded = [evidence('ev-1', '旧摘要')];
     const merged = mergeWorkerEvidence(
       [evidence('ev-1', '内存摘要')],
       [...loaded, evidence('ev-2', '新摘要')],

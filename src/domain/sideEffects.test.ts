@@ -46,7 +46,7 @@ describe('side-effect journal', () => {
     })).toThrow(/idempotencyKey/);
   });
 
-  it('marks an interrupted started effect unknown and lets a later receipt close it', () => {
+  it('keeps an interrupted effect unknown and rejects a late receipt', () => {
     const started = startSideEffect(planned);
     const unknown = recoverInterruptedSideEffect(started);
     expect(unknown).toMatchObject({ status: 'unknown', recovery: 'needs-user' });
@@ -60,7 +60,7 @@ describe('side-effect journal', () => {
       recordSideEffect(createEmptySideEffectJournal(), unknown),
       receipt,
     );
-    expect(journal.entries[0]).toMatchObject({ status: 'receipt', recovery: 'skip', receipt: receipt.receipt });
+    expect(journal.entries[0]).toMatchObject({ status: 'unknown', recovery: 'needs-user', receipt: undefined });
   });
 
   it('rejects a same-key lifecycle record that changes execution lineage', () => {

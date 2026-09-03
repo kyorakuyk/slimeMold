@@ -70,6 +70,7 @@ export function createGuiProjectWorkerRunCoordinator(
     runs: options.runs,
     concurrency: options.concurrency,
     sideEffects: options.sideEffects,
+    signal: options.signal,
     assertConsistency: options.assertConsistency,
     persistTransition: options.persistTransition,
     allocator: createWorktreeAllocator(
@@ -108,6 +109,7 @@ export function createProjectWorkerRunCoordinator(
           executor: options.executor,
           concurrency: options.concurrency,
           sideEffects: options.sideEffects,
+          signal: options.signal,
         },
         async ({ state, events }) => {
           if (state.projectId !== projectId) {

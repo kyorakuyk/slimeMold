@@ -1,6 +1,7 @@
 import type { AcceptanceRecord } from '../dev/session';
-import { normalizeAbsolutePath } from '../dev/path-utils';
+import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
+import type { SideEffectRecord } from '../domain/contracts';
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 export interface WorkerCleanupProposalReady {
@@ -45,6 +46,7 @@ export interface BuildWorkerCleanupProposalInput {
   run: WorkerRunQueueState;
   task: WorkerQueueTask;
   acceptance?: AcceptanceRecord;
+  sideEffects: readonly SideEffectRecord[];
   isWorktreeTracked?: (path: string) => boolean;
   computeWorktreeSignature: (path: string) => Promise<string>;
 }
@@ -107,6 +109,22 @@ export async function buildWorkerCleanupProposal(
     if (task.cleanupReceiptId) {
       const lineage = resolveTaskLineage(run, task);
       if (!lineage.ok) return blocked(run.runId, taskId, lineage.reason);
+      const cleanupKey = workerCleanupEffectKey(lineage.taskExecutionId, lineage.attemptId);
+      const receipt = input.sideEffects.find((effect) => effect.idempotencyKey === cleanupKey);
+      if (!receipt || receipt.status !== 'receipt'
+        || receipt.kind !== 'worktree-cleanup'
+        || receipt.runId !== run.runId
+        || receipt.taskId !== taskId
+        || receipt.taskExecutionId !== lineage.taskExecutionId
+        || receipt.attemptId !== lineage.attemptId
+        || receipt.receipt?.receiptId !== `${cleanupKey}:receipt`
+        || receipt.receipt.outcome !== 'succeeded'
+        || receipt.recovery !== 'skip'
+        || receipt.receipt.outputHash === undefined
+        || receipt.inputHash !== `${task.baseRevision ?? ''}:${receipt.receipt.outputHash}`
+        || receipt.receipt.receiptId !== task.cleanupReceiptId) {
+        return blocked(run.runId, taskId, 'cleaned 任务缺少与当前 attempt 精确匹配的 cleanup receipt');
+      }
       return {
         status: 'cleaned',
         runId: run.runId,
@@ -136,20 +154,16 @@ export async function buildWorkerCleanupProposal(
 
   const orchestrationId = run.orchestrationId ?? run.runId;
   const path = normalizeAbsolutePath(task.worktreePath);
-  const taskHasExplicitLineage = Boolean(task.taskExecutionId || task.currentAttemptId);
-  const acceptanceLineageMatches = taskHasExplicitLineage
-    ? acceptance.runId === run.runId
-      && acceptance.taskId === taskId
-      && acceptance.taskExecutionId === lineage.taskExecutionId
-      && acceptance.attemptId === lineage.attemptId
-    : (!acceptance.taskExecutionId || acceptance.taskExecutionId === lineage.taskExecutionId)
-      && (!acceptance.attemptId || acceptance.attemptId === lineage.attemptId);
+  const acceptanceLineageMatches = acceptance.runId === run.runId
+    && acceptance.taskId === taskId
+    && acceptance.taskExecutionId === lineage.taskExecutionId
+    && acceptance.attemptId === lineage.attemptId;
   const acceptanceMatches =
     acceptance.acceptanceId === task.acceptanceId &&
     acceptance.passed &&
     acceptance.orchestrationId === orchestrationId &&
     acceptance.stageId === taskId &&
-    normalizeAbsolutePath(acceptance.worktreePath) === path &&
+    pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(path) &&
     acceptanceLineageMatches;
   if (!acceptanceMatches) {
     return blocked(run.runId, taskId, 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt');

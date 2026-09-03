@@ -118,4 +118,55 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(m.isTracked(liveInfo.path)).toBe(true);
     expect(git).toHaveBeenCalledWith(['worktree', 'list', '--porcelain'], 'C:/repo');
   });
+
+  it('does not register a restored worktree after cancellation', async () => {
+    const controller = new AbortController();
+    let release!: () => void;
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        await new Promise<void>((resolve) => { release = resolve; });
+        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+    const info = {
+      id: 'wt-1',
+      path: 'C:/repo-workers/run-1/task-1',
+      branch: 'worker/task-1',
+      baseRevision: 'abc123',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'created' as const,
+    };
+
+    const restoring = m.restore(info, { signal: controller.signal });
+    controller.abort();
+    release();
+
+    await expect(restoring).resolves.toBe(false);
+    expect(m.isTracked(info.path)).toBe(false);
+  });
+
+  it('cleans an added worktree when cancellation arrives after git add', async () => {
+    const controller = new AbortController();
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'worktree' && args[1] === 'add') {
+        controller.abort();
+        return ok();
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+
+    await expect(m.create('wt-1', 'C:/repo-workers/attempt-1', {
+      branch: 'worker/attempt-1',
+      signal: controller.signal,
+    })).resolves.toBeNull();
+    expect(m.list()).toEqual([]);
+    expect(calls).toContainEqual(['worktree', 'remove', '--force', 'C:/repo-workers/attempt-1']);
+    expect(calls).toContainEqual(['branch', '-D', 'worker/attempt-1']);
+  });
 });

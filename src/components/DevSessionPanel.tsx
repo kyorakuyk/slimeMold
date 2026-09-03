@@ -17,6 +17,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { getDevGuiStatus } from '../dev/gui';
 import type { WorktreeInfo } from '../dev/worktree';
 import type { AcceptanceRecord } from '../dev/session';
+import { pathComparisonKey } from '../dev/path-utils';
 
 interface SessionSnapshot {
   worktrees: WorktreeInfo[];
@@ -65,7 +66,7 @@ export function DevSessionPanel() {
     if (!s) return;
     // 正常确认门要求绑定「本 worktree 最新通过验收」：找不到 → 拒绝审批（fail-closed）
     const passed = [...s.acceptanceStore.values()]
-      .filter((a) => a.passed && a.worktreePath === wt.path)
+      .filter((a) => a.passed && pathComparisonKey(a.worktreePath) === pathComparisonKey(wt.path))
       .sort((a, b) => b.at.localeCompare(a.at))[0];
     if (!passed) {
       await alertDialog(`worktree「${wt.path}」没有通过验收记录——拒绝批准清理（保留供审查）。`);

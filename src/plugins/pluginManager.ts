@@ -20,6 +20,7 @@ export const CUSTOM_NODES_DIR = 'custom_nodes';
 export interface ProjectPluginScanContext {
   projectId?: string | null;
   projectPath: string | null;
+  signal?: AbortSignal;
 }
 
 function log(level: 'info' | 'error', message: string): void {
@@ -212,11 +213,13 @@ export async function scanProjectCustomNodes(
     const expectedProjectId =
       context?.projectId !== undefined ? context.projectId : current.projectId;
     if (!projectPath) return 0;
+    const signal = context?.signal;
     const canRegister = (): boolean => {
       const state = useWorkflowStore.getState();
       return (
-        state.projectPath === projectPath &&
-        (expectedProjectId == null || state.projectId === expectedProjectId)
+        !signal?.aborted
+        && state.projectPath === projectPath
+        && (expectedProjectId == null || state.projectId === expectedProjectId)
       );
     };
     if (!canRegister()) return 0;

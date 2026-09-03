@@ -5,13 +5,14 @@ import type { WorkerTaskLease } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 type AcceptanceHost = Parameters<typeof createDevWorkerAcceptance>[0];
-type TestHost = Omit<AcceptanceHost, 'service' | 'recordAcceptance'> & {
+type TestHost = Omit<AcceptanceHost, 'service' | 'recordAcceptance' | 'persistAcceptance'> & {
   service: {
     testRun: ReturnType<typeof vi.fn>;
     gitDiff: ReturnType<typeof vi.fn>;
     gitChangedFiles: ReturnType<typeof vi.fn>;
   };
   recordAcceptance: ReturnType<typeof vi.fn>;
+  persistAcceptance: ReturnType<typeof vi.fn>;
 };
 
 const lease: WorkerTaskLease = {
@@ -63,7 +64,8 @@ function host(overrides: Partial<TestHost> = {}): TestHost {
       load: async () => [],
     }),
     nextAcceptanceId: vi.fn(() => 'acceptance-1'),
-    recordAcceptance: vi.fn(),
+    recordAcceptance: vi.fn((record) => record),
+    persistAcceptance: vi.fn(async () => {}),
     ...overrides,
   } as TestHost;
 }
@@ -152,5 +154,41 @@ describe('createDevWorkerAcceptance', () => {
     expect(result.passed).toBe(false);
     expect(result.failureReason).toMatch(/持久化|Evidence/);
     expect(deps.service.testRun).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when acceptance persistence fails', async () => {
+    const deps = host({
+      persistAcceptance: vi.fn(async () => {
+        throw new Error('acceptance disk unavailable');
+      }),
+    });
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    const result = await acceptance.evaluate({ lease, response: { text: '全部成功' } });
+
+    expect(result.passed).toBe(false);
+    expect(result.acceptanceId).toBeUndefined();
+    expect(result.failureReason).toContain('acceptance disk unavailable');
+  });
+
+  it('stops host checks and persistence after operation cancellation', async () => {
+    const controller = new AbortController();
+    const deps = host({
+      service: {
+        testRun: vi.fn(async () => {
+          controller.abort();
+          return { exitCode: 0, stdout: 'tests ok', stderr: '', durationMs: 10 };
+        }),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['src/feature.ts']),
+      },
+    });
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    await expect(acceptance.evaluate({ lease, response: { text: '完成' }, signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(deps.service.gitDiff).not.toHaveBeenCalled();
+    expect(deps.collector.records).toHaveLength(0);
+    expect(deps.persistAcceptance).not.toHaveBeenCalled();
   });
 });

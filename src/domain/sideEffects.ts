@@ -107,6 +107,7 @@ function decodeRecord(value: unknown): SideEffectRecord {
   }
   const receipt = decodeReceipt(value.receipt);
   if (value.status === 'receipt' && !receipt) throw new Error('receipt 状态必须带 receipt');
+  if (value.status === 'receipt' && !receipt?.outcome) throw new Error('receipt 状态必须带 outcome');
   if (value.status === 'unknown' && value.recovery !== 'needs-user') {
     throw new Error('unknown 状态必须 needs-user');
   }
@@ -222,9 +223,7 @@ export function recordSideEffect(
 
   const terminal = existing.status === 'receipt';
   if (terminal) return journal;
-  if (existing.status === 'unknown' && record.status !== 'receipt' && record.status !== 'unknown') {
-    return journal;
-  }
+  if (existing.status === 'unknown') return journal;
   if (existing.status === 'started' && record.status === 'planned') return journal;
 
   const entries = [...journal.entries];
@@ -276,6 +275,42 @@ export class SideEffectJournalRepository {
       if (next !== parsed.journal) {
         await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
       }
+      return next;
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /** Replace one explicitly validated legacy key; generic record() never renames identities. */
+  async migrateLegacyRecord(
+    legacyKey: string,
+    replacement: SideEffectRecord,
+  ): Promise<SideEffectJournal> {
+    const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
+    try {
+      const parsed = parseSideEffectJournal(await this.adapter.readText(this.path));
+      if (parsed.status === 'needs-repair') {
+        throw new SideEffectJournalError(
+          'needs-repair',
+          `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`,
+        );
+      }
+      const legacyIndex = parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === legacyKey);
+      if (legacyIndex < 0) throw new SideEffectJournalError('conflict', `legacy 副作用记录不存在：${legacyKey}`);
+      const canonicalIndex = parsed.journal.entries.findIndex(
+        (entry) => entry.idempotencyKey === replacement.idempotencyKey,
+      );
+      const entries = [...parsed.journal.entries];
+      if (canonicalIndex >= 0) {
+        if (!sameRecord(entries[canonicalIndex], replacement)) {
+          throw new SideEffectJournalError('conflict', `canonical 副作用记录已存在但内容不同：${replacement.idempotencyKey}`);
+        }
+        entries.splice(legacyIndex, 1);
+      } else {
+        entries[legacyIndex] = { ...replacement };
+      }
+      const next = { ...parsed.journal, entries };
+      await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
       return next;
     } finally {
       await lock.release();

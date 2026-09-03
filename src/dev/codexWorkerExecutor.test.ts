@@ -89,6 +89,26 @@ describe('Codex Worker executor', () => {
     });
   });
 
+  it('propagates the project cancellation signal through Codex and host acceptance', async () => {
+    const controller = new AbortController();
+    const execute = vi.fn(async (input: { prompt: string; model?: string; cwd: string; signal?: AbortSignal }) => {
+      expect(input.signal).toBe(controller.signal);
+      return { text: '已完成修改' };
+    });
+    const evaluate = vi.fn(async (input: { lease: WorkerTaskLease; response: { text: string }; signal?: AbortSignal }) => {
+      expect(input.signal).toBe(controller.signal);
+      return { passed: true, evidenceIds: ['evidence-cancel-aware'] };
+    });
+    const executor = createCodexWorkerExecutor({
+      invoker: { execute },
+      acceptance: { evaluate },
+    });
+
+    await expect(executor.execute(lease, { signal: controller.signal })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+  });
+
   it('returns failed without calling acceptance when Codex produces no final message', async () => {
     const evaluate = vi.fn(async () => ({ passed: true, evidenceIds: ['should-not-exist'] }));
     const executor = createCodexWorkerExecutor({

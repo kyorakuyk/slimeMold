@@ -119,6 +119,18 @@ describe('worker side-effect recorder', () => {
     });
   });
 
+  it('does not let a late completion promote a recovered unknown effect', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+    await recorder.recoverInterruptedRun('run-1');
+
+    const late = await recorder.complete(started, { status: 'succeeded' });
+    expect(late.status).toBe('unknown');
+    expect((await repository.read()).journal.entries[0].status).toBe('unknown');
+  });
+
   it('turns an unclosed Worker execution into unknown and exposes explicit recovery decisions', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');
@@ -206,8 +218,10 @@ describe('worker side-effect recorder', () => {
       tasks: {
         'task-1': {
           taskId: 'task-1',
+          taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
           status: 'running' as const,
           attempt: 1,
+          currentAttemptId: lease.attemptId,
           worktreeId: 'worktree-1',
           worktreePath: 'C:/worktrees/task-1',
           baseRevision: 'base-1',

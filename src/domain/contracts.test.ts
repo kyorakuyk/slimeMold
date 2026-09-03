@@ -437,6 +437,37 @@ describe('Phase 0a domain contracts', () => {
     expect(() => replayDomainEvents([started, succeeded, queued])).toThrow(/nextAttempt|attempt/);
   });
 
+  it('rejects a repeated TaskQueued event after a terminal attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-reopen-queued', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'reopen-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-reopen-queued', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const succeeded = event({
+      eventId: 'reopen-succeeded',
+      sequence: 2,
+      aggregateVersion: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskSucceeded',
+      payload: { runId: 'run-reopen-queued', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const queued = event({
+      eventId: 'reopen-queued',
+      sequence: 3,
+      aggregateVersion: 3,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-reopen-queued', taskId: 'task-1', taskExecutionId },
+    });
+    expect(() => replayDomainEvents([started, succeeded, queued])).toThrow(/queued|reopen|attempt/i);
+  });
+
   it('rejects a new attempt while the previous attempt is still running', () => {
     const taskExecutionId = createTaskExecutionId('run-overlap', 'task-1');
     const firstAttemptId = createAttemptId(taskExecutionId, 1);
@@ -459,6 +490,144 @@ describe('Phase 0a domain contracts', () => {
     });
 
     expect(() => replayDomainEvents([first, second])).toThrow(/running|Attempt|attempt/);
+  });
+
+  it('rejects a queued retry while the current attempt is still running', () => {
+    const taskExecutionId = createTaskExecutionId('run-queued-overlap', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'queued-overlap-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-queued-overlap', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const queued = event({
+      eventId: 'queued-overlap-retry',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-queued-overlap', taskId: 'task-1', taskExecutionId, nextAttempt: 2 },
+    });
+
+    expect(() => replayDomainEvents([started, queued])).toThrow(/running|Attempt|attempt/);
+  });
+
+  it('rejects a late completion from the old attempt after a retry was queued', () => {
+    const taskExecutionId = createTaskExecutionId('run-late-completion', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'late-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-late-completion', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const queued = event({
+      eventId: 'late-retry',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskQueued',
+      payload: { runId: 'run-late-completion', taskId: 'task-1', taskExecutionId, nextAttempt: 2 },
+    });
+    const late = event({
+      eventId: 'late-succeeded',
+      sequence: 3,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 3,
+      eventType: 'TaskSucceeded',
+      payload: { runId: 'run-late-completion', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+
+    expect(() => replayDomainEvents([started, queued, late])).toThrow(/Attempt|attempt|running/);
+  });
+
+  it('requires the first started attempt to be attempt one', () => {
+    const taskExecutionId = createTaskExecutionId('run-first-attempt', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 2);
+    expect(() => replayDomainEvents([event({
+      eventId: 'first-attempt-two',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-first-attempt', taskId: 'task-1', taskExecutionId, attempt: 2, attemptId },
+    })])).toThrow(/首次|连续|Attempt|attempt/);
+  });
+
+  it('rejects reopening a terminal attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-terminal-reopen', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const started = event({
+      eventId: 'terminal-started',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-terminal-reopen', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const succeeded = event({
+      eventId: 'terminal-succeeded',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 2,
+      eventType: 'TaskSucceeded',
+      payload: { runId: 'run-terminal-reopen', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+    const reopened = event({
+      eventId: 'terminal-reopened',
+      sequence: 3,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 3,
+      eventType: 'TaskStarted',
+      payload: { runId: 'run-terminal-reopen', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    });
+
+    expect(() => replayDomainEvents([started, succeeded, reopened])).toThrow(/终态|terminal|Attempt|attempt/);
+  });
+
+  it('rejects whitespace-padded lineage ids and unsafe attempt integers during replay', () => {
+    const taskExecutionId = createTaskExecutionId('run-payload-canonical', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    expect(() => replayDomainEvents([event({
+      eventId: 'padded-lineage',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: { runId: ' run-payload-canonical', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    })])).toThrow(/canonical|空白|lineage/);
+
+    expect(() => replayDomainEvents([event({
+      eventId: 'unsafe-attempt',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: {
+        runId: 'run-payload-canonical',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: Number.MAX_SAFE_INTEGER + 1,
+        attemptId: `${taskExecutionId}:attempt-${Number.MAX_SAFE_INTEGER + 1}`,
+      },
+    })])).toThrow(/整数|safe|attempt/);
+  });
+
+  it('accepts imported attempts only as synthetic system TaskExecution facts', () => {
+    const taskExecutionId = createTaskExecutionId('run-import-provenance', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const base = {
+      eventId: 'forged-import',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskAttemptImported' as const,
+      payload: { runId: 'run-import-provenance', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+    };
+    expect(() => replayDomainEvents([event({ ...base, actor: 'runtime' })])).toThrow(/synthetic|system|迁移|import/);
+    expect(() => replayDomainEvents([event({ ...base, aggregateType: 'Task', actor: 'system', synthetic: true, source: { objectId: 'migration', objectVersion: 1 } })])).toThrow(/aggregate|TaskExecution/);
   });
 
   it('resolves global, project, and run policy without mutating the global preference', () => {

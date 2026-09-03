@@ -81,6 +81,29 @@ describe('createWorktreeAllocator', () => {
     })).rejects.toThrow(/创建 worktree 失败/);
   });
 
+  it('releases a path reservation when creation fails so the attempt can retry', async () => {
+    let calls = 0;
+    const allocator = createWorktreeAllocator(
+      { create: vi.fn(async (id: string, path: string, options?: { branch?: string }) => {
+        calls += 1;
+        return calls === 1 ? null : info(id, path, options?.branch ?? '');
+      }) },
+      () => 'C:/projects/worktrees/retryable',
+    );
+    const taskExecutionId = createTaskExecutionId('run-retry', task.id);
+    const input = {
+      projectId: 'project-1',
+      runId: 'run-retry',
+      task,
+      attempt: 1,
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    };
+
+    await expect(allocator.allocate(input)).rejects.toThrow(/创建 worktree 失败/);
+    await expect(allocator.allocate(input)).resolves.toMatchObject({ path: 'C:/projects/worktrees/retryable' });
+  });
+
   it('rejects a lease whose supplied execution lineage is forged', async () => {
     const allocator = createWorktreeAllocator(
       { create: vi.fn(async (id: string, path: string, options?: { branch?: string }) => info(id, path, options?.branch ?? '')) },

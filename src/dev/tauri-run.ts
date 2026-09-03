@@ -14,7 +14,7 @@ import type { DevGitRunner } from './worktree';
 import type { CommandResult } from './node-run';
 import type { EvidencePersistence, JsonlFsOps } from './evidence';
 import { createHostEvidenceStoreWithFs } from './evidence';
-import { resolveWeb, relativeWeb } from './path-utils';
+import { pathComparisonKeyWeb, resolveWeb, relativeWeb } from './path-utils';
 
 /** Rust dev_exec 返回结构。 */
 interface DevExecResult {
@@ -75,7 +75,9 @@ export function createTauriDeps(): NodeDevDeps {
     resolveInside: async (root, rel) => {
       const abs = resolveWeb(root, rel);
       const rootNorm = resolveWeb(root, '.');
-      if (abs !== rootNorm && !abs.startsWith(rootNorm + '/')) {
+      const absKey = pathComparisonKeyWeb(abs);
+      const rootKey = pathComparisonKeyWeb(rootNorm);
+      if (absKey !== rootKey && !absKey.startsWith(rootKey + '/')) {
         throw new Error(`路径逃逸拒绝：${rel}（root=${rootNorm}）`);
       }
       return abs;

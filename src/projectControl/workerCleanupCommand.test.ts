@@ -35,8 +35,9 @@ function state(): WorkerRunQueueState {
 function cleanupReceipt(attempt: number): SideEffectRecord {
   const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
   const attemptId = createAttemptId(taskExecutionId, attempt);
+  const key = `cleanup:${attemptId}`;
   return {
-    idempotencyKey: `cleanup:${attemptId}`,
+    idempotencyKey: key,
     kind: 'worktree-cleanup',
     target: 'C:/project-workers/run-1/task-1',
     inputHash: 'abc123:sig-1',
@@ -46,8 +47,13 @@ function cleanupReceipt(attempt: number): SideEffectRecord {
     attemptId,
     status: 'receipt',
     recovery: 'skip',
-    receipt: { receiptId: 'receipt-cleanup-1', observedAt: '2026-09-01T00:02:00.000Z' },
+    receipt: { receiptId: `${key}:receipt`, observedAt: '2026-09-01T00:02:00.000Z', outcome: 'succeeded', outputHash: 'sig-1' },
   };
+}
+
+function cleanupReceiptId(attempt: number): string {
+  const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+  return `cleanup:${createAttemptId(taskExecutionId, attempt)}:receipt`;
 }
 
 describe('worker cleanup command', () => {
@@ -56,9 +62,10 @@ describe('worker cleanup command', () => {
     const result = markWorkerTaskCleaned({
       state: state(),
       taskId: 'task-1',
-      receiptId: 'receipt-cleanup-1',
+      receiptId: cleanupReceiptId(1),
       taskExecutionId,
       attemptId: createAttemptId(taskExecutionId, 1),
+      stateSignature: 'sig-1',
       receipt: cleanupReceipt(1),
       decisionId: 'cleanup-decision-1',
       now: '2026-09-01T00:02:00.000Z',
@@ -66,7 +73,7 @@ describe('worker cleanup command', () => {
 
     expect(result.state.tasks['task-1']).toEqual(expect.objectContaining({
       cleanupStatus: 'cleaned',
-      cleanupReceiptId: 'receipt-cleanup-1',
+      cleanupReceiptId: cleanupReceiptId(1),
     }));
     expect(result.events).toEqual([expect.objectContaining({
       eventId: `cleanup-decision-1:task-cleaned:${taskExecutionId}`,
@@ -79,7 +86,7 @@ describe('worker cleanup command', () => {
         taskExecutionId,
         attempt: 1,
         attemptId: createAttemptId(taskExecutionId, 1),
-        receiptId: 'receipt-cleanup-1',
+        receiptId: cleanupReceiptId(1),
       }),
     })]);
   });
@@ -88,9 +95,10 @@ describe('worker cleanup command', () => {
     expect(() => markWorkerTaskCleaned({
       state: { ...state(), tasks: { ...state().tasks, 'task-1': { ...state().tasks['task-1'], status: 'failed' } } },
       taskId: 'task-1',
-      receiptId: 'receipt-cleanup-1',
+      receiptId: cleanupReceiptId(1),
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      stateSignature: 'sig-1',
       receipt: cleanupReceipt(1),
       decisionId: 'cleanup-decision-1',
       now: '2026-09-01T00:02:00.000Z',
@@ -101,10 +109,34 @@ describe('worker cleanup command', () => {
       receiptId: ' ',
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      stateSignature: 'sig-1',
       receipt: cleanupReceipt(1),
       decisionId: 'cleanup-decision-1',
       now: '2026-09-01T00:02:00.000Z',
     })).toThrow(/receipt id 不能为空/);
+  });
+
+  it('rejects forged cleanup receipts with wrong kind, target, hash, or failed outcome', () => {
+    const current = state();
+    const mutations = [
+      { kind: 'worker-execution' as const },
+      { target: 'C:/other-worktree' },
+      { inputHash: 'wrong-hash' },
+      { receipt: { ...cleanupReceipt(1).receipt!, outcome: 'failed' as const } },
+    ];
+    for (const mutation of mutations) {
+      expect(() => markWorkerTaskCleaned({
+        state: current,
+        taskId: 'task-1',
+        receiptId: cleanupReceiptId(1),
+        taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+        attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+        stateSignature: 'sig-1',
+        receipt: { ...cleanupReceipt(1), ...mutation },
+        decisionId: 'cleanup-forged',
+        now: '2026-09-01T00:03:00.000Z',
+      })).toThrow(/receipt|cleanup|outcome/);
+    }
   });
 
   it('rejects a cleanup receipt that belongs to an older attempt', () => {
@@ -125,9 +157,10 @@ describe('worker cleanup command', () => {
     expect(() => markWorkerTaskCleaned({
       state: currentState,
       taskId: 'task-1',
-      receiptId: 'receipt-cleanup-1',
+      receiptId: cleanupReceiptId(1),
       taskExecutionId,
       attemptId: currentAttemptId,
+      stateSignature: 'sig-1',
       receipt: cleanupReceipt(1),
       decisionId: 'cleanup-decision-2',
       now: '2026-09-01T00:03:00.000Z',

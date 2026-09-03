@@ -9,8 +9,9 @@
  * 安全边界：仅 Tauri 下生效（浏览器预览不初始化，dev 节点保持不可用）。
  */
 import { isTauri } from '../platform/env';
-import { initDevSession, resetDevSession, getDevSession } from './session';
+import { initDevSession, resetDevSession, getDevSession, createHostAcceptanceStoreWithFs } from './session';
 import { useRegistryStore } from '../store/registryStore';
+import { pathComparisonKey } from './path-utils';
 
 /** dev.* 节点 typeId 集合（teardown 时从 registry 精确移除）。 */
 const DEV_TYPE_IDS = [
@@ -30,6 +31,7 @@ const DEV_TYPE_IDS = [
 /** GUI DevSession 就绪状态（审计 P1：初始化失败须显式可见，不静默吞异常）。 */
 export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
 let devGuiStatus: DevGuiStatus = 'idle';
+let devSessionGeneration = 0;
 export function getDevGuiStatus(): DevGuiStatus {
   return devGuiStatus;
 }
@@ -47,32 +49,73 @@ function evidenceRootFor(projectPath: string): string {
  * **同步链路**：await dev_init_session 成功 → 初始化 DevSession → 注册 dev.* 定义 → status=ready。
  * 失败 → status=unavailable，不注册 dev 节点（fail-closed），返回 null。
  */
-export async function ensureGuiDevSession(projectPath: string | null): Promise<ReturnType<typeof getDevSession>> {
+export async function ensureGuiDevSession(projectPath: string | null, signal?: AbortSignal): Promise<ReturnType<typeof getDevSession>> {
   if (!isTauri) return null;
   if (!projectPath) return null;
+  if (signal?.aborted) return null;
   const existing = getDevSession();
-  if (existing) return existing;
+  if (existing) {
+    if (pathComparisonKey(existing.manager.getBaseRepoPath()) !== pathComparisonKey(projectPath)) return null;
+    return existing;
+  }
+
+  const generation = ++devSessionGeneration;
 
   // 1) 先同步 Rust 宿主登记态（主仓库根；失败则开发能力不可用）
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('dev_init_session', { baseRepo: projectPath });
+    if (generation !== devSessionGeneration) return null;
+    if (signal?.aborted) {
+      await teardownGuiDevSession();
+      return null;
+    }
   } catch (e) {
+    if (generation !== devSessionGeneration) return null;
     // 审计 P1：不静默吞异常——显式标记不可用，GUI 面板提示
     console.error('[H4] dev_init_session 失败：', e);
     setDevGuiStatus('unavailable');
     return null;
   }
 
-  // 2) 宿主就绪后才初始化 DevSession + 注册 dev 节点
-  const session = initDevSession({
-    baseRepoPath: projectPath,
-    env: 'tauri',
-    evidenceRoot: evidenceRootFor(projectPath),
-  });
-  useRegistryStore.getState().register(session.defs);
-  setDevGuiStatus('ready');
-  return session;
+  // 2) 宿主就绪后初始化 DevSession，并在注册 dev.* 前恢复 durable acceptance。
+  try {
+    const { createTauriJsonlFs } = await import('./tauri-run');
+    const session = initDevSession({
+      baseRepoPath: projectPath,
+      env: 'tauri',
+      evidenceRoot: evidenceRootFor(projectPath),
+      acceptancePersistence: createHostAcceptanceStoreWithFs(
+        `${projectPath.replace(/[/\\]+$/, '')}/.slimemold/acceptance`,
+        `${projectPath.replace(/[/\\]+$/, '')}-workers`,
+        'records',
+        createTauriJsonlFs(),
+      ),
+    });
+    if (generation !== devSessionGeneration) {
+      if (getDevSession() === session) resetDevSession();
+      return null;
+    }
+    await session.loadAcceptances();
+    if (generation !== devSessionGeneration) {
+      if (getDevSession() === session) resetDevSession();
+      return null;
+    }
+    if (signal?.aborted) {
+      await teardownGuiDevSession();
+      return null;
+    }
+    useRegistryStore.getState().register(session.defs);
+    setDevGuiStatus('ready');
+    return session;
+  } catch (e) {
+    if (generation !== devSessionGeneration) return null;
+    console.error('[H4] Acceptance store 初始化/加载失败：', e);
+    await teardownGuiDevSession().catch(() => {});
+    resetDevSession();
+    setDevGuiStatus('unavailable');
+    return null;
+  }
 }
 
 /**
@@ -80,6 +123,7 @@ export async function ensureGuiDevSession(projectPath: string | null): Promise<R
  * 返回 Promise（await dev_clear_session）。
  */
 export async function teardownGuiDevSession(): Promise<void> {
+  devSessionGeneration += 1;
   // 先清空宿主登记态（切换/关闭项目时旧 worktree 登记不得泄漏到新项目）
   if (isTauri) {
     try {

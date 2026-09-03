@@ -17,7 +17,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { restoreWorkerRunQueue } from '../domain/workerQueue';
-import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 
 export type WorkerRunRecoveryDecision = 'inspect' | 'retry' | 'skip';
@@ -43,7 +43,7 @@ export interface AppliedWorkerRunRecoveryDecision {
 export type WorkerSideEffectClock = () => string;
 
 export interface WorkerSideEffectRecorderWithRecovery extends WorkerSideEffectRecorder {
-  recoverInterruptedRun(runId: string): Promise<SideEffectJournal>;
+  recoverInterruptedRun(runId: string, options?: { signal?: AbortSignal }): Promise<SideEffectJournal>;
 }
 
 function requiredText(value: string, field: string): string {
@@ -73,32 +73,36 @@ function legacyEffectKeyFor(lease: WorkerTaskLease): string {
   return `worker-execution:${requiredText(lease.runId, 'run id')}:${requiredText(lease.task.id, 'task id')}:attempt-${lease.attempt}`;
 }
 
-function legacyAttemptForKey(idempotencyKey: string): number | undefined {
-  const match = idempotencyKey.match(/(?:attempt-|:a)(\d+)$/);
-  if (!match) return undefined;
-  const attempt = Number(match[1]);
-  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : undefined;
-}
-
 function effectBelongsToCurrentAttempt(
   effect: SideEffectRecord,
   state: WorkerRunQueueState,
   taskId: string,
 ): boolean {
   const task = state.tasks[taskId];
-  if (!task || effect.runId !== state.runId) return false;
-  const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
-  if (effect.taskExecutionId && effect.taskExecutionId !== taskExecutionId) return false;
-  if (effect.attemptId) {
-    const currentAttemptId = task.currentAttemptId
-      ?? (task.status !== 'queued' && task.status !== 'blocked' && task.status !== 'cancelled' && task.attempt > 0
-        ? createAttemptId(taskExecutionId, task.attempt)
-        : undefined);
-    return currentAttemptId === effect.attemptId;
+  if (!task || task.status !== 'running' || effect.runId !== state.runId) return false;
+  if (effect.taskId !== taskId || !effect.taskExecutionId || !effect.attemptId || !task.currentAttemptId) {
+    return false;
   }
-  if (task.status === 'queued' || task.status === 'blocked' || task.status === 'cancelled') return false;
-  const attempt = legacyAttemptForKey(effect.idempotencyKey);
-  return attempt !== undefined && attempt === task.attempt;
+  const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
+  try {
+    assertTaskExecutionLineage({
+      runId: state.runId,
+      taskId,
+      taskExecutionId: effect.taskExecutionId,
+      attemptId: effect.attemptId,
+      attempt: task.attempt,
+    });
+    assertTaskExecutionLineage({
+      runId: state.runId,
+      taskId,
+      taskExecutionId,
+      attemptId: task.currentAttemptId,
+      attempt: task.attempt,
+    });
+  } catch {
+    return false;
+  }
+  return effect.taskExecutionId === taskExecutionId && effect.attemptId === task.currentAttemptId;
 }
 
 function inputHashFor(lease: WorkerTaskLease): string {
@@ -198,14 +202,31 @@ export function createWorkerSideEffectRecorder(
     },
 
     async complete(record, result: WorkerExecutionResult): Promise<SideEffectRecord> {
+      const parsed = await repository.read();
+      if (parsed.status === 'needs-repair') {
+        throw new SideEffectJournalError(
+          'needs-repair',
+          `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`,
+        );
+      }
+      const current = entryFor(parsed.journal, record.idempotencyKey);
+      const sameIdentity = current.kind === record.kind
+        && current.target === record.target
+        && current.inputHash === record.inputHash
+        && current.runId === record.runId
+        && current.taskId === record.taskId
+        && current.taskExecutionId === record.taskExecutionId
+        && current.attemptId === record.attemptId;
+      if (!sameIdentity) throw new Error(`迟到 Worker completion 的 lineage 不一致：${record.idempotencyKey}`);
+      if (current.status !== 'started') return current;
       const receipt = {
-        receiptId: `${requiredText(record.idempotencyKey, 'idempotencyKey')}:receipt`,
+        receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
         outcome: result.status,
         ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
-      const completed = completeSideEffect(record, receipt);
-      return entryFor(await repository.record(completed), record.idempotencyKey);
+      const completed = completeSideEffect(current, receipt);
+      return entryFor(await repository.record(completed), current.idempotencyKey);
     },
 
     async markUnknown(record, reason): Promise<SideEffectRecord> {
@@ -214,9 +235,11 @@ export function createWorkerSideEffectRecorder(
       return entryFor(await repository.record(unknown), record.idempotencyKey);
     },
 
-    async recoverInterruptedRun(runId): Promise<SideEffectJournal> {
+    async recoverInterruptedRun(runId, options = {}): Promise<SideEffectJournal> {
       const normalizedRunId = requiredText(runId, 'run id');
+      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
       const parsed = await repository.read();
+      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
       if (parsed.status === 'needs-repair') {
         throw new SideEffectJournalError(
           'needs-repair',
@@ -224,10 +247,13 @@ export function createWorkerSideEffectRecorder(
         );
       }
       for (const entry of parsed.journal.entries) {
+        if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
         if (entry.runId === normalizedRunId && entry.status === 'started') {
           await repository.record(recoverInterruptedSideEffect(entry, 'worker-run-restarted'));
+          if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
         }
       }
+      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
       return (await repository.read()).journal;
     },
   };
@@ -241,14 +267,61 @@ export function buildWorkerRunRecoveryPlan(
   const effects = journal.entries
     .filter((entry) => entry.runId === normalizedRunId)
     .map((entry) => ({ ...entry }));
-  const recoverableEffects = effects.filter((entry) => entry.status === 'started' || entry.status === 'unknown');
-  return {
+  return normalizeWorkerRunRecoveryPlan({
     runId: normalizedRunId,
     effects,
-    recoverableEffects,
-    effectKeys: recoverableEffects.map((entry) => entry.idempotencyKey),
-    requiresUser: recoverableEffects.length > 0,
+    recoverableEffects: effects.filter((entry) => entry.status === 'started' || entry.status === 'unknown'),
+    effectKeys: [],
+    requiresUser: false,
     allowedDecisions: ['inspect', 'retry', 'skip'],
+  });
+}
+
+function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunRecoveryPlan {
+  const runId = requiredText(plan.runId, 'run id');
+  const effects = Array.isArray(plan.effects) ? plan.effects.map((effect) => ({ ...effect })) : [];
+  const suppliedRecoverable = plan.recoverableEffects;
+  const candidates = effects
+    .filter((effect) => effect.status === 'started' || effect.status === 'unknown');
+  if (suppliedRecoverable) {
+    if (
+      suppliedRecoverable.length !== candidates.length
+      || candidates.some((effect) => !suppliedRecoverable.some((item) => JSON.stringify(item) === JSON.stringify(effect)))
+    ) {
+      throw new Error(`recoverableEffects 必须与 plan.effects 中的全部待恢复记录一致：${runId}`);
+    }
+  }
+  for (const effect of candidates) {
+    if (
+      effect.runId !== runId
+      || !effect.taskId
+      || !effect.taskExecutionId
+      || !effect.attemptId
+    ) {
+      throw new Error(`恢复 effect 缺少完整 current lineage：${effect.idempotencyKey}`);
+    }
+    try {
+      assertTaskExecutionLineage({
+        runId,
+        taskId: effect.taskId,
+        taskExecutionId: effect.taskExecutionId,
+        attemptId: effect.attemptId,
+      });
+    } catch (error) {
+      throw new Error(`恢复 effect lineage 无法验证：${effect.idempotencyKey}（${error instanceof Error ? error.message : String(error)}）`);
+    }
+
+  }
+  const allowedDecisions = (['inspect', 'retry', 'skip'] as const)
+    .filter((decision) => plan.allowedDecisions.includes(decision));
+  if (allowedDecisions.length === 0) throw new Error(`恢复计划没有合法决策：${runId}`);
+  return {
+    runId,
+    effects,
+    recoverableEffects: candidates,
+    effectKeys: candidates.map((effect) => effect.idempotencyKey),
+    requiresUser: candidates.length > 0,
+    allowedDecisions,
   };
 }
 
@@ -258,14 +331,15 @@ export function decideWorkerRunRecovery(
   decision: WorkerRunRecoveryDecision,
   reason: string,
 ): AppliedWorkerRunRecoveryDecision {
-  if (!plan.allowedDecisions.includes(decision)) throw new Error(`不允许的恢复决策：${decision}`);
+  const normalizedPlan = normalizeWorkerRunRecoveryPlan(plan);
+  if (!normalizedPlan.allowedDecisions.includes(decision)) throw new Error(`不允许的恢复决策：${decision}`);
   const normalizedReason = requiredText(reason, '恢复理由');
-  if (!plan.requiresUser) throw new Error(`Run 没有待核对的副作用：${plan.runId}`);
+  if (!normalizedPlan.requiresUser) throw new Error(`Run 没有待核对的副作用：${normalizedPlan.runId}`);
   return {
-    runId: plan.runId,
+    runId: normalizedPlan.runId,
     decision,
     reason: normalizedReason,
-    effectKeys: [...plan.effectKeys],
+    effectKeys: [...normalizedPlan.effectKeys],
     requiresNewAttempt: decision === 'retry',
   };
 }
@@ -278,11 +352,14 @@ export function applyWorkerRunRecoveryDecision(input: {
   reason: string;
   now: string;
 }): WorkerRunQueueState {
-  const applied = decideWorkerRunRecovery(input.plan, input.decision, input.reason);
+  const plan = normalizeWorkerRunRecoveryPlan(input.plan);
+  if (plan.runId !== input.state.runId) {
+    throw new Error(`恢复计划 runId 与 Worker Run 不一致：${plan.runId}`);
+  }
+  const applied = decideWorkerRunRecovery(plan, input.decision, input.reason);
   if (applied.decision === 'inspect') return { ...input.state, tasks: { ...input.state.tasks } };
 
-  const recoverableEffects = input.plan.recoverableEffects
-    ?? input.plan.effects.filter((effect) => effect.status === 'started' || effect.status === 'unknown');
+  const recoverableEffects = plan.recoverableEffects ?? [];
   const scopedRecoverableEffects = recoverableEffects.filter((effect) => (
     effect.taskId !== undefined
     && effectBelongsToCurrentAttempt(effect, input.state, effect.taskId)
@@ -290,12 +367,6 @@ export function applyWorkerRunRecoveryDecision(input: {
   const effectTaskIds = new Set(
     scopedRecoverableEffects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
   );
-  const hasTaskScopedRecoverableEffect = recoverableEffects.some((effect) => effect.taskId !== undefined);
-  if (effectTaskIds.size === 0 && !hasTaskScopedRecoverableEffect) {
-    for (const [taskId, task] of Object.entries(input.state.tasks)) {
-      if (task.status === 'running') effectTaskIds.add(taskId);
-    }
-  }
   if (effectTaskIds.size === 0) throw new Error(`恢复计划没有绑定可处理的任务：${input.state.runId}`);
 
   const tasks = Object.fromEntries(

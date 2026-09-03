@@ -509,6 +509,68 @@ describe('WorkerTaskQueue', () => {
     expect(unknownReasons).toEqual(['worker-execution-failed-before-receipt']);
   });
 
+  it('stops claiming new tasks and publishing transitions after cancellation', async () => {
+    const controller = new AbortController();
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-cancel',
+      taskGraph: graph([task('a'), task('b')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const allocated: string[] = [];
+    let executorCalls = 0;
+    const transitions: string[] = [];
+
+    await expect(runWorkerQueue(queue, {
+      concurrency: 1,
+      allocator: {
+        allocate: async ({ task: queuedTask }) => {
+          allocated.push(queuedTask.id);
+          return {
+            worktreeId: `worktree-${queuedTask.id}`,
+            path: `C:/worktrees/${queuedTask.id}`,
+            branch: `worker/${queuedTask.id}`,
+            baseRevision: 'base-1',
+          };
+        },
+      },
+      executor: {
+        execute: async (_lease, { signal } = {}) => {
+          executorCalls += 1;
+          expect(signal).toBe(controller.signal);
+          controller.abort();
+          return { status: 'succeeded', evidenceIds: ['should-not-persist'] };
+        },
+      },
+      signal: controller.signal,
+      onTransition: ({ state }) => {
+        transitions.push(state.status);
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(allocated).toEqual(['a']);
+    expect(executorCalls).toBe(1);
+    expect(transitions).toEqual(['running']);
+    expect(queue.snapshot().tasks.a.status).toBe('running');
+    expect(queue.drainEvents()).toEqual([]);
+  });
+
+  it('retains drained events when transition persistence fails', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-transition-failure',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-03T00:00:00.000Z',
+    });
+    await expect(runWorkerQueue(queue, {
+      concurrency: 1,
+      allocator: { allocate: async () => ({ worktreeId: 'wt', path: 'C:/wt', branch: 'worker/wt', baseRevision: 'base' }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'] }) },
+      onTransition: async () => { throw new Error('persistence unavailable'); },
+    })).rejects.toThrow('persistence unavailable');
+    expect(queue.drainEvents().map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted']);
+  });
+
   it('rejects cyclic task graphs before creating a queue', () => {
     expect(() => createWorkerRunQueue({
       projectId: 'project-1',
@@ -551,6 +613,29 @@ describe('WorkerTaskQueue', () => {
         },
       },
     })).toThrow(/lineage|attempt/);
+  });
+
+  it('rejects case-variant reuse of the same Windows worktree path', async () => {
+    let calls = 0;
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-case-path',
+      now: '2026-09-03T00:00:00.000Z',
+      taskGraph: graph([task('a'), task('b')]),
+    });
+    const allocator: WorkerWorktreeAllocator = {
+      allocate: async () => ({
+        worktreeId: `worktree-${++calls}`,
+        path: calls === 1 ? 'C:/Worktrees/Shared' : 'c:/worktrees/shared',
+        branch: `worker-${calls}`,
+        baseRevision: 'base-1',
+      }),
+    };
+
+    await queue.claimTask('a', allocator);
+    const secondLease = await queue.claimTask('b', allocator);
+    expect(secondLease).toBeNull();
+    expect(queue.snapshot().tasks.b.status).toBe('failed');
   });
 
   it('rejects an empty task graph instead of creating a no-op run', () => {
@@ -601,5 +686,25 @@ describe('WorkerTaskQueue', () => {
     expect(state.tasks.a.status).toBe('succeeded');
     expect(state.tasks.c.status).toBe('failed');
     expect(state.tasks.c.error).toMatch(/worktree.*复用|占用/);
+  });
+
+  it('keeps allocation failure replayable and rejects invalid queued attempts', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-allocation-failure',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-03T00:00:00.000Z',
+    });
+    const transitions: DomainEvent[] = [];
+    const failed = await runWorkerQueue(queue, {
+      allocator: { allocate: async () => { throw new Error('allocator unavailable'); } },
+      executor: { execute: async () => ({ status: 'succeeded' as const }) },
+      concurrency: 1,
+      onTransition: async ({ events }) => { transitions.push(...events); },
+    });
+    expect(failed.tasks.a.status).toBe('failed');
+    expect(transitions.map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted', 'TaskFailed', 'RunPartial']);
+    expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: -1 } } } })).toThrow(/attempt/);
+    expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
   });
 });

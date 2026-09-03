@@ -4,6 +4,7 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 import { recoverWorkerRunCommand } from './workerRecoveryCommand';
+import { applyWorkerRunRecoveryDecision, buildWorkerRunRecoveryPlan } from './workerSideEffects';
 
 const graph: ProjectTaskGraph = {
   version: 1,
@@ -90,6 +91,8 @@ const unknownJournal: SideEffectJournal = {
     inputHash: 'input-1',
     runId: 'run-1',
     taskId: 'task-1',
+    taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+    attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
     status: 'unknown',
     recovery: 'needs-user',
     unknownReason: 'worker-run-restarted',
@@ -183,7 +186,7 @@ describe('recoverWorkerRunCommand', () => {
     expect(inspected.events.map((event) => event.eventType)).toEqual(['WorkerRunRecoveryDecided']);
   });
 
-  it('rejects a recovery decision for another project or without an unknown effect', () => {
+  it('rejects partial, unscoped, and queued-stale recovery effects', () => {
     expect(() => recoverWorkerRunCommand({
       projectId: 'project-2',
       state,
@@ -191,7 +194,7 @@ describe('recoverWorkerRunCommand', () => {
       journal: unknownJournal,
       decision: 'retry',
       reason: '错误项目',
-      decisionId: 'recovery-decision-4',
+      decisionId: 'recovery-wrong-project',
       now: '2026-09-01T00:04:00.000Z',
     })).toThrow(/不属于当前项目/);
     expect(() => recoverWorkerRunCommand({
@@ -201,8 +204,102 @@ describe('recoverWorkerRunCommand', () => {
       journal: { schemaVersion: 1, entries: [] },
       decision: 'retry',
       reason: '没有 effect',
-      decisionId: 'recovery-decision-5',
+      decisionId: 'recovery-no-effect',
       now: '2026-09-01T00:04:00.000Z',
     })).toThrow(/待核对的副作用/);
+
+    const partial = {
+      ...unknownJournal.entries[0],
+      attemptId: undefined,
+    };
+    const unscoped = {
+      ...unknownJournal.entries[0],
+      taskId: undefined,
+      taskExecutionId: undefined,
+      attemptId: undefined,
+    };
+    for (const journal of [
+      { schemaVersion: 1 as const, entries: [partial] },
+      { schemaVersion: 1 as const, entries: [unscoped] },
+    ]) {
+      expect(() => recoverWorkerRunCommand({
+        projectId: 'project-1',
+        state,
+        taskGraph: graph,
+        journal,
+        decision: 'retry',
+        reason: '不完整的副作用归属',
+        decisionId: 'recovery-invalid-lineage',
+        now: '2026-09-01T00:04:00.000Z',
+      })).toThrow(/没有绑定|lineage|归属/);
+    }
+
+    expect(() => recoverWorkerRunCommand({
+      projectId: 'project-1',
+      state: {
+        ...state,
+        tasks: {
+          ...state.tasks,
+          'task-1': {
+            ...state.tasks['task-1'],
+            status: 'queued',
+            currentAttemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 2),
+          },
+        },
+      },
+      taskGraph: graph,
+      journal: unknownJournal,
+      decision: 'retry',
+      reason: 'queued task 不得使用旧 attempt',
+      decisionId: 'recovery-queued-stale',
+      now: '2026-09-01T00:04:00.000Z',
+    })).toThrow(/没有绑定|当前 Attempt|queued/);
+  });
+
+  it('rejects a recovery plan with a foreign run or trusted legacy metadata', () => {
+    const validPlan = buildWorkerRunRecoveryPlan('run-1', unknownJournal);
+    expect(() => applyWorkerRunRecoveryDecision({
+      plan: { ...validPlan, runId: 'run-foreign' },
+      state,
+      taskGraph: graph,
+      decision: 'retry',
+      reason: 'foreign plan',
+      now: '2026-09-01T00:04:00.000Z',
+    })).toThrow(/run|Run|一致/);
+
+    const receiptOnly = {
+      ...unknownJournal.entries[0],
+      status: 'receipt' as const,
+      recovery: 'skip' as const,
+      receipt: { receiptId: 'receipt-1', observedAt: '2026-09-01T00:02:00.000Z', outcome: 'succeeded' as const },
+    };
+    expect(() => applyWorkerRunRecoveryDecision({
+      plan: {
+        runId: 'run-1',
+        effects: [receiptOnly],
+        effectKeys: [unknownJournal.entries[0].idempotencyKey],
+        requiresUser: true,
+        allowedDecisions: ['inspect', 'retry', 'skip'],
+      },
+      state,
+      taskGraph: graph,
+      decision: 'retry',
+      reason: 'receipt must not be trusted as recoverable',
+      now: '2026-09-01T00:04:00.000Z',
+    })).toThrow(/待核对|绑定|recover/);
+
+    const extra = { ...unknownJournal.entries[0], idempotencyKey: 'worker-effect-2' };
+    expect(() => applyWorkerRunRecoveryDecision({
+      plan: {
+        ...validPlan,
+        effects: [...validPlan.effects, extra],
+        recoverableEffects: [validPlan.effects[0]],
+      },
+      state,
+      taskGraph: graph,
+      decision: 'retry',
+      reason: 'subset must not hide an effect',
+      now: '2026-09-01T00:04:00.000Z',
+    })).toThrow(/recoverable|完整|全部|plan/);
   });
 });

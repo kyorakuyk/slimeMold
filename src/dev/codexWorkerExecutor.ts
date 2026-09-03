@@ -15,6 +15,7 @@ export interface CodexWorkerInvoker {
     prompt: string;
     model?: string;
     cwd: string;
+    signal?: AbortSignal;
   }): Promise<CodexWorkerResponse>;
 }
 
@@ -29,6 +30,7 @@ export interface WorkerAcceptance {
   evaluate(input: {
     lease: WorkerTaskLease;
     response: CodexWorkerResponse;
+    signal?: AbortSignal;
   }): Promise<WorkerAcceptanceResult> | WorkerAcceptanceResult;
 }
 
@@ -41,9 +43,20 @@ export interface CodexWorkerExecutorOptions {
 /** Wire the queue invoker to the Tauri Codex Worker command. */
 export function createCodexWorkerInvoker(): CodexWorkerInvoker {
   return {
-    async execute({ prompt, model, cwd }): Promise<CodexWorkerResponse> {
-      const result = await codexWorkerExec(prompt, model, cwd);
-      return { text: result.text, usage: result.usage };
+    async execute({ prompt, model, cwd, signal }): Promise<CodexWorkerResponse> {
+      if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
+      const operationId = `worker-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+      const onAbort = () => {
+        void import('../agents/providers/codex').then(({ cancelCodexWorker }) => cancelCodexWorker(operationId));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const result = await codexWorkerExec(prompt, model, cwd, operationId);
+        if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
+        return { text: result.text, usage: result.usage };
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
   };
 }
@@ -73,17 +86,18 @@ export function buildCodexWorkerPrompt(lease: WorkerTaskLease): string {
 
 export function createCodexWorkerExecutor(options: CodexWorkerExecutorOptions): WorkerExecutor {
   return {
-    async execute(lease): Promise<WorkerExecutionResult> {
+    async execute(lease, { signal } = {}): Promise<WorkerExecutionResult> {
       const response = await options.invoker.execute({
         prompt: buildCodexWorkerPrompt(lease),
         model: options.model?.trim() || undefined,
         cwd: lease.assignment.path,
+        signal,
       });
       if (!response.text.trim()) {
         return { status: 'failed', error: 'Codex Worker 没有返回最终消息' };
       }
 
-      const verdict = await options.acceptance.evaluate({ lease, response });
+      const verdict = await options.acceptance.evaluate({ lease, response, signal });
       const evidenceIds = [...new Set((verdict.evidenceIds ?? []).map((id) => id.trim()).filter(Boolean))];
       if (!verdict.passed) {
         return {

@@ -29,6 +29,7 @@ export interface WorkerWorktreeAllocator {
     attempt: number;
     taskExecutionId: TaskExecutionId;
     attemptId: AttemptId;
+    signal?: AbortSignal;
   }): Promise<WorkerWorktreeAssignment>;
 }
 
@@ -50,7 +51,7 @@ export interface WorkerExecutionResult {
 }
 
 export interface WorkerExecutor {
-  execute(lease: WorkerTaskLease): Promise<WorkerExecutionResult>;
+  execute(lease: WorkerTaskLease, options?: { signal?: AbortSignal }): Promise<WorkerExecutionResult>;
 }
 
 /** Host-owned receipt boundary around a Worker execution side effect. */
@@ -115,12 +116,20 @@ export interface RunWorkerQueueOptions {
   onTransition?: (update: { state: WorkerRunQueueState; events: DomainEvent[] }) => Promise<void> | void;
   /** 可选：在 executor 前后记录 Worker side-effect receipt。 */
   sideEffects?: WorkerSideEffectRecorder;
+  signal?: AbortSignal;
 }
 
 function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} 不能为空`);
   return normalized;
+}
+
+function workerPathKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
 }
 
 function cloneTask(task: ProjectTask): ProjectTask {
@@ -134,6 +143,13 @@ function cloneTask(task: ProjectTask): ProjectTask {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Worker queue 已取消');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function taskState(taskId: string, runId: string, now: string): WorkerQueueTask {
@@ -159,8 +175,11 @@ function normalizeQueueTask(
   if (task.taskExecutionId && task.taskExecutionId !== expected) {
     throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
   }
+  if (!Number.isSafeInteger(task.attempt) || task.attempt < 0) {
+    throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
+  }
   if ((task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
-    && (!Number.isSafeInteger(task.attempt) || task.attempt < 1)) {
+    && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
   if (task.currentAttemptId) {
@@ -264,6 +283,10 @@ export class WorkerTaskQueue {
     return drained;
   }
 
+  restoreEvents(events: readonly DomainEvent[]): void {
+    this.events = [...events, ...this.events];
+  }
+
   runnableTaskIds(): string[] {
     this.reconcileBlocked(this.state.updatedAt);
     return this.taskGraph.tasks
@@ -279,7 +302,9 @@ export class WorkerTaskQueue {
   async claimTask(
     taskId: string,
     allocator: WorkerWorktreeAllocator,
+    signal?: AbortSignal,
   ): Promise<WorkerTaskLease | null> {
+    throwIfAborted(signal);
     this.reconcileBlocked(this.state.updatedAt);
     const task = this.tasksById.get(taskId);
     const current = this.state.tasks[taskId];
@@ -291,10 +316,10 @@ export class WorkerTaskQueue {
       throw new Error(`任务依赖尚未完成，不能 claim：${taskId}`);
     }
     if (this.claiming.has(taskId)) throw new Error(`任务正在 claim：${taskId}`);
-    this.claiming.add(taskId);
     const attempt = current.attempt + 1;
     const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
+    this.claiming.add(taskId);
     try {
       const assignment = await allocator.allocate({
         projectId: this.state.projectId,
@@ -303,10 +328,13 @@ export class WorkerTaskQueue {
         attempt,
         taskExecutionId,
         attemptId,
+        signal,
       });
+      throwIfAborted(signal);
       const reusedBy = Object.values(this.state.tasks).find(
         (item) => item.taskId !== taskId
-          && (item.worktreeId === assignment.worktreeId || item.worktreePath === assignment.path),
+          && (item.worktreeId === assignment.worktreeId
+            || (item.worktreePath !== undefined && workerPathKey(item.worktreePath) === workerPathKey(assignment.path))),
       );
       if (reusedBy) {
         throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用`);
@@ -357,8 +385,36 @@ export class WorkerTaskQueue {
         attemptId,
       };
     } catch (cause) {
+      if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
       const message = `worktree 分配失败：${errorMessage(cause)}`;
+      const wasRunning = this.state.status === 'running';
+      this.state = {
+        ...this.state,
+        status: 'running',
+        updatedAt: now,
+        tasks: {
+          ...this.state.tasks,
+          [taskId]: {
+            ...current,
+            taskExecutionId,
+            currentAttemptId: attemptId,
+            status: 'running',
+            attempt,
+            updatedAt: now,
+          },
+        },
+      };
+      if (!wasRunning) {
+        this.emitRun('RunStarted', { runId: this.state.runId }, now);
+      }
+      this.emitTask('TaskStarted', taskId, {
+        runId: this.state.runId,
+        taskId,
+        taskExecutionId,
+        attemptId,
+        attempt,
+      }, now);
       this.state = {
         ...this.state,
         updatedAt: now,
@@ -661,15 +717,24 @@ export async function runWorkerQueue(
   queue: WorkerTaskQueue,
   options: RunWorkerQueueOptions,
 ): Promise<WorkerRunQueueState> {
+  const throwIfCancelled = (): void => throwIfAborted(options.signal);
   const concurrency = options.concurrency === undefined
     ? Number.MAX_SAFE_INTEGER
     : Math.max(1, Math.floor(options.concurrency));
   const flushTransition = async (): Promise<void> => {
+    throwIfCancelled();
     if (!options.onTransition) return;
     const events = queue.drainEvents();
-    if (events.length > 0) await options.onTransition({ state: queue.snapshot(), events });
+    if (events.length === 0) return;
+    try {
+      await options.onTransition({ state: queue.snapshot(), events });
+    } catch (error) {
+      queue.restoreEvents(events);
+      throw error;
+    }
   };
   while (true) {
+    throwIfCancelled();
     const runnable = queue.runnableTaskIds();
     if (runnable.length === 0) {
       await flushTransition();
@@ -678,7 +743,7 @@ export async function runWorkerQueue(
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
     await Promise.all(batch.map(async (taskId) => {
-      const lease = await queue.claimTask(taskId, options.allocator);
+      const lease = await queue.claimTask(taskId, options.allocator, options.signal);
       if (lease) leases.push(lease);
     }));
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
@@ -687,9 +752,13 @@ export async function runWorkerQueue(
       const taskId = lease.task.id;
       let sideEffect: SideEffectRecord | undefined;
       try {
+        throwIfCancelled();
         sideEffect = await options.sideEffects?.start(lease);
-        const result = await options.executor.execute(lease);
+        throwIfCancelled();
+        const result = await options.executor.execute(lease, { signal: options.signal });
+        throwIfCancelled();
         if (sideEffect) await options.sideEffects!.complete(sideEffect, result);
+        throwIfCancelled();
         if (result.status === 'succeeded') {
           queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId, lease.attemptId);
         } else {
@@ -710,6 +779,7 @@ export async function runWorkerQueue(
             // Preserve the task failure; the journal remains an explicit recovery concern.
           }
         }
+        if (options.signal?.aborted) throwIfCancelled();
         queue.markFailed(taskId, `Worker 执行异常：${errorMessage(cause)}`, new Date().toISOString(), [], undefined, lease.attemptId);
       }
     }));

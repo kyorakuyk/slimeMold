@@ -99,6 +99,17 @@ export function createSyntheticBaselineEvents(
   };
 
   const snapshot = input.snapshot;
+  if (snapshot.sessions.some((session) => session.projectId !== projectId)) {
+    throw new Error(`legacy session 不属于迁移项目：${projectId}`);
+  }
+  if (snapshot.issues.some((issue) => issue.projectId !== projectId)) {
+    throw new Error(`legacy issue 不属于迁移项目：${projectId}`);
+  }
+  for (const workerRun of input.workerRuns ?? []) {
+    if (workerRun.projectId !== projectId) {
+      throw new Error(`legacy WorkerRun 不属于迁移项目：${workerRun.runId}`);
+    }
+  }
   const taskGraphs = snapshot.taskGraphs ?? [];
   add({
     eventId: `${migrationId}:project-control-baseline`,
@@ -527,6 +538,36 @@ function addWorkerTask(
         ...(task.error ? { error: task.error } : {}),
       }
     : {};
+  if (attemptId && task.attempt > 1) {
+    add({
+      ...common,
+      eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskQueued:${task.attempt}`,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskQueued',
+      payload: {
+        runId: run.runId,
+        taskId,
+        taskExecutionId,
+        nextAttempt: task.attempt,
+      },
+    });
+  }
+  if (attemptId && (task.status === 'succeeded' || task.status === 'failed')) {
+    add({
+      ...common,
+      eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskStarted:${task.attempt}`,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskStarted',
+      payload: {
+        runId: run.runId,
+        taskId,
+        taskExecutionId,
+        ...attemptPayload,
+      },
+    });
+  }
   const payload = {
     runId: run.runId,
     taskId,

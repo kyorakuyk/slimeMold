@@ -11,6 +11,7 @@ import type { NodeDefinition, ParamType, PortType } from '../../types';
 import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator';
 import type { DevSession } from '../../dev/session';
 import { collectChangedProtectedPaths } from '../../dev/policy';
+import { assertTaskExecutionLineage } from '../../domain/execution';
 
 const DEV_CATEGORY = '开发';
 
@@ -523,6 +524,10 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'orchestrationId', label: '编排 ID', type: T },
       { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'worktreePath', label: '工作区路径', type: T },
+      { id: 'runId', label: 'Worker Run ID（可选）', type: T },
+      { id: 'taskId', label: 'Worker Task ID（可选）', type: T },
+      { id: 'taskExecutionId', label: 'Task Execution ID（可选）', type: T },
+      { id: 'attemptId', label: 'Attempt ID（可选）', type: T },
       { id: 'rules', label: '验收规则（JSON 数组）', type: J },
     ],
     outputs: [
@@ -536,13 +541,27 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'runId', label: 'Worker Run ID（兜底）', type: 'text', default: '' },
+      { key: 'taskId', label: 'Worker Task ID（兜底）', type: 'text', default: '' },
+      { key: 'taskExecutionId', label: 'Task Execution ID（兜底）', type: 'text', default: '' },
+      { key: 'attemptId', label: 'Attempt ID（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const runId = str(inputs.runId ?? params.runId);
+      const taskId = str(inputs.taskId ?? params.taskId);
+      const taskExecutionId = str(inputs.taskExecutionId ?? params.taskExecutionId);
+      const attemptId = str(inputs.attemptId ?? params.attemptId);
       if (!cwd) throw nodeError('accept 需要 worktreePath');
+      const lineageValues = [runId, taskId, taskExecutionId, attemptId];
+      const hasLineage = lineageValues.some(Boolean);
+      if (hasLineage && lineageValues.some((value) => !value)) {
+        throw nodeError('accept 的 Worker lineage 必须四项完整');
+      }
+      if (hasLineage) assertTaskExecutionLineage({ runId, taskId, taskExecutionId, attemptId });
       // P1（审计）：验收 ID 始终由宿主生成（不可预测唯一），工作流/节点不可自填——
       // 防止指定已有 ID 覆盖旧验收记录（recordAcceptance 亦禁止覆盖）。
       const acceptanceId = session.nextAcceptanceId();
@@ -550,13 +569,22 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);
       // P0/P1：证据按当前任务+阶段+工作区作用域过滤，且验收前强制 flush（落盘失败 throw）
-      const evidence = await collector.flushAndByScope({ orchestrationId, stageId, worktreePath: cwd });
+      const evidence = await collector.flushAndByScope({
+        orchestrationId,
+        stageId,
+        worktreePath: cwd,
+        ...(hasLineage ? { taskExecutionId, attemptId } : {}),
+      });
+      if (!hasLineage) {
+        const attemptKeys = new Set(evidence.map((record) => record.attemptId).filter(Boolean));
+        if (attemptKeys.size > 1) throw nodeError('accept 证据混入多个 Worker attempt，必须提供当前 lineage');
+      }
       // P0：changedProtectedPaths 由宿主真实计算（gitChangedFiles × policy），不接受输入
       const changedFiles = await service.gitChangedFiles({ cwd });
       const changed = collectChangedProtectedPaths(session.policy, changedFiles);
       const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed);
       // P1（审计）：登记确定性验收记录（cleanup 确认门校验 passed + worktreePath 一致）
-      session.recordAcceptance({
+      const acceptance = session.recordAcceptance({
         acceptanceId,
         orchestrationId,
         stageId,
@@ -564,7 +592,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         passed: a.passed,
         failedChecks: a.failedChecks,
         at: new Date().toISOString(),
+        ...(hasLineage ? { runId, taskId, taskExecutionId, attemptId } : {}),
       });
+      await session.persistAcceptance(acceptance);
       return {
         passed: a.passed,
         failedChecks: a.failedChecks,

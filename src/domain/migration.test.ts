@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 import { EventStreamRepository, InMemoryEventStoreAdapter } from './eventStore';
 import { createSyntheticBaselineEvents, migrateLegacyProjectControl } from './migration';
+import type { WorkerRunQueueState } from './workerQueue';
 
 const snapshot: ProjectControlSnapshot = {
   version: 1,
@@ -183,5 +184,26 @@ describe('synthetic v1 project-control baseline migration', () => {
       occurredAt: input.now,
     }, 0);
     await expect(migrateLegacyProjectControl(otherRepository, input)).rejects.toThrow(/非空事件流/);
+  });
+
+  it('rejects worker snapshot facts belonging to another project', () => {
+    const foreignRun: WorkerRunQueueState = {
+      version: 1,
+      projectId: 'project-foreign',
+      runId: 'run-foreign',
+      taskGraphId: 'graph-foreign',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {},
+    };
+
+    expect(() => createSyntheticBaselineEvents({
+      projectId: 'project-1',
+      snapshot,
+      workerRuns: [foreignRun],
+      now: '2026-09-01T00:02:00.000Z',
+    })).toThrow(/project|项目/);
   });
 });

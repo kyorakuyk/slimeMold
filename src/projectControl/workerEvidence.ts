@@ -1,4 +1,4 @@
-import type { EvidencePersistence, EvidenceRecord } from '../dev/evidence';
+import { decodeEvidenceRecord, type EvidencePersistence, type EvidenceRecord } from '../dev/evidence';
 import type { ParsedSideEffectJournal } from '../domain/sideEffects';
 import type { SideEffectRecord } from '../domain/contracts';
 
@@ -7,9 +7,7 @@ export async function loadWorkerEvidence(
   persistence: Pick<EvidencePersistence, 'load'>,
 ): Promise<EvidenceRecord[]> {
   const records = await persistence.load();
-  return records
-    .filter((record) => record.capturedBy === 'host')
-    .map((record) => ({ ...record }));
+  return records.map((record) => decodeEvidenceRecord(record));
 }
 
 /** Merge evidence projections by immutable, host-generated evidence id. */
