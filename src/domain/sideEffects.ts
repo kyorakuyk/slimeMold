@@ -16,6 +16,12 @@ export interface SideEffectJournal {
   entries: SideEffectRecord[];
 }
 
+export interface SideEffectClaimResult {
+  journal: SideEffectJournal;
+  record: SideEffectRecord;
+  claimed: boolean;
+}
+
 export type SideEffectJournalParseStatus = 'empty' | 'ok' | 'needs-repair';
 
 export interface ParsedSideEffectJournal {
@@ -71,11 +77,20 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
   if (value.error !== undefined && typeof value.error !== 'string') {
     throw new Error('receipt.error 无效');
   }
+  if (value.evidenceIds !== undefined
+    && (!Array.isArray(value.evidenceIds) || value.evidenceIds.some((id) => typeof id !== 'string' || !id.trim()))) {
+    throw new Error('receipt.evidenceIds 无效');
+  }
+  if (value.acceptanceId !== undefined && (typeof value.acceptanceId !== 'string' || !value.acceptanceId.trim())) {
+    throw new Error('receipt.acceptanceId 无效');
+  }
   return {
     receiptId: value.receiptId,
     observedAt: value.observedAt,
     ...(typeof value.outputHash === 'string' ? { outputHash: value.outputHash } : {}),
     ...(value.outcome === 'succeeded' || value.outcome === 'failed' ? { outcome: value.outcome } : {}),
+    ...(Array.isArray(value.evidenceIds) ? { evidenceIds: [...value.evidenceIds] as string[] } : {}),
+    ...(typeof value.acceptanceId === 'string' ? { acceptanceId: value.acceptanceId } : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
   };
 }
@@ -262,6 +277,7 @@ export class SideEffectJournalRepository {
   }
 
   async record(record: SideEffectRecord): Promise<SideEffectJournal> {
+    decodeRecord(record);
     const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
     try {
       const parsed = parseSideEffectJournal(await this.adapter.readText(this.path));
@@ -276,6 +292,47 @@ export class SideEffectJournalRepository {
         await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
       }
       return next;
+    } finally {
+      await lock.release();
+    }
+  }
+
+  async claim(
+    record: SideEffectRecord,
+    aliases: readonly SideEffectRecord[] = [],
+  ): Promise<SideEffectClaimResult> {
+    decodeRecord(record);
+    aliases.forEach((alias) => decodeRecord(alias));
+    const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
+    try {
+      const parsed = parseSideEffectJournal(await this.adapter.readText(this.path));
+      if (parsed.status === 'needs-repair') {
+        throw new SideEffectJournalError('needs-repair', `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`);
+      }
+      const canonicalIndex = parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === record.idempotencyKey);
+      const alias = aliases.find((candidate) => parsed.journal.entries.some((entry) => entry.idempotencyKey === candidate.idempotencyKey));
+      const index = canonicalIndex >= 0
+        ? canonicalIndex
+        : alias ? parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === alias.idempotencyKey) : -1;
+      if (index < 0) {
+        const next = recordSideEffect(parsed.journal, record);
+        await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
+        return { journal: next, record, claimed: true };
+      }
+      const existing = parsed.journal.entries[index];
+      decodeRecord(existing);
+      const expected = canonicalIndex >= 0 ? record : alias!;
+      if (!sameIdentity(existing, expected)) {
+        throw new SideEffectJournalError('conflict', `idempotencyKey 已绑定其它副作用：${existing.idempotencyKey}`);
+      }
+      if (existing.status === 'planned' && record.status === 'started') {
+        const entries = [...parsed.journal.entries];
+        entries[index] = { ...record };
+        const next = { ...parsed.journal, entries };
+        await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
+        return { journal: next, record, claimed: true };
+      }
+      return { journal: parsed.journal, record: existing, claimed: false };
     } finally {
       await lock.release();
     }

@@ -28,7 +28,7 @@ import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
-import { recordProjectEvents } from './projectControl/eventBuffer';
+import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
 import { recoverWorkerRunCommand } from './projectControl/workerRecoveryCommand';
 import { installWorkerRunRuntime } from './projectControl/workerRunRuntime';
@@ -459,6 +459,18 @@ export default function App() {
         }
       },
       persistTransition: async ({ state, events }) => {
+        const terminalFinalization = events.length > 0 && events.every((event) => (
+          event.eventType === 'TaskSucceeded'
+          || event.eventType === 'TaskFailed'
+          || event.eventType === 'RunCompleted'
+          || event.eventType === 'RunPartial'
+          || event.eventType === 'RunFailed'
+        ));
+        if (operation.controller.signal.aborted && terminalFinalization) {
+          recordProjectEvents(projectId, events);
+          await flushPendingProjectEvents(projectId, eventRepository);
+          return;
+        }
         assertProjectOperation(operation);
         const latest = useWorkflowStore.getState();
         assertProjectOperation(operation);

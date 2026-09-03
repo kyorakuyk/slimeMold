@@ -20,6 +20,7 @@ function memPersistence(): EvidencePersistence {
 
 function fakeSession(opts: {
   failGitStatus?: boolean;
+  failGitDiff?: boolean;
   failAudit?: boolean;
   noPersistence?: boolean;
   failWorktreeAdd?: boolean;
@@ -49,6 +50,7 @@ function fakeSession(opts: {
           return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
         }
         if (args[0] === 'diff') {
+          if (opts.failGitDiff) return { exitCode: 128, stdout: 'stale diff', stderr: 'fatal: not a repository', durationMs: 1 };
           return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
         }
         if (args[0] === 'ls-files') return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
@@ -541,6 +543,20 @@ describe('H4 dev nodes', () => {
     const rec = session.resultStore.get(r.resultId)!;
     expect(rec.status).toBe('failed');
     expect(rec.summary).toContain('空 diff');
+  });
+
+  it('P1：git.diff 非零退出即使有 stdout 也登记 failed', async () => {
+    const session = fakeSession({ failGitDiff: true });
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/d2' }, {}, {} as never);
+    const diff = defs.find((d) => d.typeId === 'dev.git.diff')!;
+    const result = await diff.execute(
+      { worktreePath: '/repo/wt/d2', orchestrationId: 'o', stageId: 's' },
+      {},
+      {} as never,
+    ) as { resultId: string };
+    expect(session.resultStore.get(result.resultId)?.status).toBe('failed');
   });
 
   it('P1：git.status 失败时登记 failed（按 exitCode 判定）', async () => {

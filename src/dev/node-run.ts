@@ -152,7 +152,8 @@ export async function writeTextFile(absPath: string, content: string): Promise<v
 
 /** 解析相对路径到绝对路径（防 ../ 逃逸：结果必须仍以 root 为前缀；仅 Node 环境可用）。 */
 export async function resolveInside(root: string, relPath: string): Promise<string> {
-  const { resolve } = await import('node:path');
+  const { resolve, dirname, basename, join } = await import('node:path');
+  const { realpath } = await import('node:fs/promises');
   const abs = resolve(root, relPath);
   const rootNorm = resolve(root);
   const absKey = pathComparisonKey(abs);
@@ -160,7 +161,21 @@ export async function resolveInside(root: string, relPath: string): Promise<stri
   if (absKey !== rootKey && !absKey.startsWith(rootKey + '/')) {
     throw new Error(`路径逃逸拒绝：${relPath}（root=${rootNorm}）`);
   }
-  return abs;
+  let realAbs: string;
+  try {
+    realAbs = await realpath(abs);
+  } catch (error) {
+    if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error;
+    const realParent = await realpath(dirname(abs));
+    realAbs = join(realParent, basename(abs));
+  }
+  const realRoot = await realpath(rootNorm);
+  const realAbsKey = pathComparisonKey(realAbs);
+  const realRootKey = pathComparisonKey(realRoot);
+  if (realAbsKey !== realRootKey && !realAbsKey.startsWith(realRootKey + '/')) {
+    throw new Error(`真实路径逃逸拒绝：${relPath}（root=${realRoot}）`);
+  }
+  return realAbs;
 }
 
 /** 计算绝对路径相对于 root 的规范化相对路径（POSIX 分隔符，无 .. 段）。 */

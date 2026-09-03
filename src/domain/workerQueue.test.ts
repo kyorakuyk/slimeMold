@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
-import { replayDomainEvents, type DomainEvent } from './contracts';
+import { createSideEffect, replayDomainEvents, startSideEffect, type DomainEvent } from './contracts';
 import { clearProjectEventBuffer, getPendingProjectEvents, recordProjectEvents } from '../projectControl/eventBuffer';
 import {
   createWorkerRunQueue,
@@ -507,6 +507,51 @@ describe('WorkerTaskQueue', () => {
     expect(state.status).toBe('partial');
     expect(state.tasks.a.status).toBe('failed');
     expect(unknownReasons).toEqual(['worker-execution-failed-before-receipt']);
+  });
+
+  it('finalizes a task after its receipt commits even if cancellation follows', async () => {
+    const controller = new AbortController();
+    const runId = 'run-receipt-cancel';
+    const taskId = 'a';
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId,
+      taskGraph: graph([task(taskId)]),
+      now: '2026-09-03T00:00:00.000Z',
+    });
+    const state = await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: { execute: async () => ({ status: 'succeeded' as const }) },
+      signal: controller.signal,
+      sideEffects: {
+        start: async (lease) => startSideEffect(createSideEffect({
+          idempotencyKey: `worker-execution:${lease.attemptId}`,
+          kind: 'worker-execution',
+          target: lease.assignment.worktreeId,
+          inputHash: JSON.stringify([runId, taskId, 1, lease.attempt, lease.assignment.baseRevision]),
+          runId,
+          taskId,
+          taskExecutionId,
+          attemptId: lease.attemptId,
+        })),
+        complete: async (record) => {
+          controller.abort();
+          return {
+            ...record,
+            status: 'receipt' as const,
+            recovery: 'skip' as const,
+            receipt: {
+              receiptId: `${record.idempotencyKey}:receipt`,
+              observedAt: '2026-09-03T00:00:01.000Z',
+              outcome: 'succeeded' as const,
+              outputHash: 'output',
+            },
+          };
+        },
+      },
+    });
+    expect(state.tasks[taskId].status).toBe('succeeded');
   });
 
   it('stops claiming new tasks and publishing transitions after cancellation', async () => {

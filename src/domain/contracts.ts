@@ -824,6 +824,8 @@ export interface SideEffectReceipt {
   observedAt: string;
   outputHash?: string;
   outcome?: 'succeeded' | 'failed';
+  evidenceIds?: string[];
+  acceptanceId?: string;
   error?: string;
 }
 

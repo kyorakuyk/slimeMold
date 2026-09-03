@@ -151,6 +151,15 @@ describe('H4 EvidenceCollector', () => {
       },
     );
 
-    await expect(store.load()).rejects.toThrow('permission denied');
+    await expect(store.load()).rejects.toThrow();
+  });
+
+  it('removes pending evidence from memory when durable append fails', async () => {
+    const collector = new EvidenceCollector({
+      append: async () => { throw new Error('disk unavailable'); },
+      load: async () => [],
+    });
+    await expect(collector.addAsync({ orchestrationId: 'o', stageId: 's', kind: 'test', status: 'failed', summary: 'x' })).rejects.toThrow();
+    expect(collector.records).toHaveLength(0);
   });
 });

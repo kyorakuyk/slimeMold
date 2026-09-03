@@ -13,6 +13,7 @@ import {
 import type {
   WorkerExecutionResult,
   WorkerRunQueueState,
+  WorkerSideEffectClaim,
   WorkerSideEffectRecorder,
   WorkerTaskLease,
 } from '../domain/workerQueue';
@@ -79,7 +80,7 @@ function effectBelongsToCurrentAttempt(
   taskId: string,
 ): boolean {
   const task = state.tasks[taskId];
-  if (!task || task.status !== 'running' || effect.runId !== state.runId) return false;
+  if (!task || (task.status !== 'running' && task.status !== 'failed') || effect.runId !== state.runId) return false;
   if (effect.taskId !== taskId || !effect.taskExecutionId || !effect.attemptId || !task.currentAttemptId) {
     return false;
   }
@@ -166,6 +167,30 @@ export function createWorkerSideEffectRecorder(
   now: WorkerSideEffectClock = () => new Date().toISOString(),
 ): WorkerSideEffectRecorderWithRecovery {
   return {
+    async claim(lease): Promise<WorkerSideEffectClaim> {
+      const idempotencyKey = effectKeyFor(lease);
+      const planned = createSideEffect({
+        idempotencyKey,
+        kind: 'worker-execution',
+        target: requiredText(lease.assignment.worktreeId, 'worktree id'),
+        inputHash: inputHashFor(lease),
+        runId: lease.runId,
+        taskId: lease.task.id,
+        taskExecutionId: lease.taskExecutionId,
+        attemptId: lease.attemptId,
+      });
+      const legacyPlanned = createSideEffect({
+        idempotencyKey: legacyEffectKeyFor(lease),
+        kind: 'worker-execution',
+        target: requiredText(lease.assignment.worktreeId, 'worktree id'),
+        inputHash: legacyInputHashFor(lease),
+        runId: lease.runId,
+        taskId: lease.task.id,
+      });
+      const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
+      return { record: claimed.record, claimed: claimed.claimed };
+    },
+
     async start(lease): Promise<SideEffectRecord> {
       const idempotencyKey = effectKeyFor(lease);
       const legacyKey = legacyEffectKeyFor(lease);
@@ -223,6 +248,8 @@ export function createWorkerSideEffectRecorder(
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
         outcome: result.status,
+        ...(result.evidenceIds ? { evidenceIds: [...result.evidenceIds] } : {}),
+        ...(result.acceptanceId ? { acceptanceId: result.acceptanceId } : {}),
         ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
       const completed = completeSideEffect(current, receipt);
@@ -382,6 +409,7 @@ export function applyWorkerRunRecoveryDecision(input: {
           baseRevision: undefined,
           evidenceIds: [],
           currentAttemptId: undefined,
+          pendingAttempt: task.attempt + 1,
           acceptanceId: undefined,
           cleanupStatus: undefined,
           cleanupReceiptId: undefined,

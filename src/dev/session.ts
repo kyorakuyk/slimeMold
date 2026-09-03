@@ -446,6 +446,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       // untracked 文件内容须使签名变化，否则 cleanup 会误通过）。
       const files = await service.gitChangedFiles({ cwd: path });
       const diff = await service.gitDiff(undefined, { cwd: path });
+      if (diff.exitCode !== 0) throw new Error(`无法计算 worktree diff 签名：${diff.stderr || diff.exitCode}`);
       // untracked = gitChangedFiles 的 untracked 部分（再查一次 ls-files --others）
       const untracked = await service.gitUntrackedFiles({ cwd: path });
       const untrackedHashes: string[] = [];
@@ -515,7 +516,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           status: 'failed',
           summary: `forceCleanup: ${reason}`,
         });
-        const cleaned = await manager.cleanup(path, { confirm: true });
+        const info = manager.getByPath(path);
+        if (!info) throw new Error('forceCleanup 的 worktree 未登记');
+        const cleaned = await manager.cleanup(info.id, { confirm: true });
         return cleaned;
       } finally {
         this.confirmCleanupInFlight.delete(key);

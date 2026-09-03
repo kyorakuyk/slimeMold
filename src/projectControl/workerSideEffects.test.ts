@@ -178,7 +178,12 @@ describe('worker side-effect recorder', () => {
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-3'), 1),
       status: 'receipt',
       recovery: 'skip',
-      receipt: { receiptId: 'receipt-3', observedAt: '2026-09-01T00:02:00.000Z' },
+      receipt: {
+        receiptId: 'receipt-3',
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outcome: 'succeeded',
+        outputHash: 'output-3',
+      },
     });
     const journalWithReceipt = (await repository.read()).journal;
     const plan = buildWorkerRunRecoveryPlan('run-1', journalWithReceipt);

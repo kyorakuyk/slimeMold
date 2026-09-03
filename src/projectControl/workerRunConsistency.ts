@@ -9,7 +9,8 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
 
-import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
+import { workerCleanupEffectKey } from './workerCleanup';
 
 export type WorkerRunConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -97,6 +98,42 @@ function recordMatchesTaskLineage(
   } catch {
     return false;
   }
+}
+
+function isVerifiedHistoricalTerminalEffect(
+  effect: SideEffectRecord,
+  task: WorkerRunQueueState['tasks'][string],
+  expected: ExpectedTaskLineage,
+): boolean {
+  if (effect.status !== 'receipt' || effect.recovery !== 'skip' || !effect.receipt?.outcome) return false;
+  if (effect.runId !== expected.runId || effect.taskId !== expected.taskId || effect.taskExecutionId !== expected.taskExecutionId) return false;
+  if (!effect.attemptId || !task.taskDefinitionVersion || !task.baseRevision) return false;
+  let attempt: number;
+  try {
+    attempt = parseAttemptId(effect.attemptId).attempt;
+  } catch {
+    return false;
+  }
+  if (attempt >= expected.currentAttempt) return false;
+  const expectedAttemptId = createAttemptId(expected.taskExecutionId, attempt);
+  if (effect.attemptId !== expectedAttemptId || effect.receipt.receiptId !== `${effect.idempotencyKey}:receipt`) return false;
+  const isCleanup = effect.idempotencyKey === workerCleanupEffectKey(expected.taskExecutionId, expectedAttemptId);
+  const isExecution = effect.idempotencyKey === `worker-execution:${expected.taskExecutionId}:attempt-${attempt}`;
+  if (!isCleanup && !isExecution) return false;
+  if (isCleanup) {
+    return effect.kind === 'worktree-cleanup'
+      && effect.target === task.worktreePath
+      && effect.inputHash === `${task.baseRevision}:${effect.receipt.outputHash ?? ''}`;
+  }
+  return effect.kind === 'worker-execution'
+    && effect.target === task.worktreeId
+    && effect.inputHash === JSON.stringify([
+      expected.runId,
+      expected.taskId,
+      task.taskDefinitionVersion,
+      attempt,
+      task.baseRevision,
+    ]);
 }
 
 /**
@@ -339,10 +376,14 @@ export function auditWorkerRunConsistency(input: {
         runId: run.runId,
         taskId: effectTaskId,
         taskExecutionId: task.taskExecutionId ?? createTaskExecutionId(run.runId, effectTaskId),
-        currentAttempt: task.attempt,
+        currentAttempt: task.pendingAttempt ?? task.attempt,
         explicit: true,
       };
-      if (!recordMatchesTaskLineage(effect, expectedLineage, true)) {
+      const currentLineageMatches = recordMatchesTaskLineage(effect, expectedLineage, true);
+      if (!currentLineageMatches && isVerifiedHistoricalTerminalEffect(effect, task, expectedLineage)) {
+        continue;
+      }
+      if (!currentLineageMatches) {
         issues.push(issue(
           'side-effect-lineage-drift',
           `side-effect 未绑定当前 Run/Task/Attempt：${effect.idempotencyKey}`,
@@ -353,13 +394,14 @@ export function auditWorkerRunConsistency(input: {
       const expectedTarget = isCleanup ? task.worktreePath : task.worktreeId;
       const expectedInputHash = isCleanup
         ? `${task.baseRevision ?? ''}:${effect.receipt?.outputHash ?? ''}`
-        : effect.inputHash.trim();
+        : task.taskDefinitionVersion === 1
+          ? JSON.stringify([run.runId, effectTaskId, task.taskDefinitionVersion, task.attempt, task.baseRevision])
+          : undefined;
+      const inputHashMatches = expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
         && expectedTarget !== undefined
         && effect.target === expectedTarget
-        && (isCleanup
-          ? effect.inputHash === expectedInputHash
-          : effect.inputHash === expectedInputHash)
+        && inputHashMatches
         && (effect.status !== 'receipt'
           || (effect.receipt?.outcome !== undefined && effect.receipt.receiptId === `${effect.idempotencyKey}:receipt`));
       if (!lifecycleMatches) {

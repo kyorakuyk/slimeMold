@@ -139,16 +139,6 @@ export async function executeWorkerCleanupWithReceipt(
     throw new Error(`清理副作用需要人工核对：${key}`);
   }
 
-  let currentEntry = existing;
-  if (existing?.status === 'planned' && isLegacyKey) {
-    const migratedJournal = await input.repository.migrateLegacyRecord(legacyKey, {
-      ...existing,
-      idempotencyKey: key,
-      taskExecutionId: proposal.taskExecutionId,
-      attemptId: proposal.attemptId,
-    });
-    currentEntry = findEntry(migratedJournal.entries, [key]);
-  }
   const planned = createSideEffect({
     idempotencyKey: key,
     kind: 'worktree-cleanup',
@@ -159,10 +149,33 @@ export async function executeWorkerCleanupWithReceipt(
     taskExecutionId: proposal.taskExecutionId,
     attemptId: proposal.attemptId,
   });
-  const started = startSideEffect(currentEntry?.status === 'planned' ? currentEntry : planned);
-  const startedJournal = await input.repository.record(started);
+  const legacyPlanned = createSideEffect({
+    idempotencyKey: legacyKey,
+    kind: 'worktree-cleanup',
+    target: proposal.worktreePath,
+    inputHash: `${proposal.baseRevision}:${proposal.stateSignature}`,
+    runId: proposal.runId,
+    taskId: proposal.taskId,
+  });
+  const claim = await input.repository.claim(startSideEffect(planned), [legacyPlanned]);
   throwIfAborted(input.signal);
-  const startedRecord = findEntry(startedJournal.entries, [key]) ?? started;
+  if (!claim.claimed) {
+    if (claim.record.status === 'receipt' && matchesProposal(claim.record, proposal, claim.record.idempotencyKey === legacyKey)) {
+      if (claim.record.idempotencyKey === legacyKey) {
+        const migrated = await input.repository.migrateLegacyRecord(legacyKey, {
+          ...claim.record,
+          idempotencyKey: key,
+          taskExecutionId: proposal.taskExecutionId,
+          attemptId: proposal.attemptId,
+          receipt: { ...claim.record.receipt!, receiptId: `${key}:receipt` },
+        });
+        return { cleaned: true, sideEffect: findEntry(migrated.entries, [key])! };
+      }
+      return { cleaned: true, sideEffect: claim.record };
+    }
+    throw new Error(`清理副作用已被其它执行者占用或需要人工核对：${key}`);
+  }
+  const startedRecord = claim.record;
 
   try {
     throwIfAborted(input.signal);

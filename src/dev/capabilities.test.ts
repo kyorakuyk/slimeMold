@@ -124,6 +124,10 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['find', 'src/orchestrator', '-name', '*.ts'],
       // grep 越权：首参是 pattern，后续文件路径参数走守卫
       ['grep', 'secret', 'src/orchestrator/run.ts'],
+      ['find', '.', '-delete'],
+      ['find', '.', '-exec', 'echo', '{}', ';'],
+      ['grep', '-R', 'secret', 'src/components'],
+      ['grep', '--recursive', 'secret', 'src/components'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
@@ -173,6 +177,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(status.stdout).toContain('A.tsx');
     const diff = await svc.gitDiff('HEAD', ctx);
     expect(diff.stdout).toContain('diff --git');
+    await expect(svc.gitDiff('--output=/tmp/out', ctx)).rejects.toThrow(/baseRef|Git/);
   });
 
   it('gitChangedFiles：合并 tracked diff 与 untracked', async () => {

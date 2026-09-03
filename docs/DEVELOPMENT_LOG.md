@@ -1826,6 +1826,15 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 101 个测试文件、880 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 28 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
 - 仍未宣称完整不可信代码沙箱：OS 级 no-follow/TOCTOU、第三方插件进程/网络隔离和真实 Tauri Worker E2E 仍待后续安全阶段；本轮不 push。
 
+### 7.42 收紧公开 Git 面、原子副作用 claim 与历史 attempt 审计
+
+- 第四轮独立审查发现 legacy `run_git`、主仓库 Git gate、Node shell rule、`dev_register_worktree` 和 `dev_init_session` 仍有可绕过边界；本轮将 legacy run_git 限制为真实 Git top-level 上的只读 probe，移除 worktree mutation/prune/branch delete，限制 `gitDiff` revision，拒绝 `find -delete`、`grep` 递归和外部文件 option，并为登记/写入增加真实 worktree、canonical path、symlink/hardlink 检查；
+- 删除 vault key 解密长度/前缀日志；Node/Rust Worker 命令继续使用 credential-filtered、隔离用户配置环境；Codex login 与 Worker child 的 pending/active cancellation、timeout、输出 drain 和清理路径保持分离；
+- side-effect journal 增加持锁 `claim`，Worker execution 和 cleanup 只允许一个进程取得 started claim；receipt 携带 Evidence/Acceptance provenance，已有 receipt 可安全恢复，unknown/迟到 completion 不会伪造成功；ProjectFile 与 checkpoint 写入使用 per-project write lock；
+- retry 持久化 `pendingAttempt`，consistency audit 可重算 worker-execution inputHash、忽略经过完整验证的历史 terminal receipt，并继续报告 future/partial/篡改记录；queue 在 receipt 已 durable 后允许 terminal finalize，普通取消仍不 markSucceeded；Evidence/Acceptance schema 和读取失败保持 fail-closed；
+- 验证结果：`npm run test` 101 个测试文件、885 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
+- 仍未宣称完整不可信代码沙箱：Windows no-follow/TOCTOU 的原子保护、package script 的网络/文件系统隔离、跨进程真实压力测试和 Tauri Worker E2E 仍是后续安全阶段；本轮只在本地 checkpoint，不 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

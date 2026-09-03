@@ -141,6 +141,8 @@ interface CommandRule {
   allowExtraArgs?: number;
   disallowDashExtra?: boolean;
   denyContain?: string[];
+  denyArgs?: string[];
+  denyArgPrefixes?: string[];
   denyAbsPath?: boolean;
   /** 参数全部按路径校验（allowedPaths 内 + 非 protected + worktree 内） */
   pathArgs?: boolean;
@@ -168,6 +170,8 @@ function matchesRule(rule: CommandRule, cmd: string[]): boolean {
   }
   // 既无 args 也无 argsPrefix → 纯命令名规则（如 {cmd:'cat', denyAbsPath:true}），命令名匹配即可
   if (rule.denyContain?.some((d) => args.some((a) => a.includes(d)))) return false;
+  if (rule.denyArgs?.some((d) => args.includes(d))) return false;
+  if (rule.denyArgPrefixes?.some((prefix) => args.some((a) => a.startsWith(prefix)))) return false;
   if (rule.denyAbsPath && args.some((a) => a.startsWith('/') || a.split(/[/\\]/).includes('..'))) {
     return false;
   }
@@ -182,6 +186,17 @@ function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
   return findMatchingRule(rules, cmd) !== null;
 }
 
+function assertSafeGitRevision(baseRef: string): void {
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(baseRef)
+    || baseRef.includes('..')
+    || baseRef.includes('//')
+    || baseRef.endsWith('/')
+  ) {
+    throw new Error(`Git baseRef 非法：${baseRef}`);
+  }
+}
+
 /**
  * shell 白名单（只读）：基础查询命令（pathArgs：参数按路径校验，禁读 protected 外代码）+ 只读 git（精确参数）。
  * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
@@ -193,11 +208,17 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'echo' },
   { cmd: 'ls', denyAbsPath: true, pathArgs: true },
   { cmd: 'cat', denyAbsPath: true, pathArgs: true },
-  { cmd: 'find', denyAbsPath: true, pathArgs: true },
+  {
+    cmd: 'find',
+    denyAbsPath: true,
+    pathArgs: true,
+    denyArgs: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-L', '-H'],
+    denyArgPrefixes: ['-fprint', '-fls'],
+  },
   { cmd: 'head', denyAbsPath: true, pathArgs: true },
   { cmd: 'tail', denyAbsPath: true, pathArgs: true },
   // grep：跳过首参 pattern（pathArgsFrom=1），后续文件路径参数走守卫
-  { cmd: 'grep', denyAbsPath: true, pathArgsFrom: 1 },
+  { cmd: 'grep', denyAbsPath: true, pathArgsFrom: 1, denyArgs: ['-r', '-R', '--recursive'] },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
   { cmd: 'git', args: ['diff', 'HEAD'] },
@@ -332,7 +353,14 @@ export function createNodeDevService(
     async codePatch(relPath, unifiedDiff, ctx) {
       const abs = await guardedAbs(relPath, ctx);
       // 新增文件：目标不存在时按空内容处理（unified diff 全 + 行创建新文件）
-      const original = await read(abs).catch(() => '');
+      let original = '';
+      try {
+        original = await read(abs);
+      } catch (error) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) {
+          return { ok: false, error: `读取待修改文件失败：${error instanceof Error ? error.message : String(error)}` };
+        }
+      }
       const applied = applyUnifiedPatch(original, unifiedDiff);
       if (!applied.ok) return { ok: false, error: applied.error };
       await write(abs, applied.result!);
@@ -373,13 +401,16 @@ export function createNodeDevService(
 
     async gitStatus(ctx) {
       assertCwd(ctx.cwd);
-      return run('git', ['status', '--porcelain'], ctx.cwd);
+      const result = await run('git', ['status', '--porcelain'], ctx.cwd);
+      return result;
     },
 
     async gitDiff(baseRef, ctx) {
       assertCwd(ctx.cwd);
+      if (baseRef) assertSafeGitRevision(baseRef);
       const args = baseRef ? ['diff', baseRef] : ['diff', 'HEAD'];
-      return run('git', args, ctx.cwd);
+      const result = await run('git', args, ctx.cwd);
+      return result;
     },
 
     async gitChangedFiles(ctx) {
@@ -388,6 +419,9 @@ export function createNodeDevService(
         run('git', ['diff', '--name-only', 'HEAD'], ctx.cwd),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),
       ]);
+      if (tracked.exitCode !== 0 || untracked.exitCode !== 0) {
+        throw new Error(`git changed-files 失败：${tracked.stderr || untracked.stderr || 'unknown'}`);
+      }
       const set = new Set<string>();
       for (const raw of [tracked.stdout, untracked.stdout]) {
         for (const f of raw.split('\n')) {
@@ -401,6 +435,7 @@ export function createNodeDevService(
     async gitUntrackedFiles(ctx) {
       assertCwd(ctx.cwd);
       const r = await run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd);
+      if (r.exitCode !== 0) throw new Error(`git untracked-files 失败：${r.stderr || r.exitCode}`);
       return r.stdout
         .split('\n')
         .map((f) => f.trim())

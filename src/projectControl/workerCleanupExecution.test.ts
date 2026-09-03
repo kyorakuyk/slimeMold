@@ -78,7 +78,12 @@ describe('worker cleanup execution', () => {
       attemptId: createAttemptId(wrongExecutionId, 1),
       status: 'receipt',
       recovery: 'skip',
-      receipt: { receiptId: 'wrong-receipt', observedAt: '2026-09-01T00:03:00.000Z' },
+      receipt: {
+        receiptId: 'wrong-receipt',
+        observedAt: '2026-09-01T00:03:00.000Z',
+        outcome: 'succeeded',
+        outputHash: current.stateSignature,
+      },
     };
     await repository.record(wrongReceipt);
 

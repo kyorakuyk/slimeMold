@@ -54,20 +54,29 @@ export interface WorkerExecutor {
   execute(lease: WorkerTaskLease, options?: { signal?: AbortSignal }): Promise<WorkerExecutionResult>;
 }
 
+export interface WorkerSideEffectClaim {
+  record: SideEffectRecord;
+  claimed: boolean;
+}
+
 /** Host-owned receipt boundary around a Worker execution side effect. */
 export interface WorkerSideEffectRecorder {
   start(lease: WorkerTaskLease): Promise<SideEffectRecord>;
+  claim?(lease: WorkerTaskLease): Promise<WorkerSideEffectClaim>;
   complete(record: SideEffectRecord, result: WorkerExecutionResult): Promise<SideEffectRecord>;
   markUnknown?(record: SideEffectRecord, reason: string): Promise<SideEffectRecord>;
 }
 
 export interface WorkerQueueTask {
   taskId: string;
+  /** Version of the TaskDefinition used to derive side-effect inputHash. */
+  taskDefinitionVersion?: 1;
   /** Stable identity of this task definition within the current Run. */
   taskExecutionId?: TaskExecutionId;
   status: TaskProjectionStatus;
   attempt: number;
-  /** Stable identity of the latest attempt; old snapshots may omit it. */
+  /** Retry attempt reserved by recovery before the next claim. */
+  pendingAttempt?: number;
   currentAttemptId?: AttemptId;
   worktreeId?: string;
   worktreePath?: string;
@@ -152,9 +161,10 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw error;
 }
 
-function taskState(taskId: string, runId: string, now: string): WorkerQueueTask {
+function taskState(taskId: string, runId: string, now: string, taskDefinitionVersion: 1): WorkerQueueTask {
   return {
     taskId,
+    taskDefinitionVersion,
     taskExecutionId: createTaskExecutionId(runId, taskId),
     status: 'queued',
     attempt: 0,
@@ -181,6 +191,12 @@ function normalizeQueueTask(
   if ((task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
     && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
+  }
+  if (task.pendingAttempt !== undefined) {
+    if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt <= task.attempt || task.status !== 'queued') {
+      throw new Error(`Worker Task pendingAttempt 无效：${task.taskId}`);
+    }
+    if (task.currentAttemptId) throw new Error(`queued retry 不能保留 currentAttemptId：${task.taskId}`);
   }
   if (task.currentAttemptId) {
     const parsed = parseAttemptId(task.currentAttemptId);
@@ -242,7 +258,16 @@ export class WorkerTaskQueue {
     this.state = {
       ...initialState,
       tasks: Object.fromEntries(
-        Object.entries(initialState.tasks).map(([id, task]) => [id, normalizeQueueTask(task, initialState.runId)]),
+        Object.entries(initialState.tasks).map(([id, task]) => [
+          id,
+          normalizeQueueTask(
+            {
+              ...task,
+              taskDefinitionVersion: task.taskDefinitionVersion ?? this.tasksById.get(id)?.version,
+            },
+            initialState.runId,
+          ),
+        ]),
       ),
     };
     this.validateState();
@@ -316,7 +341,7 @@ export class WorkerTaskQueue {
       throw new Error(`任务依赖尚未完成，不能 claim：${taskId}`);
     }
     if (this.claiming.has(taskId)) throw new Error(`任务正在 claim：${taskId}`);
-    const attempt = current.attempt + 1;
+    const attempt = current.pendingAttempt ?? current.attempt + 1;
     const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
     this.claiming.add(taskId);
@@ -353,6 +378,7 @@ export class WorkerTaskQueue {
             currentAttemptId: attemptId,
             status: 'running',
             attempt,
+            pendingAttempt: undefined,
             worktreeId: requiredText(assignment.worktreeId, 'worktree id'),
             worktreePath: requiredText(assignment.path, 'worktree 路径'),
             branch: requiredText(assignment.branch, 'worktree 分支'),
@@ -703,7 +729,7 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     status: 'queued',
     createdAt: now,
     updatedAt: now,
-    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [task.id, taskState(task.id, runId, now)])),
+    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [task.id, taskState(task.id, runId, now, task.version)])),
   };
   return new WorkerTaskQueue(input.taskGraph, state, true);
 }
@@ -721,8 +747,8 @@ export async function runWorkerQueue(
   const concurrency = options.concurrency === undefined
     ? Number.MAX_SAFE_INTEGER
     : Math.max(1, Math.floor(options.concurrency));
-  const flushTransition = async (): Promise<void> => {
-    throwIfCancelled();
+  const flushTransition = async (forceFinalize = false): Promise<void> => {
+    if (!forceFinalize) throwIfCancelled();
     if (!options.onTransition) return;
     const events = queue.drainEvents();
     if (events.length === 0) return;
@@ -748,17 +774,41 @@ export async function runWorkerQueue(
     }));
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
     await flushTransition();
+    let terminalizedInBatch = false;
     await Promise.all(leases.map(async (lease) => {
       const taskId = lease.task.id;
       let sideEffect: SideEffectRecord | undefined;
       try {
         throwIfCancelled();
-        sideEffect = await options.sideEffects?.start(lease);
-        throwIfCancelled();
-        const result = await options.executor.execute(lease, { signal: options.signal });
-        throwIfCancelled();
-        if (sideEffect) await options.sideEffects!.complete(sideEffect, result);
-        throwIfCancelled();
+        const claim = options.sideEffects?.claim
+          ? await options.sideEffects.claim(lease)
+          : { record: await options.sideEffects?.start(lease), claimed: true };
+        let result: WorkerExecutionResult;
+        if (!claim.record) {
+          throwIfCancelled();
+          result = await options.executor.execute(lease, { signal: options.signal });
+          throwIfCancelled();
+        } else if (!claim.claimed) {
+          sideEffect = claim.record;
+          if (claim.record.status !== 'receipt' || !claim.record.receipt?.outcome) return;
+          if (claim.record.receipt.outcome === 'succeeded' && claim.record.receipt.evidenceIds === undefined) return;
+          result = {
+            status: claim.record.receipt.outcome,
+            error: claim.record.receipt.error,
+            evidenceIds: claim.record.receipt.evidenceIds,
+            acceptanceId: claim.record.receipt.acceptanceId,
+          };
+        } else {
+          sideEffect = claim.record;
+          throwIfCancelled();
+          result = await options.executor.execute(lease, { signal: options.signal });
+          throwIfCancelled();
+          const completed = options.sideEffects
+            ? await options.sideEffects.complete(sideEffect, result)
+            : sideEffect;
+          sideEffect = completed;
+          if (completed.status !== 'receipt') return;
+        }
         if (result.status === 'succeeded') {
           queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId, lease.attemptId);
         } else {
@@ -771,6 +821,7 @@ export async function runWorkerQueue(
             lease.attemptId,
           );
         }
+        terminalizedInBatch = true;
       } catch (cause) {
         if (sideEffect && options.sideEffects?.markUnknown) {
           try {
@@ -781,8 +832,10 @@ export async function runWorkerQueue(
         }
         if (options.signal?.aborted) throwIfCancelled();
         queue.markFailed(taskId, `Worker 执行异常：${errorMessage(cause)}`, new Date().toISOString(), [], undefined, lease.attemptId);
+        terminalizedInBatch = true;
       }
     }));
-    await flushTransition();
+    await flushTransition(terminalizedInBatch);
+    if (options.signal?.aborted && terminalizedInBatch) return queue.snapshot();
   }
 }

@@ -430,7 +430,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const r = await service.gitDiff(baseRef, { cwd });
       // P1 修复：git diff 无改动时退出码也是 0，但必须有实际变更才算 passed——
       // 空 diff 登记为 failed，evaluator 的 diff 规则（存在 passed 证据）才不会误通过。
-      const hasChange = r.stdout.trim().length > 0;
+      const hasChange = r.exitCode === 0 && r.stdout.trim().length > 0;
       const resultId = nextResultId();
       resultStore.set(resultId, {
         resultId,

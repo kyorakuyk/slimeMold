@@ -33,6 +33,28 @@ describe('side-effect journal', () => {
     })).toThrow(/lineage|execution|attempt/);
   });
 
+  it('atomically claims one execution across concurrent callers', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
+    const started = startSideEffect(planned);
+    const [first, second] = await Promise.all([
+      repository.claim(started),
+      repository.claim(started),
+    ]);
+    expect([first, second].filter((result) => result.claimed)).toHaveLength(1);
+    expect((await repository.read()).journal.entries).toEqual([started]);
+  });
+
+  it('rejects malformed receipt before it can reach the journal', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
+    await expect(repository.record({
+      ...planned,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: { receiptId: 'r', observedAt: 'now' },
+    })).rejects.toThrow(/outcome/);
+    expect((await repository.read()).journal.entries).toHaveLength(0);
+  });
+
   it('records idempotent progress and rejects key reuse for a different target or input', () => {
     const initial = createEmptySideEffectJournal();
     const started = startSideEffect(planned);

@@ -319,17 +319,6 @@ fn load_vault_key(app: AppHandle, key: String) -> Result<Option<String>, String>
         if found.is_some() { "true" } else { "false" }
     );
     let raw = found.map(|v| decrypt_api_key_in_json(&app, &v));
-    if let Some(ref s) = raw {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
-            if let Some(k) = v.get("apiKey").and_then(|x| x.as_str()) {
-                eprintln!(
-                    "[vault] load_vault_key decrypted apiKey len={} prefix={}",
-                    k.len(),
-                    &k.chars().take(6).collect::<String>()
-                );
-            }
-        }
-    }
     Ok(raw)
 }
 
@@ -362,12 +351,62 @@ fn strip_endpoint_api_key(json: &str) -> String {
 ///
 /// 安全边界（2026-08-07 P0-S4，后续收紧）：
 /// - `cwd` 必填，且必须是已存在的目录；拒绝带 `..` 的路径。
-/// - 只接受前端沙箱实现实际需要的四种精确命令形状：
-///   `rev-parse --is-inside-work-tree`、`worktree add`、`worktree remove`、临时分支删除。
-/// - worktree 必须是 `<cwd>/.slime-wt/<branch>` 的直接子目录，临时分支必须以
-///   `slime-sandbox-` 开头；不暴露 clone/config/merge/checkout/push 等通用 Git 能力。
+/// - 只接受 Git top-level 上的有限只读 probe；不暴露 worktree add/remove、branch delete、
+///   prune、config、merge、checkout、push 等 mutation 能力。
 ///
-/// 调用示例：`invoke('run_git', { args: ['worktree', 'add', '-q', dir, '-b', branch, 'HEAD'], cwd })`
+/// 调用示例：`invoke('run_git', { args: ['rev-parse', '--is-inside-work-tree'], cwd })`
+fn safe_git_revision(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '>' | '<'))
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/' | '.'))
+}
+
+fn run_git_readonly_args(args: &[String]) -> bool {
+    match args {
+        [sub, flag] if sub == "rev-parse" && flag == "--is-inside-work-tree" => true,
+        [sub, rev] if sub == "rev-parse" && rev == "HEAD" => true,
+        [sub, flag] if sub == "status" && (flag == "--porcelain" || flag == "--short") => true,
+        [sub, rev] if sub == "diff" && safe_git_revision(rev) => true,
+        [sub, flag, rev] if sub == "diff" && flag == "--name-only" && safe_git_revision(rev) => {
+            true
+        }
+        [sub, flag, rev] if sub == "diff" && flag == "--stat" && safe_git_revision(rev) => true,
+        [sub, flag, n] if sub == "log" && flag == "-n" && n.parse::<u32>().is_ok() => true,
+        [sub, pretty, flag, n]
+            if sub == "log"
+                && pretty == "--oneline"
+                && flag == "-n"
+                && n.parse::<u32>().is_ok() =>
+        {
+            true
+        }
+        [sub, a, b] if sub == "ls-files" && a == "--others" && b == "--exclude-standard" => true,
+        [sub, flag] if sub == "branch" && flag == "--list" => true,
+        [sub, action] if sub == "worktree" && action == "list" => true,
+        [sub, action, porcelain]
+            if sub == "worktree" && action == "list" && porcelain == "--porcelain" =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn apply_dev_env(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in dev_sanitized_env() {
+        command.env(key, value);
+    }
+}
+
 #[tauri::command]
 fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
     // 1) cwd 必填且为已存在目录，禁止越界
@@ -390,106 +429,42 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
         return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
     }
 
-    // 2) 精确命令形状白名单。这里不提供通用 Git 代理，只提供 worktree 沙箱协议。
-    let sandbox_root = canon.join(".slime-wt");
-    match args.as_slice() {
-        [sub, flag] if sub == "rev-parse" && flag == "--is-inside-work-tree" => {}
-        [sub, action, quiet, path, branch_flag, branch, head]
-            if sub == "worktree"
-                && action == "add"
-                && quiet == "-q"
-                && branch_flag == "-b"
-                && head == "HEAD" =>
-        {
-            validate_sandbox_branch(branch)?;
-            fs::create_dir_all(&sandbox_root)
-                .map_err(|e| format!("run_git: 创建沙箱目录失败：{e}"))?;
-            validate_worktree_path(&sandbox_root, path, branch, false)?;
-        }
-        [sub, action, force, path]
-            if sub == "worktree" && action == "remove" && force == "--force" =>
-        {
-            let branch = std::path::Path::new(path)
-                .file_name()
-                .and_then(|v| v.to_str())
-                .ok_or_else(|| "run_git: worktree 路径缺少有效目录名".to_string())?;
-            validate_sandbox_branch(branch)?;
-            validate_worktree_path(&sandbox_root, path, branch, true)?;
-        }
-        [sub, delete, branch] if sub == "branch" && delete == "-D" => {
-            validate_sandbox_branch(branch)?;
-        }
-        _ => {
-            return Err(
-                "run_git: 仅允许仓库探测与 SlimeMold .slime-wt 沙箱的创建/清理".to_string(),
-            );
-        }
+    if !run_git_readonly_args(&args) {
+        return Err("run_git: legacy 命令只允许只读 Git probe；worktree 生命周期必须走 H4 WorktreeManager/dev_exec".to_string());
+    }
+    let mut probe = Command::new(resolve_dev_program("git"));
+    probe
+        .arg("-C")
+        .arg(&canon)
+        .args(["rev-parse", "--show-toplevel"]);
+    apply_dev_env(&mut probe);
+    let probe_output = probe
+        .output()
+        .map_err(|e| format!("run_git: Git top-level probe 失败：{e}"))?;
+    if !probe_output.status.success() {
+        return Err("run_git: cwd 不是可验证的 Git top-level".to_string());
+    }
+    let top = std::path::PathBuf::from(String::from_utf8_lossy(&probe_output.stdout).trim())
+        .canonicalize()
+        .map_err(|_| "run_git: Git top-level 输出无效".to_string())?;
+    if path_compare_key(&top.to_string_lossy()) != path_compare_key(&canon.to_string_lossy()) {
+        return Err("run_git: cwd 必须是 Git repository top-level".to_string());
     }
 
-    let mut cmd = Command::new("git");
-    cmd.current_dir(&cwd);
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.current_dir(&canon)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_dev_env(&mut cmd);
     for a in &args {
         cmd.arg(a);
     }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("git 执行失败（是否未安装 git 或 PATH 未包含？）：{e}"))?;
+    let output = run_with_timeout(&mut cmd, std::time::Duration::from_secs(30))?;
     Ok(GitResult {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        code: output.status.code().unwrap_or(-1),
+        stdout: output.stdout,
+        stderr: output.stderr,
+        code: output.code,
     })
-}
-
-fn validate_sandbox_branch(branch: &str) -> Result<(), String> {
-    if !branch.starts_with("slime-sandbox-")
-        || branch.len() <= "slime-sandbox-".len()
-        || branch.contains("..")
-        || branch.contains('/')
-        || branch.contains('\\')
-    {
-        return Err(format!("run_git: 非法沙箱分支名：{branch}"));
-    }
-    Ok(())
-}
-
-fn validate_worktree_path(
-    sandbox_root: &std::path::Path,
-    raw_path: &str,
-    branch: &str,
-    must_exist: bool,
-) -> Result<(), String> {
-    let path = std::path::Path::new(raw_path);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(format!(
-            "run_git: worktree 必须是无 '..' 的绝对路径：{raw_path}"
-        ));
-    }
-
-    let root = sandbox_root
-        .canonicalize()
-        .map_err(|e| format!("run_git: 无法解析沙箱根目录：{e}"))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("run_git: worktree 路径缺少父目录：{raw_path}"))?
-        .canonicalize()
-        .map_err(|e| format!("run_git: 无法解析 worktree 父目录：{e}"))?;
-    if parent != root || path.file_name().and_then(|v| v.to_str()) != Some(branch) {
-        return Err(format!(
-            "run_git: worktree 只能位于 <cwd>/.slime-wt/<slime-sandbox-*>：{raw_path}"
-        ));
-    }
-    if must_exist && !path.is_dir() {
-        return Err(format!("run_git: 待移除的 worktree 不存在：{raw_path}"));
-    }
-    if !must_exist && path.exists() {
-        return Err(format!("run_git: 待创建的 worktree 已存在：{raw_path}"));
-    }
-    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -735,7 +710,6 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
         || exact(&["git", "rev-parse", "--show-toplevel"])
         || exact(&["git", "worktree", "list"])
         || exact(&["git", "worktree", "list", "--porcelain"])
-        || exact(&["git", "worktree", "prune"])
         || exact(&["git", "branch", "--list"])
         || exact(&["git", "branch", "-a"])
         || exact(&["git", "status", "--porcelain"])
@@ -1434,6 +1408,22 @@ fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
     run_with_timeout(&mut cmd, Duration::from_secs(30))
 }
 
+fn git_top_level(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--show-toplevel"]);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    apply_dev_env(&mut cmd);
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(5))?;
+    if result.code != 0 {
+        return Err("Git top-level probe 失败".to_string());
+    }
+    std::path::PathBuf::from(result.stdout.trim())
+        .canonicalize()
+        .map_err(|_| "Git top-level 输出无效".to_string())
+}
+
 /// 初始化 H4 宿主登记态（GUI 打开项目 / DevSession 初始化时调用）。
 #[tauri::command]
 fn dev_init_session(base_repo: String) -> Result<(), String> {
@@ -1446,6 +1436,10 @@ fn dev_init_session(base_repo: String) -> Result<(), String> {
     let canon = p
         .canonicalize()
         .map_err(|e| format!("dev_init_session: 路径解析失败：{base_repo}（{e}）"))?;
+    let top = git_top_level(&canon)?;
+    if path_compare_key(&top.to_string_lossy()) != path_compare_key(&canon.to_string_lossy()) {
+        return Err("dev_init_session: baseRepo 必须是 Git repository top-level".to_string());
+    }
     let mut st = DEV_STATE.lock().unwrap();
     st.base_repo = Some(canon.to_string_lossy().to_string());
     st.worktrees.clear();
@@ -1587,7 +1581,47 @@ fn dev_read_file(path: String) -> Result<String, String> {
     fs::read_to_string(&abs).map_err(|e| format!("dev_read_file: 读取失败：{path}（{e}）"))
 }
 
-/// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+#[cfg(windows)]
+#[repr(C)]
+struct WinByHandleFileInformation {
+    file_attributes: u32,
+    creation_low: u32,
+    creation_high: u32,
+    access_low: u32,
+    access_high: u32,
+    write_low: u32,
+    write_high: u32,
+    volume_serial: u32,
+    size_high: u32,
+    size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetFileInformationByHandle(
+        handle: *mut std::ffi::c_void,
+        info: *mut WinByHandleFileInformation,
+    ) -> i32;
+}
+
+#[cfg(windows)]
+fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    let file = fs::File::open(path).map_err(|e| format!("无法安全检查目标 inode：{e}"))?;
+    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if ok == 0 {
+        return Err("无法安全检查目标 inode".to_string());
+    }
+    Ok(unsafe { info.assume_init() }.number_of_links > 1)
+}
+
 /// P1 审计修复：防符号链接绕过——
 /// - 目标已存在 → `fs::canonicalize` 解析到真实路径（跟随 symlink）后**重新校验**仍在 worktree 内；
 /// - 目标不存在 → 父目录已 canonicalize（真实目录），文件名不跨目录，用 O_EXCL 创建（不跟随已有符号链接）；
@@ -1627,6 +1661,13 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
         if meta.file_type().is_symlink() {
             return Err(format!(
                 "dev_write_file: 拒绝写入符号链接目标（防 symlink 逃逸）：{}",
+                abs.display()
+            ));
+        }
+        #[cfg(windows)]
+        if has_multiple_hardlinks(&abs)? {
+            return Err(format!(
+                "dev_write_file: 拒绝写入 hardlink 目标（防 inode 逃逸）：{}",
                 abs.display()
             ));
         }
@@ -2101,6 +2142,25 @@ mod dev_exec_tests {
     }
 
     #[test]
+    fn legacy_run_git_is_read_only_and_revision_scoped() {
+        assert!(run_git_readonly_args(&sv(&[
+            "rev-parse",
+            "--is-inside-work-tree"
+        ])));
+        assert!(run_git_readonly_args(&sv(&["diff", "HEAD"])));
+        assert!(run_git_readonly_args(&sv(&["log", "--oneline", "-n", "5"])));
+        assert!(!run_git_readonly_args(&sv(&[
+            "diff",
+            "--output=outside.patch"
+        ])));
+        assert!(!run_git_readonly_args(&sv(&["worktree", "prune"])));
+        assert!(!run_git_readonly_args(&sv(&[
+            "worktree", "remove", "--force", "x"
+        ])));
+        assert!(!run_git_readonly_args(&sv(&["branch", "-D", "worker/x"])));
+    }
+
+    #[test]
     fn main_repo_worktree_lifecycle_is_scoped_to_worker_root() {
         let repo = std::path::Path::new("C:/Repo/SlimeMold");
         assert!(main_repo_worktree_args_are_valid(
@@ -2559,11 +2619,25 @@ mod dev_write_symlink_tests {
         with_registered_worktree(|wt| {
             let target = wt.join("new_file.txt");
             let res = dev_write_file(target.to_string_lossy().to_string(), "hello".into());
-            if let Err(e) = &res {
-                eprintln!("[diag] dev_write_file err = {e}");
-            }
             assert!(res.is_ok(), "worktree 内普通新文件应可写");
             assert_eq!(fs::read_to_string(&target).unwrap(), "hello");
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hardlink_escape_write_rejected() {
+        with_registered_worktree(|wt| {
+            let outside = wt.parent().unwrap().join("sm_h4_hardlink_outside.txt");
+            let link = wt.join("hardlink.txt");
+            fs::write(&outside, "secret").unwrap();
+            if fs::hard_link(&outside, &link).is_err() {
+                return;
+            }
+            let result = dev_write_file(link.to_string_lossy().to_string(), "overwrite".into());
+            assert!(result.is_err(), "写入 hardlink 应被拒绝（防 inode 逃逸）");
+            assert_eq!(fs::read_to_string(&outside).unwrap(), "secret");
+            let _ = fs::remove_file(&outside);
         });
     }
 }

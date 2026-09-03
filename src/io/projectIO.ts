@@ -9,6 +9,30 @@ const PROJECT_JSON = 'project.json';
 const WORKFLOWS_DIR = 'workflows';
 const RUNS_DIR = 'runs';
 const HISTORY_JSON = 'history.json';
+
+const projectWriteLocks = new Map<string, Promise<void>>();
+
+function projectLockKey(root: string): string {
+  const normalized = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+async function withProjectWriteLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = projectLockKey(root);
+  const previous = projectWriteLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  projectWriteLocks.set(key, current);
+  try {
+    await previous;
+    return await operation();
+  } finally {
+    release();
+    if (projectWriteLocks.get(key) === current) projectWriteLocks.delete(key);
+  }
+}
 const CHECKPOINTS_JSON = 'checkpoints.json';
 const LEGACY_EXT = '.smproj';
 
@@ -183,7 +207,7 @@ export function clearLastSession() {
  * @param existingRoot 已知项目根目录（首次保存为 undefined，会弹目录选择）
  * @returns 实际写入的项目根目录
  */
-export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
+async function saveProjectFileUnlocked(file: ProjectFile, existingRoot?: string): Promise<string> {
   let root = existingRoot;
   if (!root) {
     if (isTauri) {
@@ -262,6 +286,10 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
   return root;
 }
 
+export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
+  return withProjectWriteLock(existingRoot ?? `new:${file.name}`, () => saveProjectFileUnlocked(file, existingRoot));
+}
+
 /**
  * 阶段 C 独立落盘：把运行检查点原子写入 `.slimemold/runs/checkpoints.json`。
  * F9：先写 `checkpoints.json.tmp`，再 rename 覆盖目标文件——避免写入中途崩溃留下
@@ -279,7 +307,7 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
  * 行为已由 src-tauri 集成测试（fs_atomic_replace）在真实文件系统验证。
  * 浏览器端 no-op（localStorage 已由 persist 接管）。
  */
-export async function saveCheckpoints(
+async function saveCheckpointsUnlocked(
   root: string,
   checkpoints: Record<string, RunCheckpoint>,
   checkpointHistory?: Record<string, RunCheckpoint[]>,
@@ -311,6 +339,14 @@ export async function saveCheckpoints(
       throw e2 instanceof Error ? e2 : new Error(String(e2));
     }
   }
+}
+
+export async function saveCheckpoints(
+  root: string,
+  checkpoints: Record<string, RunCheckpoint>,
+  checkpointHistory?: Record<string, RunCheckpoint[]>,
+): Promise<void> {
+  return withProjectWriteLock(root, () => saveCheckpointsUnlocked(root, checkpoints, checkpointHistory));
 }
 
 // ---------- 读取 ----------

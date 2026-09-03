@@ -260,6 +260,7 @@ export class EvidenceCollector {
     this._records.push(rec);
     if (this.persistence) {
       const p = this.persistence.append(rec).catch((e: unknown) => {
+        this._records = this._records.filter((item) => item.id !== rec.id);
         this._persistErrors.push(
           `证据 ${rec.id} 落盘失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -276,7 +277,12 @@ export class EvidenceCollector {
     if (this.persistence) {
       const p = this.persistence.append(rec);
       this._pending.push(p.catch(() => {}));
-      await p;
+      try {
+        await p;
+      } catch (error) {
+        this._records = this._records.filter((item) => item.id !== rec.id);
+        throw error;
+      }
     }
     return rec;
   }
