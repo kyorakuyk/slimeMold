@@ -162,6 +162,29 @@ function assertExistingEffectMatchesLease(
  * Persist the Worker execution lifecycle in the project side-effect journal.
  * The journal is outside the worktree and is the source used during restart recovery.
  */
+function assertWorkerExecutionReceipt(record: SideEffectRecord, lease: WorkerTaskLease): void {
+  const key = effectKeyFor(lease);
+  if (
+    record.status !== 'receipt'
+    || record.idempotencyKey !== key
+    || record.kind !== 'worker-execution'
+    || record.target !== requiredText(lease.assignment.worktreeId, 'worktree id')
+    || record.inputHash !== inputHashFor(lease)
+    || record.runId !== lease.runId
+    || record.taskId !== lease.task.id
+    || record.taskExecutionId !== lease.taskExecutionId
+    || record.attemptId !== lease.attemptId
+    || record.recovery !== 'skip'
+    || record.receipt?.receiptId !== `${key}:receipt`
+    || !record.receipt.outcome
+  ) {
+    throw new Error(`已有 Worker receipt 未通过 canonical 校验：${record.idempotencyKey}`);
+  }
+  if (record.receipt.outcome === 'succeeded' && record.receipt.evidenceIds === undefined) {
+    throw new Error(`成功 Worker receipt 缺少 Evidence provenance：${key}`);
+  }
+}
+
 export function createWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
@@ -188,6 +211,9 @@ export function createWorkerSideEffectRecorder(
         taskId: lease.task.id,
       });
       const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
+      if (!claimed.claimed && claimed.record.status === 'receipt') {
+        assertWorkerExecutionReceipt(claimed.record, lease);
+      }
       return { record: claimed.record, claimed: claimed.claimed };
     },
 

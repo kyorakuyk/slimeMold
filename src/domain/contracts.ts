@@ -58,6 +58,7 @@ export interface AttemptRecord {
   runId: string;
   attempt: number;
   status: TaskProjectionStatus | 'unknown';
+  unknownReason?: string;
   worktreeId?: string;
   worktreePath?: string;
   branch?: string;
@@ -204,6 +205,7 @@ function taskLineageFor(
   const isAttemptLifecycleEvent = event.eventType === 'TaskStarted'
     || event.eventType === 'TaskSucceeded'
     || event.eventType === 'TaskFailed'
+    || event.eventType === 'TaskAttemptMarkedUnknown'
     || event.eventType === 'TaskCleaned';
   const execution = projection.taskExecutions[taskExecutionId];
   const currentAttempt = execution?.currentAttemptId
@@ -334,6 +336,23 @@ function applyTaskLineageProjection(
   const isCompletion = eventType === 'TaskSucceeded'
     || eventType === 'TaskFailed'
     || eventType === 'TaskCleaned';
+  if (eventType === 'TaskAttemptMarkedUnknown') {
+    if (!previousAttempt || previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running') {
+      throw new Error(`只能把当前 running Attempt 标记 unknown：${lineage.attemptId ?? '<missing>'}`);
+    }
+    projection.taskExecutions[lineage.taskExecutionId] = {
+      ...previous,
+      currentAttemptId: undefined,
+      status: 'running',
+      attemptIds,
+    };
+    projection.attempts[lineage.attemptId!] = {
+      ...previousAttempt,
+      status: 'unknown',
+      unknownReason: payloadText(payload, 'reason') ?? 'recovery decision',
+    };
+    return;
+  }
 
   if (eventType === 'TaskQueued'
     && nextAttempt === undefined
@@ -563,6 +582,9 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
         break;
       case 'TaskAttemptImported':
         applyImportedAttemptProjection(projection, event);
+        break;
+      case 'TaskAttemptMarkedUnknown':
+        applyTaskEvent(projection, event, 'running');
         break;
       case 'TaskStarted':
         applyTaskEvent(projection, event, 'running');

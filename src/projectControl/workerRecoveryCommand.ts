@@ -101,12 +101,22 @@ function createEvents(
     const taskExecutionId = after.taskExecutionId ?? createTaskExecutionId(next.runId, task.id);
     const attemptId = after.currentAttemptId
       ?? (after.attempt > 0 ? createAttemptId(taskExecutionId, after.attempt) : undefined);
+    if (decision.decision === 'retry' && before.status === 'running' && before.currentAttemptId) {
+      emit('TaskAttemptMarkedUnknown', 'TaskExecution', taskExecutionId, {
+        runId: next.runId,
+        taskId: task.id,
+        taskExecutionId,
+        attemptId: before.currentAttemptId,
+        attempt: before.attempt,
+        reason: decision.reason,
+      });
+    }
     if (after.status === 'queued') {
       emit('TaskQueued', 'TaskExecution', taskExecutionId, {
         runId: next.runId,
         taskId: task.id,
         taskExecutionId,
-        nextAttempt: Math.max(after.attempt + 1, 1),
+        nextAttempt: after.pendingAttempt ?? Math.max(after.attempt + 1, 1),
         recoveryDecisionId: input.decisionId,
       });
     } else if (after.status === 'failed') {

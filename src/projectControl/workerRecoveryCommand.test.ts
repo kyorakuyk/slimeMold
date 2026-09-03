@@ -119,6 +119,7 @@ describe('recoverWorkerRunCommand', () => {
     expect(result.events.map((event) => event.eventType)).toEqual([
       'WorkerRunRecoveryDecided',
       'RunQueued',
+      'TaskAttemptMarkedUnknown',
       'TaskQueued',
     ]);
     expect(result.events[0].payload).toMatchObject({ decision: 'retry', effectKeys: [unknownJournal.entries[0].idempotencyKey] });

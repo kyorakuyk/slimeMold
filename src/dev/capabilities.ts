@@ -218,7 +218,13 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'head', denyAbsPath: true, pathArgs: true },
   { cmd: 'tail', denyAbsPath: true, pathArgs: true },
   // grep：跳过首参 pattern（pathArgsFrom=1），后续文件路径参数走守卫
-  { cmd: 'grep', denyAbsPath: true, pathArgsFrom: 1, denyArgs: ['-r', '-R', '--recursive'] },
+  {
+    cmd: 'grep',
+    denyAbsPath: true,
+    pathArgsFrom: 1,
+    denyArgs: ['-r', '-R', '--recursive', '-d', '--dereference-recursive'],
+    denyArgPrefixes: ['--directories='],
+  },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
   { cmd: 'git', args: ['diff', 'HEAD'] },
@@ -284,6 +290,13 @@ function hashContent(content: string): string {
  * 命令/文件操作默认走 node-run；可通过 deps 注入（单测用 fake 避免真实执行）。
  * env 默认 'node'（headless/CI）；GUI（Tauri）由 createTauriDevService 传入 env='tauri'。
  */
+function isMissingFileError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return true;
+  if (typeof error !== 'string' && !(error instanceof Error)) return false;
+  const message = typeof error === 'string' ? error : error.message;
+  return /(?:ENOENT|not found|no such file|文件不存在|路径不存在)/i.test(message);
+}
+
 export function createNodeDevService(
   policy: SelfDevelopmentPolicy,
   deps: NodeDevDeps = {},
@@ -357,7 +370,7 @@ export function createNodeDevService(
       try {
         original = await read(abs);
       } catch (error) {
-        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) {
+        if (!isMissingFileError(error)) {
           return { ok: false, error: `读取待修改文件失败：${error instanceof Error ? error.message : String(error)}` };
         }
       }

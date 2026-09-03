@@ -20,9 +20,10 @@ import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir, scanProgramCustomNodes, scanProjectCustomNodes, terminatePluginRuntime, unloadProjectCustomNodes } from './plugins/pluginManager';
 import { createProjectPluginLifecycleScheduler } from './plugins/projectPluginLifecycle';
 import { isTauri } from './platform/env';
-import { getLastSession } from './io/projectIO';
+import { getLastSession, saveProjectFile } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
 import { useWorkflowStore } from './store/workflowStore';
+import { buildProjectFile } from './store/workflowSerialize';
 import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
@@ -459,16 +460,30 @@ export default function App() {
         }
       },
       persistTransition: async ({ state, events }) => {
-        const terminalFinalization = events.length > 0 && events.every((event) => (
-          event.eventType === 'TaskSucceeded'
-          || event.eventType === 'TaskFailed'
-          || event.eventType === 'RunCompleted'
-          || event.eventType === 'RunPartial'
-          || event.eventType === 'RunFailed'
-        ));
+        const terminalTaskEvents = new Set(['TaskSucceeded', 'TaskFailed', 'TaskBlocked']);
+        const safeFinalizationEvents = new Set([
+          'RunCreated',
+          'TaskQueued',
+          'RunStarted',
+          'TaskStarted',
+          'TaskSucceeded',
+          'TaskFailed',
+          'TaskBlocked',
+          'RunSucceeded',
+          'RunFailed',
+          'RunCancelled',
+          'RunBlocked',
+        ]);
+        const terminalFinalization = events.some((event) => terminalTaskEvents.has(event.eventType))
+          && events.every((event) => safeFinalizationEvents.has(event.eventType));
         if (operation.controller.signal.aborted && terminalFinalization) {
           recordProjectEvents(projectId, events);
           await flushPendingProjectEvents(projectId, eventRepository);
+          const oldRuns = beforeSave.workerRuns.map((run) => run.runId === state.runId ? state : run);
+          await saveProjectFile(
+            buildProjectFile({ ...beforeSave, workerRuns: oldRuns }),
+            projectPath,
+          );
           return;
         }
         assertProjectOperation(operation);

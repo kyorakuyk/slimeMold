@@ -128,6 +128,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['find', '.', '-exec', 'echo', '{}', ';'],
       ['grep', '-R', 'secret', 'src/components'],
       ['grep', '--recursive', 'secret', 'src/components'],
+      ['grep', '--directories=recurse', 'secret', 'src/components'],
+      ['grep', '-d', 'recurse', 'secret', 'src/components'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
@@ -165,6 +167,17 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     const rm = await svc.shellRun(['rm', '-rf', '/'], ctx);
     expect(rm.exitCode).toBe(-1);
     expect(rm.stderr).toContain('白名单');
+  });
+
+  it('codePatch：识别 Tauri missing-file 字符串，但不吞权限错误', async () => {
+    const patch = '--- a\n+++ b\n@@ -0,0 +1 @@\n+created\n';
+    const missingDeps = { ...fakeDeps, readFile: async () => { throw 'dev_read_file: 文件不存在'; } };
+    const missing = await createNodeDevService(defaultDevPolicy, missingDeps, registry).codePatch('src/components/new.ts', patch, ctx);
+    expect(missing.ok).toBe(true);
+
+    const deniedDeps = { ...fakeDeps, readFile: async () => { throw 'permission denied'; } };
+    const denied = await createNodeDevService(defaultDevPolicy, deniedDeps, registry).codePatch('src/components/new.ts', patch, ctx);
+    expect(denied.ok).toBe(false);
   });
 
   it('testRun/shellRun 白名单放行；gitStatus/gitDiff 走 git', async () => {

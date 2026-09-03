@@ -100,40 +100,38 @@ function recordMatchesTaskLineage(
   }
 }
 
-function isVerifiedHistoricalTerminalEffect(
+function isVerifiedHistoricalEffect(
   effect: SideEffectRecord,
-  task: WorkerRunQueueState['tasks'][string],
   expected: ExpectedTaskLineage,
 ): boolean {
-  if (effect.status !== 'receipt' || effect.recovery !== 'skip' || !effect.receipt?.outcome) return false;
   if (effect.runId !== expected.runId || effect.taskId !== expected.taskId || effect.taskExecutionId !== expected.taskExecutionId) return false;
-  if (!effect.attemptId || !task.taskDefinitionVersion || !task.baseRevision) return false;
-  let attempt: number;
+  if (!effect.attemptId) return false;
+  let parsed: ReturnType<typeof parseAttemptId>;
   try {
-    attempt = parseAttemptId(effect.attemptId).attempt;
+    parsed = parseAttemptId(effect.attemptId);
   } catch {
     return false;
   }
-  if (attempt >= expected.currentAttempt) return false;
-  const expectedAttemptId = createAttemptId(expected.taskExecutionId, attempt);
-  if (effect.attemptId !== expectedAttemptId || effect.receipt.receiptId !== `${effect.idempotencyKey}:receipt`) return false;
+  if (parsed.taskExecutionId !== expected.taskExecutionId || parsed.attempt >= expected.currentAttempt) return false;
+  const expectedAttemptId = createAttemptId(expected.taskExecutionId, parsed.attempt);
+  if (effect.attemptId !== expectedAttemptId) return false;
   const isCleanup = effect.idempotencyKey === workerCleanupEffectKey(expected.taskExecutionId, expectedAttemptId);
-  const isExecution = effect.idempotencyKey === `worker-execution:${expected.taskExecutionId}:attempt-${attempt}`;
-  if (!isCleanup && !isExecution) return false;
+  const expectedWorkerKey = `worker-execution:${expected.taskExecutionId}:attempt-${parsed.attempt}`;
   if (isCleanup) {
-    return effect.kind === 'worktree-cleanup'
-      && effect.target === task.worktreePath
-      && effect.inputHash === `${task.baseRevision}:${effect.receipt.outputHash ?? ''}`;
+    if (effect.kind !== 'worktree-cleanup' || !effect.target || !effect.inputHash.trim()) return false;
+  } else if (effect.idempotencyKey !== expectedWorkerKey || effect.kind !== 'worker-execution') {
+    return false;
+  } else {
+    let hash: unknown;
+    try { hash = JSON.parse(effect.inputHash); } catch { return false; }
+    if (!Array.isArray(hash) || hash.length !== 5 || hash[0] !== expected.runId || hash[1] !== expected.taskId || hash[2] !== 1 || hash[3] !== parsed.attempt || typeof hash[4] !== 'string' || !hash[4]) return false;
   }
-  return effect.kind === 'worker-execution'
-    && effect.target === task.worktreeId
-    && effect.inputHash === JSON.stringify([
-      expected.runId,
-      expected.taskId,
-      task.taskDefinitionVersion,
-      attempt,
-      task.baseRevision,
-    ]);
+  if (effect.status === 'unknown') return effect.recovery === 'needs-user' && effect.receipt === undefined;
+  return effect.status === 'receipt'
+    && effect.recovery === 'skip'
+    && effect.receipt?.outcome !== undefined
+    && effect.receipt.receiptId === `${effect.idempotencyKey}:receipt`
+    && (isCleanup ? effect.inputHash.endsWith(`:${effect.receipt.outputHash ?? ''}`) : true);
 }
 
 /**
@@ -380,7 +378,7 @@ export function auditWorkerRunConsistency(input: {
         explicit: true,
       };
       const currentLineageMatches = recordMatchesTaskLineage(effect, expectedLineage, true);
-      if (!currentLineageMatches && isVerifiedHistoricalTerminalEffect(effect, task, expectedLineage)) {
+      if (!currentLineageMatches && isVerifiedHistoricalEffect(effect, expectedLineage)) {
         continue;
       }
       if (!currentLineageMatches) {

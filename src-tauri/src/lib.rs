@@ -603,20 +603,31 @@ fn resolve_dev_program(name: &str) -> std::path::PathBuf {
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
 fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(raw);
-    if p.is_absolute() {
-        return p
-            .canonicalize()
-            .map_err(|e| format!("无法解析路径（{raw}）：{e}"));
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        let state = DEV_STATE.lock().unwrap();
+        let base = state
+            .base_repo
+            .as_ref()
+            .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
+        std::path::Path::new(base).join(p)
+    };
+    match joined.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = joined
+                .parent()
+                .ok_or_else(|| format!("无法解析路径父目录：{raw}"))?
+                .canonicalize()
+                .map_err(|e| format!("无法解析路径父目录（{raw}）：{e}"))?;
+            let name = joined
+                .file_name()
+                .ok_or_else(|| format!("路径缺少文件名：{raw}"))?;
+            Ok(parent.join(name))
+        }
+        Err(error) => Err(format!("无法解析路径（{raw}）：{error}")),
     }
-    let state = DEV_STATE.lock().unwrap();
-    let base = state
-        .base_repo
-        .as_ref()
-        .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
-    std::path::Path::new(base)
-        .join(raw)
-        .canonicalize()
-        .map_err(|e| format!("无法解析相对路径（{raw}，基于 {base}）：{e}"))
 }
 
 /// cwd 归属：主仓库根 或 已登记 worktree（或其子目录）。
@@ -1217,8 +1228,6 @@ fn grep_option_is_safe(arg: &str) -> bool {
             | "-i"
             | "-E"
             | "-F"
-            | "-r"
-            | "-R"
             | "-v"
             | "-w"
             | "-x"
@@ -1228,7 +1237,6 @@ fn grep_option_is_safe(arg: &str) -> bool {
             | "--line-number"
             | "--ignore-case"
             | "--fixed-strings"
-            | "--recursive"
             | "--invert-match"
     )
 }
@@ -2129,6 +2137,18 @@ mod dev_exec_tests {
             "--file=/outside/patterns",
             "needle",
             "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep", "needle", "-R", "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep",
+            "needle",
+            "--directories=recurse",
+            "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep", "needle", "-d", "recurse", "."
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
             "find",

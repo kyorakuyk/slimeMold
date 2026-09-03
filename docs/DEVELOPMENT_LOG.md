@@ -1832,8 +1832,15 @@ Issue 工作台采用四个面板：
 - 删除 vault key 解密长度/前缀日志；Node/Rust Worker 命令继续使用 credential-filtered、隔离用户配置环境；Codex login 与 Worker child 的 pending/active cancellation、timeout、输出 drain 和清理路径保持分离；
 - side-effect journal 增加持锁 `claim`，Worker execution 和 cleanup 只允许一个进程取得 started claim；receipt 携带 Evidence/Acceptance provenance，已有 receipt 可安全恢复，unknown/迟到 completion 不会伪造成功；ProjectFile 与 checkpoint 写入使用 per-project write lock；
 - retry 持久化 `pendingAttempt`，consistency audit 可重算 worker-execution inputHash、忽略经过完整验证的历史 terminal receipt，并继续报告 future/partial/篡改记录；queue 在 receipt 已 durable 后允许 terminal finalize，普通取消仍不 markSucceeded；Evidence/Acceptance schema 和读取失败保持 fail-closed；
-- 验证结果：`npm run test` 101 个测试文件、885 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
+- 验证结果：`npm run test` 101 个测试文件、887 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
 - 仍未宣称完整不可信代码沙箱：Windows no-follow/TOCTOU 的原子保护、package script 的网络/文件系统隔离、跨进程真实压力测试和 Tauri Worker E2E 仍是后续安全阶段；本轮只在本地 checkpoint，不 push。
+
+### 7.43 完成 retry replay、receipt race 与终态提交收敛
+
+- 最终独立 reviewer 发现 grep `--directories=recurse`/`-d recurse` 可绕过、Tauri missing-file 字符串无法创建新文件、pendingAttempt 可跳号、retry 缺少旧 running Attempt 的 unknown 事实、历史 unknown 被 audit 阻断，以及 receipt 竞争分支缺少完整校验；本轮分别加入全递归 alias deny、统一 missing-file 识别、严格 `attempt + 1`、`TaskAttemptMarkedUnknown` 事件、历史 effect canonical 验证和统一 cleanup/worker receipt validator。
+- queue 改用 `Promise.allSettled` 处理并发 lease；receipt 已 durable 后允许 terminal finalize，普通取消仍 fail-closed；App 终态事件只允许安全 terminal batch，并把取消后的旧项目 event/ProjectFile 快照写回捕获的旧路径，不触碰当前项目 store；ProjectIO/JSONL 持久化继续使用项目级写锁和 read-back。
+- 验证结果：`npm run test` 101 个测试文件、887 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
+- 仍未宣称完整不可信代码沙箱：Windows no-follow/TOCTOU 的原子保护、package script 的网络/文件系统隔离、真实跨进程压力测试和 Tauri Worker E2E 仍需后续安全阶段；本轮不 push。
 
 ## 八、适合拆成的博客系列
 

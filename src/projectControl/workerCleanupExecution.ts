@@ -80,6 +80,19 @@ function matchesProposal(
   );
 }
 
+function matchesCompletedCleanupReceipt(
+  entry: SideEffectRecord,
+  proposal: Extract<WorkerCleanupProposal, { status: 'ready' }>,
+  isLegacyKey: boolean,
+): boolean {
+  return entry.status === 'receipt'
+    && matchesProposal(entry, proposal, isLegacyKey)
+    && entry.receipt?.receiptId === `${entry.idempotencyKey}:receipt`
+    && entry.recovery === 'skip'
+    && entry.receipt.outcome === 'succeeded'
+    && entry.receipt.outputHash === proposal.stateSignature;
+}
+
 /** Execute only after the caller has already recorded the explicit host approval. */
 export async function executeWorkerCleanupWithReceipt(
   input: WorkerCleanupExecutionInput,
@@ -107,23 +120,20 @@ export async function executeWorkerCleanupWithReceipt(
     }
   }
   if (existing?.status === 'receipt') {
-    if (
-      existing.receipt?.receiptId !== `${existing.idempotencyKey}:receipt`
-      || existing.recovery !== 'skip'
-      || existing.receipt.outcome !== 'succeeded'
-      || existing.receipt.outputHash !== proposal.stateSignature
-    ) {
+    if (!matchesCompletedCleanupReceipt(existing, proposal, isLegacyKey)) {
       throw new Error(`已有 cleanup receipt 的 outcome/receiptId 未绑定其 key：${existing.idempotencyKey}`);
     }
     if (isLegacyKey) {
       const canonicalKey = key;
+      const receipt = existing.receipt;
+      if (!receipt) throw new Error('cleanup receipt 缺少 receipt payload');
       const migrated: SideEffectRecord = {
         ...existing,
         idempotencyKey: canonicalKey,
         taskExecutionId: proposal.taskExecutionId,
         attemptId: proposal.attemptId,
         receipt: {
-          ...existing.receipt,
+          ...receipt,
           receiptId: `${canonicalKey}:receipt`,
         },
       };
@@ -160,7 +170,7 @@ export async function executeWorkerCleanupWithReceipt(
   const claim = await input.repository.claim(startSideEffect(planned), [legacyPlanned]);
   throwIfAborted(input.signal);
   if (!claim.claimed) {
-    if (claim.record.status === 'receipt' && matchesProposal(claim.record, proposal, claim.record.idempotencyKey === legacyKey)) {
+    if (matchesCompletedCleanupReceipt(claim.record, proposal, claim.record.idempotencyKey === legacyKey)) {
       if (claim.record.idempotencyKey === legacyKey) {
         const migrated = await input.repository.migrateLegacyRecord(legacyKey, {
           ...claim.record,

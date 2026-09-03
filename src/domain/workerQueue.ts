@@ -193,7 +193,7 @@ function normalizeQueueTask(
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
   if (task.pendingAttempt !== undefined) {
-    if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt <= task.attempt || task.status !== 'queued') {
+    if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt !== task.attempt + 1 || task.status !== 'queued') {
       throw new Error(`Worker Task pendingAttempt 无效：${task.taskId}`);
     }
     if (task.currentAttemptId) throw new Error(`queued retry 不能保留 currentAttemptId：${task.taskId}`);
@@ -427,6 +427,7 @@ export class WorkerTaskQueue {
             currentAttemptId: attemptId,
             status: 'running',
             attempt,
+            pendingAttempt: undefined,
             updatedAt: now,
           },
         },
@@ -452,6 +453,7 @@ export class WorkerTaskQueue {
             currentAttemptId: attemptId,
             status: 'failed',
             attempt,
+            pendingAttempt: undefined,
             error: message,
             updatedAt: now,
           },
@@ -775,7 +777,7 @@ export async function runWorkerQueue(
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
     await flushTransition();
     let terminalizedInBatch = false;
-    await Promise.all(leases.map(async (lease) => {
+    const settled = await Promise.allSettled(leases.map(async (lease) => {
       const taskId = lease.task.id;
       let sideEffect: SideEffectRecord | undefined;
       try {
@@ -836,6 +838,8 @@ export async function runWorkerQueue(
       }
     }));
     await flushTransition(terminalizedInBatch);
+    const rejected = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+    if (rejected) throw rejected.reason;
     if (options.signal?.aborted && terminalizedInBatch) return queue.snapshot();
   }
 }

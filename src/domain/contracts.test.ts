@@ -63,6 +63,23 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('replays an unknown interrupted attempt before a retry attempt starts', () => {
+    const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
+    const attempt1 = createAttemptId(taskExecutionId, 1);
+    const attempt2 = createAttemptId(taskExecutionId, 2);
+    const events = [
+      event({ eventId: 'retry-queued-0', aggregateType: 'TaskExecution', aggregateId: taskExecutionId, eventType: 'TaskQueued', payload: { runId: 'run-replay-retry', taskId: 'task-1', taskExecutionId } }),
+      event({ eventId: 'retry-started-1', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskStarted', payload: { runId: 'run-replay-retry', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId: attempt1 } }),
+      event({ eventId: 'retry-unknown-1', sequence: 3, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 3, eventType: 'TaskAttemptMarkedUnknown', payload: { runId: 'run-replay-retry', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId: attempt1, reason: 'process exited' } }),
+      event({ eventId: 'retry-queued-2', sequence: 4, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 4, eventType: 'TaskQueued', payload: { runId: 'run-replay-retry', taskId: 'task-1', taskExecutionId, nextAttempt: 2 } }),
+      event({ eventId: 'retry-started-2', sequence: 5, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 5, eventType: 'TaskStarted', payload: { runId: 'run-replay-retry', taskId: 'task-1', taskExecutionId, attempt: 2, attemptId: attempt2 } }),
+    ];
+    const projection = replayDomainEvents(events);
+    expect(projection.attempts[attempt1]).toMatchObject({ status: 'unknown', attempt: 1 });
+    expect(projection.attempts[attempt2]).toMatchObject({ status: 'running', attempt: 2 });
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ status: 'running', currentAttemptId: attempt2, attemptIds: [attempt1, attempt2] });
+  });
+
   it('replays TaskQueued so an enqueued worker run survives projection rebuild', () => {
     const created = event({
       eventId: 'evt-run-created-queued',
