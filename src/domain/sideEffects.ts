@@ -7,6 +7,7 @@ import {
   type EventStoreAdapter,
   type EventStoreLock,
 } from './eventStore';
+import { assertSafeProjectRelativePath } from './model/artifact';
 
 export const SIDE_EFFECT_JOURNAL_RELATIVE_PATH = '.slimemold/runs/side-effects.json';
 export const SIDE_EFFECT_LOCK_RELATIVE_PATH = '.slimemold/runs/side-effects.json.lock';
@@ -84,6 +85,31 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
   if (value.acceptanceId !== undefined && (typeof value.acceptanceId !== 'string' || !value.acceptanceId.trim())) {
     throw new Error('receipt.acceptanceId 无效');
   }
+  if (value.artifactCandidateId !== undefined
+    && (typeof value.artifactCandidateId !== 'string' || !value.artifactCandidateId.trim())) {
+    throw new Error('receipt.artifactCandidateId 无效');
+  }
+  if (value.approvalId !== undefined && (typeof value.approvalId !== 'string' || !value.approvalId.trim())) {
+    throw new Error('receipt.approvalId 无效');
+  }
+  if (value.files !== undefined
+    && (!Array.isArray(value.files)
+      || value.files.some((file) => !isRecord(file)
+        || typeof file.path !== 'string'
+        || !file.path.trim()
+        || typeof file.contentHash !== 'string'
+        || !file.contentHash.trim()))) {
+    throw new Error('receipt.files 无效');
+  }
+  if (Array.isArray(value.files)) {
+    for (const file of value.files) {
+      try {
+        assertSafeProjectRelativePath((file as Record<string, unknown>).path as string);
+      } catch {
+        throw new Error('receipt.files.path 无效');
+      }
+    }
+  }
   return {
     receiptId: value.receiptId,
     observedAt: value.observedAt,
@@ -91,6 +117,16 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
     ...(value.outcome === 'succeeded' || value.outcome === 'failed' ? { outcome: value.outcome } : {}),
     ...(Array.isArray(value.evidenceIds) ? { evidenceIds: [...value.evidenceIds] as string[] } : {}),
     ...(typeof value.acceptanceId === 'string' ? { acceptanceId: value.acceptanceId } : {}),
+    ...(typeof value.artifactCandidateId === 'string' ? { artifactCandidateId: value.artifactCandidateId } : {}),
+    ...(typeof value.approvalId === 'string' ? { approvalId: value.approvalId } : {}),
+    ...(Array.isArray(value.files)
+      ? {
+        files: value.files.map((file) => ({
+          path: (file as Record<string, unknown>).path as string,
+          contentHash: (file as Record<string, unknown>).contentHash as string,
+        })),
+      }
+      : {}),
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
   };
 }

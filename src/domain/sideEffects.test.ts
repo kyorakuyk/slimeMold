@@ -55,6 +55,28 @@ describe('side-effect journal', () => {
     expect((await repository.read()).journal.entries).toHaveLength(0);
   });
 
+  it('rejects a delivery receipt containing a path traversal', () => {
+    const parsed = parseSideEffectJournal(JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        ...planned,
+        kind: 'artifact-delivery',
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: {
+          receiptId: 'delivery:receipt',
+          observedAt: '2026-09-04T00:00:00.000Z',
+          outcome: 'succeeded',
+          artifactCandidateId: 'candidate-1',
+          approvalId: 'approval-1',
+          outputHash: 'h1',
+          files: [{ path: '../escape.ts', contentHash: 'h2' }],
+        },
+      }],
+    }));
+    expect(parsed.status).toBe('needs-repair');
+  });
+
   it('records idempotent progress and rejects key reuse for a different target or input', () => {
     const initial = createEmptySideEffectJournal();
     const started = startSideEffect(planned);

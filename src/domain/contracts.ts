@@ -848,6 +848,9 @@ export interface SideEffectReceipt {
   outcome?: 'succeeded' | 'failed';
   evidenceIds?: string[];
   acceptanceId?: string;
+  artifactCandidateId?: string;
+  approvalId?: string;
+  files?: Array<{ path: string; contentHash: string }>;
   error?: string;
 }
 

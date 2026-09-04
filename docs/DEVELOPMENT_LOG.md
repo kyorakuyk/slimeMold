@@ -1867,6 +1867,15 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 106 个测试文件、905 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 33 个 Rust 测试通过；`git diff --check` 通过。
 - 本轮仍未完成真实 Tauri fixture、项目根目录 delivery、重启后的 DeliveryReceipt read-back 和真实用户端到端验收；下一阶段实现 ArtifactCandidate → 用户批准 → 受控项目文件交付。
 
+### 7.47 增加 ArtifactCandidate、用户批准交付与 DeliveryReceipt
+
+- 新增 `src/projectControl/workerDelivery.ts`：`buildArtifactCandidate` 只接受通过且无失败项的 Host Acceptance、完整有序的已应用 `FilePatchSet` 和完整 execution lineage；第一版只允许交付预期不存在的新文件，候选文件携带 source hash，不允许覆盖已有源文件。
+- 新增显式 `createArtifactDeliveryApproval`：目标根必须是绝对路径，approval 必须标记为 `approvedBy: 'user'`，candidate/approval 在 claim 前执行运行时 schema、路径、hash、lineage 校验；工作流节点不能伪造 approval 或直接触发交付。
+- `deliverArtifactCandidate` 使用 Node host 的 `wx` 新建写入、source/destination canonical path 与 component-boundary 校验、源文件 hash 校验、目标 read-back 校验；入口还必须匹配宿主查询到的 passed Acceptance，不能只凭 candidate 结构交付；通过现有 `SideEffectJournalRepository` 原子 claim，成功后持久化包含 candidateId、approvalId、文件清单、逐文件 hash、aggregate output hash 的 DeliveryReceipt；目标冲突、源漂移、账本异常或中途失败进入 `unknown/needs-user`，重复调用只读已有 receipt。
+- 扩展 `SideEffectReceipt` schema 以保留交付元数据，并拒绝 receipt 文件清单中的目录穿越/绝对路径/反斜杠/运行元数据路径；新增真实临时目录交付集成测试、lineage 伪造测试、坏 candidate claim 前拒绝测试和目标冲突恢复测试。
+- 验证结果：`npm run test` 为 107 个测试文件、910 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 33 个 Rust 测试通过；`git diff --check` 通过；测试生成物仍统一在专有系统临时根，仓库根散落目录为 0。
+- 当前交付实现已具备可调用的 host API，但尚未接入 `DevSession`/GUI approval 面板、Tauri 安全 copy command、候选/approval 的跨重启加载，目标父目录必须由 fixture 预先存在；真实 Tauri 成功/失败/recovery E2E 仍未完成，不能把本轮 Node 集成测试写成桌面 MVP 验收通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
