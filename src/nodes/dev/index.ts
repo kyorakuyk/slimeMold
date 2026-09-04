@@ -642,6 +642,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         ...(hasLineage ? { runId, taskId, taskExecutionId, attemptId } : {}),
       });
       await session.persistAcceptance(acceptance);
+      if (!a.passed) {
+        throw nodeError(`Acceptance 未通过：${a.failedChecks.join('、') || '未知检查失败'}（${acceptanceId}）`);
+      }
       return {
         passed: a.passed,
         failedChecks: a.failedChecks,

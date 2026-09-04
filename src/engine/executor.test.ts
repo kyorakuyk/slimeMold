@@ -4,6 +4,7 @@ import {
   resolveCapability,
   applyCapability,
   getActiveRunId,
+  workflowRequiresDevSession,
 } from './executor';
 import type { NodeDefinition, ExecContext } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
@@ -59,6 +60,20 @@ describe('collectInputs', () => {
     const outputs = new Map([['a', { '': 'default' }]]);
     const r = collectInputs('b', edges as never, outputs);
     expect(r).toEqual({ in1: 'default' });
+  });
+});
+
+describe('workflowRequiresDevSession', () => {
+  it('含 dev.* 节点时要求先准备宿主开发会话', () => {
+    expect(workflowRequiresDevSession([
+      { data: { typeId: 'dev.worktree.create' } },
+    ] as never)).toBe(true);
+  });
+
+  it('纯 builtin 图不触发宿主开发会话', () => {
+    expect(workflowRequiresDevSession([
+      { data: { typeId: 'input.text' } },
+    ] as never)).toBe(false);
   });
 });
 

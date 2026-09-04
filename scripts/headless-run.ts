@@ -65,8 +65,8 @@ async function main() {
   // P0/P1 审计：cleanup 的宿主审批在**运行后**执行（见下方 hostCleanupApproval），
   // 因为 acceptanceId 由 accept 节点运行时由宿主生成——运行前无法绑定。
   if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
-    const { initDevSession } = await import('../src/dev/session');
-    const { createHostEvidenceStore } = await import('../src/dev/evidence');
+    const { createHostAcceptanceStoreWithFs, initDevSession } = await import('../src/dev/session');
+    const { createHostEvidenceStore, createNodeJsonlFs } = await import('../src/dev/evidence');
     const { resolve } = await import('node:path');
     // H4 审计（P1）：宿主固定路径 EvidenceStore（.slimemold/evidence/host.jsonl，位于 worktree 外）——
     // forceCleanup 要求宿主持久化（无 persistence 拒绝强制清理），headless 宿主据此注入真实落盘；
@@ -80,7 +80,15 @@ async function main() {
     const persistence = declaredWt
       ? createHostEvidenceStore(evidenceRoot, resolve(process.cwd(), declaredWt), 'host')
       : undefined;
-    initDevSession({ baseRepoPath: process.cwd(), persistence });
+    const acceptancePersistence = declaredWt
+      ? createHostAcceptanceStoreWithFs(
+        resolve(process.cwd(), '.slimemold', 'acceptance'),
+        resolve(process.cwd(), declaredWt),
+        'records',
+        createNodeJsonlFs(),
+      )
+      : undefined;
+    initDevSession({ baseRepoPath: process.cwd(), persistence, acceptancePersistence });
     console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集，EvidenceStore=' + evidenceRoot + '）');
   }
   const edges = (wf.edges as any[]).map((e) => ({

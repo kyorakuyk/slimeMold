@@ -15,6 +15,24 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(git).toHaveBeenCalledWith(['rev-parse', 'HEAD'], '/repo');
   });
 
+  it('create：绝对 worktree 路径不会把路径字符带入 Git branch', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return ok('abc123\n');
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'D:/Temp/slimemold-fixture');
+    const target = 'D:/Temp/slimemold-fixture-workers/mvp-success-wt';
+
+    const info = await m.create(target, target);
+
+    expect(info).not.toBeNull();
+    expect(info!.branch).toMatch(/^dev-[A-Za-z0-9._-]+-[a-z0-9]+$/);
+    expect(info!.branch).not.toMatch(/[\\/:]/);
+    expect(calls).toContainEqual(['worktree', 'add', '-q', target, '-b', info!.branch, 'HEAD']);
+  });
+
   it('create→list→cleanup 完整生命周期', async () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {

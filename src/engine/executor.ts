@@ -105,6 +105,10 @@ export function getActiveRunId(wfId?: string): number {
   return genFor(id).activeRunId;
 }
 
+export function workflowRequiresDevSession(nodes: readonly FlowNode[]): boolean {
+  return nodes.some((node) => node.data.typeId.startsWith('dev.'));
+}
+
 /** 把运行代次同步到 store 供状态栏诊断显示 */
 function syncDebugRun(wfId: string): void {
   const g = genFor(wfId);
@@ -251,10 +255,25 @@ export interface RunResult {
 export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
+  const gen = genFor(wfId);
+  const graphNodesForSession = wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId]?.nodes ?? []);
+  if (isTauri && workflowRequiresDevSession(graphNodesForSession)) {
+    if (!wf.projectPath) {
+      const error = '包含 dev.* 节点的工作流必须先打开已保存项目';
+      wf.addLog('error', error);
+      return { status: 'aborted', runId: gen.currentRunId, error };
+    }
+    const { ensureGuiDevSession } = await import('../dev/gui');
+    const session = await ensureGuiDevSession(wf.projectPath);
+    if (!session) {
+      const error = 'Tauri DevSession 未就绪，开发节点未执行';
+      wf.addLog('error', error);
+      return { status: 'aborted', runId: gen.currentRunId, error };
+    }
+  }
   // 解耦接缝：执行引擎的输出动作（日志/进度/历史/成本）经 ExecutionRuntime 接口，
   // 默认实现委托 store；后续可替换为测试桩或独立运行时，使 executor 不依赖具体 store。
   const rt = createStoreRuntime(wfId);
-  const gen = genFor(wfId);
   // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
   // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
   const running = wf.runStates[wfId]?.running ?? false;

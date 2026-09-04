@@ -12,6 +12,7 @@ import { isTauri } from '../platform/env';
 import { initDevSession, resetDevSession, getDevSession, createHostAcceptanceStoreWithFs } from './session';
 import { useRegistryStore } from '../store/registryStore';
 import { pathComparisonKey } from './path-utils';
+import type { NodeDefinition } from '../types';
 
 /** dev.* 节点 typeId 集合（teardown 时从 registry 精确移除）。 */
 const DEV_TYPE_IDS = [
@@ -20,6 +21,7 @@ const DEV_TYPE_IDS = [
   'dev.worktree.cleanup',
   'dev.code.read',
   'dev.code.patch',
+  'dev.patch.apply',
   'dev.shell.run',
   'dev.test.run',
   'dev.git.status',
@@ -39,6 +41,10 @@ export function setDevGuiStatus(s: DevGuiStatus): void {
   devGuiStatus = s;
 }
 
+export function registerGuiDevDefs(defs: NodeDefinition[]): void {
+  useRegistryStore.getState().register(defs);
+}
+
 /** 宿主固定证据根：`<项目根>/.slimemold/evidence`（位于 worktree 外；worktree 创建时动态绑定）。 */
 function evidenceRootFor(projectPath: string): string {
   return `${projectPath.replace(/[/\\]+$/, '')}/.slimemold/evidence`;
@@ -56,6 +62,8 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
   const existing = getDevSession();
   if (existing) {
     if (pathComparisonKey(existing.manager.getBaseRepoPath()) !== pathComparisonKey(projectPath)) return null;
+    registerGuiDevDefs(existing.defs);
+    setDevGuiStatus('ready');
     return existing;
   }
 
@@ -105,7 +113,7 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
       await teardownGuiDevSession();
       return null;
     }
-    useRegistryStore.getState().register(session.defs);
+    registerGuiDevDefs(session.defs);
     setDevGuiStatus('ready');
     return session;
   } catch (e) {

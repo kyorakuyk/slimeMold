@@ -431,12 +431,15 @@ describe('H4 dev nodes', () => {
     expect(acc!.passed).toBe(true);
     expect(acc!.worktreePath).toBe('/repo/wt/e1');
     expect(ok.changedProtectedPaths).toEqual([]);
-    const otherStage = await accept.execute(
-      { orchestrationId: 'o1', stageId: 's9', worktreePath: '/repo/wt/e1', rules },
-      {},
-      {} as never,
-    );
-    expect(otherStage.passed).toBe(false);
+    await expect(
+      accept.execute(
+        { orchestrationId: 'o1', stageId: 's9', worktreePath: '/repo/wt/e1', rules },
+        {},
+        {} as never,
+      ),
+    ).rejects.toThrow(/Acceptance 未通过/);
+    const failedAcceptance = [...session.acceptanceStore.values()].at(-1);
+    expect(failedAcceptance?.passed).toBe(false);
   });
 
   it('dev.worktree.cleanup：无审批拒 / 仅审批无绑定拒 / 三绑定齐全才清理 / 一次性消费', async () => {

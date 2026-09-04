@@ -20,6 +20,15 @@ export function createNodeGitRunner(): DevGitRunner {
 
 export type WorktreeStatus = 'created' | 'cleaned' | 'orphaned';
 
+function branchStem(id: string): string {
+  const stem = id
+    .replace(/\\/g, '/')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+  return stem || 'worktree';
+}
+
 export interface WorktreeInfo {
   id: string;
   /** worktree 绝对路径（Agent 可写区） */
@@ -52,7 +61,7 @@ export class WorktreeManager {
     if (rev.exitCode !== 0) return null;
     if (opts?.signal?.aborted) return null;
     const baseRevision = rev.stdout.trim();
-    const branch = opts?.branch ?? `dev-${id}-${Date.now().toString(36)}`;
+    const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
     const add = await this.runner.git(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], this.baseRepoPath);
     if (add.exitCode !== 0) return null;
     if (opts?.signal?.aborted) {
