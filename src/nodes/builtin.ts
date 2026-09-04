@@ -14,6 +14,7 @@ import { auditNodes } from './builtin/audit';
 import { dispatchNodes } from './builtin/dispatch';
 import { coordNodes } from './builtin/coord';
 import { workerNodes } from './builtin/worker';
+import { mvpNodes } from './mvp';
 
 // 原 builtin.ts 的节点定义本体已按 category 物理拆分到 ./builtin/ 子目录，
 // 此处仅做聚合（行为等价）。拆分后单测网见 builtinHelpers.test / workflowSerialize.test。
@@ -22,7 +23,7 @@ import { workerNodes } from './builtin/worker';
 // 随相关类别走，不在此重复导出。
 
 // Community 友好分类顺序：输入 → 文本 → AI → 流程 → 工具 → 输出（普通用户语义）
-export const CATEGORY_ORDER = ['输入', '文本', 'AI', '流程', '工具', '输出', '审计', '派发', '协调', 'worker'] as const;
+export const CATEGORY_ORDER = ['输入', '项目 MVP', '文本', 'AI', '流程', '工具', '输出', '审计', '派发', '协调', 'worker'] as const;
 
 /** 全部内置节点定义（含 creative 节点）。各子文件已统一经 createNodeDef 包装，此处仅聚合。 */
 export const builtinDefs: NodeDefinition[] = [
@@ -36,6 +37,7 @@ export const builtinDefs: NodeDefinition[] = [
   ...dispatchNodes,
   ...coordNodes,
   ...workerNodes,
+  ...mvpNodes,
   ...creativeNodes,
 ];
 

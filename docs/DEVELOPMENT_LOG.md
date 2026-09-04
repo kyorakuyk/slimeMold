@@ -1850,6 +1850,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 102 个测试文件、890 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过。
 - 本轮只完成测试生成物治理，尚未实现 `FilePatchSet`、ArtifactCandidate、DeliveryReceipt 或真实 Tauri E2E；下一阶段进入结构化项目骨架与 Worker 补丁输出，不把本轮质量门写成真实桌面 MVP 已完成。
 
+### 7.45 建立结构化 FilePatchSet 与第一次 MVP 项目骨架节点
+
+- 新增领域模块 `src/domain/model/artifact.ts`：定义版本化 `FilePatchSet`、`FilePatchEntry`、`ProjectSpec`、`StructureManifest`，对模型/适配器输入执行 schema、重复路径、绝对路径、反斜杠、目录穿越和 `.slimemold` 元数据路径的 fail-closed 校验；新契约不依赖 React Flow、Zustand 或 Tauri。
+- 新增确定性的 `project.scaffold` 节点（`src/nodes/mvp/index.ts`）并接入 `builtinDefs`：固定生成带 `package.json`、`tsconfig.json`、`README.md`、`src/index.ts` 和 `tests/index.test.ts` 的 TypeScript MVP 骨架，输出 `ProjectSpec + StructureManifest + FilePatchSet` 候选；节点为 compute 级，只生成候选，不调用 LLM、不写文件。
+- 新增领域和节点回归测试，验证完整目录清单、编译/测试命令、可运行源文件、schema round-trip、危险路径拒绝和 builtin 注册；生产写入、worktree apply、ArtifactCandidate、DeliveryReceipt 和真实 Tauri E2E 尚未在本轮实现。
+- 验证结果：`npm run test` 为 104 个测试文件、896 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过。
+- 本轮仍不把“生成补丁候选”写成“项目文件已交付”：下一阶段必须在专用 fixture 的隔离 worktree 中实际 apply、compile、test、Evidence、Acceptance，并经用户批准后交付到项目根目录。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
