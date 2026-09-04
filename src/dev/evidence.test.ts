@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { tmpdir } from 'node:os';
 import { EvidenceCollector, createHostEvidenceStore, createHostEvidenceStoreWithFs, evidencePathFor } from './evidence';
+import { withTestArtifactRoot } from './test-artifacts';
 import { normalizeAbsolutePath } from './path-utils';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
@@ -63,35 +63,33 @@ describe('H4 EvidenceCollector', () => {
   });
 
   it('P1 持久化：JSONL store 落盘 + loadPersisted 跨会话恢复（经宿主构造）', async () => {
-    const tmpRoot = `${tmpdir()}/slimemold-evidence-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const store = createHostEvidenceStore(tmpRoot, '/some/worktree', 'case');
-    const c1 = new EvidenceCollector(store);
-    await c1.addAsync({
-      orchestrationId: 'o1',
-      stageId: 's1',
-      kind: 'test',
-      status: 'passed',
-      exitCode: 0,
-      summary: 'first',
-      runId: 'run-1',
-      taskId: 'task-1',
-      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
-      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+    await withTestArtifactRoot('evidence', async (tmpRoot) => {
+      const store = createHostEvidenceStore(tmpRoot, '/some/worktree', 'case');
+      const c1 = new EvidenceCollector(store);
+      await c1.addAsync({
+        orchestrationId: 'o1',
+        stageId: 's1',
+        kind: 'test',
+        status: 'passed',
+        exitCode: 0,
+        summary: 'first',
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+        attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      });
+      await c1.addAsync({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'line one\nline two' });
+      // 新 collector 从同一 store 恢复（模拟重启）
+      const c2 = new EvidenceCollector(store);
+      const loaded = await c2.loadPersisted();
+      expect(loaded).toHaveLength(2);
+      expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
+      const persistedTaskExecutionId = createTaskExecutionId('run-1', 'task-1');
+      const persistedAttemptId = createAttemptId(persistedTaskExecutionId, 1);
+      expect(loaded[0]).toMatchObject({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId });
+      expect(c2.byScope({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId })).toHaveLength(1);
+      expect(c2.records).toHaveLength(2);
     });
-    await c1.addAsync({ orchestrationId: 'o1', stageId: 's2', kind: 'diff', status: 'passed', summary: 'line one\nline two' });
-    // 新 collector 从同一 store 恢复（模拟重启）
-    const c2 = new EvidenceCollector(store);
-    const loaded = await c2.loadPersisted();
-    expect(loaded).toHaveLength(2);
-    expect(loaded.every((r) => r.capturedBy === 'host')).toBe(true);
-    const persistedTaskExecutionId = createTaskExecutionId('run-1', 'task-1');
-    const persistedAttemptId = createAttemptId(persistedTaskExecutionId, 1);
-    expect(loaded[0]).toMatchObject({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId });
-    expect(c2.byScope({ taskExecutionId: persistedTaskExecutionId, attemptId: persistedAttemptId })).toHaveLength(1);
-    expect(c2.records).toHaveLength(2);
-    // 清理临时文件
-    const { rm } = await import('node:fs/promises');
-    await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   });
 
   it('审计：evidencePathFor 拒绝路径逃逸 key；flush/addAsync 等待落盘确认', async () => {
@@ -116,25 +114,23 @@ describe('H4 EvidenceCollector', () => {
     expect(typeof ok.load).toBe('function');
 
     // addAsync 等待落盘；flush 在落盘失败时 throw
-    const flushRoot = `${tmpdir()}/slimemold-evidence-flush-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const store = createHostEvidenceStore(flushRoot, '/some/worktree', 'case');
-    const c = new EvidenceCollector(store);
-    await c.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'sync' });
-    await c.flush(); // 无失败 → 不抛
-    expect(c.records).toHaveLength(1);
+    await withTestArtifactRoot('evidence-flush', async (flushRoot) => {
+      const store = createHostEvidenceStore(flushRoot, '/some/worktree', 'case');
+      const c = new EvidenceCollector(store);
+      await c.addAsync({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', exitCode: 0, summary: 'sync' });
+      await c.flush(); // 无失败 → 不抛
+      expect(c.records).toHaveLength(1);
 
-    // 落盘失败（mock persistence reject）→ flush throw（含证据 id 与失败原因），验收据此拒绝
-    const c2 = new EvidenceCollector({
-      append: async () => {
-        throw new Error('disk full');
-      },
-      load: async () => [],
+      // 落盘失败（mock persistence reject）→ flush throw（含证据 id 与失败原因），验收据此拒绝
+      const c2 = new EvidenceCollector({
+        append: async () => {
+          throw new Error('disk full');
+        },
+        load: async () => [],
+      });
+      c2.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', summary: 'x' });
+      await expect(c2.flush()).rejects.toThrow(/证据.*落盘失败/);
     });
-    c2.add({ orchestrationId: 'o1', stageId: 's1', kind: 'test', status: 'passed', summary: 'x' });
-    await expect(c2.flush()).rejects.toThrow(/证据.*落盘失败/);
-
-    const { rm } = await import('node:fs/promises');
-    await rm(flushRoot, { recursive: true, force: true }).catch(() => {});
   });
 
   it('does not turn evidence read failures into an empty successful load', async () => {

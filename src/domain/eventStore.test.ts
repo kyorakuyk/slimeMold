@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { withTestArtifactRoot } from '../dev/test-artifacts';
 import type { DomainEvent, DomainProjection } from './contracts';
 import {
   EventStoreError,
@@ -214,8 +214,7 @@ describe('EventStreamRepository', () => {
   });
 
   it('persists the stream through the real filesystem adapter and releases its lock', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'slimemold-event-store-'));
-    try {
+    await withTestArtifactRoot('event-store', async (root) => {
       const repository = new EventStreamRepository(new NodeFileEventStoreAdapter(root), root);
       const created = event({ eventId: 'run-created', eventType: 'RunCreated', payload: { runId: 'run-1' } });
       await repository.append(created, 0);
@@ -226,23 +225,18 @@ describe('EventStreamRepository', () => {
         lastSequence: 1,
         runs: { 'run-1': { status: 'queued' } },
       });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it('times out on a pre-existing lock without stealing or deleting it', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'slimemold-stale-lock-'));
-    const lockPath = join(root, '.slimemold', 'events', 'events.jsonl.lock');
-    try {
+    await withTestArtifactRoot('stale-lock', async (root) => {
+      const lockPath = join(root, '.slimemold', 'events', 'events.jsonl.lock');
       await mkdir(join(root, '.slimemold', 'events'), { recursive: true });
       await writeFile(lockPath, 'stale-owner', 'utf8');
       const adapter = new NodeFileEventStoreAdapter(root, { lockTimeoutMs: 25, lockPollMs: 5 });
 
       await expect(adapter.acquireLock(lockPath)).rejects.toMatchObject({ code: 'lock-timeout' });
       expect(await readFile(lockPath, 'utf8')).toBe('stale-owner');
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    });
   });
 });

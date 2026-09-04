@@ -1842,6 +1842,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 101 个测试文件、887 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过；新增行安全模式扫描为 0。
 - 仍未宣称完整不可信代码沙箱：Windows no-follow/TOCTOU 的原子保护、package script 的网络/文件系统隔离、真实跨进程压力测试和 Tauri Worker E2E 仍需后续安全阶段；本轮不 push。
 
+### 7.44 收口测试生成物目录并开始 MVP 验收基础设施
+
+- 历史 `evidence-test-*` 空目录的根因是旧版 `src/dev/evidence.test.ts` 使用相对 `evidence-test-${Date.now()}` 作为持久化根，测试只删除 JSONL 文件而未删除父目录；本轮已清理仓库根目录遗留目录，并新增 `src/dev/test-artifacts.ts`，统一把测试生成物放入系统临时目录下的 `slimemold-test-runs/<namespace>-<unique>` 专有根。
+- 新 helper 拒绝仓库 cwd 及其子目录，使用真实路径校验和唯一目录创建，支持显式保留现场，并在 `withTestArtifactRoot` 的 `finally` 中递归清理；`src/dev/evidence.test.ts` 与 `src/domain/eventStore.test.ts` 已迁移，异常路径不会把临时目录散落回仓库根目录。
+- 新增 `src/dev/test-artifacts.test.ts` 覆盖专有根、cwd 拒绝和 callback 失败清理；全量测试后仓库根目录 `evidence-test-*`/`evidence-flush-*` 为 0，`C:/Users/rnfmabj/AppData/Local/Temp/slimemold-test-runs` 为空；未触碰 `D:/Agents/SMtest`。
+- 验证结果：`npm run test` 为 102 个测试文件、890 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过。
+- 本轮只完成测试生成物治理，尚未实现 `FilePatchSet`、ArtifactCandidate、DeliveryReceipt 或真实 Tauri E2E；下一阶段进入结构化项目骨架与 Worker 补丁输出，不把本轮质量门写成真实桌面 MVP 已完成。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
