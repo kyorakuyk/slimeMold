@@ -36,6 +36,15 @@ describe('FilePatchSet domain contract', () => {
     expect(result.patchSet.patches.find((patch) => patch.path === 'tests/index.test.ts')?.after).toContain("from '../src/index'");
   });
 
+  it('rejects a preimage hash when the patch declares a new file', () => {
+    expect(() => decodeFilePatchSet({
+      schemaVersion: 1,
+      source: 'worker',
+      summary: 'invalid new file hash',
+      patches: [{ path: 'src/new.ts', before: null, beforeHash: 'h123', after: 'export {}\n' }],
+    })).toThrow(/beforeHash|前置/);
+  });
+
   it('round-trips a valid patch set and rejects unsafe or duplicate paths', () => {
     const { patchSet } = createTypeScriptMvpScaffold('round-trip');
     expect(decodeFilePatchSet(patchSet)).toEqual(patchSet);
@@ -55,7 +64,7 @@ describe('FilePatchSet domain contract', () => {
 
   it('rejects absolute, backslash, metadata, and malformed patch paths', () => {
     const { patchSet } = createTypeScriptMvpScaffold('path-check');
-    for (const path of ['/absolute.ts', 'C:/absolute.ts', 'src\\index.ts', '.slimemold/project.json', 'docs/.slimemold/project.json', '']) {
+    for (const path of ['/absolute.ts', 'C:/absolute.ts', 'src\\index.ts', 'src/\nindex.ts', '.slimemold/project.json', 'docs/.slimemold/project.json', '']) {
       expect(() => decodeFilePatchSet({
         ...patchSet,
         patches: [{ ...patchSet.patches[0], path }],

@@ -1858,6 +1858,15 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 104 个测试文件、896 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 30 个 Rust 测试通过；`git diff --check` 通过。
 - 本轮仍不把“生成补丁候选”写成“项目文件已交付”：下一阶段必须在专用 fixture 的隔离 worktree 中实际 apply、compile、test、Evidence、Acceptance，并经用户批准后交付到项目根目录。
 
+### 7.46 将结构化补丁应用接入 H4，并把编译纳入宿主验收
+
+- 新增 `src/dev/patch-set.ts`：`applyFilePatchSet` 对 `FilePatchSet` 做全量 preimage 预检，随后经现有受控 `codePatch` 逐文件应用，并对每个文件执行 read-back；前置内容漂移、宿主拒绝、缺失 hash 或读回不一致均 fail-closed，错误保留已应用路径，不返回成功结果；目录创建通过同样受守卫的 `codeMkdir`，不在 patch-set 中直写文件系统。
+- `src/nodes/dev/index.ts` 新增动态 H4 节点 `dev.patch.apply`，在当前已登记 worktree 中应用结构化补丁并登记 `artifact` 类型宿主结果；Node/Tauri 分别接入同一语义的目录创建能力，新增回归覆盖新文件、结构化多文件补丁、作用域和宿主结果登记。
+- `src/dev/workerAcceptance.ts` 新增固定 `compileCommand`，默认先由宿主执行 `npm run build`，再执行 `npm run test`；compile/test/diff/path-policy 共四类真实 Evidence 必须持久化后才进入确定性 Acceptance，模型最终文本不改变结论。
+- 收紧 `FilePatchSet` 路径校验：拒绝任意层级 `.slimemold` 元数据目录和控制字符，避免补丁头或运行元数据路径绕过；未实现的 ArtifactCandidate、用户批准 delivery 和 DeliveryReceipt 仍未在本轮完成。
+- 验证结果：`npm run test` 为 106 个测试文件、905 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 33 个 Rust 测试通过；`git diff --check` 通过。
+- 本轮仍未完成真实 Tauri fixture、项目根目录 delivery、重启后的 DeliveryReceipt read-back 和真实用户端到端验收；下一阶段实现 ArtifactCandidate → 用户批准 → 受控项目文件交付。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

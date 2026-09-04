@@ -6,6 +6,7 @@ import { createNodeDevService, type NodeDevDeps } from '../../dev/capabilities';
 import { defaultDevPolicy } from '../../dev/policy';
 import { EvidenceCollector, type EvidencePersistence } from '../../dev/evidence';
 import type { CommandResult } from '../../dev/node-run';
+import { FILE_PATCH_SET_SCHEMA_VERSION } from '../../domain/model/artifact';
 
 /** 内存持久化（测试默认注入：forceCleanup 要求宿主持久化，无则拒绝）。 */
 function memPersistence(): EvidencePersistence {
@@ -61,7 +62,7 @@ function fakeSession(opts: {
     readFile: async (abs) => {
       const rel = abs.replace(/\\/g, '/').split('/wt/')[1]?.split('/').slice(1).join('/');
       const hit = files.get(rel ?? abs);
-      if (!hit) throw new Error(`no file ${abs}`);
+      if (!hit) throw Object.assign(new Error(`no file ${abs}`), { code: 'ENOENT' });
       return hit;
     },
     writeFile: async (abs, content) => {
@@ -228,10 +229,10 @@ async function approveFull(
 }
 
 describe('H4 dev nodes', () => {
-  it('createDevNodeDefs：返回 11 个 dev.* 节点', () => {
+  it('createDevNodeDefs：返回 12 个 dev.* 节点', () => {
     const session = fakeSession();
     const defs = createDevNodeDefs(session);
-    expect(defs).toHaveLength(11);
+    expect(defs).toHaveLength(12);
     for (const d of defs) {
       expect(d.typeId.startsWith('dev.')).toBe(true);
       expect(d.category).toBe('开发');
@@ -241,6 +242,7 @@ describe('H4 dev nodes', () => {
     expect(ids).toContain('dev.worktree.create');
     expect(ids).toContain('dev.code.read');
     expect(ids).toContain('dev.accept');
+    expect(ids).toContain('dev.patch.apply');
   });
 
   it('dev.worktree.create 登记后，dev.code.read 可读 allowed 路径', async () => {
@@ -284,6 +286,56 @@ describe('H4 dev nodes', () => {
     expect(r.resultId).toBeTruthy();
     await expect(
       patch.execute({ worktreePath: '/repo/wt/t2', path: 'src/components/A.tsx', patch: diff }, {}, {} as never),
+    ).rejects.toThrow(/orchestrationId 与 stageId/);
+  });
+
+  it('dev.patch.apply：在已登记 worktree 中落盘结构化补丁并登记宿主结果', async () => {
+    const session = fakeSession();
+    const defs = createDevNodeDefs(session);
+    const create = defs.find((d) => d.typeId === 'dev.worktree.create')!;
+    await create.execute({ path: '/repo/wt/patch-set' }, {}, {} as never);
+    const apply = defs.find((d) => d.typeId === 'dev.patch.apply')!;
+    const r = await apply.execute(
+      {
+        worktreePath: '/repo/wt/patch-set',
+        orchestrationId: 'o-patch',
+        stageId: 's-patch',
+        patchSet: {
+          schemaVersion: FILE_PATCH_SET_SCHEMA_VERSION,
+          source: 'worker',
+          summary: 'structured patch',
+          patches: [
+            {
+              path: 'src/components/A.tsx',
+              before: 'export const a = 1;\n',
+              after: 'export const a = 2;\n',
+            },
+            {
+              path: 'src/components/Created.tsx',
+              before: null,
+              after: 'export const created = true;\n',
+            },
+          ],
+        },
+      },
+      {},
+      {} as never,
+    );
+    expect(r.appliedPaths).toEqual(['src/components/A.tsx', 'src/components/Created.tsx']);
+    expect(r.contentHashes).toMatchObject({
+      'src/components/A.tsx': expect.any(String),
+      'src/components/Created.tsx': expect.any(String),
+    });
+    expect(r.resultId).toBeTruthy();
+    expect(session.resultStore.get(String(r.resultId))).toMatchObject({
+      kind: 'artifact',
+      status: 'passed',
+      orchestrationId: 'o-patch',
+      stageId: 's-patch',
+      worktreePath: '/repo/wt/patch-set',
+    });
+    await expect(
+      apply.execute({ worktreePath: '/repo/wt/patch-set', patchSet: {} }, {}, {} as never),
     ).rejects.toThrow(/orchestrationId 与 stageId/);
   });
 

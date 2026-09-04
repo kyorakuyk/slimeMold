@@ -1578,6 +1578,80 @@ fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
     ))
 }
 
+/// 在已登记 worktree 内创建一级目录。
+/// 父目录必须已存在并先 canonicalize；目标 symlink 永不跟随，调用方负责逐级创建。
+#[tauri::command]
+fn dev_create_dir(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("dev_create_dir: 路径禁止包含 '..' 逃逸：{path}"));
+    }
+    let base_dir = {
+        let state = DEV_STATE.lock().unwrap();
+        state.base_repo.clone().unwrap_or_default()
+    };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::PathBuf::from(&base_dir).join(p)
+    };
+    let parent = joined
+        .parent()
+        .ok_or_else(|| format!("dev_create_dir: 无法解析父目录：{path}"))?;
+    let canon_parent = parent.canonicalize().map_err(|e| {
+        format!(
+            "dev_create_dir: 无法解析父目录（{}）：{e}",
+            parent.display()
+        )
+    })?;
+    dev_path_allowed(&canon_parent)?;
+    let name = joined
+        .file_name()
+        .ok_or_else(|| "dev_create_dir: 路径缺少目录名".to_string())?;
+    let target = canon_parent.join(name);
+
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "dev_create_dir: 拒绝操作符号链接目录（防 symlink 逃逸）：{}",
+                target.display()
+            ));
+        }
+        if !meta.is_dir() {
+            return Err(format!(
+                "dev_create_dir: 目标已存在但不是目录：{}",
+                target.display()
+            ));
+        }
+        dev_path_allowed(&target)?;
+        return Ok(());
+    }
+
+    dev_path_allowed(&target)?;
+    match fs::create_dir(&target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let meta = fs::symlink_metadata(&target)
+                .map_err(|e| format!("dev_create_dir: 竞态后无法读取目标：{e}"))?;
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(format!(
+                    "dev_create_dir: 竞态后目标不是安全目录：{}",
+                    target.display()
+                ));
+            }
+        }
+        Err(error) => {
+            return Err(format!("dev_create_dir: 创建失败：{path}（{error}）"));
+        }
+    }
+    let real = target
+        .canonicalize()
+        .map_err(|e| format!("dev_create_dir: 目标解析失败：{e}"))?;
+    dev_path_allowed(&real)
+}
+
 /// 读文件（仅 worktree 内；H4 节点 code.read / 状态签名等；相对路径基于主仓库根解析）。
 #[tauri::command]
 fn dev_read_file(path: String) -> Result<String, String> {
@@ -1751,6 +1825,7 @@ pub fn run() {
             dev_register_worktree,
             dev_unregister_worktree,
             dev_read_file,
+            dev_create_dir,
             dev_write_file
         ])
         // 窗口默认可见（tauri.conf.json visible:true）。保留 on_page_load 作为兜底，
@@ -2641,6 +2716,48 @@ mod dev_write_symlink_tests {
             let res = dev_write_file(target.to_string_lossy().to_string(), "hello".into());
             assert!(res.is_ok(), "worktree 内普通新文件应可写");
             assert_eq!(fs::read_to_string(&target).unwrap(), "hello");
+        });
+    }
+
+    #[test]
+    fn create_dir_within_worktree_ok() {
+        with_registered_worktree(|wt| {
+            let target = wt.join("src");
+            let res = dev_create_dir(target.to_string_lossy().to_string());
+            assert!(res.is_ok(), "worktree 内新目录应可创建");
+            assert!(target.is_dir());
+        });
+    }
+
+    #[test]
+    fn create_dir_rejects_parent_escape() {
+        with_registered_worktree(|wt| {
+            let res = dev_create_dir(wt.join("..").join("outside").to_string_lossy().to_string());
+            assert!(res.is_err(), "目录创建不得包含 .. 逃逸");
+        });
+    }
+
+    #[test]
+    fn create_dir_rejects_symlink_escape() {
+        with_registered_worktree(|wt| {
+            let outside = wt.parent().unwrap().join("sm_h4_outside_dir");
+            fs::create_dir_all(&outside).unwrap();
+            let link = wt.join("linked");
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).unwrap();
+            }
+            #[cfg(windows)]
+            {
+                if std::os::windows::fs::symlink_dir(&outside, &link).is_err() {
+                    eprintln!("[skip] Windows 无 symlink 权限，跳过目录 symlink 逃逸测试");
+                    return;
+                }
+            }
+            let res = dev_create_dir(link.join("child").to_string_lossy().to_string());
+            assert!(res.is_err(), "目录创建不得跟随指向 worktree 外部的 symlink");
+            assert!(!outside.join("child").exists());
+            let _ = fs::remove_dir_all(&outside);
         });
     }
 

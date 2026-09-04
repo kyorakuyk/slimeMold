@@ -65,6 +65,7 @@ export function assertSafeProjectRelativePath(path: string): void {
     !path ||
     path.trim() !== path ||
     path.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(path) ||
     path.startsWith('/') ||
     /^[A-Za-z]:/.test(path)
   ) {
@@ -115,6 +116,9 @@ export function decodeFilePatchSet(value: unknown): FilePatchSet {
     if (typeof raw.after !== 'string') throw new Error(`FilePatchSet.patches[${index}].after 无效`);
     assertOptionalHash(raw.beforeHash, `patches[${index}].beforeHash`);
     assertOptionalHash(raw.afterHash, `patches[${index}].afterHash`);
+    if (raw.before === null && raw.beforeHash !== undefined) {
+      throw new Error(`FilePatchSet.patches[${index}].beforeHash 不能用于新文件`);
+    }
     return {
       path: raw.path,
       before: raw.before,

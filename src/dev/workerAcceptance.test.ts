@@ -78,14 +78,15 @@ describe('createDevWorkerAcceptance', () => {
     const result = await acceptance.evaluate({ lease, response: { text: '模型报告已完成' } });
 
     expect(result.passed).toBe(true);
-    expect(result.evidenceIds).toHaveLength(3);
+    expect(result.evidenceIds).toHaveLength(4);
     expect(deps.collector.records).toEqual(expect.arrayContaining([
       expect.objectContaining({
         taskExecutionId: lease.taskExecutionId,
         attemptId: lease.attemptId,
       }),
     ]));
-    expect(deps.service.testRun).toHaveBeenCalledWith(['npm', 'run', 'test'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['npm', 'run', 'build'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['npm', 'run', 'test'], { cwd: lease.assignment.path });
     expect(deps.service.gitDiff).toHaveBeenCalledWith('base-1', { cwd: lease.assignment.path });
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
       acceptanceId: 'acceptance-1',
@@ -126,6 +127,28 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('diff');
+  });
+
+  it('requires the host compile check before accepting a Worker result', async () => {
+    const deps = host({
+      service: {
+        testRun: vi.fn(async (command: string[]) => ({
+          exitCode: command[2] === 'build' ? 1 : 0,
+          stdout: command[2] === 'build' ? '' : 'tests ok',
+          stderr: command[2] === 'build' ? 'compile failed' : '',
+          durationMs: 10,
+        })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['src/feature.ts']),
+      },
+    });
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    const result = await acceptance.evaluate({ lease, response: { text: '模型声称完成' } });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toContain('compile');
+    expect(deps.service.testRun).toHaveBeenCalledWith(['npm', 'run', 'build'], { cwd: lease.assignment.path });
   });
 
   it('rejects a forged lease lineage before running host checks', async () => {

@@ -72,6 +72,9 @@ export function createTauriDeps(): NodeDevDeps {
     writeFile: async (abs, content) => {
       await call<void>('dev_write_file', { path: abs, content });
     },
+    mkdir: async (abs) => {
+      await call<void>('dev_create_dir', { path: abs });
+    },
     resolveInside: async (root, rel) => {
       const abs = resolveWeb(root, rel);
       const rootNorm = resolveWeb(root, '.');

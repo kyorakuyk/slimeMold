@@ -12,6 +12,7 @@ import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator'
 import type { DevSession } from '../../dev/session';
 import { collectChangedProtectedPaths } from '../../dev/policy';
 import { assertTaskExecutionLineage } from '../../domain/execution';
+import { applyFilePatchSet } from '../../dev/patch-set';
 
 const DEV_CATEGORY = '开发';
 
@@ -267,6 +268,52 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         stageId: scope.stageId,
       });
       return { ok: true, contentHash: r.contentHash ?? '', resultId };
+    },
+  };
+
+  const patchSetApply: NodeDefinition = {
+    typeId: 'dev.patch.apply',
+    name: '应用文件补丁集',
+    category: DEV_CATEGORY,
+    role: 'worker',
+    minCapability: 'sandbox_write',
+    whenToUse: '将 worker 或 project.scaffold 生成的结构化补丁候选应用到当前已登记 worktree。',
+    description:
+      '先核对补丁集所有文件的前置内容，再通过宿主受控 code.patch 逐文件应用并 read-back；任何漂移或写入失败都阻断节点，不返回伪造成功。',
+    inputs: [
+      { id: 'worktreePath', label: '工作区路径', type: T },
+      { id: 'patchSet', label: '结构化文件补丁集', type: J },
+      ...SCOPE_INPUTS,
+    ],
+    outputs: [
+      { id: 'appliedPaths', label: '已应用文件', type: L },
+      { id: 'contentHashes', label: '内容哈希', type: J },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
+    ],
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'patchSet', label: '结构化文件补丁集 JSON（兜底）', type: 'textarea', default: '' },
+      ...SCOPE_PARAMS,
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      if (!cwd) throw nodeError('patch.apply 需要 worktreePath');
+      const scope = scopeOf(inputs, params);
+      const rawPatchSet = inputs.patchSet ?? params.patchSet;
+      const patchSet = parseJson<unknown>(rawPatchSet, null);
+      if (!patchSet) throw nodeError('patch.apply 需要结构化 patchSet');
+      const result = await applyFilePatchSet(patchSet, service, { cwd });
+      const resultId = nextResultId();
+      session.registerResult({
+        resultId,
+        kind: 'artifact',
+        status: 'passed',
+        summary: `宿主已应用 ${result.appliedPaths.length} 个结构化文件补丁`,
+        worktreePath: cwd,
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
+      });
+      return { ...result, resultId };
     },
   };
 
@@ -611,6 +658,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     worktreeCleanup,
     codeRead,
     codePatch,
+    patchSetApply,
     shellRun,
     testRun,
     gitStatus,

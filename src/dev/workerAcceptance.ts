@@ -6,6 +6,8 @@ import type { EvidenceRecord } from './evidence';
 import { assertTaskExecutionLineage } from '../domain/execution';
 
 export interface DevWorkerAcceptanceOptions {
+  /** 默认使用项目现有编译入口；命令仍由 DevCapabilityService 的白名单校验。 */
+  compileCommand?: string[];
   /** 默认使用项目现有测试入口；命令仍由 DevCapabilityService 的白名单校验。 */
   testCommand?: string[];
 }
@@ -40,7 +42,11 @@ export function createDevWorkerAcceptance(
   host: DevWorkerAcceptanceHost,
   options: DevWorkerAcceptanceOptions = {},
 ): WorkerAcceptance {
+  const compileCommand = [...(options.compileCommand ?? ['npm', 'run', 'build'])];
   const testCommand = [...(options.testCommand ?? ['npm', 'run', 'test'])];
+  if (compileCommand.length === 0 || compileCommand.some((part) => !part.trim())) {
+    throw new Error('Worker acceptance 的 compileCommand 不能为空');
+  }
   if (testCommand.length === 0 || testCommand.some((part) => !part.trim())) {
     throw new Error('Worker acceptance 的 testCommand 不能为空');
   }
@@ -69,9 +75,12 @@ export function createDevWorkerAcceptance(
         };
       }
       const context = { cwd };
+      const compileLabel = commandLabel(compileCommand);
       const testLabel = commandLabel(testCommand);
 
       try {
+        const compile = await host.service.testRun(compileCommand, context);
+        throwIfAborted(signal);
         const test = await host.service.testRun(testCommand, context);
         throwIfAborted(signal);
         const diff = await host.service.gitDiff(lease.assignment.baseRevision, context);
@@ -84,6 +93,22 @@ export function createDevWorkerAcceptance(
         const pathPolicyPassed = changedProtectedPaths.length === 0 && changedDisallowedPaths.length === 0;
 
         const freshEvidence: EvidenceRecord[] = [];
+        freshEvidence.push(await host.collector.addAsync({
+          orchestrationId,
+          stageId,
+          kind: 'test',
+          status: compile.exitCode === 0 ? 'passed' : 'failed',
+          command: compileLabel,
+          exitCode: compile.exitCode,
+          summary: `宿主编译退出码 ${compile.exitCode}`,
+          runId: lease.runId,
+          taskId: lease.task.id,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+          worktreePath: cwd,
+          baseRevision: lease.assignment.baseRevision,
+        }));
+        throwIfAborted(signal);
         freshEvidence.push(await host.collector.addAsync({
           orchestrationId,
           stageId,
@@ -146,6 +171,7 @@ export function createDevWorkerAcceptance(
           throw new Error('Worker acceptance 的 Evidence lineage 未完成持久化');
         }
         const rules: AcceptanceRule[] = [
+          { id: 'compile', kind: 'test', command: compileLabel },
           { id: 'tests', kind: 'test', command: testLabel },
           { id: 'diff', kind: 'diff' },
           { id: 'path-policy', kind: 'path-policy' },

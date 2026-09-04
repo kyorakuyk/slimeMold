@@ -14,7 +14,7 @@
  *    便于单测）；Tauri/浏览器环境由上层按 env 分支（浏览器经 shim 抛错，GUI 下开发节点不执行任意命令）。
  */
 import type { SelfDevelopmentPolicy } from './policy';
-import { assertPathAllowed } from './policy';
+import { assertPathAllowed, isPathAllowed, isPathProtected } from './policy';
 import type { CommandResult } from './node-run';
 import { runCommand, readTextFile, writeTextFile, resolveInside, relativePath } from './node-run';
 
@@ -41,6 +41,8 @@ export interface DevContext {
 export interface DevCapabilityService {
   readonly env: 'node' | 'tauri' | 'browser';
   codeRead(relPath: string, ctx: DevContext): Promise<DevFileRead>;
+  /** 在已登记 worktree 内创建相对目录；由结构化补丁应用器使用，非工作流自由写入。 */
+  codeMkdir?(relPath: string, ctx: DevContext): Promise<void>;
   codePatch(relPath: string, unifiedDiff: string, ctx: DevContext): Promise<DevPatchResult>;
   shellRun(cmd: string[], ctx: DevContext): Promise<CommandResult>;
   testRun(cmd: string[], ctx: DevContext): Promise<CommandResult>;
@@ -266,6 +268,7 @@ export interface NodeDevDeps {
   runCommand?: (cmd: string, args: string[], cwd: string) => Promise<CommandResult>;
   readFile?: (abs: string) => Promise<string>;
   writeFile?: (abs: string, content: string) => Promise<void>;
+  mkdir?: (abs: string) => Promise<void>;
   resolveInside?: (root: string, relPath: string) => Promise<string>;
   relativePath?: (root: string, abs: string) => Promise<string>;
   testAllow?: (cmd: string[]) => boolean;
@@ -277,7 +280,7 @@ export interface WorktreeRegistry {
 }
 
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
-function hashContent(content: string): string {
+export function hashContent(content: string): string {
   let h = 5381;
   for (let i = 0; i < content.length; i++) {
     h = ((h << 5) + h + content.charCodeAt(i)) >>> 0;
@@ -306,6 +309,10 @@ export function createNodeDevService(
   const run = deps.runCommand ?? runCommand;
   const read = deps.readFile ?? readTextFile;
   const write = deps.writeFile ?? writeTextFile;
+  const makeDirectory = deps.mkdir ?? (async (abs: string) => {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(abs, { recursive: true });
+  });
   const resolveP = deps.resolveInside ?? resolveInside;
   const relP = deps.relativePath ?? relativePath;
   const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
@@ -330,6 +337,21 @@ export function createNodeDevService(
     const abs = await resolveP(ctx.cwd, relPath);
     const rel = await relP(ctx.cwd, abs);
     assertPathAllowed(policy, rel);
+    return abs;
+  };
+
+  const guardedDirectoryAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
+    assertCwd(ctx.cwd);
+    const abs = await resolveP(ctx.cwd, relPath);
+    const rel = await relP(ctx.cwd, abs);
+    const normalized = rel.replace(/\\/g, '/');
+    const hasAllowedDescendant = policy.allowedPaths.some((allowed) => {
+      const normalizedAllowed = allowed.replace(/\\/g, '/');
+      return normalizedAllowed.startsWith(`${normalized}/`);
+    });
+    if (isPathProtected(policy, normalized) || (!isPathAllowed(policy, normalized) && !hasAllowedDescendant)) {
+      throw new Error(`目录不在允许范围内（allowedPaths）：${rel}`);
+    }
     return abs;
   };
 
@@ -361,6 +383,11 @@ export function createNodeDevService(
       const abs = await guardedAbs(relPath, ctx);
       const content = await read(abs);
       return { content, lineCount: content.split('\n').length };
+    },
+
+    async codeMkdir(relPath, ctx) {
+      const abs = await guardedDirectoryAbs(relPath, ctx);
+      await makeDirectory(abs);
     },
 
     async codePatch(relPath, unifiedDiff, ctx) {
