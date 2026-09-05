@@ -274,11 +274,17 @@ export class EvidenceCollector {
   async addAsync(input: EvidenceInput): Promise<EvidenceRecord> {
     const rec = this.makeRec(input);
     this._records.push(rec);
-    if (this.persistence) {
-      const p = this.persistence.append(rec);
+    const persistence = this.persistence;
+    if (persistence) {
+      const p = persistence.append(rec);
       this._pending.push(p.catch(() => {}));
       try {
         await p;
+        const persisted = await persistence.load();
+        const readBack = persisted.find((item) => item.id === rec.id);
+        if (!readBack || JSON.stringify(readBack) !== JSON.stringify(rec)) {
+          throw new Error(`Evidence 持久化 read-back 不一致：${rec.id}`);
+        }
       } catch (error) {
         this._records = this._records.filter((item) => item.id !== rec.id);
         throw error;

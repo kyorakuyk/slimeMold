@@ -158,4 +158,20 @@ describe('H4 EvidenceCollector', () => {
     await expect(collector.addAsync({ orchestrationId: 'o', stageId: 's', kind: 'test', status: 'failed', summary: 'x' })).rejects.toThrow();
     expect(collector.records).toHaveLength(0);
   });
+
+  it('rejects an append that does not read back the exact Evidence record', async () => {
+    const collector = new EvidenceCollector({
+      append: async () => {},
+      load: async () => [],
+    });
+
+    await expect(collector.addAsync({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'passed',
+      summary: 'append silently dropped',
+    })).rejects.toThrow(/read-back|持久化/);
+    expect(collector.records).toHaveLength(0);
+  });
 });

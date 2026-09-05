@@ -1949,6 +1949,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、926 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 3 个文件、41 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.57 关键 Evidence addAsync 增加 exact read-back
+
+- Phase 2 hardening 第四个垂直切片修复 Evidence durable 边界：`EvidenceCollector.addAsync()` 在 persistence append 成功后重新 `load()`，要求同一 Evidence ID 存在且 JSON 内容完全一致；缺失、内容漂移或 read 失败都会移除内存记录并拒绝继续验收。
+- 普通 `add()` 仍保留异步采集语义；Worker acceptance 使用 `addAsync`/`flushAndByScope` 的关键证据不会再把“append 已 resolve”误当作真实落盘。同步更新 acceptance 测试 fake persistence，使其模拟可读回的 durable store；无 persistence 和 append 失败用例仍保持 fail-closed。
+- 新增 append 静默丢写的 RED→GREEN 回归；真实 JSONL store 的跨会话 load 测试继续通过。
+- 验证结果：`npm run test` 为 109 个测试文件、927 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite `src/dev/evidence.test.ts` 为 9 个测试通过，`src/dev/workerAcceptance.test.ts` 为 8 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EvidenceCollector } from './evidence';
+import { EvidenceCollector, type EvidenceRecord } from './evidence';
 import { createDevWorkerAcceptance } from './workerAcceptance';
 import type { WorkerTaskLease } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
@@ -45,6 +45,7 @@ const lease: WorkerTaskLease = {
 };
 
 function host(overrides: Partial<TestHost> = {}): TestHost {
+  const persistedEvidence: EvidenceRecord[] = [];
   return {
     policy: {
       allowedPaths: ['src'],
@@ -60,8 +61,10 @@ function host(overrides: Partial<TestHost> = {}): TestHost {
       gitChangedFiles: vi.fn(async () => ['src/feature.ts']),
     },
     collector: new EvidenceCollector({
-      append: async () => {},
-      load: async () => [],
+      append: async (record) => {
+        persistedEvidence.push({ ...record });
+      },
+      load: async () => persistedEvidence.map((record) => ({ ...record })),
     }),
     nextAcceptanceId: vi.fn(() => 'acceptance-1'),
     recordAcceptance: vi.fn((record) => record),
