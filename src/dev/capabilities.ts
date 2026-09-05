@@ -224,8 +224,11 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
     cmd: 'grep',
     denyAbsPath: true,
     pathArgsFrom: 1,
-    denyArgs: ['-r', '-R', '--recursive', '-d', '--dereference-recursive'],
-    denyArgPrefixes: ['--directories='],
+    denyArgs: [
+      '-r', '-R', '--recursive', '-d', '--dereference-recursive',
+      '--file', '--exclude-from',
+    ],
+    denyArgPrefixes: ['--directories=', '--file=', '--exclude-from=', '-f'],
   },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },

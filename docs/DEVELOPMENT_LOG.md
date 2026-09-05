@@ -2089,6 +2089,12 @@ Issue 工作台采用四个面板：
 - 新增 signal 在 destructive cleanup 完成后到达的回归；registration-pending/orphaned retry 仍走 branch-only/unregister-only 专用路径。
 - 验证结果：`npm run test` 为 109 个测试文件、959 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.76 Node grep 外部文件选项双宿主 denylist
+
+- Phase 2 hardening 第二十三个垂直切片把 grep 外部输入选项从“测试覆盖”落实为 Node policy：拒绝 `--file`、`--file=...`、`-f...`、`--exclude-from`、`--exclude-from=...`，防止 pattern/排除规则从 worktree 外部读取；Rust 原有 unknown-option fail-closed gate保持一致。
+- 新增 allowed pattern 的真实 runner-not-called regression，避免此前使用不在 allowedPaths 的 pattern 导致测试被路径守卫提前拒绝而产生假覆盖。
+- 验证结果：`npm run test` 为 109 个测试文件、959 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
