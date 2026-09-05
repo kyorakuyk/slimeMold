@@ -793,6 +793,20 @@ fn worker_branch_is_valid(branch: &str) -> bool {
     worker_name_is_valid(suffix)
 }
 
+fn is_full_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn worker_branch_from_tip_arg(arg: &str) -> Option<&str> {
+    let branch_ref = arg.strip_suffix("^{commit}")?.strip_prefix("refs/heads/")?;
+    worker_branch_is_valid(branch_ref).then_some(branch_ref)
+}
+
+fn worker_branch_from_ref_arg(arg: &str) -> Option<&str> {
+    let branch = arg.strip_prefix("refs/heads/")?;
+    worker_branch_is_valid(branch).then_some(branch)
+}
+
 fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
     if raw_path.is_empty() {
         return false;
@@ -1053,6 +1067,22 @@ fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
     })
 }
 
+fn pending_worker_branch_any(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    if !worker_name_is_valid(name) {
+        return false;
+    }
+    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
+    let state = DEV_STATE.lock().unwrap();
+    state.pending_worktrees.iter().any(|pending| {
+        pending.generation == state.generation
+            && pending.branch == branch
+            && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
 fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &str) {
     if !main_repo_worktree_target_is_valid(repo, raw_path, branch) {
         return;
@@ -1105,15 +1135,13 @@ fn update_pending_worktree_after_success(repo: &std::path::Path, args: &[String]
         }
         return;
     }
-    if args.len() == 4
-        && args[0] == "git"
-        && args[1] == "branch"
-        && matches!(args[2].as_str(), "-D" | "-d")
-    {
-        let mut state = DEV_STATE.lock().unwrap();
-        state
-            .pending_worktrees
-            .retain(|pending| pending.branch != args[3]);
+    if args.len() == 5 && args[0] == "git" && args[1] == "update-ref" && args[2] == "-d" {
+        if let Some(branch) = worker_branch_from_ref_arg(&args[3]) {
+            let mut state = DEV_STATE.lock().unwrap();
+            state
+                .pending_worktrees
+                .retain(|pending| pending.branch != branch);
+        }
     }
 }
 
@@ -1163,16 +1191,25 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             }
         });
     }
-    if args.get(1).map(|value| value.as_str()) == Some("branch")
-        && matches!(
-            args.get(2).map(|value| value.as_str()),
-            Some("-D") | Some("-d")
-        )
+    if args.len() == 5
+        && args[1] == "rev-parse"
+        && args[2] == "--verify"
+        && args[3] == "--end-of-options"
     {
         return repo.is_some_and(|path| {
-            args.len() == 4
-                && (registered_worker_branch(path, &args[3])
-                    || pending_worker_branch(path, &args[3]))
+            let Some(branch) = worker_branch_from_tip_arg(&args[4]) else {
+                return false;
+            };
+            registered_worker_branch(path, branch) || pending_worker_branch_any(path, branch)
+        });
+    }
+    if args.len() == 5 && args[1] == "update-ref" && args[2] == "-d" {
+        return repo.is_some_and(|path| {
+            let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
+                return false;
+            };
+            is_full_object_id(&args[4])
+                && (registered_worker_branch(path, branch) || pending_worker_branch(path, branch))
         });
     }
     dev_main_repo_git_allowed(args)
@@ -2900,36 +2937,53 @@ mod dev_exec_tests {
         )
         .unwrap();
         assert_eq!(result.code, 0, "worktree add should succeed");
+        let branch_ref = format!("refs/heads/{branch}");
+        let revision_arg = format!("{branch_ref}^{{commit}}");
+        let revision_args = sv(&[
+            "git",
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &revision_arg,
+        ]);
+        let revision_result =
+            dev_exec(revision_args.clone(), base_str.clone(), generation).unwrap();
+        assert_eq!(
+            revision_result.code, 0,
+            "worker branch tip read should succeed"
+        );
+        let branch_revision = revision_result.stdout.trim().to_string();
+        assert!(branch_revision.len() == 40 || branch_revision.len() == 64);
         let remove_allowed = dev_main_repo_git_allowed_at(
             &sv(&["git", "worktree", "remove", "--force", &target_str]),
             Some(&base),
         );
-        let branch_allowed_before_remove =
-            dev_main_repo_git_allowed_at(&sv(&["git", "branch", "-D", &branch]), Some(&base));
+        let cas_args = sv(&["git", "update-ref", "-d", &branch_ref, &branch_revision]);
+        let branch_allowed_before_remove = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
         let remove_result = dev_exec(
             sv(&["git", "worktree", "remove", "--force", &target_str]),
             base_str.clone(),
             generation,
         )
         .unwrap();
-        let branch_allowed_after_remove =
-            dev_main_repo_git_allowed_at(&sv(&["git", "branch", "-D", &branch]), Some(&base));
-        let branch_result = dev_exec(
-            sv(&["git", "branch", "-D", &branch]),
-            base_str.clone(),
-            generation,
-        )
-        .unwrap();
-        let branch_allowed_after_delete =
-            dev_main_repo_git_allowed_at(&sv(&["git", "branch", "-D", &branch]), Some(&base));
+        let branch_allowed_after_remove = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
+        let branch_result = dev_exec(cas_args.clone(), base_str.clone(), generation).unwrap();
+        let branch_allowed_after_delete = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
         let other_target = workers.join("attempt-2").to_string_lossy().to_string();
         let other_branch = "worker/attempt-2";
         let other_remove_allowed = dev_main_repo_git_allowed_at(
             &sv(&["git", "worktree", "remove", "--force", &other_target]),
             Some(&base),
         );
-        let other_branch_allowed =
-            dev_main_repo_git_allowed_at(&sv(&["git", "branch", "-D", other_branch]), Some(&base));
+        let other_branch_ref = format!("refs/heads/{other_branch}");
+        let other_cas_args = sv(&[
+            "git",
+            "update-ref",
+            "-d",
+            &other_branch_ref,
+            &branch_revision,
+        ]);
+        let other_branch_allowed = dev_main_repo_git_allowed_at(&other_cas_args, Some(&base));
 
         dev_clear_session(generation).unwrap();
         let _ = fs::remove_dir_all(&workers);

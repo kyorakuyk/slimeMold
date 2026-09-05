@@ -374,6 +374,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   manager.restore = async (info, opts) => {
     const restored = await rawRestore(info, opts);
     if (!restored) return false;
+    if (info.status === 'orphaned') return true;
     try {
       await syncRust('register', info.path);
       registeredWorktrees.add(info.id);

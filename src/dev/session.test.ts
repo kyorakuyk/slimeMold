@@ -14,6 +14,8 @@ function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
 }
 
+const TIP_OID = 'b'.repeat(40);
+
 describe('DevSession cleanup', () => {
   afterEach(() => {
     resetDevSession();
@@ -23,7 +25,8 @@ describe('DevSession cleanup', () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       return ok();
     });
     const session = initDevSession({
@@ -63,7 +66,8 @@ describe('DevSession cleanup', () => {
 
   it('keeps the worktree record when Tauri registration and rollback both fail', async () => {
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'remove') {
         return { exitCode: 1, stdout: '', stderr: 'host gate rejected rollback', durationMs: 1 };
       }

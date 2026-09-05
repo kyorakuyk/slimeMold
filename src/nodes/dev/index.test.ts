@@ -19,6 +19,8 @@ function memPersistence(): EvidencePersistence {
   };
 }
 
+const TIP_OID = 'b'.repeat(40);
+
 function fakeSession(opts: {
   failGitStatus?: boolean;
   failGitDiff?: boolean;
@@ -27,7 +29,12 @@ function fakeSession(opts: {
   failWorktreeAdd?: boolean;
 } = {}): DevSession {
   const git = async (args: string[], _cwd: string): Promise<CommandResult> => {
-    if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
+    }
+    if (args[0] === 'rev-parse') {
+      return { exitCode: 0, stdout: `${TIP_OID}\n`, stderr: '', durationMs: 1 };
+    }
     if (args[0] === 'worktree') {
       // 模拟残留 worktree 冲突：git worktree add 返回 128（manager.create → null）
       if (opts.failWorktreeAdd) {

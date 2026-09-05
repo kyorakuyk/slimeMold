@@ -6,6 +6,9 @@ function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
 }
 
+const TIP_OID = 'b'.repeat(40);
+const RECREATED_OID = 'c'.repeat(40);
+
 describe('H4 WorktreeManager（fake git runner）', () => {
   it('create：rev-parse 失败（非 git 仓库）→ null，不创建', async () => {
     const git = vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: 'not a repo', durationMs: 1 }));
@@ -19,7 +22,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       return ok();
     });
     const m = new WorktreeManager({ git }, 'D:/Temp/slimemold-fixture');
@@ -57,7 +61,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'list') {
         return ok('worktree D:/repo-workers/attempt-1\nHEAD abc123\nbranch refs/heads/worker/attempt-1\n');
       }
@@ -94,9 +99,9 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree') return ok();
-      if (args[0] === 'branch') return ok();
       return ok();
     });
     const m = new WorktreeManager({ git }, '/repo');
@@ -128,14 +133,20 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(cleaned).toBe(true);
     expect(m.get('t1')?.status).toBe('cleaned');
     expect(calls).toContainEqual(['worktree', 'remove', '--force', '/wt/t1']);
-    expect(calls).toContainEqual(['branch', '-D', info!.branch]);
+    expect(calls).toContainEqual([
+      'update-ref',
+      '-d',
+      `refs/heads/${info!.branch}`,
+      TIP_OID,
+    ]);
     // 二次清理返回 false（幂等）
     expect(await m.cleanup('t1', { confirm: true })).toBe(false);
   });
 
   it('hasUncommittedChanges：有 tracked diff 或 untracked 文件 → true', async () => {
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('h1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('h1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') return ok();
       if (args[0] === 'diff' && args[1] === '--quiet') {
         return { exitCode: 1, stdout: '', stderr: '', durationMs: 1 }; // 有未提交改动
@@ -150,7 +161,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
 
   it('cleanup 失败（git 报错）→ 保留现场返回 false', async () => {
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('h1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('h1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') return ok();
       if (args[0] === 'worktree' && args[1] === 'remove') {
         return { exitCode: 128, stdout: '', stderr: 'branch checked out', durationMs: 1 };
@@ -163,17 +175,82 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(m.get('t1')?.status).toBe('created'); // 保留现场
   });
 
+  it('cleanup uses an atomic branch compare-and-delete after capturing the tip', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, '/repo');
+    const info = await m.create('t1', '/repo-workers/t1', { branch: 'worker/t1' });
+    expect(info).not.toBeNull();
+
+    await expect(m.cleanup('t1', { confirm: true })).resolves.toBe(true);
+    expect(calls).toContainEqual([
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      'refs/heads/worker/t1^{commit}',
+    ]);
+    expect(calls).toContainEqual([
+      'update-ref',
+      '-d',
+      'refs/heads/worker/t1',
+      TIP_OID,
+    ]);
+    expect(calls.some((args) => args[0] === 'branch')).toBe(false);
+  });
+
+  it('refuses cleanup before worktree removal when branch tip provenance cannot be read', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return { exitCode: 1, stdout: '', stderr: 'ref unavailable', durationMs: 1 };
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, '/repo');
+    await m.create('t1', '/repo-workers/t1', { branch: 'worker/t1' });
+
+    await expect(m.cleanup('t1', { confirm: true })).resolves.toBe(false);
+    expect(m.get('t1')?.status).toBe('created');
+    expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'remove')).toBe(false);
+  });
+
+  it('stops normal cleanup when cancellation arrives while reading branch provenance', async () => {
+    const controller = new AbortController();
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') {
+        controller.abort();
+        return ok(`${TIP_OID}\n`);
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, '/repo');
+    await m.create('t1', '/repo-workers/t1', { branch: 'worker/t1' });
+
+    await expect(m.cleanup('t1', { confirm: true, signal: controller.signal })).resolves.toBe(false);
+    expect(m.get('t1')?.status).toBe('created');
+    expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'remove')).toBe(false);
+  });
+
   it('orphaned cleanup retries branch deletion without removing the worktree again', async () => {
     let removeCalls = 0;
     let branchCalls = 0;
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('h1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('h1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') return ok();
       if (args[0] === 'worktree' && args[1] === 'remove') {
         removeCalls += 1;
         return removeCalls === 1 ? ok() : { exitCode: 1, stdout: '', stderr: 'already removed', durationMs: 1 };
       }
-      if (args[0] === 'branch') {
+      if (args[0] === 'update-ref') {
         branchCalls += 1;
         return branchCalls === 1 ? { exitCode: 1, stdout: '', stderr: 'temporary branch failure', durationMs: 1 } : ok();
       }
@@ -189,17 +266,18 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(m.get('t1')?.status).toBe('cleaned');
     expect(removeCalls).toBe(1);
     expect(branchCalls).toBe(2);
+    expect(git.mock.calls.every(([args]) => args[0] !== 'branch')).toBe(true);
   });
 
   it('refuses orphan retry when the branch name was recreated at a different revision', async () => {
-    let branchRevision = 'orphan-tip';
+    let branchRevision = TIP_OID;
     let branchDeleteCalls = 0;
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
       if (args[0] === 'rev-parse') return ok(`${branchRevision}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') return ok();
       if (args[0] === 'worktree' && args[1] === 'remove') return ok();
-      if (args[0] === 'branch') {
+      if (args[0] === 'update-ref') {
         branchDeleteCalls += 1;
         return { exitCode: 1, stdout: '', stderr: 'temporary branch failure', durationMs: 1 };
       }
@@ -209,11 +287,12 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     await m.create('orphan-recreated', 'C:/repo-workers/orphan-recreated', { branch: 'worker/orphan-recreated' });
 
     expect(await m.cleanup('orphan-recreated', { confirm: true })).toBe(false);
-    expect(m.get('orphan-recreated')).toMatchObject({ status: 'orphaned', branchRevision: 'orphan-tip' });
+    expect(m.get('orphan-recreated')).toMatchObject({ status: 'orphaned', branchRevision: TIP_OID });
 
-    branchRevision = 'recreated-tip';
+    branchRevision = RECREATED_OID;
     expect(await m.cleanup('orphan-recreated', { confirm: true })).toBe(false);
     expect(branchDeleteCalls).toBe(1);
+    expect(git.mock.calls.every(([args]) => args[0] !== 'branch')).toBe(true);
   });
 
   it('createNodeGitRunner：真实 runner 结构可用', async () => {
@@ -245,6 +324,31 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     await expect(m.restore(liveInfo)).resolves.toBe(true);
     expect(m.isTracked(liveInfo.path)).toBe(true);
     expect(git).toHaveBeenCalledWith(['worktree', 'list', '--porcelain'], 'C:/repo');
+  });
+
+  it('restores an orphaned record by branch provenance without requiring a live worktree', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+    const info = {
+      id: 'orphan-1',
+      path: 'C:/repo-workers/orphan-1',
+      branch: 'worker/orphan-1',
+      baseRevision: 'base-1',
+      branchRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'orphaned' as const,
+    };
+
+    await expect(m.restore(info)).resolves.toBe(true);
+    expect(m.get(info.id)).toEqual(expect.objectContaining({ status: 'orphaned', branchRevision: TIP_OID }));
+    await expect(m.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'list')).toBe(false);
+    expect(calls).toContainEqual(['update-ref', '-d', 'refs/heads/worker/orphan-1', TIP_OID]);
   });
 
   it('does not register a restored worktree after cancellation', async () => {
@@ -280,7 +384,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') {
         controller.abort();
         return ok();
@@ -295,13 +400,19 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     })).resolves.toBeNull();
     expect(m.list()).toEqual([]);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', 'C:/repo-workers/attempt-1']);
-    expect(calls).toContainEqual(['branch', '-D', 'worker/attempt-1']);
+    expect(calls).toContainEqual([
+      'update-ref',
+      '-d',
+      'refs/heads/worker/attempt-1',
+      TIP_OID,
+    ]);
   });
 
   it('preserves create lineage when cancellation rollback cannot remove the worktree', async () => {
     const controller = new AbortController();
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'add') {
         controller.abort();
         return ok();

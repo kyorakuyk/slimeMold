@@ -2022,6 +2022,15 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、942 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 41 个 Rust 测试通过；独立 `normal_write_within_worktree_ok` 通过；相关 TS targeted suite 为 2 个文件、11 个测试通过；`git diff --check` 通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.66 branch provenance CAS cleanup 与 orphan restart lineage
+
+- Phase 2 hardening 第十三个垂直切片修复 Worker branch cleanup 的 TOCTOU：`WorktreeManager` 在删除 worktree 前用 `git rev-parse --verify --end-of-options refs/heads/<branch>^{commit}` 读取完整 tip OID，删除改为 `git update-ref -d refs/heads/<branch> <expected-oid>` 原子 compare-and-delete；不再使用无条件 `git branch -D`。tip读取失败、OID非法、CAS失败或 runner异常均 fail-closed；CAS失败保存删除前的 expected provenance，不采集失败后的新 tip。
+- 正常 cleanup 与 orphan retry 共用 branch CAS语义；取消在 provenance read/remove 尚未开始前生效，Git remove 一旦开始则继续 branch CAS收尾；新增 tip读取失败、读取期间取消、CAS命令和无 branch-D 回归。
+- Rust/Tauri 主仓库 allowlist 增加严格 worker branch tip read 与 CAS delete，仅允许当前 registered/pending worker branch、完整40/64位 object ID和精确 refs/heads/worker/*；pending lease 在 CAS成功后消费，旧 `branch -D` mutation path移除。真实 Git lifecycle test覆盖 add→tip read→remove→CAS delete→lease consume。
+- orphan `WorktreeInfo` 支持 restart restore：通过 branch provenance read-back 恢复 branch-only lineage，不要求 live worktree list；Tauri session restore 不会为已删除 worktree重新 register/unregister。Node/Rust/Dev node测试 fake 同步完整OID/CAS契约。
+- 验证结果：`npm run test` 为 109 个测试文件、947 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 41 个 Rust 测试通过；相关 TS targeted suite 为 3 个文件、30 个测试通过；`git diff --check` 通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

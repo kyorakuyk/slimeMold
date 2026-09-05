@@ -21,6 +21,8 @@ function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
 }
 
+const TIP_OID = 'b'.repeat(40);
+
 describe('DevSession Tauri orphan cleanup', () => {
   afterEach(() => {
     resetDevSession();
@@ -32,9 +34,10 @@ describe('DevSession Tauri orphan cleanup', () => {
   it('keeps Rust registration while retrying an orphaned branch cleanup', async () => {
     let branchCalls = 0;
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'remove') return ok();
-      if (args[0] === 'branch') {
+      if (args[0] === 'update-ref') {
         branchCalls += 1;
         if (branchCalls === 1) {
           return { exitCode: 1, stdout: '', stderr: 'temporary branch failure', durationMs: 1 };
@@ -75,7 +78,8 @@ describe('DevSession Tauri orphan cleanup', () => {
 
   it('keeps cleanup retryable when Rust unregister fails after Git cleanup', async () => {
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('base-1\\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       return ok();
     });
     const session = initDevSession({
@@ -102,7 +106,8 @@ describe('DevSession Tauri orphan cleanup', () => {
 
   it('retries registration-pending cleanup through confirmAndCleanup without recomputing a deleted worktree', async () => {
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       return ok();
     });
     const session = initDevSession({
@@ -150,7 +155,8 @@ describe('DevSession Tauri orphan cleanup', () => {
   it('does not unregister a worktree whose initial Rust registration never succeeded', async () => {
     let removeCalls = 0;
     const git = vi.fn(async (args: string[]) => {
-      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
       if (args[0] === 'worktree' && args[1] === 'remove') {
         removeCalls += 1;
         if (removeCalls === 1) {
@@ -177,5 +183,32 @@ describe('DevSession Tauri orphan cleanup', () => {
     await expect(session.manager.cleanup('worker-id', { confirm: true })).resolves.toBe(true);
     expect(invoke.mock.calls.filter(([command]) => command === 'dev_unregister_worktree')).toHaveLength(0);
     expect(session.manager.get('worker-id')).toBeUndefined();
+  });
+
+  it('restores an orphaned branch lineage without registering a deleted worktree', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+    const info = {
+      id: 'orphan-worker',
+      path: '/repo-workers/orphan-worker',
+      branch: 'worker/orphan-worker',
+      baseRevision: 'base-1',
+      branchRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'orphaned' as const,
+    };
+
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
+    await expect(session.manager.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
   });
 });
