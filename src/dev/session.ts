@@ -598,7 +598,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           acc.stageId === approval.stageId &&
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
-        if (info?.status === 'registration-pending') {
+        if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
           if (!accOk || !revOk) return false;
           const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
           if (signal?.aborted) return false;

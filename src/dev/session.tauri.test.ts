@@ -211,4 +211,48 @@ describe('DevSession Tauri orphan cleanup', () => {
     await expect(session.manager.cleanup(info.id, { confirm: true })).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
   });
+
+  it('confirms cleanup for a restored orphan through the branch-only path', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+    const info = {
+      id: 'orphan-confirm',
+      path: '/repo-workers/orphan-confirm',
+      branch: 'worker/orphan-confirm',
+      baseRevision: 'base-1',
+      branchRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'orphaned' as const,
+    };
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    const acceptanceId = session.nextAcceptanceId();
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: info.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(info.path, {
+      baseRevision: info.baseRevision,
+      stateSignature: 'sig-orphan',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+    });
+
+    await expect(session.confirmAndCleanup(info.path)).resolves.toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
+  });
 });

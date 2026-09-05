@@ -140,12 +140,12 @@ export class WorktreeManager {
     return this.infos.get(id);
   }
 
-  /** 按规范化后的 worktree 路径查找仍在使用中的登记（含待重试宿主注销的 lineage）。 */
+  /** 按规范化后的 worktree 路径查找可收尾的登记（含 orphan branch lineage）。 */
   getByPath(path: string): WorktreeInfo | undefined {
     const normalized = pathComparisonKey(path);
     return [...this.infos.values()].find(
       (info) =>
-        (info.status === 'created' || info.status === 'registration-pending') &&
+        (info.status === 'created' || info.status === 'registration-pending' || info.status === 'orphaned') &&
         pathComparisonKey(info.path) === normalized,
     );
   }

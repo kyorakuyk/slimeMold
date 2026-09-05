@@ -2038,6 +2038,13 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、948 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 42 个 Rust 测试通过；相关 TS targeted suite 为 2 个文件、22 个测试通过；`cargo test event_store::tests` 为 4 个测试通过；`git diff --check` 通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.68 重启 orphan 的用户确认清理路径
+
+- Phase 2 hardening 第十五个垂直切片补齐 orphan restart lineage 的用户路径：`WorktreeManager.getByPath()` 纳入 `orphaned`，`DevSession.confirmAndCleanup()` 对 orphan 与 registration-pending 共用 approval、Acceptance、base revision 校验，跳过已删除 worktree 的 signature 读取，直接执行 branch-only CAS cleanup。
+- 新增真实 Tauri session 语义回归：恢复后的 orphan 不会重新 register，也不会因为不存在 worktree 而触发 `assertTracked`/signature 失败；用户确认仍可完成 branch cleanup。
+- 验证结果：`npm run test` 为 109 个测试文件、949 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 42 个 Rust 测试通过；相关 TS targeted suite 为 3 个文件、31 个测试通过；`git diff --check` 通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
