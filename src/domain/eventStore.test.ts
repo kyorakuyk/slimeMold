@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withTestArtifactRoot } from '../dev/test-artifacts';
 import type { DomainEvent, DomainProjection } from './contracts';
@@ -237,6 +237,31 @@ describe('EventStreamRepository', () => {
 
       await expect(adapter.acquireLock(lockPath)).rejects.toMatchObject({ code: 'lock-timeout' });
       expect(await readFile(lockPath, 'utf8')).toBe('stale-owner');
+    });
+  });
+
+  it('rejects lexical parent traversal before touching the filesystem', async () => {
+    await withTestArtifactRoot('event-store-traversal', async (root) => {
+      const adapter = new NodeFileEventStoreAdapter(root);
+      const escaped = `${root}/.slimemold/events/../../../outside/events.jsonl`;
+
+      await expect(adapter.readText(escaped)).rejects.toThrow(/事件存储路径逃逸/);
+    });
+  });
+
+  it('rejects an event root replaced by a junction or symlink', async () => {
+    await withTestArtifactRoot('event-store-reparse', async (root) => {
+      const outside = `${root}-outside`;
+      const linkedRoot = `${root}-linked`;
+      await mkdir(outside, { recursive: true });
+      await symlink(outside, linkedRoot, 'junction');
+      try {
+        const adapter = new NodeFileEventStoreAdapter(linkedRoot);
+        await expect(adapter.readText(`${linkedRoot}/events.jsonl`)).rejects.toThrow(/事件存储路径逃逸/);
+      } finally {
+        await rm(linkedRoot, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -66,10 +66,47 @@ export class NodeFileEventStoreAdapter implements EventStoreAdapter {
   }
 
   private assertInsideRoot(path: string): void {
-    const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    const root = normalize(this.root);
-    const candidate = normalize(path);
-    if (candidate !== root && !candidate.startsWith(`${root}/`)) {
+    const root = normalizeBoundaryPath(this.root);
+    const candidate = normalizeBoundaryPath(path);
+    const isChild = root.value === '/'
+      ? candidate.value.startsWith('/')
+      : candidate.value.startsWith(`${root.value}/`);
+    if (root.escaped || candidate.escaped || (candidate.value !== root.value && !isChild)) {
+      throw new Error(`事件存储路径逃逸：${path}`);
+    }
+  }
+
+  private async assertRealPathInsideRoot(
+    path: string,
+    fs: {
+      lstat(value: string): Promise<{ isSymbolicLink(): boolean }>;
+      realpath(value: string): Promise<string>;
+    },
+  ): Promise<void> {
+    const rootLexical = normalizeBoundaryPath(this.root);
+    const rootReal = normalizeBoundaryPath(await fs.realpath(this.root));
+    if (rootLexical.escaped || rootReal.escaped || rootLexical.value !== rootReal.value) {
+      throw new Error(`事件存储路径逃逸：${path}`);
+    }
+    let current = path;
+    while (true) {
+      try {
+        const stat = await fs.lstat(current);
+        if (stat.isSymbolicLink()) throw new Error(`事件存储路径逃逸：${path}`);
+      } catch (error) {
+        if (!isNodeError(error, 'ENOENT')) throw error;
+      }
+      if (normalizeBoundaryPath(current).value === rootLexical.value) break;
+      const parent = dirname(current);
+      if (parent === current || parent === '.') throw new Error(`事件存储路径逃逸：${path}`);
+      current = parent;
+    }
+    const nearestExisting = await realpathNearestExisting(fs, path);
+    const candidateReal = normalizeBoundaryPath(nearestExisting);
+    const isChild = rootReal.value === '/'
+      ? candidateReal.value.startsWith('/')
+      : candidateReal.value.startsWith(`${rootReal.value}/`);
+    if (candidateReal.escaped || (candidateReal.value !== rootReal.value && !isChild)) {
       throw new Error(`事件存储路径逃逸：${path}`);
     }
   }
@@ -77,6 +114,7 @@ export class NodeFileEventStoreAdapter implements EventStoreAdapter {
   async readText(path: string): Promise<string | null> {
     this.assertInsideRoot(path);
     const fs = await import('node:fs/promises');
+    await this.assertRealPathInsideRoot(path, fs);
     try {
       return await fs.readFile(path, 'utf8');
     } catch (error) {
@@ -88,7 +126,9 @@ export class NodeFileEventStoreAdapter implements EventStoreAdapter {
   async writeTextAtomic(path: string, text: string): Promise<void> {
     this.assertInsideRoot(path);
     const fs = await import('node:fs/promises');
+    await this.assertRealPathInsideRoot(path, fs);
     await fs.mkdir(dirname(path), { recursive: true });
+    await this.assertRealPathInsideRoot(path, fs);
     const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
     await fs.writeFile(tmpPath, text, 'utf8');
     try {
@@ -107,7 +147,9 @@ export class NodeFileEventStoreAdapter implements EventStoreAdapter {
   async acquireLock(path: string): Promise<EventStoreLock> {
     this.assertInsideRoot(path);
     const fs = await import('node:fs/promises');
+    await this.assertRealPathInsideRoot(path, fs);
     await fs.mkdir(dirname(path), { recursive: true });
+    await this.assertRealPathInsideRoot(path, fs);
     const token = `event-lock:${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const startedAt = Date.now();
     let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
@@ -154,6 +196,49 @@ export class NodeFileEventStoreAdapter implements EventStoreAdapter {
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function normalizeBoundaryPath(raw: string): { value: string; escaped: boolean } {
+  const replaced = raw.replace(/\\/g, '/');
+  const prefix = replaced.startsWith('/')
+    ? '/'
+    : /^[A-Za-z]:\//.test(replaced)
+      ? replaced.slice(0, 3)
+      : '';
+  const rest = prefix ? replaced.slice(prefix.length) : replaced;
+  const parts: string[] = [];
+  let escaped = false;
+  for (const part of rest.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (parts.length === 0) escaped = true;
+      else parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  let value = `${prefix}${parts.join('/')}`;
+  if (value.length > 1) value = value.replace(/\/+$/, '');
+  if (!value) value = prefix || '.';
+  if (typeof process !== 'undefined' && process.platform === 'win32') value = value.toLowerCase();
+  return { value, escaped };
+}
+
+async function realpathNearestExisting(
+  fs: { realpath(value: string): Promise<string> },
+  path: string,
+): Promise<string> {
+  let current = path;
+  while (true) {
+    try {
+      return await fs.realpath(current);
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) throw error;
+      const parent = dirname(current);
+      if (parent === current || parent === '.') throw error;
+      current = parent;
+    }
+  }
 }
 
 function dirname(path: string): string {

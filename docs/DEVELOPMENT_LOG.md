@@ -2053,6 +2053,12 @@ Issue 工作台采用四个面板：
 
 
 
+### 7.70 Node EventStore path boundary 与 reparse gate
+
+- Phase 2 hardening 第十七个垂直切片修复 Node/headless EventStore adapter 的路径边界：`assertInsideRoot` 现在解析分隔符、`.`/`..`、Windows drive/UNC 和平台大小写规则；读、原子写、跨进程 lock 都在 filesystem 操作前后执行 root realpath、ancestor `lstat` 和 nearest-existing realpath 校验，拒绝 root/ancestor junction 或 symlink 被重定向到外部。
+- 新增 lexical parent traversal 与 root reparse replacement 回归；测试生成物继续位于专用临时根。
+- 验证结果：`npm run test` 为 109 个测试文件、952 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
