@@ -45,10 +45,49 @@ describe('H4 WorktreeManager（fake git runner）', () => {
       '/repo-workers/foo.',
       '/repo-workers/foo.lock',
       '/repo-workers/Foo.LOCK',
+      '/repo-workers/./foo',
+      '/repo-workers/../repo-workers/foo',
       `/repo-workers/${'a'.repeat(201)}`,
     ]) {
-      expect(() => workerBranchForPath(path)).toThrow(/basename 无效/);
+      expect(() => workerBranchForPath(path)).toThrow(/(?:path|basename) 无效/);
     }
+  });
+
+  it('Worker-scoped create/restore：只接受 base sibling Worker root 与 branch-basename 对', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        return ok('worktree D:/repo-workers/attempt-1\nHEAD abc123\nbranch refs/heads/worker/attempt-1\n');
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'D:/repo');
+
+    await expect(m.create('attempt-1', 'D:/repo-workers/attempt-1', {
+      branch: 'worker/attempt-1',
+    })).resolves.not.toBeNull();
+    await expect(m.create('outside', 'D:/repo/outside', {
+      branch: 'worker/outside',
+    })).resolves.toBeNull();
+    await expect(m.create('foldback', 'D:/repo-workers/../repo-workers/foldback', {
+      branch: 'worker/foldback',
+    })).resolves.toBeNull();
+    await expect(m.create('mismatch', 'D:/repo-workers/mismatch', {
+      branch: 'worker/other',
+    })).resolves.toBeNull();
+    expect(calls).not.toContainEqual(['worktree', 'add', '-q', 'D:/repo/outside', '-b', 'worker/outside', 'HEAD']);
+
+    const restored = await m.restore({
+      id: 'restored-outside',
+      path: 'D:/repo/outside',
+      branch: 'worker/outside',
+      baseRevision: 'abc123',
+      createdAt: '2026-09-05T00:00:00.000Z',
+      status: 'created',
+    });
+    expect(restored).toBe(false);
   });
 
   it('create→list→cleanup 完整生命周期', async () => {
@@ -162,7 +201,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
   it('restore：只接受 git worktree list 中、且不等于主仓库的 worktree', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'worktree' && args[1] === 'list') {
-        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
+        return ok('worktree C:/repo-workers/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
       }
       return ok();
     });
@@ -175,7 +214,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
       createdAt: '2026-09-01T00:00:00.000Z',
       status: 'created' as const,
     };
-    const liveInfo = { ...mainRepoInfo, path: 'C:/repo-workers/run-1/task-1' };
+    const liveInfo = { ...mainRepoInfo, path: 'C:/repo-workers/task-1' };
 
     await expect(m.restore(mainRepoInfo)).resolves.toBe(false);
     await expect(m.restore(liveInfo)).resolves.toBe(true);
@@ -189,14 +228,14 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'worktree' && args[1] === 'list') {
         await new Promise<void>((resolve) => { release = resolve; });
-        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
+        return ok('worktree C:/repo-workers/task-1\nHEAD abc123\nbranch refs/heads/worker/task-1\n');
       }
       return ok();
     });
     const m = new WorktreeManager({ git }, 'C:/repo');
     const info = {
       id: 'wt-1',
-      path: 'C:/repo-workers/run-1/task-1',
+      path: 'C:/repo-workers/task-1',
       branch: 'worker/task-1',
       baseRevision: 'abc123',
       createdAt: '2026-09-01T00:00:00.000Z',

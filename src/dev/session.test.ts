@@ -32,7 +32,7 @@ describe('DevSession cleanup', () => {
     });
     const info = await session.manager.create(
       'worker-id',
-      '/repo-workers/run-1/task-1',
+      '/repo-workers/task-1',
       { branch: 'worker/task-1' },
     );
     expect(info).not.toBeNull();
@@ -78,11 +78,11 @@ describe('DevSession cleanup', () => {
 
     await expect(session.manager.create(
       'worker-id',
-      '/repo-workers/run-1/task-1',
+      '/repo-workers/task-1',
       { branch: 'worker/task-1' },
     )).rejects.toThrow('register rejected');
     expect(session.manager.get('worker-id')).toEqual(expect.objectContaining({
-      path: '/repo-workers/run-1/task-1',
+      path: '/repo-workers/task-1',
       status: 'created',
     }));
   });
@@ -90,7 +90,7 @@ describe('DevSession cleanup', () => {
   it('keeps a restored worktree record when Tauri registration fails', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'worktree' && args[1] === 'list') {
-        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD base-1\nbranch refs/heads/worker/task-1\n');
+        return ok('worktree C:/repo-workers/task-1\nHEAD base-1\nbranch refs/heads/worker/task-1\n');
       }
       return ok();
     });
@@ -102,7 +102,7 @@ describe('DevSession cleanup', () => {
     });
     const info = {
       id: 'worker-id',
-      path: 'C:/repo-workers/run-1/task-1',
+      path: 'C:/repo-workers/task-1',
       branch: 'worker/task-1',
       baseRevision: 'base-1',
       createdAt: '2026-09-01T00:00:00.000Z',
@@ -138,7 +138,7 @@ describe('DevSession cleanup', () => {
       acceptanceId: 'acc-partial-lineage',
       orchestrationId: 'orch-1',
       stageId: 'task-1',
-      worktreePath: '/repo-workers/run-1/task-1',
+      worktreePath: '/repo-workers/task-1',
       passed: true,
       failedChecks: [],
       at: '2026-09-01T00:00:00.000Z',

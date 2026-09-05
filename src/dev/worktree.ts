@@ -32,7 +32,12 @@ function branchStem(id: string): string {
 
 /** Rust/Tauri worktree registration uses the target basename as its branch identity. */
 export function workerBranchForPath(path: string): string {
-  const basename = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  const normalizedInput = path.replace(/\\/g, '/');
+  const segments = normalizedInput.split('/');
+  if (segments.some((segment) => segment === '.' || segment === '..')) {
+    throw new Error(`Worker worktree path 无效：${path}`);
+  }
+  const basename = normalizedInput.replace(/\/+$/, '').split('/').pop() ?? '';
   if (
     !/^[A-Za-z0-9._-]+$/.test(basename)
     || basename.length > WORKER_IDENTITY_MAX_LENGTH
@@ -44,6 +49,18 @@ export function workerBranchForPath(path: string): string {
     throw new Error(`Worker worktree basename 无效：${path}`);
   }
   return `worker/${basename}`;
+}
+
+function isWorkerScopedTarget(baseRepoPath: string, path: string, branch: string): boolean {
+  if (!branch.startsWith('worker/')) return true;
+  try {
+    const target = normalizeAbsolutePath(path);
+    const root = normalizeAbsolutePath(`${normalizeAbsolutePath(baseRepoPath)}-workers`);
+    const parent = target.slice(0, target.lastIndexOf('/')) || '/';
+    return pathComparisonKey(parent) === pathComparisonKey(root) && workerBranchForPath(path) === branch;
+  } catch {
+    return false;
+  }
 }
 
 export interface WorktreeInfo {
@@ -74,6 +91,7 @@ export class WorktreeManager {
    */
   async create(id: string, path: string, opts?: { branch?: string; signal?: AbortSignal }): Promise<WorktreeInfo | null> {
     if (opts?.signal?.aborted) return null;
+    if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) return null;
     const rev = await this.runner.git(['rev-parse', 'HEAD'], this.baseRepoPath);
     if (rev.exitCode !== 0) return null;
     if (opts?.signal?.aborted) return null;
@@ -120,6 +138,7 @@ export class WorktreeManager {
     const path = normalizeAbsolutePath(info.path);
     const base = normalizeAbsolutePath(this.baseRepoPath);
     if (pathComparisonKey(path) === pathComparisonKey(base)) return false;
+    if (!isWorkerScopedTarget(base, path, info.branch)) return false;
 
     const existing = this.infos.get(info.id);
     if (existing) return pathComparisonKey(existing.path) === pathComparisonKey(path) && existing.status === 'created';

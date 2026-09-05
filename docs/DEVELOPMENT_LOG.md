@@ -1933,6 +1933,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、924 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；定向 `src/dev/session.tauri.test.ts` 为 2 tests passed。
 - 本切片仍未通过新的独立 reviewer；当前 snapshot 只作为本地 unverified checkpoint，未 push；既有 success worktree 未清理。
 
+### 7.55 对齐 Node WorktreeManager 与 Rust Worker target 接受集
+
+- Phase 2 hardening 第二个垂直切片针对 Node/headless 可创建、Tauri 拒绝的路径分叉：显式 `worker/<basename>` 分支现在要求目标规范化后位于 `<base>-workers` sibling root，branch suffix 必须等于 target basename；raw path 中的 `.`/`..` 组件直接 fail-closed。
+- 通用 `dev-...` WorktreeManager 语义保持不变；Worker-scoped create/restore 在 Git 调用前拒绝 root 外、折返、branch-basename 不一致的记录，Node fixture 与 Rust target gate 共用同一接受集。
+- 更新 dev node/session 测试夹具到直接 Worker sibling root，并新增 create/restore、mixed separator、折返路径回归。
+- 验证结果：`npm run test` 为 109 个测试文件、925 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 5 个文件、38 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
