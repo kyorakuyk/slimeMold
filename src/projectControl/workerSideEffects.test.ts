@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createSideEffect } from '../domain/contracts';
 import type { WorkerExecutionResult, WorkerTaskLease } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
@@ -91,6 +92,39 @@ describe('worker side-effect recorder', () => {
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect((await repository.read()).journal.entries).toHaveLength(1);
     expect((await repository.read()).journal.entries[0].status).toBe('started');
+  });
+
+  it('binds a pending canonical claim to the exact worker path and branch', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    await repository.record(createSideEffect({
+      idempotencyKey: `worker-execution:${lease.attemptId}`,
+      kind: 'worker-execution',
+      target: lease.assignment.worktreeId,
+      inputHash: JSON.stringify([
+        lease.runId,
+        lease.task.id,
+        lease.task.version,
+        lease.attempt,
+        lease.assignment.baseRevision,
+      ]),
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+    }));
+
+    const movedLease = {
+      ...lease,
+      assignment: {
+        ...lease.assignment,
+        path: 'C:/worktrees/other',
+        branch: 'worker/other',
+      },
+    };
+    await expect(recorder.start(movedLease)).rejects.toThrow(/idempotencyKey|inputHash/);
+    expect((await repository.read()).journal.entries[0].status).toBe('planned');
   });
 
   it('uses canonical attempt identity instead of delimiter-ambiguous run/task keys', async () => {

@@ -1989,6 +1989,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、931 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted `src/dev/evidence.test.ts` 为 10 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.62 canonical Worker side-effect hash 绑定 path/branch
+
+- Phase 2 hardening 第九个垂直切片补齐 side-effect claim provenance：canonical Worker execution `inputHash` 现在包含 run、task/version、attempt、base revision、exact worktree path 和 branch；同一 execution/attempt 的 pending record 不能被另一条 path/branch lease 接管。
+- legacy idempotency key/hash 仍按旧格式读取，用于显式兼容迁移；新的 canonical claim 与 receipt 校验使用完整 path/branch binding。claim 冲突发生在持锁 journal 更新前，不会把 pending 状态推进成 started。
+- 新增 pending claim 被移动 Worker path/branch 接管的 RED→GREEN 回归；并发 claim、receipt、recovery 测试继续通过。
+- 验证结果：`npm run test` 为 109 个测试文件、932 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 3 个文件、42 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

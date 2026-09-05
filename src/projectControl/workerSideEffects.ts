@@ -113,6 +113,8 @@ function inputHashFor(lease: WorkerTaskLease): string {
     lease.task.version,
     lease.attempt,
     lease.assignment.baseRevision,
+    lease.assignment.path,
+    lease.assignment.branch,
   ]);
 }
 
