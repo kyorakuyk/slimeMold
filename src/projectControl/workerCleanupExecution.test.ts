@@ -15,6 +15,8 @@ function proposal(): WorkerCleanupProposalReady {
     attempt: 1,
     taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
     attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+    worktreeId: 'wt-1',
+    branch: 'worker/task-1',
     worktreePath: 'C:/project-workers/run-1/task-1',
     baseRevision: 'abc123',
     stateSignature: 'sig-1',
@@ -48,6 +50,27 @@ describe('worker cleanup execution', () => {
       status: 'ok',
       journal: { entries: [expect.objectContaining({ status: 'receipt' })] },
     });
+  });
+
+  it('finalizes a cleanup receipt when cancellation arrives after the host gate cleans', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    const controller = new AbortController();
+    const confirmAndCleanup = vi.fn(async () => {
+      controller.abort();
+      return true;
+    });
+
+    const result = await executeWorkerCleanupWithReceipt({
+      proposal: proposal(),
+      repository,
+      host: { confirmAndCleanup },
+      now: '2026-09-01T00:03:00.000Z',
+      signal: controller.signal,
+    });
+
+    expect(result.cleaned).toBe(true);
+    expect(result.sideEffect.status).toBe('receipt');
+    expect(result.sideEffect.receipt?.outcome).toBe('succeeded');
   });
 
   it('turns a rejected host cleanup into unknown and refuses an automatic second delete', async () => {

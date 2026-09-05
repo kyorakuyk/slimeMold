@@ -24,7 +24,9 @@ function run(): WorkerRunQueueState {
         acceptanceId: 'acc-1',
         worktreeId: 'wt-1',
         worktreePath: 'C:/project-workers/run-1/task-1',
+        branch: 'worker/task-1',
         baseRevision: 'abc123',
+        worktreeStatus: 'created',
         updatedAt: '2026-09-01T00:01:00.000Z',
       },
     },
@@ -66,6 +68,8 @@ describe('worker cleanup proposal', () => {
       attempt: 1,
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      worktreeId: 'wt-1',
+      branch: 'worker/task-1',
       worktreePath: 'C:/project-workers/run-1/task-1',
       baseRevision: 'abc123',
       stateSignature: 'sig-1',
@@ -111,6 +115,33 @@ describe('worker cleanup proposal', () => {
     })).resolves.toEqual(expect.objectContaining({
       status: 'blocked',
       reason: 'worktree 未被当前宿主登记，不能清理',
+    }));
+    expect(computeWorktreeSignature).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds an orphan proposal from durable branch provenance without live worktree access', async () => {
+    const computeWorktreeSignature = vi.fn(async () => 'should-not-run');
+    const task = {
+      ...run().tasks['task-1'],
+      worktreeStatus: 'orphaned' as const,
+      branchRevision: 'b'.repeat(40),
+      cleanupStateSignature: 'sig-before-removal',
+    };
+
+    const proposal = await buildWorkerCleanupProposal({
+      run: run(),
+      task,
+      acceptance: acceptance(),
+      isWorktreeTracked: () => false,
+      computeWorktreeSignature,
+      sideEffects: [],
+    });
+
+    expect(proposal).toEqual(expect.objectContaining({
+      status: 'ready',
+      worktreeId: 'wt-1',
+      branch: 'worker/task-1',
+      stateSignature: 'sig-before-removal',
     }));
     expect(computeWorktreeSignature).not.toHaveBeenCalled();
   });

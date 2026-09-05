@@ -170,6 +170,10 @@ export class WorktreeManager {
       this.infos.set(info.id, { ...info, path, status: 'orphaned' });
       return true;
     }
+    if (info.status === 'registration-pending') {
+      this.infos.set(info.id, { ...info, path, status: 'registration-pending' });
+      return true;
+    }
     if (info.status !== 'created') return false;
 
     const existing = this.infos.get(info.id);

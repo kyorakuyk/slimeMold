@@ -2102,6 +2102,13 @@ Issue 工作台采用四个面板：
 - 成功 Worker receipt 现在要求非空、非重复 Evidence ID；没有 host Evidence verifier 直接 fail-closed；新增可复用 verifier 对持久化 Evidence 做唯一 read-back、`capturedBy=host`、`status=passed`、execution/attempt/path/baseRevision provenance 校验。Worker queue 生成/恢复 succeeded 状态同样拒绝空或重复 Evidence。
 - 验证结果：`npm run test` 为 109 个测试文件、970 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.78 Restart worktree provenance、approval lineage 与 cleanup terminalization
+
+- Phase 2 hardening 第二十五个垂直切片把 Worktree 状态事实写入 WorkerQueueTask：持久化 `worktreeStatus`、`branchRevision`、`cleanupStateSignature`，App restart 按真实 status/branch provenance restore；`registration-pending` 可在无 live worktree 时恢复并等待 unregister retry，orphan proposal 使用持久化 signature/branch-only CAS，不再重新读取已删除 worktree。
+- cleanup approval 现在绑定具体 `worktreeId`、branch 以及 run/task/taskExecution/attempt lineage；confirm gate 同时核对当前 WorktreeInfo 与 passed Acceptance 全部 identity，阻断同路径复用旧 approval/Acceptance。
+- Evidence projection 对 durable duplicate ID 和 current/incoming 内容冲突 fail-closed，禁止 restart merge last-write-wins；cleanup host gate 已完成 destructive mutation 后即使 cancellation 到达也会先写成功 receipt；App recovery 传递 operation signal。
+- 验证结果：`npm run test` 为 109 个测试文件、975 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

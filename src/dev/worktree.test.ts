@@ -95,6 +95,24 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(restored).toBe(false);
   });
 
+  it('restores registration-pending lineage without requiring a live worktree', async () => {
+    const git = vi.fn(async () => ok());
+    const m = new WorktreeManager({ git }, 'D:/repo');
+    const info = {
+      id: 'pending-1',
+      path: 'D:/repo-workers/pending-1',
+      branch: 'worker/pending-1',
+      baseRevision: 'abc123',
+      createdAt: '2026-09-05T00:00:00.000Z',
+      status: 'registration-pending' as const,
+    };
+
+    await expect(m.restore(info)).resolves.toBe(true);
+    expect(m.get(info.id)).toEqual(info);
+    await expect(m.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    expect(m.get(info.id)?.status).toBe('registration-pending');
+  });
+
   it('create→list→cleanup 完整生命周期', async () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {

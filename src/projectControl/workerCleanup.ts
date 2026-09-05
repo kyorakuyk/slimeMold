@@ -11,6 +11,8 @@ export interface WorkerCleanupProposalReady {
   attempt: number;
   taskExecutionId: string;
   attemptId: string;
+  worktreeId: string;
+  branch: string;
   worktreePath: string;
   baseRevision: string;
   stateSignature: string;
@@ -55,6 +57,12 @@ export interface WorkerCleanupHost {
   approveCleanup(
     path: string,
     options: {
+      worktreeId: string;
+      branch: string;
+      runId: string;
+      taskId: string;
+      taskExecutionId: string;
+      attemptId: string;
       baseRevision: string;
       stateSignature: string;
       acceptanceId: string;
@@ -105,6 +113,7 @@ export async function buildWorkerCleanupProposal(
 ): Promise<WorkerCleanupProposal> {
   const { run, task, acceptance } = input;
   const taskId = task.taskId;
+  const durableBranchCleanup = task.worktreeStatus === 'orphaned' || task.worktreeStatus === 'registration-pending';
   if (task.cleanupStatus === 'cleaned') {
     if (task.cleanupReceiptId) {
       const lineage = resolveTaskLineage(run, task);
@@ -146,7 +155,7 @@ export async function buildWorkerCleanupProposal(
   if (!task.acceptanceId || !acceptance) {
     return blocked(run.runId, taskId, '任务缺少宿主 acceptance 记录，不能生成清理提案');
   }
-  if (!task.worktreePath || !task.baseRevision) {
+  if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) {
     return blocked(run.runId, taskId, '任务缺少 worktree 或 baseRevision，不能生成清理提案');
   }
   const lineage = resolveTaskLineage(run, task);
@@ -168,13 +177,17 @@ export async function buildWorkerCleanupProposal(
   if (!acceptanceMatches) {
     return blocked(run.runId, taskId, 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt');
   }
-  if (input.isWorktreeTracked && !input.isWorktreeTracked(task.worktreePath)) {
+  if (!durableBranchCleanup && input.isWorktreeTracked && !input.isWorktreeTracked(task.worktreePath)) {
     return blocked(run.runId, taskId, 'worktree 未被当前宿主登记，不能清理');
   }
 
-  const stateSignature = await input.computeWorktreeSignature(task.worktreePath);
-  if (!stateSignature.trim()) {
-    return blocked(run.runId, taskId, '无法取得 worktree 状态签名，拒绝清理');
+  const stateSignature = durableBranchCleanup
+    ? task.cleanupStateSignature
+    : await input.computeWorktreeSignature(task.worktreePath);
+  if (!stateSignature?.trim()) {
+    return blocked(run.runId, taskId, durableBranchCleanup
+      ? 'orphan/registration-pending 缺少持久化 cleanup state signature，拒绝清理'
+      : '无法取得 worktree 状态签名，拒绝清理');
   }
   return {
     status: 'ready',
@@ -183,6 +196,8 @@ export async function buildWorkerCleanupProposal(
     attempt: task.attempt,
     taskExecutionId: lineage.taskExecutionId,
     attemptId: lineage.attemptId,
+    worktreeId: task.worktreeId,
+    branch: task.branch,
     worktreePath: task.worktreePath,
     baseRevision: task.baseRevision,
     stateSignature,
@@ -200,6 +215,12 @@ export function approveWorkerCleanupProposal(
   if (proposal.status === 'blocked') throw new Error(`清理提案不可批准：${proposal.reason}`);
   if (proposal.status === 'cleaned') throw new Error('清理提案已经完成，不能重复批准');
   host.approveCleanup(proposal.worktreePath, {
+    worktreeId: proposal.worktreeId,
+    branch: proposal.branch,
+    runId: proposal.runId,
+    taskId: proposal.taskId,
+    taskExecutionId: proposal.taskExecutionId,
+    attemptId: proposal.attemptId,
     baseRevision: proposal.baseRevision,
     stateSignature: proposal.stateSignature,
     acceptanceId: proposal.acceptanceId,

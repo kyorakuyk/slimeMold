@@ -87,6 +87,8 @@ export function markWorkerTaskCleaned(
         taskExecutionId: expectedTaskExecutionId,
         currentAttemptId: expectedAttemptId,
         cleanupStatus: 'cleaned',
+        worktreeStatus: 'cleaned',
+        branchRevision: undefined,
         cleanupReceiptId: receiptId,
         updatedAt: now,
       },

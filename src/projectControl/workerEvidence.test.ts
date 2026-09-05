@@ -30,7 +30,7 @@ describe('worker evidence projection', () => {
 
     const loaded = [evidence('ev-1', '旧摘要')];
     const merged = mergeWorkerEvidence(
-      [evidence('ev-1', '内存摘要')],
+      [evidence('ev-1', '旧摘要')],
       [...loaded, evidence('ev-2', '新摘要')],
     );
 
@@ -48,6 +48,17 @@ describe('worker evidence projection', () => {
 
     expect(current).toEqual([evidence('ev-1', '当前')]);
     expect(incoming).toEqual([evidence('ev-2', '新增')]);
+  });
+
+  it('fails closed on duplicate durable ids or conflicting in-memory ids', async () => {
+    await expect(loadWorkerEvidence({
+      load: async () => [evidence('ev-dup', 'same'), evidence('ev-dup', 'same')],
+    })).rejects.toThrow(/重复|duplicate|冲突/);
+
+    expect(() => mergeWorkerEvidence(
+      [evidence('ev-conflict', '内存版本')],
+      [evidence('ev-conflict', '持久化版本')],
+    )).toThrow(/冲突|conflict/);
   });
 
   it('loads and merges side-effect receipts without treating a repair-needed journal as valid', async () => {

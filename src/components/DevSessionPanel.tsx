@@ -90,6 +90,12 @@ export function DevSessionPanel() {
       }
       const sig = await s.computeWorktreeSignature(wt.path);
       s.approveCleanup(wt.path, {
+        worktreeId: wt.id,
+        branch: wt.branch,
+        runId: passed.runId,
+        taskId: passed.taskId,
+        taskExecutionId: passed.taskExecutionId,
+        attemptId: passed.attemptId,
         acceptanceId: passed.acceptanceId,
         orchestrationId: passed.orchestrationId,
         stageId: passed.stageId,

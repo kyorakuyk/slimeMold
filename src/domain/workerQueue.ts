@@ -67,6 +67,8 @@ export interface WorkerSideEffectRecorder {
   markUnknown?(record: SideEffectRecord, reason: string): Promise<SideEffectRecord>;
 }
 
+export type WorkerWorktreeStatus = 'created' | 'cleaned' | 'orphaned' | 'registration-pending';
+
 export interface WorkerQueueTask {
   taskId: string;
   /** Version of the TaskDefinition used to derive side-effect inputHash. */
@@ -82,6 +84,9 @@ export interface WorkerQueueTask {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  worktreeStatus?: WorkerWorktreeStatus;
+  branchRevision?: string;
+  cleanupStateSignature?: string;
   evidenceIds: string[];
   acceptanceId?: string;
   cleanupStatus?: 'cleaned';
@@ -408,6 +413,8 @@ export class WorkerTaskQueue {
         worktreePath: assignment.path,
         branch: assignment.branch,
         baseRevision: assignment.baseRevision,
+        worktreeStatus: 'created',
+        branchRevision: undefined,
         attempt,
       }, now);
       return {

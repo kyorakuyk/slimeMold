@@ -268,8 +268,9 @@ export default function App() {
           path: task.worktreePath,
           branch: task.branch,
           baseRevision: task.baseRevision,
+          branchRevision: task.branchRevision,
           createdAt: task.updatedAt,
-          status: 'created',
+          status: task.worktreeStatus ?? 'created',
         }, { signal });
         if (signal?.aborted) return;
         if (!restored) {
@@ -608,7 +609,7 @@ export default function App() {
       ),
     );
     assertProjectOperation(operation);
-    const journal = await recorder.recoverInterruptedRun(runId);
+    const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
     assertProjectOperation(operation);
     current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
     const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -697,6 +698,29 @@ export default function App() {
       mergeWorkerSideEffects(current.workerRunSideEffects, [cleanupResult.sideEffect]),
     );
     if (!cleanupResult.cleaned) {
+      const pendingRun = current.workerRuns.find((item) => item.runId === runId);
+      const pendingInfo = session.manager.getByPath(proposal.worktreePath);
+      if (pendingRun && pendingInfo) {
+        const pendingRuns = current.workerRuns.map((item) => item.runId === runId
+          ? {
+            ...item,
+            tasks: {
+              ...item.tasks,
+              [taskId]: {
+                ...item.tasks[taskId],
+                worktreeStatus: pendingInfo.status,
+                branchRevision: pendingInfo.branchRevision,
+                cleanupStateSignature: proposal.stateSignature,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          }
+          : item);
+        current.setWorkerRuns(pendingRuns);
+        current.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(current.orchestrations, pendingRuns),
+        );
+      }
       assertProjectOperation(operation);
       await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
       throw new Error('宿主 cleanup 未完成，副作用已标记为 unknown，需要人工核对');

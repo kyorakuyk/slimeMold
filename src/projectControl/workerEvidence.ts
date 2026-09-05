@@ -7,7 +7,16 @@ export async function loadWorkerEvidence(
   persistence: Pick<EvidencePersistence, 'load'>,
 ): Promise<EvidenceRecord[]> {
   const records = await persistence.load();
-  return records.map((record) => decodeEvidenceRecord(record));
+  return indexEvidence(records.map((record) => decodeEvidenceRecord(record)), 'durable');
+}
+
+function indexEvidence(records: readonly EvidenceRecord[], source: string): EvidenceRecord[] {
+  const byId = new Map<string, EvidenceRecord>();
+  for (const record of records) {
+    if (byId.has(record.id)) throw new Error(`Evidence ID 在 ${source} 中重复：${record.id}`);
+    byId.set(record.id, { ...record });
+  }
+  return [...byId.values()];
 }
 
 /** Merge evidence projections by immutable, host-generated evidence id. */
@@ -15,9 +24,17 @@ export function mergeWorkerEvidence(
   current: readonly EvidenceRecord[],
   incoming: readonly EvidenceRecord[],
 ): EvidenceRecord[] {
-  const byId = new Map<string, EvidenceRecord>();
-  for (const record of current) byId.set(record.id, { ...record });
-  for (const record of incoming) byId.set(record.id, { ...record });
+  const byId = new Map(indexEvidence(current, 'current').map((record) => [record.id, record]));
+  for (const record of indexEvidence(incoming, 'incoming')) {
+    const existing = byId.get(record.id);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Evidence ID 内容冲突：${record.id}`);
+      }
+      continue;
+    }
+    byId.set(record.id, { ...record });
+  }
   return [...byId.values()];
 }
 

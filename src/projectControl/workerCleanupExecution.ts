@@ -192,7 +192,6 @@ export async function executeWorkerCleanupWithReceipt(
     const cleaned = input.signal
       ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal)
       : await input.host.confirmAndCleanup(proposal.worktreePath);
-    throwIfAborted(input.signal);
     if (!cleaned) {
       const unknown = markSideEffectUnknown(startedRecord, 'cleanup-host-gate-rejected-or-drifted');
       const journal = await input.repository.record(unknown);

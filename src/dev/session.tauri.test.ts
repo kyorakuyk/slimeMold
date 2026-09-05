@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from './node-run';
 import { initDevSession, resetDevSession } from './session';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 const hostState = vi.hoisted(() => ({ rejectRegister: false, rejectUnregister: false }));
 const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) => {
@@ -128,12 +129,22 @@ describe('DevSession Tauri orphan cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: info!.path,
       passed: true,
       failedChecks: [],
       at: '2026-09-01T00:00:00.000Z',
     });
     session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info!.baseRevision,
       stateSignature: 'sig-1',
       acceptanceId,
@@ -238,12 +249,22 @@ describe('DevSession Tauri orphan cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: info.path,
       passed: true,
       failedChecks: [],
       at: '2026-09-01T00:00:00.000Z',
     });
     session.approveCleanup(info.path, {
+      worktreeId: info.id,
+      branch: info.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info.baseRevision,
       stateSignature: 'sig-orphan',
       acceptanceId,

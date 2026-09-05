@@ -183,6 +183,12 @@ function isAcceptanceRecord(value: unknown): value is AcceptanceRecord {
  */
 export interface CleanupApproval {
   worktreePath: string;
+  worktreeId?: string;
+  branch?: string;
+  runId?: string;
+  taskId?: string;
+  taskExecutionId?: string;
+  attemptId?: string;
   baseRevision?: string;
   stateSignature?: string;
   acceptanceId?: string;
@@ -225,6 +231,12 @@ export interface DevSession {
   approveCleanup(
     path: string,
     opts?: {
+      worktreeId?: string;
+      branch?: string;
+      runId?: string;
+      taskId?: string;
+      taskExecutionId?: string;
+      attemptId?: string;
       baseRevision?: string;
       stateSignature?: string;
       acceptanceId?: string;
@@ -523,6 +535,12 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       const key = pathComparisonKey(path);
       this.approvedCleanups.set(key, {
         worktreePath: normalizedPath,
+        worktreeId: opts?.worktreeId,
+        branch: opts?.branch,
+        runId: opts?.runId,
+        taskId: opts?.taskId,
+        taskExecutionId: opts?.taskExecutionId,
+        attemptId: opts?.attemptId,
         baseRevision: opts?.baseRevision,
         stateSignature: opts?.stateSignature,
         acceptanceId: opts?.acceptanceId,
@@ -589,6 +607,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const approval = this.approvedCleanups.get(key);
         const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
+        if (!approval.worktreeId || !approval.branch
+          || !approval.runId || !approval.taskId || !approval.taskExecutionId || !approval.attemptId
+          || !info
+          || info.id !== approval.worktreeId
+          || info.branch !== approval.branch) return false;
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
         const acc = this.getAcceptance(approval.acceptanceId);
         const accOk =
@@ -596,6 +619,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           acc.passed &&
           acc.orchestrationId === approval.orchestrationId &&
           acc.stageId === approval.stageId &&
+          acc.runId === approval.runId &&
+          acc.taskId === approval.taskId &&
+          acc.taskExecutionId === approval.taskExecutionId &&
+          acc.attemptId === approval.attemptId &&
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {

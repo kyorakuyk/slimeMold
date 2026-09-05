@@ -46,12 +46,22 @@ describe('DevSession cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: info!.path,
       passed: true,
       failedChecks: [],
       at: '2026-09-01T00:00:00.000Z',
     });
     session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info!.baseRevision,
       stateSignature: 'sig-1',
       acceptanceId,
@@ -62,6 +72,52 @@ describe('DevSession cleanup', () => {
     await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
+  });
+
+  it('rejects an approval when the same path is reused by a different worktree identity', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({ baseRepoPath: '/repo', gitRunner: { git } });
+    const original = await session.manager.create('worker-old', '/repo-workers/task-1', { branch: 'worker/task-1' });
+    expect(original).not.toBeNull();
+    session.computeWorktreeSignature = vi.fn(async () => 'sig-1');
+    const acceptanceId = session.nextAcceptanceId();
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      worktreePath: original!.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(original!.path, {
+      worktreeId: original!.id,
+      branch: original!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      baseRevision: original!.baseRevision,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+    });
+
+    session.manager.forget(original!.id);
+    const replacement = await session.manager.create('worker-new', original!.path, { branch: original!.branch });
+    expect(replacement).not.toBeNull();
+
+    await expect(session.confirmAndCleanup(replacement!.path)).resolves.toBe(false);
+    expect(session.manager.get(replacement!.id)?.status).toBe('created');
   });
 
   it('consumes approval when cancellation arrives after destructive cleanup completes', async () => {
@@ -79,12 +135,22 @@ describe('DevSession cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreePath: info!.path,
       passed: true,
       failedChecks: [],
       at: '2026-09-01T00:00:00.000Z',
     });
     session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info!.baseRevision,
       stateSignature: 'sig-1',
       acceptanceId,
