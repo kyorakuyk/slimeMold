@@ -122,11 +122,13 @@ export class WorktreeManager {
     return this.infos.get(id);
   }
 
-  /** 按规范化后的 worktree 路径查找仍在使用中的登记。 */
+  /** 按规范化后的 worktree 路径查找仍在使用中的登记（含待重试宿主注销的 lineage）。 */
   getByPath(path: string): WorktreeInfo | undefined {
     const normalized = pathComparisonKey(path);
     return [...this.infos.values()].find(
-      (info) => info.status === 'created' && pathComparisonKey(info.path) === normalized,
+      (info) =>
+        (info.status === 'created' || info.status === 'registration-pending') &&
+        pathComparisonKey(info.path) === normalized,
     );
   }
 

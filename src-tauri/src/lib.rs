@@ -1387,6 +1387,7 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
 
 /// worktree 内命令的文件路径参数**词法级**校验（纯函数，无 IO，可单测）。
 /// 拦截：绝对路径（POSIX `/`、Windows `C:\`、UNC `\\`）、`..` 逃逸、`~`、shell 元字符重定向。
+/// `*`/`?` 保留为直接 spawn 的 find/grep 模式操作数；Rust 不经过 shell，不会发生 shell 展开。
 /// 注意：词法校验不解析符号链接，symlink 逃逸由 dev_exec_validate_paths 的 canonicalize 层兜底。
 fn dev_arg_path_lexically_safe(arg: &str) -> bool {
     if arg.is_empty() || arg == "." || arg == ".." {
@@ -1416,9 +1417,7 @@ fn dev_arg_path_lexically_safe(arg: &str) -> bool {
         return false;
     }
     // shell 元字符（重定向 / 管道 / 命令拼接）——Command spawn 不经 shell，但保守拒绝
-    const META: &[char] = &[
-        '>', '<', '|', '&', ';', '`', '$', '*', '?', '\'', '"', '(', ')', ' ',
-    ];
+    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '\'', '"', '(', ')', ' '];
     if arg.chars().any(|c| META.contains(&c)) {
         return false;
     }
@@ -2736,6 +2735,17 @@ mod dev_exec_tests {
     }
 
     #[test]
+    fn worktree_read_commands_allow_non_shell_glob_operands() {
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "find",
+            "src/components",
+            "-name",
+            "*.tsx"
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&["grep", "needle", "*.tsx"])));
+    }
+
+    #[test]
     fn legacy_run_git_is_read_only_and_revision_scoped() {
         assert!(run_git_readonly_args(&sv(&[
             "rev-parse",
@@ -3591,6 +3601,7 @@ mod dev_write_symlink_tests {
         // 登记为 worktree
         {
             let mut st = DEV_STATE.lock().unwrap();
+            st.generation = next_session_generation(st.generation);
             st.base_repo = Some(tmp_str.clone());
             st.worktrees.clear();
             st.worktrees.push(tmp_str);
@@ -3600,6 +3611,7 @@ mod dev_write_symlink_tests {
         let _ = fs::remove_dir_all(&cleanup);
         {
             let mut st = DEV_STATE.lock().unwrap();
+            st.generation = next_session_generation(st.generation);
             st.base_repo = None;
             st.worktrees.clear();
         }

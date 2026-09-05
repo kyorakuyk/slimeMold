@@ -2013,6 +2013,15 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、940 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite `src/dev/evidence.test.ts` 为 14 个测试、`src/nodes/dev/index.test.ts` 为 20 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.65 registration-pending cleanup convergence 与双宿主 glob parity
+
+- Phase 2 hardening 第十二个垂直切片收敛宿主注销失败后的恢复链：`WorktreeManager.getByPath()` 现在保留 `registration-pending` lineage，`DevSession.confirmAndCleanup()` 在 Git worktree/branch 已删除后跳过签名重算，仅重新校验原 Acceptance/base revision 并执行 `dev_unregister_worktree`；因此 retry 不会把已删除路径当作仍可读的 worktree。
+- session wrapper 增加 Rust registration success fencing：初始 `dev_register_worktree` 从未成功时，后续 Git rollback 完成不得误调用 `dev_unregister_worktree`；只有已成功登记的 Worker 才进入 unregister retry。
+- Node/Rust command policy 对齐：Rust worktree lexical guard 允许直接 spawn 下的 `*`/`?` find/grep pattern operand，仍拒绝 shell 重定向、拼接、绝对路径、`..` 与危险 find/grep 选项。
+- 修复 Rust symlink-write 单测 fixture：测试 helper 建立有效 generation 并在 teardown 时推进 generation；`normal_write_within_worktree_ok` 可独立运行，不依赖其它测试污染全局状态。
+- 验证结果：`npm run test` 为 109 个测试文件、942 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 41 个 Rust 测试通过；独立 `normal_write_within_worktree_ok` 通过；相关 TS targeted suite 为 2 个文件、11 个测试通过；`git diff --check` 通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

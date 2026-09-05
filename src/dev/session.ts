@@ -338,6 +338,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       generation: hostGeneration,
     });
   };
+  // Host registration is a separate side effect from Git cleanup. Keep its
+  // success state so a failed initial registration never turns a later Git
+  // rollback into an invalid unregister call.
+  const registeredWorktrees = new Set<string>();
   const rawCreate = manager.create.bind(manager);
   const rawRestore = manager.restore.bind(manager);
   const rawCleanup = manager.cleanup.bind(manager);
@@ -355,6 +359,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       }
       try {
         await syncRust('register', info.path);
+        registeredWorktrees.add(info.id);
       } catch (error) {
         // Tauri host keeps a pending add lease until registration succeeds, so
         // this cleanup can pass the host gate. Preserve the manager record when
@@ -371,6 +376,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     if (!restored) return false;
     try {
       await syncRust('register', info.path);
+      registeredWorktrees.add(info.id);
       return true;
     } catch {
       // Keep the live Git worktree record so registration can be retried after
@@ -384,6 +390,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (!opts?.confirm || opts?.signal?.aborted) return false;
       try {
         await syncRust('unregister', info.path);
+        registeredWorktrees.delete(id);
         manager.markCleaned(id);
         return true;
       } catch {
@@ -392,8 +399,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     }
     const cleaned = await rawCleanup(id, opts);
     if (!cleaned || !info) return cleaned;
+    if (!registeredWorktrees.has(id)) {
+      // Git cleanup completed, but Rust registration never did. There is no
+      // host registration to unregister; drop the resolved manager lineage.
+      manager.forget(id);
+      return true;
+    }
     try {
       await syncRust('unregister', info.path);
+      registeredWorktrees.delete(id);
     } catch {
       manager.markRegistrationPending(id);
       return false;
@@ -583,6 +597,13 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           acc.stageId === approval.stageId &&
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
+        if (info?.status === 'registration-pending') {
+          if (!accOk || !revOk) return false;
+          const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
+          if (signal?.aborted) return false;
+          if (cleaned) this.consumeCleanup(path);
+          return cleaned;
+        }
         // 第一次签名校验
         const sig = await this.computeWorktreeSignature(path);
         if (signal?.aborted) return false;
