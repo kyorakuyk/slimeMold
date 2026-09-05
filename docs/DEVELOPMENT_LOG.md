@@ -2077,6 +2077,12 @@ Issue 工作台采用四个面板：
 - Node capability regression 覆盖 grep `--file`、`-f`、`--exclude-from` 的外部输入选项；当前 `/outside` 与 Windows drive-form参数均经过双宿主策略检查。
 - 验证结果：targeted component/capability tests 为 3 个文件、23 个测试通过；`npm run test` 为 109 个测试文件、956 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.74 SideEffect read-back lock ordering 与 migration safety
+
+- Phase 2 hardening 第二十一个垂直切片修复 journal read-back 的二阶问题：`record/migrate` 现在 await 完整 write+read-back 后才释放锁；expected/persisted journal 必须都是 `ok`；migration replacement 先 decode，legacy/canonical 同 key 直接 conflict；claim 返回 read-back 后的实际 durable entry。
+- 新增延迟写入锁顺序、同 key migration 和 durable entry 回归；避免释放锁后仍在写入、删除唯一 receipt、或调用方继续使用未核验对象。
+- 验证结果：`npm run test` 为 109 个测试文件、958 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

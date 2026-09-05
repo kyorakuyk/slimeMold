@@ -17,6 +17,40 @@ class SilentDropEventStoreAdapter extends InMemoryEventStoreAdapter {
   }
 }
 
+class DelayedWriteEventStoreAdapter extends InMemoryEventStoreAdapter {
+  readonly events: string[] = [];
+  private readonly gate: Promise<void>;
+  private releaseWrite!: () => void;
+
+  constructor() {
+    super();
+    this.gate = new Promise<void>((resolve) => {
+      this.releaseWrite = resolve;
+    });
+  }
+
+  async writeTextAtomic(path: string, text: string): Promise<void> {
+    this.events.push('write-start');
+    await this.gate;
+    this.events.push('write-done');
+    await super.writeTextAtomic(path, text);
+  }
+
+  async acquireLock(path: string) {
+    const lock = await super.acquireLock(path);
+    return {
+      release: async () => {
+        this.events.push('release');
+        await lock.release();
+      },
+    };
+  }
+
+  finishWrite(): void {
+    this.releaseWrite();
+  }
+}
+
 const planned = createSideEffect({
   idempotencyKey: 'push:task-1:commit-a',
   kind: 'push',
@@ -54,6 +88,27 @@ describe('side-effect journal', () => {
     const repository = new SideEffectJournalRepository(new SilentDropEventStoreAdapter(), 'project-root');
 
     await expect(repository.record(planned)).rejects.toThrow(/read-back|durable|持久化/);
+  });
+
+  it('keeps the journal lock until write and read-back finish', async () => {
+    const adapter = new DelayedWriteEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const pending = repository.record(planned);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    adapter.finishWrite();
+    await pending;
+    expect(adapter.events).toEqual(['write-start', 'write-done', 'release']);
+  });
+
+  it('rejects migration when legacy and replacement keys are identical', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
+    await repository.record(planned);
+
+    await expect(repository.migrateLegacyRecord(planned.idempotencyKey, planned)).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    expect((await repository.read()).journal.entries).toEqual([planned]);
   });
 
   it('rejects canonical and legacy alias records coexisting for one effect', async () => {

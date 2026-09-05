@@ -314,9 +314,8 @@ export class SideEffectJournalRepository {
     const expected = parseSideEffectJournal(serialized);
     const persisted = parseSideEffectJournal(await this.adapter.readText(this.path));
     if (
-      expected.status === 'needs-repair'
-      || expected.status === 'empty'
-      || persisted.status === 'needs-repair'
+      expected.status !== 'ok'
+      || persisted.status !== 'ok'
       || serializeSideEffectJournal(persisted.journal) !== serializeSideEffectJournal(expected.journal)
     ) {
       throw new SideEffectJournalError(
@@ -344,7 +343,7 @@ export class SideEffectJournalRepository {
       }
       const next = recordSideEffect(parsed.journal, record);
       if (next !== parsed.journal) {
-        return this.persistAndReadBack(next);
+        return await this.persistAndReadBack(next);
       }
       return next;
     } finally {
@@ -381,7 +380,9 @@ export class SideEffectJournalRepository {
       if (index < 0) {
         const next = recordSideEffect(parsed.journal, record);
         const persisted = await this.persistAndReadBack(next);
-        return { journal: persisted, record, claimed: true };
+        const persistedRecord = persisted.entries.find((entry) => entry.idempotencyKey === record.idempotencyKey);
+        if (!persistedRecord) throw new SideEffectJournalError('needs-repair', `claim read-back 缺少记录：${record.idempotencyKey}`);
+        return { journal: persisted, record: persistedRecord, claimed: true };
       }
       const existing = parsed.journal.entries[index];
       decodeRecord(existing);
@@ -400,7 +401,9 @@ export class SideEffectJournalRepository {
         entries[index] = { ...record };
         const next = { ...parsed.journal, entries };
         const persisted = await this.persistAndReadBack(next);
-        return { journal: persisted, record, claimed: true };
+        const persistedRecord = persisted.entries.find((entry) => entry.idempotencyKey === record.idempotencyKey);
+        if (!persistedRecord) throw new SideEffectJournalError('needs-repair', `claim read-back 缺少记录：${record.idempotencyKey}`);
+        return { journal: persisted, record: persistedRecord, claimed: true };
       }
       return { journal: parsed.journal, record: existing, claimed: false };
     } finally {
@@ -413,6 +416,10 @@ export class SideEffectJournalRepository {
     legacyKey: string,
     replacement: SideEffectRecord,
   ): Promise<SideEffectJournal> {
+    decodeRecord(replacement);
+    if (legacyKey === replacement.idempotencyKey) {
+      throw new SideEffectJournalError('conflict', `legacy 与 canonical key 不能相同：${legacyKey}`);
+    }
     const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
     try {
       const parsed = parseSideEffectJournal(await this.adapter.readText(this.path));
@@ -437,7 +444,7 @@ export class SideEffectJournalRepository {
         entries[legacyIndex] = { ...replacement };
       }
       const next = { ...parsed.journal, entries };
-      return this.persistAndReadBack(next);
+      return await this.persistAndReadBack(next);
     } finally {
       await lock.release();
     }
