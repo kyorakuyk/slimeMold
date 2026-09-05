@@ -145,6 +145,7 @@ interface CommandRule {
   denyContain?: string[];
   denyArgs?: string[];
   denyArgPrefixes?: string[];
+  denyArgPatterns?: RegExp[];
   denyAbsPath?: boolean;
   /** 参数全部按路径校验（allowedPaths 内 + 非 protected + worktree 内） */
   pathArgs?: boolean;
@@ -174,6 +175,7 @@ function matchesRule(rule: CommandRule, cmd: string[]): boolean {
   if (rule.denyContain?.some((d) => args.some((a) => a.includes(d)))) return false;
   if (rule.denyArgs?.some((d) => args.includes(d))) return false;
   if (rule.denyArgPrefixes?.some((prefix) => args.some((a) => a.startsWith(prefix)))) return false;
+  if (rule.denyArgPatterns?.some((pattern) => args.some((a) => pattern.test(a)))) return false;
   if (rule.denyAbsPath && args.some((a) => a.startsWith('/') || a.split(/[/\\]/).includes('..'))) {
     return false;
   }
@@ -229,6 +231,7 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
       '--file', '--exclude-from',
     ],
     denyArgPrefixes: ['--directories=', '--file=', '--exclude-from=', '-f'],
+    denyArgPatterns: [/^-[^-]*f/],
   },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
@@ -299,8 +302,8 @@ export function hashContent(content: string): string {
 function isMissingFileError(error: unknown): boolean {
   if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return true;
   if (typeof error !== 'string' && !(error instanceof Error)) return false;
-  const message = typeof error === 'string' ? error : error.message;
-  return /(?:ENOENT|not found|no such file|文件不存在|路径不存在)/i.test(message);
+  const message = (typeof error === 'string' ? error : error.message).trim();
+  return /^(?:dev_read_file:\s*)?(?:ENOENT|file not found|no such file(?: or directory)?|文件不存在|路径不存在)$/i.test(message);
 }
 
 export function createNodeDevService(

@@ -192,6 +192,15 @@ function normalizeQueueTask(
     && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
+  if (task.status === 'succeeded') {
+    if (!Array.isArray(task.evidenceIds) || task.evidenceIds.length === 0) {
+      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${task.taskId}`);
+    }
+    const evidenceIds = task.evidenceIds.map((id) => requiredText(id, 'Evidence id'));
+    if (new Set(evidenceIds).size !== evidenceIds.length) {
+      throw new Error(`succeeded Worker Task 的 Evidence ids 重复：${task.taskId}`);
+    }
+  }
   if (task.pendingAttempt !== undefined) {
     if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt !== task.attempt + 1 || task.status !== 'queued') {
       throw new Error(`Worker Task pendingAttempt 无效：${task.taskId}`);
@@ -484,6 +493,9 @@ export class WorkerTaskQueue {
   ): void {
     const current = this.requireRunning(taskId, expectedAttemptId);
     const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
+    if (uniqueEvidenceIds.length === 0) {
+      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${taskId}`);
+    }
     this.state = {
       ...this.state,
       updatedAt: now,

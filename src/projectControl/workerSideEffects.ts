@@ -11,6 +11,9 @@ import {
   type SideEffectJournal,
 } from '../domain/sideEffects';
 import type {
+  EvidenceRecord,
+} from '../dev/evidence';
+import type {
   WorkerExecutionResult,
   WorkerRunQueueState,
   WorkerSideEffectClaim,
@@ -43,6 +46,19 @@ export interface AppliedWorkerRunRecoveryDecision {
 
 export type WorkerSideEffectClock = () => string;
 
+export interface WorkerEvidenceVerificationInput {
+  record: SideEffectRecord;
+  evidenceIds: readonly string[];
+}
+
+export type WorkerEvidenceVerifier = (
+  input: WorkerEvidenceVerificationInput,
+) => Promise<void> | void;
+
+export interface WorkerEvidenceSource {
+  loadPersisted(): Promise<readonly EvidenceRecord[]>;
+}
+
 export interface WorkerSideEffectRecorderWithRecovery extends WorkerSideEffectRecorder {
   recoverInterruptedRun(runId: string, options?: { signal?: AbortSignal }): Promise<SideEffectJournal>;
 }
@@ -51,6 +67,56 @@ function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} 不能为空`);
   return normalized;
+}
+
+function throwIfRecoveryAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error('Worker recovery 已取消');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function comparableWorkerPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): WorkerEvidenceVerifier {
+  return async ({ record, evidenceIds }) => {
+    assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    let hash: unknown;
+    try {
+      hash = JSON.parse(record.inputHash);
+    } catch {
+      throw new Error(`Worker Evidence verifier 无法解析 inputHash：${record.idempotencyKey}`);
+    }
+    if (!Array.isArray(hash) || hash.length !== 7) {
+      throw new Error(`Worker Evidence verifier 缺少 assignment provenance：${record.idempotencyKey}`);
+    }
+    const persisted = await source.loadPersisted();
+    for (const evidenceId of evidenceIds) {
+      const matches = persisted.filter((evidence) => evidence.id === evidenceId);
+      if (matches.length !== 1) {
+        throw new Error(`Worker Evidence 不存在或不唯一：${evidenceId}`);
+      }
+      const evidence = matches[0];
+      if (
+        evidence.capturedBy !== 'host'
+        || evidence.status !== 'passed'
+        || evidence.runId !== record.runId
+        || evidence.taskId !== record.taskId
+        || evidence.taskExecutionId !== record.taskExecutionId
+        || evidence.attemptId !== record.attemptId
+        || !evidence.worktreePath
+        || comparableWorkerPath(evidence.worktreePath) !== comparableWorkerPath(String(hash[5]))
+        || evidence.baseRevision !== hash[4]
+      ) {
+        throw new Error(`Worker Evidence provenance 不匹配：${evidenceId}`);
+      }
+    }
+  };
 }
 
 function entryFor(journal: SideEffectJournal, idempotencyKey: string): SideEffectRecord {
@@ -165,6 +231,17 @@ function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string):
   if (parsedAttempt.taskExecutionId !== effect.taskExecutionId) {
     throw new Error(`恢复 effect execution lineage 不一致：${effect.idempotencyKey}`);
   }
+  try {
+    assertTaskExecutionLineage({
+      runId,
+      taskId: effect.taskId,
+      taskExecutionId: effect.taskExecutionId,
+      attemptId: effect.attemptId,
+      attempt: parsedAttempt.attempt,
+    });
+  } catch {
+    throw new Error(`恢复 effect task execution lineage 不一致：${effect.idempotencyKey}`);
+  }
   const canonicalKey = `worker-execution:${effect.taskExecutionId}:attempt-${parsedAttempt.attempt}`;
   const legacyKey = `worker-execution:${effect.runId}:${effect.taskId}:attempt-${parsedAttempt.attempt}`;
   if (effect.idempotencyKey === legacyKey) {
@@ -182,7 +259,9 @@ function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string):
     || hash.length !== 7
     || hash[0] !== effect.runId
     || hash[1] !== effect.taskId
-    || hash[2] !== 1
+    || typeof hash[2] !== 'number'
+    || !Number.isSafeInteger(hash[2])
+    || hash[2] < 1
     || hash[3] !== parsedAttempt.attempt
     || typeof hash[4] !== 'string'
     || !hash[4]
@@ -193,7 +272,7 @@ function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string):
   ) {
     throw new Error(`恢复 effect 缺少 assignment path/branch provenance：${effect.idempotencyKey}`);
   }
-  if (effect.status === 'started' && effect.recovery !== 'retry') {
+  if (effect.status === 'started' && (effect.recovery !== 'retry' || effect.receipt !== undefined)) {
     throw new Error(`started recovery effect 状态不一致：${effect.idempotencyKey}`);
   }
   if (effect.status === 'unknown' && (effect.recovery !== 'needs-user' || effect.receipt !== undefined)) {
@@ -237,7 +316,22 @@ function assertExistingEffectMatchesLease(
  * Persist the Worker execution lifecycle in the project side-effect journal.
  * The journal is outside the worktree and is the source used during restart recovery.
  */
-function assertWorkerExecutionReceipt(record: SideEffectRecord, lease: WorkerTaskLease): void {
+function normalizedEvidenceIds(ids: string[] | undefined, key: string): string[] {
+  if (!ids || ids.length === 0) {
+    throw new Error(`成功 Worker receipt 缺少非空 Evidence provenance：${key}`);
+  }
+  const normalized = ids.map((id) => requiredText(id, 'Evidence id'));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`成功 Worker receipt 的 Evidence provenance 重复：${key}`);
+  }
+  return normalized;
+}
+
+async function assertWorkerExecutionReceipt(
+  record: SideEffectRecord,
+  lease: WorkerTaskLease,
+  verifyEvidence: WorkerEvidenceVerifier | undefined,
+): Promise<void> {
   const key = effectKeyFor(lease);
   if (
     record.status !== 'receipt'
@@ -255,14 +349,17 @@ function assertWorkerExecutionReceipt(record: SideEffectRecord, lease: WorkerTas
   ) {
     throw new Error(`已有 Worker receipt 未通过 canonical 校验：${record.idempotencyKey}`);
   }
-  if (record.receipt.outcome === 'succeeded' && record.receipt.evidenceIds === undefined) {
-    throw new Error(`成功 Worker receipt 缺少 Evidence provenance：${key}`);
+  if (record.receipt.outcome === 'succeeded') {
+    const evidenceIds = normalizedEvidenceIds(record.receipt.evidenceIds, key);
+    if (!verifyEvidence) throw new Error(`成功 Worker receipt 缺少 host Evidence verifier：${key}`);
+    await verifyEvidence({ record, evidenceIds });
   }
 }
 
 export function createWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
+  verifyEvidence?: WorkerEvidenceVerifier,
 ): WorkerSideEffectRecorderWithRecovery {
   const claim = async (lease: WorkerTaskLease): Promise<WorkerSideEffectClaim> => {
     const idempotencyKey = effectKeyFor(lease);
@@ -288,7 +385,7 @@ export function createWorkerSideEffectRecorder(
     });
     const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
     if (!claimed.claimed && claimed.record.status === 'receipt') {
-      assertWorkerExecutionReceipt(claimed.record, lease);
+      await assertWorkerExecutionReceipt(claimed.record, lease, verifyEvidence);
     }
     return { record: claimed.record, claimed: claimed.claimed };
   };
@@ -311,6 +408,7 @@ export function createWorkerSideEffectRecorder(
     },
 
     async complete(record, result: WorkerExecutionResult): Promise<SideEffectRecord> {
+      assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
       const parsed = await repository.read();
       if (parsed.status === 'needs-repair') {
         throw new SideEffectJournalError(
@@ -328,14 +426,18 @@ export function createWorkerSideEffectRecorder(
         && current.attemptId === record.attemptId;
       if (!sameIdentity) throw new Error(`迟到 Worker completion 的 lineage 不一致：${record.idempotencyKey}`);
       if (current.status !== 'started') return current;
-      if (result.status === 'succeeded' && (!result.evidenceIds || result.evidenceIds.length === 0)) {
-        throw new Error(`Worker succeeded receipt 缺少 host Evidence provenance：${record.idempotencyKey}`);
+      const evidenceIds = result.status === 'succeeded'
+        ? normalizedEvidenceIds(result.evidenceIds, record.idempotencyKey)
+        : result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
+      if (result.status === 'succeeded') {
+        if (!verifyEvidence) throw new Error(`Worker succeeded receipt 缺少 host Evidence verifier：${record.idempotencyKey}`);
+        await verifyEvidence({ record: current, evidenceIds: evidenceIds! });
       }
       const receipt = {
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
         outcome: result.status,
-        ...(result.evidenceIds ? { evidenceIds: [...result.evidenceIds] } : {}),
+        ...(evidenceIds ? { evidenceIds: [...evidenceIds] } : {}),
         ...(result.acceptanceId ? { acceptanceId: result.acceptanceId } : {}),
         ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
@@ -344,6 +446,7 @@ export function createWorkerSideEffectRecorder(
     },
 
     async markUnknown(record, reason): Promise<SideEffectRecord> {
+      assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
       if (record.status !== 'started') return record;
       const unknown = recoverInterruptedSideEffect(record, requiredText(reason, 'unknown reason'));
       return entryFor(await repository.record(unknown), record.idempotencyKey);
@@ -351,24 +454,28 @@ export function createWorkerSideEffectRecorder(
 
     async recoverInterruptedRun(runId, options = {}): Promise<SideEffectJournal> {
       const normalizedRunId = requiredText(runId, 'run id');
-      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
+      throwIfRecoveryAborted(options.signal);
       const parsed = await repository.read();
-      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
+      throwIfRecoveryAborted(options.signal);
       if (parsed.status === 'needs-repair') {
         throw new SideEffectJournalError(
           'needs-repair',
           `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`,
         );
       }
-      for (const entry of parsed.journal.entries) {
-        if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
-        if (entry.runId === normalizedRunId && entry.status === 'started') {
-          assertRecoverableWorkerEffect(entry, normalizedRunId);
-          await repository.record(recoverInterruptedSideEffect(entry, 'worker-run-restarted'));
-          if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
-        }
+      const candidates = parsed.journal.entries.filter(
+        (entry) => entry.runId === normalizedRunId && entry.status === 'started',
+      );
+      for (const entry of candidates) {
+        throwIfRecoveryAborted(options.signal);
+        assertRecoverableWorkerEffect(entry, normalizedRunId);
       }
-      if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
+      for (const entry of candidates) {
+        throwIfRecoveryAborted(options.signal);
+        await repository.record(recoverInterruptedSideEffect(entry, 'worker-run-restarted'));
+        throwIfRecoveryAborted(options.signal);
+      }
+      throwIfRecoveryAborted(options.signal);
       return (await repository.read()).journal;
     },
   };
@@ -476,10 +583,14 @@ export function applyWorkerRunRecoveryDecision(input: {
   if (applied.decision === 'inspect') return { ...input.state, tasks: { ...input.state.tasks } };
 
   const recoverableEffects = plan.recoverableEffects ?? [];
-  const scopedRecoverableEffects = recoverableEffects.filter((effect) => (
-    effect.taskId !== undefined
-    && effectBelongsToCurrentAttempt(effect, input.state, effect.taskId)
+  const staleEffects = recoverableEffects.filter((effect) => (
+    effect.taskId === undefined
+    || !effectBelongsToCurrentAttempt(effect, input.state, effect.taskId)
   ));
+  if (staleEffects.length > 0) {
+    throw new Error(`恢复计划包含不属于当前 task/attempt/assignment 的 effect：${staleEffects.map((effect) => effect.idempotencyKey).join(', ')}`);
+  }
+  const scopedRecoverableEffects = recoverableEffects;
   const effectTaskIds = new Set(
     scopedRecoverableEffects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
   );

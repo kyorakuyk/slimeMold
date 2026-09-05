@@ -126,15 +126,17 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['grep', 'secret', 'src/orchestrator/run.ts'],
       ['find', '.', '-delete'],
       ['find', '.', '-exec', 'echo', '{}', ';'],
-      ['grep', '-R', 'secret', 'src/components'],
-      ['grep', '--recursive', 'secret', 'src/components'],
-      ['grep', '--directories=recurse', 'secret', 'src/components'],
-      ['grep', '-d', 'recurse', 'secret', 'src/components'],
-      ['grep', '--file=/outside/patterns', 'secret', 'src/components/A.tsx'],
-      ['grep', '--exclude-from=/outside/excludes', 'secret', 'src/components/A.tsx'],
-      ['grep', '-f/outside/patterns', 'secret', 'src/components/A.tsx'],
+      ['grep', '-R', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--recursive', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--directories=recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-d', 'recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--file=/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-f/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--file=C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
-            ['grep', '--exclude-from=C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
@@ -161,6 +163,32 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(t2.exitCode).toBe(-1);
   });
 
+  it('grep 外部文件选项在允许 pattern 下也不会调用 runner', async () => {
+    let calls = 0;
+    const svc = createNodeDevService(
+      defaultDevPolicy,
+      {
+        ...fakeDeps,
+        runCommand: async () => {
+          calls += 1;
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+        },
+      },
+      registry,
+    );
+    for (const cmd of [
+      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--file', 'C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from', 'C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+    ]) {
+      const result = await svc.shellRun(cmd, ctx);
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toMatch(/白名单|路径参数越权/);
+    }
+    expect(calls).toBe(0);
+  });
+
   it('codePatch：受控 diff 落盘 + contentHash；白名单外命令拒绝', async () => {
     const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const patch = '--- a\n+++ b\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
@@ -183,6 +211,11 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     const deniedDeps = { ...fakeDeps, readFile: async () => { throw 'permission denied'; } };
     const denied = await createNodeDevService(defaultDevPolicy, deniedDeps, registry).codePatch('src/components/new.ts', patch, ctx);
     expect(denied.ok).toBe(false);
+
+    const ambiguousDeniedDeps = { ...fakeDeps, readFile: async () => { throw 'permission denied: file not found'; } };
+    const ambiguousDenied = await createNodeDevService(defaultDevPolicy, ambiguousDeniedDeps, registry)
+      .codePatch('src/components/new.ts', patch, ctx);
+    expect(ambiguousDenied.ok).toBe(false);
   });
 
   it('testRun/shellRun 白名单放行；gitStatus/gitDiff 走 git', async () => {

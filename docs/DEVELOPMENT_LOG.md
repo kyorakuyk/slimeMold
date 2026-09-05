@@ -2095,6 +2095,13 @@ Issue 工作台采用四个面板：
 - 新增 allowed pattern 的真实 runner-not-called regression，避免此前使用不在 allowedPaths 的 pattern 导致测试被路径守卫提前拒绝而产生假覆盖。
 - 验证结果：`npm run test` 为 109 个测试文件、959 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.77 Worker provenance/Evidence gate 与 grep 选项边界
+
+- Phase 2 hardening 第二十四个垂直切片修复当前 reviewer 复现的 fail-open：Node grep 拒绝包含 `f` 的 GNU 短选项组合（如 `-if...`、`-Ff...`），并用 allowed pattern + runner-not-called 回归避免路径守卫假通过；Node `capabilities` 与 Evidence 的 missing-file 判断不再把任意 `permission denied ... not found` 文本吞成空文件。
+- `workerSideEffects` 统一把 canonical worker-execution validator 接入 `complete`、`markUnknown`、recovery plan 和 interrupted recovery，校验派生 task execution lineage、7 元 assignment hash、started/receipt 状态；recovery 先全量预验证，禁止混合 valid/stale effect 部分变更，并以 `AbortError` 保留取消分类。
+- 成功 Worker receipt 现在要求非空、非重复 Evidence ID；没有 host Evidence verifier 直接 fail-closed；新增可复用 verifier 对持久化 Evidence 做唯一 read-back、`capturedBy=host`、`status=passed`、execution/attempt/path/baseRevision provenance 校验。Worker queue 生成/恢复 succeeded 状态同样拒绝空或重复 Evidence。
+- 验证结果：`npm run test` 为 109 个测试文件、970 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

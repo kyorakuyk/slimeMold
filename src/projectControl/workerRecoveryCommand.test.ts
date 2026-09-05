@@ -264,7 +264,7 @@ describe('recoverWorkerRunCommand', () => {
       reason: 'queued task 不得使用旧 attempt',
       decisionId: 'recovery-queued-stale',
       now: '2026-09-01T00:04:00.000Z',
-    })).toThrow(/没有绑定|当前 Attempt|queued/);
+    })).toThrow(/没有绑定|当前 Attempt|当前 task\/attempt\/assignment|queued/);
   });
 
   it('rejects a recovery plan with a foreign run or trusted legacy metadata', () => {

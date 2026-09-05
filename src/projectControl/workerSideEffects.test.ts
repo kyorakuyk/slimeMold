@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSideEffect } from '../domain/contracts';
+import { createSideEffect, startSideEffect } from '../domain/contracts';
 import type { WorkerExecutionResult, WorkerTaskLease } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
@@ -8,6 +8,7 @@ import { SideEffectJournalRepository } from '../domain/sideEffects';
 import {
   buildWorkerRunRecoveryPlan,
   createWorkerSideEffectRecorder,
+  createWorkerEvidenceVerifier,
   decideWorkerRunRecovery,
   applyWorkerRunRecoveryDecision,
 } from './workerSideEffects';
@@ -50,7 +51,15 @@ describe('worker side-effect recorder', () => {
   it('records a started Worker execution before completion and closes it with a host receipt', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');
-    const recorder = createWorkerSideEffectRecorder(repository, () => '2026-09-01T00:01:00.000Z');
+    const recorder = createWorkerSideEffectRecorder(
+      repository,
+      () => '2026-09-01T00:01:00.000Z',
+      async ({ record, evidenceIds }) => {
+        expect(record.taskExecutionId).toBe(lease.taskExecutionId);
+        expect(record.attemptId).toBe(lease.attemptId);
+        expect(evidenceIds).toEqual(['evidence-1']);
+      },
+    );
 
     const started = await recorder.start(lease);
     expect(started).toMatchObject({
@@ -211,6 +220,30 @@ describe('worker side-effect recorder', () => {
     });
   });
 
+  it('rejects direct completion or unknown marking for non-worker effects', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const foreign = startSideEffect(createSideEffect({
+      idempotencyKey: 'cleanup:foreign',
+      kind: 'worktree-cleanup',
+      target: 'worktree-1',
+      inputHash: 'cleanup-input',
+      runId: 'run-1',
+      taskId: 'task-1',
+    }));
+    await repository.record(foreign);
+
+    await expect(recorder.complete(foreign, { status: 'failed', error: 'foreign' }))
+      .rejects.toThrow(/worker-execution/);
+    await expect(recorder.markUnknown!(foreign, 'foreign'))
+      .rejects.toThrow(/worker-execution/);
+    expect((await repository.read()).journal.entries[0]).toMatchObject({
+      idempotencyKey: 'cleanup:foreign',
+      status: 'started',
+    });
+  });
+
   it('rejects a succeeded receipt without non-empty host Evidence provenance', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');
@@ -218,6 +251,50 @@ describe('worker side-effect recorder', () => {
     const started = await recorder.start(lease);
 
     await expect(recorder.complete(started, { status: 'succeeded' })).rejects.toThrow(/Evidence/);
+  });
+
+  it('rejects a succeeded receipt when no host Evidence verifier is configured', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, {
+      status: 'succeeded',
+      evidenceIds: ['evidence-1'],
+    })).rejects.toThrow(/Evidence verifier/);
+  });
+
+  it('verifies persisted host Evidence against the Worker assignment before success', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const evidence = {
+      id: 'evidence-1',
+      orchestrationId: 'orch-1',
+      stageId: 'stage-1',
+      kind: 'test' as const,
+      status: 'passed' as const,
+      summary: 'host test passed',
+      capturedBy: 'host' as const,
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      worktreePath: lease.assignment.path,
+      baseRevision: lease.assignment.baseRevision,
+      createdAt: '2026-09-01T00:01:00.000Z',
+    };
+    const recorder = createWorkerSideEffectRecorder(
+      repository,
+      () => '2026-09-01T00:02:00.000Z',
+      createWorkerEvidenceVerifier({ loadPersisted: async () => [evidence] }),
+    );
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, succeeded)).resolves.toMatchObject({
+      status: 'receipt',
+      receipt: { outcome: 'succeeded', evidenceIds: ['evidence-1'] },
+    });
   });
 
   it('does not let a late completion promote a recovered unknown effect', async () => {
@@ -230,6 +307,40 @@ describe('worker side-effect recorder', () => {
     const late = await recorder.complete(started, { status: 'succeeded' });
     expect(late.status).toBe('unknown');
     expect((await repository.read()).journal.entries[0].status).toBe('unknown');
+  });
+
+  it('classifies interrupted recovery cancellation as AbortError', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(recorder.recoverInterruptedRun('run-1', { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('prevalidates the recovery journal before changing any started effect', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+    await repository.record(startSideEffect(createSideEffect({
+      idempotencyKey: 'cleanup:foreign-in-recovery',
+      kind: 'worktree-cleanup',
+      target: 'worktree-foreign',
+      inputHash: 'cleanup-input',
+      runId: 'run-1',
+      taskId: 'task-foreign',
+    })));
+
+    await expect(recorder.recoverInterruptedRun('run-1')).rejects.toThrow(/worker-execution/);
+    expect((await repository.read()).journal.entries).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        idempotencyKey: started.idempotencyKey,
+        status: 'started',
+      })]),
+    );
   });
 
   it('turns an unclosed Worker execution into unknown and exposes explicit recovery decisions', async () => {
@@ -281,6 +392,61 @@ describe('worker side-effect recorder', () => {
     expect(() => buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [effect] })).toThrow(/worker-execution/);
   });
 
+  it('rejects a worker effect whose taskExecutionId belongs to another run', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const foreignExecutionId = createTaskExecutionId('foreign-run', 'task-1');
+    const foreignAttemptId = createAttemptId(foreignExecutionId, 1);
+    await repository.record({
+      idempotencyKey: `worker-execution:${foreignAttemptId}`,
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: JSON.stringify(['run-1', 'task-1', 1, 1, 'base-1', 'C:/worktrees/task-1', 'worker/run-1/task-1/a1']),
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: foreignExecutionId,
+      attemptId: foreignAttemptId,
+      status: 'started',
+      recovery: 'retry',
+    });
+
+    await expect(recorder.recoverInterruptedRun('run-1')).rejects.toThrow(/lineage/);
+  });
+
+  it('rejects a started worker effect that already carries a receipt', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    await repository.record({
+      idempotencyKey: `worker-execution:${lease.attemptId}`,
+      kind: 'worker-execution',
+      target: lease.assignment.worktreeId,
+      inputHash: JSON.stringify([
+        lease.runId,
+        lease.task.id,
+        lease.task.version,
+        lease.attempt,
+        lease.assignment.baseRevision,
+        lease.assignment.path,
+        lease.assignment.branch,
+      ]),
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      status: 'started',
+      recovery: 'retry',
+      receipt: {
+        receiptId: 'late-receipt',
+        observedAt: '2026-09-01T00:01:00.000Z',
+        outcome: 'failed',
+      },
+    });
+
+    await expect(recorder.recoverInterruptedRun('run-1')).rejects.toThrow(/状态不一致/);
+  });
+
   it('rejects a legacy worker recovery record without assignment-bound path and branch', () => {
     const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
     const attemptId = createAttemptId(taskExecutionId, 1);
@@ -298,6 +464,102 @@ describe('worker side-effect recorder', () => {
     };
 
     expect(() => buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [effect] })).toThrow(/path.*branch/);
+  });
+
+  it('rejects a recovery decision when any recoverable effect is stale for the current queue assignment', () => {
+    const taskTwo = { ...lease.task, id: 'task-2', title: '第二任务' };
+    const taskTwoExecutionId = createTaskExecutionId('run-1', 'task-2');
+    const taskTwoAttemptId = createAttemptId(taskTwoExecutionId, 1);
+    const valid = {
+      idempotencyKey: `worker-execution:${lease.attemptId}`,
+      kind: 'worker-execution',
+      target: lease.assignment.worktreeId,
+      inputHash: JSON.stringify([
+        lease.runId,
+        lease.task.id,
+        lease.task.version,
+        lease.attempt,
+        lease.assignment.baseRevision,
+        lease.assignment.path,
+        lease.assignment.branch,
+      ]),
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      status: 'unknown' as const,
+      recovery: 'needs-user' as const,
+    };
+    const stale = {
+      idempotencyKey: `worker-execution:${taskTwoAttemptId}`,
+      kind: 'worker-execution',
+      target: 'worktree-2',
+      inputHash: JSON.stringify(['run-1', 'task-2', 1, 1, 'base-2', 'C:/worktrees/task-2', 'worker/run-1/task-2/a1']),
+      runId: 'run-1',
+      taskId: 'task-2',
+      taskExecutionId: taskTwoExecutionId,
+      attemptId: taskTwoAttemptId,
+      status: 'unknown' as const,
+      recovery: 'needs-user' as const,
+    };
+    const plan = buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [valid, stale] });
+    const state = {
+      version: 1 as const,
+      projectId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'running' as const,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          taskExecutionId: lease.taskExecutionId,
+          taskDefinitionVersion: 1 as const,
+          status: 'running' as const,
+          attempt: 1,
+          currentAttemptId: lease.attemptId,
+          worktreeId: lease.assignment.worktreeId,
+          worktreePath: lease.assignment.path,
+          branch: lease.assignment.branch,
+          baseRevision: lease.assignment.baseRevision,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+        'task-2': {
+          taskId: 'task-2',
+          taskExecutionId: taskTwoExecutionId,
+          taskDefinitionVersion: 1 as const,
+          status: 'queued' as const,
+          attempt: 0,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    };
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [lease.task, taskTwo],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+
+    expect(() => applyWorkerRunRecoveryDecision({
+      plan,
+      state,
+      taskGraph,
+      decision: 'retry',
+      reason: '全部旧 effect 都需要重新核对',
+      now: '2026-09-01T00:02:00.000Z',
+    })).toThrow(/当前|绑定|恢复/);
   });
 
   it('creates a new queued attempt for retry and blocks dependents for skip', async () => {
@@ -425,7 +687,7 @@ describe('worker side-effect recorder', () => {
       decision: 'retry',
       reason: '旧计划不能再次作用于 queued retry',
       now: '2026-09-01T00:05:00.000Z',
-    })).toThrow(/没有绑定可处理的任务/);
+    })).toThrow(/没有绑定可处理的任务|当前 task\/attempt\/assignment/);
 
     const staleCurrentAttemptId = createAttemptId(createTaskExecutionId('run-1', 'task-1'), 2);
     expect(() => applyWorkerRunRecoveryDecision({
@@ -441,7 +703,7 @@ describe('worker side-effect recorder', () => {
       decision: 'retry',
       reason: '旧 attempt 已被新的执行取代',
       now: '2026-09-01T00:04:00.000Z',
-    })).toThrow(/没有绑定可处理的任务/);
+    })).toThrow(/没有绑定可处理的任务|当前 task\/attempt\/assignment/);
 
     const skipped = applyWorkerRunRecoveryDecision({
       plan,

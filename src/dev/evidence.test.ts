@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { EvidenceCollector, createHostEvidenceStore, createHostEvidenceStoreWithFs, evidencePathFor, type EvidencePersistence } from './evidence';
+import { EvidenceCollector, createHostEvidenceStore, createHostEvidenceStoreWithFs, evidencePathFor, isMissingFileError, type EvidencePersistence } from './evidence';
 import { withTestArtifactRoot } from './test-artifacts';
 import { normalizeAbsolutePath } from './path-utils';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 describe('H4 EvidenceCollector', () => {
+  it('只把明确的 missing-file 错误视为缺失，不吞权限错误文本', () => {
+    expect(isMissingFileError('dev_read_file: 文件不存在')).toBe(true);
+    expect(isMissingFileError('permission denied: file not found')).toBe(false);
+    expect(isMissingFileError(new Error('access denied: does not exist'))).toBe(false);
+  });
+
   it('add 强制 capturedBy=host，并补齐 id/createdAt', () => {
     const c = new EvidenceCollector();
     const rec = c.add({

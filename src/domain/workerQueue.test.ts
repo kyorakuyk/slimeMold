@@ -130,6 +130,25 @@ describe('WorkerTaskQueue', () => {
     expect(secondStarted?.eventId).not.toBe(firstStarted?.eventId);
   });
 
+  it('rejects restoring a succeeded task without non-empty Evidence ids', async () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-evidence-restore',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', undefined, lease!.attemptId);
+    const state = queue.snapshot();
+    state.tasks.a = { ...state.tasks.a, evidenceIds: [] };
+
+    expect(() => restoreWorkerRunQueue({
+      taskGraph,
+      state,
+    })).toThrow(/Evidence/);
+  });
+
   it('rejects stale completion from an older attempt', () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -522,7 +541,7 @@ describe('WorkerTaskQueue', () => {
     });
     const state = await runWorkerQueue(queue, {
       allocator: allocatorFor([]),
-      executor: { execute: async () => ({ status: 'succeeded' as const }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['evidence-1'] }) },
       signal: controller.signal,
       sideEffects: {
         start: async (lease) => startSideEffect(createSideEffect({
@@ -545,6 +564,7 @@ describe('WorkerTaskQueue', () => {
               receiptId: `${record.idempotencyKey}:receipt`,
               observedAt: '2026-09-03T00:00:01.000Z',
               outcome: 'succeeded' as const,
+              evidenceIds: ['evidence-1'],
               outputHash: 'output',
             },
           };
