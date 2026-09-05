@@ -468,6 +468,45 @@ describe('H4 dev nodes', () => {
     }, {}, {} as never)).rejects.toThrow(/EvidenceStore.*持久化/);
   });
 
+  it('dev.evidence.add preserves Worker lineage for a scoped Acceptance', async () => {
+    const session = fakeSession();
+    const defs = createDevNodeDefs(session);
+    const byId = new Map(defs.map((d) => [d.typeId, d]));
+    const create = byId.get('dev.worktree.create')!;
+    const test = byId.get('dev.test.run')!;
+    const evidenceAdd = byId.get('dev.evidence.add')!;
+    const accept = byId.get('dev.accept')!;
+    await create.execute({ path: '/repo-workers/lineage' }, {}, {} as never);
+    const result = await test.execute({
+      worktreePath: '/repo-workers/lineage',
+      cmd: ['tsc', '--noEmit'],
+      orchestrationId: 'o-lineage',
+      stageId: 's-lineage',
+    }, {}, {} as never);
+    const lineage = {
+      runId: 'run-lineage',
+      taskId: 'task-lineage',
+      taskExecutionId: 'task-execution:run-lineage:task-lineage',
+      attemptId: 'task-execution:run-lineage:task-lineage:attempt-1',
+    };
+    await evidenceAdd.execute({
+      orchestrationId: 'o-lineage',
+      stageId: 's-lineage',
+      resultId: result.resultId,
+      worktreePath: '/repo-workers/lineage',
+      ...lineage,
+    }, {}, {} as never);
+    expect(session.collector.records.at(-1)).toMatchObject(lineage);
+    const acceptance = await accept.execute({
+      orchestrationId: 'o-lineage',
+      stageId: 's-lineage',
+      worktreePath: '/repo-workers/lineage',
+      rules: [{ id: 'typecheck', kind: 'test', command: 'tsc --noEmit' }],
+      ...lineage,
+    }, {}, {} as never);
+    expect(acceptance.passed).toBe(true);
+  });
+
   it('dev.worktree.cleanup：无审批拒 / 仅审批无绑定拒 / 三绑定齐全才清理 / 一次性消费', async () => {
     const session = fakeSession();
     const defs = createDevNodeDefs(session);

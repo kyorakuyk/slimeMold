@@ -510,6 +510,10 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'resultId', label: '宿主结果 ID（来自 dev.* 执行节点）', type: T },
       { id: 'worktreePath', label: '工作区路径（作用域校验）', type: T },
+      { id: 'runId', label: 'Worker Run ID（可选）', type: T },
+      { id: 'taskId', label: 'Worker Task ID（可选）', type: T },
+      { id: 'taskExecutionId', label: 'Task Execution ID（可选）', type: T },
+      { id: 'attemptId', label: 'Attempt ID（可选）', type: T },
     ],
     outputs: [{ id: 'evidenceId', label: '证据 ID', type: T }],
     params: [
@@ -517,12 +521,26 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'resultId', label: '宿主结果 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'runId', label: 'Worker Run ID（兜底）', type: 'text', default: '' },
+      { key: 'taskId', label: 'Worker Task ID（兜底）', type: 'text', default: '' },
+      { key: 'taskExecutionId', label: 'Task Execution ID（兜底）', type: 'text', default: '' },
+      { key: 'attemptId', label: 'Attempt ID（兜底）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const resultId = str(inputs.resultId ?? params.resultId);
       const worktreePath = str(inputs.worktreePath ?? params.worktreePath);
+      const runId = str(inputs.runId ?? params.runId);
+      const taskId = str(inputs.taskId ?? params.taskId);
+      const taskExecutionId = str(inputs.taskExecutionId ?? params.taskExecutionId);
+      const attemptId = str(inputs.attemptId ?? params.attemptId);
+      const lineageValues = [runId, taskId, taskExecutionId, attemptId];
+      const hasLineage = lineageValues.some(Boolean);
+      if (hasLineage && lineageValues.some((value) => !value)) {
+        throw nodeError('evidence.add 的 Worker lineage 必须四项完整');
+      }
+      if (hasLineage) assertTaskExecutionLineage({ runId, taskId, taskExecutionId, attemptId });
       if (!orchestrationId || !stageId) throw nodeError('evidence.add 需要 orchestrationId 与 stageId');
       if (!resultId) throw nodeError('evidence.add 需要引用宿主结果 resultId');
       // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
@@ -553,6 +571,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: host.command,
         exitCode: host.exitCode,
         contentHash: host.contentHash,
+        ...(hasLineage ? { runId, taskId, taskExecutionId, attemptId } : {}),
       });
       return { evidenceId: rec.id };
     },

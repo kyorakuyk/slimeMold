@@ -2127,6 +2127,26 @@ Issue 工作台采用四个面板：
 
 本轮只建立本地 `unverified` checkpoint，不 push；独立 reviewer 尚未针对当前最终 snapshot 返回 approval。成功 worktree 和截图 fixture 保留，未执行用户批准之外的 Delivery/Cleanup；OS 级 no-follow/TOCTOU、跨进程真实压力验证、不可信 package script 隔离以及完整 DeliveryReceipt 仍未完成。
 
+### 7.80 最小项目交付闭环与真实项目生产档案
+
+- 为 `dev.evidence.add` 增加可选的 Worker `runId/taskId/taskExecutionId/attemptId` lineage；当四项同时存在时先执行 canonical 校验，再写入 Evidence。新增回归证明带 lineage 的 Evidence 能被同 attempt 的 `dev.accept` 读取，避免 Acceptance 通过但 Evidence 无法关联到 Delivery 的断链。
+- 在 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260904-203708` 中重新执行真实 Tauri GUI success：最终 `runId=2`、`taskId=accept`、`attemptId=task-execution:2:accept:attempt-1`，Worker worktree 为 `mvp-gui-success-wt-6`，compile/test/diff/path-policy 和 4 条 host Evidence 均通过，Acceptance `acc-mtopto7s-c3a9c07f` 为 `passed=true`。
+- 通过现有 `workerDelivery` host API 完成最小真实 Delivery：创建 `ArtifactCandidate`、用户 approval、目标项目写入、逐文件 hash/read-back 和 `DeliveryReceipt`；目标项目为 `mvp-delivery-target-7`，交付 `src/components/greeting.js` 与 `tests/greeting.test.js`。第一版 no-overwrite 边界将 `src/components/baseline.js` 明确记录为 excluded，没有静默覆盖已有文件。
+- 目标 fixture 真实生成 worker commit `944a67a` 与 merge commit `f2fc91d`；目标最终工作树 clean，目标项目测试通过。生成最小项目生产档案：`project-manifest-run-2.json`、`plan-run-2.md`、`construction-log-run-2.md`、`evidence-index-run-2.json`、`git-record-run-2.json` 和 `delivery-manifest-run-2.json`，包含计划、施工步骤、Evidence、时间、实际 Git 历史、交付 Receipt 和未计量成本说明。
+- 保存最终真实 WebView 截图：`screenshots/04-run2-worker.png` 与 `screenshots/05-run2-acceptance.png`；两张截图与 run 2 的 Worktree/Acceptance lineage 一致。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、980 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过；
+- 真实 Tauri fixture：GUI worktree → patch → compile/test/diff → lineage Evidence → Acceptance → ArtifactCandidate → user approval → target read-back → worker commit/merge，通过。
+
+本轮建立本地 `unverified` checkpoint，不 push；Delivery/Cleanup 的完整 GUI 面板、重启 read-back 和 CleanupReceipt 仍未完成。第一版 MVP 当前证明的是一个小型可运行项目的受控生产与交付，不宣称通用覆盖已有文件、完整成本计量、任意 Artifact 类型或无人值守运维。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
