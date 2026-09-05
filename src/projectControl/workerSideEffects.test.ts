@@ -78,6 +78,15 @@ describe('worker side-effect recorder', () => {
     expect((await repository.read()).journal.entries).toEqual([completed]);
   });
 
+  it('keeps start safe when passed as an unbound callback', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const { start } = recorder;
+
+    await expect(start(lease)).resolves.toMatchObject({ status: 'started' });
+  });
+
   it('atomically rejects a concurrent start for the same attempt', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');

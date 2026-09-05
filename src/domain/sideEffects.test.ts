@@ -44,6 +44,65 @@ describe('side-effect journal', () => {
     expect((await repository.read()).journal.entries).toEqual([started]);
   });
 
+  it('rejects canonical and legacy alias records coexisting for one effect', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
+    const taskExecutionId = createTaskExecutionId('run-alias', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const canonical = createSideEffect({
+      idempotencyKey: 'worker-execution:canonical',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'canonical-input',
+      runId: 'run-alias',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+    });
+    const legacy = createSideEffect({
+      idempotencyKey: 'worker-execution:legacy',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'legacy-input',
+      runId: 'run-alias',
+      taskId: 'task-1',
+    });
+    await repository.record(canonical);
+    await repository.record(legacy);
+
+    await expect(repository.claim(startSideEffect(canonical), [legacy]))
+      .rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('rejects a legacy alias without complete lineage before upgrading it', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
+    const taskExecutionId = createTaskExecutionId('run-legacy', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const canonical = createSideEffect({
+      idempotencyKey: 'worker-execution:canonical-legacy',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'canonical-input',
+      runId: 'run-legacy',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+    });
+    const legacy = createSideEffect({
+      idempotencyKey: 'worker-execution:legacy-only',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'legacy-input',
+      runId: 'run-legacy',
+      taskId: 'task-1',
+    });
+    await repository.record(legacy);
+
+    await expect(repository.claim(startSideEffect(canonical), [legacy]))
+      .rejects.toMatchObject({ code: 'conflict' });
+    expect((await repository.read()).journal.entries[0].status).toBe('planned');
+    expect(attemptId).toBeTruthy();
+  });
+
   it('rejects malformed receipt before it can reach the journal', async () => {
     const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'project-root');
     await expect(repository.record({

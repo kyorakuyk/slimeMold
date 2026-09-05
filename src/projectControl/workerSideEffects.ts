@@ -191,37 +191,39 @@ export function createWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
 ): WorkerSideEffectRecorderWithRecovery {
+  const claim = async (lease: WorkerTaskLease): Promise<WorkerSideEffectClaim> => {
+    const idempotencyKey = effectKeyFor(lease);
+    const planned = createSideEffect({
+      idempotencyKey,
+      kind: 'worker-execution',
+      target: requiredText(lease.assignment.worktreeId, 'worktree id'),
+      inputHash: inputHashFor(lease),
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+    });
+    const legacyPlanned = createSideEffect({
+      idempotencyKey: legacyEffectKeyFor(lease),
+      kind: 'worker-execution',
+      target: requiredText(lease.assignment.worktreeId, 'worktree id'),
+      inputHash: legacyInputHashFor(lease),
+      runId: lease.runId,
+      taskId: lease.task.id,
+    });
+    const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
+    if (!claimed.claimed && claimed.record.status === 'receipt') {
+      assertWorkerExecutionReceipt(claimed.record, lease);
+    }
+    return { record: claimed.record, claimed: claimed.claimed };
+  };
+
   return {
-    async claim(lease): Promise<WorkerSideEffectClaim> {
-      const idempotencyKey = effectKeyFor(lease);
-      const planned = createSideEffect({
-        idempotencyKey,
-        kind: 'worker-execution',
-        target: requiredText(lease.assignment.worktreeId, 'worktree id'),
-        inputHash: inputHashFor(lease),
-        runId: lease.runId,
-        taskId: lease.task.id,
-        taskExecutionId: lease.taskExecutionId,
-        attemptId: lease.attemptId,
-      });
-      const legacyPlanned = createSideEffect({
-        idempotencyKey: legacyEffectKeyFor(lease),
-        kind: 'worker-execution',
-        target: requiredText(lease.assignment.worktreeId, 'worktree id'),
-        inputHash: legacyInputHashFor(lease),
-        runId: lease.runId,
-        taskId: lease.task.id,
-      });
-      const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
-      if (!claimed.claimed && claimed.record.status === 'receipt') {
-        assertWorkerExecutionReceipt(claimed.record, lease);
-      }
-      return { record: claimed.record, claimed: claimed.claimed };
-    },
+    claim,
 
     async start(lease): Promise<SideEffectRecord> {
       const idempotencyKey = effectKeyFor(lease);
-      const claimed = await this.claim!(lease);
+      const claimed = await claim(lease);
       if (claimed.claimed) return claimed.record;
       assertExistingEffectMatchesLease(claimed.record, lease, claimed.record.idempotencyKey);
       if (claimed.record.status === 'receipt') {

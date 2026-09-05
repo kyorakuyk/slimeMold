@@ -1997,6 +1997,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、932 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 3 个文件、42 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.63 claim/lock safety 修复与 stale-reviewer findings 复现
+
+- 针对旧 reviewer 报告、并重新在当前代码复现后修复三类问题：`WorkerSideEffectRecorder.start` 改为闭包引用，解构调用不再因 `this` 丢失而抛 TypeError；SideEffectJournal claim 拒绝 canonical/legacy alias 同时存在；仅命中缺少 taskExecution/attempt lineage 的 legacy planned 记录时 fail-closed，不升级为 started。
+- Tauri Rust `event_lock_acquire` 移除同进程持锁立即报错的 early return，第二个同路径 caller现在通过已有 create-new + bounded wait逻辑等待首个 holder释放；跨进程锁和5秒超时语义保留。新增线程级 Rust 回归覆盖等待、release和再次释放锁文件。
+- 这些修复不把旧 reviewer 的 stale snapshot verdict升级为 approval；它只提供了可复现问题线索，当前累计 reviewer仍需针对最新 HEAD重新返回严格 JSON。
+- 验证结果：`npm run test` 为 109 个测试文件、935 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 TS targeted suite 为 2 个文件、21 个测试通过；Rust lock targeted test通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

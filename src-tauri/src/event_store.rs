@@ -88,14 +88,6 @@ fn new_token() -> String {
 #[tauri::command]
 pub fn event_lock_acquire(root: String, relative_path: Option<String>) -> Result<String, String> {
     let (lock_path, key) = lock_path_for_root(&root, relative_path.as_deref())?;
-    if held_locks()
-        .lock()
-        .map_err(|_| "event_lock: 锁表 poisoned".to_string())?
-        .contains_key(&key)
-    {
-        return Err(format!("event_lock: 当前进程已持有锁：{key}"));
-    }
-
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("event_lock: 创建锁目录失败：{e}"))?;
     }
@@ -202,8 +194,12 @@ mod tests {
         let token = event_lock_acquire(root.to_string_lossy().to_string(), None).unwrap();
         let (path, _) = lock_path_for_root(root.to_string_lossy().as_ref(), None).unwrap();
         assert!(path.exists());
-        assert!(event_lock_acquire(root.to_string_lossy().to_string(), None).is_err());
+        let waiter_root = root.to_string_lossy().to_string();
+        let waiter = thread::spawn(move || event_lock_acquire(waiter_root, None));
+        thread::sleep(LOCK_POLL + LOCK_POLL);
         event_lock_release(root.to_string_lossy().to_string(), token, None).unwrap();
+        let second_token = waiter.join().unwrap().unwrap();
+        event_lock_release(root.to_string_lossy().to_string(), second_token, None).unwrap();
         assert!(!path.exists());
         let _ = fs::remove_dir_all(root);
     }

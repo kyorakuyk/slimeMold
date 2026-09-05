@@ -346,6 +346,15 @@ export class SideEffectJournalRepository {
         throw new SideEffectJournalError('needs-repair', `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`);
       }
       const canonicalIndex = parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === record.idempotencyKey);
+      const aliasIndexes = aliases
+        .map((candidate) => parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === candidate.idempotencyKey))
+        .filter((index) => index >= 0);
+      if (canonicalIndex >= 0 && aliasIndexes.length > 0) {
+        throw new SideEffectJournalError(
+          'conflict',
+          `canonical 与 legacy 副作用记录同时存在：${record.idempotencyKey}`,
+        );
+      }
       const alias = aliases.find((candidate) => parsed.journal.entries.some((entry) => entry.idempotencyKey === candidate.idempotencyKey));
       const index = canonicalIndex >= 0
         ? canonicalIndex
@@ -357,6 +366,12 @@ export class SideEffectJournalRepository {
       }
       const existing = parsed.journal.entries[index];
       decodeRecord(existing);
+      if (canonicalIndex < 0 && (!existing.taskExecutionId || !existing.attemptId)) {
+        throw new SideEffectJournalError(
+          'conflict',
+          `legacy 副作用记录缺少完整 lineage，拒绝升级：${existing.idempotencyKey}`,
+        );
+      }
       const expected = canonicalIndex >= 0 ? record : alias!;
       if (!sameIdentity(existing, expected)) {
         throw new SideEffectJournalError('conflict', `idempotencyKey 已绑定其它副作用：${existing.idempotencyKey}`);
