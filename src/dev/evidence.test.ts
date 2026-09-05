@@ -150,6 +150,24 @@ describe('H4 EvidenceCollector', () => {
     await expect(store.load()).rejects.toThrow();
   });
 
+  it('rejects conflicting duplicate Evidence IDs during restart load', async () => {
+    const source = new EvidenceCollector();
+    const original = source.add({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'passed',
+      summary: 'original',
+    });
+    const restored = new EvidenceCollector({
+      append: async () => {},
+      load: async () => [original, { ...original, summary: 'tampered' }],
+    });
+
+    await expect(restored.loadPersisted()).rejects.toThrow(/Evidence ID 内容冲突/);
+    expect(restored.records).toHaveLength(0);
+  });
+
   it('removes pending evidence from memory when durable append fails', async () => {
     const collector = new EvidenceCollector({
       append: async () => { throw new Error('disk unavailable'); },

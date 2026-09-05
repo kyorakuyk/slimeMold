@@ -308,9 +308,26 @@ export class EvidenceCollector {
   /** 启动/恢复：从持久化 store 载入历史证据（强制 capturedBy='host'）。 */
   async loadPersisted(): Promise<EvidenceRecord[]> {
     if (!this.persistence) return [];
-    const recs = await this.persistence.load();
-    for (const r of recs) this.restore(r);
-    return recs;
+    const recs = (await this.persistence.load()).map((record) => decodeEvidenceRecord(record));
+    const loadedById = new Map<string, EvidenceRecord>();
+    for (const record of recs) {
+      const existing = loadedById.get(record.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Evidence ID 内容冲突：${record.id}`);
+      }
+      loadedById.set(record.id, record);
+    }
+    const currentById = new Map(this._records.map((record) => [record.id, record]));
+    for (const record of loadedById.values()) {
+      const existing = currentById.get(record.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Evidence ID 内容冲突：${record.id}`);
+      }
+    }
+    for (const record of loadedById.values()) {
+      if (!currentById.has(record.id)) this._records.push(record);
+    }
+    return [...loadedById.values()];
   }
 
   get records(): readonly EvidenceRecord[] {

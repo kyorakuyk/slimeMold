@@ -1981,6 +1981,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、930 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 6 个文件、49 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.61 Evidence restart load 增加 ID conflict reconciliation
+
+- Phase 2 hardening 第八个垂直切片修复重启读取边界：`EvidenceCollector.loadPersisted()` 现在先 decode 全部记录，在临时 ID map 中拒绝同 ID 不同内容，再与当前内存记录做冲突校验，最后一次性合并唯一记录；冲突不会留下半恢复内存状态，完全相同的重复行只保留一条。
+- 这样 JSONL 重复/篡改不会通过“逐条 restore”混入 EvidenceCollector；`capturedBy`、lineage 和已有 decode 校验继续生效。
+- 新增冲突 duplicate ID RED→GREEN 回归；append/read-back 与跨会话 JSONL 测试继续通过。
+- 验证结果：`npm run test` 为 109 个测试文件、931 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted `src/dev/evidence.test.ts` 为 10 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
