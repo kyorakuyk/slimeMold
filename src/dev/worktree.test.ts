@@ -272,4 +272,30 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(calls).toContainEqual(['worktree', 'remove', '--force', 'C:/repo-workers/attempt-1']);
     expect(calls).toContainEqual(['branch', '-D', 'worker/attempt-1']);
   });
+
+  it('preserves create lineage when cancellation rollback cannot remove the worktree', async () => {
+    const controller = new AbortController();
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok('abc123\n');
+      if (args[0] === 'worktree' && args[1] === 'add') {
+        controller.abort();
+        return ok();
+      }
+      if (args[0] === 'worktree' && args[1] === 'remove') {
+        return { exitCode: 128, stdout: '', stderr: 'worktree busy', durationMs: 1 };
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+
+    await expect(m.create('wt-rollback', 'C:/repo-workers/rollback', {
+      branch: 'worker/rollback',
+      signal: controller.signal,
+    })).resolves.toBeNull();
+    expect(m.get('wt-rollback')).toMatchObject({
+      path: 'C:/repo-workers/rollback',
+      branch: 'worker/rollback',
+      status: 'created',
+    });
+  });
 });

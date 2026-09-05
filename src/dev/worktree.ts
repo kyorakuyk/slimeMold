@@ -99,11 +99,6 @@ export class WorktreeManager {
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
     const add = await this.runner.git(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], this.baseRepoPath);
     if (add.exitCode !== 0) return null;
-    if (opts?.signal?.aborted) {
-      await this.runner.git(['worktree', 'remove', '--force', path], this.baseRepoPath);
-      await this.runner.git(['branch', '-D', branch], this.baseRepoPath);
-      return null;
-    }
     const info: WorktreeInfo = {
       id,
       path,
@@ -113,6 +108,11 @@ export class WorktreeManager {
       status: 'created',
     };
     this.infos.set(id, info);
+    if (opts?.signal?.aborted) {
+      const rolledBack = await this.cleanupCreated(info);
+      if (rolledBack) this.forget(id);
+      return null;
+    }
     return info;
   }
 
@@ -215,6 +215,18 @@ export class WorktreeManager {
     return diffQ.exitCode !== 0 || untracked.stdout.trim().length > 0;
   }
 
+  private async cleanupCreated(info: WorktreeInfo): Promise<boolean> {
+    const rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
+    if (rm.exitCode !== 0) return false;
+    const branch = await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);
+    if (branch.exitCode !== 0) {
+      this.infos.set(info.id, { ...info, status: 'orphaned' });
+      return false;
+    }
+    this.infos.set(info.id, { ...info, status: 'cleaned' });
+    return true;
+  }
+
   /**
    * 清理 worktree 并删除临时分支。
    * 确认门（审计修复）：必须显式传入 { confirm: true }（由上层在人工验收后调用）——
@@ -233,15 +245,7 @@ export class WorktreeManager {
       this.infos.set(id, { ...info, status: 'cleaned' });
       return true;
     }
-    const rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
-    if (rm.exitCode !== 0) return false;
     // remove 已经发生后必须完成分支收尾，不能因取消留下假 created 状态。
-    const branch = await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);
-    if (branch.exitCode !== 0) {
-      this.infos.set(id, { ...info, status: 'orphaned' });
-      return false;
-    }
-    this.infos.set(id, { ...info, status: 'cleaned' });
-    return true;
+    return this.cleanupCreated(info);
   }
 }

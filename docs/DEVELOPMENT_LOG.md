@@ -1957,6 +1957,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、927 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite `src/dev/evidence.test.ts` 为 9 个测试通过，`src/dev/workerAcceptance.test.ts` 为 8 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.58 取消后的 Worktree rollback 保留 lineage
+
+- Phase 2 hardening 第五个垂直切片修复 add-after-cancel 的恢复缺口：`WorktreeManager.create()` 在 Git `worktree add` 已成功但 signal 随后取消时，先登记完整 `WorktreeInfo`，再执行 rollback；rollback 失败不再返回 `null` 丢失现场。
+- rollback 的 remove 失败保留 `created` 状态供后续显式 retry；remove 成功但 branch 删除失败转为 `orphaned`，成功完成两步才清除 manager 记录。普通 cleanup 复用同一收敛 helper；成功取消的既有行为仍不残留记录。
+- 新增 cancellation rollback 失败 RED→GREEN 回归，覆盖“已应用但未完全清理”的 Worktree lineage 保留；避免 Tauri 包装层在未注册前误触发 unregister。
+- 验证结果：`npm run test` 为 109 个测试文件、928 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 5 个文件、46 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
