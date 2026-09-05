@@ -77,6 +77,22 @@ describe('worker side-effect recorder', () => {
     expect((await repository.read()).journal.entries).toEqual([completed]);
   });
 
+  it('atomically rejects a concurrent start for the same attempt', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+
+    const results = await Promise.allSettled([
+      recorder.start(lease),
+      recorder.start(lease),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect((await repository.read()).journal.entries).toHaveLength(1);
+    expect((await repository.read()).journal.entries[0].status).toBe('started');
+  });
+
   it('uses canonical attempt identity instead of delimiter-ambiguous run/task keys', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');

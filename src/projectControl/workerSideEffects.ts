@@ -219,37 +219,16 @@ export function createWorkerSideEffectRecorder(
 
     async start(lease): Promise<SideEffectRecord> {
       const idempotencyKey = effectKeyFor(lease);
-      const legacyKey = legacyEffectKeyFor(lease);
-      const parsed = await repository.read();
-      if (parsed.status === 'needs-repair') {
-        throw new SideEffectJournalError(
-          'needs-repair',
-          `副作用账本需要修复：${parsed.reason ?? '未知格式错误'}`,
-        );
-      }
-      const existing = parsed.journal.entries.find((item) => item.idempotencyKey === idempotencyKey)
-        ?? parsed.journal.entries.find((item) => item.idempotencyKey === legacyKey);
-      if (existing) assertExistingEffectMatchesLease(existing, lease, existing.idempotencyKey);
-      if (existing?.status === 'receipt') {
+      const claimed = await this.claim!(lease);
+      if (claimed.claimed) return claimed.record;
+      assertExistingEffectMatchesLease(claimed.record, lease, claimed.record.idempotencyKey);
+      if (claimed.record.status === 'receipt') {
         throw new Error(`Worker side effect 已有 receipt，拒绝重复执行：${idempotencyKey}`);
       }
-      if (existing?.status === 'unknown' || existing?.status === 'started') {
+      if (claimed.record.status === 'unknown' || claimed.record.status === 'started') {
         throw new Error(`Worker side effect 需要先恢复核对：${idempotencyKey}`);
       }
-
-      const planned = createSideEffect({
-        idempotencyKey,
-        kind: 'worker-execution',
-        target: requiredText(lease.assignment.worktreeId, 'worktree id'),
-        inputHash: inputHashFor(lease),
-        runId: lease.runId,
-        taskId: lease.task.id,
-        taskExecutionId: lease.taskExecutionId,
-        attemptId: lease.attemptId,
-      });
-      const afterPlanned = await repository.record(planned);
-      const started = startSideEffect(entryFor(afterPlanned, idempotencyKey));
-      return entryFor(await repository.record(started), idempotencyKey);
+      throw new Error(`Worker side effect 当前不可启动：${idempotencyKey}`);
     },
 
     async complete(record, result: WorkerExecutionResult): Promise<SideEffectRecord> {

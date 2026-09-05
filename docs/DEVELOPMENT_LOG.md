@@ -1941,6 +1941,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、925 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 5 个文件、38 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.56 将 Worker execution start 收敛到原子 claim
+
+- Phase 2 hardening 第三个垂直切片修复 side-effect journal 的残留竞态：`createWorkerSideEffectRecorder.start()` 不再执行 `read → record(planned) → record(started)`，而是统一委托持有 journal lock 的 `repository.claim()`。
+- 同一 execution/attempt 并发调用 `start()` 时只允许一个 caller 获得 `started` record；其它 caller 明确拒绝，不会观察到“账本里没有记录”后重复触碰 Worker 外部副作用。已有 `receipt`、`started`、`unknown` 状态继续 fail-closed，必须走恢复/核对路径。
+- 新增并发 RED→GREEN 回归，覆盖原子 claim 后 journal 只保留一条 started record；没有改变默认 `claim()` queue 路径或既有 recovery 语义。
+- 验证结果：`npm run test` 为 109 个测试文件、926 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 3 个文件、41 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
