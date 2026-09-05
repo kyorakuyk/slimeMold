@@ -2075,7 +2075,7 @@ Issue 工作台采用四个面板：
 
 - Phase 2 hardening 第二十个垂直切片修复 DevSessionPanel 调用链：`registration-pending/orphaned` worktree 重试复用既有未消费 approval，直接进入宿主 `confirmAndCleanup` 的 unregister/branch-only 路径，不再对已删除 worktree 重新计算 signature。
 - Node capability regression 覆盖 grep `--file`、`-f`、`--exclude-from` 的外部输入选项；当前 `/outside` 与 Windows drive-form参数均经过双宿主策略检查。
-- 验证结果：targeted component/capability tests 为 3 个文件、23 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning。
+- 验证结果：targeted component/capability tests 为 3 个文件、23 个测试通过；`npm run test` 为 109 个测试文件、956 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
 ## 八、适合拆成的博客系列
 
