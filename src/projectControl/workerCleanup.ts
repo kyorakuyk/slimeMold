@@ -13,6 +13,7 @@ export interface WorkerCleanupProposalReady {
   attemptId: string;
   worktreeId: string;
   branch: string;
+  branchRevision?: string;
   worktreePath: string;
   baseRevision: string;
   stateSignature: string;
@@ -59,6 +60,8 @@ export interface WorkerCleanupHost {
     options: {
       worktreeId: string;
       branch: string;
+      branchRevision?: string;
+      branchRevisionRequired?: boolean;
       runId: string;
       taskId: string;
       taskExecutionId: string;
@@ -158,6 +161,9 @@ export async function buildWorkerCleanupProposal(
   if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) {
     return blocked(run.runId, taskId, '任务缺少 worktree 或 baseRevision，不能生成清理提案');
   }
+  if (durableBranchCleanup && !task.branchRevision?.trim()) {
+    return blocked(run.runId, taskId, 'orphan/registration-pending 缺少持久化 branchRevision，拒绝清理');
+  }
   const lineage = resolveTaskLineage(run, task);
   if (!lineage.ok) return blocked(run.runId, taskId, lineage.reason);
 
@@ -198,6 +204,7 @@ export async function buildWorkerCleanupProposal(
     attemptId: lineage.attemptId,
     worktreeId: task.worktreeId,
     branch: task.branch,
+    ...(durableBranchCleanup ? { branchRevision: task.branchRevision } : {}),
     worktreePath: task.worktreePath,
     baseRevision: task.baseRevision,
     stateSignature,
@@ -217,6 +224,8 @@ export function approveWorkerCleanupProposal(
   host.approveCleanup(proposal.worktreePath, {
     worktreeId: proposal.worktreeId,
     branch: proposal.branch,
+    branchRevision: proposal.branchRevision,
+    branchRevisionRequired: proposal.branchRevision !== undefined,
     runId: proposal.runId,
     taskId: proposal.taskId,
     taskExecutionId: proposal.taskExecutionId,

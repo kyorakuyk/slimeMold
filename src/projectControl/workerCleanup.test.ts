@@ -141,9 +141,30 @@ describe('worker cleanup proposal', () => {
       status: 'ready',
       worktreeId: 'wt-1',
       branch: 'worker/task-1',
+      branchRevision: 'b'.repeat(40),
       stateSignature: 'sig-before-removal',
     }));
     expect(computeWorktreeSignature).not.toHaveBeenCalled();
+  });
+
+  it('blocks orphan cleanup when durable branch revision is missing', async () => {
+    const task = {
+      ...run().tasks['task-1'],
+      worktreeStatus: 'orphaned' as const,
+      cleanupStateSignature: 'sig-before-removal',
+    };
+
+    await expect(buildWorkerCleanupProposal({
+      run: run(),
+      task,
+      acceptance: acceptance(),
+      isWorktreeTracked: () => false,
+      computeWorktreeSignature: vi.fn(async () => 'should-not-run'),
+      sideEffects: [],
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'blocked',
+      reason: expect.stringMatching(/branchRevision/),
+    }));
   });
 
   it('blocks a legacy acceptance without lineage for a task with explicit lineage', async () => {

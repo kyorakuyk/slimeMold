@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-05
+updated: 2026-09-06
 tags:
   - SlimeMold
   - Agent
@@ -11,7 +11,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-09-05
+period: 2026-07-29 至 2026-09-06
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -2108,6 +2108,24 @@ Issue 工作台采用四个面板：
 - cleanup approval 现在绑定具体 `worktreeId`、branch 以及 run/task/taskExecution/attempt lineage；confirm gate 同时核对当前 WorktreeInfo 与 passed Acceptance 全部 identity，阻断同路径复用旧 approval/Acceptance。
 - Evidence projection 对 durable duplicate ID 和 current/incoming 内容冲突 fail-closed，禁止 restart merge last-write-wins；cleanup host gate 已完成 destructive mutation 后即使 cancellation 到达也会先写成功 receipt；App recovery 传递 operation signal。
 - 验证结果：`npm run test` 为 109 个测试文件、975 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
+### 7.79 Evidence merge、restart cleanup provenance 与真实 GUI 成功验收
+
+- 针对最新 reviewer 复现的 fail-open，`workerEvidence.indexEvidence` 现在对所有 current/incoming/durable 输入先执行 `decodeEvidenceRecord`；直接注入 `capturedBy:'agent'`、损坏 schema 或重复冲突记录均 fail-closed。`WorkerQueue.claimTask` 将 `worktreeStatus:'created'` 写入持久 task state，而不是只写 `TaskStarted` payload；restore decoder 对非法 worktreeStatus、orphan/registration-pending 缺少 branchRevision、cleaned 缺少 cleanup receipt 直接拒绝，旧格式缺少新字段仍可迁移。
+- `registration-pending` restore 不再误调用 `dev_register_worktree`；Rust `dev_unregister_worktree` 在 generation、受控 Worker target、非 live worktree、branch 已删除且非 pending rollback 的前提下幂等成功，避免新宿主 generation 已丢登记时 cleanup 永远卡死。orphan/pending cleanup proposal 必须保留 branchRevision，并通过显式 `branchRevisionRequired` 绑定 CAS gate；Worktree cleanup 成功写入 cleaned 状态时保留实际 branchRevision。
+- App 项目重开在 Worker restore 和事实审计后重新生成 cleanup proposals；cleanup receipt 已 durable 后，即使 operation signal 取消，也会先终态化 Worker task，保存 ProjectFile 并重新打开 read-back 核对 worktreeStatus、cleanupStatus、cleanupReceiptId、branchRevision 和 cleanupStateSignature，不把已完成 destructive action 返回成未收尾状态。
+- 在 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260904-203708` 中重新导入成功 workflow，通过真实 Tauri WebView DOM 运行 `runId=4`；新 Worker worktree `mvp-gui-success-wt-3` 创建成功，结构化 patch、compile、test、diff、path-policy Evidence 和 `Acceptance passed=true` 均已从磁盘 read-back，真实文件位于该成功 worktree。保存三张真实 GUI/WebView 截图：`screenshots/01-worker-success.png`、`screenshots/02-acceptance-passed.png`、`screenshots/03-patch-evidence.png`。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、979 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮只建立本地 `unverified` checkpoint，不 push；独立 reviewer 尚未针对当前最终 snapshot 返回 approval。成功 worktree 和截图 fixture 保留，未执行用户批准之外的 Delivery/Cleanup；OS 级 no-follow/TOCTOU、跨进程真实压力验证、不可信 package script 隔离以及完整 DeliveryReceipt 仍未完成。
 
 ## 八、适合拆成的博客系列
 

@@ -100,6 +100,13 @@ describe('WorkerTaskQueue', () => {
     const firstStarted = queue.drainEvents().find((event) => event.eventType === 'TaskStarted');
     expect(firstLease).toMatchObject({ taskExecutionId, attempt: 1, attemptId: firstAttemptId });
     expect(firstStarted?.payload).toMatchObject({ taskExecutionId, attemptId: firstAttemptId, attempt: 1 });
+    expect(queue.snapshot().tasks.a).toMatchObject({
+      worktreeStatus: 'created',
+      worktreeId: 'worktree-a',
+      worktreePath: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+    });
 
     queue.markFailed('a', '第一次失败', '2026-09-01T00:00:02.000Z', [], undefined, firstLease!.attemptId);
     queue.drainEvents();
@@ -147,6 +154,34 @@ describe('WorkerTaskQueue', () => {
       taskGraph,
       state,
     })).toThrow(/Evidence/);
+  });
+
+  it('rejects invalid persisted worktree lifecycle provenance', () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-worktree-provenance',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const invalidStatus = queue.snapshot();
+    invalidStatus.tasks.a = { ...invalidStatus.tasks.a, worktreeStatus: 'unknown' as never };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidStatus })).toThrow(/worktreeStatus/);
+
+    const orphanWithoutRevision = queue.snapshot();
+    orphanWithoutRevision.tasks.a = { ...orphanWithoutRevision.tasks.a, worktreeStatus: 'orphaned' };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: orphanWithoutRevision })).toThrow(/branchRevision/);
+
+    const cleanedWithoutReceipt = queue.snapshot();
+    cleanedWithoutReceipt.tasks.a = {
+      ...cleanedWithoutReceipt.tasks.a,
+      status: 'succeeded',
+      attempt: 1,
+      evidenceIds: ['evidence-1'],
+      worktreeStatus: 'cleaned',
+      cleanupStatus: 'cleaned',
+    };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: cleanedWithoutReceipt })).toThrow(/cleanup receipt/);
   });
 
   it('rejects stale completion from an older attempt', () => {

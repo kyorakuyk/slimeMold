@@ -99,6 +99,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     hostState.rejectUnregister = true;
     await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('registration-pending');
+    expect(session.manager.get(info!.id)?.branchRevision).toBe(TIP_OID);
 
     hostState.rejectUnregister = false;
     await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(true);
@@ -146,6 +147,7 @@ describe('DevSession Tauri orphan cleanup', () => {
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info!.baseRevision,
+      branchRevision: info!.branchRevision,
       stateSignature: 'sig-1',
       acceptanceId,
       orchestrationId: 'orch-1',
@@ -223,6 +225,36 @@ describe('DevSession Tauri orphan cleanup', () => {
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
   });
 
+  it('restores registration-pending lineage without registering a deleted worktree', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 2,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+    const info = {
+      id: 'pending-worker',
+      path: '/repo-workers/pending-worker',
+      branch: 'worker/pending-worker',
+      baseRevision: 'base-1',
+      branchRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'registration-pending' as const,
+    };
+
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
+    expect(session.manager.get(info.id)).toEqual(expect.objectContaining({
+      id: info.id,
+      status: 'registration-pending',
+      branchRevision: TIP_OID,
+    }));
+  });
+
   it('confirms cleanup for a restored orphan through the branch-only path', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
@@ -266,6 +298,7 @@ describe('DevSession Tauri orphan cleanup', () => {
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info.baseRevision,
+      branchRevision: info.branchRevision,
       stateSignature: 'sig-orphan',
       acceptanceId,
       orchestrationId: 'orch-1',

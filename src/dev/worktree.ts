@@ -294,7 +294,7 @@ export class WorktreeManager {
       this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
       return false;
     }
-    this.infos.set(info.id, { ...info, status: 'cleaned' });
+    this.infos.set(info.id, { ...info, branchRevision, status: 'cleaned' });
     return true;
   }
 

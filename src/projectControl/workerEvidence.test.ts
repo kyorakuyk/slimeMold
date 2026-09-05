@@ -50,6 +50,13 @@ describe('worker evidence projection', () => {
     expect(incoming).toEqual([evidence('ev-2', '新增')]);
   });
 
+  it('rejects forged evidence when merging in-memory projections directly', () => {
+    expect(() => mergeWorkerEvidence(
+      [evidence('ev-current', '当前')],
+      [{ ...evidence('ev-agent', '模型自报'), capturedBy: 'agent' as never }],
+    )).toThrow(/capturedBy/);
+  });
+
   it('fails closed on duplicate durable ids or conflicting in-memory ids', async () => {
     await expect(loadWorkerEvidence({
       load: async () => [evidence('ev-dup', 'same'), evidence('ev-dup', 'same')],

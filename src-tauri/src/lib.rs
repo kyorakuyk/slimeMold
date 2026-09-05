@@ -1983,13 +1983,6 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
         {
             return Err("dev_unregister_worktree: pending rollback worktree 不能注销".into());
         }
-        if !state
-            .worktrees
-            .iter()
-            .any(|worktree| path_compare_key(worktree) == path_compare_key(&c))
-        {
-            return Err("dev_unregister_worktree: worktree 未登记".into());
-        }
     }
     if git_worktree_is_listed(&base_path, &canon)? {
         return Err("dev_unregister_worktree: Git worktree 仍处于 live 状态".into());
@@ -2001,14 +1994,13 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
     if st.base_repo.as_deref() != Some(base.as_str()) || st.generation != generation {
         return Err("dev_unregister_worktree: session 在 read-back 期间发生变化".into());
     }
-    let Some(index) = st
+    if let Some(index) = st
         .worktrees
         .iter()
         .position(|w| path_compare_key(w) == path_compare_key(&c))
-    else {
-        return Err("dev_unregister_worktree: worktree 未登记".into());
-    };
-    st.worktrees.remove(index);
+    {
+        st.worktrees.remove(index);
+    }
     Ok(())
 }
 
@@ -3152,7 +3144,7 @@ mod dev_exec_tests {
     }
 
     #[test]
-    fn unregister_requires_a_valid_registered_worker_and_preserves_pending_state() {
+    fn unregister_is_idempotent_after_safe_cleanup_and_preserves_pending_state() {
         let _test_guard = lock_dev_state_tests();
         let test_root = std::env::temp_dir().join("slimemold-test-runs");
         let base = test_root.join(format!(
@@ -3239,8 +3231,8 @@ mod dev_exec_tests {
             "pending worktree cannot be unregistered"
         );
         assert!(
-            other_result.is_err(),
-            "unregistered worktree cannot be unregistered"
+            other_result.is_ok(),
+            "safe absent worktree unregister is idempotent"
         );
         assert!(
             live_result.is_err(),
@@ -3250,7 +3242,10 @@ mod dev_exec_tests {
             cleaned_result.is_ok(),
             "cleaned worktree can be unregistered once"
         );
-        assert!(registered_again.is_err(), "unregister must be one-shot");
+        assert!(
+            registered_again.is_ok(),
+            "unregister must be idempotent after cleanup"
+        );
         assert!(
             pending_still_present,
             "failed unregister must not erase pending rollback state"

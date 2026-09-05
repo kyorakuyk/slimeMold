@@ -663,6 +663,45 @@ export default function App() {
     if (!session) throw new Error('开发宿主不可用，Worker cleanup 未执行');
     assertProjectOperation(operation);
 
+    const persistCleanupState = async (
+      nextRuns: WorkerRunQueueState[],
+    ): Promise<void> => {
+      const latest = useWorkflowStore.getState();
+      const sameProject = latest.projectId === projectId && latest.projectPath === projectPath;
+      if (sameProject) {
+        // Receipt 已经 durable 后，不再把当前 operation 的 cancellation 当作阻断条件。
+        await latest.saveProject();
+      } else {
+        const [{ createTauriEventStoreAdapter }] = await Promise.all([
+          import('./domain/tauriEventStore'),
+        ]);
+        await flushPendingProjectEvents(
+          projectId,
+          new EventStreamRepository(createTauriEventStoreAdapter(projectPath), projectPath),
+        );
+        await saveProjectFile(buildProjectFile({
+          ...current,
+          workerRuns: nextRuns,
+          orchestrations: projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
+        }), projectPath);
+      }
+      const { openProjectByPath } = await import('./io/projectIO');
+      const persisted = await openProjectByPath(projectPath);
+      const expected = nextRuns.find((item) => item.runId === runId)?.tasks[taskId];
+      const actual = (persisted?.workerRuns ?? []).find((item) => item.runId === runId)?.tasks[taskId];
+      const projection = (task: typeof expected) => task && ({
+        status: task.status,
+        worktreeStatus: task.worktreeStatus,
+        branchRevision: task.branchRevision,
+        cleanupStateSignature: task.cleanupStateSignature,
+        cleanupStatus: task.cleanupStatus,
+        cleanupReceiptId: task.cleanupReceiptId,
+      });
+      if (!expected || !actual || JSON.stringify(projection(actual)) !== JSON.stringify(projection(expected))) {
+        throw new Error(`Worker cleanup ProjectFile read-back 不一致：${runId}/${taskId}`);
+      }
+    };
+
     if (action === 'approve') {
       approveWorkerCleanupProposal(proposal, session);
       assertProjectOperation(operation);
@@ -693,42 +732,46 @@ export default function App() {
       now: new Date().toISOString(),
       signal: operation.controller.signal,
     });
-    assertProjectOperation(operation);
-    current.setWorkerRunSideEffects(
-      mergeWorkerSideEffects(current.workerRunSideEffects, [cleanupResult.sideEffect]),
+    const cleanupSideEffects = mergeWorkerSideEffects(
+      current.workerRunSideEffects,
+      [cleanupResult.sideEffect],
     );
+    const sameProjectAtReceipt = useWorkflowStore.getState().projectId === projectId
+      && useWorkflowStore.getState().projectPath === projectPath;
+    if (sameProjectAtReceipt) current.setWorkerRunSideEffects(cleanupSideEffects);
     if (!cleanupResult.cleaned) {
       const pendingRun = current.workerRuns.find((item) => item.runId === runId);
       const pendingInfo = session.manager.getByPath(proposal.worktreePath);
-      if (pendingRun && pendingInfo) {
-        const pendingRuns = current.workerRuns.map((item) => item.runId === runId
-          ? {
-            ...item,
-            tasks: {
-              ...item.tasks,
-              [taskId]: {
-                ...item.tasks[taskId],
-                worktreeStatus: pendingInfo.status,
-                branchRevision: pendingInfo.branchRevision,
-                cleanupStateSignature: proposal.stateSignature,
-                updatedAt: new Date().toISOString(),
-              },
+      if (!pendingRun || !pendingInfo) {
+        throw new Error('宿主 cleanup 未完成且缺少可恢复的 Worker 状态');
+      }
+      const pendingRuns = current.workerRuns.map((item) => item.runId === runId
+        ? {
+          ...item,
+          tasks: {
+            ...item.tasks,
+            [taskId]: {
+              ...item.tasks[taskId],
+              worktreeStatus: pendingInfo.status,
+              branchRevision: pendingInfo.branchRevision,
+              cleanupStateSignature: proposal.stateSignature,
+              updatedAt: new Date().toISOString(),
             },
-          }
-          : item);
+          },
+        }
+        : item);
+      if (sameProjectAtReceipt) {
         current.setWorkerRuns(pendingRuns);
         current.setOrchestrations(
           projectWorkerRunsOntoOrchestrations(current.orchestrations, pendingRuns),
         );
       }
-      assertProjectOperation(operation);
-      await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
+      await persistCleanupState(pendingRuns);
       throw new Error('宿主 cleanup 未完成，副作用已标记为 unknown，需要人工核对');
     }
 
     const run = current.workerRuns.find((item) => item.runId === runId);
     if (!run) throw new Error(`找不到 Worker Run：${runId}`);
-    assertProjectOperation(operation);
     const cleaned = markWorkerTaskCleaned({
       state: run,
       taskId,
@@ -740,16 +783,15 @@ export default function App() {
       decisionId: globalThis.crypto?.randomUUID?.() ?? `cleanup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       now: new Date().toISOString(),
     });
-    assertProjectOperation(operation);
     recordProjectEvents(projectId, cleaned.events);
     const nextRuns = current.workerRuns.map((item) => item.runId === runId ? cleaned.state : item);
-    current.setWorkerRuns(nextRuns);
-    current.setOrchestrations(
-      projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
-    );
-    assertProjectOperation(operation);
-    await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
-    assertProjectOperation(operation);
+    if (sameProjectAtReceipt) {
+      current.setWorkerRuns(nextRuns);
+      current.setOrchestrations(
+        projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
+      );
+    }
+    await persistCleanupState(nextRuns);
     await refreshWorkerCleanupProposals(session, runId, operation.controller.signal);
   };
 
@@ -916,6 +958,12 @@ export default function App() {
             session ? [...session.acceptanceStore.values()] : undefined,
             operation.controller.signal,
           );
+          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
+          const restoredRuns = useWorkflowStore.getState().workerRuns;
+          for (const run of restoredRuns) {
+            if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
+            await refreshWorkerCleanupProposals(session, run.runId, operation.controller.signal);
+          }
         })
         .catch((cause) => {
           if (!operation.controller.signal.aborted) {

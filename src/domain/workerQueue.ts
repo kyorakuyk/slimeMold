@@ -197,6 +197,25 @@ function normalizeQueueTask(
     && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
+  if (task.worktreeStatus !== undefined
+    && !['created', 'cleaned', 'orphaned', 'registration-pending'].includes(task.worktreeStatus)) {
+    throw new Error(`Worker Task worktreeStatus 无效：${task.taskId}`);
+  }
+  if ((task.worktreeStatus === 'orphaned' || task.worktreeStatus === 'registration-pending')
+    && !task.branchRevision?.trim()) {
+    throw new Error(`Worker Task ${task.worktreeStatus} 缺少 branchRevision：${task.taskId}`);
+  }
+  if (task.cleanupStatus !== undefined) {
+    if (task.cleanupStatus !== 'cleaned') {
+      throw new Error(`Worker Task cleanupStatus 无效：${task.taskId}`);
+    }
+    if (task.status !== 'succeeded' || task.worktreeStatus !== 'cleaned' || !task.cleanupReceiptId?.trim()) {
+      throw new Error(`Worker Task cleaned 状态缺少 cleanup receipt：${task.taskId}`);
+    }
+  }
+  if (task.worktreeStatus === 'cleaned' && task.cleanupStatus !== 'cleaned') {
+    throw new Error(`Worker Task cleaned 状态缺少 cleanup receipt：${task.taskId}`);
+  }
   if (task.status === 'succeeded') {
     if (!Array.isArray(task.evidenceIds) || task.evidenceIds.length === 0) {
       throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${task.taskId}`);
@@ -397,6 +416,9 @@ export class WorkerTaskQueue {
             worktreePath: requiredText(assignment.path, 'worktree 路径'),
             branch: requiredText(assignment.branch, 'worktree 分支'),
             baseRevision: requiredText(assignment.baseRevision, 'worktree 基线'),
+            worktreeStatus: 'created',
+            branchRevision: undefined,
+            cleanupStateSignature: undefined,
             updatedAt: now,
           },
         },

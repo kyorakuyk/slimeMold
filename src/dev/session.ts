@@ -185,6 +185,8 @@ export interface CleanupApproval {
   worktreePath: string;
   worktreeId?: string;
   branch?: string;
+  branchRevision?: string;
+  branchRevisionRequired?: boolean;
   runId?: string;
   taskId?: string;
   taskExecutionId?: string;
@@ -233,6 +235,8 @@ export interface DevSession {
     opts?: {
       worktreeId?: string;
       branch?: string;
+      branchRevision?: string;
+      branchRevisionRequired?: boolean;
       runId?: string;
       taskId?: string;
       taskExecutionId?: string;
@@ -386,7 +390,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   manager.restore = async (info, opts) => {
     const restored = await rawRestore(info, opts);
     if (!restored) return false;
-    if (info.status === 'orphaned') return true;
+    if (info.status === 'orphaned' || info.status === 'registration-pending') return true;
     try {
       await syncRust('register', info.path);
       registeredWorktrees.add(info.id);
@@ -537,6 +541,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         worktreePath: normalizedPath,
         worktreeId: opts?.worktreeId,
         branch: opts?.branch,
+        branchRevision: opts?.branchRevision,
+        branchRevisionRequired: opts?.branchRevisionRequired,
         runId: opts?.runId,
         taskId: opts?.taskId,
         taskExecutionId: opts?.taskExecutionId,
@@ -626,7 +632,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
-          if (!accOk || !revOk) return false;
+          const branchRevisionOk = !approval.branchRevisionRequired
+            || (!!approval.branchRevision && info.branchRevision === approval.branchRevision);
+          if (!accOk || !revOk || !branchRevisionOk) return false;
           const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
           if (cleaned) {
             this.consumeCleanup(path);

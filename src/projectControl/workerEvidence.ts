@@ -7,12 +7,13 @@ export async function loadWorkerEvidence(
   persistence: Pick<EvidencePersistence, 'load'>,
 ): Promise<EvidenceRecord[]> {
   const records = await persistence.load();
-  return indexEvidence(records.map((record) => decodeEvidenceRecord(record)), 'durable');
+  return indexEvidence(records, 'durable');
 }
 
-function indexEvidence(records: readonly EvidenceRecord[], source: string): EvidenceRecord[] {
+function indexEvidence(records: readonly unknown[], source: string): EvidenceRecord[] {
   const byId = new Map<string, EvidenceRecord>();
-  for (const record of records) {
+  for (const value of records) {
+    const record = decodeEvidenceRecord(value);
     if (byId.has(record.id)) throw new Error(`Evidence ID 在 ${source} 中重复：${record.id}`);
     byId.set(record.id, { ...record });
   }
