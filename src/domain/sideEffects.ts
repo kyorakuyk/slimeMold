@@ -308,6 +308,25 @@ export class SideEffectJournalRepository {
     this.lockPath = joinPath(root, SIDE_EFFECT_LOCK_RELATIVE_PATH);
   }
 
+  private async persistAndReadBack(next: SideEffectJournal): Promise<SideEffectJournal> {
+    const serialized = serializeSideEffectJournal(next);
+    await this.adapter.writeTextAtomic(this.path, serialized);
+    const expected = parseSideEffectJournal(serialized);
+    const persisted = parseSideEffectJournal(await this.adapter.readText(this.path));
+    if (
+      expected.status === 'needs-repair'
+      || expected.status === 'empty'
+      || persisted.status === 'needs-repair'
+      || serializeSideEffectJournal(persisted.journal) !== serializeSideEffectJournal(expected.journal)
+    ) {
+      throw new SideEffectJournalError(
+        'needs-repair',
+        `副作用账本写入后 read-back 不一致：${this.path}`,
+      );
+    }
+    return persisted.journal;
+  }
+
   async read(): Promise<ParsedSideEffectJournal> {
     return parseSideEffectJournal(await this.adapter.readText(this.path));
   }
@@ -325,7 +344,7 @@ export class SideEffectJournalRepository {
       }
       const next = recordSideEffect(parsed.journal, record);
       if (next !== parsed.journal) {
-        await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
+        return this.persistAndReadBack(next);
       }
       return next;
     } finally {
@@ -361,8 +380,8 @@ export class SideEffectJournalRepository {
         : alias ? parsed.journal.entries.findIndex((entry) => entry.idempotencyKey === alias.idempotencyKey) : -1;
       if (index < 0) {
         const next = recordSideEffect(parsed.journal, record);
-        await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
-        return { journal: next, record, claimed: true };
+        const persisted = await this.persistAndReadBack(next);
+        return { journal: persisted, record, claimed: true };
       }
       const existing = parsed.journal.entries[index];
       decodeRecord(existing);
@@ -380,8 +399,8 @@ export class SideEffectJournalRepository {
         const entries = [...parsed.journal.entries];
         entries[index] = { ...record };
         const next = { ...parsed.journal, entries };
-        await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
-        return { journal: next, record, claimed: true };
+        const persisted = await this.persistAndReadBack(next);
+        return { journal: persisted, record, claimed: true };
       }
       return { journal: parsed.journal, record: existing, claimed: false };
     } finally {
@@ -418,8 +437,7 @@ export class SideEffectJournalRepository {
         entries[legacyIndex] = { ...replacement };
       }
       const next = { ...parsed.journal, entries };
-      await this.adapter.writeTextAtomic(this.path, serializeSideEffectJournal(next));
-      return next;
+      return this.persistAndReadBack(next);
     } finally {
       await lock.release();
     }

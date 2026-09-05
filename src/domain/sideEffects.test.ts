@@ -11,6 +11,12 @@ import {
 import { InMemoryEventStoreAdapter } from './eventStore';
 import { createAttemptId, createTaskExecutionId } from './execution';
 
+class SilentDropEventStoreAdapter extends InMemoryEventStoreAdapter {
+  override async writeTextAtomic(): Promise<void> {
+    // Simulate an adapter that reports success without making the journal durable.
+  }
+}
+
 const planned = createSideEffect({
   idempotencyKey: 'push:task-1:commit-a',
   kind: 'push',
@@ -42,6 +48,12 @@ describe('side-effect journal', () => {
     ]);
     expect([first, second].filter((result) => result.claimed)).toHaveLength(1);
     expect((await repository.read()).journal.entries).toEqual([started]);
+  });
+
+  it('fails closed when a journal write is silently dropped', async () => {
+    const repository = new SideEffectJournalRepository(new SilentDropEventStoreAdapter(), 'project-root');
+
+    await expect(repository.record(planned)).rejects.toThrow(/read-back|durable|持久化/);
   });
 
   it('rejects canonical and legacy alias records coexisting for one effect', async () => {

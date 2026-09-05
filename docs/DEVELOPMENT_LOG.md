@@ -2065,6 +2065,12 @@ Issue 工作台采用四个面板：
 - `applyWorkerRunRecoveryDecision` 重新校验当前 task 的 worktreeId、path、branch、baseRevision 与 effect hash；`complete(succeeded)` 要求非空 host Evidence IDs，失败 receipt仍保留错误语义。
 - 验证结果：`npm run test` 为 109 个测试文件、955 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.72 SideEffect journal durable write/read-back
+
+- Phase 2 hardening 第十九个垂直切片修复副作用账本的 durable 证明：`record`、canonical/legacy `claim` 和显式 migration 现在统一在锁内写入后 reload，并比较 canonical serialized journal；silent-drop、partial write、needs-repair 或 read-back mismatch 均 fail-closed，不返回成功 claim/receipt。
+- 新增 silent-drop adapter 回归；保留 canonical/legacy alias、lineage、receipt 与 recovery validator 约束。
+- 验证结果：`npm run test` 为 109 个测试文件、956 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
