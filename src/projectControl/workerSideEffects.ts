@@ -210,6 +210,8 @@ export function createWorkerSideEffectRecorder(
       inputHash: legacyInputHashFor(lease),
       runId: lease.runId,
       taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
     });
     const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
     if (!claimed.claimed && claimed.record.status === 'receipt') {

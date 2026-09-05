@@ -87,6 +87,39 @@ describe('worker side-effect recorder', () => {
     await expect(start(lease)).resolves.toMatchObject({ status: 'started' });
   });
 
+  it('upgrades a lineage-bearing legacy planned alias to the canonical started record', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const legacyKey = `worker-execution:${lease.runId}:${lease.task.id}:attempt-${lease.attempt}`;
+    await repository.record(createSideEffect({
+      idempotencyKey: legacyKey,
+      kind: 'worker-execution',
+      target: lease.assignment.worktreeId,
+      inputHash: [
+        lease.runId,
+        lease.task.id,
+        lease.task.version,
+        lease.attempt,
+        lease.assignment.baseRevision,
+      ].join(':'),
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+    }));
+
+    const started = await recorder.start(lease);
+
+    expect(started).toMatchObject({
+      idempotencyKey: `worker-execution:${lease.attemptId}`,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      status: 'started',
+    });
+    expect((await repository.read()).journal.entries).toHaveLength(1);
+  });
+
   it('atomically rejects a concurrent start for the same attempt', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');

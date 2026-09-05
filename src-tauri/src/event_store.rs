@@ -95,6 +95,20 @@ pub fn event_lock_acquire(root: String, relative_path: Option<String>) -> Result
     let started = Instant::now();
 
     loop {
+        let mut locks = held_locks()
+            .lock()
+            .map_err(|_| "event_lock: 锁表 poisoned".to_string())?;
+        if locks.contains_key(&key) {
+            drop(locks);
+            if started.elapsed() >= LOCK_WAIT {
+                return Err(format!(
+                    "event_lock: 锁等待超时，可能需要显式修复陈旧锁：{}",
+                    lock_path.to_string_lossy()
+                ));
+            }
+            thread::sleep(LOCK_POLL);
+            continue;
+        }
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -109,19 +123,17 @@ pub fn event_lock_acquire(root: String, relative_path: Option<String>) -> Result
                     let _ = fs::remove_file(&lock_path);
                     return Err(format!("event_lock: 写入锁文件失败：{error}"));
                 }
-                held_locks()
-                    .lock()
-                    .map_err(|_| "event_lock: 锁表 poisoned".to_string())?
-                    .insert(
-                        key,
-                        HeldLock {
-                            token: token.clone(),
-                            _file: file,
-                        },
-                    );
+                locks.insert(
+                    key.clone(),
+                    HeldLock {
+                        token: token.clone(),
+                        _file: file,
+                    },
+                );
                 return Ok(token);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                drop(locks);
                 if started.elapsed() >= LOCK_WAIT {
                     return Err(format!(
                         "event_lock: 锁等待超时，可能需要显式修复陈旧锁：{}",
@@ -201,6 +213,34 @@ mod tests {
         let second_token = waiter.join().unwrap().unwrap();
         event_lock_release(root.to_string_lossy().to_string(), second_token, None).unwrap();
         assert!(!path.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn same_process_waiter_cannot_replace_a_held_lock_file() {
+        let root = temp_root("deleted_while_held");
+        let root_string = root.to_string_lossy().to_string();
+        let token = event_lock_acquire(root_string.clone(), None).unwrap();
+        let (path, _) = lock_path_for_root(root.to_string_lossy().as_ref(), None).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiter_root = root_string.clone();
+        thread::spawn(move || {
+            sender.send(event_lock_acquire(waiter_root, None)).unwrap();
+        });
+        thread::sleep(LOCK_POLL * 3);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        event_lock_release(root_string.clone(), token, None).unwrap();
+        let second_token = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        event_lock_release(root_string, second_token, None).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 

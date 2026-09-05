@@ -2031,6 +2031,13 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、947 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 41 个 Rust 测试通过；相关 TS targeted suite 为 3 个文件、30 个测试通过；`git diff --check` 通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.67 legacy alias lineage compatibility 与锁文件删除竞态
+
+- Phase 2 hardening 第十四个垂直切片修复 Worker side-effect legacy migration：`legacyPlanned` 现在携带当前 lease 的 `taskExecutionId/attemptId`，因此已有完整 lineage 的 legacy planned record 可以在锁内安全升级为 canonical started；仍缺失 lineage 的旧记录继续 fail-closed，不被隐式执行。
+- Rust event lock 增加同进程 reservation：在 `held_locks` mutex 内完成已有持有者检查、`create_new`、锁文件写入和 HeldLock 登记。即使外部修复流程删除仍被首 caller 持有的 lock file，第二同进程 caller 也不能创建新锁并覆盖首记录；必须等待首 caller release。新增删除锁文件期间 waiter 回归。
+- 验证结果：`npm run test` 为 109 个测试文件、948 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 42 个 Rust 测试通过；相关 TS targeted suite 为 2 个文件、22 个测试通过；`cargo test event_store::tests` 为 4 个测试通过；`git diff --check` 通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
