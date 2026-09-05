@@ -253,6 +253,7 @@ describe('H4 dev nodes', () => {
     const created = await create.execute({ path: '/repo/wt/t1' }, {}, {} as never);
     expect(created.ok).toBe(true);
     expect(created.path).toBe('/repo/wt/t1');
+    expect(session.manager.get('/repo/wt/t1')?.branch).toBe('worker/t1');
 
     const read = byId.get('dev.code.read')!;
     const r = await read.execute({ worktreePath: '/repo/wt/t1', path: 'src/components/A.tsx' }, {}, {} as never);

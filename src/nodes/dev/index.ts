@@ -13,6 +13,7 @@ import type { DevSession } from '../../dev/session';
 import { collectChangedProtectedPaths } from '../../dev/policy';
 import { assertTaskExecutionLineage } from '../../domain/execution';
 import { applyFilePatchSet } from '../../dev/patch-set';
+import { workerBranchForPath } from '../../dev/worktree';
 
 const DEV_CATEGORY = '开发';
 
@@ -128,7 +129,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.path ?? params.path);
       if (!path) throw nodeError('worktree.create 需要 path');
-      const info = await manager.create(path, path); // 登记 id 即路径（cleanup/status 按 path 引用）
+      const info = await manager.create(path, path, { branch: workerBranchForPath(path) }); // 登记 id 即路径（cleanup/status 按 path 引用）
       // 审计修复：create 失败（git worktree add 返回非零，如残留 worktree 冲突）必须**显式抛错**，
       // 而不是返回 { ok:false } 被当作 success——否则后续节点会连锁报「不属于已登记 worktree」，
       // 掩盖真实根因。fail-closed：未成功登记即节点失败。

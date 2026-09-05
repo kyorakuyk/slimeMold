@@ -4,6 +4,7 @@ import {
   createAttemptId,
   createTaskExecutionId,
   parseAttemptId,
+  workerIdentitySegment,
 } from './execution';
 
 describe('execution identity', () => {
@@ -39,5 +40,24 @@ describe('execution identity', () => {
       attemptId: createAttemptId(taskExecutionId, 1),
       attempt: 2,
     })).toThrow(/lineage|attempt/);
+  });
+
+  it('encodes canonical attempt identities with Git-safe characters', () => {
+    const taskExecutionId = createTaskExecutionId('run/1', 'task/1');
+    const attemptId = createAttemptId(taskExecutionId, 2);
+    const identity = workerIdentitySegment(attemptId);
+
+    expect(identity).toMatch(/^w-[0-9a-f]+$/);
+    expect(identity).not.toContain('%');
+    expect(workerIdentitySegment(attemptId)).toBe(identity);
+    expect(workerIdentitySegment(createAttemptId(createTaskExecutionId('run-1', 'task/1'), 2)))
+      .not.toBe(identity);
+  });
+
+  it('rejects identities that would exceed the worker basename limit', () => {
+    const taskExecutionId = createTaskExecutionId('r'.repeat(180), 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => workerIdentitySegment(attemptId)).toThrow(/过长|长度|length/i);
   });
 });

@@ -2,9 +2,13 @@
  * tauri-run 单元测试：纯前端路径工具（resolveWeb/relativeWeb）与 deps 注入逻辑。
  * 命令通道本身由 Rust 侧校验，这里只测前端路径解析（GUI 下 node:path 不可用的替代实现）。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { resolveWeb, relativeWeb } from './path-utils';
 import { createTauriDeps } from './tauri-run';
+
+const invoke = vi.hoisted(() => vi.fn(async () => ({ stdout: '', stderr: '', code: 0 })));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 describe('resolveWeb（GUI 纯前端路径解析）', () => {
   it('相对路径基于 root 拼接', () => {
@@ -38,7 +42,7 @@ describe('resolveWeb（GUI 纯前端路径解析）', () => {
 });
 
 describe('createTauriDeps.resolveInside（逃逸判定）', () => {
-  const deps = createTauriDeps();
+  const deps = createTauriDeps(1);
 
   it('root 内路径放行', async () => {
     expect(await deps.resolveInside!('/repo/wt', 'src/a.ts')).toBe('/repo/wt/src/a.ts');
@@ -46,5 +50,18 @@ describe('createTauriDeps.resolveInside（逃逸判定）', () => {
 
   it('逃逸到 root 外 → 抛错（fail-closed）', async () => {
     await expect(deps.resolveInside!('/repo/wt', '../../secret.ts')).rejects.toThrow(/逃逸/);
+  });
+
+  it('passes the Rust session generation with host command calls', async () => {
+    invoke.mockClear();
+    const deps = createTauriDeps(17);
+
+    await deps.runCommand!('pwd', [], '/repo/wt');
+
+    expect(invoke).toHaveBeenCalledWith('dev_exec', {
+      args: ['pwd'],
+      cwd: '/repo/wt',
+      generation: 17,
+    });
   });
 });

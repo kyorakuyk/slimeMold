@@ -5,7 +5,14 @@ import type {
   WorkerWorktreeAllocator,
   WorkerWorktreeAssignment,
 } from '../domain/workerQueue';
-import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, type AttemptId, type TaskExecutionId } from '../domain/execution';
+import {
+  assertTaskExecutionLineage,
+  createAttemptId,
+  createTaskExecutionId,
+  workerIdentitySegment,
+  type AttemptId,
+  type TaskExecutionId,
+} from '../domain/execution';
 
 export interface WorktreeCreator {
   create(
@@ -52,7 +59,7 @@ export function createWorktreeAllocator(
         attemptId: executionAttemptId,
         attempt,
       });
-      const identitySegment = encodeURIComponent(executionAttemptId);
+      const identitySegment = workerIdentitySegment(executionAttemptId);
       const worktreeId = `worker-${identitySegment}`;
       const path = requiredText(pathFor({ projectId, runId, task, attempt, taskExecutionId: executionId, attemptId: executionAttemptId }), 'worktree 路径');
       const pathKey = pathComparisonKey(path);

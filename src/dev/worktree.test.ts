@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WorktreeManager, createNodeGitRunner } from './worktree';
+import { WorktreeManager, createNodeGitRunner, workerBranchForPath } from './worktree';
 import type { CommandResult } from './node-run';
 
 function ok(stdout = ''): CommandResult {
@@ -31,6 +31,24 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(info!.branch).toMatch(/^dev-[A-Za-z0-9._-]+-[a-z0-9]+$/);
     expect(info!.branch).not.toMatch(/[\\/:]/);
     expect(calls).toContainEqual(['worktree', 'add', '-q', target, '-b', info!.branch, 'HEAD']);
+  });
+
+  it('workerBranchForPath：与 Git/Rust branch 组件规则一致', () => {
+    expect(workerBranchForPath('D:/Temp/repo-workers/mvp-gui-success-wt/')).toBe('worker/mvp-gui-success-wt');
+    const windowsPath = ['D:', 'Temp', 'repo-workers', 'mvp-gui-success-wt', ''].join(String.fromCharCode(92));
+    expect(workerBranchForPath(windowsPath)).toBe('worker/mvp-gui-success-wt');
+    expect(workerBranchForPath('C:/repo-workers\\mixed-separator')).toBe('worker/mixed-separator');
+
+    for (const path of [
+      '/repo-workers/foo..bar',
+      '/repo-workers/.hidden',
+      '/repo-workers/foo.',
+      '/repo-workers/foo.lock',
+      '/repo-workers/Foo.LOCK',
+      `/repo-workers/${'a'.repeat(201)}`,
+    ]) {
+      expect(() => workerBranchForPath(path)).toThrow(/basename 无效/);
+    }
   });
 
   it('create→list→cleanup 完整生命周期', async () => {
@@ -104,6 +122,34 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     await m.create('t1', '/wt/t1');
     expect(await m.cleanup('t1', { confirm: true })).toBe(false);
     expect(m.get('t1')?.status).toBe('created'); // 保留现场
+  });
+
+  it('orphaned cleanup retries branch deletion without removing the worktree again', async () => {
+    let removeCalls = 0;
+    let branchCalls = 0;
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok('h1\n');
+      if (args[0] === 'worktree' && args[1] === 'add') return ok();
+      if (args[0] === 'worktree' && args[1] === 'remove') {
+        removeCalls += 1;
+        return removeCalls === 1 ? ok() : { exitCode: 1, stdout: '', stderr: 'already removed', durationMs: 1 };
+      }
+      if (args[0] === 'branch') {
+        branchCalls += 1;
+        return branchCalls === 1 ? { exitCode: 1, stdout: '', stderr: 'temporary branch failure', durationMs: 1 } : ok();
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, '/repo');
+    const info = await m.create('t1', '/wt/t1');
+    expect(info).not.toBeNull();
+
+    expect(await m.cleanup('t1', { confirm: true })).toBe(false);
+    expect(m.get('t1')?.status).toBe('orphaned');
+    expect(await m.cleanup('t1', { confirm: true })).toBe(true);
+    expect(m.get('t1')?.status).toBe('cleaned');
+    expect(removeCalls).toBe(1);
+    expect(branchCalls).toBe(2);
   });
 
   it('createNodeGitRunner：真实 runner 结构可用', async () => {

@@ -4,6 +4,12 @@ import { createHostAcceptanceStoreWithFs, initDevSession, resetDevSession } from
 import type { AcceptanceRecord, AcceptancePersistence } from './session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async () => {
+    throw new Error('register rejected');
+  }),
+}));
+
 function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
 }
@@ -53,6 +59,75 @@ describe('DevSession cleanup', () => {
     await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
+  });
+
+  it('keeps the worktree record when Tauri registration and rollback both fail', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return ok('base-1\n');
+      if (args[0] === 'worktree' && args[1] === 'remove') {
+        return { exitCode: 1, stdout: '', stderr: 'host gate rejected rollback', durationMs: 1 };
+      }
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+
+    await expect(session.manager.create(
+      'worker-id',
+      '/repo-workers/run-1/task-1',
+      { branch: 'worker/task-1' },
+    )).rejects.toThrow('register rejected');
+    expect(session.manager.get('worker-id')).toEqual(expect.objectContaining({
+      path: '/repo-workers/run-1/task-1',
+      status: 'created',
+    }));
+  });
+
+  it('keeps a restored worktree record when Tauri registration fails', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        return ok('worktree C:/repo-workers/run-1/task-1\nHEAD base-1\nbranch refs/heads/worker/task-1\n');
+      }
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: 'C:/repo',
+      gitRunner: { git },
+    });
+    const info = {
+      id: 'worker-id',
+      path: 'C:/repo-workers/run-1/task-1',
+      branch: 'worker/task-1',
+      baseRevision: 'base-1',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'created' as const,
+    };
+
+    await expect(session.manager.restore(info)).resolves.toBe(false);
+    expect(session.manager.get(info.id)).toEqual(expect.objectContaining({
+      path: info.path,
+      status: 'created',
+    }));
+  });
+
+  it('rejects reusing a DevSession with a different host generation', () => {
+    initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+    });
+
+    expect(() => initDevSession({
+      env: 'tauri',
+      hostGeneration: 2,
+      baseRepoPath: '/repo',
+    })).toThrow(/generation|session/);
   });
 
   it('rejects an acceptance that declares partial lineage provenance', () => {

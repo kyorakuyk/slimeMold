@@ -41,7 +41,10 @@ export interface CodexWorkerExecutorOptions {
 }
 
 /** Wire the queue invoker to the Tauri Codex Worker command. */
-export function createCodexWorkerInvoker(): CodexWorkerInvoker {
+export function createCodexWorkerInvoker(generation: number): CodexWorkerInvoker {
+  if (!Number.isSafeInteger(generation) || generation <= 0) {
+    throw new Error('Codex Worker session generation is required');
+  }
   return {
     async execute({ prompt, model, cwd, signal }): Promise<CodexWorkerResponse> {
       if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
@@ -51,7 +54,7 @@ export function createCodexWorkerInvoker(): CodexWorkerInvoker {
       };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        const result = await codexWorkerExec(prompt, model, cwd, operationId);
+        const result = await codexWorkerExec(prompt, model, cwd, operationId, generation);
         if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
         return { text: result.text, usage: result.usage };
       } finally {

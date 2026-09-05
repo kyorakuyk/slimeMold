@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-03
+updated: 2026-09-05
 tags:
   - SlimeMold
   - Agent
@@ -11,7 +11,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-09-02
+period: 2026-07-29 至 2026-09-05
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -1875,6 +1875,63 @@ Issue 工作台采用四个面板：
 - 扩展 `SideEffectReceipt` schema 以保留交付元数据，并拒绝 receipt 文件清单中的目录穿越/绝对路径/反斜杠/运行元数据路径；新增真实临时目录交付集成测试、lineage 伪造测试、坏 candidate claim 前拒绝测试和目标冲突恢复测试。
 - 验证结果：`npm run test` 为 107 个测试文件、910 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 33 个 Rust 测试通过；`git diff --check` 通过；测试生成物仍统一在专有系统临时根，仓库根散落目录为 0。
 - 当前交付实现已具备可调用的 host API，但尚未接入 `DevSession`/GUI approval 面板、Tauri 安全 copy command、候选/approval 的跨重启加载，目标父目录必须由 fixture 预先存在；真实 Tauri 成功/失败/recovery E2E 仍未完成，不能把本轮 Node 集成测试写成桌面 MVP 验收通过。
+
+### 7.48 修复 Tauri Worktree branch 契约并完成首条真实 GUI 成功切片
+
+- 真实 Tauri 首次运行停在 `dev.worktree.create`：Node `WorktreeManager` 默认生成 `dev-...` 分支，而 Rust `dev_exec`/`dev_register_worktree` 只接受与受控 Worker 目录一一对应的 `worker/<worktree basename>`；headless 直调 Node git 未经过该宿主边界，因此曾出现 headless 成功、GUI 失败的双宿主分叉。
+- 新增 `workerBranchForPath` 并让 `dev.worktree.create` 显式传入 `worker/<basename>`；新增 RED→GREEN 回归断言。与此同时，Acceptance 在持久化失败记录后抛出节点错误，避免 `{ passed: false }` 被执行器当作成功；success fixture 的 Evidence→Acceptance 依赖改为 data，并加入允许目录内的 tracked diff，保持 compile/test/diff/Acceptance 证据真实。
+- 从 disposable fixture 的初始 Git commit 恢复被误建空 workflow 覆盖的工作流，重新导入并通过真实 Tauri WebView 运行：`runId=1` 的 10 个节点全部 success；Worker worktree 为 `D:/Temp/slimemold-tauri-e2e-20260904-203708-workers/mvp-gui-success-wt`，branch 为 `worker/mvp-gui-success-wt`，实际生成 `src/components/greeting.js`、`tests/greeting.test.js` 并修改 `src/components/baseline.js`；宿主 Acceptance `passed=true`，artifact/compile/test/diff 四条 Evidence 全部 passed，fixture 文件已 read-back。
+- 验证结果：`npm run test` 为 108 个测试文件、914 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 33 个 Rust 测试通过；`git diff --check` 通过；定向 branch/Acceptance 回归为 2 个测试文件、28 个测试通过。
+- 本轮建立本地 checkpoint `7e4de57 chore: checkpoint tauri e2e runner progress`，未 push；branch 修复已验证但尚待独立 reviewer 针对当前 HEAD 复审后提交。成功 worktree 暂不清理，等待用户批准；DeliveryReceipt、用户批准交付、重启 read-back、failure/unknown/retry/recovery 路径仍未完成，不能把本轮写成完整 MVP 或完整 Tauri E2E 闭环。
+
+### 7.49 对齐 Git Worker basename 的双宿主非法值规则
+
+- 当前 staged 独立 reviewer 发现 `workerBranchForPath` 仍接受 `foo..bar`、`.hidden`、`foo.` 和 `foo.lock`；这些值与 Rust 的 Worker branch/target 守卫及 Git ref 规则不一致，可能让 Node/headless 与 Tauri 得到不同结果。
+- 新增 `worker_name_is_valid` 并让 Rust 的 branch 与 target 校验共用同一规则；Node helper 同步拒绝任意 `..`、首尾点和大小写不敏感的 `.lock` 后缀，同时保留字符白名单；新增 POSIX、Windows、混合分隔符、尾斜杠和非法 basename 回归测试。真实 fixture 使用的 `mvp-gui-success-wt` 不受影响，既有 GUI success 证据仍对应同一合法 branch。
+- 验证结果：`npm run test` 为 108 个测试文件、915 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 34 个 Rust 测试通过；`git diff --check` 通过；新增 TS/Rust 定向回归均通过。
+- 本轮仍未 push；成功 worktree 暂不清理，DeliveryReceipt、用户批准交付、重启 read-back 和 failure/unknown/retry/recovery 仍待后续阶段；最终提交需在当前 staged diff 重新独立审查通过后完成。
+
+### 7.50 修复 Queue Worker identity 与 Tauri rollback lease 的双宿主分叉
+
+- 当前独立 reviewer 发现 GUI queue 使用 `encodeURIComponent(attemptId)` 生成包含 `%3A`/`%25` 的 Worker basename，而 Rust/Git Worker gate 只接受安全 ref 组件，导致正常 queue worktree 在 Tauri add/register 前被拒绝；本轮新增 canonical AttemptId 的无 `%` 十六进制 identity，并让 queue path、branch 和 worktree id 共用同一编码。
+- 修复 Tauri worktree add 成功但 registration 失败时的回滚竞态：Rust 仅为成功 add 记录当前 session 的 pending rollback lease，remove/branch delete 只能匹配该 target/branch，成功后按阶段消费；Node rollback 失败不再 `forget` manager 记录，`orphaned` 状态可在用户确认后只重试 branch delete，避免丢失孤儿分支 lineage。
+- 新增 queue identity、Rust pending lease scope、登记失败现场保留、orphaned branch retry、大小写 `.LOCK` 和 Windows 路径回归覆盖；未放宽任意合法 Worker target 的 remove/branch gate。
+- 验证结果：`npm run test` 为 108 个测试文件、918 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 35 个 Rust 测试通过；`git diff --check` 通过。
+- 本轮未重新执行真实 GUI Worker；既有 success fixture/worktree 仍保留，DeliveryReceipt、用户批准交付、重启 read-back 和 failure/unknown/retry/recovery 仍待后续阶段；当前修复需在最终 staged snapshot 获得新的独立 reviewer 通过后提交，未 push。
+
+### 7.51 收紧 pending rollback 顺序、长度边界与 Tauri orphan retry
+
+- 继续针对独立 reviewer 的双宿主审查补强：queue Worker identity 采用 bounded Git-safe 编码，Node/Rust 同步限制单一 basename 长度为 200；pending branch 只有在对应 worktree remove 成功后才可删除，branch 成功后 lease 立即消费，其他合法 target/branch 仍被拒绝。
+- 修复 Tauri `dev_register_worktree` 失败后的现场处理：成功 add 产生的 pending lease 专供当前 rollback，create/restore registration 失败时都保留 manager 记录而不是丢失 live/orphan lineage；Tauri `orphaned` cleanup 保持 Rust registration，用户确认后只重试 branch delete，完整成功后才注销登记。
+- 新增超长 identity、pending remove→branch→consume、Tauri registration 保留和 orphan branch retry 回归；测试使用 disposable/fake host，不触碰 `D:/Agents/SMtest` 或无关未跟踪素材。
+- 验证结果：`npm run test` 为 109 个测试文件、921 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 35 个 Rust 测试通过；`git diff --check` 通过。
+- Tauri 开发进程已因 Rust 变更重编译并保持运行，但本轮未重新点击真实 GUI Worker；既有 success worktree 仍保留，DeliveryReceipt、用户批准交付、重启 read-back 和 failure/unknown/retry/recovery 仍待后续阶段，未 push。
+
+### 7.52 收紧 Worktree realpath、session fencing 与 unregister 语义
+
+- 最新独立 reviewer 以 `passed=false` 指出：仅用 lexical parent 校验时，预存 symlink/junction 可把 `git worktree add` 的副作用导向 Worker 根外；本轮在 Rust 实际 spawn 前 canonicalize Worker root 与 parent，拒绝 reparse root、已有 target 和不一致 realpath，同时允许安全缺失 root 由 Git 创建；新增 Windows junction/缺失 root 回归，测试夹具统一放在 `slimemold-test-runs` 并由 RAII 清理。
+- 为项目切换与宿主命令增加 session generation 和进程内 operation lease：`dev_exec`、文件读写/建目录、init/clear/register/unregister 共用串行 lease，pending rollback 绑定当前 generation，register/exec 在 I/O 前后复核代次；新增并发 reset fencing 回归。该修复覆盖同一 Tauri 进程内的切换竞态，不把它写成跨进程锁或完整 OS no-follow 保障。
+- `dev_unregister_worktree` 现在必须有当前 base repo、合法 `worker/<basename>` 关系、已登记 worktree 且不在 pending rollback 中；未登记、非法或重复注销返回错误并保留 pending 状态，避免任意调用静默破坏宿主登记态。
+- 验证结果：`npm run test` 为 109 个测试文件、921 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 39 个 Rust 测试通过；`git diff --check` 通过；新增行敏感模式扫描为 0。
+- 本轮只完成宿主边界 hardening，未重新点击真实 GUI Worker；既有 success worktree 仍保留，DeliveryReceipt、用户批准交付、重启 read-back、failure/unknown/retry/recovery 和 OS 级 no-follow/TOCTOU 仍未完成；未 push。
+
+### 7.53 为 GUI/Tauri host command 增加 caller generation fencing
+
+- 针对独立 reviewer 之前指出的 session race，本轮让 `dev_init_session` 返回单调 generation；GUI DevSession、Tauri Git/Deps、Codex Worker、register/unregister/read/write/mkdir/clear 均必须携带同一 token，stale token fail-closed。
+- Rust 侧用 session generation + operation lease 串行化 session mutation 与 host command；Codex Worker 在 auth 后及实际 spawn 前再次校验，并在执行期间持有 lease，取消仍走独立 cancel 通道。
+- unregister 现在要求当前 generation、合法 Worker target、非 pending、Git worktree 已不再 live 且 Worker branch 已删除；restore/create rollback 失败时保留 manager lineage，orphan retry 只重试 branch。
+- Worktree add 在 spawn 前校验 root/parent realpath，拒绝预存 symlink/junction；缺失 root 在安全 parent 下由宿主原子创建，并在 Windows 持有 no-DELETE directory handle 覆盖 Git add。POSIX/跨进程以及 target replacement 的 OS 级 no-follow 压力测试仍是后续边界，不能把本轮测试当作完整安全证明。
+- 新增 stale generation、session reuse、Tauri payload、live/cleaned unregister、junction、missing-root、operation lease 与 dedicated Temp RAII 回归；专有测试根无残留。
+- 最终质量门：`npm run test` 为 109 个测试文件 / 923 个测试通过，`npm run build` 通过，`npm run i18n:check` 为 991 keys 对齐，Rust `cargo fmt -- --check` 通过、`cargo test` 为 40 个测试通过，`git diff --check` 通过。
+- 本轮未 push；真实 GUI success worktree 仍保留，未执行用户批准之外的 Delivery/Cleanup。
+
+### 7.54 修复 unregister 失败后的 cleanup 收敛
+
+- Phase 2 hardening 的第一个垂直切片针对 reviewer 指出的状态分裂：Git worktree/branch 已清理但 Rust `dev_unregister_worktree` 失败时，Node 不再把记录当作不可重试的 `cleaned` 终态；新增 `registration-pending` 状态，保留 manager lineage。
+- `manager.cleanup` 在 `registration-pending` 状态下仍要求显式 `confirm` 且未取消，重试只调用 Rust unregister，不重复执行已经完成的 Git 删除；只有 unregister 成功后才回到 `cleaned`。
+- 新增 Tauri session RED→GREEN 回归，覆盖首次 unregister 失败、状态保留和第二次成功收敛；不触碰真实 fixture 或用户项目。
+- 验证结果：`npm run test` 为 109 个测试文件、924 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；定向 `src/dev/session.tauri.test.ts` 为 2 tests passed。
+- 本切片仍未通过新的独立 reviewer；当前 snapshot 只作为本地 unverified checkpoint，未 push；既有 success worktree 未清理。
 
 ## 八、适合拆成的博客系列
 

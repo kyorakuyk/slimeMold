@@ -32,7 +32,7 @@ function info(id: string, path: string, branch: string): WorktreeInfo {
 }
 
 describe('createWorktreeAllocator', () => {
-  it('creates one manager worktree per worker lease with safe generated identifiers', async () => {
+  it('creates one manager worktree per worker lease with Rust-compatible identity', async () => {
     const create = vi.fn(async (id: string, path: string, options?: { branch?: string }) =>
       info(id, path, options?.branch ?? ''));
     const allocator = createWorktreeAllocator(
@@ -41,8 +41,6 @@ describe('createWorktreeAllocator', () => {
     );
     const taskExecutionId = createTaskExecutionId('run/one', 'task/one');
     const attemptId = createAttemptId(taskExecutionId, 2);
-    const identitySegment = encodeURIComponent(attemptId);
-
     const assignment = await allocator.allocate({
       projectId: 'project/one',
       runId: 'run/one',
@@ -53,14 +51,17 @@ describe('createWorktreeAllocator', () => {
     });
 
     expect(create).toHaveBeenCalledWith(
-      `worker-${identitySegment}`,
+      expect.stringMatching(/^worker-w-[0-9a-f]+$/),
       'C:/projects/worktrees/task/one/2',
-      { branch: `worker/${identitySegment}` },
+      { branch: expect.stringMatching(/^worker\/w-[0-9a-f]+$/) },
     );
+    expect(assignment.branch).not.toContain('%');
+    expect(assignment.branch.slice('worker/'.length)).toBe('w-7461736b2d657865637574696f6e3a72756e2532466f6e653a7461736b2532466f6e653a617474656d70742d32');
+    const identity = assignment.branch.slice('worker/'.length);
     expect(assignment).toEqual({
-      worktreeId: `worker-${identitySegment}`,
+      worktreeId: `worker-${identity}`,
       path: 'C:/projects/worktrees/task/one/2',
-      branch: `worker/${identitySegment}`,
+      branch: `worker/${identity}`,
       baseRevision: 'base-1',
     });
   });

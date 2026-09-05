@@ -195,6 +195,8 @@ export interface CleanupApproval {
 
 export interface DevSession {
   policy: SelfDevelopmentPolicy;
+  /** Rust Tauri host session fencing token；Node/headless 无此字段。 */
+  hostGeneration?: number;
   manager: WorktreeManager;
   service: DevCapabilityService;
   collector: EvidenceCollector;
@@ -268,6 +270,8 @@ export interface DevSessionOptions {
    *   worktree 创建/清理自动同步 Rust 登记态。
    */
   env?: 'node' | 'tauri';
+  /** Tauri host generation returned by dev_init_session; required in GUI mode. */
+  hostGeneration?: number;
   /** Tauri 宿主固定证据根（如 `<项目根>/.slimemold/evidence`）。worktree 创建时自动绑定宿主 EvidenceStore。 */
   evidenceRoot?: string;
 }
@@ -281,33 +285,44 @@ function hash(s: string): string {
   return `h${h.toString(36)}`;
 }
 
+function requireHostGeneration(generation: number | undefined): number {
+  if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= 0) {
+    throw new Error('Tauri DevSession requires a host session generation');
+  }
+  return generation;
+}
+
 export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   const requestedBaseRepoPath = opts.baseRepoPath ?? process.cwd();
+  const env: 'node' | 'tauri' = opts.env ?? 'node';
+  const hostGeneration = env === 'tauri' ? requireHostGeneration(opts.hostGeneration) : undefined;
   if (_session) {
     if (pathComparisonKey(_session.manager.getBaseRepoPath()) !== pathComparisonKey(requestedBaseRepoPath)) {
       throw new Error('DevSession 已绑定另一个项目，必须先 teardown 后切换');
+    }
+    if (_session.hostGeneration !== hostGeneration) {
+      throw new Error('DevSession host session generation 不匹配，必须先 teardown 后重建');
     }
     return _session;
   }
   const policy = opts.policy ?? defaultDevPolicy;
   const baseRepoPath = requestedBaseRepoPath;
-  const env: 'node' | 'tauri' = opts.env ?? 'node';
   const acceptancePersistence = opts.acceptancePersistence;
 
   // Tauri（GUI）下的命令/文件/路径通道：全部走 Rust 宿主（dev_exec / dev_read_file / dev_write_file）。
   // tauri-run 顶层无 @tauri-apps 运行时依赖（invoke 均延迟 import），静态 import 对浏览器构建安全。
+  const tauriDeps = env === 'tauri' ? createTauriDeps(hostGeneration!) : undefined;
   const manager = new WorktreeManager(
-    opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner() : createNodeGitRunner()),
+    opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner(hostGeneration!) : createNodeGitRunner()),
     baseRepoPath,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
   const registry: WorktreeRegistry = { isTracked: (cwd) => manager.isTracked(cwd) };
   const service = env === 'tauri'
-    ? createNodeDevService(policy, createTauriDeps(), registry, 'tauri')
+    ? createNodeDevService(policy, tauriDeps!, registry, 'tauri')
     : createNodeDevService(policy, {}, registry);
   const collector = new EvidenceCollector(opts.persistence);
   // 未跟踪文件内容读取/路径解析：Tauri 下走 Rust 通道（node-run 在 GUI 被 shim 掉）。
-  const tauriDeps = env === 'tauri' ? createTauriDeps() : undefined;
   const readFileP = tauriDeps?.readFile ?? readTextFile;
   const resolveP = tauriDeps?.resolveInside ?? resolveInside;
   // Tauri 宿主固定证据根（worktree 创建后动态绑定；断言由 evidence.assertEvidenceOutsideWorktree 保证）
@@ -318,7 +333,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   const syncRust = async (fn: 'register' | 'unregister', path: string): Promise<void> => {
     if (env !== 'tauri') return;
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', { path });
+    await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', {
+      path,
+      generation: hostGeneration,
+    });
   };
   const rawCreate = manager.create.bind(manager);
   const rawRestore = manager.restore.bind(manager);
@@ -338,8 +356,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       try {
         await syncRust('register', info.path);
       } catch (error) {
-        await rawCleanup(id, { confirm: true, signal: opts?.signal }).catch(() => false);
-        manager.forget(id);
+        // Tauri host keeps a pending add lease until registration succeeds, so
+        // this cleanup can pass the host gate. Preserve the manager record when
+        // rollback itself fails; forgetting it would lose orphan lineage.
+        const rolledBack = await rawCleanup(id, { confirm: true, signal: opts?.signal }).catch(() => false);
+        if (rolledBack) manager.forget(id);
         throw error;
       }
     }
@@ -352,18 +373,36 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       await syncRust('register', info.path);
       return true;
     } catch {
-      manager.forget(info.id);
+      // Keep the live Git worktree record so registration can be retried after
+      // a transient host/session failure; forgetting it would lose recovery lineage.
       return false;
     }
   };
   manager.cleanup = async (id, opts) => {
     const info = manager.get(id);
+    if (info?.status === 'registration-pending') {
+      if (!opts?.confirm || opts?.signal?.aborted) return false;
+      try {
+        await syncRust('unregister', info.path);
+        manager.markCleaned(id);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     const cleaned = await rawCleanup(id, opts);
-    if ((cleaned || manager.get(id)?.status === 'orphaned') && info) await syncRust('unregister', info.path);
+    if (!cleaned || !info) return cleaned;
+    try {
+      await syncRust('unregister', info.path);
+    } catch {
+      manager.markRegistrationPending(id);
+      return false;
+    }
     return cleaned;
   };
   const session: DevSession = {
     policy,
+    hostGeneration,
     manager,
     service,
     collector,

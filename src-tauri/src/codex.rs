@@ -545,10 +545,12 @@ pub async fn codex_worker_exec(
     model: Option<String>,
     cwd: String,
     operation_id: String,
+    generation: u64,
 ) -> Result<CodexExecResult, String> {
     if prompt.trim().is_empty() {
         return Err("Codex Worker 请求不能为空。".into());
     }
+    crate::assert_session_generation(generation, "codex_worker_exec")?;
     let worktree = crate::assert_registered_worktree(&cwd)?;
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation id 非法".into());
@@ -567,7 +569,10 @@ pub async fn codex_worker_exec(
             return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
         }
         let program = codex_program()?;
+        let generation_for_task = generation;
         let result = tauri::async_runtime::spawn_blocking(move || {
+            let _operation_guard = crate::lock_dev_operation();
+            crate::assert_session_generation(generation_for_task, "codex_worker_exec")?;
             run_exec(
                 program,
                 prompt,

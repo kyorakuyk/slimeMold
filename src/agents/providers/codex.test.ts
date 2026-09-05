@@ -3,7 +3,7 @@ import { codexWorkerExec } from './codex';
 
 describe('codexWorkerExec', () => {
   it('fails closed outside the Tauri desktop host', async () => {
-    await expect(codexWorkerExec('implement task', 'gpt-worker', 'C:/worktree', 'operation-test'))
+    await expect(codexWorkerExec('implement task', 'gpt-worker', 'C:/worktree', 'operation-test', 1))
       .rejects.toThrow(/桌面版/);
   });
 });

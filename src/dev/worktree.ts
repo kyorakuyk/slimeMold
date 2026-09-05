@@ -8,6 +8,7 @@
 import type { CommandResult } from './node-run';
 import { runCommand } from './node-run';
 import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
+import { WORKER_IDENTITY_MAX_LENGTH } from '../domain/execution';
 
 export interface DevGitRunner {
   git(args: string[], cwd: string): Promise<CommandResult>;
@@ -18,7 +19,7 @@ export function createNodeGitRunner(): DevGitRunner {
   return { git: (args, cwd) => runCommand('git', args, cwd) };
 }
 
-export type WorktreeStatus = 'created' | 'cleaned' | 'orphaned';
+export type WorktreeStatus = 'created' | 'cleaned' | 'orphaned' | 'registration-pending';
 
 function branchStem(id: string): string {
   const stem = id
@@ -27,6 +28,22 @@ function branchStem(id: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 96);
   return stem || 'worktree';
+}
+
+/** Rust/Tauri worktree registration uses the target basename as its branch identity. */
+export function workerBranchForPath(path: string): string {
+  const basename = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  if (
+    !/^[A-Za-z0-9._-]+$/.test(basename)
+    || basename.length > WORKER_IDENTITY_MAX_LENGTH
+    || basename.startsWith('.')
+    || basename.endsWith('.')
+    || basename.includes('..')
+    || basename.toLowerCase().endsWith('.lock')
+  ) {
+    throw new Error(`Worker worktree basename 无效：${path}`);
+  }
+  return `worker/${basename}`;
 }
 
 export interface WorktreeInfo {
@@ -151,6 +168,16 @@ export class WorktreeManager {
     this.infos.delete(id);
   }
 
+  markRegistrationPending(id: string): void {
+    const info = this.infos.get(id);
+    if (info?.status === 'cleaned') this.infos.set(id, { ...info, status: 'registration-pending' });
+  }
+
+  markCleaned(id: string): void {
+    const info = this.infos.get(id);
+    if (info?.status === 'registration-pending') this.infos.set(id, { ...info, status: 'cleaned' });
+  }
+
   /** P0 审计：cwd 必须属于已登记 worktree，否则抛错（防指向主仓库/任意目录绕过）。 */
   assertTracked(path: string): void {
     if (!this.isTracked(path)) {
@@ -180,6 +207,13 @@ export class WorktreeManager {
     if (!info || info.status === 'cleaned') return false;
     if (!opts.confirm) return false; // 确认门：未确认拒绝清理（防误删未提交改动）
     if (opts.signal?.aborted) return false;
+    if (info.status === 'registration-pending') return true;
+    if (info.status === 'orphaned') {
+      const branch = await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);
+      if (branch.exitCode !== 0) return false;
+      this.infos.set(id, { ...info, status: 'cleaned' });
+      return true;
+    }
     const rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
     if (rm.exitCode !== 0) return false;
     // remove 已经发生后必须完成分支收尾，不能因取消留下假 created 状态。

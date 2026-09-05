@@ -2,6 +2,9 @@ export type TaskDefinitionId = string;
 export type TaskExecutionId = string;
 export type AttemptId = string;
 
+/** Cross-host limit for a single Worker branch/path basename. */
+export const WORKER_IDENTITY_MAX_LENGTH = 200;
+
 function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} 不能为空`);
@@ -57,6 +60,20 @@ export function parseAttemptId(value: string): ParsedAttemptId {
     throw new Error(`attempt id 不是 canonical 形式：${attemptId}`);
   }
   return { taskExecutionId, attempt };
+}
+
+/** Encode a canonical attempt identity using only Git-safe worker basename characters. */
+export function workerIdentitySegment(value: AttemptId): string {
+  parseAttemptId(value);
+  let hex = '';
+  for (let index = 0; index < value.length; index += 1) {
+    hex += value.charCodeAt(index).toString(16).padStart(2, '0');
+  }
+  const segment = `w-${hex}`;
+  if (segment.length > WORKER_IDENTITY_MAX_LENGTH) {
+    throw new Error(`Worker identity 过长：${segment.length}`);
+  }
+  return segment;
 }
 
 export interface TaskExecutionLineageInput {

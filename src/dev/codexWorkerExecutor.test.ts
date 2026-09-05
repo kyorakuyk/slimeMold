@@ -124,7 +124,7 @@ describe('Codex Worker executor', () => {
   });
 
   it('provides the real Codex provider as an invoker while retaining desktop fail-closed behavior', async () => {
-    const invoker = createCodexWorkerInvoker();
+    const invoker = createCodexWorkerInvoker(1);
     await expect(invoker.execute({
       prompt: 'implement task',
       cwd: 'C:/worktrees/task-1',

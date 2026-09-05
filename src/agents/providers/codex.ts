@@ -111,16 +111,19 @@ export async function codexWorkerExec(
   model: string | undefined,
   cwd: string,
   operationId: string,
+  generation: number,
 ): Promise<LLMResponse> {
   if (!isTauri) throw new Error('Codex Worker 需要 SlimeMold 桌面版。');
   if (!prompt.trim()) throw new Error('Codex Worker 请求不能为空。');
   if (!cwd.trim()) throw new Error('Codex Worker worktree 路径不能为空。');
   if (!operationId.trim()) throw new Error('Codex Worker operation id 不能为空。');
+  if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error('Codex Worker session generation 无效。');
   const result = await invokeRaw<CodexExecResult>('codex_worker_exec', {
     prompt,
     model: model?.trim() || null,
     cwd,
     operationId,
+    generation,
   });
   return {
     text: result.text,

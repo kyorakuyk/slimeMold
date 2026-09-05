@@ -34,6 +34,18 @@ const DEV_TYPE_IDS = [
 export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
 let devGuiStatus: DevGuiStatus = 'idle';
 let devSessionGeneration = 0;
+let activeHostGeneration: number | null = null;
+
+async function clearStaleHostSession(generation: number): Promise<void> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('dev_clear_session', { generation });
+    if (activeHostGeneration === generation) activeHostGeneration = null;
+  } catch (e) {
+    // A newer Rust generation legitimately rejects the stale clear; preserve it.
+    console.error('[H4] stale dev_clear_session 失败：', e);
+  }
+}
 export function getDevGuiStatus(): DevGuiStatus {
   return devGuiStatus;
 }
@@ -70,10 +82,19 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
   const generation = ++devSessionGeneration;
 
   // 1) 先同步 Rust 宿主登记态（主仓库根；失败则开发能力不可用）
+  let hostGeneration: number | null = null;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('dev_init_session', { baseRepo: projectPath });
-    if (generation !== devSessionGeneration) return null;
+    const returnedGeneration = await invoke<number>('dev_init_session', { baseRepo: projectPath });
+    if (!Number.isSafeInteger(returnedGeneration) || returnedGeneration <= 0) {
+      throw new Error('dev_init_session returned an invalid generation');
+    }
+    if (generation !== devSessionGeneration) {
+      await clearStaleHostSession(returnedGeneration);
+      return null;
+    }
+    hostGeneration = returnedGeneration;
+    activeHostGeneration = returnedGeneration;
     if (signal?.aborted) {
       await teardownGuiDevSession();
       return null;
@@ -92,6 +113,7 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
     const session = initDevSession({
       baseRepoPath: projectPath,
       env: 'tauri',
+      hostGeneration: hostGeneration!,
       evidenceRoot: evidenceRootFor(projectPath),
       acceptancePersistence: createHostAcceptanceStoreWithFs(
         `${projectPath.replace(/[/\\]+$/, '')}/.slimemold/acceptance`,
@@ -102,11 +124,13 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
     });
     if (generation !== devSessionGeneration) {
       if (getDevSession() === session) resetDevSession();
+      await clearStaleHostSession(hostGeneration!);
       return null;
     }
     await session.loadAcceptances();
     if (generation !== devSessionGeneration) {
       if (getDevSession() === session) resetDevSession();
+      await clearStaleHostSession(hostGeneration!);
       return null;
     }
     if (signal?.aborted) {
@@ -131,17 +155,21 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
  * 返回 Promise（await dev_clear_session）。
  */
 export async function teardownGuiDevSession(): Promise<void> {
-  devSessionGeneration += 1;
+  const lifecycleGeneration = ++devSessionGeneration;
+  const hostGeneration = activeHostGeneration;
   // 先清空宿主登记态（切换/关闭项目时旧 worktree 登记不得泄漏到新项目）
-  if (isTauri) {
+  if (isTauri && hostGeneration !== null) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('dev_clear_session');
+      await invoke('dev_clear_session', { generation: hostGeneration });
+      if (activeHostGeneration === hostGeneration) activeHostGeneration = null;
     } catch (e) {
-      // 清空失败不阻断 teardown（前端 session 已重置；Rust 侧 dev_exec 会 fail-closed）
+      // 清空失败不阻断 teardown；若 lifecycle 已过期，不得覆盖新 session。
       console.error('[H4] dev_clear_session 失败：', e);
     }
   }
+  if (lifecycleGeneration !== devSessionGeneration) return;
+
   const session = getDevSession();
   const typeIds = new Set(
     DEV_TYPE_IDS.filter((id) => useRegistryStore.getState().defs[id]),

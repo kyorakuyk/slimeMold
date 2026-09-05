@@ -8,7 +8,6 @@ import type {
 } from '../domain/workerQueue';
 import { installWorkerRunRuntime, clearWorkerRunRuntime } from './workerRunRuntime';
 import { createProjectWorkerRunCoordinator, workerWorktreePathFor } from './workerRunCoordinator';
-import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 
 function graph(): ProjectTaskGraph {
   return {
@@ -86,9 +85,10 @@ describe('createProjectWorkerRunCoordinator', () => {
       attempt: 2,
     });
 
-    const taskExecutionId = createTaskExecutionId('run/one', 'task-1');
-    const attemptId = createAttemptId(taskExecutionId, 2);
-    expect(path).toBe(`C:/projects/slimeMold-workers/${encodeURIComponent(attemptId)}`);
+    const identity = path.slice(path.lastIndexOf('/') + 1);
+    expect(identity).toMatch(/^w-[0-9a-f]+$/);
+    expect(path).toBe(`C:/projects/slimeMold-workers/${identity}`);
+    expect(identity).not.toContain('%');
     expect(path.startsWith('C:/projects/slimeMold/')).toBe(false);
   });
 

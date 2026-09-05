@@ -1,7 +1,12 @@
 import type { DomainEvent } from '../domain/contracts';
 import type { RunWorkerQueueOptions, WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTask } from './types';
-import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
+import {
+  assertTaskExecutionLineage,
+  createAttemptId,
+  createTaskExecutionId,
+  workerIdentitySegment,
+} from '../domain/execution';
 import { runActiveWorkerRun } from './workerRunRuntime';
 import { createWorktreeAllocator } from '../dev/workerAllocator';
 import { createCodexWorkerExecutor, createCodexWorkerInvoker } from '../dev/codexWorkerExecutor';
@@ -51,7 +56,7 @@ export function workerWorktreePathFor(
     attemptId,
     attempt: input.attempt,
   });
-  return `${root}-workers/${encodeURIComponent(attemptId)}`;
+  return `${root}-workers/${workerIdentitySegment(attemptId)}`;
 }
 
 export interface GuiProjectWorkerRunCoordinatorOptions
@@ -65,6 +70,10 @@ export interface GuiProjectWorkerRunCoordinatorOptions
 export function createGuiProjectWorkerRunCoordinator(
   options: GuiProjectWorkerRunCoordinatorOptions,
 ): ProjectWorkerRunCoordinator {
+  const hostGeneration = options.session.hostGeneration;
+  if (typeof hostGeneration !== 'number' || !Number.isSafeInteger(hostGeneration) || hostGeneration <= 0) {
+    throw new Error('GUI Worker coordinator requires a Tauri host session generation');
+  }
   return createProjectWorkerRunCoordinator({
     projectId: options.projectId,
     runs: options.runs,
@@ -78,7 +87,7 @@ export function createGuiProjectWorkerRunCoordinator(
       (input) => workerWorktreePathFor(options.projectPath, input),
     ),
     executor: createCodexWorkerExecutor({
-      invoker: createCodexWorkerInvoker(),
+      invoker: createCodexWorkerInvoker(hostGeneration),
       acceptance: createDevWorkerAcceptance(options.session),
       model: options.model,
     }),
