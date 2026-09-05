@@ -130,6 +130,11 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['grep', '--recursive', 'secret', 'src/components'],
       ['grep', '--directories=recurse', 'secret', 'src/components'],
       ['grep', '-d', 'recurse', 'secret', 'src/components'],
+      ['grep', '--file=/outside/patterns', 'secret', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=/outside/excludes', 'secret', 'src/components/A.tsx'],
+      ['grep', '-f/outside/patterns', 'secret', 'src/components/A.tsx'],
+      ['grep', '--file=C:/outside/patterns', 'secret', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=C:/outside/excludes', 'secret', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);

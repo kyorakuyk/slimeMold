@@ -78,6 +78,16 @@ export function DevSessionPanel() {
     if (!ok) return;
     setBusy(true);
     try {
+      if (wt.status === 'registration-pending' || wt.status === 'orphaned') {
+        if (!s.isCleanupApproved(wt.path)) {
+          await alertDialog(`worktree「${wt.path}」没有可复用的未消费清理批准——拒绝重试。`);
+          return;
+        }
+        const cleaned = await s.confirmAndCleanup(wt.path);
+        if (cleaned) await alertDialog(`已完成遗留清理：${wt.path}`);
+        else await alertDialog(`遗留清理被宿主拒绝：${wt.path}`);
+        return;
+      }
       const sig = await s.computeWorktreeSignature(wt.path);
       s.approveCleanup(wt.path, {
         acceptanceId: passed.acceptanceId,
