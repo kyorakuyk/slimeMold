@@ -35,6 +35,8 @@ export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
 let devGuiStatus: DevGuiStatus = 'idle';
 let devSessionGeneration = 0;
 let activeHostGeneration: number | null = null;
+let ensureInFlight: Promise<ReturnType<typeof getDevSession>> | null = null;
+let ensureInFlightProjectKey: string | null = null;
 
 async function clearStaleHostSession(generation: number): Promise<void> {
   try {
@@ -67,9 +69,8 @@ function evidenceRootFor(projectPath: string): string {
  * **同步链路**：await dev_init_session 成功 → 初始化 DevSession → 注册 dev.* 定义 → status=ready。
  * 失败 → status=unavailable，不注册 dev 节点（fail-closed），返回 null。
  */
-export async function ensureGuiDevSession(projectPath: string | null, signal?: AbortSignal): Promise<ReturnType<typeof getDevSession>> {
+async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal): Promise<ReturnType<typeof getDevSession>> {
   if (!isTauri) return null;
-  if (!projectPath) return null;
   if (signal?.aborted) return null;
   const existing = getDevSession();
   if (existing) {
@@ -150,11 +151,39 @@ export async function ensureGuiDevSession(projectPath: string | null, signal?: A
   }
 }
 
+export function ensureGuiDevSession(
+  projectPath: string | null,
+  signal?: AbortSignal,
+): Promise<ReturnType<typeof getDevSession>> {
+  if (!isTauri || !projectPath || signal?.aborted) return Promise.resolve(null);
+  const projectKey = pathComparisonKey(projectPath);
+  if (ensureInFlight && ensureInFlightProjectKey === projectKey) return ensureInFlight;
+  if (ensureInFlight) {
+    // A project transition fences the older initializer; its host generation
+    // will be cleared when the older initializer observes the drift.
+    devSessionGeneration += 1;
+    ensureInFlight = null;
+    ensureInFlightProjectKey = null;
+  }
+  const promise = initializeGuiDevSession(projectPath, signal);
+  const wrapped = promise.finally(() => {
+    if (ensureInFlight === wrapped) {
+      ensureInFlight = null;
+      ensureInFlightProjectKey = null;
+    }
+  });
+  ensureInFlight = wrapped;
+  ensureInFlightProjectKey = projectKey;
+  return wrapped;
+}
+
 /**
- * 卸载 GUI DevSession：先清空 Rust 宿主登记态（防旧项目泄漏），再移除 dev 节点定义 + 重置单例。
+ * 卸载 GUI DevSession：先清空 Rust 宿主登记态（防旧项目登记泄漏到新项目），再移除 dev 节点定义 + 重置单例。
  * 返回 Promise（await dev_clear_session）。
  */
 export async function teardownGuiDevSession(): Promise<void> {
+  ensureInFlight = null;
+  ensureInFlightProjectKey = null;
   const lifecycleGeneration = ++devSessionGeneration;
   const hostGeneration = activeHostGeneration;
   // 先清空宿主登记态（切换/关闭项目时旧 worktree 登记不得泄漏到新项目）

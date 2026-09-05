@@ -1965,6 +1965,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、928 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 5 个文件、46 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.59 GUI DevSession 初始化改为同项目 single-flight
+
+- Phase 2 hardening 第六个垂直切片收敛 session transition：同一项目的并发 `ensureGuiDevSession` caller 现在共享一个初始化 Promise，只执行一次 `dev_init_session`，并返回同一个 DevSession/host generation；不再让两个 caller 同时创建 Rust session 后再互相清理。
+- 不同项目会递增前端 lifecycle generation 使旧初始化失效；旧 host generation 仍通过 stale clear 路径清理。teardown 会清空 in-flight 引用并保留既有 registry/session reset 顺序。
+- 新增真实 Tauri bridge mock 下的并发回归，验证单次 host init、同一 session 返回和现有 session/tauri-run 回归。
+- 验证结果：`npm run test` 为 109 个测试文件、929 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 4 个文件、20 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
