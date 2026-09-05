@@ -601,8 +601,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
           if (!accOk || !revOk) return false;
           const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
-          if (signal?.aborted) return false;
-          if (cleaned) this.consumeCleanup(path);
+          if (cleaned) {
+            this.consumeCleanup(path);
+            return true;
+          }
           return cleaned;
         }
         // 第一次签名校验
@@ -615,8 +617,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         if (signal?.aborted) return false;
         if (sig2 !== approval.stateSignature) return false;
         const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
-        if (signal?.aborted) return false;
-        if (cleaned) this.consumeCleanup(path);
+        if (cleaned) {
+          this.consumeCleanup(path);
+          return true;
+        }
         return cleaned;
       } finally {
         this.confirmCleanupInFlight.delete(key);

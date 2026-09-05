@@ -64,6 +64,45 @@ describe('DevSession cleanup', () => {
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
   });
 
+  it('consumes approval when cancellation arrives after destructive cleanup completes', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({ baseRepoPath: '/repo', gitRunner: { git } });
+    const info = await session.manager.create('worker-id', '/repo-workers/task-1', { branch: 'worker/task-1' });
+    expect(info).not.toBeNull();
+    session.computeWorktreeSignature = vi.fn(async () => 'sig-1');
+    const acceptanceId = session.nextAcceptanceId();
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: info!.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(info!.path, {
+      baseRevision: info!.baseRevision,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+    });
+    const controller = new AbortController();
+    const cleanup = session.manager.cleanup.bind(session.manager);
+    vi.spyOn(session.manager, 'cleanup').mockImplementation(async (id, opts) => {
+      const result = await cleanup(id, opts);
+      controller.abort();
+      return result;
+    });
+
+    await expect(session.confirmAndCleanup(info!.path, controller.signal)).resolves.toBe(true);
+    expect(session.isCleanupApproved(info!.path)).toBe(false);
+  });
+
   it('keeps the worktree record when Tauri registration and rollback both fail', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');

@@ -2083,6 +2083,12 @@ Issue 工作台采用四个面板：
 - 新增延迟写入锁顺序、同 key migration 和 durable entry 回归；避免释放锁后仍在写入、删除唯一 receipt、或调用方继续使用未核验对象。
 - 验证结果：`npm run test` 为 109 个测试文件、958 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.75 destructive cleanup 完成后的 cancellation/approval 收敛
+
+- Phase 2 hardening 第二十二个垂直切片修复 `confirmAndCleanup` 的取消竞态：若 manager 已返回 cleaned，操作事实已发生，session 现在先消费 approval 并返回成功；只有 cleanup 未发生时才将取消返回为 false，避免已删除 worktree 保留可重放 approval。
+- 新增 signal 在 destructive cleanup 完成后到达的回归；registration-pending/orphaned retry 仍走 branch-only/unregister-only 专用路径。
+- 验证结果：`npm run test` 为 109 个测试文件、959 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
