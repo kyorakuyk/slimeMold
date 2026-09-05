@@ -2045,6 +2045,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、949 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 42 个 Rust 测试通过；相关 TS targeted suite 为 3 个文件、31 个测试通过；`git diff --check` 通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.69 Worker consistency canonical hash 与 registered path identity fencing
+
+- Phase 2 hardening 第十六个垂直切片修复 side-effect 审计分叉：`workerRunConsistency` 现在按 canonical worker key 校验包含 `path/branch` 的 7 元 inputHash；旧 5 元 hash 只在明确 legacy key 下兼容，canonical key 的未绑定路径记录 fail-closed。
+- Rust host gate 不再在每次请求中重新 canonicalize 已登记 `base_repo/worktrees`；这些字符串被视为 registration-time stable identity，只 canonicalize 请求路径，避免登记目录被 junction/reparse 替换后外部路径同时匹配。新增 Windows replacement regression（使用专用 `D:/Temp/slimemold-test-runs` fixture root）。
+- 验证结果：`npm run test` 为 109 个测试文件、950 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
+
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

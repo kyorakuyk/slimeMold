@@ -117,14 +117,29 @@ function isVerifiedHistoricalEffect(
   if (effect.attemptId !== expectedAttemptId) return false;
   const isCleanup = effect.idempotencyKey === workerCleanupEffectKey(expected.taskExecutionId, expectedAttemptId);
   const expectedWorkerKey = `worker-execution:${expected.taskExecutionId}:attempt-${parsed.attempt}`;
+  const expectedLegacyWorkerKey = `worker-execution:${expected.runId}:${expected.taskId}:attempt-${parsed.attempt}`;
   if (isCleanup) {
     if (effect.kind !== 'worktree-cleanup' || !effect.target || !effect.inputHash.trim()) return false;
-  } else if (effect.idempotencyKey !== expectedWorkerKey || effect.kind !== 'worker-execution') {
+  } else if (
+    (effect.idempotencyKey !== expectedWorkerKey && effect.idempotencyKey !== expectedLegacyWorkerKey)
+    || effect.kind !== 'worker-execution'
+  ) {
     return false;
   } else {
     let hash: unknown;
     try { hash = JSON.parse(effect.inputHash); } catch { return false; }
-    if (!Array.isArray(hash) || hash.length !== 5 || hash[0] !== expected.runId || hash[1] !== expected.taskId || hash[2] !== 1 || hash[3] !== parsed.attempt || typeof hash[4] !== 'string' || !hash[4]) return false;
+    if (!Array.isArray(hash) || hash[0] !== expected.runId || hash[1] !== expected.taskId || hash[2] !== 1 || hash[3] !== parsed.attempt || typeof hash[4] !== 'string' || !hash[4]) return false;
+    if (effect.idempotencyKey === expectedWorkerKey) {
+      if (
+        hash.length !== 7
+        || typeof hash[5] !== 'string'
+        || !hash[5]
+        || typeof hash[6] !== 'string'
+        || !hash[6]
+      ) return false;
+    } else if (hash.length !== 5) {
+      return false;
+    }
   }
   if (effect.status === 'unknown') return effect.recovery === 'needs-user' && effect.receipt === undefined;
   return effect.status === 'receipt'
@@ -393,7 +408,17 @@ export function auditWorkerRunConsistency(input: {
       const expectedInputHash = isCleanup
         ? `${task.baseRevision ?? ''}:${effect.receipt?.outputHash ?? ''}`
         : task.taskDefinitionVersion === 1
-          ? JSON.stringify([run.runId, effectTaskId, task.taskDefinitionVersion, task.attempt, task.baseRevision])
+          ? task.worktreePath && task.branch
+            ? JSON.stringify([
+              run.runId,
+              effectTaskId,
+              task.taskDefinitionVersion,
+              task.attempt,
+              task.baseRevision,
+              task.worktreePath,
+              task.branch,
+            ])
+            : undefined
           : undefined;
       const inputHashMatches = expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')

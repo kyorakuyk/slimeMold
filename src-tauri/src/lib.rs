@@ -690,20 +690,21 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     let state = DEV_STATE.lock().unwrap();
     let norm_canon = dev_strip_verbatim(&canon);
     if let Some(base) = &state.base_repo {
-        let bc = std::path::Path::new(base)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(base));
+        // `base_repo` is a registration-time canonical identity. Do not
+        // canonicalize it again: a replaced junction/reparse point must not
+        // redefine the identity of the active session.
+        let bc = std::path::PathBuf::from(base);
         if path_compare_key(&norm_canon.to_string_lossy())
-            == path_compare_key(&dev_strip_verbatim(&bc).to_string_lossy())
+            == path_compare_key(&bc.to_string_lossy())
         {
             return Ok(DevCwdKind::MainRepo);
         }
     }
     for w in &state.worktrees {
-        let wc = std::path::Path::new(w)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(w));
-        let norm_wc = dev_strip_verbatim(&wc);
+        // `worktrees` stores the canonical path captured at registration.
+        // Re-canonicalizing here would follow a replacement junction and
+        // could make an outside directory appear to be the old worktree.
+        let norm_wc = dev_strip_verbatim(std::path::Path::new(w));
         if path_is_same_or_child(&norm_canon, &norm_wc) {
             return Ok(DevCwdKind::Worktree(norm_wc));
         }
@@ -3104,6 +3105,49 @@ mod dev_exec_tests {
         assert!(
             result.is_err(),
             "symlinked worker root must be rejected before git worktree add"
+        );
+    }
+
+    #[test]
+    fn registered_worktree_replacement_is_not_recanonicalized_to_outside() {
+        let _test_guard = lock_dev_state_tests();
+        let root = std::path::PathBuf::from(r"D:\Temp\slimemold-test-runs").join(format!(
+            "sm-registered-replace-{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let base = root.join("repo");
+        let worker = root.join("repo-workers");
+        let outside = root.join("outside");
+        let _cleanup = TempDirs(vec![root.clone()]);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&worker).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker.txt"), "outside").unwrap();
+        let registered = worker.canonicalize().unwrap().to_string_lossy().to_string();
+        fs::remove_dir_all(&worker).unwrap();
+        make_dir_symlink(&outside, &worker).unwrap();
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = next_session_generation(state.generation);
+            state.base_repo = Some(base.to_string_lossy().to_string());
+            state.worktrees = vec![registered];
+        }
+
+        let result = dev_cwd_kind(worker.join("marker.txt").to_string_lossy().as_ref());
+
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = next_session_generation(state.generation);
+            state.base_repo = None;
+            state.worktrees.clear();
+        }
+        assert!(
+            result.is_err(),
+            "replaced registered worktree must fail closed"
         );
     }
 

@@ -463,4 +463,61 @@ describe('worker run consistency audit', () => {
       expect.objectContaining({ code: 'side-effect-lineage-drift' }),
     ]));
   });
+
+  it('accepts the canonical Worker side-effect hash with path and branch provenance', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const running: WorkerRunQueueState = {
+      ...run,
+      status: 'running',
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          status: 'running',
+          taskDefinitionVersion: 1,
+          taskExecutionId,
+          currentAttemptId: attemptId,
+          worktreeId: 'worktree-1',
+          worktreePath: 'C:/worktrees/task-1',
+          branch: 'worker/task-1',
+          baseRevision: 'base-1',
+          evidenceIds: [],
+          acceptanceId: undefined,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+        },
+      },
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [running],
+      events: [],
+      evidence: [],
+      acceptances: [],
+      sideEffects: [{
+        idempotencyKey: `worker-execution:${attemptId}:attempt-1`,
+        kind: 'worker-execution',
+        target: 'worktree-1',
+        inputHash: JSON.stringify([
+          'run-1',
+          'task-1',
+          1,
+          1,
+          'base-1',
+          'C:/worktrees/task-1',
+          'worker/task-1',
+        ]),
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId,
+        status: 'started',
+        recovery: 'retry',
+      }],
+    });
+
+    expect(result.issues).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'side-effect-lineage-drift' }),
+    ]));
+  });
 });
