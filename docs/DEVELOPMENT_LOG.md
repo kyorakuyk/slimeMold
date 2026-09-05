@@ -2059,6 +2059,12 @@ Issue 工作台采用四个面板：
 - 新增 lexical parent traversal 与 root reparse replacement 回归；测试生成物继续位于专用临时根。
 - 验证结果：`npm run test` 为 109 个测试文件、952 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
 
+### 7.71 Worker recovery provenance validator 与成功 receipt Evidence gate
+
+- Phase 2 hardening 第十八个垂直切片收紧 Worker recovery：started/unknown effect 必须是当前 `worker-execution` canonical key，包含完整 7 元 inputHash、target、task/attempt lineage 与 assignment path/branch/baseRevision；legacy 5 元 hash 不再直接进入 retry/skip，需显式 migration；cleanup 或伪造 kind 不会被 worker recovery 标记 unknown。
+- `applyWorkerRunRecoveryDecision` 重新校验当前 task 的 worktreeId、path、branch、baseRevision 与 effect hash；`complete(succeeded)` 要求非空 host Evidence IDs，失败 receipt仍保留错误语义。
+- 验证结果：`npm run test` 为 109 个测试文件、955 个测试通过；`npm run build` 通过并保留既有 dynamic/static import 与大 chunk warning；`npm run i18n:check` 为 991 keys 对齐；`cargo fmt --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml' -- --check` 与 `cargo test --manifest-path 'D:/code/slimeMold/src-tauri/Cargo.toml'` 通过（43 tests）；`git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

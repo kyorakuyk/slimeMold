@@ -211,6 +211,15 @@ describe('worker side-effect recorder', () => {
     });
   });
 
+  it('rejects a succeeded receipt without non-empty host Evidence provenance', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, { status: 'succeeded' })).rejects.toThrow(/Evidence/);
+  });
+
   it('does not let a late completion promote a recovered unknown effect', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');
@@ -251,6 +260,44 @@ describe('worker side-effect recorder', () => {
       decision: 'skip',
       requiresNewAttempt: false,
     });
+  });
+
+  it('rejects non-worker started effects from the worker recovery plan', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const effect = {
+      idempotencyKey: 'worktree-cleanup:task-1:attempt-1',
+      kind: 'worktree-cleanup',
+      target: 'worktree-1',
+      inputHash: 'cleanup-input',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      status: 'started' as const,
+      recovery: 'retry' as const,
+    };
+
+    expect(() => buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [effect] })).toThrow(/worker-execution/);
+  });
+
+  it('rejects a legacy worker recovery record without assignment-bound path and branch', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const effect = {
+      idempotencyKey: 'worker-execution:run-1:task-1:attempt-1',
+      kind: 'worker-execution',
+      target: 'worktree-1',
+      inputHash: 'run-1:task-1:1:1:base-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      status: 'started' as const,
+      recovery: 'retry' as const,
+    };
+
+    expect(() => buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [effect] })).toThrow(/path.*branch/);
   });
 
   it('creates a new queued attempt for retry and blocks dependents for skip', async () => {
@@ -316,11 +363,13 @@ describe('worker side-effect recorder', () => {
         'task-1': {
           taskId: 'task-1',
           taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+          taskDefinitionVersion: 1 as const,
           status: 'running' as const,
           attempt: 1,
           currentAttemptId: lease.attemptId,
           worktreeId: 'worktree-1',
           worktreePath: 'C:/worktrees/task-1',
+          branch: lease.assignment.branch,
           baseRevision: 'base-1',
           evidenceIds: [],
           updatedAt: '2026-09-01T00:01:00.000Z',

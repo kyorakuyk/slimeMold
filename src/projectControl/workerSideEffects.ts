@@ -18,7 +18,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { restoreWorkerRunQueue } from '../domain/workerQueue';
-import { assertTaskExecutionLineage, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 
 export type WorkerRunRecoveryDecision = 'inspect' | 'retry' | 'skip';
@@ -84,6 +84,11 @@ function effectBelongsToCurrentAttempt(
   if (effect.taskId !== taskId || !effect.taskExecutionId || !effect.attemptId || !task.currentAttemptId) {
     return false;
   }
+  try {
+    assertRecoverableWorkerEffect(effect, state.runId);
+  } catch {
+    return false;
+  }
   const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
   try {
     assertTaskExecutionLineage({
@@ -103,7 +108,19 @@ function effectBelongsToCurrentAttempt(
   } catch {
     return false;
   }
-  return effect.taskExecutionId === taskExecutionId && effect.attemptId === task.currentAttemptId;
+  if (effect.taskExecutionId !== taskExecutionId || effect.attemptId !== task.currentAttemptId) return false;
+  if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) return false;
+  let hash: unknown;
+  try { hash = JSON.parse(effect.inputHash); } catch { return false; }
+  return JSON.stringify(hash) === JSON.stringify([
+    state.runId,
+    taskId,
+    task.taskDefinitionVersion ?? 1,
+    task.attempt,
+    task.baseRevision,
+    task.worktreePath,
+    task.branch,
+  ]) && effect.target === task.worktreeId;
 }
 
 function inputHashFor(lease: WorkerTaskLease): string {
@@ -126,6 +143,62 @@ function legacyInputHashFor(lease: WorkerTaskLease): string {
     lease.attempt,
     lease.assignment.baseRevision,
   ].join(':');
+}
+
+function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string): void {
+  if (
+    effect.kind !== 'worker-execution'
+    || effect.runId !== runId
+    || !effect.taskId
+    || !effect.taskExecutionId
+    || !effect.attemptId
+    || !effect.target
+  ) {
+    throw new Error(`恢复 effect 缺少完整 lineage 或不是 worker-execution 记录：${effect.idempotencyKey}`);
+  }
+  let parsedAttempt: ReturnType<typeof parseAttemptId>;
+  try {
+    parsedAttempt = parseAttemptId(effect.attemptId);
+  } catch {
+    throw new Error(`恢复 effect attemptId 无法验证：${effect.idempotencyKey}`);
+  }
+  if (parsedAttempt.taskExecutionId !== effect.taskExecutionId) {
+    throw new Error(`恢复 effect execution lineage 不一致：${effect.idempotencyKey}`);
+  }
+  const canonicalKey = `worker-execution:${effect.taskExecutionId}:attempt-${parsedAttempt.attempt}`;
+  const legacyKey = `worker-execution:${effect.runId}:${effect.taskId}:attempt-${parsedAttempt.attempt}`;
+  if (effect.idempotencyKey === legacyKey) {
+    throw new Error(`legacy recovery effect 缺少 assignment path/branch，需先迁移：${effect.idempotencyKey}`);
+  }
+  if (effect.idempotencyKey !== canonicalKey) {
+    throw new Error(`恢复 effect key 不是当前 canonical worker key：${effect.idempotencyKey}`);
+  }
+  let hash: unknown;
+  try { hash = JSON.parse(effect.inputHash); } catch {
+    throw new Error(`恢复 effect inputHash 无法解析：${effect.idempotencyKey}`);
+  }
+  if (
+    !Array.isArray(hash)
+    || hash.length !== 7
+    || hash[0] !== effect.runId
+    || hash[1] !== effect.taskId
+    || hash[2] !== 1
+    || hash[3] !== parsedAttempt.attempt
+    || typeof hash[4] !== 'string'
+    || !hash[4]
+    || typeof hash[5] !== 'string'
+    || !hash[5]
+    || typeof hash[6] !== 'string'
+    || !hash[6]
+  ) {
+    throw new Error(`恢复 effect 缺少 assignment path/branch provenance：${effect.idempotencyKey}`);
+  }
+  if (effect.status === 'started' && effect.recovery !== 'retry') {
+    throw new Error(`started recovery effect 状态不一致：${effect.idempotencyKey}`);
+  }
+  if (effect.status === 'unknown' && (effect.recovery !== 'needs-user' || effect.receipt !== undefined)) {
+    throw new Error(`unknown recovery effect 状态不一致：${effect.idempotencyKey}`);
+  }
 }
 
 function assertExistingEffectMatchesLease(
@@ -255,6 +328,9 @@ export function createWorkerSideEffectRecorder(
         && current.attemptId === record.attemptId;
       if (!sameIdentity) throw new Error(`迟到 Worker completion 的 lineage 不一致：${record.idempotencyKey}`);
       if (current.status !== 'started') return current;
+      if (result.status === 'succeeded' && (!result.evidenceIds || result.evidenceIds.length === 0)) {
+        throw new Error(`Worker succeeded receipt 缺少 host Evidence provenance：${record.idempotencyKey}`);
+      }
       const receipt = {
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
@@ -287,6 +363,7 @@ export function createWorkerSideEffectRecorder(
       for (const entry of parsed.journal.entries) {
         if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
         if (entry.runId === normalizedRunId && entry.status === 'started') {
+          assertRecoverableWorkerEffect(entry, normalizedRunId);
           await repository.record(recoverInterruptedSideEffect(entry, 'worker-run-restarted'));
           if (options.signal?.aborted) throw new Error('Worker recovery 已取消');
         }
@@ -330,6 +407,7 @@ function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunR
     }
   }
   for (const effect of candidates) {
+    assertRecoverableWorkerEffect(effect, runId);
     if (
       effect.runId !== runId
       || !effect.taskId
