@@ -1973,6 +1973,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、929 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 4 个文件、20 个测试通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.60 orphaned branch retry 增加 tip provenance fencing
+
+- Phase 2 hardening 第七个垂直切片修复同名 branch 重建风险：Worktree remove 成功但 branch delete 失败进入 `orphaned` 时，记录当时 `refs/heads/<branch>` 的 tip revision；后续 branch-only retry 必须先 read-back 同一 tip，revision 不同、不可读或缺少 provenance 都 fail-closed，不调用 `git branch -D`。
+- 普通 cleanup 与取消 rollback 共用同一 provenance capture；既有 branch retry 在 tip 未变化时继续通过，worktree 不会被重复 remove。
+- 新增 branch 同名重建回归，证明旧 orphan 不会删除新 branch。该切片暂未把 `branchRevision` 扩展进 ProjectControl durable schema；因此重启后没有该 provenance 的旧 orphan 只能拒绝自动 branch retry，等待显式重建/人工核对。
+- 验证结果：`npm run test` 为 109 个测试文件、930 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite 为 6 个文件、49 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

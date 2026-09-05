@@ -191,6 +191,31 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(branchCalls).toBe(2);
   });
 
+  it('refuses orphan retry when the branch name was recreated at a different revision', async () => {
+    let branchRevision = 'orphan-tip';
+    let branchDeleteCalls = 0;
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${branchRevision}\n`);
+      if (args[0] === 'worktree' && args[1] === 'add') return ok();
+      if (args[0] === 'worktree' && args[1] === 'remove') return ok();
+      if (args[0] === 'branch') {
+        branchDeleteCalls += 1;
+        return { exitCode: 1, stdout: '', stderr: 'temporary branch failure', durationMs: 1 };
+      }
+      return ok();
+    });
+    const m = new WorktreeManager({ git }, 'C:/repo');
+    await m.create('orphan-recreated', 'C:/repo-workers/orphan-recreated', { branch: 'worker/orphan-recreated' });
+
+    expect(await m.cleanup('orphan-recreated', { confirm: true })).toBe(false);
+    expect(m.get('orphan-recreated')).toMatchObject({ status: 'orphaned', branchRevision: 'orphan-tip' });
+
+    branchRevision = 'recreated-tip';
+    expect(await m.cleanup('orphan-recreated', { confirm: true })).toBe(false);
+    expect(branchDeleteCalls).toBe(1);
+  });
+
   it('createNodeGitRunner：真实 runner 结构可用', async () => {
     const runner = createNodeGitRunner();
     const r = await runner.git(['--version'], process.cwd());

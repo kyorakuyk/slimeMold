@@ -69,6 +69,8 @@ export interface WorktreeInfo {
   path: string;
   branch: string;
   baseRevision: string;
+  /** Branch tip captured after a partial cleanup; required for branch-only retry. */
+  branchRevision?: string;
   createdAt: string;
   status: WorktreeStatus;
 }
@@ -215,12 +217,23 @@ export class WorktreeManager {
     return diffQ.exitCode !== 0 || untracked.stdout.trim().length > 0;
   }
 
+  private async readBranchRevision(branch: string): Promise<string | null> {
+    const result = await this.runner.git(['rev-parse', `refs/heads/${branch}`], this.baseRepoPath);
+    const revision = result.stdout.trim();
+    return result.exitCode === 0 && revision ? revision : null;
+  }
+
   private async cleanupCreated(info: WorktreeInfo): Promise<boolean> {
     const rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
     if (rm.exitCode !== 0) return false;
     const branch = await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);
     if (branch.exitCode !== 0) {
-      this.infos.set(info.id, { ...info, status: 'orphaned' });
+      const branchRevision = await this.readBranchRevision(info.branch);
+      this.infos.set(info.id, {
+        ...info,
+        ...(branchRevision ? { branchRevision } : {}),
+        status: 'orphaned',
+      });
       return false;
     }
     this.infos.set(info.id, { ...info, status: 'cleaned' });
@@ -240,6 +253,9 @@ export class WorktreeManager {
     if (opts.signal?.aborted) return false;
     if (info.status === 'registration-pending') return true;
     if (info.status === 'orphaned') {
+      if (!info.branchRevision) return false;
+      const currentRevision = await this.readBranchRevision(info.branch);
+      if (currentRevision !== info.branchRevision) return false;
       const branch = await this.runner.git(['branch', '-D', info.branch], this.baseRepoPath);
       if (branch.exitCode !== 0) return false;
       this.infos.set(id, { ...info, status: 'cleaned' });
