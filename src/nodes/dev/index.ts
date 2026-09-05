@@ -610,6 +610,9 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         throw nodeError('accept 的 Worker lineage 必须四项完整');
       }
       if (hasLineage) assertTaskExecutionLineage({ runId, taskId, taskExecutionId, attemptId });
+      if (!collector.hasPersistence()) {
+        throw nodeError('accept 需要宿主 EvidenceStore 持久化，拒绝使用仅内存 Evidence');
+      }
       // P1（审计）：验收 ID 始终由宿主生成（不可预测唯一），工作流/节点不可自填——
       // 防止指定已有 ID 覆盖旧验收记录（recordAcceptance 亦禁止覆盖）。
       const acceptanceId = session.nextAcceptanceId();

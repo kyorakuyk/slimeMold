@@ -2005,6 +2005,14 @@ Issue 工作台采用四个面板：
 - 验证结果：`npm run test` 为 109 个测试文件、935 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 TS targeted suite 为 2 个文件、21 个测试通过；Rust lock targeted test通过。
 - 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
 
+### 7.64 Evidence verification 统一追踪与通用 accept durable gate
+
+- Phase 2 hardening 第十一个垂直切片收敛 Evidence 持久化失败语义：`addAsync` 把 append、load、exact read-back放进同一个 tracked promise；同步/异步 append失败、read-back缺失/重复/漂移都会回滚当前对象并写入 persistErrors，`flush` 会等待完整 verification而不是只等待 append。fire-and-forget `add` 同样捕获同步 append throw。
+- Evidence ID 优先使用 `crypto.randomUUID()`，fallback 保留进程内序号+随机尾段；read-back要求目标 ID 恰好一条，避免旧同 ID记录误认本次写入。
+- 通用 `dev.accept` 现在和 `createDevWorkerAcceptance` 一样，必须配置宿主 EvidencePersistence；仅内存 Evidence 不能产生通过的 Acceptance。新增同步失败、duplicate read-back、deferred flush 和 no-persistence accept 回归。
+- 验证结果：`npm run test` 为 109 个测试文件、940 个测试通过；`npm run build` 通过（保留既有 dynamic/static import 与大 chunk warning）；`npm run i18n:check` 为 991 个 key 对齐；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 40 个 Rust 测试通过；`git diff --check` 通过；相关 targeted suite `src/dev/evidence.test.ts` 为 14 个测试、`src/nodes/dev/index.test.ts` 为 20 个测试通过。
+- 本切片仍未通过新的独立 reviewer；成功 worktree 未清理，未 push。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

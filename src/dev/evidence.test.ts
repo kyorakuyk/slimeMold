@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EvidenceCollector, createHostEvidenceStore, createHostEvidenceStoreWithFs, evidencePathFor } from './evidence';
+import { EvidenceCollector, createHostEvidenceStore, createHostEvidenceStoreWithFs, evidencePathFor, type EvidencePersistence } from './evidence';
 import { withTestArtifactRoot } from './test-artifacts';
 import { normalizeAbsolutePath } from './path-utils';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
@@ -191,5 +191,90 @@ describe('H4 EvidenceCollector', () => {
       summary: 'append silently dropped',
     })).rejects.toThrow(/read-back|持久化/);
     expect(collector.records).toHaveLength(0);
+  });
+
+  it('rolls back when persistence append throws synchronously', async () => {
+    const collector = new EvidenceCollector({
+      append: (() => { throw new Error('sync append failure'); }) as unknown as EvidencePersistence['append'],
+      load: async () => [],
+    });
+
+    await expect(collector.addAsync({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'failed',
+      summary: 'sync failure',
+    })).rejects.toThrow('sync append failure');
+    expect(collector.records).toHaveLength(0);
+  });
+
+  it('captures synchronous fire-and-forget append failures for flush', async () => {
+    const collector = new EvidenceCollector({
+      append: (() => { throw new Error('sync fire-and-forget failure'); }) as unknown as EvidencePersistence['append'],
+      load: async () => [],
+    });
+
+    expect(() => collector.add({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'failed',
+      summary: 'sync fire-and-forget',
+    })).not.toThrow();
+    await expect(collector.flush()).rejects.toThrow(/sync fire-and-forget failure/);
+    expect(collector.records).toHaveLength(0);
+  });
+
+  it('rejects read-back with duplicate records for the newly written Evidence ID', async () => {
+    let appended: import('./evidence').EvidenceRecord | undefined;
+    const collector = new EvidenceCollector({
+      append: async (record) => {
+        appended = record;
+      },
+      load: async () => (appended ? [appended, { ...appended }] : []),
+    });
+
+    await expect(collector.addAsync({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'passed',
+      summary: 'duplicate read-back',
+    })).rejects.toThrow(/read-back/);
+    expect(collector.records).toHaveLength(0);
+  });
+
+  it('flush waits for the complete append and read-back verification', async () => {
+    let releaseLoad!: () => void;
+    let resolveLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => { resolveLoadStarted = resolve; });
+    const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+    let appended: import('./evidence').EvidenceRecord | undefined;
+    const collector = new EvidenceCollector({
+      append: async (record) => {
+        appended = record;
+      },
+      load: async () => {
+        resolveLoadStarted();
+        await loadGate;
+        return appended ? [appended] : [];
+      },
+    });
+
+    const adding = collector.addAsync({
+      orchestrationId: 'o',
+      stageId: 's',
+      kind: 'test',
+      status: 'passed',
+      summary: 'deferred read-back',
+    });
+    await loadStarted;
+    let flushed = false;
+    const flushing = collector.flush().then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    releaseLoad();
+    await Promise.all([adding, flushing]);
   });
 });

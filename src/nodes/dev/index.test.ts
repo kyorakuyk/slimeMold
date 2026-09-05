@@ -449,6 +449,18 @@ describe('H4 dev nodes', () => {
     expect(failedAcceptance?.passed).toBe(false);
   });
 
+  it('dev.accept：没有宿主 EvidencePersistence 时 fail-closed', async () => {
+    const session = fakeSession({ noPersistence: true });
+    const accept = createDevNodeDefs(session).find((definition) => definition.typeId === 'dev.accept')!;
+
+    await expect(accept.execute({
+      orchestrationId: 'o',
+      stageId: 's',
+      worktreePath: '/repo-workers/no-evidence',
+      rules: [],
+    }, {}, {} as never)).rejects.toThrow(/EvidenceStore.*持久化/);
+  });
+
   it('dev.worktree.cleanup：无审批拒 / 仅审批无绑定拒 / 三绑定齐全才清理 / 一次性消费', async () => {
     const session = fakeSession();
     const defs = createDevNodeDefs(session);

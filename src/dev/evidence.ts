@@ -86,8 +86,10 @@ export type EvidenceInput = Omit<EvidenceRecord, 'id' | 'createdAt' | 'capturedB
 
 let seq = 0;
 function nextId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `ev-${uuid}`;
   seq += 1;
-  return `ev-${Date.now().toString(36)}-${seq.toString(36)}`;
+  return `ev-${Date.now().toString(36)}-${seq.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
@@ -259,8 +261,10 @@ export class EvidenceCollector {
     const rec = this.makeRec(input);
     this._records.push(rec);
     if (this.persistence) {
-      const p = this.persistence.append(rec).catch((e: unknown) => {
-        this._records = this._records.filter((item) => item.id !== rec.id);
+      const p = Promise.resolve()
+        .then(() => this.persistence!.append(rec))
+        .catch((e: unknown) => {
+        this._records = this._records.filter((item) => item !== rec);
         this._persistErrors.push(
           `证据 ${rec.id} 落盘失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -276,19 +280,23 @@ export class EvidenceCollector {
     this._records.push(rec);
     const persistence = this.persistence;
     if (persistence) {
-      const p = persistence.append(rec);
-      this._pending.push(p.catch(() => {}));
-      try {
-        await p;
+      const verification = (async () => {
+        await persistence.append(rec);
         const persisted = await persistence.load();
-        const readBack = persisted.find((item) => item.id === rec.id);
-        if (!readBack || JSON.stringify(readBack) !== JSON.stringify(rec)) {
+        const matches = persisted.filter((item) => item.id === rec.id);
+        if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(rec)) {
           throw new Error(`Evidence 持久化 read-back 不一致：${rec.id}`);
         }
-      } catch (error) {
-        this._records = this._records.filter((item) => item.id !== rec.id);
+      })();
+      const tracked = verification.catch((error: unknown) => {
+        this._records = this._records.filter((item) => item !== rec);
+        this._persistErrors.push(
+          `证据 ${rec.id} 落盘失败：${error instanceof Error ? error.message : String(error)}`,
+        );
         throw error;
-      }
+      });
+      this._pending.push(tracked.catch(() => {}));
+      await tracked;
     }
     return rec;
   }
