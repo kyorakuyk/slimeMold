@@ -2283,7 +2283,7 @@ Issue 工作台采用四个面板：
 ### 7.89 Existing orphan worktree restart compatibility
 
 - branch CAS 已先于 worktree remove；若 CAS 成功但 remove 失败，orphan restore 允许匹配 Git worktree list 的 existing directory，同时继续拒绝不匹配路径；missing directory 仍走 branch-only registry。
-- 验证结果：`npm run build` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。前一轮同一工作树的 Vitest/i18n 结果保持 109/990 与 991 keys。
+- 最终代码 checkpoint：`d9ae7160e2264243583f329782f01fbc53a35564`，继续标记本地 `unverified`，未 push；fresh reviewer 必须针对该 HEAD。
 
 ## 八、适合拆成的博客系列
 
