@@ -76,6 +76,8 @@ describe('worker cleanup proposal', () => {
       acceptanceId: 'acc-1',
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
     });
     expect(computeWorktreeSignature).toHaveBeenCalledWith('C:/project-workers/run-1/task-1');
   });

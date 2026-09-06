@@ -2201,6 +2201,24 @@ Issue 工作台采用四个面板：
 
 本轮最终控制面 checkpoint：`49ed0e41e3a37ceb9d5448fb929cece7656f8076`，仍为本地 `unverified`，不 push；需要针对该最终 HEAD 重新进行独立 reviewer，不能把旧 `af3a584` verdict 迁移到新代码。
 
+### 7.84 Cleanup fingerprint、生命周期与重复 TaskGraph fail-closed
+
+- 固定 HEAD `4f0f221` 的 reviewer 继续发现 Cleanup host gate 边界：App 未绑定完整 approval fingerprint/lifecycle；旧 direct `DevSession`/node cleanup 可以绕过 Worker proposal；TaskGraph duplicate ID 仍 last-write-wins；legacy custom-stage 在 startup audit 前未使用可信 TaskGraph。
+- 新增 canonical cleanup fingerprint，绑定 worktree/branch/base/branchRevision/stateSignature、Run/Task/Execution/Attempt、Acceptance/orchestration/stage 以及 `succeeded/active` lifecycle。Approval、receipt execution、Session host gate 和 App action 必须匹配同一 fingerprint；无 fingerprint 的 direct node/panel path 不再能删除 worktree。
+- App cleanup 现在要求当前 trusted Task 为 `succeeded` 且未 cleaned；runtime 与 consistency audit 都拒绝重复 TaskGraph ID；consistency audit 使用传入的可信 TaskGraph.stageId 解释 legacy 缺失 `acceptanceStageId`，避免启动时把合法 legacy stage 报为 drift。
+- 历史 run 2 CleanupReceipt 不重新执行、不改写 execution source provenance；本轮只修正未来 cleanup 控制面。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、987 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮继续保持本地 `unverified`，不 push；待本轮最终 checkpoint 的 fresh reviewer 返回严格 JSON 后再决定是否可标记 verified。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

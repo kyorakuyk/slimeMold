@@ -28,6 +28,7 @@ import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
 import { assertTaskExecutionLineage } from '../domain/execution';
+import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -191,12 +192,15 @@ export interface CleanupApproval {
   taskId?: string;
   taskExecutionId?: string;
   attemptId?: string;
+  attempt?: number;
   baseRevision?: string;
   stateSignature?: string;
   acceptanceId?: string;
   /** 绑定的验收所属任务/阶段（cleanup 校验 acceptance 三元组） */
   orchestrationId?: string;
   stageId?: string;
+  taskStatus?: 'succeeded';
+  cleanupStatus?: 'active';
   approvedAt: string;
   consumed: boolean;
 }
@@ -241,11 +245,14 @@ export interface DevSession {
       taskId?: string;
       taskExecutionId?: string;
       attemptId?: string;
+      attempt?: number;
       baseRevision?: string;
       stateSignature?: string;
       acceptanceId?: string;
       orchestrationId?: string;
       stageId?: string;
+      taskStatus?: 'succeeded';
+      cleanupStatus?: 'active';
     },
   ): void;
   isCleanupApproved(path: string): boolean;
@@ -259,7 +266,7 @@ export interface DevSession {
    * 全部通过后立即 cleanup → 成功后消费审批。
    * 节点与 headless 收尾统一走这里，不在外部「先算签名再 cleanup」。
    */
-  confirmAndCleanup(path: string, signal?: AbortSignal): Promise<boolean>;
+  confirmAndCleanup(path: string, signal?: AbortSignal, expectedFingerprint?: string): Promise<boolean>;
   /**
    * 强制清理（P1：高风险专用 API，仅 UI/宿主审批层人工触发）。
    * 绕过「绑定验收/状态签名」的正常确认门，但必须显式给出 reason（记录审计）；
@@ -547,11 +554,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         taskId: opts?.taskId,
         taskExecutionId: opts?.taskExecutionId,
         attemptId: opts?.attemptId,
+        attempt: opts?.attempt,
         baseRevision: opts?.baseRevision,
         stateSignature: opts?.stateSignature,
         acceptanceId: opts?.acceptanceId,
         orchestrationId: opts?.orchestrationId,
         stageId: opts?.stageId,
+        taskStatus: opts?.taskStatus,
+        cleanupStatus: opts?.cleanupStatus,
         approvedAt: new Date().toISOString(),
         consumed: false,
       });
@@ -602,7 +612,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         this.confirmCleanupInFlight.delete(key);
       }
     },
-    async confirmAndCleanup(path, signal) {
+    async confirmAndCleanup(path, signal, expectedFingerprint) {
       // P1（审计）：宿主级互斥锁——同一 worktree 的确认清理串行，防并发窗口；
       // 锁内完成「取审批 → 校验验收三元组 → 重新计算状态签名 → 校验基线 → cleanup」，
       // 并在 cleanup 前**二次**重算签名（computeWorktreeSignature 与删除紧邻，窗口最小化）。
@@ -613,6 +623,13 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const approval = this.approvedCleanups.get(key);
         const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
+        if (!expectedFingerprint?.trim()
+          || cleanupBindingFingerprint(approval) !== expectedFingerprint
+          || approval.taskStatus !== 'succeeded'
+          || approval.cleanupStatus !== 'active'
+          || typeof approval.attempt !== 'number'
+          || !Number.isSafeInteger(approval.attempt)
+          || approval.attempt < 1) return false;
         if (!approval.worktreeId || !approval.branch
           || !approval.runId || !approval.taskId || !approval.taskExecutionId || !approval.attemptId
           || !info
@@ -631,10 +648,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           acc.attemptId === approval.attemptId &&
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
+        const branchRevisionOk = !approval.branchRevisionRequired
+          || (!!approval.branchRevision && info?.branchRevision === approval.branchRevision);
+        if (!branchRevisionOk) return false;
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
-          const branchRevisionOk = !approval.branchRevisionRequired
-            || (!!approval.branchRevision && info.branchRevision === approval.branchRevision);
-          if (!accOk || !revOk || !branchRevisionOk) return false;
+          if (!accOk || !revOk) return false;
           const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
           if (cleaned) {
             this.consumeCleanup(path);

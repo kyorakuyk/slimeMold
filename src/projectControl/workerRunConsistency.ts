@@ -5,6 +5,7 @@ import {
   type SideEffectRecord,
 } from '../domain/contracts';
 import { resolveWorkerAcceptanceStageId, type WorkerRunQueueState } from '../domain/workerQueue';
+import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
@@ -31,7 +32,8 @@ export type WorkerRunConsistencyIssueCode =
   | 'attempt-lineage-drift'
   | 'missing-attempt-event'
   | 'orphaned-run-event'
-  | 'orphaned-task-event';
+  | 'orphaned-task-event'
+  | 'task-graph-duplicate';
 
 export interface WorkerRunConsistencyIssue {
   code: WorkerRunConsistencyIssueCode;
@@ -163,6 +165,7 @@ export function auditWorkerRunConsistency(input: {
   evidence?: readonly EvidenceRecord[];
   acceptances?: readonly AcceptanceRecord[];
   sideEffects?: readonly SideEffectRecord[];
+  taskGraphs?: readonly ProjectTaskGraph[];
 }): WorkerRunConsistencyReport {
   const issues: WorkerRunConsistencyIssue[] = [];
   if (input.runs.length > 0 && input.evidence === undefined) {
@@ -194,7 +197,21 @@ export function auditWorkerRunConsistency(input: {
   }
 
   const runsById = new Map(input.runs.map((run) => [run.runId, run]));
+  const graphIds = new Set<string>();
+  const duplicateGraphIds = new Set<string>();
+  for (const graph of input.taskGraphs ?? []) {
+    if (graphIds.has(graph.id)) duplicateGraphIds.add(graph.id);
+    graphIds.add(graph.id);
+  }
   for (const run of input.runs) {
+    if (duplicateGraphIds.has(run.taskGraphId)) {
+      issues.push(issue(
+        'task-graph-duplicate',
+        `Worker Run 关联的 TaskGraph id 重复，拒绝审计：${run.taskGraphId}`,
+        { runId: run.runId },
+      ));
+    }
+    const taskGraph = input.taskGraphs?.find((graph) => graph.id === run.taskGraphId);
     const replayedRun = projection.runs[run.runId];
     if (!replayedRun) {
       issues.push(issue(
@@ -211,7 +228,11 @@ export function auditWorkerRunConsistency(input: {
     }
 
     for (const [taskId, task] of Object.entries(run.tasks)) {
-      const expectedAcceptanceStageId = resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
+      const taskDefinition = taskGraph?.tasks.find((item) => item.id === taskId);
+      const expectedAcceptanceStageId = resolveWorkerAcceptanceStageId(
+        taskId,
+        task.acceptanceStageId ?? taskDefinition?.stageId,
+      );
       if (!expectedAcceptanceStageId) {
         issues.push(issue(
           'acceptance-lineage-drift',

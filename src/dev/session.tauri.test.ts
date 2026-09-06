@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from './node-run';
 import { initDevSession, resetDevSession } from './session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 
 const hostState = vi.hoisted(() => ({ rejectRegister: false, rejectUnregister: false }));
 const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) => {
@@ -152,14 +153,18 @@ describe('DevSession Tauri orphan cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
     });
 
     hostState.rejectUnregister = true;
-    await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(false);
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('registration-pending');
 
     hostState.rejectUnregister = false;
-    await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(true);
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(true);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
     expect(invoke).toHaveBeenCalledTimes(3);
     expect(invoke.mock.calls.filter(([command]) => command === 'dev_unregister_worktree')).toHaveLength(2);
@@ -303,9 +308,13 @@ describe('DevSession Tauri orphan cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
     });
 
-    await expect(session.confirmAndCleanup(info.path)).resolves.toBe(true);
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info.path)!);
+    await expect(session.confirmAndCleanup(info.path, undefined, fingerprint)).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
   });

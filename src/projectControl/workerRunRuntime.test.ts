@@ -90,6 +90,20 @@ describe('rehydrateWorkerRunRegistry', () => {
     });
   });
 
+  it('refuses a run when the trusted TaskGraph id is duplicated', () => {
+    const registry = rehydrateWorkerRunRegistry({
+      projectId: 'project-1',
+      taskGraphs: [graph(), graph()],
+      runs: [run()],
+    });
+
+    expect(registry.queues.size).toBe(0);
+    expect(registry.recoveries[0]).toMatchObject({
+      runId: 'run-1',
+      reason: 'task-graph-duplicate',
+    });
+  });
+
   it('does not expose a cleanup snapshot when persisted Worker state fails restore', () => {
     const drifted = run({
       tasks: {

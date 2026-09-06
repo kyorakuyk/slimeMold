@@ -3,6 +3,7 @@ import type { CommandResult } from './node-run';
 import { createHostAcceptanceStoreWithFs, initDevSession, resetDevSession } from './session';
 import type { AcceptanceRecord, AcceptancePersistence } from './session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => {
@@ -67,9 +68,15 @@ describe('DevSession cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
     });
 
-    await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(true);
+    await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(false);
+    expect(session.manager.get(info!.id)?.status).toBe('created');
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
   });
@@ -156,6 +163,9 @@ describe('DevSession cleanup', () => {
       acceptanceId,
       orchestrationId: 'orch-1',
       stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
     });
     const controller = new AbortController();
     const cleanup = session.manager.cleanup.bind(session.manager);
@@ -165,7 +175,8 @@ describe('DevSession cleanup', () => {
       return result;
     });
 
-    await expect(session.confirmAndCleanup(info!.path, controller.signal)).resolves.toBe(true);
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    await expect(session.confirmAndCleanup(info!.path, controller.signal, fingerprint)).resolves.toBe(true);
     expect(session.isCleanupApproved(info!.path)).toBe(false);
   });
 

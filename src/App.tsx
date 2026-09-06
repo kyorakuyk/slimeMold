@@ -348,6 +348,7 @@ export default function App() {
           evidence: current.workerRunEvidence,
           acceptances,
           sideEffects: current.workerRunSideEffects,
+          taskGraphs: current.projectControl.taskGraphs ?? [],
         });
         controlReport = auditProjectControlConsistency({
           projectId: current.projectId,
@@ -461,6 +462,7 @@ export default function App() {
           evidence: current.workerRunEvidence,
           acceptances: [...session.acceptanceStore.values()],
           sideEffects: current.workerRunSideEffects,
+          taskGraphs: current.projectControl.taskGraphs ?? [],
         });
         if (!report.ok) {
           throw new Error(`Worker 事实源不一致：${report.issues.map((item) => item.message).join('；')}`);
@@ -689,6 +691,8 @@ export default function App() {
       ? trustedTask.currentAttemptId ?? createAttemptId(trustedTaskExecutionId, trustedTask.attempt)
       : undefined;
     if (!trustedTask
+      || trustedTask.status !== 'succeeded'
+      || trustedTask.cleanupStatus === 'cleaned'
       || proposal.taskExecutionId !== trustedTaskExecutionId
       || proposal.attemptId !== trustedAttemptId
       || proposal.worktreeId !== trustedTask.worktreeId
@@ -696,7 +700,9 @@ export default function App() {
       || proposal.branch !== trustedTask.branch
       || proposal.baseRevision !== trustedTask.baseRevision
       || proposal.acceptanceId !== trustedTask.acceptanceId
-      || proposal.stageId !== expectedStageId) {
+      || proposal.stageId !== expectedStageId
+      || proposal.taskStatus !== 'succeeded'
+      || proposal.cleanupStatus !== 'active') {
       throw new Error(`Worker cleanup proposal 未通过当前 TaskGraph restore 校验：${runId}/${taskId}`);
     }
     const operation = getProjectOperation(projectId, projectPath);

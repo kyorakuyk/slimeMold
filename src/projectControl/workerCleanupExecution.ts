@@ -9,12 +9,16 @@ import {
   SideEffectJournalError,
   SideEffectJournalRepository,
 } from '../domain/sideEffects';
-import { workerCleanupEffectKey, type WorkerCleanupProposal } from './workerCleanup';
+import {
+  cleanupBindingFingerprint,
+  workerCleanupEffectKey,
+  type WorkerCleanupProposal,
+} from './workerCleanup';
 import { pathComparisonKey } from '../dev/path-utils';
 
 export interface WorkerCleanupExecutionHost {
   /** Host method must re-check approval, acceptance, baseline, and state signature. */
-  confirmAndCleanup(path: string, signal?: AbortSignal): Promise<boolean>;
+  confirmAndCleanup(path: string, signal?: AbortSignal, expectedFingerprint?: string): Promise<boolean>;
 }
 
 export interface WorkerCleanupExecutionInput {
@@ -189,9 +193,10 @@ export async function executeWorkerCleanupWithReceipt(
 
   try {
     throwIfAborted(input.signal);
+    const fingerprint = cleanupBindingFingerprint(proposal);
     const cleaned = input.signal
-      ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal)
-      : await input.host.confirmAndCleanup(proposal.worktreePath);
+      ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal, fingerprint)
+      : await input.host.confirmAndCleanup(proposal.worktreePath, undefined, fingerprint);
     if (!cleaned) {
       const unknown = markSideEffectUnknown(startedRecord, 'cleanup-host-gate-rejected-or-drifted');
       const journal = await input.repository.record(unknown);

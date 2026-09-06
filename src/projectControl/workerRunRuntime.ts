@@ -11,6 +11,7 @@ import type { WorkerRunConsistencyIssue, WorkerRunConsistencyReport } from './wo
 export type WorkerRunRecoveryReason =
   | 'project-mismatch'
   | 'task-graph-missing'
+  | 'task-graph-duplicate'
   | 'task-graph-version-mismatch'
   | 'duplicate-run'
   | 'unfinished-worker-lease'
@@ -77,6 +78,12 @@ export function rehydrateWorkerRunRegistry(
   const queues = new Map<string, WorkerTaskQueue>();
   const recoveries: WorkerRunRecovery[] = [];
   const seenRunIds = new Set<string>();
+  const duplicateGraphIds = new Set<string>();
+  const graphIds = new Set<string>();
+  for (const graph of input.taskGraphs) {
+    if (graphIds.has(graph.id)) duplicateGraphIds.add(graph.id);
+    graphIds.add(graph.id);
+  }
   const graphsById = new Map(input.taskGraphs.map((graph) => [graph.id, graph]));
 
   for (const run of input.runs) {
@@ -87,6 +94,10 @@ export function rehydrateWorkerRunRegistry(
     seenRunIds.add(run.runId);
     if (run.projectId !== input.projectId) {
       recoveries.push(recovery(run, 'project-mismatch', `Run 不属于当前项目：${run.projectId}`));
+      continue;
+    }
+    if (duplicateGraphIds.has(run.taskGraphId)) {
+      recoveries.push(recovery(run, 'task-graph-duplicate', `任务图 id 重复，拒绝恢复：${run.taskGraphId}`));
       continue;
     }
     const consistencyIssue = consistencyRecovery(run, input.consistency);

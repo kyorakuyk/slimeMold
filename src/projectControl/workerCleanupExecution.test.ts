@@ -23,6 +23,8 @@ function proposal(): WorkerCleanupProposalReady {
     acceptanceId: 'acc-1',
     orchestrationId: 'orch-1',
     stageId: 'task-1',
+    taskStatus: 'succeeded',
+    cleanupStatus: 'active',
   };
 }
 
@@ -45,7 +47,11 @@ describe('worker cleanup execution', () => {
       attemptId: proposal().attemptId,
     });
     expect(result.sideEffect.receipt?.receiptId).toBe(`${workerCleanupEffectKey(proposal().taskExecutionId, proposal().attemptId)}:receipt`);
-    expect(confirmAndCleanup).toHaveBeenCalledWith(proposal().worktreePath);
+    expect(confirmAndCleanup).toHaveBeenCalledWith(
+      proposal().worktreePath,
+      undefined,
+      expect.any(String),
+    );
     await expect(repository.read()).resolves.toMatchObject({
       status: 'ok',
       journal: { entries: [expect.objectContaining({ status: 'receipt' })] },

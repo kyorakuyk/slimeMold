@@ -1,4 +1,4 @@
-import type { AcceptanceRecord } from '../dev/session';
+import type { AcceptanceRecord, CleanupApproval } from '../dev/session';
 import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
 import { resolveWorkerAcceptanceStageId, type WorkerQueueTask, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { SideEffectRecord } from '../domain/contracts';
@@ -20,6 +20,8 @@ export interface WorkerCleanupProposalReady {
   acceptanceId: string;
   orchestrationId: string;
   stageId: string;
+  taskStatus: 'succeeded';
+  cleanupStatus: 'active';
   approvalStatus?: 'pending' | 'approved';
 }
 
@@ -66,14 +68,47 @@ export interface WorkerCleanupHost {
       taskId: string;
       taskExecutionId: string;
       attemptId: string;
+      attempt?: number;
       baseRevision: string;
       stateSignature: string;
       acceptanceId: string;
       orchestrationId: string;
       stageId: string;
+      taskStatus?: 'succeeded';
+      cleanupStatus?: 'active';
     },
   ): void;
-  confirmAndCleanup(path: string): Promise<boolean>;
+  confirmAndCleanup(path: string, signal?: AbortSignal, expectedFingerprint?: string): Promise<boolean>;
+}
+
+/** Canonical binding used by both approval and the destructive host confirmation gate. */
+export function cleanupBindingFingerprint(
+  value: Pick<CleanupApproval, 'worktreePath' | 'worktreeId' | 'branch' | 'branchRevision'
+    | 'branchRevisionRequired' | 'runId' | 'taskId' | 'taskExecutionId' | 'attemptId'
+    | 'attempt' | 'baseRevision' | 'stateSignature' | 'acceptanceId' | 'orchestrationId'
+    | 'stageId' | 'taskStatus' | 'cleanupStatus'> | WorkerCleanupProposalReady,
+): string {
+  return JSON.stringify([
+    normalizeAbsolutePath(value.worktreePath),
+    value.worktreeId ?? null,
+    value.branch ?? null,
+    value.branchRevision ?? null,
+    ('branchRevisionRequired' in value
+      ? value.branchRevisionRequired
+      : value.branchRevision !== undefined) ?? false,
+    value.runId ?? null,
+    value.taskId ?? null,
+    value.taskExecutionId ?? null,
+    value.attemptId ?? null,
+    value.attempt ?? null,
+    value.baseRevision ?? null,
+    value.stateSignature ?? null,
+    value.acceptanceId ?? null,
+    value.orchestrationId ?? null,
+    value.stageId ?? null,
+    value.taskStatus ?? null,
+    value.cleanupStatus ?? null,
+  ]);
 }
 
 export function workerCleanupEffectKey(_taskExecutionId: string, attemptId: string): string {
@@ -218,6 +253,8 @@ export async function buildWorkerCleanupProposal(
     acceptanceId: task.acceptanceId,
     orchestrationId,
     stageId: acceptanceStageId,
+    taskStatus: 'succeeded',
+    cleanupStatus: 'active',
   };
 }
 
@@ -237,11 +274,14 @@ export function approveWorkerCleanupProposal(
     taskId: proposal.taskId,
     taskExecutionId: proposal.taskExecutionId,
     attemptId: proposal.attemptId,
+    attempt: proposal.attempt,
     baseRevision: proposal.baseRevision,
     stateSignature: proposal.stateSignature,
     acceptanceId: proposal.acceptanceId,
     orchestrationId: proposal.orchestrationId,
     stageId: proposal.stageId,
+    taskStatus: proposal.taskStatus,
+    cleanupStatus: proposal.cleanupStatus,
   });
 }
 
@@ -251,5 +291,9 @@ export async function cleanupApprovedWorker(
   host: WorkerCleanupHost,
 ): Promise<boolean> {
   if (proposal.status !== 'ready') return false;
-  return host.confirmAndCleanup(proposal.worktreePath);
+  return host.confirmAndCleanup(
+    proposal.worktreePath,
+    undefined,
+    cleanupBindingFingerprint(proposal),
+  );
 }
