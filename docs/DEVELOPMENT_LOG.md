@@ -2268,7 +2268,7 @@ Issue 工作台采用四个面板：
 - `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
 - `git diff --check`：通过。
 
-本轮最终控制面 checkpoint：`c322062f667e7d18119ed7677d07e405260e746b`，仍为本地 `unverified`，不 push；必须针对该最终提交重新运行独立 reviewer，不能迁移旧 verdict。
+本轮最终控制面 checkpoint：`f6b0a14bc08d93ac137ff26055882690d724f3fc`，仍为本地 `unverified`，不 push；必须针对该最终提交重新运行独立 reviewer，不能迁移旧 verdict。
 
 ### 7.88 Approval lifecycle、orphan restart registry 与 recovery reconciliation
 
