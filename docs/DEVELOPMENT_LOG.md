@@ -2288,7 +2288,7 @@ Issue 工作台采用四个面板：
 ### 7.90 MVP closure：真实交付闭环完成但控制面保持 unverified
 
 - 最终 reviewer 针对 exact HEAD `1ac0ad34b4273bce38dd320ac4cc14e09644178e` 返回 `passed=false`；按 fail-closed 规则不使用 `[verified]`，也不 push。
-- 本轮正式收口为 `mvp-closed-unverified`：真实 disposable 项目、Delivery、真实 Git merge、Restart read-back、用户批准 Cleanup、CleanupReceipt 和完整 production dossier 均保留；历史执行来源继续是 `4e3111b51ac47a39bed8857b06ce9847c4bef757`，最终控制面实现是 `d9ae7160e2264243583f329782f01fbc53a35564`。
+- 本轮正式收口为 `mvp-closed-unverified`：真实 disposable 项目、Delivery、真实 Git merge、Restart read-back、用户批准 Cleanup、CleanupReceipt 和完整 production dossier 均保留；历史执行来源继续是 `4e3111b51ac47a39bed8857b06ce9847c9b51df1`，最终控制面实现是 `d9ae7160e2264243583f329782f01fbc53a35564`。
 - reviewer 剩余问题归入 Phase 2 native host authority，而不是继续局部补 TypeScript gate：Rust-owned TaskGraph/Approval authority、destructive mutation capability、worktree identity race fencing、orphan terminal reconciliation、cleanup-unknown inspect/skip UI、conflict-aware side-effect merge 和持久化失败恢复。
 - 同一最终工作树质量门：`npm run test` 为 109 个测试文件、990 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；Rust 43 tests、fmt、diff-check 均通过。
 
