@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createDevNodeDefs } from './index';
-import type { DevSession } from '../../dev/session';
+import type { AcceptanceRecord, CleanupApproval, DevSession } from '../../dev/session';
 import { WorktreeManager } from '../../dev/worktree';
 import { createNodeDevService, type NodeDevDeps } from '../../dev/capabilities';
 import { defaultDevPolicy } from '../../dev/policy';
@@ -28,7 +28,10 @@ function fakeSession(opts: {
   failAudit?: boolean;
   noPersistence?: boolean;
   failWorktreeAdd?: boolean;
-} = {}): DevSession {
+} = {}): DevSession & {
+  acceptanceStore: Map<string, AcceptanceRecord>;
+  approvedCleanups: Map<string, CleanupApproval>;
+} {
   const git = async (args: string[], _cwd: string): Promise<CommandResult> => {
     if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
       return { exitCode: 0, stdout: 'abc123\n', stderr: '', durationMs: 1 };
@@ -102,7 +105,10 @@ function fakeSession(opts: {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
   let accSeq = 0;
   const trustedCleanupBindings = new Set<string>();
-  const session: DevSession = {
+  const session: DevSession & {
+    acceptanceStore: Map<string, AcceptanceRecord>;
+    approvedCleanups: Map<string, CleanupApproval>;
+  } = {
     policy: defaultDevPolicy,
     manager,
     service,
@@ -135,6 +141,12 @@ function fakeSession(opts: {
     loadAcceptances: async () => {},
     getAcceptance(id) {
       return this.acceptanceStore.get(id);
+    },
+    listAcceptances() {
+      return [...this.acceptanceStore.values()];
+    },
+    listCleanupApprovals() {
+      return [...this.approvedCleanups.values()];
     },
     async computeWorktreeSignature(path) {
       return `sig-${norm(path)}`;

@@ -489,7 +489,9 @@ export function auditWorkerRunConsistency(input: {
             ])
             : undefined
           : undefined;
-      const inputHashMatches = expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
+      const inputHashMatches = isCleanup && effect.status === 'unknown' && effect.recovery === 'needs-user'
+        ? !!task.baseRevision && effect.inputHash.startsWith(`${task.baseRevision}:`)
+        : expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
         && expectedTarget !== undefined
         && effect.target === expectedTarget

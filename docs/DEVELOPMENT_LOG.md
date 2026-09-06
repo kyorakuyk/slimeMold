@@ -2270,6 +2270,16 @@ Issue 工作台采用四个面板：
 
 本轮最终控制面 checkpoint：`c322062f667e7d18119ed7677d07e405260e746b`，仍为本地 `unverified`，不 push；必须针对该最终提交重新运行独立 reviewer，不能迁移旧 verdict。
 
+### 7.88 Approval lifecycle、orphan restart registry 与 recovery reconciliation
+
+- 修复 fresh reviewer 发现的正常 Cleanup 顺序回归：refresh 只生成 proposal；显式 approval 成功后才注册 trusted binding；host rejection/drift 会消费 approval 并使旧 fingerprint 失效。
+- 将 `acceptanceStore`/`approvedCleanups` 移出公开 DevSession object，提供只读快照接口；Tauri orphan restore 新增 branch-only host registry，不重新注册不存在的 worktree。
+- `dev_cleanup_worktree` 先执行 approved branch-revision CAS，再 remove worktree；generic `dev_exec` mutation 仍只保留 pending rollback lease。
+- `started` cleanup effect 可在重启时转成 `unknown/needs-user`；cleanup unknown 可 inspect/skip，不可 retry；consistency audit 保留其 input-hash 结构和 recovery。
+- 成功 CleanupReceipt reconciliation 的 save/read-back 失败会写 recovery、清空 cleanup proposals；stale/invalid approval 不再复用旧 binding。
+
+验证结果：`npm run test` 为 109 个测试文件、990 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

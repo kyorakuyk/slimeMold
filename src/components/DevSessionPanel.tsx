@@ -30,8 +30,8 @@ function snapshot(): SessionSnapshot {
   if (!s) return { worktrees: [], acceptances: [], approvalPaths: [], hasPersistence: false };
   return {
     worktrees: s.manager.list(),
-    acceptances: [...s.acceptanceStore.values()],
-    approvalPaths: [...s.approvedCleanups.keys()],
+    acceptances: [...s.listAcceptances()],
+    approvalPaths: s.listCleanupApprovals().map((item) => item.worktreePath),
     hasPersistence: s.collector.hasPersistence(),
   };
 }

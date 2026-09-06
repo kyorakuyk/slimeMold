@@ -68,6 +68,7 @@ struct DevState {
     base_repo: Option<String>,
     worktrees: Vec<String>,
     pending_worktrees: Vec<PendingWorktree>,
+    orphan_worktrees: Vec<PendingWorktree>,
 }
 
 struct PendingWorktree {
@@ -84,6 +85,7 @@ impl DevState {
             base_repo: None,
             worktrees: Vec::new(),
             pending_worktrees: Vec::new(),
+            orphan_worktrees: Vec::new(),
         }
     }
 }
@@ -1084,6 +1086,22 @@ fn pending_worker_branch_any(repo: &std::path::Path, branch: &str) -> bool {
     })
 }
 
+fn orphan_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    if !worker_name_is_valid(name) {
+        return false;
+    }
+    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
+    let state = DEV_STATE.lock().unwrap();
+    state.orphan_worktrees.iter().any(|orphan| {
+        orphan.generation == state.generation
+            && orphan.branch == branch
+            && path_compare_key(&orphan.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
 fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &str) {
     if !main_repo_worktree_target_is_valid(repo, raw_path, branch) {
         return;
@@ -1201,7 +1219,9 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             let Some(branch) = worker_branch_from_tip_arg(&args[4]) else {
                 return false;
             };
-            registered_worker_branch(path, branch) || pending_worker_branch_any(path, branch)
+            registered_worker_branch(path, branch)
+                || pending_worker_branch_any(path, branch)
+                || orphan_worker_branch(path, branch)
         });
     }
     if args.len() == 5 && args[1] == "update-ref" && args[2] == "-d" {
@@ -1818,6 +1838,7 @@ fn dev_init_session(base_repo: String) -> Result<u64, String> {
     st.base_repo = Some(canon.to_string_lossy().to_string());
     st.worktrees.clear();
     st.pending_worktrees.clear();
+    st.orphan_worktrees.clear();
     Ok(st.generation)
 }
 
@@ -1831,6 +1852,7 @@ fn dev_clear_session(generation: u64) -> Result<(), String> {
     st.base_repo = None;
     st.worktrees.clear();
     st.pending_worktrees.clear();
+    st.orphan_worktrees.clear();
     Ok(())
 }
 
@@ -1950,6 +1972,51 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn dev_register_orphan_worktree(
+    path: String,
+    branch: String,
+    generation: u64,
+) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_register_orphan_worktree")?;
+    if !worker_branch_is_valid(&branch) {
+        return Err("dev_register_orphan_worktree: branch 无效".into());
+    }
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_register_orphan_worktree: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    let c = canon.to_string_lossy().to_string();
+    if canon.is_dir() || !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+        return Err(
+            "dev_register_orphan_worktree: 目标必须是受控且已删除的 Worker worktree".into(),
+        );
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
+    }
+    if !state
+        .orphan_worktrees
+        .iter()
+        .any(|item| path_compare_key(&item.path) == path_compare_key(&c))
+    {
+        state.orphan_worktrees.push(PendingWorktree {
+            generation,
+            path: c,
+            branch,
+            removed: true,
+        });
+    }
+    Ok(())
+}
+
 /// Atomic Worker cleanup used after the JS TaskGraph/fingerprint gate.
 /// Generic dev_exec deliberately cannot run `worktree remove` or `update-ref -d`.
 #[tauri::command]
@@ -1979,11 +2046,16 @@ fn dev_cleanup_worktree(
     }
     {
         let state = DEV_STATE.lock().unwrap();
-        if !state
+        let registered = state
             .worktrees
             .iter()
-            .any(|item| path_compare_key(item) == path_compare_key(&c))
-        {
+            .any(|item| path_compare_key(item) == path_compare_key(&c));
+        let orphan = state.orphan_worktrees.iter().any(|item| {
+            item.generation == generation
+                && item.branch == branch
+                && path_compare_key(&item.path) == path_compare_key(&c)
+        });
+        if !registered && !orphan {
             return Err("dev_cleanup_worktree: worktree 未被当前 host 登记".into());
         }
         if state
@@ -1992,21 +2064,6 @@ fn dev_cleanup_worktree(
             .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
         {
             return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
-        }
-    }
-    if git_worktree_is_listed(&base_path, &canon)? {
-        let mut remove = Command::new(resolve_dev_program("git"));
-        remove
-            .current_dir(&base_path)
-            .args(["worktree", "remove", "--force"]);
-        remove.arg(&canon);
-        apply_dev_env(&mut remove);
-        let result = run_with_timeout(&mut remove, Duration::from_secs(30))?;
-        if result.code != 0 {
-            return Err(format!(
-                "dev_cleanup_worktree: worktree remove 失败：{}",
-                result.stderr
-            ));
         }
     }
     let mut delete = Command::new(resolve_dev_program("git"));
@@ -2023,6 +2080,21 @@ fn dev_cleanup_worktree(
             result.stderr
         ));
     }
+    if git_worktree_is_listed(&base_path, &canon)? {
+        let mut remove = Command::new(resolve_dev_program("git"));
+        remove
+            .current_dir(&base_path)
+            .args(["worktree", "remove", "--force"]);
+        remove.arg(&canon);
+        apply_dev_env(&mut remove);
+        let result = run_with_timeout(&mut remove, Duration::from_secs(30))?;
+        if result.code != 0 {
+            return Err(format!(
+                "dev_cleanup_worktree: branch 已按 CAS 删除，但 worktree remove 失败：{}",
+                result.stderr
+            ));
+        }
+    }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
         return Err("dev_cleanup_worktree: session 在清理后发生变化".into());
@@ -2030,6 +2102,9 @@ fn dev_cleanup_worktree(
     state
         .worktrees
         .retain(|item| path_compare_key(item) != path_compare_key(&c));
+    state
+        .orphan_worktrees
+        .retain(|item| path_compare_key(&item.path) != path_compare_key(&c));
     Ok(())
 }
 
@@ -2363,6 +2438,7 @@ pub fn run() {
             dev_init_session,
             dev_clear_session,
             dev_register_worktree,
+            dev_register_orphan_worktree,
             dev_cleanup_worktree,
             dev_unregister_worktree,
             dev_read_file,

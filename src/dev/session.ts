@@ -217,11 +217,6 @@ export interface DevSession {
   collector: EvidenceCollector;
   /** 宿主登记的真实执行结果（P0：证据唯一事实来源；作用域必填） */
   resultStore: Map<string, HostResultRecord>;
-  /** 确定性验收记录（cleanup 确认门校验） */
-  acceptanceStore: Map<string, AcceptanceRecord>;
-  /** 宿主已批准清理的 worktree（P1：一次性、绑定 baseRevision/stateSignature/acceptanceId） */
-  approvedCleanups: Map<string, CleanupApproval>;
-
   /** 宿主级 per-worktree 清理互斥锁（P1：同一 worktree 的确认清理串行执行）。 */
   confirmCleanupInFlight: Set<string>;
   /** 登记一次宿主真实执行结果（三项作用域必填，缺失即拒绝）。 */
@@ -235,6 +230,8 @@ export interface DevSession {
   /** 从宿主持久化加载 acceptance（项目启动/恢复前调用）。 */
   loadAcceptances(): Promise<void>;
   getAcceptance(acceptanceId: string): AcceptanceRecord | undefined;
+  listAcceptances(): readonly AcceptanceRecord[];
+  listCleanupApprovals(): readonly CleanupApproval[];
   /** 计算 worktree 当前状态签名（changedFiles + diff 哈希；供审批/清理校验）。 */
   computeWorktreeSignature(path: string): Promise<string>;
   /** 宿主审批：批准清理某 worktree（仅 UI/宿主审批层调用，节点/工作流不可触达）。 */
@@ -351,6 +348,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     : createNodeDevService(policy, {}, registry);
   const collector = new EvidenceCollector(opts.persistence);
   const trustedCleanupBindings = new Set<string>();
+  const acceptanceStore = new Map<string, AcceptanceRecord>();
+  const approvedCleanups = new Map<string, CleanupApproval>();
   // 未跟踪文件内容读取/路径解析：Tauri 下走 Rust 通道（node-run 在 GUI 被 shim 掉）。
   const readFileP = tauriDeps?.readFile ?? readTextFile;
   const resolveP = tauriDeps?.resolveInside ?? resolveInside;
@@ -359,12 +358,17 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
 
   // Tauri 下：worktree 创建/清理同步 Rust 登记态（dev_register_worktree / dev_unregister_worktree），
   // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
-  const syncRust = async (fn: 'register' | 'unregister', path: string): Promise<void> => {
+  const syncRust = async (fn: 'register' | 'register-orphan' | 'unregister', path: string, branch?: string): Promise<void> => {
     if (env !== 'tauri') return;
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke(fn === 'register' ? 'dev_register_worktree' : 'dev_unregister_worktree', {
+    await invoke(fn === 'register'
+      ? 'dev_register_worktree'
+      : fn === 'register-orphan'
+        ? 'dev_register_orphan_worktree'
+        : 'dev_unregister_worktree', {
       path,
       generation: hostGeneration,
+      ...(branch ? { branch } : {}),
     });
   };
   // Host registration is a separate side effect from Git cleanup. Keep its
@@ -403,7 +407,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   manager.restore = async (info, opts) => {
     const restored = await rawRestore(info, opts);
     if (!restored) return false;
-    if (info.status === 'orphaned' || info.status === 'registration-pending') return true;
+    if (info.status === 'registration-pending') return true;
+    if (info.status === 'orphaned') {
+      try {
+        await syncRust('register-orphan', info.path, info.branch);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     try {
       await syncRust('register', info.path);
       registeredWorktrees.add(info.id);
@@ -451,9 +463,6 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     service,
     collector,
     resultStore: new Map(),
-    acceptanceStore: new Map(),
-    approvedCleanups: new Map(),
-
     confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
@@ -476,40 +485,40 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     },
     recordAcceptance(rec) {
       // P1（审计）：禁止覆盖已有 ID——同一 ID 的验收记录不可被后续运行替换
-      if (this.acceptanceStore.has(rec.acceptanceId)) {
+      if (acceptanceStore.has(rec.acceptanceId)) {
         throw new Error(`验收记录 ID 已存在，禁止覆盖：${rec.acceptanceId}`);
       }
       if (!isAcceptanceRecord(rec)) {
         throw new Error('验收记录格式或 lineage 无效');
       }
-      this.acceptanceStore.set(rec.acceptanceId, rec);
+      acceptanceStore.set(rec.acceptanceId, rec);
       return rec;
     },
     async persistAcceptance(rec) {
-      const current = this.acceptanceStore.get(rec.acceptanceId);
+      const current = acceptanceStore.get(rec.acceptanceId);
       if (!current || JSON.stringify(current) !== JSON.stringify(rec)) {
         throw new Error(`验收记录未在当前 session 登记：${rec.acceptanceId}`);
       }
       if (!acceptancePersistence) {
-        this.acceptanceStore.delete(rec.acceptanceId);
+        acceptanceStore.delete(rec.acceptanceId);
         throw new Error('AcceptancePersistence 未配置，拒绝把验收当作 durable 事实');
       }
       try {
         await acceptancePersistence.append({ ...rec });
         const persisted = (await acceptancePersistence.load()).find((item) => item.acceptanceId === rec.acceptanceId);
         if (!persisted || JSON.stringify(persisted) !== JSON.stringify(rec)) {
-          this.acceptanceStore.delete(rec.acceptanceId);
+          acceptanceStore.delete(rec.acceptanceId);
           throw new Error(`Acceptance 持久化 read-back 不一致：${rec.acceptanceId}`);
         }
       } catch (error) {
-        this.acceptanceStore.delete(rec.acceptanceId);
+        acceptanceStore.delete(rec.acceptanceId);
         throw error;
       }
     },
     async loadAcceptances() {
       if (!acceptancePersistence) return;
       const loaded = await acceptancePersistence.load();
-      const next = new Map(this.acceptanceStore);
+      const next = new Map(acceptanceStore);
       for (const record of loaded) {
         if (!isAcceptanceRecord(record)) throw new Error('Acceptance 记录无效');
         const existing = next.get(record.acceptanceId);
@@ -518,11 +527,17 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         }
         next.set(record.acceptanceId, { ...record });
       }
-      this.acceptanceStore.clear();
-      for (const [id, record] of next) this.acceptanceStore.set(id, record);
+      acceptanceStore.clear();
+      for (const [id, record] of next) acceptanceStore.set(id, record);
     },
     getAcceptance(acceptanceId) {
-      return this.acceptanceStore.get(acceptanceId);
+      return acceptanceStore.get(acceptanceId);
+    },
+    listAcceptances() {
+      return [...acceptanceStore.values()].map((item) => ({ ...item }));
+    },
+    listCleanupApprovals() {
+      return [...approvedCleanups.values()].map((item) => ({ ...item }));
     },
     async computeWorktreeSignature(path) {
       // worktree 当前状态指纹：changedFiles（排序）+ diff 文本 + **untracked 文件内容哈希**
@@ -551,7 +566,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     approveCleanup(path, opts) {
       const normalizedPath = normalizeAbsolutePath(path);
       const key = pathComparisonKey(path);
-      this.approvedCleanups.set(key, {
+      approvedCleanups.set(key, {
         worktreePath: normalizedPath,
         worktreeId: opts?.worktreeId,
         branch: opts?.branch,
@@ -575,7 +590,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     },
     registerTrustedCleanupBinding(proposal) {
       if (proposal.status !== 'ready') throw new Error('只有 ready Worker proposal 才能注册 cleanup binding');
-      const approval = this.approvedCleanups.get(pathComparisonKey(proposal.worktreePath));
+      const approval = approvedCleanups.get(pathComparisonKey(proposal.worktreePath));
       if (!approval || approval.consumed
         || cleanupBindingFingerprint(approval) !== cleanupBindingFingerprint(proposal)) {
         throw new Error('cleanup binding 未匹配当前 host approval');
@@ -583,18 +598,18 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       trustedCleanupBindings.add(cleanupBindingFingerprint(proposal));
     },
     isCleanupApproved(path) {
-      const a = this.approvedCleanups.get(pathComparisonKey(path));
+      const a = approvedCleanups.get(pathComparisonKey(path));
       return !!a && !a.consumed;
     },
     getCleanupApproval(path) {
-      return this.approvedCleanups.get(pathComparisonKey(path));
+      return approvedCleanups.get(pathComparisonKey(path));
     },
     consumeCleanup(path) {
       const key = pathComparisonKey(path);
-      const a = this.approvedCleanups.get(key);
+      const a = approvedCleanups.get(key);
       if (a) {
         trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
-        this.approvedCleanups.set(key, { ...a, consumed: true });
+        approvedCleanups.set(key, { ...a, consumed: true });
       }
     },
     async forceCleanup(path, reason) {
@@ -610,26 +625,31 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (signal?.aborted || this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
       try {
-        const approval = this.approvedCleanups.get(key);
+        const approval = approvedCleanups.get(key);
         const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
+        const rejectCleanup = (): boolean => {
+          trustedCleanupBindings.delete(cleanupBindingFingerprint(approval));
+          approvedCleanups.set(key, { ...approval, consumed: true });
+          return false;
+        };
         if (!expectedFingerprint?.trim()
           || !trustedCleanupBindings.has(expectedFingerprint)
-          || cleanupBindingFingerprint(approval) !== expectedFingerprint
-          || approval.taskStatus !== 'succeeded'
+          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return false;
+        if (approval.taskStatus !== 'succeeded'
           || approval.cleanupStatus !== 'active'
           || approval.branchRevisionRequired !== true
           || typeof approval.attempt !== 'number'
           || !Number.isSafeInteger(approval.attempt)
-          || approval.attempt < 1) return false;
+          || approval.attempt < 1) return rejectCleanup();
         if (!approval.worktreeId || !approval.branch
           || !approval.runId || !approval.taskId || !approval.taskExecutionId || !approval.attemptId
           || !info
           || info.id !== approval.worktreeId
-          || info.branch !== approval.branch) return false;
+          || info.branch !== approval.branch) return rejectCleanup();
         if (approval.taskExecutionId !== createTaskExecutionId(approval.runId, approval.taskId)
-          || approval.attemptId !== createAttemptId(approval.taskExecutionId, approval.attempt)) return false;
-        if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
+          || approval.attemptId !== createAttemptId(approval.taskExecutionId, approval.attempt)) return rejectCleanup();
+        if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return rejectCleanup();
         const acc = this.getAcceptance(approval.acceptanceId);
         const accOk =
           !!acc &&
@@ -646,13 +666,13 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           || (info?.status === 'created'
             ? !!approval.branchRevision
             : !!approval.branchRevision && info?.branchRevision === approval.branchRevision);
-        if (!branchRevisionOk) return false;
+        if (!branchRevisionOk) return rejectCleanup();
         if (approval.branchRevisionRequired && info?.status === 'created') {
           const liveBranchRevision = await this.manager.getBranchRevision(approval.branch);
-          if (liveBranchRevision !== approval.branchRevision) return false;
+          if (liveBranchRevision !== approval.branchRevision) return rejectCleanup();
         }
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
-          if (!accOk || !revOk) return false;
+          if (!accOk || !revOk) return rejectCleanup();
           const cleaned = await this.manager.cleanup(info.id, {
             confirm: true,
             signal,
@@ -662,17 +682,17 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
             this.consumeCleanup(path);
             return true;
           }
-          return cleaned;
+          return rejectCleanup();
         }
         // 第一次签名校验
         const sig = await this.computeWorktreeSignature(path);
         if (signal?.aborted) return false;
         const sigOk = sig === approval.stateSignature;
-        if (!accOk || !revOk || !sigOk) return false;
+        if (!accOk || !revOk || !sigOk) return rejectCleanup();
         // cleanup 前二次签名校验（与删除紧邻——window 内签名变化即拒绝）
         const sig2 = await this.computeWorktreeSignature(path);
         if (signal?.aborted) return false;
-        if (sig2 !== approval.stateSignature) return false;
+        if (sig2 !== approval.stateSignature) return rejectCleanup();
         const cleaned = await this.manager.cleanup(info.id, {
           confirm: true,
           signal,
@@ -682,7 +702,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           this.consumeCleanup(path);
           return true;
         }
-        return cleaned;
+        return rejectCleanup();
       } finally {
         this.confirmCleanupInFlight.delete(key);
       }

@@ -325,11 +325,6 @@ export default function App() {
           },
         })),
     );
-    for (const proposal of proposals) {
-      if (proposal.status === 'ready') {
-        session.registerTrustedCleanupBinding(proposal);
-      }
-    }
     if (signal?.aborted) return;
     const latest = useWorkflowStore.getState();
     if (latest.projectId !== run.projectId) return;
@@ -540,7 +535,7 @@ export default function App() {
           runs: current.workerRuns,
           events: parsed.events,
           evidence: current.workerRunEvidence,
-          acceptances: [...session.acceptanceStore.values()],
+          acceptances: session.listAcceptances(),
           sideEffects: current.workerRunSideEffects,
           taskGraphs: current.projectControl.taskGraphs ?? [],
         });
@@ -694,9 +689,18 @@ export default function App() {
       }
     } catch (cause) {
       if (signal?.aborted) return;
+      const failedState = useWorkflowStore.getState();
+      const message = `Worker Evidence/Receipt reconciliation 无法持久化：${cause instanceof Error ? cause.message : String(cause)}`;
+      failedState.setWorkerRunRecoveries(failedState.workerRuns.map((run): WorkerRunRecovery => ({
+        runId: run.runId,
+        projectId: run.projectId,
+        reason: 'event-stream-invalid',
+        message,
+      })));
+      failedState.setWorkerCleanupProposals([]);
       useWorkflowStore.getState().addLog(
         'warn',
-        `Worker Evidence 无法加载：${cause instanceof Error ? cause.message : String(cause)}`,
+        message,
       );
       throw cause;
     }
@@ -837,8 +841,6 @@ export default function App() {
         throw new Error(`Worker cleanup live branch revision 已漂移：${runId}/${taskId}`);
       }
     }
-    session.registerTrustedCleanupBinding(proposal);
-
     const persistCleanupState = async (
       nextRuns: WorkerRunQueueState[],
     ): Promise<void> => {
@@ -880,6 +882,7 @@ export default function App() {
 
     if (action === 'approve') {
       approveWorkerCleanupProposal(proposal, session);
+      session.registerTrustedCleanupBinding(proposal);
       assertProjectOperation(operation);
       current.setWorkerCleanupProposals(current.workerCleanupProposals.map((item) => (
         item.runId === runId && item.taskId === taskId && item.status === 'ready'
@@ -1143,7 +1146,7 @@ export default function App() {
           if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
           await auditLoadedWorkerRunFacts(
             next.projectPath,
-            session ? [...session.acceptanceStore.values()] : undefined,
+            session ? session.listAcceptances() : undefined,
             operation.controller.signal,
           );
           if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;

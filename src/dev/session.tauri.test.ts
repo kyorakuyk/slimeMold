@@ -21,6 +21,7 @@ const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =
   if (command === 'dev_unregister_worktree' && hostState.rejectUnregister) {
     throw new Error('transient unregister failure');
   }
+  if (command === 'dev_register_orphan_worktree') return undefined;
   if (command === 'dev_unregister_worktree') return undefined;
   throw new Error(`unexpected command: ${command}`);
 }));
@@ -177,7 +178,27 @@ describe('DevSession Tauri orphan cleanup', () => {
     expect(session.manager.get(info!.id)?.status).toBe('registration-pending');
 
     hostState.rejectUnregister = false;
-    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(true);
+    session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      baseRevision: info!.baseRevision,
+      branchRevision: session.manager.get(info!.id)?.branchRevision,
+      branchRevisionRequired: true,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
+    });
+    const retryFingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
+    await expect(session.confirmAndCleanup(info!.path, undefined, retryFingerprint)).resolves.toBe(true);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
     expect(invoke).toHaveBeenCalledTimes(3);
     expect(invoke.mock.calls.filter(([command]) => command === 'dev_unregister_worktree')).toHaveLength(2);

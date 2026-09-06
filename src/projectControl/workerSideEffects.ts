@@ -146,7 +146,37 @@ function effectBelongsToCurrentAttempt(
   taskId: string,
 ): boolean {
   const task = state.tasks[taskId];
-  if (!task || (task.status !== 'running' && task.status !== 'failed') || effect.runId !== state.runId) return false;
+  if (!task || effect.runId !== state.runId) return false;
+  if (effect.kind === 'worktree-cleanup') {
+    if (
+      task.status !== 'succeeded'
+      || effect.status !== 'unknown'
+      || effect.recovery !== 'needs-user'
+      || effect.taskId !== taskId
+      || !effect.taskExecutionId
+      || !effect.attemptId
+      || !task.currentAttemptId
+      || !task.worktreePath
+      || !task.baseRevision
+    ) return false;
+    try {
+      assertRecoverableWorkerEffect(effect, state.runId);
+      assertTaskExecutionLineage({
+        runId: state.runId,
+        taskId,
+        taskExecutionId: effect.taskExecutionId,
+        attemptId: effect.attemptId,
+        attempt: task.attempt,
+      });
+    } catch {
+      return false;
+    }
+    return effect.taskExecutionId === (task.taskExecutionId ?? createTaskExecutionId(state.runId, taskId))
+      && effect.attemptId === task.currentAttemptId
+      && effect.target === task.worktreePath
+      && effect.inputHash.startsWith(`${task.baseRevision}:`);
+  }
+  if (task.status !== 'running' && task.status !== 'failed') return false;
   if (effect.taskId !== taskId || !effect.taskExecutionId || !effect.attemptId || !task.currentAttemptId) {
     return false;
   }
@@ -214,13 +244,14 @@ function legacyInputHashFor(lease: WorkerTaskLease): string {
 function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string): void {
   if (
     effect.kind === 'worktree-cleanup'
-    && effect.status === 'unknown'
-    && effect.recovery === 'needs-user'
+    && (effect.status === 'started' || effect.status === 'unknown')
+    && (effect.status === 'started' || effect.recovery === 'needs-user')
     && effect.runId === runId
     && effect.taskId
     && effect.taskExecutionId
     && effect.attemptId
     && effect.target
+    && effect.inputHash.includes(':')
   ) {
     return;
   }
