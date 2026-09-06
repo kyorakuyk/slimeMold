@@ -2280,6 +2280,11 @@ Issue 工作台采用四个面板：
 
 验证结果：`npm run test` 为 109 个测试文件、990 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.89 Existing orphan worktree restart compatibility
+
+- branch CAS 已先于 worktree remove；若 CAS 成功但 remove 失败，orphan restore 允许匹配 Git worktree list 的 existing directory，同时继续拒绝不匹配路径；missing directory 仍走 branch-only registry。
+- 验证结果：`npm run build` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。前一轮同一工作树的 Vitest/i18n 结果保持 109/990 与 991 keys。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

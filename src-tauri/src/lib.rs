@@ -1993,7 +1993,10 @@ fn dev_register_orphan_worktree(
     let base_path = std::path::PathBuf::from(&base);
     let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
-    if canon.is_dir() || !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+    let listed_match = canon.is_dir() && git_worktree_matches(&base_path, &canon, &branch)?;
+    if (canon.is_dir() && !listed_match)
+        || !main_repo_worktree_target_is_valid(&base_path, &c, &branch)
+    {
         return Err(
             "dev_register_orphan_worktree: 目标必须是受控且已删除的 Worker worktree".into(),
         );
