@@ -81,6 +81,22 @@ describe('worker cleanup proposal', () => {
   });
 
   it('binds cleanup to the Acceptance stage when it differs from the task id', async () => {
+    const task = { ...run().tasks['task-1'], acceptanceStageId: 'verify' };
+    const proposal = await buildWorkerCleanupProposal({
+      run: run(),
+      task,
+      acceptance: { ...acceptance(), stageId: 'verify' },
+      computeWorktreeSignature: vi.fn(async () => 'sig-stage'),
+      sideEffects: [],
+    });
+
+    expect(proposal).toEqual(expect.objectContaining({
+      status: 'ready',
+      stageId: 'verify',
+    }));
+  });
+
+  it('blocks an Acceptance stage that is not declared by the Worker task', async () => {
     const proposal = await buildWorkerCleanupProposal({
       run: run(),
       task: run().tasks['task-1'],
@@ -90,8 +106,8 @@ describe('worker cleanup proposal', () => {
     });
 
     expect(proposal).toEqual(expect.objectContaining({
-      status: 'ready',
-      stageId: 'verify',
+      status: 'blocked',
+      reason: expect.stringMatching(/stage|阶段/),
     }));
   });
 

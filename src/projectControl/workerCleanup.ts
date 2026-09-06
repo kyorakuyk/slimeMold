@@ -1,6 +1,6 @@
 import type { AcceptanceRecord } from '../dev/session';
 import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
-import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
+import { resolveWorkerAcceptanceStageId, type WorkerQueueTask, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { SideEffectRecord } from '../domain/contracts';
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 
@@ -166,6 +166,10 @@ export async function buildWorkerCleanupProposal(
   }
   const lineage = resolveTaskLineage(run, task);
   if (!lineage.ok) return blocked(run.runId, taskId, lineage.reason);
+  const acceptanceStageId = resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
+  if (!acceptanceStageId) {
+    return blocked(run.runId, taskId, 'Worker Task 缺少有效 acceptance stage，拒绝清理');
+  }
 
   const orchestrationId = run.orchestrationId ?? run.runId;
   const path = normalizeAbsolutePath(task.worktreePath);
@@ -173,10 +177,14 @@ export async function buildWorkerCleanupProposal(
     && acceptance.taskId === taskId
     && acceptance.taskExecutionId === lineage.taskExecutionId
     && acceptance.attemptId === lineage.attemptId;
+  if (acceptance.stageId !== acceptanceStageId) {
+    return blocked(run.runId, taskId, 'acceptance stage 未绑定当前 Worker Task，拒绝清理');
+  }
   const acceptanceMatches =
     acceptance.acceptanceId === task.acceptanceId &&
     acceptance.passed &&
     acceptance.orchestrationId === orchestrationId &&
+    acceptance.stageId === acceptanceStageId &&
     pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(path) &&
     acceptanceLineageMatches;
   if (!acceptanceMatches) {
@@ -209,7 +217,7 @@ export async function buildWorkerCleanupProposal(
     stateSignature,
     acceptanceId: task.acceptanceId,
     orchestrationId,
-    stageId: acceptance.stageId,
+    stageId: acceptanceStageId,
   };
 }
 

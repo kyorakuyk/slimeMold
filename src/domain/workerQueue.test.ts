@@ -79,6 +79,33 @@ describe('WorkerTaskQueue', () => {
     ]);
   });
 
+  it('persists the TaskGraph acceptance stage and rejects stage drift on restore', () => {
+    const stageTask = { ...task('verify-task'), stageId: 'verify' };
+    const taskGraph = graph([stageTask]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-stage',
+      taskGraph,
+      now: '2026-09-01T00:00:01.000Z',
+    });
+
+    expect(queue.snapshot().tasks['verify-task'].acceptanceStageId).toBe('verify');
+    const legacyState = queue.snapshot();
+    legacyState.tasks['verify-task'] = {
+      ...legacyState.tasks['verify-task'],
+      acceptanceStageId: undefined,
+    };
+    expect(restoreWorkerRunQueue({ taskGraph, state: legacyState }).snapshot().tasks['verify-task'].acceptanceStageId)
+      .toBe('verify');
+
+    const tamperedState = queue.snapshot();
+    tamperedState.tasks['verify-task'] = {
+      ...tamperedState.tasks['verify-task'],
+      acceptanceStageId: 'unrelated-stage',
+    };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: tamperedState })).toThrow(/acceptance stage/);
+  });
+
   it('assigns stable task execution and attempt ids across retries', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',

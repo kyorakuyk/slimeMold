@@ -71,6 +71,8 @@ export type WorkerWorktreeStatus = 'created' | 'cleaned' | 'orphaned' | 'registr
 
 export interface WorkerQueueTask {
   taskId: string;
+  /** Host Acceptance stage expected for this task; defaults to taskId. */
+  acceptanceStageId?: string;
   /** Version of the TaskDefinition used to derive side-effect inputHash. */
   taskDefinitionVersion?: 1;
   /** Stable identity of this task definition within the current Run. */
@@ -146,6 +148,17 @@ function workerPathKey(path: string): string {
     : normalized;
 }
 
+export function resolveWorkerAcceptanceStageId(
+  taskId: string,
+  acceptanceStageId?: string,
+): string | undefined {
+  const fallback = taskId.trim();
+  if (!fallback) return undefined;
+  if (acceptanceStageId === undefined) return fallback;
+  const normalized = acceptanceStageId.trim();
+  return normalized || undefined;
+}
+
 function cloneTask(task: ProjectTask): ProjectTask {
   return {
     ...task,
@@ -166,9 +179,16 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw error;
 }
 
-function taskState(taskId: string, runId: string, now: string, taskDefinitionVersion: 1): WorkerQueueTask {
+function taskState(
+  taskId: string,
+  runId: string,
+  now: string,
+  taskDefinitionVersion: 1,
+  acceptanceStageId?: string,
+): WorkerQueueTask {
   return {
     taskId,
+    ...(acceptanceStageId === undefined ? {} : { acceptanceStageId }),
     taskDefinitionVersion,
     taskExecutionId: createTaskExecutionId(runId, taskId),
     status: 'queued',
@@ -187,6 +207,10 @@ function normalizeQueueTask(
   runId: string,
 ): WorkerQueueTask {
   const expected = createTaskExecutionId(runId, task.taskId);
+  const acceptanceStageId = resolveWorkerAcceptanceStageId(task.taskId, task.acceptanceStageId);
+  if (!acceptanceStageId) {
+    throw new Error(`Worker Task acceptanceStageId 无效：${task.taskId}`);
+  }
   if (task.taskExecutionId && task.taskExecutionId !== expected) {
     throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
   }
@@ -241,7 +265,12 @@ function normalizeQueueTask(
     ?? (task.status === 'running' && task.attempt > 0
       ? createAttemptId(expected, task.attempt)
       : undefined);
-  return cloneQueueTask({ ...task, taskExecutionId: expected, currentAttemptId });
+  return cloneQueueTask({
+    ...task,
+    ...(task.acceptanceStageId === undefined ? {} : { acceptanceStageId }),
+    taskExecutionId: expected,
+    currentAttemptId,
+  });
 }
 
 function validateGraph(taskGraph: ProjectTaskGraph): void {
@@ -296,6 +325,17 @@ export class WorkerTaskQueue {
           normalizeQueueTask(
             {
               ...task,
+              acceptanceStageId: (() => {
+                const taskDefinition = this.tasksById.get(id);
+                const expectedStageId = resolveWorkerAcceptanceStageId(id, taskDefinition?.stageId);
+                const persistedStageId = task.acceptanceStageId === undefined
+                  ? expectedStageId
+                  : resolveWorkerAcceptanceStageId(id, task.acceptanceStageId);
+                if (!expectedStageId || persistedStageId !== expectedStageId) {
+                  throw new Error(`Worker Task acceptance stage 与 TaskGraph 不一致：${id}`);
+                }
+                return expectedStageId;
+              })(),
               taskDefinitionVersion: task.taskDefinitionVersion ?? this.tasksById.get(id)?.version,
             },
             initialState.runId,
@@ -772,7 +812,10 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     status: 'queued',
     createdAt: now,
     updatedAt: now,
-    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [task.id, taskState(task.id, runId, now, task.version)])),
+    tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [
+      task.id,
+      taskState(task.id, runId, now, task.version, task.stageId),
+    ])),
   };
   return new WorkerTaskQueue(input.taskGraph, state, true);
 }

@@ -85,6 +85,25 @@ describe('worker run consistency audit', () => {
     });
   });
 
+  it('uses the task-owned acceptance stage override for audit scope', () => {
+    const stageBoundRun: WorkerRunQueueState = {
+      ...run,
+      tasks: {
+        'task-1': { ...run.tasks['task-1'], acceptanceStageId: 'verify' },
+      },
+    };
+    const stageBoundEvidence = { ...evidence1, stageId: 'verify' };
+    const stageBoundAcceptance = { ...acceptance1, stageId: 'verify' };
+
+    expect(auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [stageBoundRun],
+      events,
+      evidence: [stageBoundEvidence],
+      acceptances: [stageBoundAcceptance],
+    })).toMatchObject({ ok: true, issues: [] });
+  });
+
   it('reports persisted run and task status drift instead of choosing a side silently', () => {
     const drifted = {
       ...run,

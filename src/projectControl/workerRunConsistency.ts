@@ -4,7 +4,7 @@ import {
   type DomainProjection,
   type SideEffectRecord,
 } from '../domain/contracts';
-import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { resolveWorkerAcceptanceStageId, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
@@ -211,6 +211,14 @@ export function auditWorkerRunConsistency(input: {
     }
 
     for (const [taskId, task] of Object.entries(run.tasks)) {
+      const expectedAcceptanceStageId = resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
+      if (!expectedAcceptanceStageId) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `Worker Task acceptance stage 无效：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
+      }
       const expectedTaskExecutionId = createTaskExecutionId(run.runId, taskId);
       if (task.taskExecutionId && task.taskExecutionId !== expectedTaskExecutionId) {
         issues.push(issue(
@@ -329,7 +337,7 @@ export function auditWorkerRunConsistency(input: {
           const evidenceScopeMatches = !!record
             && record.capturedBy === 'host'
             && record.orchestrationId === expectedOrchestrationId
-            && record.stageId === taskId
+            && record.stageId === expectedAcceptanceStageId
             && (!task.worktreePath
               || (record.worktreePath !== undefined
                 && pathComparisonKey(record.worktreePath) === pathComparisonKey(task.worktreePath)))
@@ -349,7 +357,7 @@ export function auditWorkerRunConsistency(input: {
         const acceptanceScopeMatches = !!acceptance
           && acceptance.passed === (task.status === 'succeeded')
           && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
-          && acceptance.stageId === taskId
+          && acceptance.stageId === expectedAcceptanceStageId
           && (!task.worktreePath
             || pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(task.worktreePath));
         if (!acceptanceScopeMatches || !acceptance || !recordMatchesTaskLineage(acceptance, expectedLineage, true)) {

@@ -2166,6 +2166,24 @@ Issue 工作台采用四个面板：
 
 本轮建立本地 `unverified` checkpoint，不 push；独立 reviewer 尚未针对本轮最终 snapshot 返回 approval。该 MVP 仍不宣称 OS 级 no-follow/TOCTOU、跨进程压力验证、不可信 package script 隔离和完整 GUI Delivery/Cleanup 面板已全部完成。
 
+### 7.82 Reviewer fail-closed：Acceptance stage 重新绑定 TaskGraph
+
+- 固定 HEAD `4e3111b51ac47a39bed8857b06ce9847c9b51df1` 的独立 reviewer 返回 `passed=false`：仅复制 `Acceptance.stageId` 到 cleanup proposal 会移除原有 `stageId === taskId` 的 fail-closed 约束，并与 `workerRunConsistency` 的既有审计契约冲突。
+- 不保留该 fail-open 修复。新增 task-owned `acceptanceStageId`：默认从 `ProjectTask.stageId` 推导，未声明时退回 `taskId`；WorkerQueue 创建/restore 持久化并校验该字段与 TaskGraph 一致，旧 state 缺字段时只从可信 TaskGraph 补齐，显式 stage drift 直接拒绝恢复。
+- cleanup proposal、Evidence/Acceptance consistency audit 统一使用同一 expected stage；Acceptance 自己声明的任意 stage 不能扩大清理授权范围。新增 proposal mismatch、consistency override、TaskGraph restore/tamper 回归。
+- run 2 的真实 Delivery、restart read-back 和 CleanupReceipt 是此前 disposable execution 的历史事实；本轮只修正控制面 stage contract，不重复执行破坏性 Cleanup，也不把 reviewer 失败的 `4e` 标为 verified。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、984 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮建立新的本地 `unverified` checkpoint，不 push；仍需针对新的最终 HEAD 重新进行独立 reviewer，不能沿用对 `4e` 的失败或任何旧 verdict。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
