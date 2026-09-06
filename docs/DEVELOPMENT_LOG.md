@@ -2182,7 +2182,7 @@ Issue 工作台采用四个面板：
 - `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
 - `git diff --check`：通过。
 
-本轮建立新的本地 `unverified` checkpoint，不 push；仍需针对新的最终 HEAD 重新进行独立 reviewer，不能沿用对 `4e` 的失败或任何旧 verdict。
+本轮建立新的本地 `unverified` checkpoint：`39d53ce3f39a8f86a7a0c3a457cc3f5ace8e7259`，不 push；仍需针对新的最终 HEAD 重新进行独立 reviewer，不能沿用对 `4e` 的失败或任何旧 verdict。
 
 ## 八、适合拆成的博客系列
 
