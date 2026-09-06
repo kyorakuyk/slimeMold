@@ -2219,6 +2219,23 @@ Issue 工作台采用四个面板：
 
 本轮最终控制面 checkpoint：`df69b67bce0e2bcb9e33965f013d63ef74c7aeb2`，继续保持本地 `unverified`，不 push；待该 checkpoint 的 fresh reviewer 返回严格 JSON 后再决定是否可标记 verified。
 
+### 7.85 Branch CAS、Attempt canonical 与启动审计 fail-closed
+
+- 针对固定 HEAD `034d292` reviewer 的剩余问题，live cleanup proposal 现在在宿主侧捕获当前 branch tip，approval fingerprint 与 `branchRevision` CAS 同时覆盖 live/orphan/registration-pending；branch tip 变化会在确认门拒绝。
+- Session host gate 现在验证 `taskExecutionId = createTaskExecutionId(runId, taskId)`、`attemptId = createAttemptId(taskExecutionId, attempt)`；App action 同时校验 attempt、orchestration、branchRevision、orphan cleanup signature 与 trusted Task lifecycle。
+- `auditLoadedWorkerRunFacts` 遇到事件流/控制面读取异常时，为当前 Worker Runs 写入 `event-stream-invalid` recovery 并清空 cleanup proposals；consistency audit 只接受可信 TaskGraph.stageId，显式 persisted stage drift、缺失 Task 定义和重复 TaskGraph ID 均 fail-closed。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、988 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮仍为本地 `unverified`，不 push；需要对包含本轮修复的最终 HEAD 重新进行独立 reviewer。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

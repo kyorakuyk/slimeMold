@@ -27,7 +27,7 @@ import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
-import { assertTaskExecutionLineage } from '../domain/execution';
+import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 
 /**
@@ -635,6 +635,8 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           || !info
           || info.id !== approval.worktreeId
           || info.branch !== approval.branch) return false;
+        if (approval.taskExecutionId !== createTaskExecutionId(approval.runId, approval.taskId)
+          || approval.attemptId !== createAttemptId(approval.taskExecutionId, approval.attempt)) return false;
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
         const acc = this.getAcceptance(approval.acceptanceId);
         const accOk =
@@ -651,6 +653,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const branchRevisionOk = !approval.branchRevisionRequired
           || (!!approval.branchRevision && info?.branchRevision === approval.branchRevision);
         if (!branchRevisionOk) return false;
+        if (approval.branchRevisionRequired) {
+          const liveBranchRevision = await this.manager.getBranchRevision(approval.branch);
+          if (liveBranchRevision !== approval.branchRevision) return false;
+        }
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
           if (!accOk || !revOk) return false;
           const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });

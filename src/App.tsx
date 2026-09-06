@@ -35,6 +35,7 @@ import { recoverWorkerRunCommand } from './projectControl/workerRecoveryCommand'
 import {
   getRestoredWorkerRunForCleanup,
   installWorkerRunRuntime,
+  type WorkerRunRecovery,
 } from './projectControl/workerRunRuntime';
 import {
   approveWorkerCleanupProposal,
@@ -256,6 +257,11 @@ export default function App() {
           sideEffects: current.workerRunSideEffects,
           isWorktreeTracked: (path) => session.manager.isTracked(path),
           computeWorktreeSignature: (path) => session.computeWorktreeSignature(path),
+          computeBranchRevision: async (branch) => {
+            const revision = await session.manager.getBranchRevision(branch);
+            return revision ?? undefined;
+          },
+          requireBranchRevision: true,
         })),
     );
     if (signal?.aborted) return;
@@ -396,10 +402,16 @@ export default function App() {
       }
     } catch (cause) {
       if (signal?.aborted) return;
-      useWorkflowStore.getState().addLog(
-        'warn',
-        `Worker 事件流无法审计：${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      const failedState = useWorkflowStore.getState();
+      const message = `Worker 事件流无法审计：${cause instanceof Error ? cause.message : String(cause)}`;
+      failedState.setWorkerRunRecoveries(failedState.workerRuns.map((run): WorkerRunRecovery => ({
+        runId: run.runId,
+        projectId: run.projectId,
+        reason: 'event-stream-invalid',
+        message,
+      })));
+      failedState.setWorkerCleanupProposals([]);
+      failedState.addLog('warn', message);
     }
   };
 
@@ -690,9 +702,13 @@ export default function App() {
     const trustedAttemptId = trustedTask
       ? trustedTask.currentAttemptId ?? createAttemptId(trustedTaskExecutionId, trustedTask.attempt)
       : undefined;
+    const isDurableBranchCleanup = trustedTask?.worktreeStatus === 'orphaned'
+      || trustedTask?.worktreeStatus === 'registration-pending';
+    const expectedOrchestrationId = persistedRun?.orchestrationId ?? runId;
     if (!trustedTask
       || trustedTask.status !== 'succeeded'
       || trustedTask.cleanupStatus === 'cleaned'
+      || proposal.attempt !== trustedTask.attempt
       || proposal.taskExecutionId !== trustedTaskExecutionId
       || proposal.attemptId !== trustedAttemptId
       || proposal.worktreeId !== trustedTask.worktreeId
@@ -701,6 +717,9 @@ export default function App() {
       || proposal.baseRevision !== trustedTask.baseRevision
       || proposal.acceptanceId !== trustedTask.acceptanceId
       || proposal.stageId !== expectedStageId
+      || proposal.orchestrationId !== expectedOrchestrationId
+      || (isDurableBranchCleanup && proposal.branchRevision !== trustedTask.branchRevision)
+      || (isDurableBranchCleanup && proposal.stateSignature !== trustedTask.cleanupStateSignature)
       || proposal.taskStatus !== 'succeeded'
       || proposal.cleanupStatus !== 'active') {
       throw new Error(`Worker cleanup proposal 未通过当前 TaskGraph restore 校验：${runId}/${taskId}`);

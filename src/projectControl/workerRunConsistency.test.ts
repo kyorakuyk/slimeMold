@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
@@ -76,6 +77,35 @@ const acceptance1: AcceptanceRecord = {
   taskExecutionId: evidence1.taskExecutionId!, attemptId: evidence1.attemptId!,
 };
 
+const trustedGraph: ProjectTaskGraph = {
+  version: 1,
+  id: 'graph-1',
+  sessionId: 'session-1',
+  architectureId: 'architecture-1',
+  graphVersion: 1,
+  tasks: [{
+    version: 1,
+    id: 'task-1',
+    architectureId: 'architecture-1',
+    title: '实现任务',
+    description: '完成实现',
+    moduleId: 'module-1',
+    scope: ['src'],
+    dependsOn: [],
+    acceptanceCriteria: ['通过'],
+    category: 'implementation',
+    status: 'approved',
+    stageId: 'verify',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+  }],
+  approval: 'approved',
+  approvedBy: 'user',
+  approvedAt: '2026-09-01T00:00:00.000Z',
+  createdAt: '2026-09-01T00:00:00.000Z',
+  updatedAt: '2026-09-01T00:00:00.000Z',
+};
+
 describe('worker run consistency audit', () => {
   it('accepts a ProjectFile worker registry that matches replayed facts', () => {
     expect(auditWorkerRunConsistency({ projectId: 'project-1', runs: [run], events, evidence: [evidence1], acceptances: [acceptance1] })).toMatchObject({
@@ -102,6 +132,31 @@ describe('worker run consistency audit', () => {
       evidence: [stageBoundEvidence],
       acceptances: [stageBoundAcceptance],
     })).toMatchObject({ ok: true, issues: [] });
+  });
+
+  it('uses trusted TaskGraph stage for legacy data and rejects explicit stage drift', () => {
+    const legacyRun: WorkerRunQueueState = {
+      ...run,
+      tasks: { 'task-1': { ...run.tasks['task-1'], acceptanceStageId: undefined } },
+    };
+    const graphEvidence = { ...evidence1, stageId: 'verify' };
+    const graphAcceptance = { ...acceptance1, stageId: 'verify' };
+    const common = {
+      projectId: 'project-1',
+      events,
+      evidence: [graphEvidence],
+      acceptances: [graphAcceptance],
+      taskGraphs: [trustedGraph],
+    };
+    expect(auditWorkerRunConsistency({ ...common, runs: [legacyRun] })).toMatchObject({ ok: true, issues: [] });
+    const driftedRun = {
+      ...legacyRun,
+      tasks: { 'task-1': { ...legacyRun.tasks['task-1'], acceptanceStageId: 'attacker-stage' } },
+    };
+    expect(auditWorkerRunConsistency({ ...common, runs: [driftedRun] })).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'acceptance-lineage-drift' })]),
+    });
   });
 
   it('reports persisted run and task status drift instead of choosing a side silently', () => {

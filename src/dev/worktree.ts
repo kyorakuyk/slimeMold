@@ -150,6 +150,11 @@ export class WorktreeManager {
     );
   }
 
+  /** Read the current branch tip for approval/CAS fingerprints. */
+  async getBranchRevision(branch: string): Promise<string | null> {
+    return this.readBranchRevision(branch);
+  }
+
   /**
    * Restore either a live worktree or an orphaned branch lineage after process restart.
    * ProjectFile metadata is a hint; live worktrees require host git list verification,

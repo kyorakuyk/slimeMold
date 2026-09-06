@@ -212,6 +212,13 @@ export function auditWorkerRunConsistency(input: {
       ));
     }
     const taskGraph = input.taskGraphs?.find((graph) => graph.id === run.taskGraphId);
+    if (input.taskGraphs !== undefined && !taskGraph) {
+      issues.push(issue(
+        'acceptance-lineage-drift',
+        `Worker Run 缺少可信 TaskGraph：${run.taskGraphId}`,
+        { runId: run.runId },
+      ));
+    }
     const replayedRun = projection.runs[run.runId];
     if (!replayedRun) {
       issues.push(issue(
@@ -229,14 +236,25 @@ export function auditWorkerRunConsistency(input: {
 
     for (const [taskId, task] of Object.entries(run.tasks)) {
       const taskDefinition = taskGraph?.tasks.find((item) => item.id === taskId);
-      const expectedAcceptanceStageId = resolveWorkerAcceptanceStageId(
-        taskId,
-        task.acceptanceStageId ?? taskDefinition?.stageId,
-      );
+      const expectedAcceptanceStageId = input.taskGraphs === undefined
+        ? resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId)
+        : taskDefinition
+          ? resolveWorkerAcceptanceStageId(taskId, taskDefinition.stageId)
+          : undefined;
+      const persistedAcceptanceStageId = task.acceptanceStageId === undefined
+        ? undefined
+        : resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
       if (!expectedAcceptanceStageId) {
         issues.push(issue(
           'acceptance-lineage-drift',
           `Worker Task acceptance stage 无效：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
+      } else if (persistedAcceptanceStageId !== undefined
+        && persistedAcceptanceStageId !== expectedAcceptanceStageId) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `Worker Task acceptance stage 与可信 TaskGraph 不一致：${taskId}`,
           { runId: run.runId, taskId },
         ));
       }

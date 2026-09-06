@@ -54,6 +54,8 @@ export interface BuildWorkerCleanupProposalInput {
   sideEffects: readonly SideEffectRecord[];
   isWorktreeTracked?: (path: string) => boolean;
   computeWorktreeSignature: (path: string) => Promise<string>;
+  computeBranchRevision?: (branch: string) => Promise<string | undefined>;
+  requireBranchRevision?: boolean;
 }
 
 export interface WorkerCleanupHost {
@@ -237,6 +239,15 @@ export async function buildWorkerCleanupProposal(
       ? 'orphan/registration-pending 缺少持久化 cleanup state signature，拒绝清理'
       : '无法取得 worktree 状态签名，拒绝清理');
   }
+  let branchRevision = task.branchRevision;
+  if (!durableBranchCleanup && input.requireBranchRevision) {
+    branchRevision = input.computeBranchRevision
+      ? await input.computeBranchRevision(task.branch)
+      : undefined;
+    if (!branchRevision?.trim()) {
+      return blocked(run.runId, taskId, 'live worktree 缺少 branchRevision，拒绝清理');
+    }
+  }
   return {
     status: 'ready',
     runId: run.runId,
@@ -246,7 +257,7 @@ export async function buildWorkerCleanupProposal(
     attemptId: lineage.attemptId,
     worktreeId: task.worktreeId,
     branch: task.branch,
-    ...(durableBranchCleanup ? { branchRevision: task.branchRevision } : {}),
+    ...(branchRevision ? { branchRevision } : {}),
     worktreePath: task.worktreePath,
     baseRevision: task.baseRevision,
     stateSignature,
