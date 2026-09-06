@@ -177,7 +177,6 @@ export async function buildWorkerCleanupProposal(
     acceptance.acceptanceId === task.acceptanceId &&
     acceptance.passed &&
     acceptance.orchestrationId === orchestrationId &&
-    acceptance.stageId === taskId &&
     pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(path) &&
     acceptanceLineageMatches;
   if (!acceptanceMatches) {
@@ -210,7 +209,7 @@ export async function buildWorkerCleanupProposal(
     stateSignature,
     acceptanceId: task.acceptanceId,
     orchestrationId,
-    stageId: taskId,
+    stageId: acceptance.stageId,
   };
 }
 

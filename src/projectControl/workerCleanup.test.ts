@@ -80,6 +80,21 @@ describe('worker cleanup proposal', () => {
     expect(computeWorktreeSignature).toHaveBeenCalledWith('C:/project-workers/run-1/task-1');
   });
 
+  it('binds cleanup to the Acceptance stage when it differs from the task id', async () => {
+    const proposal = await buildWorkerCleanupProposal({
+      run: run(),
+      task: run().tasks['task-1'],
+      acceptance: { ...acceptance(), stageId: 'verify' },
+      computeWorktreeSignature: vi.fn(async () => 'sig-stage'),
+      sideEffects: [],
+    });
+
+    expect(proposal).toEqual(expect.objectContaining({
+      status: 'ready',
+      stageId: 'verify',
+    }));
+  });
+
   it('blocks cleanup when the task or acceptance is not safely complete', async () => {
     const computeWorktreeSignature = vi.fn(async () => 'sig-1');
     const incomplete = { ...run().tasks['task-1'], status: 'failed' as const };

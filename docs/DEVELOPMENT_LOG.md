@@ -2147,6 +2147,25 @@ Issue 工作台采用四个面板：
 
 本轮建立本地 `unverified` checkpoint，不 push；Delivery/Cleanup 的完整 GUI 面板、重启 read-back 和 CleanupReceipt 仍未完成。第一版 MVP 当前证明的是一个小型可运行项目的受控生产与交付，不宣称通用覆盖已有文件、完整成本计量、任意 Artifact 类型或无人值守运维。
 
+### 7.81 Restart read-back、用户批准 CleanupReceipt 与最终质量门
+
+- 通过产品自己的“保存项目”入口把最终 run 2 写回 ProjectFile，read-back 确认 `.slimemold/project.json` 的 `updatedAt=2026-09-06T04:21:34.268Z`、run history、Worker path 和 Acceptance lineage 均已持久化；结束旧 Tauri dev 树后重新启动真实 Tauri GUI，新窗口恢复同一 workflow，并从持久化项目加载成功状态。保存 `screenshots/06-run2-restart-acceptance.png`。
+- 修复 cleanup proposal 对通用 workflow 的过强假设：`buildWorkerCleanupProposal` 继续绑定 task/run/execution/attempt/worktree/Acceptance identity，但 proposal 的 `stageId` 取已验证 Acceptance 的真实 stage，而不是硬编码为 taskId；WorkerQueue 的常规 `stageId=taskId` 行为不变。新增 stage 不同于 taskId 的 RED→GREEN 回归。
+- 生成并 read-back `cleanup-proposal-run-2.json` 后取得用户明确批准；通过真实 `executeWorkerCleanupWithReceipt → confirmAndCleanup → Git CAS` 删除 `mvp-gui-success-wt-6` 及其 branch。CleanupReceipt 为 `cleanup:task-execution:2:accept:attempt-1:receipt`，`outcome=succeeded`，`outputHash=h1suf5fc`；目录不存在、branch ref 不存在，side-effect journal 为 durable receipt。历史尝试 worktree 未擅自删除。
+- 目标交付 fixture `mvp-delivery-target-7` 仍保持 `master`、HEAD `f2fc91d`、工作树 clean；重新执行目标项目测试通过。更新 `cleanup-manifest-run-2.json`，将 restart、Delivery、Cleanup 与目标 read-back 绑定在同一 dossier。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、981 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过；
+- 真实 Tauri：ProjectFile save → restart read-back → Acceptance 恢复 → 用户批准 Cleanup → CleanupReceipt durable read-back，通过。
+
+本轮建立本地 `unverified` checkpoint，不 push；独立 reviewer 尚未针对本轮最终 snapshot 返回 approval。该 MVP 仍不宣称 OS 级 no-follow/TOCTOU、跨进程压力验证、不可信 package script 隔离和完整 GUI Delivery/Cleanup 面板已全部完成。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
