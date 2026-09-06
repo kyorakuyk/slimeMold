@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectTask, ProjectTaskGraph } from './types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { installWorkerRunRuntime, rehydrateWorkerRunRegistry, runActiveWorkerRun } from './workerRunRuntime';
+import {
+  getRestoredWorkerRunForCleanup,
+  installWorkerRunRuntime,
+  rehydrateWorkerRunRegistry,
+  runActiveWorkerRun,
+} from './workerRunRuntime';
 
 function graph(version = 2): ProjectTaskGraph {
   const task: ProjectTask = {
@@ -83,6 +88,23 @@ describe('rehydrateWorkerRunRegistry', () => {
       runId: 'run-1',
       reason: 'task-graph-version-mismatch',
     });
+  });
+
+  it('does not expose a cleanup snapshot when persisted Worker state fails restore', () => {
+    const drifted = run({
+      tasks: {
+        'task-1': {
+          ...run().tasks['task-1'],
+          taskId: 'other-task',
+        },
+      },
+    });
+
+    expect(getRestoredWorkerRunForCleanup({
+      projectId: 'project-1',
+      taskGraphs: [graph()],
+      run: drifted,
+    })).toBeNull();
   });
 
   it('does not install a queue when durable Worker facts drift from ProjectFile', () => {

@@ -131,6 +131,23 @@ export function rehydrateWorkerRunRegistry(
   return { projectId: input.projectId, queues, recoveries };
 }
 
+/** Return only a TaskGraph-validated snapshot for destructive cleanup proposal generation. */
+export function getRestoredWorkerRunForCleanup(input: {
+  projectId: string;
+  taskGraphs: readonly ProjectTaskGraph[];
+  run: WorkerRunQueueState;
+  consistency?: WorkerRunConsistencyReport;
+}): WorkerRunQueueState | null {
+  const registry = rehydrateWorkerRunRegistry({
+    projectId: input.projectId,
+    taskGraphs: input.taskGraphs,
+    runs: [input.run],
+    consistency: input.consistency,
+  });
+  if (registry.recoveries.some((item) => item.runId === input.run.runId)) return null;
+  return registry.queues.get(input.run.runId)?.snapshot() ?? null;
+}
+
 let activeRegistry: WorkerRunRuntimeRegistry | null = null;
 const activeRunIds = new Set<string>();
 

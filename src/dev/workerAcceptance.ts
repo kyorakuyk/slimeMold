@@ -4,6 +4,7 @@ import { evaluateDevAcceptance, type AcceptanceRule } from './evaluator';
 import { collectChangedProtectedPaths, isPathAllowed } from './policy';
 import type { EvidenceRecord } from './evidence';
 import { assertTaskExecutionLineage } from '../domain/execution';
+import { resolveWorkerAcceptanceStageId } from '../domain/workerQueue';
 
 export interface DevWorkerAcceptanceOptions {
   /** 默认使用项目现有编译入口；命令仍由 DevCapabilityService 的白名单校验。 */
@@ -67,7 +68,14 @@ export function createDevWorkerAcceptance(
       }
       const cwd = lease.assignment.path;
       const orchestrationId = lease.orchestrationId ?? lease.runId;
-      const stageId = lease.task.id;
+      const stageId = resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId);
+      if (!stageId) {
+        return {
+          passed: false,
+          evidenceIds: [],
+          failureReason: 'Worker Acceptance stage 无效，拒绝验收',
+        };
+      }
       if (!host.collector.hasPersistence()) {
         return {
           passed: false,

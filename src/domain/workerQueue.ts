@@ -320,27 +320,27 @@ export class WorkerTaskQueue {
     this.state = {
       ...initialState,
       tasks: Object.fromEntries(
-        Object.entries(initialState.tasks).map(([id, task]) => [
-          id,
-          normalizeQueueTask(
+        Object.entries(initialState.tasks).map(([id, task]) => {
+          if (task.taskId !== id) {
+            throw new Error(`Worker Task state key 与 taskId 不一致：${id}/${task.taskId}`);
+          }
+          const taskDefinition = this.tasksById.get(id);
+          const expectedStageId = resolveWorkerAcceptanceStageId(id, taskDefinition?.stageId);
+          const persistedStageId = task.acceptanceStageId === undefined
+            ? expectedStageId
+            : resolveWorkerAcceptanceStageId(id, task.acceptanceStageId);
+          if (!expectedStageId || persistedStageId !== expectedStageId) {
+            throw new Error(`Worker Task acceptance stage 与 TaskGraph 不一致：${id}`);
+          }
+          return [id, normalizeQueueTask(
             {
               ...task,
-              acceptanceStageId: (() => {
-                const taskDefinition = this.tasksById.get(id);
-                const expectedStageId = resolveWorkerAcceptanceStageId(id, taskDefinition?.stageId);
-                const persistedStageId = task.acceptanceStageId === undefined
-                  ? expectedStageId
-                  : resolveWorkerAcceptanceStageId(id, task.acceptanceStageId);
-                if (!expectedStageId || persistedStageId !== expectedStageId) {
-                  throw new Error(`Worker Task acceptance stage 与 TaskGraph 不一致：${id}`);
-                }
-                return expectedStageId;
-              })(),
-              taskDefinitionVersion: task.taskDefinitionVersion ?? this.tasksById.get(id)?.version,
+              acceptanceStageId: expectedStageId,
+              taskDefinitionVersion: task.taskDefinitionVersion ?? taskDefinition?.version,
             },
             initialState.runId,
-          ),
-        ]),
+          )] as const;
+        }),
       ),
     };
     this.validateState();

@@ -104,6 +104,13 @@ describe('WorkerTaskQueue', () => {
       acceptanceStageId: 'unrelated-stage',
     };
     expect(() => restoreWorkerRunQueue({ taskGraph, state: tamperedState })).toThrow(/acceptance stage/);
+
+    const keyDriftState = queue.snapshot();
+    keyDriftState.tasks['verify-task'] = {
+      ...keyDriftState.tasks['verify-task'],
+      taskId: 'other-task',
+    };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: keyDriftState })).toThrow(/key.*taskId|taskId.*key/);
   });
 
   it('assigns stable task execution and attempt ids across retries', async () => {

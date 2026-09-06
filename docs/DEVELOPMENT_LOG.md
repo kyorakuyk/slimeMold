@@ -2184,6 +2184,23 @@ Issue 工作台采用四个面板：
 
 本轮建立新的本地 `unverified` checkpoint：`39d53ce3f39a8f86a7a0c3a457cc3f5ace8e7259`，不 push；仍需针对新的最终 HEAD 重新进行独立 reviewer，不能沿用对 `4e` 的失败或任何旧 verdict。
 
+### 7.83 Reviewer integration hardening：Acceptance、restore 与 GUI cleanup gate
+
+- 固定 HEAD `af3a584` 的 reviewer 继续 fail-closed，发现三处集成问题：`workerAcceptance` 仍把 Evidence/Acceptance stage 硬编码为 task id；WorkerQueue restore 未拒绝 tasks map key 与 taskId 漂移；App cleanup proposal 可直接消费 raw ProjectFile WorkerRun，绕过 TaskGraph restore。
+- `workerAcceptance` 现在使用 `ProjectTask.stageId ?? taskId` 的 canonical resolver 写入所有 Host Evidence 和 Acceptance；WorkerQueue restore 在 normalize 前校验 key/taskId identity；新增 `getRestoredWorkerRunForCleanup`，App proposal 刷新和 cleanup action 都必须先通过 TaskGraph-validated normalized snapshot，restore recovery 或 state drift 时不产生/不执行 Cleanup。
+- 新增显式 stage Acceptance、key/taskId drift、runtime cleanup snapshot suppression 回归；不重新执行历史破坏性 Cleanup，保留此前 Receipt 的 execution provenance。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、986 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮仍为本地 `unverified`，不 push；需要针对包含本轮集成修复的最终 HEAD 重新进行独立 reviewer，不能把旧 `af3a584` verdict 迁移到新代码。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

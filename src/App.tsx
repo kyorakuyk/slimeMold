@@ -32,7 +32,10 @@ import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
 import { recoverWorkerRunCommand } from './projectControl/workerRecoveryCommand';
-import { installWorkerRunRuntime } from './projectControl/workerRunRuntime';
+import {
+  getRestoredWorkerRunForCleanup,
+  installWorkerRunRuntime,
+} from './projectControl/workerRunRuntime';
 import {
   approveWorkerCleanupProposal,
   buildWorkerCleanupProposal,
@@ -47,6 +50,7 @@ import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
 import type { AcceptanceRecord } from './dev/session';
 import type { DomainProjection } from './domain/contracts';
+import { createAttemptId, createTaskExecutionId } from './domain/execution';
 import { EventStreamRepository } from './domain/eventStore';
 import {
   loadWorkerEvidence,
@@ -230,8 +234,18 @@ export default function App() {
   ): Promise<void> => {
     if (signal?.aborted) return;
     const current = useWorkflowStore.getState();
-    const run = current.workerRuns.find((item) => item.runId === runId);
-    if (!run) return;
+    const persistedRun = current.workerRuns.find((item) => item.runId === runId);
+    if (!persistedRun) return;
+    if (current.workerRunRecoveries.some((item) => item.runId === runId)) return;
+    const run = getRestoredWorkerRunForCleanup({
+      projectId: current.projectId ?? persistedRun.projectId,
+      taskGraphs: current.projectControl.taskGraphs ?? [],
+      run: persistedRun,
+    });
+    if (!run) {
+      current.addLog('warn', `Worker cleanup proposal 已抑制：Run ${runId} 未通过 TaskGraph restore`);
+      return;
+    }
     const proposals = await Promise.all(
       Object.values(run.tasks)
         .filter((task) => task.worktreePath)
@@ -657,6 +671,34 @@ export default function App() {
     );
     if (!projectId || !projectPath) throw new Error('项目必须先保存，才能清理 Worker worktree');
     if (!proposal || proposal.status !== 'ready') throw new Error(`清理提案不可用：${runId}/${taskId}`);
+    if (current.workerRunRecoveries.some((item) => item.runId === runId)) {
+      throw new Error(`Worker Run ${runId} 存在 restore recovery，拒绝清理`);
+    }
+    const persistedRun = current.workerRuns.find((item) => item.runId === runId);
+    const trustedRun = persistedRun
+      ? getRestoredWorkerRunForCleanup({
+        projectId,
+        taskGraphs: current.projectControl.taskGraphs ?? [],
+        run: persistedRun,
+      })
+      : null;
+    const trustedTask = trustedRun?.tasks[taskId];
+    const expectedStageId = trustedTask?.acceptanceStageId ?? taskId;
+    const trustedTaskExecutionId = trustedTask?.taskExecutionId ?? createTaskExecutionId(runId, taskId);
+    const trustedAttemptId = trustedTask
+      ? trustedTask.currentAttemptId ?? createAttemptId(trustedTaskExecutionId, trustedTask.attempt)
+      : undefined;
+    if (!trustedTask
+      || proposal.taskExecutionId !== trustedTaskExecutionId
+      || proposal.attemptId !== trustedAttemptId
+      || proposal.worktreeId !== trustedTask.worktreeId
+      || proposal.worktreePath !== trustedTask.worktreePath
+      || proposal.branch !== trustedTask.branch
+      || proposal.baseRevision !== trustedTask.baseRevision
+      || proposal.acceptanceId !== trustedTask.acceptanceId
+      || proposal.stageId !== expectedStageId) {
+      throw new Error(`Worker cleanup proposal 未通过当前 TaskGraph restore 校验：${runId}/${taskId}`);
+    }
     const operation = getProjectOperation(projectId, projectPath);
     assertProjectOperation(operation);
     const session = await ensureGuiDevSession(projectPath, operation.controller.signal);

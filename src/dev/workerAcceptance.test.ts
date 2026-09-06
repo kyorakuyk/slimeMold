@@ -102,6 +102,21 @@ describe('createDevWorkerAcceptance', () => {
     }));
   });
 
+  it('uses the task-owned stage for every Evidence and Acceptance record', async () => {
+    const deps = host();
+    const stageLease: WorkerTaskLease = {
+      ...lease,
+      task: { ...lease.task, stageId: 'verify' },
+    };
+    const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
+
+    const result = await acceptance.evaluate({ lease: stageLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(true);
+    expect(deps.collector.records.every((record) => record.stageId === 'verify')).toBe(true);
+    expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({ stageId: 'verify' }));
+  });
+
   it('fails when tests fail or protected paths changed, regardless of model text', async () => {
     const deps = host({
       service: {
