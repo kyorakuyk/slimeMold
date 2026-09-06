@@ -68,10 +68,13 @@ describe('DevSession Tauri orphan cleanup', () => {
       generation: 1,
     });
 
-    await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(false);
+    await expect(session.manager.cleanup(info!.id, { confirm: true, branchRevision: info!.branchRevision })).resolves.toBe(false);
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
     expect(session.manager.get(info!.id)?.status).toBe('orphaned');
-    await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(true);
+    await expect(session.manager.cleanup(info!.id, {
+      confirm: true,
+      branchRevision: session.manager.get(info!.id)?.branchRevision,
+    })).resolves.toBe(true);
     expect(invoke).toHaveBeenCalledWith('dev_unregister_worktree', {
       path: info!.path,
       generation: 1,
@@ -98,12 +101,12 @@ describe('DevSession Tauri orphan cleanup', () => {
     expect(info).not.toBeNull();
 
     hostState.rejectUnregister = true;
-    await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(false);
+    await expect(session.manager.cleanup(info!.id, { confirm: true, branchRevision: info!.branchRevision })).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('registration-pending');
     expect(session.manager.get(info!.id)?.branchRevision).toBe(TIP_OID);
 
     hostState.rejectUnregister = false;
-    await expect(session.manager.cleanup(info!.id, { confirm: true })).resolves.toBe(true);
+    await expect(session.manager.cleanup(info!.id, { confirm: true, branchRevision: info!.branchRevision })).resolves.toBe(true);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
   });
 
@@ -148,7 +151,8 @@ describe('DevSession Tauri orphan cleanup', () => {
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info!.baseRevision,
-      branchRevision: info!.branchRevision,
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
       stateSignature: 'sig-1',
       acceptanceId,
       orchestrationId: 'orch-1',
@@ -160,6 +164,7 @@ describe('DevSession Tauri orphan cleanup', () => {
 
     hostState.rejectUnregister = true;
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(fingerprint);
     await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('registration-pending');
 
@@ -226,7 +231,7 @@ describe('DevSession Tauri orphan cleanup', () => {
 
     await expect(session.manager.restore(info)).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
-    await expect(session.manager.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    await expect(session.manager.cleanup(info.id, { confirm: true, branchRevision: info.branchRevision })).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
   });
 
@@ -304,6 +309,7 @@ describe('DevSession Tauri orphan cleanup', () => {
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       baseRevision: info.baseRevision,
       branchRevision: info.branchRevision,
+      branchRevisionRequired: true,
       stateSignature: 'sig-orphan',
       acceptanceId,
       orchestrationId: 'orch-1',
@@ -314,6 +320,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     });
 
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info.path)!);
+    session.registerTrustedCleanupBinding(fingerprint);
     await expect(session.confirmAndCleanup(info.path, undefined, fingerprint)).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());

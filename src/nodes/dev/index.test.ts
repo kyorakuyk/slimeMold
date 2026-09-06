@@ -7,6 +7,7 @@ import { defaultDevPolicy } from '../../dev/policy';
 import { EvidenceCollector, type EvidencePersistence } from '../../dev/evidence';
 import type { CommandResult } from '../../dev/node-run';
 import { FILE_PATCH_SET_SCHEMA_VERSION } from '../../domain/model/artifact';
+import { cleanupBindingFingerprint } from '../../projectControl/workerCleanup';
 
 /** 内存持久化（测试默认注入：forceCleanup 要求宿主持久化，无则拒绝）。 */
 function memPersistence(): EvidencePersistence {
@@ -108,6 +109,7 @@ function fakeSession(opts: {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
+    trustedCleanupBindings: new Set(),
     confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
@@ -149,6 +151,9 @@ function fakeSession(opts: {
         consumed: false,
       });
     },
+    registerTrustedCleanupBinding(fingerprint) {
+      this.trustedCleanupBindings.add(fingerprint);
+    },
     isCleanupApproved(path) {
       const a = this.approvedCleanups.get(norm(path));
       return !!a && !a.consumed;
@@ -185,7 +190,7 @@ function fakeSession(opts: {
         this.confirmCleanupInFlight.delete(key);
       }
     },
-    async confirmAndCleanup(path) {
+    async confirmAndCleanup(path, _signal, expectedFingerprint) {
       const key = norm(path);
       if (this.confirmCleanupInFlight.has(key)) return false;
       this.confirmCleanupInFlight.add(key);
@@ -193,6 +198,7 @@ function fakeSession(opts: {
         const approval = this.approvedCleanups.get(key);
         const info = manager.get(path);
         if (!approval || approval.consumed) return false;
+        if (!expectedFingerprint || !this.trustedCleanupBindings.has(expectedFingerprint)) return false;
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
         const acc = this.acceptanceStore.get(approval.acceptanceId);
         const accOk =
@@ -519,12 +525,12 @@ describe('H4 dev nodes', () => {
     session.approveCleanup('/repo-workers/t4');
     const noBind = await cleanup.execute({ worktreePath: '/repo-workers/t4' }, {}, {} as never);
     expect(noBind.cleaned).toBe(false);
-    // 三绑定齐全 → 清理
+    // legacy direct path 即使三绑定齐全也拒绝；必须走 Worker fingerprint API
     await approveFull(session, '/repo-workers/t4', { orchestrationId: 'o', stageId: 's' });
     const approved = await cleanup.execute({ worktreePath: '/repo-workers/t4' }, {}, {} as never);
-    expect(approved.cleaned).toBe(true);
-    expect(session.manager.isTracked('/repo-workers/t4')).toBe(false);
-    expect(session.isCleanupApproved('/repo-workers/t4')).toBe(false);
+    expect(approved.cleaned).toBe(false);
+    expect(session.manager.isTracked('/repo-workers/t4')).toBe(true);
+    expect(session.isCleanupApproved('/repo-workers/t4')).toBe(true);
   });
 
   it('cleanup：绑定 acceptance 四态（无记录/failed/跨 worktree/passed）', async () => {
@@ -551,10 +557,10 @@ describe('H4 dev nodes', () => {
     await approveFull(session, '/repo-workers/c1', { orchestrationId: 'o', stageId: 's', wtOverride: '/repo-workers/other' });
     r = await cleanup.execute({ worktreePath: '/repo-workers/c1' }, {}, {} as never);
     expect(r.cleaned).toBe(false);
-    // passed + 一致 → 清理
+    // passed + 一致仍不能使用 legacy direct path
     await approveFull(session, '/repo-workers/c1', { orchestrationId: 'o', stageId: 's' });
     r = await cleanup.execute({ worktreePath: '/repo-workers/c1' }, {}, {} as never);
-    expect(r.cleaned).toBe(true);
+    expect(r.cleaned).toBe(false);
   });
 
   it('cleanup：stateSignature 不一致拒 / 基线不匹配拒', async () => {
@@ -597,7 +603,7 @@ describe('H4 dev nodes', () => {
     });
     r = await cleanup.execute({ worktreePath: '/repo-workers/s1' }, {}, {} as never);
     expect(r.cleaned).toBe(false);
-    // 全绑定正确 → 清理
+    // 全绑定正确仍不能使用 legacy direct path
     session.approveCleanup('/repo-workers/s1', {
       acceptanceId: mkAcc(),
       orchestrationId: 'o',
@@ -606,7 +612,7 @@ describe('H4 dev nodes', () => {
       baseRevision: 'abc123',
     });
     r = await cleanup.execute({ worktreePath: '/repo-workers/s1' }, {}, {} as never);
-    expect(r.cleaned).toBe(true);
+    expect(r.cleaned).toBe(false);
   });
 
   it('P1（审计）：accept 二次执行产生新 acceptanceId（不覆盖旧记录）', async () => {
@@ -702,13 +708,15 @@ describe('H4 dev nodes', () => {
     await create.execute({ path: '/repo-workers/m1' }, {}, {} as never);
     // 三绑定审批
     await approveFull(session, '/repo-workers/m1', { orchestrationId: 'o', stageId: 's' });
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval('/repo-workers/m1')!);
+    session.registerTrustedCleanupBinding(fingerprint);
     // 模拟并发：先占用锁
     session.confirmCleanupInFlight.add('/repo-workers/m1');
     const blocked = await session.confirmAndCleanup('/repo-workers/m1');
     expect(blocked).toBe(false); // 锁占用 → 拒绝
     session.confirmCleanupInFlight.delete('/repo-workers/m1');
     // 释放锁后正常清理
-    const ok = await session.confirmAndCleanup('/repo-workers/m1');
+    const ok = await session.confirmAndCleanup('/repo-workers/m1', undefined, fingerprint);
     expect(ok).toBe(true);
     expect(session.manager.isTracked('/repo-workers/m1')).toBe(false);
   });

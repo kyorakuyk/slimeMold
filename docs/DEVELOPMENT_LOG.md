@@ -2236,6 +2236,23 @@ Issue 工作台采用四个面板：
 
 本轮最终控制面 checkpoint：`70c3a6d7c9cba6817589c98a278387b4089cd21d`，仍为本地 `unverified`，不 push；需要对该最终 HEAD 重新进行独立 reviewer。
 
+### 7.86 Final Cleanup CAS、legacy path removal 与 TaskGraph audit hardening
+
+- 针对固定 HEAD `402d89b` reviewer 的剩余问题，ready Cleanup proposal 现在强制包含 `branchRevisionRequired=true` 和 branch tip；`WorktreeManager.cleanup` 接收批准的 revision，live worktree 在 remove/delete branch 前重新读取并用同一 revision 做 CAS，orphan 只使用 durable revision，registration-pending 不读取已删除 branch。
+- Session host gate 要求强制 branch CAS、canonical attempt/lifecycle/fingerprint 和 trusted cleanup binding；`forceCleanup`、headless direct cleanup、旧 DevSessionPanel cleanup 按钮和 legacy `dev.worktree.cleanup` 不再形成第二套破坏性协议。
+- consistency audit 在无 TaskGraph 时拒绝显式 persisted stage；有 TaskGraph 时同时校验 id、graphVersion、approved 状态和 task stage。新增 branch mutation、no-graph stage、graph-version 回归测试；历史 run 2 CleanupReceipt 不重新执行、不改写 execution source provenance。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、990 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮当前改动仍为本地 `unverified`，不 push；必须针对最终提交重新运行独立 reviewer，不能迁移旧 verdict。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

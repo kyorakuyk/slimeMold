@@ -33,7 +33,9 @@ export type WorkerRunConsistencyIssueCode =
   | 'missing-attempt-event'
   | 'orphaned-run-event'
   | 'orphaned-task-event'
-  | 'task-graph-duplicate';
+  | 'task-graph-duplicate'
+  | 'task-graph-version-drift'
+  | 'task-graph-unapproved';
 
 export interface WorkerRunConsistencyIssue {
   code: WorkerRunConsistencyIssueCode;
@@ -219,6 +221,21 @@ export function auditWorkerRunConsistency(input: {
         { runId: run.runId },
       ));
     }
+    const graphVersionMatches = taskGraph?.graphVersion === run.taskGraphVersion;
+    if (taskGraph && !graphVersionMatches) {
+      issues.push(issue(
+        'task-graph-version-drift',
+        `Worker Run 的 TaskGraph version 不匹配：${run.taskGraphId}`,
+        { runId: run.runId },
+      ));
+    }
+    if (taskGraph && taskGraph.approval !== 'approved') {
+      issues.push(issue(
+        'task-graph-unapproved',
+        `Worker Run 关联的 TaskGraph 未获批准：${run.taskGraphId}`,
+        { runId: run.runId },
+      ));
+    }
     const replayedRun = projection.runs[run.runId];
     if (!replayedRun) {
       issues.push(issue(
@@ -235,9 +252,14 @@ export function auditWorkerRunConsistency(input: {
     }
 
     for (const [taskId, task] of Object.entries(run.tasks)) {
-      const taskDefinition = taskGraph?.tasks.find((item) => item.id === taskId);
+      const trustedGraph = taskGraph && graphVersionMatches && taskGraph.approval === 'approved'
+        ? taskGraph
+        : undefined;
+      const taskDefinition = trustedGraph?.tasks.find((item) => item.id === taskId);
       const expectedAcceptanceStageId = input.taskGraphs === undefined
-        ? resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId)
+        ? task.acceptanceStageId === undefined
+          ? resolveWorkerAcceptanceStageId(taskId, undefined)
+          : undefined
         : taskDefinition
           ? resolveWorkerAcceptanceStageId(taskId, taskDefinition.stageId)
           : undefined;

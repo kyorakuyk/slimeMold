@@ -13,7 +13,8 @@ export interface WorkerCleanupProposalReady {
   attemptId: string;
   worktreeId: string;
   branch: string;
-  branchRevision?: string;
+  branchRevision: string;
+  branchRevisionRequired: true;
   worktreePath: string;
   baseRevision: string;
   stateSignature: string;
@@ -55,10 +56,10 @@ export interface BuildWorkerCleanupProposalInput {
   isWorktreeTracked?: (path: string) => boolean;
   computeWorktreeSignature: (path: string) => Promise<string>;
   computeBranchRevision?: (branch: string) => Promise<string | undefined>;
-  requireBranchRevision?: boolean;
 }
 
 export interface WorkerCleanupHost {
+  registerTrustedCleanupBinding?(fingerprint: string): void;
   approveCleanup(
     path: string,
     options: {
@@ -240,14 +241,18 @@ export async function buildWorkerCleanupProposal(
       : '无法取得 worktree 状态签名，拒绝清理');
   }
   let branchRevision = task.branchRevision;
-  if (!durableBranchCleanup && input.requireBranchRevision) {
+  if (!durableBranchCleanup) {
     branchRevision = input.computeBranchRevision
       ? await input.computeBranchRevision(task.branch)
-      : undefined;
+      : task.branchRevision;
     if (!branchRevision?.trim()) {
       return blocked(run.runId, taskId, 'live worktree 缺少 branchRevision，拒绝清理');
     }
   }
+  if (!branchRevision?.trim()) {
+    return blocked(run.runId, taskId, 'cleanup proposal 缺少 branchRevision，拒绝清理');
+  }
+  const requiredBranchRevision = branchRevision;
   return {
     status: 'ready',
     runId: run.runId,
@@ -257,7 +262,8 @@ export async function buildWorkerCleanupProposal(
     attemptId: lineage.attemptId,
     worktreeId: task.worktreeId,
     branch: task.branch,
-    ...(branchRevision ? { branchRevision } : {}),
+    branchRevision: requiredBranchRevision,
+    branchRevisionRequired: true,
     worktreePath: task.worktreePath,
     baseRevision: task.baseRevision,
     stateSignature,
@@ -280,7 +286,7 @@ export function approveWorkerCleanupProposal(
     worktreeId: proposal.worktreeId,
     branch: proposal.branch,
     branchRevision: proposal.branchRevision,
-    branchRevisionRequired: proposal.branchRevision !== undefined,
+    branchRevisionRequired: proposal.branchRevisionRequired,
     runId: proposal.runId,
     taskId: proposal.taskId,
     taskExecutionId: proposal.taskExecutionId,

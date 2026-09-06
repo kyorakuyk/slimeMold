@@ -17,6 +17,8 @@ function proposal(): WorkerCleanupProposalReady {
     attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
     worktreeId: 'wt-1',
     branch: 'worker/task-1',
+    branchRevision: 'a'.repeat(40),
+    branchRevisionRequired: true,
     worktreePath: 'C:/project-workers/run-1/task-1',
     baseRevision: 'abc123',
     stateSignature: 'sig-1',

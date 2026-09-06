@@ -218,6 +218,8 @@ export interface DevSession {
   acceptanceStore: Map<string, AcceptanceRecord>;
   /** 宿主已批准清理的 worktree（P1：一次性、绑定 baseRevision/stateSignature/acceptanceId） */
   approvedCleanups: Map<string, CleanupApproval>;
+  /** 仅由 TaskGraph-restored Worker proposal 注册的破坏性 cleanup binding。 */
+  trustedCleanupBindings: Set<string>;
   /** 宿主级 per-worktree 清理互斥锁（P1：同一 worktree 的确认清理串行执行）。 */
   confirmCleanupInFlight: Set<string>;
   /** 登记一次宿主真实执行结果（三项作用域必填，缺失即拒绝）。 */
@@ -255,6 +257,7 @@ export interface DevSession {
       cleanupStatus?: 'active';
     },
   ): void;
+  registerTrustedCleanupBinding(fingerprint: string): void;
   isCleanupApproved(path: string): boolean;
   /** 读取清理审批记录（cleanup 确认门校验绑定字段用）。 */
   getCleanupApproval(path: string): CleanupApproval | undefined;
@@ -447,6 +450,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
+    trustedCleanupBindings: new Set(),
     confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
@@ -566,6 +570,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         consumed: false,
       });
     },
+    registerTrustedCleanupBinding(fingerprint) {
+      if (!fingerprint.trim()) throw new Error('cleanup fingerprint 不能为空');
+      this.trustedCleanupBindings.add(fingerprint);
+    },
     isCleanupApproved(path) {
       const a = this.approvedCleanups.get(pathComparisonKey(path));
       return !!a && !a.consumed;
@@ -576,41 +584,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     consumeCleanup(path) {
       const key = pathComparisonKey(path);
       const a = this.approvedCleanups.get(key);
-      if (a) this.approvedCleanups.set(key, { ...a, consumed: true });
+      if (a) {
+        this.trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
+        this.approvedCleanups.set(key, { ...a, consumed: true });
+      }
     },
     async forceCleanup(path, reason) {
-      // P1（审计）：无宿主持久化 → 直接拒绝。forceCleanup 的审计必须落盘（addAsync 只在
-      // 未注入 persistence 时静默写内存）——内存审计进程退出即丢，等同无审计强制删除。
-      if (!this.collector.hasPersistence()) {
-        throw new Error('forceCleanup 需要宿主持久化（EvidenceStore）——无持久化不可执行强制清理');
-      }
-      // P1（审计）：reason 必须提供并**持久化审计**（写宿主证据，capturedBy=host）。
-      if (!reason || !reason.trim()) {
-        throw new Error('forceCleanup 必须提供 reason（审计要求）');
-      }
-      const normalizedPath = normalizeAbsolutePath(path);
-      const key = pathComparisonKey(path);
-      // 与正常确认门共用互斥锁，防并发清理同一 worktree
-      if (this.confirmCleanupInFlight.has(key)) return false;
-      this.confirmCleanupInFlight.add(key);
-      try {
-        // P1（审计）：审计落盘失败 → 直接拒绝 forceCleanup，不得继续删除 worktree
-        //（高风险操作必须有可靠审计记录；addAsync 落盘失败会 throw）。
-        await this.collector.addAsync({
-          orchestrationId: 'host',
-          stageId: 'force-cleanup',
-          worktreePath: normalizedPath,
-          kind: 'path-policy',
-          status: 'failed',
-          summary: `forceCleanup: ${reason}`,
-        });
-        const info = manager.getByPath(path);
-        if (!info) throw new Error('forceCleanup 的 worktree 未登记');
-        const cleaned = await manager.cleanup(info.id, { confirm: true });
-        return cleaned;
-      } finally {
-        this.confirmCleanupInFlight.delete(key);
-      }
+      void path;
+      void reason;
+      throw new Error('legacy forceCleanup 已禁用：破坏性清理必须通过 TaskGraph Worker fingerprint gate');
     },
     async confirmAndCleanup(path, signal, expectedFingerprint) {
       // P1（审计）：宿主级互斥锁——同一 worktree 的确认清理串行，防并发窗口；
@@ -624,9 +606,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
         if (!expectedFingerprint?.trim()
+          || !this.trustedCleanupBindings.has(expectedFingerprint)
           || cleanupBindingFingerprint(approval) !== expectedFingerprint
           || approval.taskStatus !== 'succeeded'
           || approval.cleanupStatus !== 'active'
+          || approval.branchRevisionRequired !== true
           || typeof approval.attempt !== 'number'
           || !Number.isSafeInteger(approval.attempt)
           || approval.attempt < 1) return false;
@@ -651,15 +635,21 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           pathComparisonKey(acc.worktreePath) === key;
         const revOk = info?.baseRevision === approval.baseRevision;
         const branchRevisionOk = !approval.branchRevisionRequired
-          || (!!approval.branchRevision && info?.branchRevision === approval.branchRevision);
+          || (info?.status === 'created'
+            ? !!approval.branchRevision
+            : !!approval.branchRevision && info?.branchRevision === approval.branchRevision);
         if (!branchRevisionOk) return false;
-        if (approval.branchRevisionRequired) {
+        if (approval.branchRevisionRequired && info?.status === 'created') {
           const liveBranchRevision = await this.manager.getBranchRevision(approval.branch);
           if (liveBranchRevision !== approval.branchRevision) return false;
         }
         if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
           if (!accOk || !revOk) return false;
-          const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
+          const cleaned = await this.manager.cleanup(info.id, {
+            confirm: true,
+            signal,
+            branchRevision: approval.branchRevision,
+          });
           if (cleaned) {
             this.consumeCleanup(path);
             return true;
@@ -675,7 +665,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const sig2 = await this.computeWorktreeSignature(path);
         if (signal?.aborted) return false;
         if (sig2 !== approval.stateSignature) return false;
-        const cleaned = await this.manager.cleanup(info.id, { confirm: true, signal });
+        const cleaned = await this.manager.cleanup(info.id, {
+          confirm: true,
+          signal,
+          branchRevision: approval.branchRevision,
+        });
         if (cleaned) {
           this.consumeCleanup(path);
           return true;

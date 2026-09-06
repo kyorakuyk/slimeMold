@@ -63,6 +63,8 @@ describe('DevSession cleanup', () => {
       taskId: 'task-1',
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
       baseRevision: info!.baseRevision,
       stateSignature: 'sig-1',
       acceptanceId,
@@ -76,6 +78,7 @@ describe('DevSession cleanup', () => {
     await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('created');
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(fingerprint);
     await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
@@ -127,6 +130,56 @@ describe('DevSession cleanup', () => {
     expect(session.manager.get(replacement!.id)?.status).toBe('created');
   });
 
+  it('rejects cleanup when the live branch tip changes after approval', async () => {
+    let tip = TIP_OID;
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${tip}\n`);
+      return ok();
+    });
+    const session = initDevSession({ baseRepoPath: '/repo', gitRunner: { git } });
+    const info = await session.manager.create('worker-id', '/repo-workers/cas', { branch: 'worker/cas' });
+    expect(info).not.toBeNull();
+    session.computeWorktreeSignature = vi.fn(async () => 'sig-1');
+    const acceptanceId = session.nextAcceptanceId();
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      worktreePath: info!.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      attempt: 1,
+      baseRevision: info!.baseRevision,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
+    });
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(fingerprint);
+    tip = 'c'.repeat(40);
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
+    expect(session.manager.get(info!.id)?.status).toBe('created');
+  });
+
   it('consumes approval when cancellation arrives after destructive cleanup completes', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
@@ -158,6 +211,8 @@ describe('DevSession cleanup', () => {
       taskId: 'task-1',
       taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
       baseRevision: info!.baseRevision,
       stateSignature: 'sig-1',
       acceptanceId,
@@ -176,6 +231,7 @@ describe('DevSession cleanup', () => {
     });
 
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(fingerprint);
     await expect(session.confirmAndCleanup(info!.path, controller.signal, fingerprint)).resolves.toBe(true);
     expect(session.isCleanupApproved(info!.path)).toBe(false);
   });

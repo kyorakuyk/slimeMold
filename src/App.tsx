@@ -40,6 +40,7 @@ import {
 import {
   approveWorkerCleanupProposal,
   buildWorkerCleanupProposal,
+  cleanupBindingFingerprint,
 } from './projectControl/workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './projectControl/workerCleanupExecution';
 import { markWorkerTaskCleaned } from './projectControl/workerCleanupCommand';
@@ -261,9 +262,13 @@ export default function App() {
             const revision = await session.manager.getBranchRevision(branch);
             return revision ?? undefined;
           },
-          requireBranchRevision: true,
         })),
     );
+    for (const proposal of proposals) {
+      if (proposal.status === 'ready') {
+        session.registerTrustedCleanupBinding(cleanupBindingFingerprint(proposal));
+      }
+    }
     if (signal?.aborted) return;
     const latest = useWorkflowStore.getState();
     if (latest.projectId !== run.projectId) return;
@@ -729,6 +734,20 @@ export default function App() {
     const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
     if (!session) throw new Error('开发宿主不可用，Worker cleanup 未执行');
     assertProjectOperation(operation);
+    if (!proposal.branchRevisionRequired || !proposal.branchRevision) {
+      throw new Error(`Worker cleanup proposal 缺少强制 branch CAS：${runId}/${taskId}`);
+    }
+    if (isDurableBranchCleanup) {
+      if (proposal.branchRevision !== trustedTask.branchRevision) {
+        throw new Error(`Worker cleanup durable branch revision 已漂移：${runId}/${taskId}`);
+      }
+    } else {
+      const liveBranchRevision = await session.manager.getBranchRevision(trustedTask.branch);
+      if (liveBranchRevision !== proposal.branchRevision) {
+        throw new Error(`Worker cleanup live branch revision 已漂移：${runId}/${taskId}`);
+      }
+    }
+    session.registerTrustedCleanupBinding(cleanupBindingFingerprint(proposal));
 
     const persistCleanupState = async (
       nextRuns: WorkerRunQueueState[],

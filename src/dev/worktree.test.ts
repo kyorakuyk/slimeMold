@@ -280,7 +280,10 @@ describe('H4 WorktreeManager（fake git runner）', () => {
 
     expect(await m.cleanup('t1', { confirm: true })).toBe(false);
     expect(m.get('t1')?.status).toBe('orphaned');
-    expect(await m.cleanup('t1', { confirm: true })).toBe(true);
+    expect(await m.cleanup('t1', {
+      confirm: true,
+      branchRevision: m.get('t1')?.branchRevision,
+    })).toBe(true);
     expect(m.get('t1')?.status).toBe('cleaned');
     expect(removeCalls).toBe(1);
     expect(branchCalls).toBe(2);
@@ -364,7 +367,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
 
     await expect(m.restore(info)).resolves.toBe(true);
     expect(m.get(info.id)).toEqual(expect.objectContaining({ status: 'orphaned', branchRevision: TIP_OID }));
-    await expect(m.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    await expect(m.cleanup(info.id, { confirm: true, branchRevision: info.branchRevision })).resolves.toBe(true);
     expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'list')).toBe(false);
     expect(calls).toContainEqual(['update-ref', '-d', 'refs/heads/worker/orphan-1', TIP_OID]);
   });

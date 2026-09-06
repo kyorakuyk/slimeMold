@@ -25,6 +25,7 @@ function run(): WorkerRunQueueState {
         worktreeId: 'wt-1',
         worktreePath: 'C:/project-workers/run-1/task-1',
         branch: 'worker/task-1',
+        branchRevision: 'a'.repeat(40),
         baseRevision: 'abc123',
         worktreeStatus: 'created',
         updatedAt: '2026-09-01T00:01:00.000Z',
@@ -70,6 +71,8 @@ describe('worker cleanup proposal', () => {
       attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       worktreeId: 'wt-1',
       branch: 'worker/task-1',
+      branchRevision: 'a'.repeat(40),
+      branchRevisionRequired: true,
       worktreePath: 'C:/project-workers/run-1/task-1',
       baseRevision: 'abc123',
       stateSignature: 'sig-1',
@@ -184,6 +187,7 @@ describe('worker cleanup proposal', () => {
     const task = {
       ...run().tasks['task-1'],
       worktreeStatus: 'orphaned' as const,
+      branchRevision: undefined,
       cleanupStateSignature: 'sig-before-removal',
     };
 

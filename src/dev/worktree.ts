@@ -283,10 +283,15 @@ export class WorktreeManager {
     }
   }
 
-  private async cleanupCreated(info: WorktreeInfo, signal?: AbortSignal): Promise<boolean> {
+  private async cleanupCreated(
+    info: WorktreeInfo,
+    signal?: AbortSignal,
+    expectedBranchRevision?: string,
+  ): Promise<boolean> {
     if (signal?.aborted) return false;
-    const branchRevision = await this.readBranchRevision(info.branch);
+    const branchRevision = expectedBranchRevision ?? await this.readBranchRevision(info.branch);
     if (!branchRevision) return false;
+    if (expectedBranchRevision && await this.readBranchRevision(info.branch) !== expectedBranchRevision) return false;
     if (signal?.aborted) return false;
     let rm: CommandResult;
     try {
@@ -309,7 +314,10 @@ export class WorktreeManager {
    * `git worktree remove --force` 会丢弃未提交改动，未确认一律拒绝清理（返回 false）。
    * 失败返回 false（保留现场供回放）。
    */
-  async cleanup(id: string, opts: { confirm?: boolean; signal?: AbortSignal } = {}): Promise<boolean> {
+  async cleanup(
+    id: string,
+    opts: { confirm?: boolean; signal?: AbortSignal; branchRevision?: string } = {},
+  ): Promise<boolean> {
     const info = this.infos.get(id);
     if (!info || info.status === 'cleaned') return false;
     if (!opts.confirm) return false; // 确认门：未确认拒绝清理（防误删未提交改动）
@@ -317,6 +325,7 @@ export class WorktreeManager {
     if (info.status === 'registration-pending') return true;
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
+      if (opts.branchRevision !== info.branchRevision) return false;
       if (opts.signal?.aborted) return false;
       const currentRevision = await this.readBranchRevision(info.branch);
       if (opts.signal?.aborted) return false;
@@ -326,6 +335,6 @@ export class WorktreeManager {
       return true;
     }
     // remove 已经发生后必须完成分支收尾，不能因取消留下假 created 状态。
-    return this.cleanupCreated(info, opts.signal);
+    return this.cleanupCreated(info, opts.signal, opts.branchRevision);
   }
 }

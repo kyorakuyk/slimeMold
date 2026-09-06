@@ -131,7 +131,25 @@ describe('worker run consistency audit', () => {
       events,
       evidence: [stageBoundEvidence],
       acceptances: [stageBoundAcceptance],
+      taskGraphs: [trustedGraph],
     })).toMatchObject({ ok: true, issues: [] });
+  });
+
+  it('rejects an explicit persisted stage when no trusted TaskGraph is supplied', () => {
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [{
+        ...run,
+        tasks: { 'task-1': { ...run.tasks['task-1'], acceptanceStageId: 'attacker-stage' } },
+      }],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'acceptance-lineage-drift' }),
+    ]));
   });
 
   it('uses trusted TaskGraph stage for legacy data and rejects explicit stage drift', () => {
@@ -156,6 +174,14 @@ describe('worker run consistency audit', () => {
     expect(auditWorkerRunConsistency({ ...common, runs: [driftedRun] })).toMatchObject({
       ok: false,
       issues: expect.arrayContaining([expect.objectContaining({ code: 'acceptance-lineage-drift' })]),
+    });
+    expect(auditWorkerRunConsistency({
+      ...common,
+      runs: [run],
+      taskGraphs: [{ ...trustedGraph, graphVersion: 2 }],
+    })).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'task-graph-version-drift' })]),
     });
   });
 

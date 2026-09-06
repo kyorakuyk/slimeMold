@@ -1,23 +1,21 @@
 /**
- * H4 GUI 开发会话面板（Phase 1）：展示 DevSession 状态（worktree / 证据 / 验收 / 审批），
- * 并提供 approveCleanup（正常确认门）与 forceCleanup（高风险，必须填 reason）的 GUI 入口。
+ * H4 GUI 开发会话面板（Phase 1）：只读展示 DevSession 状态（worktree / 证据 / 验收 / 审批）。
+ * 破坏性 Cleanup 统一从 TaskGraph-backed Worker proposal/action 入口执行。
  *
  * 安全边界：
  * - 仅 Tauri + 已初始化 DevSession 时渲染内容；否则提示不可用；
- * - approveCleanup：确认后调 session.approveCleanup（绑定验收+签名+基线），再 confirmAndCleanup
- *   （宿主原子确认门——内部二次校验验收三元组/签名/基线，清理成功才消费审批）；
- * - forceCleanup：必须填写 reason，经宿主 forceCleanup（要求宿主持久化，无则拒绝；
- *   审计落盘失败也拒绝清理）；UI 二次确认。
+ * - 破坏性清理不从此面板发起，避免 legacy direct path 绕过 WorkerQueue lineage/fingerprint；
+ * - 面板仅展示状态，用户从 Worker Task proposal/action 完成审批与 CleanupReceipt。
  */
-import { useCallback, useEffect, useState } from 'react';
-import { GitBranch, FileText, ShieldCheck, ShieldAlert, Trash2, Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { GitBranch, FileText, ShieldCheck } from 'lucide-react';
 import { getDevSession } from '../dev/session';
-import { isTauri, confirmDialog, alertDialog } from '../platform/env';
+import { isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getDevGuiStatus } from '../dev/gui';
 import type { WorktreeInfo } from '../dev/worktree';
 import type { AcceptanceRecord } from '../dev/session';
-import { pathComparisonKey } from '../dev/path-utils';
+
 
 interface SessionSnapshot {
   worktrees: WorktreeInfo[];
@@ -40,8 +38,7 @@ function snapshot(): SessionSnapshot {
 
 export function DevSessionPanel() {
   const [snap, setSnap] = useState<SessionSnapshot>(snapshot);
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
+
   // 画布节点状态变化时刷新面板（dev.* 节点执行后 worktree/验收会变）
   const nodeTick = useWorkflowStore((s) => s.nodes.map((n) => `${n.id}:${n.data.status}`).join('|'));
   useEffect(() => {
@@ -61,88 +58,6 @@ export function DevSessionPanel() {
     );
   }
 
-  const approve = useCallback(async (wt: WorktreeInfo) => {
-    const s = getDevSession();
-    if (!s) return;
-    // 正常确认门要求绑定「本 worktree 最新通过验收」：找不到 → 拒绝审批（fail-closed）
-    const passed = [...s.acceptanceStore.values()]
-      .filter((a) => a.passed && pathComparisonKey(a.worktreePath) === pathComparisonKey(wt.path))
-      .sort((a, b) => b.at.localeCompare(a.at))[0];
-    if (!passed) {
-      await alertDialog(`worktree「${wt.path}」没有通过验收记录——拒绝批准清理（保留供审查）。`);
-      return;
-    }
-    const ok = await confirmDialog(
-      `批准清理 worktree「${wt.path}」？\n将绑定验收 ${passed.acceptanceId} + 状态签名 + 基线一致，全部通过才会删除。`,
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      if (wt.status === 'registration-pending' || wt.status === 'orphaned') {
-        if (!s.isCleanupApproved(wt.path)) {
-          await alertDialog(`worktree「${wt.path}」没有可复用的未消费清理批准——拒绝重试。`);
-          return;
-        }
-        const cleaned = await s.confirmAndCleanup(wt.path);
-        if (cleaned) await alertDialog(`已完成遗留清理：${wt.path}`);
-        else await alertDialog(`遗留清理被宿主拒绝：${wt.path}`);
-        return;
-      }
-      const sig = await s.computeWorktreeSignature(wt.path);
-      s.approveCleanup(wt.path, {
-        worktreeId: wt.id,
-        branch: wt.branch,
-        runId: passed.runId,
-        taskId: passed.taskId,
-        taskExecutionId: passed.taskExecutionId,
-        attemptId: passed.attemptId,
-        acceptanceId: passed.acceptanceId,
-        orchestrationId: passed.orchestrationId,
-        stageId: passed.stageId,
-        stateSignature: sig,
-        baseRevision: wt.baseRevision,
-      });
-      const cleaned = await s.confirmAndCleanup(wt.path);
-      if (cleaned) await alertDialog(`已清理 worktree：${wt.path}`);
-      else await alertDialog(`清理被拒绝（验收/签名/基线任一不满足）：${wt.path}`);
-    } finally {
-      setBusy(false);
-      setSnap(snapshot());
-    }
-  }, []);
-
-  const force = useCallback(async (wt: WorktreeInfo) => {
-    const s = getDevSession();
-    if (!s) return;
-    if (!s.collector.hasPersistence()) {
-      await alertDialog('强制清理需要宿主持久化（EvidenceStore）——当前会话无持久化，拒绝执行。');
-      return;
-    }
-    const r = reason.trim();
-    if (!r) {
-      await alertDialog('强制清理必须填写 reason（审计要求）。');
-      return;
-    }
-    const ok = await confirmDialog(
-      `⚠ 强制清理会丢弃 worktree「${wt.path}」所有未提交改动！\nreason：${r}\n审计将落盘。确认执行？`,
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const cleaned = await s.forceCleanup(wt.path, r);
-      if (cleaned) {
-        setReason('');
-        await alertDialog(`已强制清理 worktree：${wt.path}`);
-      } else {
-        await alertDialog(`强制清理失败（审计落盘失败或已被清理）：${wt.path}`);
-      }
-    } catch (e) {
-      await alertDialog(`强制清理被拒绝：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
-      setSnap(snapshot());
-    }
-  }, [reason]);
 
   if (!isReady) {
     return (
@@ -192,43 +107,12 @@ export function DevSessionPanel() {
                     <span style={{ color: 'var(--sm-ok)' }}>· 已批准</span>
                   )}
                 </div>
-                <div className="mt-1.5 flex gap-1.5">
-                  <button
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-green-500/15"
-                    style={{ color: 'var(--sm-ok)', border: '1px solid var(--sm-line)' }}
-                    disabled={busy}
-                    onClick={() => approve(wt)}
-                  >
-                    <Check size={11} /> 批准并清理
-                  </button>
-                  <button
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-red-500/15"
-                    style={{ color: 'var(--sm-err)', border: '1px solid var(--sm-line)' }}
-                    disabled={busy}
-                    onClick={() => force(wt)}
-                  >
-                    <Trash2 size={11} /> 强制清理
-                  </button>
-                </div>
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      <div>
-        <div className="mb-1 flex items-center gap-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
-          <ShieldAlert size={12} /> 强制清理 reason（审计必填）
-        </div>
-        <textarea
-          className="w-full rounded border p-1.5 text-[11px] outline-none"
-          style={{ borderColor: 'var(--sm-line)', background: 'var(--sm-bg-soft)', color: 'var(--sm-ink)' }}
-          rows={2}
-          placeholder="例：测试工作区验收通过，人工确认丢弃临时改动"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        />
-      </div>
 
       <div>
         <div className="mb-1 flex items-center gap-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
