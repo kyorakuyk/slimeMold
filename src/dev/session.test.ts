@@ -4,6 +4,7 @@ import { createHostAcceptanceStoreWithFs, initDevSession, resetDevSession } from
 import type { AcceptanceRecord, AcceptancePersistence } from './session';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
+import type { WorkerCleanupProposalReady } from '../projectControl/workerCleanup';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async () => {
@@ -16,6 +17,13 @@ function ok(stdout = ''): CommandResult {
 }
 
 const TIP_OID = 'b'.repeat(40);
+
+function trustedProposal(session: ReturnType<typeof initDevSession>, path: string): WorkerCleanupProposalReady {
+  return {
+    status: 'ready',
+    ...session.getCleanupApproval(path),
+  } as WorkerCleanupProposalReady;
+}
 
 describe('DevSession cleanup', () => {
   afterEach(() => {
@@ -78,7 +86,7 @@ describe('DevSession cleanup', () => {
     await expect(session.confirmAndCleanup(info!.path)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('created');
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
-    session.registerTrustedCleanupBinding(fingerprint);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
     await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(true);
     expect(calls).toContainEqual(['worktree', 'remove', '--force', info!.path]);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
@@ -174,7 +182,7 @@ describe('DevSession cleanup', () => {
       cleanupStatus: 'active',
     });
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
-    session.registerTrustedCleanupBinding(fingerprint);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
     tip = 'c'.repeat(40);
     await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('created');
@@ -231,7 +239,7 @@ describe('DevSession cleanup', () => {
     });
 
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
-    session.registerTrustedCleanupBinding(fingerprint);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
     await expect(session.confirmAndCleanup(info!.path, controller.signal, fingerprint)).resolves.toBe(true);
     expect(session.isCleanupApproved(info!.path)).toBe(false);
   });

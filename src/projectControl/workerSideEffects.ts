@@ -213,6 +213,18 @@ function legacyInputHashFor(lease: WorkerTaskLease): string {
 
 function assertRecoverableWorkerEffect(effect: SideEffectRecord, runId: string): void {
   if (
+    effect.kind === 'worktree-cleanup'
+    && effect.status === 'unknown'
+    && effect.recovery === 'needs-user'
+    && effect.runId === runId
+    && effect.taskId
+    && effect.taskExecutionId
+    && effect.attemptId
+    && effect.target
+  ) {
+    return;
+  }
+  if (
     effect.kind !== 'worker-execution'
     || effect.runId !== runId
     || !effect.taskId
@@ -535,7 +547,9 @@ function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunR
     }
 
   }
+  const hasCleanupRecovery = candidates.some((effect) => effect.kind === 'worktree-cleanup');
   const allowedDecisions = (['inspect', 'retry', 'skip'] as const)
+    .filter((decision) => !(hasCleanupRecovery && decision === 'retry'))
     .filter((decision) => plan.allowedDecisions.includes(decision));
   if (allowedDecisions.length === 0) throw new Error(`恢复计划没有合法决策：${runId}`);
   return {
@@ -580,6 +594,9 @@ export function applyWorkerRunRecoveryDecision(input: {
     throw new Error(`恢复计划 runId 与 Worker Run 不一致：${plan.runId}`);
   }
   const applied = decideWorkerRunRecovery(plan, input.decision, input.reason);
+  if (applied.decision === 'retry' && plan.recoverableEffects?.some((effect) => effect.kind === 'worktree-cleanup')) {
+    throw new Error('未知 Cleanup 副作用必须先人工核对，不能直接 retry Worker');
+  }
   if (applied.decision === 'inspect') return { ...input.state, tasks: { ...input.state.tasks } };
 
   const recoverableEffects = plan.recoverableEffects ?? [];

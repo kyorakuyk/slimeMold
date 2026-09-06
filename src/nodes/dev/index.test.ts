@@ -101,6 +101,7 @@ function fakeSession(opts: {
   );
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
   let accSeq = 0;
+  const trustedCleanupBindings = new Set<string>();
   const session: DevSession = {
     policy: defaultDevPolicy,
     manager,
@@ -109,7 +110,7 @@ function fakeSession(opts: {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
-    trustedCleanupBindings: new Set(),
+
     confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
@@ -151,8 +152,8 @@ function fakeSession(opts: {
         consumed: false,
       });
     },
-    registerTrustedCleanupBinding(fingerprint) {
-      this.trustedCleanupBindings.add(fingerprint);
+    registerTrustedCleanupBinding(proposal) {
+      trustedCleanupBindings.add(cleanupBindingFingerprint(proposal));
     },
     isCleanupApproved(path) {
       const a = this.approvedCleanups.get(norm(path));
@@ -198,7 +199,7 @@ function fakeSession(opts: {
         const approval = this.approvedCleanups.get(key);
         const info = manager.get(path);
         if (!approval || approval.consumed) return false;
-        if (!expectedFingerprint || !this.trustedCleanupBindings.has(expectedFingerprint)) return false;
+        if (!expectedFingerprint || !trustedCleanupBindings.has(expectedFingerprint)) return false;
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return false;
         const acc = this.acceptanceStore.get(approval.acceptanceId);
         const accOk =
@@ -709,7 +710,10 @@ describe('H4 dev nodes', () => {
     // 三绑定审批
     await approveFull(session, '/repo-workers/m1', { orchestrationId: 'o', stageId: 's' });
     const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval('/repo-workers/m1')!);
-    session.registerTrustedCleanupBinding(fingerprint);
+    session.registerTrustedCleanupBinding({
+      status: 'ready',
+      ...session.getCleanupApproval('/repo-workers/m1'),
+    } as never);
     // 模拟并发：先占用锁
     session.confirmCleanupInFlight.add('/repo-workers/m1');
     const blocked = await session.confirmAndCleanup('/repo-workers/m1');

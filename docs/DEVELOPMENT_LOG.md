@@ -2253,6 +2253,23 @@ Issue 工作台采用四个面板：
 
 本轮最终控制面 checkpoint：`b3ca0910dcd29946c5eaa77c3f94cf96166bfe78`，仍为本地 `unverified`，不 push；必须针对该最终提交重新运行独立 reviewer，不能迁移旧 verdict。
 
+### 7.87 Tauri mutation gate、Receipt reconciliation 与 Cleanup recovery
+
+- 针对最终 reviewer 发现的 public `dev_exec` mutation bypass，通用 Tauri `dev_exec` 不再允许已登记 Worker 的 `git worktree remove` 或 `git update-ref -d`；pending rollback 仍仅在短生命周期 lease 内允许。正常 Worker Cleanup 通过专用 `dev_cleanup_worktree` atomic host command，携带 approved branch revision，并由 Rust 侧再次校验受控 Worker path/branch/session。
+- startup 加载 side-effect journal 后，成功 CleanupReceipt 会在 ProjectFile/事件事实缺失时执行严格 lineage read-back reconciliation，补写 `TaskCleaned` 与 cleaned state；unknown/needs-user Cleanup 写入 `cleanup-unknown` Worker recovery 并抑制 proposals。
+- audit/restore 失败、TaskGraph restore 失败和 stale run refresh 都清除旧 Cleanup proposals；recovery planner 支持 Cleanup unknown 的 inspect/skip 路径，禁止直接 retry 未知破坏性副作用。trusted cleanup binding 改为 session closure + proposal/approval matching，不再暴露可直接写入的 public Set。
+
+本轮最终验证结果：
+
+- `npm run test`：109 个测试文件、990 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过（保留既有 dynamic/static import 与大 chunk warning）；
+- `npm run i18n:check`：991 keys 对齐；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：43 个 Rust 测试通过；
+- `git diff --check`：通过。
+
+本轮仍为本地 `unverified`，不 push；必须针对最终提交重新运行独立 reviewer，不能迁移旧 verdict。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

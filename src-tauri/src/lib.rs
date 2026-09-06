@@ -1182,9 +1182,9 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             }
             match args[2].as_str() {
                 "add" => true,
-                "remove" => args.last().is_some_and(|target| {
-                    registered_worker_target(path, target) || pending_worker_target(path, target)
-                }),
+                "remove" => args
+                    .last()
+                    .is_some_and(|target| pending_worker_target(path, target)),
                 "lock" | "unlock" => args
                     .last()
                     .is_some_and(|target| registered_worker_target(path, target)),
@@ -1209,8 +1209,7 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
                 return false;
             };
-            is_full_object_id(&args[4])
-                && (registered_worker_branch(path, branch) || pending_worker_branch(path, branch))
+            is_full_object_id(&args[4]) && pending_worker_branch(path, branch)
         });
     }
     dev_main_repo_git_allowed(args)
@@ -1951,6 +1950,89 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Atomic Worker cleanup used after the JS TaskGraph/fingerprint gate.
+/// Generic dev_exec deliberately cannot run `worktree remove` or `update-ref -d`.
+#[tauri::command]
+fn dev_cleanup_worktree(
+    path: String,
+    branch: String,
+    branch_revision: String,
+    generation: u64,
+) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_cleanup_worktree")?;
+    if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
+        return Err("dev_cleanup_worktree: branch 或 revision 无效".into());
+    }
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_cleanup_worktree: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    let c = canon.to_string_lossy().to_string();
+    if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+        return Err("dev_cleanup_worktree: 路径/分支不属于受控 Worker 根".into());
+    }
+    {
+        let state = DEV_STATE.lock().unwrap();
+        if !state
+            .worktrees
+            .iter()
+            .any(|item| path_compare_key(item) == path_compare_key(&c))
+        {
+            return Err("dev_cleanup_worktree: worktree 未被当前 host 登记".into());
+        }
+        if state
+            .pending_worktrees
+            .iter()
+            .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
+        {
+            return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
+        }
+    }
+    if git_worktree_is_listed(&base_path, &canon)? {
+        let mut remove = Command::new(resolve_dev_program("git"));
+        remove
+            .current_dir(&base_path)
+            .args(["worktree", "remove", "--force"]);
+        remove.arg(&canon);
+        apply_dev_env(&mut remove);
+        let result = run_with_timeout(&mut remove, Duration::from_secs(30))?;
+        if result.code != 0 {
+            return Err(format!(
+                "dev_cleanup_worktree: worktree remove 失败：{}",
+                result.stderr
+            ));
+        }
+    }
+    let mut delete = Command::new(resolve_dev_program("git"));
+    delete
+        .current_dir(&base_path)
+        .args(["update-ref", "-d"])
+        .arg(format!("refs/heads/{branch}"))
+        .arg(&branch_revision);
+    apply_dev_env(&mut delete);
+    let result = run_with_timeout(&mut delete, Duration::from_secs(30))?;
+    if result.code != 0 {
+        return Err(format!(
+            "dev_cleanup_worktree: branch CAS 删除失败：{}",
+            result.stderr
+        ));
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        return Err("dev_cleanup_worktree: session 在清理后发生变化".into());
+    }
+    state
+        .worktrees
+        .retain(|item| path_compare_key(item) != path_compare_key(&c));
+    Ok(())
+}
+
 /// 注销 worktree（前端清理成功后调用）。
 #[tauri::command]
 fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> {
@@ -2281,6 +2363,7 @@ pub fn run() {
             dev_init_session,
             dev_clear_session,
             dev_register_worktree,
+            dev_cleanup_worktree,
             dev_unregister_worktree,
             dev_read_file,
             dev_create_dir,
@@ -2665,6 +2748,26 @@ mod dev_exec_tests {
         // 只读 git / worktree 生命周期管理 → 放行
         assert!(dev_exec_allowed(&main, &sv(&["git", "rev-parse", "HEAD"])));
         assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "list"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&[
+                "git",
+                "worktree",
+                "remove",
+                "--force",
+                "C:/repo-workers/task-1"
+            ])
+        ));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&[
+                "git",
+                "update-ref",
+                "-d",
+                "refs/heads/worker/task-1",
+                &"a".repeat(40)
+            ])
+        ));
         assert!(!dev_exec_allowed(
             &main,
             &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])

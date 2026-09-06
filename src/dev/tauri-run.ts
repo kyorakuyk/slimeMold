@@ -61,6 +61,25 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
         };
       }
     },
+    cleanupWorktree: async (path, branch, branchRevision, cwd) => {
+      try {
+        await call<void>('dev_cleanup_worktree', {
+          path,
+          branch,
+          branchRevision,
+          cwd,
+          generation: sessionGeneration,
+        });
+        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+      } catch (e) {
+        return {
+          exitCode: -1,
+          stdout: '',
+          stderr: e instanceof Error ? e.message : String(e),
+          durationMs: 0,
+        };
+      }
+    },
   };
 }
 

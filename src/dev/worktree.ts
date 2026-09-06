@@ -12,6 +12,8 @@ import { WORKER_IDENTITY_MAX_LENGTH } from '../domain/execution';
 
 export interface DevGitRunner {
   git(args: string[], cwd: string): Promise<CommandResult>;
+  /** Atomic host cleanup path used by Tauri after the JS proposal gate. */
+  cleanupWorktree?(path: string, branch: string, branchRevision: string, cwd: string): Promise<CommandResult>;
 }
 
 /** Node/headless git runner：直接调系统 git。 */
@@ -293,6 +295,20 @@ export class WorktreeManager {
     if (!branchRevision) return false;
     if (expectedBranchRevision && await this.readBranchRevision(info.branch) !== expectedBranchRevision) return false;
     if (signal?.aborted) return false;
+    if (expectedBranchRevision && this.runner.cleanupWorktree) {
+      const cleanup = await this.runner.cleanupWorktree(
+        info.path,
+        info.branch,
+        expectedBranchRevision,
+        this.baseRepoPath,
+      );
+      if (cleanup.exitCode !== 0) {
+        this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
+        return false;
+      }
+      this.infos.set(info.id, { ...info, branchRevision, status: 'cleaned' });
+      return true;
+    }
     let rm: CommandResult;
     try {
       rm = await this.runner.git(['worktree', 'remove', '--force', info.path], this.baseRepoPath);
@@ -330,6 +346,17 @@ export class WorktreeManager {
       const currentRevision = await this.readBranchRevision(info.branch);
       if (opts.signal?.aborted) return false;
       if (currentRevision !== info.branchRevision) return false;
+      if (this.runner.cleanupWorktree) {
+        const cleanup = await this.runner.cleanupWorktree(
+          info.path,
+          info.branch,
+          info.branchRevision,
+          this.baseRepoPath,
+        );
+        if (cleanup.exitCode !== 0) return false;
+        this.infos.set(id, { ...info, status: 'cleaned' });
+        return true;
+      }
       if (!(await this.deleteBranchAtRevision(info.branch, info.branchRevision))) return false;
       this.infos.set(id, { ...info, status: 'cleaned' });
       return true;

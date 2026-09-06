@@ -40,7 +40,6 @@ import {
 import {
   approveWorkerCleanupProposal,
   buildWorkerCleanupProposal,
-  cleanupBindingFingerprint,
 } from './projectControl/workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './projectControl/workerCleanupExecution';
 import { markWorkerTaskCleaned } from './projectControl/workerCleanupCommand';
@@ -51,7 +50,7 @@ import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunO
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
 import type { AcceptanceRecord } from './dev/session';
-import type { DomainProjection } from './domain/contracts';
+import type { DomainProjection, SideEffectRecord } from './domain/contracts';
 import { createAttemptId, createTaskExecutionId } from './domain/execution';
 import { EventStreamRepository } from './domain/eventStore';
 import {
@@ -62,6 +61,61 @@ import {
 } from './projectControl/workerEvidence';
 
 registerBuiltins();
+
+function reconcileSuccessfulCleanupReceipts(
+  runs: readonly WorkerRunQueueState[],
+  effects: readonly SideEffectRecord[],
+): { runs: WorkerRunQueueState[]; events: ReturnType<typeof markWorkerTaskCleaned>['events'] } {
+  const nextRuns = [...runs];
+  const events: ReturnType<typeof markWorkerTaskCleaned>['events'] = [];
+  for (const run of runs) {
+    let nextRun = run;
+    for (const [taskId, task] of Object.entries(run.tasks)) {
+      if (task.cleanupStatus === 'cleaned' || !task.worktreePath || task.attempt < 1) continue;
+      const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(run.runId, taskId);
+      const attemptId = task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt);
+      const receipt = effects.find((entry) => (
+        entry.kind === 'worktree-cleanup'
+        && entry.idempotencyKey === `cleanup:${attemptId}`
+        && entry.status === 'receipt'
+        && entry.recovery === 'skip'
+        && entry.receipt?.outcome === 'succeeded'
+      ));
+      const stateSignature = receipt?.receipt?.outputHash;
+      if (!receipt || !stateSignature) continue;
+      try {
+        const reconciled = markWorkerTaskCleaned({
+          state: nextRun,
+          taskId,
+          receiptId: receipt.receipt?.receiptId ?? '',
+          taskExecutionId,
+          attemptId,
+          stateSignature,
+          receipt,
+          decisionId: `cleanup-reconcile:${receipt.receipt?.receiptId ?? attemptId}`,
+          now: receipt.receipt?.observedAt ?? new Date().toISOString(),
+        });
+        nextRun = reconciled.state;
+        events.push(...reconciled.events);
+      } catch {
+        // A receipt that does not match the current task is not trusted for migration.
+      }
+    }
+    const index = nextRuns.findIndex((item) => item.runId === run.runId);
+    if (index >= 0) nextRuns[index] = nextRun;
+  }
+  return { runs: nextRuns, events };
+}
+
+function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<string> {
+  return new Set(
+    effects
+      .filter((entry) => entry.kind === 'worktree-cleanup'
+        && (entry.status === 'unknown' || entry.recovery === 'needs-user')
+        && !!entry.runId)
+      .map((entry) => entry.runId as string),
+  );
+}
 
 /** 拆分视图：左右并排显示两个不同的工作流图，右侧边栏显示焦点节点信息 */
 function SplitCanvas({
@@ -237,8 +291,12 @@ export default function App() {
     if (signal?.aborted) return;
     const current = useWorkflowStore.getState();
     const persistedRun = current.workerRuns.find((item) => item.runId === runId);
-    if (!persistedRun) return;
-    if (current.workerRunRecoveries.some((item) => item.runId === runId)) return;
+    if (!persistedRun || current.workerRunRecoveries.some((item) => item.runId === runId)) {
+      current.setWorkerCleanupProposals(
+        current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
+      );
+      return;
+    }
     const run = getRestoredWorkerRunForCleanup({
       projectId: current.projectId ?? persistedRun.projectId,
       taskGraphs: current.projectControl.taskGraphs ?? [],
@@ -246,6 +304,9 @@ export default function App() {
     });
     if (!run) {
       current.addLog('warn', `Worker cleanup proposal 已抑制：Run ${runId} 未通过 TaskGraph restore`);
+      current.setWorkerCleanupProposals(
+        current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
+      );
       return;
     }
     const proposals = await Promise.all(
@@ -266,7 +327,7 @@ export default function App() {
     );
     for (const proposal of proposals) {
       if (proposal.status === 'ready') {
-        session.registerTrustedCleanupBinding(cleanupBindingFingerprint(proposal));
+        session.registerTrustedCleanupBinding(proposal);
       }
     }
     if (signal?.aborted) return;
@@ -394,12 +455,14 @@ export default function App() {
         );
       }
       if (!report.ok) {
+        current.setWorkerCleanupProposals([]);
         current.addLog(
           'warn',
           `Worker 事实源审计未通过：${report.issues.map((item) => item.message).join('；')}`,
         );
       }
       if (controlReport && !controlReport.ok) {
+        current.setWorkerCleanupProposals([]);
         current.addLog(
           'warn',
           `ProjectControl 事实审计未通过：${controlReport.issues.map((item) => item.message).join('；')}`,
@@ -599,8 +662,35 @@ export default function App() {
       if (signal?.aborted) return;
       const current = useWorkflowStore.getState();
       if (current.projectPath === projectPath) {
+        const mergedEffects = mergeWorkerSideEffects(current.workerRunSideEffects, effects);
+        const reconciled = reconcileSuccessfulCleanupReceipts(current.workerRuns, mergedEffects);
         current.setWorkerRunEvidence(mergeWorkerEvidence(current.workerRunEvidence, records));
-        current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, effects));
+        current.setWorkerRunSideEffects(mergedEffects);
+        if (reconciled.events.length > 0 && current.projectId) {
+          recordProjectEvents(current.projectId, reconciled.events);
+          current.setWorkerRuns(reconciled.runs);
+          current.setOrchestrations(
+            projectWorkerRunsOntoOrchestrations(current.orchestrations, reconciled.runs),
+          );
+          await current.saveProject({ projectId: current.projectId, projectPath, signal });
+        }
+        const cleanupUnknownRuns = cleanupUnknownRunIds(mergedEffects);
+        if (cleanupUnknownRuns.size > 0) {
+          current.setWorkerRunRecoveries([
+            ...current.workerRunRecoveries.filter((item) => !cleanupUnknownRuns.has(item.runId)),
+            ...current.workerRuns
+              .filter((run) => cleanupUnknownRuns.has(run.runId))
+              .map((run): WorkerRunRecovery => ({
+                runId: run.runId,
+                projectId: run.projectId,
+                reason: 'cleanup-unknown',
+                message: 'Cleanup 副作用为 unknown/needs-user，必须人工核对后才能继续。',
+              })),
+          ]);
+          current.setWorkerCleanupProposals(
+            current.workerCleanupProposals.filter((proposal) => !cleanupUnknownRuns.has(proposal.runId)),
+          );
+        }
       }
     } catch (cause) {
       if (signal?.aborted) return;
@@ -747,7 +837,7 @@ export default function App() {
         throw new Error(`Worker cleanup live branch revision 已漂移：${runId}/${taskId}`);
       }
     }
-    session.registerTrustedCleanupBinding(cleanupBindingFingerprint(proposal));
+    session.registerTrustedCleanupBinding(proposal);
 
     const persistCleanupState = async (
       nextRuns: WorkerRunQueueState[],
@@ -826,6 +916,18 @@ export default function App() {
       && useWorkflowStore.getState().projectPath === projectPath;
     if (sameProjectAtReceipt) current.setWorkerRunSideEffects(cleanupSideEffects);
     if (!cleanupResult.cleaned) {
+      current.setWorkerRunRecoveries([
+        ...current.workerRunRecoveries.filter((item) => item.runId !== runId),
+        {
+          runId,
+          projectId,
+          reason: 'cleanup-unknown',
+          message: 'Cleanup host gate rejected or drifted; side effect is unknown/needs-user.',
+        },
+      ]);
+      current.setWorkerCleanupProposals(
+        current.workerCleanupProposals.filter((item) => item.runId !== runId),
+      );
       const pendingRun = current.workerRuns.find((item) => item.runId === runId);
       const pendingInfo = session.manager.getByPath(proposal.worktreePath);
       if (!pendingRun || !pendingInfo) {

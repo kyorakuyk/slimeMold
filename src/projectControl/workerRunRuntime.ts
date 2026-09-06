@@ -17,7 +17,8 @@ export type WorkerRunRecoveryReason =
   | 'unfinished-worker-lease'
   | 'invalid-state'
   | 'event-stream-invalid'
-  | 'event-stream-drift';
+  | 'event-stream-drift'
+  | 'cleanup-unknown';
 
 export interface WorkerRunRecovery {
   runId: string;

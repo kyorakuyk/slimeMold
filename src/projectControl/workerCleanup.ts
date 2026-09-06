@@ -59,7 +59,7 @@ export interface BuildWorkerCleanupProposalInput {
 }
 
 export interface WorkerCleanupHost {
-  registerTrustedCleanupBinding?(fingerprint: string): void;
+  registerTrustedCleanupBinding?(proposal: WorkerCleanupProposalReady): void;
   approveCleanup(
     path: string,
     options: {

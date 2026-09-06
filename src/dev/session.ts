@@ -28,7 +28,10 @@ import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
-import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
+import {
+  cleanupBindingFingerprint,
+  type WorkerCleanupProposalReady,
+} from '../projectControl/workerCleanup';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -218,8 +221,7 @@ export interface DevSession {
   acceptanceStore: Map<string, AcceptanceRecord>;
   /** 宿主已批准清理的 worktree（P1：一次性、绑定 baseRevision/stateSignature/acceptanceId） */
   approvedCleanups: Map<string, CleanupApproval>;
-  /** 仅由 TaskGraph-restored Worker proposal 注册的破坏性 cleanup binding。 */
-  trustedCleanupBindings: Set<string>;
+
   /** 宿主级 per-worktree 清理互斥锁（P1：同一 worktree 的确认清理串行执行）。 */
   confirmCleanupInFlight: Set<string>;
   /** 登记一次宿主真实执行结果（三项作用域必填，缺失即拒绝）。 */
@@ -257,7 +259,7 @@ export interface DevSession {
       cleanupStatus?: 'active';
     },
   ): void;
-  registerTrustedCleanupBinding(fingerprint: string): void;
+  registerTrustedCleanupBinding(proposal: WorkerCleanupProposalReady): void;
   isCleanupApproved(path: string): boolean;
   /** 读取清理审批记录（cleanup 确认门校验绑定字段用）。 */
   getCleanupApproval(path: string): CleanupApproval | undefined;
@@ -348,6 +350,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     ? createNodeDevService(policy, tauriDeps!, registry, 'tauri')
     : createNodeDevService(policy, {}, registry);
   const collector = new EvidenceCollector(opts.persistence);
+  const trustedCleanupBindings = new Set<string>();
   // 未跟踪文件内容读取/路径解析：Tauri 下走 Rust 通道（node-run 在 GUI 被 shim 掉）。
   const readFileP = tauriDeps?.readFile ?? readTextFile;
   const resolveP = tauriDeps?.resolveInside ?? resolveInside;
@@ -450,7 +453,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     resultStore: new Map(),
     acceptanceStore: new Map(),
     approvedCleanups: new Map(),
-    trustedCleanupBindings: new Set(),
+
     confirmCleanupInFlight: new Set(),
     defs: [],
     registerResult(rec) {
@@ -570,9 +573,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         consumed: false,
       });
     },
-    registerTrustedCleanupBinding(fingerprint) {
-      if (!fingerprint.trim()) throw new Error('cleanup fingerprint 不能为空');
-      this.trustedCleanupBindings.add(fingerprint);
+    registerTrustedCleanupBinding(proposal) {
+      if (proposal.status !== 'ready') throw new Error('只有 ready Worker proposal 才能注册 cleanup binding');
+      const approval = this.approvedCleanups.get(pathComparisonKey(proposal.worktreePath));
+      if (!approval || approval.consumed
+        || cleanupBindingFingerprint(approval) !== cleanupBindingFingerprint(proposal)) {
+        throw new Error('cleanup binding 未匹配当前 host approval');
+      }
+      trustedCleanupBindings.add(cleanupBindingFingerprint(proposal));
     },
     isCleanupApproved(path) {
       const a = this.approvedCleanups.get(pathComparisonKey(path));
@@ -585,7 +593,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       const key = pathComparisonKey(path);
       const a = this.approvedCleanups.get(key);
       if (a) {
-        this.trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
+        trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
         this.approvedCleanups.set(key, { ...a, consumed: true });
       }
     },
@@ -606,7 +614,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         const info = this.manager.getByPath(path);
         if (!approval || approval.consumed) return false;
         if (!expectedFingerprint?.trim()
-          || !this.trustedCleanupBindings.has(expectedFingerprint)
+          || !trustedCleanupBindings.has(expectedFingerprint)
           || cleanupBindingFingerprint(approval) !== expectedFingerprint
           || approval.taskStatus !== 'succeeded'
           || approval.cleanupStatus !== 'active'
