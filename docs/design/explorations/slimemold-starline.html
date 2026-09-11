@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · starline mark study</title>
+  <style>
+    :root { color-scheme: light; --paper: #f5f4ed; --ivory: #faf9f5; --ink: #141413; --muted: #6d6b65; --line: #dedcd2; --mark: #b56f4f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--paper); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { max-width: 1220px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 28px; margin-bottom: 26px; }
+    h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -0.03em; }
+    h1 { margin: 0; font-size: 38px; line-height: 1.1; }
+    header p { max-width: 700px; margin: 10px 0 0; color: var(--muted); }
+    .eyebrow { margin-bottom: 9px; color: var(--mark); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .rule { height: 1px; margin-bottom: 22px; background: var(--line); }
+    .brief { max-width: 950px; margin: 0 0 26px; color: var(--muted); }
+    .brief strong { color: var(--ink); font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    article { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); }
+    .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 20px 20px 0; }
+    h2 { margin: 0; font-size: 23px; line-height: 1.2; }
+    .tag { color: var(--mark); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; white-space: nowrap; }
+    .previews { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 18px 20px 0; }
+    .preview { display: grid; place-items: center; min-height: 178px; padding: 20px; border-radius: 9px; }
+    .preview img { display: block; width: 138px; height: 138px; }
+    .light { background: #f5f4ed; }
+    .dark { background: #232321; }
+    .copy { min-height: 92px; padding: 16px 20px 0; color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 4px; color: var(--ink); font-weight: 600; }
+    .sizes { display: flex; align-items: end; gap: 10px; margin: 18px 20px 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 4px; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); }
+    .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); }
+    .notes strong { display: block; margin-bottom: 4px; color: var(--ink); font-weight: 600; }
+    @media (max-width: 980px) { body { padding: 28px; } header { display: block; } .grid { grid-template-columns: 1fr; } .copy { min-height: 0; } .notes { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><div class="eyebrow">SlimeMold · identity study 10</div><h1>Rounded line, living rhythm.</h1><p>这轮参考 Claude 的中心聚合和圆头线条，但不照搬它的星爆轮廓：SlimeMold 保留一个偏置的生长势，以及一两条较短的回收笔势。</p></div>
+      <div class="eyebrow">warm clay · controlled asymmetry · line core</div>
+    </header>
+    <div class="rule"></div>
+    <p class="brief"><strong>判断重点：</strong>远看先读到一个稳定的品牌符号，近看才发现线条长度、曲率和重量并不完全相同。没有节点、箭头、路径端点、方框、阴影或渐变；“自优化”只通过主方向与短暂回收来暗示。</p>
+    <section class="grid">
+      <article>
+        <div class="card-head"><h2>01 · Adaptive Spark</h2><span class="tag">strong fit</span></div>
+        <div class="previews"><div class="preview light"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" alt="Adaptive Spark on parchment"></div><div class="preview dark"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" alt="Adaptive Spark on dark"></div></div>
+        <div class="copy"><strong>最接近 Claude 式中心聚合</strong>线条有明显能量中心，但长短、角度和粗细都不完全规则；右上方向略有偏置，形成 SlimeMold 的生长性。</div>
+        <div class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:16px" alt="16px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:24px" alt="24px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:32px" alt="32px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:48px" alt="48px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:64px" alt="64px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:128px" alt="128px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-adaptive-spark.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>02 · Soft Burst</h2><span class="tag">quiet mark</span></div>
+        <div class="previews"><div class="preview light"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" alt="Soft Burst on parchment"></div><div class="preview dark"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" alt="Soft Burst on dark"></div></div>
+        <div class="copy"><strong>更安静、更接近成熟品牌</strong>减少一个方向的冲刺感，让整体更像经过控制的手绘符号；保留少量不规则笔势，不落入规则花朵。</div>
+        <div class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:16px" alt="16px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:24px" alt="24px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:32px" alt="32px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:48px" alt="48px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:64px" alt="64px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:128px" alt="128px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-soft-burst.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>03 · One Gesture</h2><span class="tag">small-size</span></div>
+        <div class="previews"><div class="preview light"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" alt="One Gesture on parchment"></div><div class="preview dark"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" alt="One Gesture on dark"></div></div>
+        <div class="copy"><strong>最像一笔完成的线性标志</strong>不追求完整星爆，而是用一条连续粗线和一个回收动作建立记忆；小尺寸稳定，但 Claude 式聚合感更弱。</div>
+        <div class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:16px" alt="16px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:24px" alt="24px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:32px" alt="32px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:48px" alt="48px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:64px" alt="64px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:128px" alt="128px"></div><div class="size"><img src="../../src-tauri/icons/concepts/round-10-starline/slimemold-one-gesture.svg" style="--size:256px" alt="256px"></div></div>
+      </article>
+    </section>
+    <section class="notes"><div><strong>借鉴 Claude 的是</strong>中心聚合、圆头粗线、暖色单色、整体平衡与局部不规则。</div><div><strong>不复制 Claude 的是</strong>具体星爆轮廓、线条数量、角度分布和标志比例；SlimeMold 采用偏置生长与回收笔势。</div></section>
+  </main>
+</body>
+</html>

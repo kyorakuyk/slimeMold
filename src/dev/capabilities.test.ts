@@ -124,6 +124,19 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['find', 'src/orchestrator', '-name', '*.ts'],
       // grep 越权：首参是 pattern，后续文件路径参数走守卫
       ['grep', 'secret', 'src/orchestrator/run.ts'],
+      ['find', '.', '-delete'],
+      ['find', '.', '-exec', 'echo', '{}', ';'],
+      ['grep', '-R', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--recursive', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--directories=recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-d', 'recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--file=/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-f/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--file=C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from=C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
@@ -150,6 +163,32 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(t2.exitCode).toBe(-1);
   });
 
+  it('grep 外部文件选项在允许 pattern 下也不会调用 runner', async () => {
+    let calls = 0;
+    const svc = createNodeDevService(
+      defaultDevPolicy,
+      {
+        ...fakeDeps,
+        runCommand: async () => {
+          calls += 1;
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+        },
+      },
+      registry,
+    );
+    for (const cmd of [
+      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--file', 'C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--exclude-from', 'C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
+    ]) {
+      const result = await svc.shellRun(cmd, ctx);
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toMatch(/白名单|路径参数越权/);
+    }
+    expect(calls).toBe(0);
+  });
+
   it('codePatch：受控 diff 落盘 + contentHash；白名单外命令拒绝', async () => {
     const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const patch = '--- a\n+++ b\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
@@ -163,6 +202,22 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(rm.stderr).toContain('白名单');
   });
 
+  it('codePatch：识别 Tauri missing-file 字符串，但不吞权限错误', async () => {
+    const patch = '--- a\n+++ b\n@@ -0,0 +1 @@\n+created\n';
+    const missingDeps = { ...fakeDeps, readFile: async () => { throw 'dev_read_file: 文件不存在'; } };
+    const missing = await createNodeDevService(defaultDevPolicy, missingDeps, registry).codePatch('src/components/new.ts', patch, ctx);
+    expect(missing.ok).toBe(true);
+
+    const deniedDeps = { ...fakeDeps, readFile: async () => { throw 'permission denied'; } };
+    const denied = await createNodeDevService(defaultDevPolicy, deniedDeps, registry).codePatch('src/components/new.ts', patch, ctx);
+    expect(denied.ok).toBe(false);
+
+    const ambiguousDeniedDeps = { ...fakeDeps, readFile: async () => { throw 'permission denied: file not found'; } };
+    const ambiguousDenied = await createNodeDevService(defaultDevPolicy, ambiguousDeniedDeps, registry)
+      .codePatch('src/components/new.ts', patch, ctx);
+    expect(ambiguousDenied.ok).toBe(false);
+  });
+
   it('testRun/shellRun 白名单放行；gitStatus/gitDiff 走 git', async () => {
     const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
     const t = await svc.testRun(['npm', 'run', 'test'], ctx);
@@ -173,6 +228,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(status.stdout).toContain('A.tsx');
     const diff = await svc.gitDiff('HEAD', ctx);
     expect(diff.stdout).toContain('diff --git');
+    await expect(svc.gitDiff('--output=/tmp/out', ctx)).rejects.toThrow(/baseRef|Git/);
   });
 
   it('gitChangedFiles：合并 tracked diff 与 untracked', async () => {

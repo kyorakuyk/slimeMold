@@ -65,8 +65,8 @@ async function main() {
   // P0/P1 审计：cleanup 的宿主审批在**运行后**执行（见下方 hostCleanupApproval），
   // 因为 acceptanceId 由 accept 节点运行时由宿主生成——运行前无法绑定。
   if (nodes.some((n) => String(n.data?.typeId ?? '').startsWith('dev.'))) {
-    const { initDevSession } = await import('../src/dev/session');
-    const { createHostEvidenceStore } = await import('../src/dev/evidence');
+    const { createHostAcceptanceStoreWithFs, initDevSession } = await import('../src/dev/session');
+    const { createHostEvidenceStore, createNodeJsonlFs } = await import('../src/dev/evidence');
     const { resolve } = await import('node:path');
     // H4 审计（P1）：宿主固定路径 EvidenceStore（.slimemold/evidence/host.jsonl，位于 worktree 外）——
     // forceCleanup 要求宿主持久化（无 persistence 拒绝强制清理），headless 宿主据此注入真实落盘；
@@ -80,7 +80,15 @@ async function main() {
     const persistence = declaredWt
       ? createHostEvidenceStore(evidenceRoot, resolve(process.cwd(), declaredWt), 'host')
       : undefined;
-    initDevSession({ baseRepoPath: process.cwd(), persistence });
+    const acceptancePersistence = declaredWt
+      ? createHostAcceptanceStoreWithFs(
+        resolve(process.cwd(), '.slimemold', 'acceptance'),
+        resolve(process.cwd(), declaredWt),
+        'records',
+        createNodeJsonlFs(),
+      )
+      : undefined;
+    initDevSession({ baseRepoPath: process.cwd(), persistence, acceptancePersistence });
     console.log('▶ H4 自举模式：已初始化 DevSession（worktree 隔离 + 开发能力 + 证据采集，EvidenceStore=' + evidenceRoot + '）');
   }
   const edges = (wf.edges as any[]).map((e) => ({
@@ -134,54 +142,14 @@ function flagValue(argv: string[], flag: string): string | undefined {
   return undefined;
 }
 
-const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
-
 /**
- * H4 宿主收尾清理（P1 审计）：
- * 对每个 --dev-approve-cleanup=<path>（支持等号/空格、逗号分隔）：
- * - 找到该 worktree 的**最新通过验收记录**（worktreePath 规范化匹配）→ 无则拒绝清理并保留；
- * - approveCleanup 绑定 acceptanceId + orchestrationId/stageId + stateSignature + baseRevision；
- * - manager.cleanup(confirm:true) 真实清理（清理后审批自动消费）。
- * 这等价于 GUI 里「验收通过 → 宿主确认清理」的 headless 宿主侧入口。
+ * Legacy direct cleanup is intentionally disabled. Destructive cleanup must flow
+ * through a TaskGraph-restored Worker proposal and canonical host fingerprint.
  */
 async function hostCleanupApproval(argv: string[]): Promise<void> {
   const raw = flagValue(argv, '--dev-approve-cleanup');
   if (!raw) return;
-  const { getDevSession } = await import('../src/dev/session');
-  const s = getDevSession();
-  if (!s) return;
-  const paths = raw.split(',').map((x) => x.trim()).filter(Boolean);
-  for (const p of paths) {
-    const info = s.manager.get(p);
-    if (!info) {
-      console.log(`  ⊘ 跳过清理 ${p}：未登记 worktree`);
-      continue;
-    }
-    const passed = [...s.acceptanceStore.values()]
-      .filter((a) => a.passed && normPath(a.worktreePath) === normPath(p))
-      .sort((a, b) => b.at.localeCompare(a.at));
-    const acc = passed[0];
-    if (!acc) {
-      console.log(`  ⚠ 拒绝清理 ${p}：未找到通过验收记录（保留 worktree 供审查）`);
-      continue;
-    }
-    const sig = await s.computeWorktreeSignature(p);
-    s.approveCleanup(p, {
-      acceptanceId: acc.acceptanceId,
-      orchestrationId: acc.orchestrationId,
-      stageId: acc.stageId,
-      stateSignature: sig,
-      baseRevision: info.baseRevision,
-    });
-    // P1（审计）：收口到宿主原子确认 API——confirmAndCleanup 内部重新校验
-    // 验收三元组 + 重算状态签名 + 基线 + 清理 + 消费（消除 TOCTOU 窗口）。
-    const cleaned = await s.confirmAndCleanup(p);
-    if (cleaned) {
-      console.log(`  ✔ 宿主批准并清理 worktree：${p}（绑定验收 ${acc.acceptanceId}）`);
-    } else {
-      console.log(`  ⊘ 清理失败：${p}`);
-    }
-  }
+  console.log(`  ⊘ 已拒绝 legacy direct cleanup：${raw}；请通过 TaskGraph Worker proposal 执行。`);
 }
 
 main().catch((e) => {

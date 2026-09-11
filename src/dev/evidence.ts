@@ -5,7 +5,8 @@
  * 两者职责分离。关键约束：capturedBy 恒为 'host'，Agent（模型/工作流节点）不能自报事实证据，
  * 只能写 uncertainties/agentSummary 辅助文本。
  */
-import { normalizeAbsolutePath } from './path-utils';
+import { normalizeAbsolutePath, pathComparisonKey, pathsOverlap } from './path-utils';
+import { assertTaskExecutionLineage } from '../domain/execution';
 
 export type EvidenceKind = 'command' | 'test' | 'diff' | 'path-policy' | 'artifact';
 
@@ -25,11 +26,49 @@ export interface EvidenceRecord {
   summary: string;
   /** 强制：仅宿主采集，Agent 不可自报 */
   capturedBy: 'host';
+  /** 当前 Worker execution lineage；旧证据可能没有这些字段。 */
+  runId?: string;
+  taskId?: string;
+  taskExecutionId?: string;
+  attemptId?: string;
   worktreePath?: string;
   baseRevision?: string;
   headRevision?: string;
   contentHash?: string;
   createdAt: string;
+}
+
+export function decodeEvidenceRecord(value: unknown): EvidenceRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Evidence 记录必须是对象');
+  }
+  const record = value as Partial<EvidenceRecord>;
+  if (typeof record.id !== 'string' || !record.id.trim()) throw new Error('Evidence.id 无效');
+  if (typeof record.orchestrationId !== 'string' || !record.orchestrationId.trim()) throw new Error('Evidence.orchestrationId 无效');
+  if (typeof record.stageId !== 'string' || !record.stageId.trim()) throw new Error('Evidence.stageId 无效');
+  if (!['command', 'test', 'diff', 'path-policy', 'artifact'].includes(record.kind as string)) throw new Error('Evidence.kind 无效');
+  if (!['passed', 'failed', 'unknown'].includes(record.status as string)) throw new Error('Evidence.status 无效');
+  if (typeof record.summary !== 'string' || !record.summary.trim()) throw new Error('Evidence.summary 无效');
+  if (record.capturedBy !== 'host') throw new Error('Evidence.capturedBy 必须是 host');
+  if (typeof record.createdAt !== 'string' || !record.createdAt.trim()) throw new Error('Evidence.createdAt 无效');
+  for (const key of ['command', 'worktreePath', 'baseRevision', 'headRevision', 'contentHash'] as const) {
+    if (record[key] !== undefined && (typeof record[key] !== 'string' || !record[key].trim())) {
+      throw new Error(`Evidence.${key} 无效`);
+    }
+  }
+  if (record.exitCode !== undefined && (!Number.isSafeInteger(record.exitCode))) throw new Error('Evidence.exitCode 无效');
+  const lineageKeys = [record.runId, record.taskId, record.taskExecutionId, record.attemptId];
+  if (lineageKeys.some((item) => item !== undefined)) {
+    if (lineageKeys.some((item) => typeof item !== 'string' || !item.trim())) throw new Error('Evidence lineage 不完整');
+    const [runId, taskId, taskExecutionId, attemptId] = lineageKeys as [string, string, string, string];
+    assertTaskExecutionLineage({
+      runId,
+      taskId,
+      taskExecutionId,
+      attemptId,
+    });
+  }
+  return { ...record } as EvidenceRecord;
 }
 
 /** 确定性验收结论（由 DevEvaluator 依据规则 + 证据生成）。 */
@@ -47,8 +86,10 @@ export type EvidenceInput = Omit<EvidenceRecord, 'id' | 'createdAt' | 'capturedB
 
 let seq = 0;
 function nextId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `ev-${uuid}`;
   seq += 1;
-  return `ev-${Date.now().toString(36)}-${seq.toString(36)}`;
+  return `ev-${Date.now().toString(36)}-${seq.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
@@ -81,7 +122,7 @@ export function evidencePathFor(baseDir: string, key: string): string {
 export function assertEvidenceOutsideWorktree(baseDir: string, worktreePath: string): void {
   const b = normalizeAbsolutePath(baseDir);
   const w = normalizeAbsolutePath(worktreePath);
-  if (b === w || w.startsWith(b + '/') || b.startsWith(w + '/')) {
+  if (pathsOverlap(baseDir, worktreePath)) {
     throw new Error(`EvidenceStore 必须位于 worktree 之外：baseDir=${b}，worktree=${w}`);
   }
 }
@@ -152,19 +193,36 @@ function createJsonlEvidenceStore(filePath: string, fsOps: JsonlFsOps): Evidence
   const dirname = filePath.includes('/') || filePath.includes('\\')
     ? filePath.slice(0, Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')))
     : '.';
+  let appendChain = Promise.resolve();
   return {
     async append(rec) {
-      await fsOps.mkdir(dirname); // 宿主创建 store 时确保目录存在
-      await fsOps.append(filePath, `${JSON.stringify(rec)}\n`);
+      const operation = appendChain.then(async () => {
+        decodeEvidenceRecord(rec);
+        await fsOps.mkdir(dirname);
+        await fsOps.append(filePath, `${JSON.stringify(rec)}\n`);
+      });
+      appendChain = operation.catch(() => {});
+      await operation;
     },
     async load() {
-      const text = await fsOps.read(filePath).catch(() => '');
+      let text = '';
+      try {
+        text = await fsOps.read(filePath);
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error;
+      }
       return text
         .split('\n')
         .filter((l) => l.trim().length > 0)
-        .map((l) => JSON.parse(l) as EvidenceRecord);
+        .map((l) => decodeEvidenceRecord(JSON.parse(l)));
     },
   };
+}
+
+export function isMissingFileError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return true;
+  const message = (error instanceof Error ? error.message : String(error)).trim();
+  return /^(?:dev_read_file:\s*)?(?:ENOENT|file not found|no such file(?: or directory)?|文件不存在|路径不存在)$/i.test(message);
 }
 
 /**
@@ -182,6 +240,14 @@ export class EvidenceCollector {
   constructor(private readonly persistence?: EvidencePersistence) {}
 
   private makeRec(input: EvidenceInput): EvidenceRecord {
+    if (input.taskExecutionId !== undefined || input.attemptId !== undefined) {
+      assertTaskExecutionLineage({
+        runId: input.runId ?? '',
+        taskId: input.taskId ?? '',
+        taskExecutionId: input.taskExecutionId,
+        attemptId: input.attemptId,
+      });
+    }
     return {
       ...input,
       id: nextId(),
@@ -195,7 +261,10 @@ export class EvidenceCollector {
     const rec = this.makeRec(input);
     this._records.push(rec);
     if (this.persistence) {
-      const p = this.persistence.append(rec).catch((e: unknown) => {
+      const p = Promise.resolve()
+        .then(() => this.persistence!.append(rec))
+        .catch((e: unknown) => {
+        this._records = this._records.filter((item) => item !== rec);
         this._persistErrors.push(
           `证据 ${rec.id} 落盘失败：${e instanceof Error ? e.message : String(e)}`,
         );
@@ -209,10 +278,25 @@ export class EvidenceCollector {
   async addAsync(input: EvidenceInput): Promise<EvidenceRecord> {
     const rec = this.makeRec(input);
     this._records.push(rec);
-    if (this.persistence) {
-      const p = this.persistence.append(rec);
-      this._pending.push(p.catch(() => {}));
-      await p;
+    const persistence = this.persistence;
+    if (persistence) {
+      const verification = (async () => {
+        await persistence.append(rec);
+        const persisted = await persistence.load();
+        const matches = persisted.filter((item) => item.id === rec.id);
+        if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(rec)) {
+          throw new Error(`Evidence 持久化 read-back 不一致：${rec.id}`);
+        }
+      })();
+      const tracked = verification.catch((error: unknown) => {
+        this._records = this._records.filter((item) => item !== rec);
+        this._persistErrors.push(
+          `证据 ${rec.id} 落盘失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      });
+      this._pending.push(tracked.catch(() => {}));
+      await tracked;
     }
     return rec;
   }
@@ -232,9 +316,26 @@ export class EvidenceCollector {
   /** 启动/恢复：从持久化 store 载入历史证据（强制 capturedBy='host'）。 */
   async loadPersisted(): Promise<EvidenceRecord[]> {
     if (!this.persistence) return [];
-    const recs = await this.persistence.load();
-    for (const r of recs) this.restore(r);
-    return recs;
+    const recs = (await this.persistence.load()).map((record) => decodeEvidenceRecord(record));
+    const loadedById = new Map<string, EvidenceRecord>();
+    for (const record of recs) {
+      const existing = loadedById.get(record.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Evidence ID 内容冲突：${record.id}`);
+      }
+      loadedById.set(record.id, record);
+    }
+    const currentById = new Map(this._records.map((record) => [record.id, record]));
+    for (const record of loadedById.values()) {
+      const existing = currentById.get(record.id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`Evidence ID 内容冲突：${record.id}`);
+      }
+    }
+    for (const record of loadedById.values()) {
+      if (!currentById.has(record.id)) this._records.push(record);
+    }
+    return [...loadedById.values()];
   }
 
   get records(): readonly EvidenceRecord[] {
@@ -263,7 +364,7 @@ export class EvidenceCollector {
 
   /** 追加已构造好的证据（批量恢复用；仍强制 capturedBy='host'）。 */
   restore(rec: EvidenceRecord): void {
-    this._records.push({ ...rec, capturedBy: 'host' });
+    this._records.push(decodeEvidenceRecord(rec));
   }
 
   /** 按阶段过滤。 */
@@ -276,7 +377,13 @@ export class EvidenceCollector {
    * 验收/引用时若 scope 指定了某项，证据**必须存在该字段且严格匹配**——缺字段的历史证据
    * 直接排除（不得「没写就不校验」混入）。worktreePath 经 resolve 规范化比较。
    */
-  byScope(scope: { orchestrationId?: string; stageId?: string; worktreePath?: string }): EvidenceRecord[] {
+  byScope(scope: {
+    orchestrationId?: string;
+    stageId?: string;
+    taskExecutionId?: string;
+    attemptId?: string;
+    worktreePath?: string;
+  }): EvidenceRecord[] {
     return this._records.filter((r) => {
       if (scope.orchestrationId !== undefined) {
         if (r.orchestrationId !== scope.orchestrationId) return false;
@@ -284,9 +391,15 @@ export class EvidenceCollector {
       if (scope.stageId !== undefined) {
         if (r.stageId !== scope.stageId) return false;
       }
+      if (scope.taskExecutionId !== undefined && r.taskExecutionId !== scope.taskExecutionId) {
+        return false;
+      }
+      if (scope.attemptId !== undefined && r.attemptId !== scope.attemptId) {
+        return false;
+      }
       if (scope.worktreePath !== undefined) {
         if (!r.worktreePath) return false; // 缺 worktreePath 的证据排除
-        if (normalizeAbsolutePath(r.worktreePath) !== normalizeAbsolutePath(scope.worktreePath)) {
+        if (pathComparisonKey(r.worktreePath) !== pathComparisonKey(scope.worktreePath)) {
           return false;
         }
       }
@@ -296,7 +409,13 @@ export class EvidenceCollector {
 
   /** 验收前强制 flush + 按作用域取证据（落盘失败 throw，未落盘的证据不作为验收依据）。 */
   async flushAndByScope(
-    scope: { orchestrationId?: string; stageId?: string; worktreePath?: string },
+    scope: {
+      orchestrationId?: string;
+      stageId?: string;
+      taskExecutionId?: string;
+      attemptId?: string;
+      worktreePath?: string;
+    },
   ): Promise<EvidenceRecord[]> {
     await this.flush();
     return this.byScope(scope);

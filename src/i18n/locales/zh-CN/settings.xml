@@ -7,9 +7,9 @@
   <string name="settings.sec.general.label">通用</string>
   <string name="settings.sec.general.desc">画布、LLM 通道、全局代理</string>
   <string name="settings.sec.agent.label">智能体</string>
-  <string name="settings.sec.agent.desc">凭据、预设、默认切换、检测</string>
+  <string name="settings.sec.agent.desc">全局主控、凭据、预设、检测</string>
   <string name="settings.sec.model.label">模型</string>
-  <string name="settings.sec.model.desc">供应商预设库与全局默认模型</string>
+  <string name="settings.sec.model.desc">供应商预设库与项目默认模型</string>
   <string name="settings.sec.mcp.label">MCP</string>
   <string name="settings.sec.mcp.desc">插件 / MCP server 管理</string>
   <string name="settings.sec.flow.label">对话流</string>
@@ -53,12 +53,19 @@
   <string name="settings.general.proxyPlaceholder">http://127.0.0.1:7890（留空=各智能体用自己的代理或直连）</string>
   <string name="settings.general.proxyHint">全局默认出口。智能体自身的 proxyUrl 优先于此项；均留空则直连目标 Base URL。适配中转 / OpenAI 格式统一出口，backend 与 frontend 通道均已生效。</string>
 
+  <!-- 智能体 -->
+  <string name="settings.agent.globalMasterTitle">全局默认主控 Agent</string>
+  <string name="settings.agent.globalMasterDesc">所有没有项目级覆盖的项目都会使用这里的主控。只有已提升为全局通用且处于启用状态的 Agent 才能被选择。</string>
+  <string name="settings.agent.globalMasterUnset">（未设置：由项目默认 Agent 决定）</string>
+  <string name="settings.agent.globalMasterDisabled">已禁用</string>
+  <string name="settings.agent.globalMasterNoAgents">暂无全局 Agent。请在下方添加 Agent 后，使用列表中的图钉将它提升为全局通用。</string>
+
   <!-- 模型 -->
   <string name="settings.model.presetLib">供应商预设库</string>
   <string name="settings.model.presetLibDesc">在「智能体」分区新建智能体时，可按下方预设一键填充 Base URL 与默认模型。</string>
   <string name="settings.model.custom">自定义（手动填写）</string>
-  <string name="settings.model.defaultModel">全局默认模型 / 智能体</string>
-  <string name="settings.model.defaultModelDesc">设为默认后，新建对话流节点会优先套用该智能体（含其模型与凭据）。</string>
+  <string name="settings.model.defaultModel">项目默认模型 / 智能体</string>
+  <string name="settings.model.defaultModelDesc">设为默认后，当前项目中新建对话流节点会优先套用该智能体（含其模型与凭据）。该设置随项目保存。</string>
   <string name="settings.model.unset">（未设置）</string>
 
   <!-- 路由表 -->

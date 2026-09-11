@@ -27,13 +27,20 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
 
 /** 创建一个带临时分支的 git worktree 指向 HEAD，返回其路径。失败返回 null（调用方降级到 copy 沙箱）。 */
 export async function addWorktree(cwd: string, path: string, branch: string): Promise<string | null> {
-  const r = await runGit(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], cwd);
-  if (r.code !== 0) return null;
-  return path;
+  // Legacy lane is intentionally read-only. H4 Worker worktrees must go through
+  // WorktreeManager/dev_exec so the host can bind path, branch, and AttemptId.
+  void cwd;
+  void path;
+  void branch;
+  return null;
 }
 
 /** 移除 worktree 并清理分支（force 以丢弃未提交改动）。 */
 export async function removeWorktree(cwd: string, path: string, branch: string): Promise<void> {
-  await runGit(['worktree', 'remove', '--force', path], cwd);
-  await runGit(['branch', '-D', branch], cwd);
+  // No legacy worktree can be created after addWorktree became read-only.
+  // Keep the API for callers compiled against the old executor; cleanup is
+  // performed by the registered H4 WorktreeManager path.
+  void cwd;
+  void path;
+  void branch;
 }

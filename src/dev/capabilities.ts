@@ -14,7 +14,7 @@
  *    便于单测）；Tauri/浏览器环境由上层按 env 分支（浏览器经 shim 抛错，GUI 下开发节点不执行任意命令）。
  */
 import type { SelfDevelopmentPolicy } from './policy';
-import { assertPathAllowed } from './policy';
+import { assertPathAllowed, isPathAllowed, isPathProtected } from './policy';
 import type { CommandResult } from './node-run';
 import { runCommand, readTextFile, writeTextFile, resolveInside, relativePath } from './node-run';
 
@@ -41,6 +41,8 @@ export interface DevContext {
 export interface DevCapabilityService {
   readonly env: 'node' | 'tauri' | 'browser';
   codeRead(relPath: string, ctx: DevContext): Promise<DevFileRead>;
+  /** 在已登记 worktree 内创建相对目录；由结构化补丁应用器使用，非工作流自由写入。 */
+  codeMkdir?(relPath: string, ctx: DevContext): Promise<void>;
   codePatch(relPath: string, unifiedDiff: string, ctx: DevContext): Promise<DevPatchResult>;
   shellRun(cmd: string[], ctx: DevContext): Promise<CommandResult>;
   testRun(cmd: string[], ctx: DevContext): Promise<CommandResult>;
@@ -141,6 +143,9 @@ interface CommandRule {
   allowExtraArgs?: number;
   disallowDashExtra?: boolean;
   denyContain?: string[];
+  denyArgs?: string[];
+  denyArgPrefixes?: string[];
+  denyArgPatterns?: RegExp[];
   denyAbsPath?: boolean;
   /** 参数全部按路径校验（allowedPaths 内 + 非 protected + worktree 内） */
   pathArgs?: boolean;
@@ -168,6 +173,9 @@ function matchesRule(rule: CommandRule, cmd: string[]): boolean {
   }
   // 既无 args 也无 argsPrefix → 纯命令名规则（如 {cmd:'cat', denyAbsPath:true}），命令名匹配即可
   if (rule.denyContain?.some((d) => args.some((a) => a.includes(d)))) return false;
+  if (rule.denyArgs?.some((d) => args.includes(d))) return false;
+  if (rule.denyArgPrefixes?.some((prefix) => args.some((a) => a.startsWith(prefix)))) return false;
+  if (rule.denyArgPatterns?.some((pattern) => args.some((a) => pattern.test(a)))) return false;
   if (rule.denyAbsPath && args.some((a) => a.startsWith('/') || a.split(/[/\\]/).includes('..'))) {
     return false;
   }
@@ -182,6 +190,17 @@ function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
   return findMatchingRule(rules, cmd) !== null;
 }
 
+function assertSafeGitRevision(baseRef: string): void {
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(baseRef)
+    || baseRef.includes('..')
+    || baseRef.includes('//')
+    || baseRef.endsWith('/')
+  ) {
+    throw new Error(`Git baseRef 非法：${baseRef}`);
+  }
+}
+
 /**
  * shell 白名单（只读）：基础查询命令（pathArgs：参数按路径校验，禁读 protected 外代码）+ 只读 git（精确参数）。
  * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
@@ -193,11 +212,27 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'echo' },
   { cmd: 'ls', denyAbsPath: true, pathArgs: true },
   { cmd: 'cat', denyAbsPath: true, pathArgs: true },
-  { cmd: 'find', denyAbsPath: true, pathArgs: true },
+  {
+    cmd: 'find',
+    denyAbsPath: true,
+    pathArgs: true,
+    denyArgs: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-L', '-H'],
+    denyArgPrefixes: ['-fprint', '-fls'],
+  },
   { cmd: 'head', denyAbsPath: true, pathArgs: true },
   { cmd: 'tail', denyAbsPath: true, pathArgs: true },
   // grep：跳过首参 pattern（pathArgsFrom=1），后续文件路径参数走守卫
-  { cmd: 'grep', denyAbsPath: true, pathArgsFrom: 1 },
+  {
+    cmd: 'grep',
+    denyAbsPath: true,
+    pathArgsFrom: 1,
+    denyArgs: [
+      '-r', '-R', '--recursive', '-d', '--dereference-recursive',
+      '--file', '--exclude-from',
+    ],
+    denyArgPrefixes: ['--directories=', '--file=', '--exclude-from=', '-f'],
+    denyArgPatterns: [/^-[^-]*f/],
+  },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
   { cmd: 'git', args: ['diff', 'HEAD'] },
@@ -239,6 +274,7 @@ export interface NodeDevDeps {
   runCommand?: (cmd: string, args: string[], cwd: string) => Promise<CommandResult>;
   readFile?: (abs: string) => Promise<string>;
   writeFile?: (abs: string, content: string) => Promise<void>;
+  mkdir?: (abs: string) => Promise<void>;
   resolveInside?: (root: string, relPath: string) => Promise<string>;
   relativePath?: (root: string, abs: string) => Promise<string>;
   testAllow?: (cmd: string[]) => boolean;
@@ -250,7 +286,7 @@ export interface WorktreeRegistry {
 }
 
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
-function hashContent(content: string): string {
+export function hashContent(content: string): string {
   let h = 5381;
   for (let i = 0; i < content.length; i++) {
     h = ((h << 5) + h + content.charCodeAt(i)) >>> 0;
@@ -263,6 +299,13 @@ function hashContent(content: string): string {
  * 命令/文件操作默认走 node-run；可通过 deps 注入（单测用 fake 避免真实执行）。
  * env 默认 'node'（headless/CI）；GUI（Tauri）由 createTauriDevService 传入 env='tauri'。
  */
+function isMissingFileError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return true;
+  if (typeof error !== 'string' && !(error instanceof Error)) return false;
+  const message = (typeof error === 'string' ? error : error.message).trim();
+  return /^(?:dev_read_file:\s*)?(?:ENOENT|file not found|no such file(?: or directory)?|文件不存在|路径不存在)$/i.test(message);
+}
+
 export function createNodeDevService(
   policy: SelfDevelopmentPolicy,
   deps: NodeDevDeps = {},
@@ -272,6 +315,10 @@ export function createNodeDevService(
   const run = deps.runCommand ?? runCommand;
   const read = deps.readFile ?? readTextFile;
   const write = deps.writeFile ?? writeTextFile;
+  const makeDirectory = deps.mkdir ?? (async (abs: string) => {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(abs, { recursive: true });
+  });
   const resolveP = deps.resolveInside ?? resolveInside;
   const relP = deps.relativePath ?? relativePath;
   const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
@@ -296,6 +343,21 @@ export function createNodeDevService(
     const abs = await resolveP(ctx.cwd, relPath);
     const rel = await relP(ctx.cwd, abs);
     assertPathAllowed(policy, rel);
+    return abs;
+  };
+
+  const guardedDirectoryAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
+    assertCwd(ctx.cwd);
+    const abs = await resolveP(ctx.cwd, relPath);
+    const rel = await relP(ctx.cwd, abs);
+    const normalized = rel.replace(/\\/g, '/');
+    const hasAllowedDescendant = policy.allowedPaths.some((allowed) => {
+      const normalizedAllowed = allowed.replace(/\\/g, '/');
+      return normalizedAllowed.startsWith(`${normalized}/`);
+    });
+    if (isPathProtected(policy, normalized) || (!isPathAllowed(policy, normalized) && !hasAllowedDescendant)) {
+      throw new Error(`目录不在允许范围内（allowedPaths）：${rel}`);
+    }
     return abs;
   };
 
@@ -329,10 +391,22 @@ export function createNodeDevService(
       return { content, lineCount: content.split('\n').length };
     },
 
+    async codeMkdir(relPath, ctx) {
+      const abs = await guardedDirectoryAbs(relPath, ctx);
+      await makeDirectory(abs);
+    },
+
     async codePatch(relPath, unifiedDiff, ctx) {
       const abs = await guardedAbs(relPath, ctx);
       // 新增文件：目标不存在时按空内容处理（unified diff 全 + 行创建新文件）
-      const original = await read(abs).catch(() => '');
+      let original = '';
+      try {
+        original = await read(abs);
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          return { ok: false, error: `读取待修改文件失败：${error instanceof Error ? error.message : String(error)}` };
+        }
+      }
       const applied = applyUnifiedPatch(original, unifiedDiff);
       if (!applied.ok) return { ok: false, error: applied.error };
       await write(abs, applied.result!);
@@ -373,13 +447,16 @@ export function createNodeDevService(
 
     async gitStatus(ctx) {
       assertCwd(ctx.cwd);
-      return run('git', ['status', '--porcelain'], ctx.cwd);
+      const result = await run('git', ['status', '--porcelain'], ctx.cwd);
+      return result;
     },
 
     async gitDiff(baseRef, ctx) {
       assertCwd(ctx.cwd);
+      if (baseRef) assertSafeGitRevision(baseRef);
       const args = baseRef ? ['diff', baseRef] : ['diff', 'HEAD'];
-      return run('git', args, ctx.cwd);
+      const result = await run('git', args, ctx.cwd);
+      return result;
     },
 
     async gitChangedFiles(ctx) {
@@ -388,6 +465,9 @@ export function createNodeDevService(
         run('git', ['diff', '--name-only', 'HEAD'], ctx.cwd),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),
       ]);
+      if (tracked.exitCode !== 0 || untracked.exitCode !== 0) {
+        throw new Error(`git changed-files 失败：${tracked.stderr || untracked.stderr || 'unknown'}`);
+      }
       const set = new Set<string>();
       for (const raw of [tracked.stdout, untracked.stdout]) {
         for (const f of raw.split('\n')) {
@@ -401,6 +481,7 @@ export function createNodeDevService(
     async gitUntrackedFiles(ctx) {
       assertCwd(ctx.cwd);
       const r = await run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd);
+      if (r.exitCode !== 0) throw new Error(`git untracked-files 失败：${r.stderr || r.exitCode}`);
       return r.stdout
         .split('\n')
         .map((f) => f.trim())

@@ -49,6 +49,12 @@ import {
   setCached,
   strike,
 } from './nodeCache';
+import {
+  assertAllowedSandboxLane,
+  encodeSandboxIdentifier,
+  assertSandboxRelativePath,
+} from './sandboxPath';
+import { createSandboxFsGuard } from './sandboxFs';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -97,6 +103,10 @@ function genFor(wfId: string): { currentRunId: number; activeRunId: number; abor
 export function getActiveRunId(wfId?: string): number {
   const id = wfId ?? useWorkflowStore.getState().activeWfId;
   return genFor(id).activeRunId;
+}
+
+export function workflowRequiresDevSession(nodes: readonly FlowNode[]): boolean {
+  return nodes.some((node) => node.data.typeId.startsWith('dev.'));
 }
 
 /** 把运行代次同步到 store 供状态栏诊断显示 */
@@ -245,10 +255,25 @@ export interface RunResult {
 export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
+  const gen = genFor(wfId);
+  const graphNodesForSession = wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId]?.nodes ?? []);
+  if (isTauri && workflowRequiresDevSession(graphNodesForSession)) {
+    if (!wf.projectPath) {
+      const error = '包含 dev.* 节点的工作流必须先打开已保存项目';
+      wf.addLog('error', error);
+      return { status: 'aborted', runId: gen.currentRunId, error };
+    }
+    const { ensureGuiDevSession } = await import('../dev/gui');
+    const session = await ensureGuiDevSession(wf.projectPath);
+    if (!session) {
+      const error = 'Tauri DevSession 未就绪，开发节点未执行';
+      wf.addLog('error', error);
+      return { status: 'aborted', runId: gen.currentRunId, error };
+    }
+  }
   // 解耦接缝：执行引擎的输出动作（日志/进度/历史/成本）经 ExecutionRuntime 接口，
   // 默认实现委托 store；后续可替换为测试桩或独立运行时，使 executor 不依赖具体 store。
   const rt = createStoreRuntime(wfId);
-  const gen = genFor(wfId);
   // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
   // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
   const running = wf.runStates[wfId]?.running ?? false;
@@ -795,92 +820,55 @@ async function executeNode(
       return base;
     };
 
-    const sandboxRoot = (nid: string, base: string): string => `${base}/.sandbox/${nid}`;
+    const allowedSandboxNodeIds = new Set(
+      incoming.filter((e) => e.target === id).map((e) => e.source),
+    );
+    const sandboxRoot = (nid: string): string =>
+      `.sandbox/${encodeSandboxIdentifier(nid, '沙箱节点 id')}`;
 
     sandbox = {
       nodeId: id,
       baseDir: null, // 真实路径惰性确定，构造期未知
       inBrowser,
       async writeFile(filename, content) {
+        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
         const base = await rootDirAndTrack();
-        if (!base) return `[sandbox:${id}] ${filename}`; // 浏览器/无根：内存态
+        if (!base) return `[sandbox:${id}] ${safeFilename}`; // 浏览器/无根：内存态
         const fs = await import('@tauri-apps/plugin-fs');
-        const dir = sandboxRoot(id, base);
-        await fs.mkdir(dir, { recursive: true });
-        const p = `${dir}/${filename}`;
-        await fs.writeTextFile(p, content);
-        return p;
+        return createSandboxFsGuard(fs, base).writeFile(sandboxRoot(id), safeFilename, content);
       },
       async readFrom(otherNodeId, filename) {
+        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
+        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
         const base = await rootDirAndTrack();
         if (!base) return null;
         const fs = await import('@tauri-apps/plugin-fs');
-        const p = `${sandboxRoot(otherNodeId, base)}/${filename}`;
-        try {
-          return await fs.readTextFile(p);
-        } catch {
-          return null;
-        }
+        return createSandboxFsGuard(fs, base).readFile(sandboxRoot(safeNodeId), safeFilename);
       },
       async list(otherNodeId) {
+        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
         const base = await rootDirAndTrack();
         if (!base) return [];
         const fs = await import('@tauri-apps/plugin-fs');
-        const dir = sandboxRoot(otherNodeId, base);
-        try {
-          return (await fs.readDir(dir)).map((e) => e.name).filter(Boolean) as string[];
-        } catch {
-          return [];
-        }
+        return createSandboxFsGuard(fs, base).list(sandboxRoot(safeNodeId));
       },
       async commitAll() {
         const base = await rootDirAndTrack();
         if (!base) return [];
         const fs = await import('@tauri-apps/plugin-fs');
-        const src = sandboxRoot(id, base);
-        const dst = base;
-        await fs.mkdir(dst, { recursive: true });
-        const committed: string[] = [];
-        let entries: Awaited<ReturnType<typeof fs.readDir>> = [];
-        try {
-          entries = await fs.readDir(src);
-        } catch {
-          return committed;
-        }
-        for (const e of entries) {
-          if (e.isFile) {
-            const name = e.name;
-            const content = await fs.readTextFile(`${src}/${name}`);
-            const target = `${dst}/${name}`;
-            await fs.writeTextFile(target, content);
-            committed.push(target);
-          }
-        }
-        return committed;
+        return createSandboxFsGuard(fs, base).commit(sandboxRoot(id));
       },
       async commitLanes(laneIds) {
+        const safeLaneIds = laneIds.map((laneId) =>
+          assertAllowedSandboxLane(laneId, allowedSandboxNodeIds),
+        );
         const base = await rootDirAndTrack();
         if (!base) return [];
         const fs = await import('@tauri-apps/plugin-fs');
-        await fs.mkdir(base, { recursive: true });
         const committed: string[] = [];
-        for (const lane of laneIds) {
-          const laneDir = sandboxRoot(lane, base);
-          let files: Awaited<ReturnType<typeof fs.readDir>> = [];
-          try {
-            files = await fs.readDir(laneDir);
-          } catch {
-            continue; // 该车道无沙箱产出（例如未写文件），跳过
-          }
-          for (const e of files) {
-            if (e.isFile) {
-              const name = e.name;
-              const content = await fs.readTextFile(`${laneDir}/${name}`);
-              const target = `${base}/${name}`;
-              await fs.writeTextFile(target, content);
-              committed.push(target);
-            }
-          }
+        const guard = createSandboxFsGuard(fs, base);
+        for (const lane of safeLaneIds) {
+          committed.push(...(await guard.commit(sandboxRoot(lane))));
         }
         return committed;
       },

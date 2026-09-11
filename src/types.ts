@@ -1,8 +1,9 @@
 import type { Node, Edge } from '@xyflow/react';
+import type { ProjectControlSnapshot } from './projectControl/types';
 
 /* ---------- 节点状态与协议 ---------- */
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
-export type Protocol = 'openai' | 'anthropic' | 'ollama';
+export type Protocol = 'openai' | 'anthropic' | 'ollama' | 'codex';
 
 /* ---------- API 接入点（APIKEYS 分区集中管理的「网址 + 密钥」） ---------- */
 /** 一个 API 接入点：把 Base URL 与密钥绑定成可复用的配置单元（类似 cc-switch 的 API 路由）。
@@ -44,8 +45,8 @@ export interface AgentConfig {
   name: string;
   protocol: Protocol;
   baseUrl: string;
-  /** 明文 apiKey：仅在 headless / 本地 Ollama（无需 key）场景下使用。
-   *  桌面生产链路应通过 credentialKey 从系统密钥库取，UI 不编辑此字段。 */
+  /** 明文 apiKey：仅在 headless / 本地 Ollama / 受控测试场景下使用。
+   *  桌面 API provider 应通过 credentialKey 从系统密钥库取，Codex provider 不需要此字段。 */
   apiKey?: string;
   /** 系统密钥库中的凭据键；非空时 Rust 侧按此从 OS 密钥库取回真实 key（Step 0.5）。
    *  工作流文件只存此键，绝不存明文 key。 */
@@ -872,6 +873,12 @@ export interface ProjectFile {
   defaultAgentId?: string | null;
   /** 项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
   pipelines?: PipelineDef[];
+  /** 项目级编排记录（草案、阶段绑定、运行进度和失败信息），随 .slimemold 持久化 */
+  orchestrations?: Orchestration[];
+  /** 项目级 Worker Run queue registry（状态可恢复，随 project.json 持久化） */
+  workerRuns?: import('./domain/workerQueue').WorkerRunQueueState[];
+  /** 项目控制面快照（主控会话、Decision、Issue 和版本化 Brief），随 .slimemold 持久化 */
+  projectControl?: ProjectControlSnapshot;
   /** 项目级运行历史（持久化） */
   runs?: { history: RunRecord[] };
   /** 运行检查点（阶段 C 可恢复执行）：按 wfId 覆盖式存储最近一次运行的节点级结果，随项目落盘 */
@@ -1104,6 +1111,10 @@ export interface DraftStage {
   goal: string;
   /** 建议绑定的工作流：新生成 或 复用已有（只读引用） */
   wfRef: { kind: 'new' } | { kind: 'existing'; wfId: string };
+  /** 来源任务图（供控制面与高级 DAG 互相追溯） */
+  sourceTaskGraphId?: string;
+  /** 该阶段负责的项目任务 id */
+  taskIds?: string[];
   /** AgentRouter 决策结果（选哪个 agent） */
   agentId?: string;
   /** 需要的上游产物 */
@@ -1157,6 +1168,9 @@ export interface Orchestration {
   /** 阶段 → 真实 wfId 固化映射（首次绑定后写入，恢复/重试复用同一工作流，不重建） */
   stageWfIds?: Record<string, string>;
   stageLogs: StageLog[];
+  /** 每个 Worker Run 独立的阶段投影；stageLogs 是当前 activeRunId 的便捷视图。 */
+  stageLogsByRun?: Record<string, StageLog[]>;
+  activeRunId?: string | number;
   /** 关联运行 id（runEvents 重放；executor runId 数字代次） */
   runIds: (string | number)[];
 }

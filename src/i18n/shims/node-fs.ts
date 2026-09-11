@@ -10,3 +10,6 @@ export function readdirSync(): never {
 export function readFileSync(): never {
   throw new Error('[i18n] node:fs 在浏览器环境不可用（应走 Vite import.meta.glob 分支）');
 }
+export function existsSync(): never {
+  throw new Error('[i18n] node:fs 在浏览器环境不可用（应走 Vite import.meta.glob 分支）');
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   X,
   Settings as SettingsIcon,
@@ -283,11 +283,47 @@ function GeneralSection() {
 
 /* ---------------- 智能体（复用 AgentPanel，内联嵌入） ---------------- */
 function AgentSection() {
-  // 全屏撑满，让 AgentPanel 内部 flex/min-h-0 正确建立滚动约束（智能体列表 + 编辑表单各自滚动）
-  // wrapper 必须是 flex 容器，让 AgentPanel inner 的 flex-1 生效
+  const t = useT('settings');
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
+  const globalMasterAgentId = useViewStore((s) => s.globalMasterAgentId);
+  const setGlobalMasterAgent = useViewStore((s) => s.setGlobalMasterAgent);
+  const globalMasterAgents = globalAgents.filter(
+    (agent) => agent.enabled !== false || agent.id === globalMasterAgentId,
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <AgentPanel embedded />
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+      <section className="shrink-0 rounded border border-line p-3">
+        <h3 className="mb-1 text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>
+          {t('settings.agent.globalMasterTitle')}
+        </h3>
+        <p className="mb-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+          {t('settings.agent.globalMasterDesc')}
+        </p>
+        <select
+          className="sm-input w-full"
+          value={globalMasterAgentId ?? ''}
+          onChange={(e) => setGlobalMasterAgent(e.target.value || null)}
+          aria-label={t('settings.agent.globalMasterTitle')}
+        >
+          <option value="">{t('settings.agent.globalMasterUnset')}</option>
+          {globalMasterAgents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name || agent.id} · {agent.model}
+              {agent.enabled === false ? ` · ${t('settings.agent.globalMasterDisabled')}` : ''}
+            </option>
+          ))}
+        </select>
+        {globalAgents.length === 0 && (
+          <p className="mt-2 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+            {t('settings.agent.globalMasterNoAgents')}
+          </p>
+        )}
+      </section>
+      {/* 全屏撑满，让 AgentPanel 内部 flex/min-h-0 正确建立滚动约束（智能体列表 + 编辑表单各自滚动） */}
+      <div className="min-h-0 flex-1">
+        <AgentPanel embedded />
+      </div>
     </div>
   );
 }
@@ -296,8 +332,13 @@ function AgentSection() {
 function ModelSection() {
   const t = useT('settings');
   const agents = useWorkflowStore((s) => s.agents);
+  const globalAgents = useWorkflowStore((s) => s.globalAgents);
   const defaultAgentId = useWorkflowStore((s) => s.defaultAgentId);
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
+  const agentPool = useMemo(() => {
+    const projectIds = new Set(agents.map((agent) => agent.id));
+    return [...globalAgents.filter((agent) => !projectIds.has(agent.id)), ...agents];
+  }, [agents, globalAgents]);
 
   return (
     <div className="h-full space-y-4 overflow-y-auto">
@@ -331,7 +372,7 @@ function ModelSection() {
           onChange={(e) => setDefaultAgent(e.target.value || null)}
         >
           <option value="">{t('settings.model.unset')}</option>
-          {agents.map((a) => (
+          {agentPool.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name || a.id} · {a.model}
             </option>

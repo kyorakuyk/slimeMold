@@ -58,8 +58,8 @@ export default function StatusBar({
   };
 
   return (
-    <footer className="sm-panel shrink-0" style={{ color: 'var(--sm-ink-soft)' }}>
-      <div className="sm-panel-tabs">
+    <footer className="sm-pro-status-panel sm-panel shrink-0" style={{ color: 'var(--sm-ink-soft)' }}>
+      <div className="sm-pro-status-tabs sm-panel-tabs">
         <button
           className="sm-panel-tab"
           data-active={tab === 'log'}

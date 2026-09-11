@@ -1,0 +1,232 @@
+---
+title: 上帝模块拆分工程 · 总结
+type: refactor-history
+status: archived
+date: 2026-08
+authority: none
+---
+
+# 上帝模块拆分工程 · 总结（for Codex Review）
+
+> 本文档记录 slimeMold 项目在 2026-08 期间进行的一轮「上帝模块（God Module）拆分」重构。
+> 目的：把体积庞大、职责混杂的核心模块（节点定义单体、workflowStore、executor）拆成
+> 单一职责、可独立测试的纯函数/常量模块，以测试为安全网、极保守小步推进。
+> 供 Codex 评审本轮改动、或接手后续拆分时参考。
+
+---
+
+## 0. 项目背景（一句话）
+
+slimeMold 是类 ComfyUI 的**节点式 Agent 工作流**可视化编辑与执行工具，技术栈
+Tauri 2 + React 18 + React Flow (@xyflow/react) + Zustand + TypeScript + Vite。
+核心概念：节点（NodeDefinition）经画布连线组成工作流，引擎按拓扑分层并发执行。
+
+---
+
+## 1. 拆分原则（贯穿始终）
+
+- **极保守、小步、以测试为安全网**：每次只抽一个低风险纯函数岛屿，抽完即跑
+  `tsc -b` + `vitest` + `headless` 三示例 + （必要时）GUI 验收，零回归才 commit。
+- **行为等价优先**：物理搬家，不改运行时语义；新模块对外 `export` 与旧位置一致，
+  避免破坏既有 import 路径与单测。
+- **纯函数可独立测试**：抽出的函数只依赖输入参数 + 类型，不触碰 store 单例 / IO /
+  运行态，因而可在 jsdom 环境下桩入依赖后单测。
+- **高风险区隔离**：含 `setState` 副作用、运行代次、abort、并发的 action 主体**不碰**，
+  留作后续明确授权 + 分步 GUI 验收才动。
+
+---
+
+## 2. 已完成的拆分（6 批）
+
+### 批次 1 — `src/nodes/builtin.ts` 物理拆分（单体 2741 行 → 聚合器 + 10 子文件）
+- **内容**：37 个内置节点定义按 `category` 拆到 `src/nodes/builtin/`（input / media /
+  ai / text / flow / tool / audit / dispatch / coord / worker）。
+- **结果**：原文件删 2621 行，退化为 `CATEGORY_ORDER` + `builtinDefs` 聚合 + `registerBuiltins`。
+- **测试**：无新增（节点定义本身由 registryStore 真实加载验证）。
+- **Commit**：早期（main 上，无单独编号在此总结范围；属本工程前置）。
+
+### 批次 2 — `workflowStore` 分组/默认参数/配色 → `src/store/groupProxy.ts`
+- **抽离**：`recomputeProxyPorts`（分组折叠代理端口聚合）、`defaultParams`（节点默认参数）、
+  `GROUP_COLORS`（组框配色常量）。
+- **测试**：`src/store/groupProxy.test.ts`（6 用例）。
+- **Commit**：`b29a21b`
+
+### 批次 3 — `workflowStore` 快照/脏检测 → `src/store/workflowSerialize.ts`
+- **抽离**：`projectSnapshot`（buildProjectFile 的快照封装）、`DIRTY_KEYS`（脏检测白名单常量）。
+- **注意**：`finalizeLoaded()` 含 `setState` 副作用 + `suppressDirty` 模块变量，**保持原位不动**。
+- **测试**：`src/store/workflowSerialize.test.ts` 11 用例（含新增 3）。
+- **Commit**：`d2c00cf`
+
+### 批次 4 — `workflowStore` 几何布局 → `src/store/nodeLayout.ts`
+- **抽离**：`alignNodes`（6 种对齐）、`distributeNodes`（x/y 等距分布）。
+  关键设计：原内联逻辑耦合 `get().selectedIds`，抽离后改为**显式参数传入**，使纯函数不依赖 store。
+- **测试**：`src/store/nodeLayout.test.ts`（10 用例）。
+- **Commit**：`e0ad847`
+
+### 批次 5 — `workflowStore` 运行态复位 → `src/store/nodeRuntime.ts`
+- **抽离**：`resetNodeRuntime`（清节点 status/error/outputs/usage）、`resetEdgeRuntime`（剥离边 running class）。
+- **测试**：`src/store/nodeRuntime.test.ts`（8 用例）。
+- **Commit**：`49ff132`
+
+### 批次 6 — `executor` 纯辅助 → `src/engine/executorHelpers.ts`
+- **抽离**：`resolveCapability`、`applyCapability`（能力等级推导与上下文裁剪）、
+  `isTransient`（瞬时错误判断）、`collectInputs`（上游输入汇集）、`accumulateUsage`（用量累加）。
+- **做法**：executor.ts 改为 `import` 供内部使用 + `export` 再导出，保持 `executor.test.ts` 兼容。
+- **测试**：复用既有 `src/engine/executor.test.ts`（15 用例全过）。
+- **Commit**：`2c9fcbb`
+
+---
+
+## 3. 模块边界现状（拆后）
+
+| 新模块 | 职责 | 依赖 |
+|---|---|---|
+| `src/nodes/builtin/*.ts` | 内置节点定义（按 category） | registry / types |
+| `src/store/groupProxy.ts` | 分组折叠代理端口 + 默认参数 + 配色 | registryStore（非完全纯函数） |
+| `src/store/workflowSerialize.ts` | 序列化/反序列化 + 快照 + 脏检测白名单 | types |
+| `src/store/nodeLayout.ts` | 节点几何对齐/分布（纯） | types |
+| `src/store/nodeRuntime.ts` | 运行态复位映射（纯） | types |
+| `src/engine/executorHelpers.ts` | 能力/输入/用量/瞬时错误（纯） | types |
+| `src/engine/graphAlgo.ts` | 图算法（reachable / downstream / executionSet / 剪枝 / scope 簇 / loop 决策） | types |
+| `src/engine/topoSort.ts` | 拓扑分层（stage 化，含 loopGate 正向触发边抬高） | types |
+| `src/engine/runtime.ts` | 运行时状态（store runtime） | — |
+| `src/engine/runFinalizer.ts` | 运行收尾（历史/checkpoint/成本/指针回退） | types + store |
+| `src/engine/runScheduler.ts` | 单层调度（进度/簇并发/executeNode 注入） | types |
+| `src/engine/runLoop.ts` | 循环变量注入 + loopGate 每轮 force | types |
+| `src/engine/nodeExecutionPolicy.ts` | 节点前置决策（NodeDecision 联合类型） | types |
+| `src/engine/runLlmCall.ts` | LLM 候选链 fallback 调用骨架 | types |
+| `src/engine/nodeResultHandler.ts` | 节点成功/失败结果副作用 | types |
+| `src/agents/agentDecision.ts` | AgentRouter 运行时决策纯函数 | types |
+
+> 除 `groupProxy.ts` 依赖 `registryStore` 单例外，抽出的计算模块不依赖
+> workflowStore / executor 主流程，可被独立单测。
+
+---
+
+## 4. 验证基线（拆后全绿）
+
+- `npx tsc -b`：**0 错误**
+- `npx vitest run`：**222 / 222 通过**（14 个测试文件）
+  - 其中本轮新增/复用：groupProxy 6 · workflowSerialize 11（含新增 3）· nodeLayout 10 ·
+    nodeRuntime 8 · executor 15
+- `npm run headless` 三示例全成功：`examples/loop-closure-test.json` ·
+  `examples/test-dispatch-plan.workflow.json` · `examples/test-conflict-council.workflow.json`
+- GUI 验收：分组折叠/代理端口、默认参数、组框配色、对齐分布、运行态复位均通过。
+  > **注**：GUI 验收为**人工验收记录**（非 CI 自动可复现项），验收环境为 Windows + Tauri dev。
+
+---
+
+## 5. 剩余未拆的高风险区（供 Codex 接手评估）
+
+以下**尚未动**，均属动作型/耦合运行态，需明确授权 + 分步 GUI 验收：
+
+1. **`workflowStore.ts` 的项目/画布/运行态 actions 内核**（文件约 2051 行，其中 actions
+   约占 1900 行，口径：main @ `2c9fcbb` 之后含方案 P 的 workflows 内存态改造）：
+   - `openProject` / `saveProject` / `switchWorkflow` / `closeProject` 等项目生命周期；
+   - `onConnect` / `addNode` / `removeNode` / 复制粘贴 / 撤销重做 / `markDirty` 等画布编辑；
+   - `finalizeLoaded()`：含 `setState` + `suppressDirty` 模块变量。
+2. **`executor.ts` 的 `runWorkflow` 主循环**（`src/engine/executor.ts:231-680`，约 450 行）：
+   - 分层并发执行、缓存命中、增量执行、失败续跑、stop 代次过期逻辑。
+   - 这是「上帝模块」最顽固的部分；纯函数已抽干净，但**编排本身**仍是单点大函数。
+3. **`runtime.ts` 的运行时状态管理**（可进一步评估是否还能拆）。
+
+> 注：`runWorkflow` 位于 `src/engine/executor.ts`，**不在** `workflowStore.ts`。
+> workflowStore 仅通过 store 方法调用引擎，引擎内部直接 import `executor`。
+
+---
+
+## 6. Codex 评审后续（2026-08-07 已落地）
+
+Codex 评审后，以下修复已随 `ae0652d`（codex审议完成）进入 main，后续又有
+`eb37926`（工作区信任 + openProject 修复）与 `00194ec`（序列化往返修复）：
+
+- **运行资源按 `wfId + runId` 隔离**（新增 `src/engine/runResources.ts`），
+  根治旧运行清理新运行资源的竞态。
+- **执行计划抽离**（新增 `src/engine/runPlan.ts`）：子图展开、data/control 边分类、
+  拓扑分层、环检测、loopGate 识别。
+- **主流程 `try/finally` 统一收尾**：空图/展开失败/环检测/异常/中止均进入资源清理。
+- **`force` 重启主动 abort 旧运行**；节点 `await` 返回后补代次守卫。
+- **非激活工作流不再误读 `activeWfId`**（workspace/变量/资产/输出按目标工作流区分）。
+- **Tauri/Git 安全边界收窄**：`run_git` 收敛为沙箱协议，移除开发机硬编码目录权限。
+- **工作区信任（动态 capability 注入）**：`grant_project_access` 在打开项目时把
+  `<项目根>/**` 动态注入 `main` 窗口 `fs:scope`，替代静态写死绝对路径白名单。
+- **序列化往返修复**：`flowEdgesFrom` 恢复 `data.kind/scope`，补 round-trip 测试。
+
+当前验证基线（main @ `917e13d`，2026-08-11）：`npm run build`（tsc -b + vite build）
+0 错误、`vitest` **437/437**（37 文件）、`i18n:check` **621 keys** 对齐、`headless` 冒烟通过。
+
+### 后续（2026-08-08）已落地
+
+- **执行内核六阶段（Codex 规划 A–E）+ 缓存隔离细粒度化**：见
+  `docs/history/verification/EXECUTION_PHASES_VERIFICATION.md`，覆盖 RunContext/事件流（A1–A3）、
+  AgentRouter 决策（B）、检查点持久化（C）、实时接管（D）、结构化经验库（E）。
+- **Codex 二轮评审修复（`8046674`）**：构建恢复全绿、收尾读最新节点状态、
+  检查点独立原子落盘（tmp+rename）、Router 接通 category + 失败 fallback、
+  intervention 复合键、项目授权统一入口、经验注入 system prompt。
+- **下述「未了结课题」多数已收口**：生命周期集成测试已建（executorLifecycle/
+  executorEvents/executorIntervene 共 14 用例）、缓存已按 wfId+nodeId+workspace
+  隔离、旧运行收尾有代次守卫、RunContext 显式边界已建。
+
+### H1a–g：executor 七刀拆分（2026-08-11 完成，Codex 节奏「先收尾 → 调度 → 循环 → 节点策略 → LLM → 结果副作用」）
+
+> 此前的「未了结课题：`runWorkflow` 主循环仍是大函数」已解决——executor 从
+> ~1500 行降至 **1233 行**，7 个纯逻辑模块抽出并各自补了直接单测。
+
+| # | 新模块 | 行数 | 职责 | 直接单测 |
+|---|---|---|---|---|
+| H1a | `src/engine/runFinalizer.ts` | 313 | 运行收尾收敛（状态归约/最新视图/运行历史/checkpoint 终态/成本指标/终态事件/经验复盘/指针回退），显式 `FinalizeInput` 输入对象 | runFinalizer.test（5） |
+| H1b | `src/engine/runScheduler.ts` | 104 | 单层调度（层进度事件/簇并发/executeNode 闭包注入/fail-fast/层中间检查点快照） | runScheduler.test（8） |
+| H1c | `src/engine/runLoop.ts` | 69 | 循环控制辅助（`prepareLoopRound` 循环变量注入 + loopGate 每轮 force 重算；`loopLogMessages` 轮次日志） | runLoop.test（5） |
+| H1d | `src/agents/agentDecision.ts` | ~98 | `decideAgentCall`：ctx.llm 的 AgentRouter 决策段（agent 池合并/过滤/goal/category/评分/路由日志）纯函数 | — |
+| H1e | `src/engine/nodeExecutionPolicy.ts` | 155 | `decideNodeExecution`：节点前置决策统一输出 NodeDecision 联合类型（upstream-failed/bypass/mute/…/cached/execute），副作用由 executor switch 执行 | nodeExecutionPolicy.test（14） |
+| H1f | `src/engine/runLlmCall.ts` | 175 | `runLlmWithFallback`：候选链逐级尝试（限流+成本记录）、harness/普通分发、失败换候选、中止立即抛、全败抛最后错误 | runLlmCall.test（6） |
+| H1g | `src/engine/nodeResultHandler.ts` | 120 | 节点成功/失败结果副作用（缓存写入/分支登记/状态/事件/快照/stopAfter 剪裁） | nodeResultHandler.test（5） |
+
+**拆分模式**：显式输入对象 + 回调注入（不直接依赖 Zustand 闭包），副作用留在
+executor 主流程。曾有两次过度抽取尝试（`nodePreflight.ts` 前置判定、`nodeContextFactory`
+ctx 构造工厂）因行为偏差/参数爆炸**删除回退**——「小步、纯函数、行为不变」是铁律。
+
+### H1v：八项 GUI 验收（2026-08-11 完成）
+
+executor 拆分后的最终稳定性验证，四项自动化全绿 + 八项 GUI 人工验收全过：
+
+- 自动化：`tsc -b` 0 错误 · `vitest` **437 tests**（37 文件）· `headless` 冒烟 ·
+  `i18n:check` 621 keys 对齐
+- GUI：① 运行/停止 ② 强制重启 ③ 失败续跑 ④ 缓存复用 ⑤ 循环 ⑥ 并发+沙箱
+  ⑦ 接管（单测覆盖） ⑧ checkpoint 恢复
+
+**验收期间修复的真实 bug**（均已 push）：
+- `AgentPanel.pullModels` 静默吞错 → catch 暴露真实错误（新增 i18n key `agent.model.pullFailed`）
+- 顶栏停止按钮不出现：`resetStatuses` 无条件清 `running`，`runWorkflow` 里
+  `setRunning(true)` 被紧随的 `resetStatuses` 打回 false
+- 停止流程三处：`stopWorkflow` 未同步 debugRun（runID 残留误报）；`finalizeRun`
+  不区分手动停止与「被新运行顶替」（日志误导）；abort 路径不清节点状态（节点卡「正在运行」）
+- loopGate 循环只跑 1 轮（**三层根因**）：① `workflowIO` 导入边 kind 读 `e.kind`
+  而非 `e.data?.kind`（与导出不对称，所有 control 边导入后变 data 边——最关键）；
+  ② `runPlan.hasLoop` 误用图论环检测；③ `topoStages` Pass B 把 loopGate 触发边当
+  回流边跳过；④ loopGate 每轮命中缓存吞掉分支上报（`prepareLoopRound` 补 force）
+
+### 仍未了结的课题
+
+- **成本感知路由**：AgentRouter 目前是「运行时路由 + 失败回退」，tier 仅作标注，
+  未按价格/成功率/订阅额度动态评分（注：G3 AgentEconomics 已落地四级价格优先级，
+  但动态评分与「性价比最优」编排闭环仍待深化）。
+- **`workflowStore` 仍是大函数**（约 2050 行），物理拆分暂缓（Codex 确认 G5 门面化，
+  待 executor 拆完 + GUI 验收稳定后再启动——H1v 验收已通过，G5 可重新评估）。
+- **插件进程级隔离（H2）**、**Orchestrator/主控 Agent（H3）** 未做。
+
+---
+
+## 7. 给接手者的提示
+
+- 本工程采用 `feature` 分支 + 显式 `git add <具体文件>`（不用 `git add -A`）。
+- 测试框架为 vitest（jsdom 环境、setupFiles 桩、globals）。
+- 新增节点/分组/执行相关纯逻辑时，优先放进对应 `*-Helpers` / `*-Runtime` 类模块，
+  而非塞回主模块。
+- 若你要动第 5 节的「高风险区」，建议：先抽纯调度决策为单测覆盖的纯函数，
+  再改主流程调用，每步保留 `tsc`/`vitest`/`headless` 全绿。
+
+---
+
+*生成日期：2026-08-07 · 初版基于 main @ `2c9fcbb`；评审后续章节基于 main @ `00194ec`；
+2026-08-08 更新至 main @ `8046674`；2026-08-11 更新至 main @ `917e13d`（H1a–g 七刀拆分 + H1v 验收）*

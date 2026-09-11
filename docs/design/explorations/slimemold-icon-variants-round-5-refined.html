@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold icon directions · refined spatial</title>
+  <style>
+    :root { color-scheme: dark; --bg: #101214; --surface: #191c20; --ink: #f1f4f6; --muted: #9aa4ad; --line: #353c43; --slime: #c8f36a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--bg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.04em; }
+    header p { max-width: 720px; margin: 8px 0 0; color: var(--muted); }
+    .legend { color: var(--slime); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+    .principle { margin: 0 0 22px; padding: 14px 16px; border-left: 2px solid var(--slime); color: var(--muted); background: color-mix(in srgb, var(--slime) 6%, var(--surface)); }
+    .principle strong { color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    article { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h2 { margin: 0; font-size: 18px; }
+    .tag { color: var(--slime); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .concept { display: grid; grid-template-columns: 180px 1fr; gap: 20px; align-items: center; }
+    .hero { display: grid; place-items: center; padding: 18px; border-radius: 14px; background: #0b0d0f; }
+    .hero img { display: block; width: 144px; height: 144px; }
+    .copy { color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 14px; }
+    .sizes { display: flex; align-items: end; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 6px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); border-radius: calc(var(--size) * .2); }
+    .light { background: #f5f6f8; }
+    .dark { background: #0b0d0f; }
+    @media (max-width: 780px) { body { padding: 24px; } .grid { grid-template-columns: 1fr; } .concept { grid-template-columns: 128px 1fr; } .hero img { width: 104px; height: 104px; } header { display: block; } .legend { margin-top: 14px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>SlimeMold · spatial shortest path</h1><p>精修版把透视和生命力放进同一条路径：近处黏菌更有体积，候选路线退向消失点，成功通道在空间中被加粗。</p></div>
+      <div class="legend">life · depth · prune · converge</div>
+    </header>
+    <p class="principle"><strong>这轮的判断标准：</strong>不依赖文字说明，也要能读到“前景活体 → 多路试探 → 失败路径后退 → 主路强化 → 远处资源”。侧面阴影和高光只服务于路径层级，不作为装饰。</p>
+    <section class="grid">
+      <article>
+        <div class="card-head"><h2>01 · Living Vanishing</h2><span class="tag">main icon</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" alt="Living Vanishing variant"></div><div class="copy"><strong>完整叙事与空间层次</strong>拥有最明确的消失点、前景主体、候选路径和路径体积；适合作为正式应用主图标。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-living-vanishing.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>02 · Frontier</h2><span class="tag">life + tension</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" alt="Frontier variant"></div><div class="copy"><strong>近处生命向远处伸展</strong>让活体占据前景，伪足向深处探索；灰色枝条回缩，绿色胜出路径形成强烈的视觉主轴。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-frontier.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>03 · Tension Bridge</h2><span class="tag">route + depth</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" alt="Tension Bridge variant"></div><div class="copy"><strong>在立体障碍之间压出短路</strong>障碍拥有侧面和高度，黏菌沿可行缝隙穿过；长绕行逐渐退后，最短通道被强化。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-tension-bridge.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>04 · Depth Mini</h2><span class="tag">small-size first</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" alt="Depth Mini variant"></div><div class="copy"><strong>小尺寸的保真版本</strong>只保留前景黏菌、后退旧路、强化主路和远处目标；适合标题栏、任务栏与 favicon。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/round-5-refined/slimemold-depth-mini.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

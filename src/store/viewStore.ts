@@ -3,6 +3,12 @@ import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type LocaleCode = string;
+export type WorkspaceMode = 'simple' | 'advanced';
+
+/** 旧版欢迎遮罩只属于高级工作台，避免覆盖轻量工作台自己的入口。 */
+export function shouldRenderWelcomeModal(workspaceMode: WorkspaceMode, showWelcome: boolean): boolean {
+  return showWelcome && workspaceMode === 'advanced';
+}
 
 import i18n from '../i18n';
 import { setSelfImprove } from '../agents/reviewer';
@@ -43,6 +49,9 @@ namespace applyTheme {
 }
 
 interface ViewState {
+  /** 默认面向轻度用户的项目视图；高级模式保留原有节点画布 */
+  workspaceMode: WorkspaceMode;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
   showGrid: boolean;
   showMinimap: boolean;
   /** 颜色主题：dark / light / system（跟随系统），持久化，全局跟随 */
@@ -53,6 +62,10 @@ interface ViewState {
   globalProxyUrl: string;
   /** 设置全局默认代理出口 */
   setGlobalProxyUrl: (url: string) => void;
+  /** 全局默认主控 Agent：应用级设置，项目未单独覆盖时生效 */
+  globalMasterAgentId: string | null;
+  /** 设置全局默认主控 Agent */
+  setGlobalMasterAgent: (id: string | null) => void;
   /** 拆分视图：画布右侧并排显示辅助面板 */
   splitView: boolean;
   /** 底侧边栏（底部面板）开关状态，持久化以记住上次选择 */
@@ -108,6 +121,8 @@ interface ViewState {
 export const useViewStore = create<ViewState>()(
   persist(
     (set, get) => ({
+      workspaceMode: 'simple',
+      setWorkspaceMode: (mode) => set({ workspaceMode: mode }),
       showGrid: true,
       showMinimap: false,
       theme: 'dark',
@@ -121,6 +136,7 @@ export const useViewStore = create<ViewState>()(
       inspectAssetId: null,
       debugMode: false,
       globalProxyUrl: '',
+      globalMasterAgentId: null,
       locale: (typeof navigator !== 'undefined' && navigator.language?.startsWith('en') ? 'en-US' : 'zh-CN'),
       selfImprove: false,
       setSelfImprove: (v) => {
@@ -150,6 +166,7 @@ export const useViewStore = create<ViewState>()(
       setInspectAsset: (id) => set({ inspectAssetId: id }),
       toggleDebug: () => set((s) => ({ debugMode: !s.debugMode })),
       setGlobalProxyUrl: (v: string) => set({ globalProxyUrl: v }),
+      setGlobalMasterAgent: (id: string | null) => set({ globalMasterAgentId: id }),
       setTheme: (t) => {
         applyTheme(t);
         set({ theme: t });

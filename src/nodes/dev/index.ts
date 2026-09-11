@@ -11,6 +11,9 @@ import type { NodeDefinition, ParamType, PortType } from '../../types';
 import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator';
 import type { DevSession } from '../../dev/session';
 import { collectChangedProtectedPaths } from '../../dev/policy';
+import { assertTaskExecutionLineage } from '../../domain/execution';
+import { applyFilePatchSet } from '../../dev/patch-set';
+import { workerBranchForPath } from '../../dev/worktree';
 
 const DEV_CATEGORY = '开发';
 
@@ -126,7 +129,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     async execute(inputs, params) {
       const path = str(inputs.path ?? params.path);
       if (!path) throw nodeError('worktree.create 需要 path');
-      const info = await manager.create(path, path); // 登记 id 即路径（cleanup/status 按 path 引用）
+      const info = await manager.create(path, path, { branch: workerBranchForPath(path) }); // 登记 id 即路径（cleanup/status 按 path 引用）
       // 审计修复：create 失败（git worktree add 返回非零，如残留 worktree 冲突）必须**显式抛错**，
       // 而不是返回 { ok:false } 被当作 success——否则后续节点会连锁报「不属于已登记 worktree」，
       // 掩盖真实根因。fail-closed：未成功登记即节点失败。
@@ -266,6 +269,52 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         stageId: scope.stageId,
       });
       return { ok: true, contentHash: r.contentHash ?? '', resultId };
+    },
+  };
+
+  const patchSetApply: NodeDefinition = {
+    typeId: 'dev.patch.apply',
+    name: '应用文件补丁集',
+    category: DEV_CATEGORY,
+    role: 'worker',
+    minCapability: 'sandbox_write',
+    whenToUse: '将 worker 或 project.scaffold 生成的结构化补丁候选应用到当前已登记 worktree。',
+    description:
+      '先核对补丁集所有文件的前置内容，再通过宿主受控 code.patch 逐文件应用并 read-back；任何漂移或写入失败都阻断节点，不返回伪造成功。',
+    inputs: [
+      { id: 'worktreePath', label: '工作区路径', type: T },
+      { id: 'patchSet', label: '结构化文件补丁集', type: J },
+      ...SCOPE_INPUTS,
+    ],
+    outputs: [
+      { id: 'appliedPaths', label: '已应用文件', type: L },
+      { id: 'contentHashes', label: '内容哈希', type: J },
+      { id: 'resultId', label: '宿主结果 ID', type: T },
+    ],
+    params: [
+      { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'patchSet', label: '结构化文件补丁集 JSON（兜底）', type: 'textarea', default: '' },
+      ...SCOPE_PARAMS,
+    ],
+    async execute(inputs, params) {
+      const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      if (!cwd) throw nodeError('patch.apply 需要 worktreePath');
+      const scope = scopeOf(inputs, params);
+      const rawPatchSet = inputs.patchSet ?? params.patchSet;
+      const patchSet = parseJson<unknown>(rawPatchSet, null);
+      if (!patchSet) throw nodeError('patch.apply 需要结构化 patchSet');
+      const result = await applyFilePatchSet(patchSet, service, { cwd });
+      const resultId = nextResultId();
+      session.registerResult({
+        resultId,
+        kind: 'artifact',
+        status: 'passed',
+        summary: `宿主已应用 ${result.appliedPaths.length} 个结构化文件补丁`,
+        worktreePath: cwd,
+        orchestrationId: scope.orchestrationId,
+        stageId: scope.stageId,
+      });
+      return { ...result, resultId };
     },
   };
 
@@ -429,7 +478,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       const r = await service.gitDiff(baseRef, { cwd });
       // P1 修复：git diff 无改动时退出码也是 0，但必须有实际变更才算 passed——
       // 空 diff 登记为 failed，evaluator 的 diff 规则（存在 passed 证据）才不会误通过。
-      const hasChange = r.stdout.trim().length > 0;
+      const hasChange = r.exitCode === 0 && r.stdout.trim().length > 0;
       const resultId = nextResultId();
       resultStore.set(resultId, {
         resultId,
@@ -461,6 +510,10 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'resultId', label: '宿主结果 ID（来自 dev.* 执行节点）', type: T },
       { id: 'worktreePath', label: '工作区路径（作用域校验）', type: T },
+      { id: 'runId', label: 'Worker Run ID（可选）', type: T },
+      { id: 'taskId', label: 'Worker Task ID（可选）', type: T },
+      { id: 'taskExecutionId', label: 'Task Execution ID（可选）', type: T },
+      { id: 'attemptId', label: 'Attempt ID（可选）', type: T },
     ],
     outputs: [{ id: 'evidenceId', label: '证据 ID', type: T }],
     params: [
@@ -468,12 +521,26 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'resultId', label: '宿主结果 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'runId', label: 'Worker Run ID（兜底）', type: 'text', default: '' },
+      { key: 'taskId', label: 'Worker Task ID（兜底）', type: 'text', default: '' },
+      { key: 'taskExecutionId', label: 'Task Execution ID（兜底）', type: 'text', default: '' },
+      { key: 'attemptId', label: 'Attempt ID（兜底）', type: 'text', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const resultId = str(inputs.resultId ?? params.resultId);
       const worktreePath = str(inputs.worktreePath ?? params.worktreePath);
+      const runId = str(inputs.runId ?? params.runId);
+      const taskId = str(inputs.taskId ?? params.taskId);
+      const taskExecutionId = str(inputs.taskExecutionId ?? params.taskExecutionId);
+      const attemptId = str(inputs.attemptId ?? params.attemptId);
+      const lineageValues = [runId, taskId, taskExecutionId, attemptId];
+      const hasLineage = lineageValues.some(Boolean);
+      if (hasLineage && lineageValues.some((value) => !value)) {
+        throw nodeError('evidence.add 的 Worker lineage 必须四项完整');
+      }
+      if (hasLineage) assertTaskExecutionLineage({ runId, taskId, taskExecutionId, attemptId });
       if (!orchestrationId || !stageId) throw nodeError('evidence.add 需要 orchestrationId 与 stageId');
       if (!resultId) throw nodeError('evidence.add 需要引用宿主结果 resultId');
       // P0：从宿主登记表取真实结果；不存在（伪造/过期 resultId）→ 拒绝
@@ -504,6 +571,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         command: host.command,
         exitCode: host.exitCode,
         contentHash: host.contentHash,
+        ...(hasLineage ? { runId, taskId, taskExecutionId, attemptId } : {}),
       });
       return { evidenceId: rec.id };
     },
@@ -523,6 +591,10 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { id: 'orchestrationId', label: '编排 ID', type: T },
       { id: 'stageId', label: '阶段 ID', type: T },
       { id: 'worktreePath', label: '工作区路径', type: T },
+      { id: 'runId', label: 'Worker Run ID（可选）', type: T },
+      { id: 'taskId', label: 'Worker Task ID（可选）', type: T },
+      { id: 'taskExecutionId', label: 'Task Execution ID（可选）', type: T },
+      { id: 'attemptId', label: 'Attempt ID（可选）', type: T },
       { id: 'rules', label: '验收规则（JSON 数组）', type: J },
     ],
     outputs: [
@@ -536,13 +608,30 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
       { key: 'orchestrationId', label: '编排 ID（兜底）', type: 'text', default: '' },
       { key: 'stageId', label: '阶段 ID（兜底）', type: 'text', default: '' },
       { key: 'worktreePath', label: '工作区路径（兜底）', type: 'text', default: '' },
+      { key: 'runId', label: 'Worker Run ID（兜底）', type: 'text', default: '' },
+      { key: 'taskId', label: 'Worker Task ID（兜底）', type: 'text', default: '' },
+      { key: 'taskExecutionId', label: 'Task Execution ID（兜底）', type: 'text', default: '' },
+      { key: 'attemptId', label: 'Attempt ID（兜底）', type: 'text', default: '' },
       { key: 'rules', label: '验收规则 JSON（兜底）', type: 'textarea', default: '' },
     ],
     async execute(inputs, params) {
       const orchestrationId = str(inputs.orchestrationId ?? params.orchestrationId);
       const stageId = str(inputs.stageId ?? params.stageId);
       const cwd = str(inputs.worktreePath ?? params.worktreePath);
+      const runId = str(inputs.runId ?? params.runId);
+      const taskId = str(inputs.taskId ?? params.taskId);
+      const taskExecutionId = str(inputs.taskExecutionId ?? params.taskExecutionId);
+      const attemptId = str(inputs.attemptId ?? params.attemptId);
       if (!cwd) throw nodeError('accept 需要 worktreePath');
+      const lineageValues = [runId, taskId, taskExecutionId, attemptId];
+      const hasLineage = lineageValues.some(Boolean);
+      if (hasLineage && lineageValues.some((value) => !value)) {
+        throw nodeError('accept 的 Worker lineage 必须四项完整');
+      }
+      if (hasLineage) assertTaskExecutionLineage({ runId, taskId, taskExecutionId, attemptId });
+      if (!collector.hasPersistence()) {
+        throw nodeError('accept 需要宿主 EvidenceStore 持久化，拒绝使用仅内存 Evidence');
+      }
       // P1（审计）：验收 ID 始终由宿主生成（不可预测唯一），工作流/节点不可自填——
       // 防止指定已有 ID 覆盖旧验收记录（recordAcceptance 亦禁止覆盖）。
       const acceptanceId = session.nextAcceptanceId();
@@ -550,13 +639,22 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         ? (inputs.rules as AcceptanceRule[])
         : parseJson<AcceptanceRule[]>(params.rules, []);
       // P0/P1：证据按当前任务+阶段+工作区作用域过滤，且验收前强制 flush（落盘失败 throw）
-      const evidence = await collector.flushAndByScope({ orchestrationId, stageId, worktreePath: cwd });
+      const evidence = await collector.flushAndByScope({
+        orchestrationId,
+        stageId,
+        worktreePath: cwd,
+        ...(hasLineage ? { taskExecutionId, attemptId } : {}),
+      });
+      if (!hasLineage) {
+        const attemptKeys = new Set(evidence.map((record) => record.attemptId).filter(Boolean));
+        if (attemptKeys.size > 1) throw nodeError('accept 证据混入多个 Worker attempt，必须提供当前 lineage');
+      }
       // P0：changedProtectedPaths 由宿主真实计算（gitChangedFiles × policy），不接受输入
       const changedFiles = await service.gitChangedFiles({ cwd });
       const changed = collectChangedProtectedPaths(session.policy, changedFiles);
       const a = evaluateDevAcceptance(rules as AcceptanceRule[], evidence as never[], changed);
       // P1（审计）：登记确定性验收记录（cleanup 确认门校验 passed + worktreePath 一致）
-      session.recordAcceptance({
+      const acceptance = session.recordAcceptance({
         acceptanceId,
         orchestrationId,
         stageId,
@@ -564,7 +662,12 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
         passed: a.passed,
         failedChecks: a.failedChecks,
         at: new Date().toISOString(),
+        ...(hasLineage ? { runId, taskId, taskExecutionId, attemptId } : {}),
       });
+      await session.persistAcceptance(acceptance);
+      if (!a.passed) {
+        throw nodeError(`Acceptance 未通过：${a.failedChecks.join('、') || '未知检查失败'}（${acceptanceId}）`);
+      }
       return {
         passed: a.passed,
         failedChecks: a.failedChecks,
@@ -581,6 +684,7 @@ export function createDevNodeDefs(session: DevSession): NodeDefinition[] {
     worktreeCleanup,
     codeRead,
     codePatch,
+    patchSetApply,
     shellRun,
     testRun,
     gitStatus,

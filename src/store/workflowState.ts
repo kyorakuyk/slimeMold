@@ -19,6 +19,8 @@ import type {
 } from '../types';
 import { flowEdgesFrom, flowNodesFrom, fromDisk, serializeCurrent } from './workflowSerialize';
 import { builtinRoles, createAgent } from '../agents/agentManager';
+import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
+import type { ProjectControlSnapshot } from '../projectControl/types';
 
 /** 按 id 更新或追加：列表中存在同 id 项则替换，否则追加。纯函数。 */
 export function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
@@ -92,6 +94,9 @@ export interface OpenProjectState {
   checkpointHistory: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
   artifacts: import('../types').ProjectArtifacts;
   pipelines: import('../types').PipelineDef[];
+  orchestrations: import('../types').Orchestration[];
+  workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
+  projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
   logs: never[];
 }
@@ -151,6 +156,9 @@ export function buildOpenProjectState(
     // 交付物：读回项目级黑板（pipeline.handoff 产出的成果，落盘于 project.json 的 artifacts）
     artifacts: file.artifacts ?? {},
     pipelines: file.pipelines ?? [],
+    orchestrations: file.orchestrations ?? [],
+    workerRuns: Array.isArray(file.workerRuns) ? file.workerRuns : [],
+    projectControl: parseProjectControlSnapshot(file.projectControl),
     selectedNodeId: null,
     logs: [],
   };
@@ -246,6 +254,8 @@ export interface NewProjectState {
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
   projectAssets: import('../types').AssetMeta[];
+  workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
+  projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
   logs: never[];
 }
@@ -289,6 +299,8 @@ export function buildNewProjectState(name: string): NewProjectState {
     variables: wf.variables!,
     projectVariables: {},
     projectAssets: [],
+    workerRuns: [],
+    projectControl: createEmptyProjectControlSnapshot(),
     selectedNodeId: null,
     logs: [],
   };

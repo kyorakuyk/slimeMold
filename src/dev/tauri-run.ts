@@ -14,7 +14,7 @@ import type { DevGitRunner } from './worktree';
 import type { CommandResult } from './node-run';
 import type { EvidencePersistence, JsonlFsOps } from './evidence';
 import { createHostEvidenceStoreWithFs } from './evidence';
-import { resolveWeb, relativeWeb } from './path-utils';
+import { pathComparisonKeyWeb, resolveWeb, relativeWeb } from './path-utils';
 
 /** Rust dev_exec 返回结构。 */
 interface DevExecResult {
@@ -29,17 +29,48 @@ async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   return invoke<T>(cmd, args);
 }
 
+function requireSessionGeneration(generation: number | undefined): number {
+  if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= 0) {
+    throw new Error('Tauri dev host session generation is required');
+  }
+  return generation;
+}
+
 function toCommandResult(r: DevExecResult): CommandResult {
   return { exitCode: r.code, stdout: r.stdout, stderr: r.stderr, durationMs: 0 };
 }
 
 /** Tauri git runner：git 命令经 dev_exec 在宿主执行（cwd 归属由 Rust 校验）。 */
-export function createTauriGitRunner(): DevGitRunner {
+export function createTauriGitRunner(generation: number): DevGitRunner {
+  const sessionGeneration = requireSessionGeneration(generation);
   return {
     git: async (args, cwd) => {
       try {
-        const r = await call<DevExecResult>('dev_exec', { args: ['git', ...args], cwd });
+        const r = await call<DevExecResult>('dev_exec', {
+          args: ['git', ...args],
+          cwd,
+          generation: sessionGeneration,
+        });
         return toCommandResult(r);
+      } catch (e) {
+        return {
+          exitCode: -1,
+          stdout: '',
+          stderr: e instanceof Error ? e.message : String(e),
+          durationMs: 0,
+        };
+      }
+    },
+    cleanupWorktree: async (path, branch, branchRevision, cwd) => {
+      try {
+        await call<void>('dev_cleanup_worktree', {
+          path,
+          branch,
+          branchRevision,
+          cwd,
+          generation: sessionGeneration,
+        });
+        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
       } catch (e) {
         return {
           exitCode: -1,
@@ -53,11 +84,16 @@ export function createTauriGitRunner(): DevGitRunner {
 }
 
 /** Tauri deps：把 NodeDevDeps 的命令/文件/路径替换为 Rust 通道实现。 */
-export function createTauriDeps(): NodeDevDeps {
+export function createTauriDeps(generation: number): NodeDevDeps {
+  const sessionGeneration = requireSessionGeneration(generation);
   return {
     runCommand: async (cmd, args, cwd) => {
       try {
-        const r = await call<DevExecResult>('dev_exec', { args: [cmd, ...args], cwd });
+        const r = await call<DevExecResult>('dev_exec', {
+          args: [cmd, ...args],
+          cwd,
+          generation: sessionGeneration,
+        });
         return toCommandResult(r);
       } catch (e) {
         return {
@@ -68,14 +104,22 @@ export function createTauriDeps(): NodeDevDeps {
         };
       }
     },
-    readFile: async (abs) => call<string>('dev_read_file', { path: abs }),
+    readFile: async (abs) => call<string>('dev_read_file', {
+      path: abs,
+      generation: sessionGeneration,
+    }),
     writeFile: async (abs, content) => {
-      await call<void>('dev_write_file', { path: abs, content });
+      await call<void>('dev_write_file', { path: abs, content, generation: sessionGeneration });
+    },
+    mkdir: async (abs) => {
+      await call<void>('dev_create_dir', { path: abs, generation: sessionGeneration });
     },
     resolveInside: async (root, rel) => {
       const abs = resolveWeb(root, rel);
       const rootNorm = resolveWeb(root, '.');
-      if (abs !== rootNorm && !abs.startsWith(rootNorm + '/')) {
+      const absKey = pathComparisonKeyWeb(abs);
+      const rootKey = pathComparisonKeyWeb(rootNorm);
+      if (absKey !== rootKey && !absKey.startsWith(rootKey + '/')) {
         throw new Error(`路径逃逸拒绝：${rel}（root=${rootNorm}）`);
       }
       return abs;

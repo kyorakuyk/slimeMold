@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold · independent dense IC</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0b1012; --surface: #151e22; --ink: #f0f4ef; --muted: #9aa7aa; --line: #30444a; --active: #c8f36a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 50px; color: var(--ink); background: var(--bg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; }
+    .eyebrow { margin-bottom: 10px; color: var(--active); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -.04em; }
+    header p { max-width: 700px; margin: 10px 0 26px; color: var(--muted); }
+    .rule { height: 1px; margin-bottom: 22px; background: var(--line); }
+    .hero { display: grid; place-items: center; min-height: 600px; padding: 44px; border: 1px solid var(--line); border-radius: 18px; background: #080d0f; }
+    .hero img { display: block; width: min(100%, 480px); height: auto; }
+    .read { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .read div { padding: 15px; border-top: 1px solid var(--line); color: var(--muted); }
+    .read strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    .sizes { display: flex; align-items: end; gap: 17px; margin-top: 20px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 6px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); }
+    .note { margin-top: 20px; color: var(--muted); }
+    .note strong { color: var(--ink); }
+    @media (max-width: 700px) { body { padding: 28px; } h1 { font-size: 30px; } .hero { min-height: 400px; padding: 26px; } .read { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">SlimeMold · independent study 13</div>
+    <h1>Dense IC State</h1>
+    <header><p>从零开始，只保留四个要求：正方形芯片、密集灰色未激活电路、少数激活亮线、明确的圆形接线柱。</p></header>
+    <div class="rule"></div>
+    <section class="hero"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" alt="Independent dense integrated circuit state icon"></section>
+    <section class="read"><div><strong>底层状态</strong>灰色线路占绝大多数，作为芯片表面的静默结构。</div><div><strong>激活状态</strong>仅一条主线和一条短支线使用黄绿色，避免全图霓虹化。</div><div><strong>接线柱</strong>少量圆形端子直接落在线路上，作为状态的可见锚点。</div></section>
+    <section class="sizes"><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:16px" alt="16px"><span>16</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:24px" alt="24px"><span>24</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:32px" alt="32px"><span>32</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:48px" alt="48px"><span>48</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:64px" alt="64px"><span>64</span></div><div class="size"><img src="../../src-tauri/icons/concepts/round-13-independent-circuit/slimemold-dense-ic-state.svg" style="--size:128px" alt="128px"><span>128</span></div></section>
+    <p class="note"><strong>状态：</strong>这是独立样稿，不基于前面的 Claude、Junction、Adaptive Circuit 或 v8/v9 构图；正式图标资源仍未修改。</p>
+  </main>
+</body>
+</html>

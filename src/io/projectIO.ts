@@ -9,6 +9,30 @@ const PROJECT_JSON = 'project.json';
 const WORKFLOWS_DIR = 'workflows';
 const RUNS_DIR = 'runs';
 const HISTORY_JSON = 'history.json';
+
+const projectWriteLocks = new Map<string, Promise<void>>();
+
+function projectLockKey(root: string): string {
+  const normalized = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+async function withProjectWriteLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = projectLockKey(root);
+  const previous = projectWriteLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  projectWriteLocks.set(key, current);
+  try {
+    await previous;
+    return await operation();
+  } finally {
+    release();
+    if (projectWriteLocks.get(key) === current) projectWriteLocks.delete(key);
+  }
+}
 const CHECKPOINTS_JSON = 'checkpoints.json';
 const LEGACY_EXT = '.smproj';
 
@@ -51,10 +75,60 @@ function joinPath(root: string, ...parts: string[]): string {
 
 // ---------- 最近项目记录（localStorage 缓存） ----------
 
+/** 最近项目统一保存为项目根目录 + 正斜杠，避免 Windows 分隔符制造重复记录。 */
+function normalizeRecentPath(path: string): string {
+  return projectRootFromPath(path).replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/** Windows 驱动器/UNC 路径大小写不敏感，其它平台保留大小写语义。 */
+function recentPathKey(path: string): string {
+  const normalized = normalizeRecentPath(path);
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLocaleLowerCase()
+    : normalized;
+}
+
 function readRecent(): RecentProject[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? (JSON.parse(raw) as RecentProject[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    let changed = false;
+    const list: RecentProject[] = [];
+    for (const rawItem of parsed) {
+      if (typeof rawItem !== 'object' || rawItem === null) {
+        changed = true;
+        continue;
+      }
+      const item = rawItem as Partial<RecentProject>;
+      if (typeof item.path !== 'string' || !item.path) {
+        changed = true;
+        continue;
+      }
+      const entry: RecentProject = {
+        name: typeof item.name === 'string' && item.name ? item.name : item.path,
+        path: normalizeRecentPath(item.path),
+        openedAt: typeof item.openedAt === 'string' ? item.openedAt : '',
+      };
+      if (list.some((existing) => recentPathKey(existing.path) === recentPathKey(entry.path))) {
+        changed = true;
+        continue;
+      }
+      if (
+        entry.name !== item.name ||
+        entry.path !== item.path ||
+        entry.openedAt !== item.openedAt
+      ) {
+        changed = true;
+      }
+      list.push(entry);
+    }
+
+    const limited = list.slice(0, RECENT_MAX);
+    if (changed || limited.length !== list.length) writeRecent(limited);
+    return limited;
   } catch {
     return [];
   }
@@ -71,9 +145,17 @@ export function getRecentProjects(): RecentProject[] {
   return readRecent();
 }
 export function pushRecentProject(r: RecentProject) {
-  const list = readRecent().filter((x) => x.path !== r.path);
-  list.unshift(r);
+  const entry = { ...r, path: normalizeRecentPath(r.path) };
+  const key = recentPathKey(entry.path);
+  const list = readRecent().filter((x) => recentPathKey(x.path) !== key);
+  list.unshift(entry);
   writeRecent(list.slice(0, RECENT_MAX));
+}
+export function removeRecentProject(path: string) {
+  const key = recentPathKey(path);
+  const list = readRecent();
+  const next = list.filter((x) => recentPathKey(x.path) !== key);
+  if (next.length !== list.length) writeRecent(next);
 }
 export function clearRecentProjects() {
   writeRecent([]);
@@ -125,7 +207,7 @@ export function clearLastSession() {
  * @param existingRoot 已知项目根目录（首次保存为 undefined，会弹目录选择）
  * @returns 实际写入的项目根目录
  */
-export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
+async function saveProjectFileUnlocked(file: ProjectFile, existingRoot?: string): Promise<string> {
   let root = existingRoot;
   if (!root) {
     if (isTauri) {
@@ -204,6 +286,10 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
   return root;
 }
 
+export async function saveProjectFile(file: ProjectFile, existingRoot?: string): Promise<string> {
+  return withProjectWriteLock(existingRoot ?? `new:${file.name}`, () => saveProjectFileUnlocked(file, existingRoot));
+}
+
 /**
  * 阶段 C 独立落盘：把运行检查点原子写入 `.slimemold/runs/checkpoints.json`。
  * F9：先写 `checkpoints.json.tmp`，再 rename 覆盖目标文件——避免写入中途崩溃留下
@@ -221,7 +307,7 @@ export async function saveProjectFile(file: ProjectFile, existingRoot?: string):
  * 行为已由 src-tauri 集成测试（fs_atomic_replace）在真实文件系统验证。
  * 浏览器端 no-op（localStorage 已由 persist 接管）。
  */
-export async function saveCheckpoints(
+async function saveCheckpointsUnlocked(
   root: string,
   checkpoints: Record<string, RunCheckpoint>,
   checkpointHistory?: Record<string, RunCheckpoint[]>,
@@ -253,6 +339,14 @@ export async function saveCheckpoints(
       throw e2 instanceof Error ? e2 : new Error(String(e2));
     }
   }
+}
+
+export async function saveCheckpoints(
+  root: string,
+  checkpoints: Record<string, RunCheckpoint>,
+  checkpointHistory?: Record<string, RunCheckpoint[]>,
+): Promise<void> {
+  return withProjectWriteLock(root, () => saveCheckpointsUnlocked(root, checkpoints, checkpointHistory));
 }
 
 // ---------- 读取 ----------

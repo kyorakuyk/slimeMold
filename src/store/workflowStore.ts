@@ -59,6 +59,12 @@ export interface RunState {
   running: boolean;
   progress: RunProgressShape;
 }
+
+export interface ProjectSaveGuard {
+  projectId: string;
+  projectPath: string;
+  signal?: AbortSignal;
+}
 import { useRegistryStore, getNodeDef } from './registryStore';
 import { applyCheckpoint, mergeCheckpointHistory, type RunCheckpoint } from '../engine/checkpoint';
 import { useViewStore } from './viewStore';
@@ -67,6 +73,20 @@ import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
+import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
+import type { ProjectControlSnapshot } from '../projectControl/types';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
+import type { WorkerRunRecovery } from '../projectControl/workerRunRuntime';
+import type { EvidenceRecord } from '../dev/evidence';
+import type { SideEffectRecord } from '../domain/contracts';
+import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
+import { EventStreamRepository } from '../domain/eventStore';
+import {
+  clearProjectEventBuffer,
+  flushPendingProjectEvents,
+  getPendingProjectEvents,
+} from '../projectControl/eventBuffer';
+import { clearWorkerRunRuntime, installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
@@ -192,6 +212,18 @@ interface WorkflowState {
   pipelines: PipelineDef[];
   /** H3 Orchestrator：项目级编排记录（草案/进度/阶段日志），随 .slimemold 持久化 */
   orchestrations: Orchestration[];
+  /** Phase 1b：项目级 Worker Run registry（队列状态随项目持久化） */
+  workerRuns: WorkerRunQueueState[];
+  /** 从持久队列派生的恢复提示（运行态，不写入 ProjectFile） */
+  workerRunRecoveries: WorkerRunRecovery[];
+  /** 从宿主 EvidenceStore 派生的证据详情（运行态，不写入 ProjectFile） */
+  workerRunEvidence: EvidenceRecord[];
+  /** 从项目 side-effect journal 派生的 receipt 状态（运行态，不写入 ProjectFile） */
+  workerRunSideEffects: SideEffectRecord[];
+  /** 从宿主 acceptance/signature 派生的清理提案（运行态，不写入 ProjectFile） */
+  workerCleanupProposals: WorkerCleanupProposal[];
+  /** 项目控制面快照：主控会话、Decision 和 Project Brief */
+  projectControl: ProjectControlSnapshot;
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 
@@ -284,9 +316,9 @@ interface WorkflowState {
   /** 引导式新建项目：可选从模板起步，可选立即落盘到指定位置 */
   createProject: (opts: { name: string; templateId?: string; location?: string }) => Promise<void>;
   /** 载入整个项目文件，并激活 activeId 对应工作流；path 为磁盘路径（Tauri）或项目名（浏览器） */
-  openProject: (file: ProjectFile, path?: string) => void;
+  openProject: (file: ProjectFile, path?: string) => boolean;
   /** 保存当前项目（返回保存的项目根路径/名称） */
-  saveProject: () => Promise<string>;
+  saveProject: (guard?: ProjectSaveGuard) => Promise<string>;
   /** 项目级脏标记：内存态是否不同于最近一次落盘快照 */
   isProjectDirty: () => boolean;
   /** 切换当前激活工作流（先写回当前，再加载目标） */
@@ -330,6 +362,16 @@ interface WorkflowState {
   setPipelines: (defs: PipelineDef[]) => void;
   /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
   setOrchestrations: (orchs: Orchestration[]) => void;
+  /** Phase 1b：覆盖项目级 Worker Run registry（队列状态可持久化/恢复） */
+  setWorkerRuns: (runs: WorkerRunQueueState[]) => void;
+  /** 更新当前 runtime 的 Worker recovery 提示（不写入 ProjectFile） */
+  setWorkerRunRecoveries: (recoveries: WorkerRunRecovery[]) => void;
+  /** 更新当前 runtime 的 Worker Evidence 详情（不写入 ProjectFile） */
+  setWorkerRunEvidence: (evidence: EvidenceRecord[]) => void;
+  setWorkerRunSideEffects: (effects: SideEffectRecord[]) => void;
+  setWorkerCleanupProposals: (proposals: WorkerCleanupProposal[]) => void;
+  /** 覆盖项目控制面快照（主控会话/Decision/Brief 更新时调用） */
+  setProjectControl: (snapshot: ProjectControlSnapshot) => void;
   /** 步骤 14.A：声明或更新单条 Pipeline 定义（随项目持久化，触发脏标记） */
   upsertPipeline: (def: PipelineDef) => void;
 
@@ -392,6 +434,20 @@ interface WorkflowState {
   selectAll: () => void;
 }
 
+function assertProjectSaveGuard(state: WorkflowState, guard?: ProjectSaveGuard): void {
+  if (!guard) return;
+  if (guard.signal?.aborted) {
+    const error = new Error('项目保存 operation 已取消');
+    error.name = 'AbortError';
+    throw error;
+  }
+  if (state.projectId !== guard.projectId || state.projectPath !== guard.projectPath) {
+    const error = new Error('项目已切换，拒绝提交旧保存 operation');
+    error.name = 'AbortError';
+    throw error;
+  }
+}
+
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等）已抽到 workflowSerialize.projectSnapshot */
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
@@ -444,6 +500,12 @@ export const useWorkflowStore = create<WorkflowState>()(
       agentRouteTable: {},
       pipelines: [],
       orchestrations: [],
+      workerRuns: [],
+      workerRunRecoveries: [],
+      workerRunEvidence: [],
+      workerRunSideEffects: [],
+      workerCleanupProposals: [],
+      projectControl: createEmptyProjectControlSnapshot(),
 
       onNodesChange: (changes) => {
         // grpnode_* 是折叠组的「派生代理节点」，由 WorkflowEditor 计算，不应写回 store.nodes，
@@ -799,6 +861,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       removeGlobalAgent: (id) => {
         const next = get().globalAgents.filter((a) => a.id !== id);
         set({ globalAgents: next });
+        if (useViewStore.getState().globalMasterAgentId === id) {
+          useViewStore.getState().setGlobalMasterAgent(null);
+        }
         void saveGlobalAgents(next);
       },
 
@@ -1034,12 +1099,16 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       newProject: (name) => {
         // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
+        const previousProjectId = get().projectId;
+        if (previousProjectId) clearProjectEventBuffer(previousProjectId);
+        clearWorkerRunRuntime();
         suppressDirty = true;
-        set(buildNewProjectState(name));
+        set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
         suppressDirty = false;
       },
 
       createProject: async ({ name, templateId, location }) => {
+        clearWorkerRunRuntime();
         const tpl = templateId
           ? STARTER_TEMPLATES.find((t) => t.id === templateId)
           : undefined;
@@ -1097,6 +1166,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: wf.variables!,
           projectVariables: {},
           projectAssets: [],
+          workerRuns: [],
+          workerRunRecoveries: [],
+          workerRunEvidence: [],
+          workerRunSideEffects: [],
+          workerCleanupProposals: [],
+          projectControl: createEmptyProjectControlSnapshot(),
           selectedNodeId: null,
           logs: [],
         });
@@ -1124,21 +1199,42 @@ export const useWorkflowStore = create<WorkflowState>()(
         try {
           state = buildOpenProjectState(file, path ?? file.name, get().defaultAgentId);
         } catch {
-          return; // 无可用工作流，保持现状
+          return false; // 无可用工作流，保持现状
         }
         suppressDirty = true;
         set(state);
         finalizeLoaded();
+        const runtime = installWorkerRunRuntime({
+          projectId: file.id,
+          taskGraphs: state.projectControl.taskGraphs ?? [],
+          runs: state.workerRuns,
+        });
+        set({ workerRunRecoveries: runtime.recoveries, workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
+        clearProjectEventBuffer(file.id);
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
+        return true;
       },
 
-      saveProject: async () => {
+      saveProject: async (guard) => {
         const s = get();
+        assertProjectSaveGuard(s, guard);
         const file = buildProjectFile(s);
         const { saveProjectFile } = await import('../io/projectIO');
+        assertProjectSaveGuard(get(), guard);
         // P0：已存盘则直接覆盖原路径，不再弹另存为
         const path = await saveProjectFile(file, s.projectPath ?? undefined);
+        assertProjectSaveGuard(get(), guard);
+        if (isTauri && getPendingProjectEvents(file.id).length > 0) {
+          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          assertProjectSaveGuard(get(), guard);
+          await flushPendingProjectEvents(
+            file.id,
+            new EventStreamRepository(createTauriEventStoreAdapter(path), path),
+          );
+          assertProjectSaveGuard(get(), guard);
+        }
+        assertProjectSaveGuard(get(), guard);
         set({
           projectId: file.id,
           projectCreatedAt: file.createdAt,
@@ -1448,6 +1544,9 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       closeProject: () => {
+        const currentProjectId = get().projectId;
+        if (currentProjectId) clearProjectEventBuffer(currentProjectId);
+        clearWorkerRunRuntime();
         suppressDirty = true;
         set({
           projectName: null,
@@ -1468,6 +1567,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectAssets: [],
           subgraphs: {},
           groups: [],
+          workerRuns: [],
+          workerRunRecoveries: [],
+          workerRunEvidence: [],
+          workerRunSideEffects: [],
+          workerCleanupProposals: [],
+          projectControl: createEmptyProjectControlSnapshot(),
           selectedNodeId: null,
           logs: [],
         });
@@ -1487,6 +1592,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         const { saveProjectFile } = await import('../io/projectIO');
         try {
           const root = await saveProjectFile(file, picked);
+          if (getPendingProjectEvents(file.id).length > 0) {
+            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+            await flushPendingProjectEvents(
+              file.id,
+              new EventStreamRepository(createTauriEventStoreAdapter(root), root),
+            );
+          }
           set({ projectPath: root, projectDirty: false, lastSavedSnapshot: JSON.stringify(file) });
           saveLastSession({ path: root, activeId: s.activeWfId || undefined });
           return root;
@@ -1539,6 +1651,25 @@ export const useWorkflowStore = create<WorkflowState>()(
       /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
       setOrchestrations: (orchs: Orchestration[]) => {
         set({ orchestrations: orchs });
+      },
+      /** Phase 1b：覆盖项目级 Worker Run registry（队列状态可持久化/恢复） */
+      setWorkerRuns: (runs: WorkerRunQueueState[]) => {
+        set({ workerRuns: runs });
+      },
+      setWorkerRunRecoveries: (recoveries: WorkerRunRecovery[]) => {
+        set({ workerRunRecoveries: recoveries });
+      },
+      setWorkerRunEvidence: (evidence: EvidenceRecord[]) => {
+        set({ workerRunEvidence: evidence });
+      },
+      setWorkerRunSideEffects: (effects: SideEffectRecord[]) => {
+        set({ workerRunSideEffects: effects });
+      },
+      setWorkerCleanupProposals: (proposals: WorkerCleanupProposal[]) => {
+        set({ workerCleanupProposals: proposals });
+      },
+      setProjectControl: (snapshot: ProjectControlSnapshot) => {
+        set({ projectControl: parseProjectControlSnapshot(snapshot) });
       },
       /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
       upsertPipeline: (def: PipelineDef) => {
@@ -1919,6 +2050,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         agentRouteTable: s.agentRouteTable,
         pipelines: s.pipelines,
         orchestrations: s.orchestrations,
+        projectControl: s.projectControl,
       }),
       // 恢复持久化状态时，把拍平的 workflows 重新收口为内存态 FlowNode
       merge: (persisted, current) => {
@@ -1934,6 +2066,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           ...current,
           ...p,
           workflows: restoredWorkflows,
+          projectControl: parseProjectControlSnapshot(p.projectControl),
         } as WorkflowState;
       },
     },

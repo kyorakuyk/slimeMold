@@ -5,6 +5,10 @@
     "windows": ["main"],
     "permissions": [
         "core:default",
+        "core:window:allow-minimize",
+        "core:window:allow-toggle-maximize",
+        "core:window:allow-close",
+        "core:window:allow-start-dragging",
         {
             "identifier": "http:default",
             "allow": [
@@ -18,7 +22,9 @@
         "fs:allow-appdata-write-recursive",
         "fs:allow-mkdir",
         "fs:allow-read-dir",
+        "fs:allow-lstat",
         "fs:allow-read-text-file",
+        "fs:allow-open",
         "fs:allow-write-text-file",
         "fs:allow-remove",
         "fs:allow-exists",

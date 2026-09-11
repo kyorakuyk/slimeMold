@@ -23,10 +23,12 @@ import { scoreCandidates, type CandidateScore, type ScoringWeights } from './rou
 /**
  * 判断 Agent 是否「可调用」：避免评分选出明显必败的 Agent（无 baseUrl / 无模型 / 无凭据）。
  * - ollama：本地模型只需 baseUrl，不需要 key。
- * - 非 ollama：baseUrl + model + 凭据（credentialKey 或 apiKey）三者缺一不可，
+ * - codex：由本机官方 Codex CLI 管理登录态，不需要 API endpoint/key。
+ * - 其它非 ollama：baseUrl + model + 凭据（credentialKey 或 apiKey）三者缺一不可，
  *   否则一次请求必然 401/失败，白白浪费时间与成本。
  */
 export function isAgentCallable(a: AgentConfig): boolean {
+  if (a.protocol === 'codex') return true;
   if (!a.baseUrl?.trim()) return false;
   if (!a.model?.trim()) return false;
   if (a.protocol === 'ollama') return true;

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SlimeMold Icon Variants</title>
+  <style>
+    :root { color-scheme: dark; --bg: #111214; --surface: #191b1f; --surface-2: #23262b; --ink: #f5f7fa; --muted: #9aa2ad; --line: #343941; --blue: #2997ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; color: var(--ink); background: var(--bg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.04em; }
+    header p { max-width: 520px; margin: 8px 0 0; color: var(--muted); }
+    .legend { color: var(--blue); font-size: 12px; white-space: nowrap; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    article { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h2 { margin: 0; font-size: 18px; }
+    .tag { color: var(--blue); font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .concept { display: grid; grid-template-columns: 180px 1fr; gap: 20px; align-items: center; }
+    .hero { display: grid; place-items: center; padding: 18px; border-radius: 14px; background: #0d0e10; }
+    .hero img { display: block; width: 144px; height: 144px; }
+    .copy { color: var(--muted); }
+    .copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 14px; }
+    .sizes { display: flex; align-items: end; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .size { display: grid; justify-items: center; gap: 6px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .size img { display: block; width: var(--size); height: var(--size); border-radius: calc(var(--size) * .2); }
+    .light { background: #f5f6f8; }
+    .dark { background: #0d0e10; }
+    @media (max-width: 780px) { body { padding: 24px; } .grid { grid-template-columns: 1fr; } .concept { grid-template-columns: 128px 1fr; } .hero img { width: 104px; height: 104px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>SlimeMold icon directions</h1><p>四个可缩放的 SVG 母版。重点比较：品牌隐喻、工作流语义、16–32px 识别度，以及在深浅背景上的稳定性。</p></div>
+      <div class="legend">single accent · no watermark</div>
+    </header>
+    <section class="grid">
+      <article>
+        <div class="card-head"><h2>01 · Route</h2><span class="tag">recommended balance</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/slimemold-route.svg" alt="Route variant"></div><div class="copy"><strong>有机路径 + 分支节点</strong>保留 slime mold 的生长感，同时给出输入、汇合、分支和出口的工作流暗示。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-route.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-route.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-route.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-route.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-route.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>02 · Junction</h2><span class="tag">workflow first</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/slimemold-junction.svg" alt="Junction variant"></div><div class="copy"><strong>明确的节点编排语法</strong>输入节点连接中心节点，再分成两个结果节点；产品含义最直接，品牌有机感相对克制。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-junction.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-junction.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-junction.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-junction.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-junction.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>03 · Cell</h2><span class="tag">brand first</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/slimemold-cell.svg" alt="Cell variant"></div><div class="copy"><strong>黏菌细胞 / 自组织网络</strong>更接近品牌名称和自然智能隐喻，适合官网和大尺寸展示，小尺寸语义更抽象。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-cell.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-cell.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-cell.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-cell.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-cell.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+      <article>
+        <div class="card-head"><h2>04 · S-mark</h2><span class="tag">small-size first</span></div>
+        <div class="concept"><div class="hero"><img src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" alt="S mark variant"></div><div class="copy"><strong>slimemold 的 S 单线标记</strong>最适合标题栏、任务栏和 favicon；识别稳定，但工作流/节点语义主要由产品上下文补足。</div></div>
+        <div class="sizes"><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" style="--size:16px" alt="16px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" style="--size:24px" alt="24px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" style="--size:32px" alt="32px"></div><div class="size"><img class="dark" src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" style="--size:48px" alt="48px"></div><div class="size"><img class="light" src="../../src-tauri/icons/concepts/slimemold-s-mark.svg" style="--size:64px" alt="64px"></div></div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

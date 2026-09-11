@@ -79,5 +79,14 @@
   <string name="dialog.saveAsFailed">项目另存为失败：</string>
   <string name="dialog.closeConfirmTitle">关闭项目</string>
   <string name="dialog.closeConfirm">当前项目有未保存的改动，关闭后将丢失这些改动。确定关闭项目吗？</string>
-  <string name="log.legacyProject">检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构</string>
+  <string name="log.legacyProject">检测到旧版 .smproj 项目，保存时会自动转换为 .slimemold/ 目录</string>
+
+  <!-- 自定义窗口标题栏 -->
+  <string name="window.title">SlimeMold 窗口标题栏</string>
+  <string name="window.context">Agent 工作流</string>
+  <string name="window.controls">窗口控制</string>
+  <string name="window.minimize">最小化窗口</string>
+  <string name="window.maximize">最大化窗口</string>
+  <string name="window.restore">还原窗口</string>
+  <string name="window.close">关闭窗口</string>
 </resources>

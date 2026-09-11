@@ -68,6 +68,7 @@ interface WorkerSlot {
   loaded: boolean;
   dead: boolean;
   ready: Promise<void>;
+  readyReject: (error: Error) => void;
   current?: {
     executionId: string;
     capability: CapabilityLevel;
@@ -119,12 +120,10 @@ export class SandboxManager {
     }
     const url = createRuntimeUrl();
     const worker = this.makeWorker(url);
-    const slot: WorkerSlot = {
-      worker,
-      pluginId,
-      loaded: false,
-      dead: false,
-      ready: new Promise<void>((resolve, reject) => {
+    let rejectReady: (error: Error) => void = () => {};
+    let slot!: WorkerSlot;
+    const ready = new Promise<void>((resolve, reject) => {
+      rejectReady = (error) => reject(error);
         const onLoad = (ev: { data: WorkerToHost }) => {
           const m = ev.data;
           if (m.kind === 'ready') {
@@ -147,7 +146,14 @@ export class SandboxManager {
           worker.onmessage = null;
           reject(new Error('插件沙箱 worker 崩溃（加载阶段）'));
         };
-      }),
+      });
+    slot = {
+      worker,
+      pluginId,
+      loaded: false,
+      dead: false,
+      ready,
+      readyReject: (error) => rejectReady(error),
     };
     this.slots.set(pluginId, slot);
     worker.postMessage({ kind: 'load-plugin', pluginId, entryCode });
@@ -360,7 +366,10 @@ export class SandboxManager {
       slot.heartbeat = undefined;
       cur.reject(err);
     }
+    if (!slot.loaded) slot.readyReject(err);
     slot.dead = true;
+    slot.worker.onmessage = null;
+    slot.worker.onerror = null;
     try {
       slot.worker.terminate();
     } catch {

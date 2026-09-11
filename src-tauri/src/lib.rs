@@ -10,8 +10,8 @@
 //! - set_credential / get_credential / delete_credential / list_credentials：基于 keyring crate，
 //!   落盘到 OS 密钥库（Windows Credential Manager / macOS Keychain / Linux secret-service）。
 //!
-//! 注意：Rust 侧不再实现 LLM HTTP 客户端（原 chat_completion 已移除），所有 LLM 调用
-//! 由前端 provider 发起。
+//! 注意：Rust 侧不实现 LLM HTTP 客户端（原 chat_completion 已移除）。普通 API provider
+//! 由前端发起；Codex provider 是受控例外，只通过官方 Codex CLI 的 Tauri 命令调用。
 
 use std::collections::HashMap;
 use std::fs;
@@ -21,17 +21,72 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
+mod codex;
+mod event_store;
+
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
+/// Serialize session changes and host operations so a project switch cannot race a checked command.
+static DEV_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) fn lock_dev_operation() -> std::sync::MutexGuard<'static, ()> {
+    DEV_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn next_session_generation(current: u64) -> u64 {
+    current.wrapping_add(1).max(1)
+}
+
+pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Result<(), String> {
+    if expected == 0 {
+        return Err(format!("{operation}: 缺少有效 session generation"));
+    }
+    let state = DEV_STATE.lock().unwrap();
+    if state.base_repo.is_none() || state.generation != expected {
+        return Err(format!(
+            "{operation}: session generation 已失效（expected={expected}, current={}）",
+            state.generation
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+static DEV_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+fn lock_dev_state_tests() -> std::sync::MutexGuard<'static, ()> {
+    DEV_STATE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 struct DevState {
+    generation: u64,
     base_repo: Option<String>,
     worktrees: Vec<String>,
+    pending_worktrees: Vec<PendingWorktree>,
+    orphan_worktrees: Vec<PendingWorktree>,
+}
+
+struct PendingWorktree {
+    generation: u64,
+    path: String,
+    branch: String,
+    removed: bool,
 }
 
 impl DevState {
     const fn new() -> Self {
-        DevState { base_repo: None, worktrees: Vec::new() }
+        DevState {
+            generation: 0,
+            base_repo: None,
+            worktrees: Vec::new(),
+            pending_worktrees: Vec::new(),
+            orphan_worktrees: Vec::new(),
+        }
     }
 }
 
@@ -303,13 +358,6 @@ fn load_vault_key(app: AppHandle, key: String) -> Result<Option<String>, String>
         if found.is_some() { "true" } else { "false" }
     );
     let raw = found.map(|v| decrypt_api_key_in_json(&app, &v));
-    if let Some(ref s) = raw {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
-            if let Some(k) = v.get("apiKey").and_then(|x| x.as_str()) {
-                eprintln!("[vault] load_vault_key decrypted apiKey len={} prefix={}", k.len(), &k.chars().take(6).collect::<String>());
-            }
-        }
-    }
     Ok(raw)
 }
 
@@ -342,12 +390,62 @@ fn strip_endpoint_api_key(json: &str) -> String {
 ///
 /// 安全边界（2026-08-07 P0-S4，后续收紧）：
 /// - `cwd` 必填，且必须是已存在的目录；拒绝带 `..` 的路径。
-/// - 只接受前端沙箱实现实际需要的四种精确命令形状：
-///   `rev-parse --is-inside-work-tree`、`worktree add`、`worktree remove`、临时分支删除。
-/// - worktree 必须是 `<cwd>/.slime-wt/<branch>` 的直接子目录，临时分支必须以
-///   `slime-sandbox-` 开头；不暴露 clone/config/merge/checkout/push 等通用 Git 能力。
+/// - 只接受 Git top-level 上的有限只读 probe；不暴露 worktree add/remove、branch delete、
+///   prune、config、merge、checkout、push 等 mutation 能力。
 ///
-/// 调用示例：`invoke('run_git', { args: ['worktree', 'add', '-q', dir, '-b', branch, 'HEAD'], cwd })`
+/// 调用示例：`invoke('run_git', { args: ['rev-parse', '--is-inside-work-tree'], cwd })`
+fn safe_git_revision(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '>' | '<'))
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/' | '.'))
+}
+
+fn run_git_readonly_args(args: &[String]) -> bool {
+    match args {
+        [sub, flag] if sub == "rev-parse" && flag == "--is-inside-work-tree" => true,
+        [sub, rev] if sub == "rev-parse" && rev == "HEAD" => true,
+        [sub, flag] if sub == "status" && (flag == "--porcelain" || flag == "--short") => true,
+        [sub, rev] if sub == "diff" && safe_git_revision(rev) => true,
+        [sub, flag, rev] if sub == "diff" && flag == "--name-only" && safe_git_revision(rev) => {
+            true
+        }
+        [sub, flag, rev] if sub == "diff" && flag == "--stat" && safe_git_revision(rev) => true,
+        [sub, flag, n] if sub == "log" && flag == "-n" && n.parse::<u32>().is_ok() => true,
+        [sub, pretty, flag, n]
+            if sub == "log"
+                && pretty == "--oneline"
+                && flag == "-n"
+                && n.parse::<u32>().is_ok() =>
+        {
+            true
+        }
+        [sub, a, b] if sub == "ls-files" && a == "--others" && b == "--exclude-standard" => true,
+        [sub, flag] if sub == "branch" && flag == "--list" => true,
+        [sub, action] if sub == "worktree" && action == "list" => true,
+        [sub, action, porcelain]
+            if sub == "worktree" && action == "list" && porcelain == "--porcelain" =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn apply_dev_env(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in dev_sanitized_env() {
+        command.env(key, value);
+    }
+}
+
 #[tauri::command]
 fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
     // 1) cwd 必填且为已存在目录，禁止越界
@@ -370,106 +468,42 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
         return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
     }
 
-    // 2) 精确命令形状白名单。这里不提供通用 Git 代理，只提供 worktree 沙箱协议。
-    let sandbox_root = canon.join(".slime-wt");
-    match args.as_slice() {
-        [sub, flag] if sub == "rev-parse" && flag == "--is-inside-work-tree" => {}
-        [sub, action, quiet, path, branch_flag, branch, head]
-            if sub == "worktree"
-                && action == "add"
-                && quiet == "-q"
-                && branch_flag == "-b"
-                && head == "HEAD" =>
-        {
-            validate_sandbox_branch(branch)?;
-            fs::create_dir_all(&sandbox_root)
-                .map_err(|e| format!("run_git: 创建沙箱目录失败：{e}"))?;
-            validate_worktree_path(&sandbox_root, path, branch, false)?;
-        }
-        [sub, action, force, path]
-            if sub == "worktree" && action == "remove" && force == "--force" =>
-        {
-            let branch = std::path::Path::new(path)
-                .file_name()
-                .and_then(|v| v.to_str())
-                .ok_or_else(|| "run_git: worktree 路径缺少有效目录名".to_string())?;
-            validate_sandbox_branch(branch)?;
-            validate_worktree_path(&sandbox_root, path, branch, true)?;
-        }
-        [sub, delete, branch] if sub == "branch" && delete == "-D" => {
-            validate_sandbox_branch(branch)?;
-        }
-        _ => {
-            return Err(
-                "run_git: 仅允许仓库探测与 SlimeMold .slime-wt 沙箱的创建/清理".to_string(),
-            );
-        }
+    if !run_git_readonly_args(&args) {
+        return Err("run_git: legacy 命令只允许只读 Git probe；worktree 生命周期必须走 H4 WorktreeManager/dev_exec".to_string());
+    }
+    let mut probe = Command::new(resolve_dev_program("git"));
+    probe
+        .arg("-C")
+        .arg(&canon)
+        .args(["rev-parse", "--show-toplevel"]);
+    apply_dev_env(&mut probe);
+    let probe_output = probe
+        .output()
+        .map_err(|e| format!("run_git: Git top-level probe 失败：{e}"))?;
+    if !probe_output.status.success() {
+        return Err("run_git: cwd 不是可验证的 Git top-level".to_string());
+    }
+    let top = std::path::PathBuf::from(String::from_utf8_lossy(&probe_output.stdout).trim())
+        .canonicalize()
+        .map_err(|_| "run_git: Git top-level 输出无效".to_string())?;
+    if path_compare_key(&top.to_string_lossy()) != path_compare_key(&canon.to_string_lossy()) {
+        return Err("run_git: cwd 必须是 Git repository top-level".to_string());
     }
 
-    let mut cmd = Command::new("git");
-    cmd.current_dir(&cwd);
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.current_dir(&canon)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_dev_env(&mut cmd);
     for a in &args {
         cmd.arg(a);
     }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("git 执行失败（是否未安装 git 或 PATH 未包含？）：{e}"))?;
+    let output = run_with_timeout(&mut cmd, std::time::Duration::from_secs(30))?;
     Ok(GitResult {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        code: output.status.code().unwrap_or(-1),
+        stdout: output.stdout,
+        stderr: output.stderr,
+        code: output.code,
     })
-}
-
-fn validate_sandbox_branch(branch: &str) -> Result<(), String> {
-    if !branch.starts_with("slime-sandbox-")
-        || branch.len() <= "slime-sandbox-".len()
-        || branch.contains("..")
-        || branch.contains('/')
-        || branch.contains('\\')
-    {
-        return Err(format!("run_git: 非法沙箱分支名：{branch}"));
-    }
-    Ok(())
-}
-
-fn validate_worktree_path(
-    sandbox_root: &std::path::Path,
-    raw_path: &str,
-    branch: &str,
-    must_exist: bool,
-) -> Result<(), String> {
-    let path = std::path::Path::new(raw_path);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(format!(
-            "run_git: worktree 必须是无 '..' 的绝对路径：{raw_path}"
-        ));
-    }
-
-    let root = sandbox_root
-        .canonicalize()
-        .map_err(|e| format!("run_git: 无法解析沙箱根目录：{e}"))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("run_git: worktree 路径缺少父目录：{raw_path}"))?
-        .canonicalize()
-        .map_err(|e| format!("run_git: 无法解析 worktree 父目录：{e}"))?;
-    if parent != root || path.file_name().and_then(|v| v.to_str()) != Some(branch) {
-        return Err(format!(
-            "run_git: worktree 只能位于 <cwd>/.slime-wt/<slime-sandbox-*>：{raw_path}"
-        ));
-    }
-    if must_exist && !path.is_dir() {
-        return Err(format!("run_git: 待移除的 worktree 不存在：{raw_path}"));
-    }
-    if !must_exist && path.exists() {
-        return Err(format!("run_git: 待创建的 worktree 已存在：{raw_path}"));
-    }
-    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -494,10 +528,11 @@ struct GitResult {
 fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.exists() || !p.is_dir() {
-        return Err(format!("grant_project_access: 路径不存在或不是目录：{path}"));
+        return Err(format!(
+            "grant_project_access: 路径不存在或不是目录：{path}"
+        ));
     }
-    if p
-        .components()
+    if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!(
@@ -515,12 +550,13 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
     //（曾致 Rust 主线程死循环、CPU 打满、WebView 输入事件冻结——每条 capability 都会
     //  参与每次 fs 操作的权限校验，列表越滚越长越慢）。
     use std::time::{Duration, Instant};
-    static LAST_GRANT: std::sync::Mutex<Option<(String, Instant)>> =
-        std::sync::Mutex::new(None);
+    static LAST_GRANT: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
     {
         let mut last = LAST_GRANT.lock().unwrap();
         if let Some((prev, at)) = &*last {
-            if *prev == canon_str && at.elapsed() < Duration::from_secs(1) {
+            if path_compare_key(prev) == path_compare_key(&canon_str)
+                && at.elapsed() < Duration::from_secs(1)
+            {
                 return Ok(()); // 同路径近期已授权，跳过
             }
         }
@@ -557,25 +593,80 @@ struct DevExecResult {
 
 /// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
 const DEV_ALLOWED_CMDS: &[&str] = &[
-    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx", "npm",
+    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx",
+    "npm",
 ];
+
+/// Windows 下 PATH 中的 npm/tsx/tsc/vitest 通常是 `.cmd` shim，
+/// `std::process::Command::new("npm")` 不会像 shell 一样自动补全扩展名。
+/// 命令名已经先经过 DEV_ALLOWED_CMDS 白名单，因此这里只负责确定真实可执行文件。
+#[cfg(windows)]
+fn resolve_dev_program_from_path(
+    name: &str,
+    search_path: Option<&std::ffi::OsStr>,
+) -> std::path::PathBuf {
+    let raw = std::path::PathBuf::from(name);
+    if raw.components().count() > 1 || raw.extension().is_some() {
+        return raw;
+    }
+
+    if let Some(search_path) = search_path {
+        for dir in std::env::split_paths(search_path) {
+            for extension in [".com", ".exe", ".bat", ".cmd"] {
+                let candidate = dir.join(format!("{name}{extension}"));
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+            let direct = dir.join(name);
+            if direct.is_file() {
+                return direct;
+            }
+        }
+    }
+    raw
+}
+
+#[cfg(not(windows))]
+fn resolve_dev_program_from_path(
+    name: &str,
+    _search_path: Option<&std::ffi::OsStr>,
+) -> std::path::PathBuf {
+    std::path::PathBuf::from(name)
+}
+
+fn resolve_dev_program(name: &str) -> std::path::PathBuf {
+    resolve_dev_program_from_path(name, std::env::var_os("PATH").as_deref())
+}
 
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
 fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(raw);
-    if p.is_absolute() {
-        return p
-            .canonicalize()
-            .map_err(|e| format!("无法解析路径（{raw}）：{e}"));
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        let state = DEV_STATE.lock().unwrap();
+        let base = state
+            .base_repo
+            .as_ref()
+            .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
+        std::path::Path::new(base).join(p)
+    };
+    match joined.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = joined
+                .parent()
+                .ok_or_else(|| format!("无法解析路径父目录：{raw}"))?
+                .canonicalize()
+                .map_err(|e| format!("无法解析路径父目录（{raw}）：{e}"))?;
+            let name = joined
+                .file_name()
+                .ok_or_else(|| format!("路径缺少文件名：{raw}"))?;
+            Ok(parent.join(name))
+        }
+        Err(error) => Err(format!("无法解析路径（{raw}）：{error}")),
     }
-    let state = DEV_STATE.lock().unwrap();
-    let base = state.base_repo.as_ref().ok_or_else(|| {
-        format!("路径是相对的，但未初始化主仓库根：{raw}")
-    })?;
-    std::path::Path::new(base)
-        .join(raw)
-        .canonicalize()
-        .map_err(|e| format!("无法解析相对路径（{raw}，基于 {base}）：{e}"))
 }
 
 /// cwd 归属：主仓库根 或 已登记 worktree（或其子目录）。
@@ -589,8 +680,7 @@ enum DevCwdKind {
 /// 判定 cwd 归属（主仓库根 / 已登记 worktree）。
 fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     let p = std::path::Path::new(cwd);
-    if p
-        .components()
+    if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
@@ -602,25 +692,61 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
     let state = DEV_STATE.lock().unwrap();
     let norm_canon = dev_strip_verbatim(&canon);
     if let Some(base) = &state.base_repo {
-        let bc = std::path::Path::new(base)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(base));
-        if norm_canon == dev_strip_verbatim(&bc) {
+        // `base_repo` is a registration-time canonical identity. Do not
+        // canonicalize it again: a replaced junction/reparse point must not
+        // redefine the identity of the active session.
+        let bc = std::path::PathBuf::from(base);
+        if path_compare_key(&norm_canon.to_string_lossy())
+            == path_compare_key(&bc.to_string_lossy())
+        {
             return Ok(DevCwdKind::MainRepo);
         }
     }
     for w in &state.worktrees {
-        let wc = std::path::Path::new(w)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(w));
-        let norm_wc = dev_strip_verbatim(&wc);
-        if norm_canon == norm_wc || norm_canon.starts_with(&norm_wc) {
+        // `worktrees` stores the canonical path captured at registration.
+        // Re-canonicalizing here would follow a replacement junction and
+        // could make an outside directory appear to be the old worktree.
+        let norm_wc = dev_strip_verbatim(std::path::Path::new(w));
+        if path_is_same_or_child(&norm_canon, &norm_wc) {
             return Ok(DevCwdKind::Worktree(norm_wc));
         }
     }
     Err(format!(
         "dev_exec: cwd 不属于已登记 worktree 或主仓库根：{cwd}"
     ))
+}
+
+/// Codex Worker 专用 cwd 守卫：只允许已登记 worktree，不允许主仓库根或任意子路径。
+pub(crate) fn assert_registered_worktree(cwd: &str) -> Result<PathBuf, String> {
+    match dev_cwd_kind(cwd)? {
+        DevCwdKind::Worktree(path) => Ok(path),
+        DevCwdKind::MainRepo => {
+            Err("Codex Worker 拒绝在主仓库根执行，必须使用已登记 worktree".into())
+        }
+    }
+}
+
+fn path_compare_key(raw: &str) -> String {
+    let mut normalized = raw.replace('\\', "/").trim_end_matches('/').to_string();
+    if let Some(unc) = normalized.strip_prefix("//?/UNC/") {
+        normalized = format!("//{unc}");
+    } else if let Some(verbatim) = normalized.strip_prefix("//?/") {
+        normalized = verbatim.to_string();
+    }
+    #[cfg(windows)]
+    {
+        normalized.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        normalized
+    }
+}
+
+fn path_is_same_or_child(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let path = path_compare_key(&path.to_string_lossy());
+    let root = path_compare_key(&root.to_string_lossy());
+    path == root || path.starts_with(&(root + "/"))
 }
 
 /// 主仓库根允许的 git 子命令（严格只读 / worktree 生命周期管理）。
@@ -630,33 +756,600 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
     if args.first().map(|s| s.as_str()) != Some("git") {
         return false;
     }
-    match args.get(1).map(|s| s.as_str()) {
-        // 只读查询 / worktree 生命周期管理（WorktreeManager 创建/清理所需）
-        Some("rev-parse") => true,
-        Some("worktree") => matches!(
-            args.get(2).map(|s| s.as_str()),
-            Some("list") | Some("add") | Some("remove") | Some("prune") | Some("lock") | Some("unlock")
-        ),
-        Some("branch") => matches!(
-            args.get(2).map(|s| s.as_str()),
-            Some("-D") | Some("-d") | Some("--list") | Some("-a")
-        ),
-        Some("status") | Some("diff") | Some("log") | Some("show") | Some("ls-files") | Some("rev-list") => true,
+    let exact = |want: &[&str]| args.iter().map(|s| s.as_str()).eq(want.iter().copied());
+    exact(&["git", "rev-parse", "HEAD"])
+        || exact(&["git", "rev-parse", "--show-toplevel"])
+        || exact(&["git", "worktree", "list"])
+        || exact(&["git", "worktree", "list", "--porcelain"])
+        || exact(&["git", "branch", "--list"])
+        || exact(&["git", "branch", "-a"])
+        || exact(&["git", "status", "--porcelain"])
+        || exact(&["git", "status", "--short"])
+        || exact(&["git", "diff", "HEAD"])
+        || exact(&["git", "diff", "--name-only", "HEAD"])
+        || exact(&["git", "diff", "--stat", "HEAD"])
+        || exact(&["git", "diff", "--name-only"])
+        || exact(&["git", "ls-files", "--others", "--exclude-standard"])
+        || (args.len() == 5
+            && args[1] == "log"
+            && args[2] == "--oneline"
+            && args[3] == "-n"
+            && args[4].chars().all(|c| c.is_ascii_digit()))
+}
+
+fn worker_name_is_valid(name: &str) -> bool {
+    name.len() <= 200
+        && !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && !name.contains("..")
+        && !name.to_ascii_lowercase().ends_with(".lock")
+}
+
+fn worker_branch_is_valid(branch: &str) -> bool {
+    let Some(suffix) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    worker_name_is_valid(suffix)
+}
+
+fn is_full_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn worker_branch_from_tip_arg(arg: &str) -> Option<&str> {
+    let branch_ref = arg.strip_suffix("^{commit}")?.strip_prefix("refs/heads/")?;
+    worker_branch_is_valid(branch_ref).then_some(branch_ref)
+}
+
+fn worker_branch_from_ref_arg(arg: &str) -> Option<&str> {
+    let branch = arg.strip_prefix("refs/heads/")?;
+    worker_branch_is_valid(branch).then_some(branch)
+}
+
+fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
+    if raw_path.is_empty() {
+        return false;
+    }
+    let raw = std::path::Path::new(raw_path);
+    if raw
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let target = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        repo.join(raw)
+    };
+    let Some(parent) = target.parent() else {
+        return false;
+    };
+    let Some(name) = target.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let worker_root = std::path::PathBuf::from(format!("{}-workers", repo.to_string_lossy()));
+    path_compare_key(&parent.to_string_lossy()) == path_compare_key(&worker_root.to_string_lossy())
+        && worker_name_is_valid(name)
+}
+
+fn main_repo_worktree_target_is_valid(
+    repo: &std::path::Path,
+    raw_path: &str,
+    branch: &str,
+) -> bool {
+    if !worker_branch_is_valid(branch) || !worker_target_is_valid(repo, raw_path) {
+        return false;
+    }
+    let name = std::path::Path::new(raw_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    branch.strip_prefix("worker/") == Some(name)
+}
+
+fn main_repo_worktree_args_are_valid(repo: &std::path::Path, args: &[String]) -> bool {
+    if args.first().map(|value| value.as_str()) != Some("git")
+        || args.get(1).map(|value| value.as_str()) != Some("worktree")
+    {
+        return false;
+    }
+    match args.get(2).map(|value| value.as_str()) {
+        Some("add")
+            if args.len() == 8 && args[3] == "-q" && args[5] == "-b" && args[7] == "HEAD" =>
+        {
+            main_repo_worktree_target_is_valid(repo, &args[4], &args[6])
+        }
+        Some("add") if args.len() == 7 && args[4] == "-b" && args[6] == "HEAD" => {
+            main_repo_worktree_target_is_valid(repo, &args[3], &args[5])
+        }
+        Some("remove") if args.len() == 5 && args[3] == "--force" => {
+            worker_target_is_valid(repo, &args[4])
+        }
+        Some("lock") | Some("unlock") if args.len() == 4 => worker_target_is_valid(repo, &args[3]),
         _ => false,
     }
 }
 
-/// 剥离常见凭据环境变量 + 注入 git 非交互配置（与前端 sanitizeEnv 对齐）。
-fn dev_sanitized_env() -> HashMap<String, String> {
+fn main_repo_worktree_add_spec(args: &[String]) -> Option<(&str, &str)> {
+    if args.first().map(|value| value.as_str()) != Some("git")
+        || args.get(1).map(|value| value.as_str()) != Some("worktree")
+        || args.get(2).map(|value| value.as_str()) != Some("add")
+    {
+        return None;
+    }
+    if args.len() == 8 && args[3] == "-q" && args[5] == "-b" && args[7] == "HEAD" {
+        return Some((&args[4], &args[6]));
+    }
+    if args.len() == 7 && args[4] == "-b" && args[6] == "HEAD" {
+        return Some((&args[3], &args[5]));
+    }
+    None
+}
+
+fn repo_target_path(repo: &std::path::Path, raw_path: &str) -> std::path::PathBuf {
+    let raw = std::path::Path::new(raw_path);
+    if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        repo.join(raw)
+    }
+}
+
+fn worker_root_path(repo: &std::path::Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}-workers", repo.to_string_lossy()))
+}
+
+struct WorktreeAddRootGuard {
+    #[cfg(windows)]
+    _root: fs::File,
+}
+
+fn hold_worktree_add_root(root: &std::path::Path) -> Result<WorktreeAddRootGuard, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        const FILE_SHARE_WRITE: u32 = 0x00000002;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+            .open(root)
+            .map_err(|error| {
+                format!(
+                    "dev_exec: 无法锁定 Worker root：{}（{error}）",
+                    root.display()
+                )
+            })?;
+        return Ok(WorktreeAddRootGuard { _root: file });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = root;
+        Ok(WorktreeAddRootGuard {})
+    }
+}
+
+/// Check the real worker root immediately before `git worktree add`.
+/// A lexical parent check alone can follow a pre-existing symlink/junction out of the project.
+fn worktree_add_target_is_safe(
+    repo: &std::path::Path,
+    raw_path: &str,
+    branch: &str,
+) -> Result<WorktreeAddRootGuard, String> {
+    if !main_repo_worktree_target_is_valid(repo, raw_path, branch) {
+        return Err("dev_exec: worktree add 的路径/分支不合法".to_string());
+    }
+    let worker_root = worker_root_path(repo);
+    let worker_root_key = path_compare_key(&worker_root.to_string_lossy());
+    let worker_parent = worker_root
+        .parent()
+        .ok_or_else(|| "dev_exec: Worker root 缺少父目录".to_string())?;
+    let real_worker_parent = worker_parent.canonicalize().map_err(|error| {
+        format!(
+            "dev_exec: Worker root 父目录无法 canonicalize：{}（{error}）",
+            worker_parent.display()
+        )
+    })?;
+    if path_compare_key(&real_worker_parent.to_string_lossy())
+        != path_compare_key(&worker_parent.to_string_lossy())
+    {
+        return Err("dev_exec: Worker root 父目录 realpath 不匹配".to_string());
+    }
+
+    match fs::symlink_metadata(&worker_root) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(format!(
+                    "dev_exec: Worker root 不是目录，拒绝 worktree add：{}",
+                    worker_root.display()
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(&worker_root).map_err(|create_error| {
+                format!(
+                    "dev_exec: 无法创建 Worker root：{}（{create_error}）",
+                    worker_root.display()
+                )
+            })?;
+        }
+        Err(error) => {
+            return Err(format!(
+                "dev_exec: 无法安全检查 Worker root：{}（{error}）",
+                worker_root.display()
+            ));
+        }
+    }
+
+    let real_root = worker_root.canonicalize().map_err(|error| {
+        format!(
+            "dev_exec: Worker root 无法 canonicalize，拒绝 worktree add：{}（{error}）",
+            worker_root.display()
+        )
+    })?;
+    if !real_root.is_dir() {
+        return Err(format!(
+            "dev_exec: Worker root 不是目录，拒绝 worktree add：{}",
+            worker_root.display()
+        ));
+    }
+    if path_compare_key(&real_root.to_string_lossy()) != worker_root_key {
+        return Err(format!(
+            "dev_exec: Worker root 是 symlink/junction，拒绝 worktree add：{}",
+            worker_root.display()
+        ));
+    }
+
+    let target = repo_target_path(repo, raw_path);
+    let parent = target
+        .parent()
+        .ok_or_else(|| "dev_exec: worktree target 缺少父目录".to_string())?;
+    let real_parent = parent.canonicalize().map_err(|error| {
+        format!(
+            "dev_exec: worktree target 父目录无法 canonicalize：{}（{error}）",
+            parent.display()
+        )
+    })?;
+    if path_compare_key(&real_parent.to_string_lossy())
+        != path_compare_key(&real_root.to_string_lossy())
+    {
+        return Err("dev_exec: worktree target 父目录 realpath 不匹配 Worker root".to_string());
+    }
+    match fs::symlink_metadata(&target) {
+        Ok(_) => Err(format!(
+            "dev_exec: worktree target 已存在，拒绝覆盖或跟随链接：{}",
+            target.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(hold_worktree_add_root(&worker_root)?)
+        }
+        Err(error) => Err(format!(
+            "dev_exec: 无法安全检查 worktree target：{}（{error}）",
+            target.display()
+        )),
+    }
+}
+
+/// A successful add owns a short-lived rollback lease until registration completes.
+/// It is intentionally narrower than the normal registered-worktree gate.
+fn pending_worker_target(repo: &std::path::Path, raw_path: &str) -> bool {
+    if !worker_target_is_valid(repo, raw_path) {
+        return false;
+    }
+    let target = repo_target_path(repo, raw_path);
+    let state = DEV_STATE.lock().unwrap();
+    state.pending_worktrees.iter().any(|pending| {
+        pending.generation == state.generation
+            && !pending.removed
+            && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
+fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    if !worker_name_is_valid(name) {
+        return false;
+    }
+    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
+    let state = DEV_STATE.lock().unwrap();
+    state.pending_worktrees.iter().any(|pending| {
+        pending.generation == state.generation
+            && pending.removed
+            && pending.branch == branch
+            && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
+fn pending_worker_branch_any(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    if !worker_name_is_valid(name) {
+        return false;
+    }
+    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
+    let state = DEV_STATE.lock().unwrap();
+    state.pending_worktrees.iter().any(|pending| {
+        pending.generation == state.generation
+            && pending.branch == branch
+            && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
+fn orphan_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    if !worker_name_is_valid(name) {
+        return false;
+    }
+    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
+    let state = DEV_STATE.lock().unwrap();
+    state.orphan_worktrees.iter().any(|orphan| {
+        orphan.generation == state.generation
+            && orphan.branch == branch
+            && path_compare_key(&orphan.path) == path_compare_key(&target.to_string_lossy())
+    })
+}
+
+fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &str) {
+    if !main_repo_worktree_target_is_valid(repo, raw_path, branch) {
+        return;
+    }
+    let target = repo_target_path(repo, raw_path);
+    let stored_path = target
+        .canonicalize()
+        .unwrap_or(target)
+        .to_string_lossy()
+        .to_string();
+    let mut state = DEV_STATE.lock().unwrap();
+    if state
+        .base_repo
+        .as_deref()
+        .is_none_or(|base| path_compare_key(base) != path_compare_key(&repo.to_string_lossy()))
+    {
+        return;
+    }
+    if !state.pending_worktrees.iter().any(|pending| {
+        path_compare_key(&pending.path) == path_compare_key(&stored_path)
+            && pending.branch == branch
+    }) {
+        let generation = state.generation;
+        state.pending_worktrees.push(PendingWorktree {
+            generation,
+            path: stored_path,
+            branch: branch.to_string(),
+            removed: false,
+        });
+    }
+}
+
+fn update_pending_worktree_after_success(repo: &std::path::Path, args: &[String]) {
+    if let Some((raw_path, branch)) = main_repo_worktree_add_spec(args) {
+        record_pending_worktree_add(repo, raw_path, branch);
+        return;
+    }
+    if args.len() == 5
+        && args[0] == "git"
+        && args[1] == "worktree"
+        && args[2] == "remove"
+        && args[3] == "--force"
+    {
+        let target = repo_target_path(repo, &args[4]);
+        let mut state = DEV_STATE.lock().unwrap();
+        if let Some(pending) = state.pending_worktrees.iter_mut().find(|pending| {
+            path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
+        }) {
+            pending.removed = true;
+        }
+        return;
+    }
+    if args.len() == 5 && args[0] == "git" && args[1] == "update-ref" && args[2] == "-d" {
+        if let Some(branch) = worker_branch_from_ref_arg(&args[3]) {
+            let mut state = DEV_STATE.lock().unwrap();
+            state
+                .pending_worktrees
+                .retain(|pending| pending.branch != branch);
+        }
+    }
+}
+
+fn registered_worker_target(repo: &std::path::Path, raw_path: &str) -> bool {
+    if !worker_target_is_valid(repo, raw_path) {
+        return false;
+    }
+    let target = if std::path::Path::new(raw_path).is_absolute() {
+        std::path::PathBuf::from(raw_path)
+    } else {
+        repo.join(raw_path)
+    };
+    let state = DEV_STATE.lock().unwrap();
+    state
+        .worktrees
+        .iter()
+        .any(|path| path_compare_key(path) == path_compare_key(&target.to_string_lossy()))
+}
+
+fn registered_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
+    let Some(name) = branch.strip_prefix("worker/") else {
+        return false;
+    };
+    registered_worker_target(repo, &format!("{}-workers/{name}", repo.to_string_lossy()))
+}
+
+fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>) -> bool {
+    if matches!(args.get(1).map(|value| value.as_str()), Some("worktree"))
+        && matches!(
+            args.get(2).map(|value| value.as_str()),
+            Some("add") | Some("remove") | Some("lock") | Some("unlock")
+        )
+    {
+        return repo.is_some_and(|path| {
+            if !main_repo_worktree_args_are_valid(path, args) {
+                return false;
+            }
+            match args[2].as_str() {
+                "add" => true,
+                "remove" => args
+                    .last()
+                    .is_some_and(|target| pending_worker_target(path, target)),
+                "lock" | "unlock" => args
+                    .last()
+                    .is_some_and(|target| registered_worker_target(path, target)),
+                _ => false,
+            }
+        });
+    }
+    if args.len() == 5
+        && args[1] == "rev-parse"
+        && args[2] == "--verify"
+        && args[3] == "--end-of-options"
+    {
+        return repo.is_some_and(|path| {
+            let Some(branch) = worker_branch_from_tip_arg(&args[4]) else {
+                return false;
+            };
+            registered_worker_branch(path, branch)
+                || pending_worker_branch_any(path, branch)
+                || orphan_worker_branch(path, branch)
+        });
+    }
+    if args.len() == 5 && args[1] == "update-ref" && args[2] == "-d" {
+        return repo.is_some_and(|path| {
+            let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
+                return false;
+            };
+            is_full_object_id(&args[4]) && pending_worker_branch(path, branch)
+        });
+    }
+    dev_main_repo_git_allowed(args)
+}
+
+/// 与 Node 侧 sanitizeEnv 对齐：凭据变量采用稳定 suffix 词元而非有限名单。
+pub(crate) fn is_safe_env_name(name: &str) -> bool {
+    const SAFE: &[&str] = &[
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "COMSPEC",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "TERM",
+        "COLORTERM",
+        "CI",
+        "FORCE_COLOR",
+        "NODE_ENV",
+    ];
+    let upper = name.to_ascii_uppercase();
+    SAFE.iter().any(|safe| upper == *safe)
+}
+
+pub(crate) fn is_credential_env_name(name: &str) -> bool {
+    const SUFFIXES: &[&str] = &[
+        "API_KEY",
+        "APIKEY",
+        "TOKEN",
+        "PAT",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "PASS",
+        "PASSPHRASE",
+        "PRIVATE_KEY",
+        "ACCESS_KEY",
+        "ACCESS_KEY_ID",
+        "CLIENT_SECRET",
+        "APPLICATION_CREDENTIAL",
+        "APPLICATION_CREDENTIALS",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "AUTH",
+        "AUTHORIZATION",
+        "SIGNING_KEY",
+        "ENCRYPTION_KEY",
+        "MASTER_KEY",
+        "CERT",
+        "CERTIFICATE",
+        "KEY",
+        "COOKIE",
+        "BEARER",
+        "CONNECTION_STRING",
+        "DATABASE_URL",
+        "DB_URL",
+        "DSN",
+        "USERCONFIG",
+        "DOCKER_CONFIG",
+        "SESSION",
+    ];
+    let upper = name.to_ascii_uppercase();
+    SUFFIXES
+        .iter()
+        .any(|suffix| upper == *suffix || upper.ends_with(&format!("_{suffix}")))
+}
+
+/// 剥离凭据环境变量 + 注入 git 非交互配置（与前端 sanitizeEnv 对齐）。
+pub(crate) fn dev_sanitized_env() -> HashMap<String, String> {
+    dev_sanitized_env_with_home(true)
+}
+
+pub(crate) fn dev_login_sanitized_env() -> HashMap<String, String> {
+    dev_sanitized_env_with_home(false)
+}
+
+fn dev_sanitized_env_with_home(isolate_home: bool) -> HashMap<String, String> {
     const DENY: &[&str] = &[
-        "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_KEY_1", "AZURE_OPENAI_API_KEY_2",
-        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "REPLICATE_API_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITLAB_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_KEY_1",
+        "AZURE_OPENAI_API_KEY_2",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "REPLICATE_API_TOKEN",
     ];
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    for k in DENY {
-        env.remove(*k);
+    env.retain(|key, _| {
+        is_safe_env_name(key) && !is_credential_env_name(key) && !DENY.contains(&key.as_str())
+    });
+    if isolate_home {
+        let home = std::env::temp_dir().join("slimemold-worker-home");
+        let home = home.to_string_lossy().to_string();
+        env.insert("HOME".into(), home.clone());
+        env.insert("USERPROFILE".into(), home.clone());
+        env.insert("APPDATA".into(), format!("{home}/appdata"));
+        env.insert("LOCALAPPDATA".into(), format!("{home}/localappdata"));
+        env.insert("NPM_CONFIG_USERCONFIG".into(), format!("{home}/npmrc"));
+        env.insert(
+            "NPM_CONFIG_GLOBALCONFIG".into(),
+            format!("{home}/global-npmrc"),
+        );
+        env.insert("NPM_CONFIG_CACHE".into(), format!("{home}/npm-cache"));
     }
     env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
     env.insert("GIT_CONFIG_NOSYSTEM".into(), "1".into());
@@ -664,34 +1357,84 @@ fn dev_sanitized_env() -> HashMap<String, String> {
 }
 
 /// 带超时的子进程执行，返回 stdout/stderr/exitCode（非零退出码不视为错误）。
+fn drain_child_output<R: std::io::Read>(mut reader: R) -> Vec<u8> {
+    const CAP: usize = 16 * 1024 * 1024;
+    let mut captured = Vec::new();
+    let mut total = 0usize;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(size) => size,
+        };
+        if total < CAP {
+            let keep = read.min(CAP - total);
+            captured.extend_from_slice(&buffer[..keep]);
+        }
+        total = total.saturating_add(read);
+    }
+    captured
+}
+
+fn kill_dev_child_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .status();
+    }
+    let _ = child.kill();
+}
+
 fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResult, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child: Child = cmd.spawn().map_err(|e| format!("命令启动失败：{e}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .map(|stream| std::thread::spawn(move || drain_child_output(stream)));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|stream| std::thread::spawn(move || drain_child_output(stream)));
     let start = Instant::now();
-    loop {
-        match child
-            .try_wait()
-            .map_err(|e| format!("等待子进程失败：{e}"))?
-        {
-            Some(_) => break,
-            None if start.elapsed() > timeout => {
-                let _ = child.kill();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() > timeout => {
+                kill_dev_child_tree(&mut child);
                 let _ = child.wait();
+                let _ = stdout.map(|thread| thread.join());
+                let _ = stderr.map(|thread| thread.join());
                 return Err("dev_exec 执行超时（30s）".into());
             }
-            None => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                kill_dev_child_tree(&mut child);
+                let _ = child.wait();
+                let _ = stdout.map(|thread| thread.join());
+                let _ = stderr.map(|thread| thread.join());
+                return Err(format!("等待子进程失败：{error}"));
+            }
         }
-    }
-    use std::io::Read;
-    let mut out_buf = Vec::new();
-    let mut err_buf = Vec::new();
-    if let Some(mut o) = child.stdout.take() {
-        o.read_to_end(&mut out_buf).ok();
-    }
-    if let Some(mut e) = child.stderr.take() {
-        e.read_to_end(&mut err_buf).ok();
-    }
-    let status = child.wait().unwrap_or_default();
+    };
+    let out_buf = stdout
+        .map(|thread| {
+            thread
+                .join()
+                .map_err(|_| "读取 stdout 线程失败".to_string())
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let err_buf = stderr
+        .map(|thread| {
+            thread
+                .join()
+                .map_err(|_| "读取 stderr 线程失败".to_string())
+        })
+        .transpose()?
+        .unwrap_or_default();
     Ok(DevExecResult {
         stdout: String::from_utf8_lossy(&out_buf).to_string(),
         stderr: String::from_utf8_lossy(&err_buf).to_string(),
@@ -701,6 +1444,7 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
 
 /// worktree 内命令的文件路径参数**词法级**校验（纯函数，无 IO，可单测）。
 /// 拦截：绝对路径（POSIX `/`、Windows `C:\`、UNC `\\`）、`..` 逃逸、`~`、shell 元字符重定向。
+/// `*`/`?` 保留为直接 spawn 的 find/grep 模式操作数；Rust 不经过 shell，不会发生 shell 展开。
 /// 注意：词法校验不解析符号链接，symlink 逃逸由 dev_exec_validate_paths 的 canonicalize 层兜底。
 fn dev_arg_path_lexically_safe(arg: &str) -> bool {
     if arg.is_empty() || arg == "." || arg == ".." {
@@ -720,7 +1464,9 @@ fn dev_arg_path_lexically_safe(arg: &str) -> bool {
         return false;
     }
     // `..` 任意位置的父目录逃逸
-    if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return false;
     }
     // 家目录展开符号
@@ -728,7 +1474,7 @@ fn dev_arg_path_lexically_safe(arg: &str) -> bool {
         return false;
     }
     // shell 元字符（重定向 / 管道 / 命令拼接）——Command spawn 不经 shell，但保守拒绝
-    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '*', '?', '\'', '"', '(', ')', ' '];
+    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '\'', '"', '(', ')', ' '];
     if arg.chars().any(|c| META.contains(&c)) {
         return false;
     }
@@ -748,7 +1494,7 @@ fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
         let joined = wt_root.join(arg);
         if let Ok(canon) = joined.canonicalize() {
             let norm = dev_strip_verbatim(&canon);
-            if !norm.starts_with(&wt_root) {
+            if !path_is_same_or_child(&norm, &wt_root) {
                 return Err(format!("dev_exec: 参数路径逃逸出 worktree：{arg}"));
             }
         }
@@ -800,6 +1546,97 @@ fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn canonicalize_dev_exec_args(
+    cwd: &std::path::Path,
+    args: &[String],
+) -> Result<Vec<String>, String> {
+    let mut result = args.to_vec();
+    let mut replace_if_existing = |index: usize| -> Result<(), String> {
+        let Some(raw) = result.get(index).cloned() else {
+            return Ok(());
+        };
+        if raw.starts_with('-') || raw == "." {
+            return Ok(());
+        }
+        let joined = cwd.join(&raw);
+        if let Ok(canon) = joined.canonicalize() {
+            if !path_is_same_or_child(&canon, cwd) {
+                return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
+            }
+            result[index] = dev_strip_verbatim(&canon).to_string_lossy().to_string();
+        }
+        Ok(())
+    };
+    match args.first().map(|value| value.as_str()) {
+        Some("cat") | Some("head") | Some("tail") | Some("ls") => {
+            for index in 1..args.len() {
+                replace_if_existing(index)?;
+            }
+        }
+        Some("find") | Some("tsx") => replace_if_existing(1)?,
+        Some("git") if args.get(1).map(|value| value.as_str()) == Some("diff") => {
+            replace_if_existing(2)?;
+        }
+        Some("grep") => {
+            // DEFAULT_GREP_RULES 不接受 -e；第一个非 option 是 pattern，后续才是文件 operand。
+            for index in 2..args.len() {
+                replace_if_existing(index)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(result)
+}
+
+fn grep_option_is_safe(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--" | "-n"
+            | "-i"
+            | "-E"
+            | "-F"
+            | "-v"
+            | "-w"
+            | "-x"
+            | "-l"
+            | "-h"
+            | "-s"
+            | "--line-number"
+            | "--ignore-case"
+            | "--fixed-strings"
+            | "--invert-match"
+    )
+}
+
+fn find_option_is_safe(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-P" | "-name"
+            | "-iname"
+            | "-path"
+            | "-ipath"
+            | "-type"
+            | "-maxdepth"
+            | "-mindepth"
+            | "-mount"
+            | "-xdev"
+            | "-prune"
+            | "-print"
+            | "-print0"
+            | "-ls"
+            | "-printf"
+            | "-regex"
+            | "-iregex"
+            | "-not"
+            | "!"
+            | "-o"
+            | "-or"
+            | "-a"
+            | "-and"
+            | "-quit"
+    )
+}
+
 /// worktree 内允许的命令参数白名单（与前端 capabilities DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES
 /// 对齐；P1 审计：Rust 侧也做完整参数校验，WebView 直调 dev_exec 无法执行白名单外的高风险操作）。
 fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
@@ -819,19 +1656,27 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 .filter(|a| !a.starts_with('-'))
                 .all(|a| dev_arg_path_lexically_safe(a))
         }
-        // find 禁 -delete/-exec/-execdir/>（防删除/执行）；且搜索根必须合法（默认 . 或安全相对路径）
         "find" => {
-            !rest.iter().any(|a| a == "-delete" || a == "-exec" || a == "-execdir" || a.contains('>'))
+            !rest
+                .iter()
+                .any(|a| a.starts_with('-') && !find_option_is_safe(a))
+                && rest
+                    .iter()
+                    .filter(|a| !a.starts_with('-'))
+                    .all(|a| *a == "." || dev_arg_path_lexically_safe(a))
                 && match rest.first().map(|s| s.as_str()) {
                     None | Some(".") => true,
                     Some(root) => dev_arg_path_lexically_safe(root),
                 }
         }
-        // grep 只读；文件路径参数须词法安全
-        "grep" => rest
-            .iter()
-            .filter(|a| !a.starts_with('-'))
-            .all(|a| dev_arg_path_lexically_safe(a)),
+        // grep 只读；未知选项一律拒绝，避免 --file/--exclude-from 等外部文件输入。
+        "grep" => rest.iter().all(|a| {
+            if a.starts_with('-') {
+                grep_option_is_safe(a)
+            } else {
+                dev_arg_path_lexically_safe(a)
+            }
+        }),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
         "git" => {
             rest_eq(&["status", "--porcelain"])
@@ -870,14 +1715,27 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 && rest.len() <= 3
                 && !rest[1..].iter().any(|a| a.starts_with('-'))
         }
-        "npm" => rest_eq(&["run", "test"]) || rest_eq(&["run", "build"]) || rest_eq(&["run", "i18n:check"]),
+        "npm" => {
+            rest_eq(&["run", "test"])
+                || rest_eq(&["run", "build"])
+                || rest_eq(&["run", "i18n:check"])
+        }
         _ => false,
     }
 }
 
 /// 判定 dev_exec 是否放行（cwd 归属 + 命令 + 参数）。
 /// 纯函数，便于 Rust 单元测试覆盖主仓库根权限边界。
+#[allow(dead_code)]
 fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
+    dev_exec_allowed_at(kind, args, None)
+}
+
+fn dev_exec_allowed_at(
+    kind: &DevCwdKind,
+    args: &[String],
+    main_repo: Option<&std::path::Path>,
+) -> bool {
     if args.is_empty() {
         return false;
     }
@@ -886,7 +1744,7 @@ fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
         return false;
     }
     match kind {
-        DevCwdKind::MainRepo => dev_main_repo_git_allowed(args),
+        DevCwdKind::MainRepo => dev_main_repo_git_allowed_at(args, main_repo),
         DevCwdKind::Worktree(_) => dev_worktree_cmd_allowed(args),
     }
 }
@@ -897,76 +1755,412 @@ fn dev_exec_allowed(kind: &DevCwdKind, args: &[String]) -> bool {
 ///   完整白名单（npm/tsx/写入型 git）仅在**已登记 worktree** 内可用；
 /// - 剥离凭据 env + 超时。
 #[tauri::command]
-fn dev_exec(args: Vec<String>, cwd: String) -> Result<DevExecResult, String> {
+fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecResult, String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_exec")?;
+    let operation_generation = generation;
     let kind = dev_cwd_kind(&cwd)?;
-    if !dev_exec_allowed(&kind, &args) {
-        return Err(format!("dev_exec: 命令在当前 cwd 不被允许：{}", args.join(" ")));
+    let canonical_cwd = match &kind {
+        DevCwdKind::MainRepo => dev_abs_of(&cwd)?,
+        DevCwdKind::Worktree(path) => path.clone(),
+    };
+    if !dev_exec_allowed_at(&kind, &args, Some(&canonical_cwd)) {
+        return Err(format!(
+            "dev_exec: 命令在当前 cwd 不被允许：{}",
+            args.join(" ")
+        ));
     }
+    let _worktree_add_guard = if matches!(kind, DevCwdKind::MainRepo) {
+        main_repo_worktree_add_spec(&args)
+            .map(|(raw_path, branch)| worktree_add_target_is_safe(&canonical_cwd, raw_path, branch))
+            .transpose()?
+    } else {
+        None
+    };
     // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
-    dev_exec_validate_paths(&cwd, &args)?;
-    let name = args[0].clone();
-    let mut cmd = Command::new(name);
-    cmd.current_dir(&cwd);
-    for a in &args[1..] {
+    dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args)?;
+    let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args)?;
+    let program = resolve_dev_program(&spawn_args[0]);
+    let mut cmd = Command::new(program);
+    cmd.current_dir(&canonical_cwd);
+    for a in &spawn_args[1..] {
         cmd.arg(a);
     }
     cmd.env_clear();
     for (k, v) in dev_sanitized_env() {
         cmd.env(k, v);
     }
-    run_with_timeout(&mut cmd, Duration::from_secs(30))
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(30))?;
+    if DEV_STATE.lock().unwrap().generation != operation_generation {
+        return Err("dev_exec: session 在命令执行期间发生变化".to_string());
+    }
+    if result.code == 0 && matches!(kind, DevCwdKind::MainRepo) {
+        update_pending_worktree_after_success(&canonical_cwd, &args);
+    }
+    Ok(result)
+}
+
+fn git_top_level(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--show-toplevel"]);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    apply_dev_env(&mut cmd);
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(5))?;
+    if result.code != 0 {
+        return Err("Git top-level probe 失败".to_string());
+    }
+    std::path::PathBuf::from(result.stdout.trim())
+        .canonicalize()
+        .map_err(|_| "Git top-level 输出无效".to_string())
 }
 
 /// 初始化 H4 宿主登记态（GUI 打开项目 / DevSession 初始化时调用）。
 #[tauri::command]
-fn dev_init_session(base_repo: String) -> Result<(), String> {
+fn dev_init_session(base_repo: String) -> Result<u64, String> {
+    let _operation_guard = lock_dev_operation();
     let p = std::path::Path::new(&base_repo);
     if !p.exists() || !p.is_dir() {
-        return Err(format!("dev_init_session: 主仓库不存在或不是目录：{base_repo}"));
+        return Err(format!(
+            "dev_init_session: 主仓库不存在或不是目录：{base_repo}"
+        ));
     }
     let canon = p
         .canonicalize()
         .map_err(|e| format!("dev_init_session: 路径解析失败：{base_repo}（{e}）"))?;
+    let top = git_top_level(&canon)?;
+    if path_compare_key(&top.to_string_lossy()) != path_compare_key(&canon.to_string_lossy()) {
+        return Err("dev_init_session: baseRepo 必须是 Git repository top-level".to_string());
+    }
     let mut st = DEV_STATE.lock().unwrap();
+    st.generation = next_session_generation(st.generation);
     st.base_repo = Some(canon.to_string_lossy().to_string());
     st.worktrees.clear();
-    Ok(())
+    st.pending_worktrees.clear();
+    st.orphan_worktrees.clear();
+    Ok(st.generation)
 }
 
 /// 清空 H4 宿主登记态（GUI 切换/关闭项目时先调用，避免旧项目登记态泄漏到新项目）。
 #[tauri::command]
-fn dev_clear_session() -> Result<(), String> {
+fn dev_clear_session(generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_clear_session")?;
     let mut st = DEV_STATE.lock().unwrap();
+    st.generation = next_session_generation(st.generation);
     st.base_repo = None;
     st.worktrees.clear();
+    st.pending_worktrees.clear();
+    st.orphan_worktrees.clear();
     Ok(())
 }
 
 /// 登记一个 worktree（前端 dev.worktree.create 成功后调用；支持相对路径基于主仓库根解析）。
+fn git_worktree_list(repo: &std::path::Path) -> Result<String, String> {
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain"]);
+    cmd.env_clear();
+    for (key, value) in dev_sanitized_env() {
+        cmd.env(key, value);
+    }
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(5))?;
+    if result.code != 0 {
+        return Err("Git worktree list probe 失败".to_string());
+    }
+    Ok(result.stdout)
+}
+
+fn git_worktree_is_listed(
+    repo: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<bool, String> {
+    Ok(git_worktree_list(repo)?.lines().any(|line| {
+        line.strip_prefix("worktree ").is_some_and(|path| {
+            path_compare_key(path.trim()) == path_compare_key(&target.to_string_lossy())
+        })
+    }))
+}
+
+fn git_worktree_matches(
+    repo: &std::path::Path,
+    target: &std::path::Path,
+    expected_branch: &str,
+) -> Result<bool, String> {
+    let mut listed_path = None;
+    for line in git_worktree_list(repo)?.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            listed_path = Some(path.trim());
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            if listed_path.is_some_and(|path| {
+                path_compare_key(path) == path_compare_key(&target.to_string_lossy())
+            }) && branch.trim() == expected_branch
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn git_branch_exists(repo: &std::path::Path, branch: &str) -> Result<bool, String> {
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.arg("-C")
+        .arg(repo)
+        .args(["show-ref", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{branch}"));
+    cmd.env_clear();
+    for (key, value) in dev_sanitized_env() {
+        cmd.env(key, value);
+    }
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(5))?;
+    match result.code {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err("Git branch existence probe 失败".to_string()),
+    }
+}
+
 #[tauri::command]
-fn dev_register_worktree(path: String) -> Result<(), String> {
+fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_register_worktree")?;
+    let (base, registration_generation) = {
+        let state = DEV_STATE.lock().unwrap();
+        (
+            state
+                .base_repo
+                .clone()
+                .ok_or_else(|| "dev_register_worktree: 尚未初始化主仓库根".to_string())?,
+            state.generation,
+        )
+    };
+    let base_path = std::path::PathBuf::from(&base);
     let canon = dev_abs_of(&path)?;
     if !canon.is_dir() {
-        return Err(format!("dev_register_worktree: worktree 不存在或不是目录：{path}"));
+        return Err(format!(
+            "dev_register_worktree: worktree 不存在或不是目录：{path}"
+        ));
     }
-    let c = canon.to_string_lossy().to_string();
+    let name = canon
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "dev_register_worktree: worktree 目录名无效".to_string())?;
+    let branch = format!("worker/{name}");
+    if !main_repo_worktree_target_is_valid(&base_path, &canon.to_string_lossy(), &branch) {
+        return Err("dev_register_worktree: 路径/分支不属于受控 Worker 根".into());
+    }
+    if !git_worktree_matches(&base_path, &canon, &branch)? {
+        return Err("dev_register_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
+    }
     let mut st = DEV_STATE.lock().unwrap();
-    if !st.worktrees.iter().any(|w| w == &c) {
-        st.worktrees.push(c);
+    if st.base_repo.as_deref() != Some(base.as_str()) || st.generation != registration_generation {
+        return Err("dev_register_worktree: 主仓库 session 在校验期间发生变化".into());
     }
+    if !st
+        .worktrees
+        .iter()
+        .any(|w| path_compare_key(w) == path_compare_key(&canon.to_string_lossy()))
+    {
+        st.worktrees.push(canon.to_string_lossy().to_string());
+    }
+    st.pending_worktrees.retain(|pending| {
+        path_compare_key(&pending.path) != path_compare_key(&canon.to_string_lossy())
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn dev_register_orphan_worktree(
+    path: String,
+    branch: String,
+    generation: u64,
+) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_register_orphan_worktree")?;
+    if !worker_branch_is_valid(&branch) {
+        return Err("dev_register_orphan_worktree: branch 无效".into());
+    }
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_register_orphan_worktree: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    let c = canon.to_string_lossy().to_string();
+    let listed_match = canon.is_dir() && git_worktree_matches(&base_path, &canon, &branch)?;
+    if (canon.is_dir() && !listed_match)
+        || !main_repo_worktree_target_is_valid(&base_path, &c, &branch)
+    {
+        return Err(
+            "dev_register_orphan_worktree: 目标必须是受控且已删除的 Worker worktree".into(),
+        );
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
+    }
+    if !state
+        .orphan_worktrees
+        .iter()
+        .any(|item| path_compare_key(&item.path) == path_compare_key(&c))
+    {
+        state.orphan_worktrees.push(PendingWorktree {
+            generation,
+            path: c,
+            branch,
+            removed: true,
+        });
+    }
+    Ok(())
+}
+
+/// Atomic Worker cleanup used after the JS TaskGraph/fingerprint gate.
+/// Generic dev_exec deliberately cannot run `worktree remove` or `update-ref -d`.
+#[tauri::command]
+fn dev_cleanup_worktree(
+    path: String,
+    branch: String,
+    branch_revision: String,
+    generation: u64,
+) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_cleanup_worktree")?;
+    if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
+        return Err("dev_cleanup_worktree: branch 或 revision 无效".into());
+    }
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_cleanup_worktree: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    let c = canon.to_string_lossy().to_string();
+    if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+        return Err("dev_cleanup_worktree: 路径/分支不属于受控 Worker 根".into());
+    }
+    {
+        let state = DEV_STATE.lock().unwrap();
+        let registered = state
+            .worktrees
+            .iter()
+            .any(|item| path_compare_key(item) == path_compare_key(&c));
+        let orphan = state.orphan_worktrees.iter().any(|item| {
+            item.generation == generation
+                && item.branch == branch
+                && path_compare_key(&item.path) == path_compare_key(&c)
+        });
+        if !registered && !orphan {
+            return Err("dev_cleanup_worktree: worktree 未被当前 host 登记".into());
+        }
+        if state
+            .pending_worktrees
+            .iter()
+            .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
+        {
+            return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
+        }
+    }
+    let mut delete = Command::new(resolve_dev_program("git"));
+    delete
+        .current_dir(&base_path)
+        .args(["update-ref", "-d"])
+        .arg(format!("refs/heads/{branch}"))
+        .arg(&branch_revision);
+    apply_dev_env(&mut delete);
+    let result = run_with_timeout(&mut delete, Duration::from_secs(30))?;
+    if result.code != 0 {
+        return Err(format!(
+            "dev_cleanup_worktree: branch CAS 删除失败：{}",
+            result.stderr
+        ));
+    }
+    if git_worktree_is_listed(&base_path, &canon)? {
+        let mut remove = Command::new(resolve_dev_program("git"));
+        remove
+            .current_dir(&base_path)
+            .args(["worktree", "remove", "--force"]);
+        remove.arg(&canon);
+        apply_dev_env(&mut remove);
+        let result = run_with_timeout(&mut remove, Duration::from_secs(30))?;
+        if result.code != 0 {
+            return Err(format!(
+                "dev_cleanup_worktree: branch 已按 CAS 删除，但 worktree remove 失败：{}",
+                result.stderr
+            ));
+        }
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        return Err("dev_cleanup_worktree: session 在清理后发生变化".into());
+    }
+    state
+        .worktrees
+        .retain(|item| path_compare_key(item) != path_compare_key(&c));
+    state
+        .orphan_worktrees
+        .retain(|item| path_compare_key(&item.path) != path_compare_key(&c));
     Ok(())
 }
 
 /// 注销 worktree（前端清理成功后调用）。
 #[tauri::command]
-fn dev_unregister_worktree(path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    let canon = p
-        .canonicalize()
-        .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_unregister_worktree")?;
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_unregister_worktree: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
+    let name = canon
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "dev_unregister_worktree: worktree 目录名无效".to_string())?;
+    let branch = format!("worker/{name}");
+    if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+        return Err("dev_unregister_worktree: 路径/分支不属于受控 Worker 根".into());
+    }
+    {
+        let state = DEV_STATE.lock().unwrap();
+        if state
+            .pending_worktrees
+            .iter()
+            .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
+        {
+            return Err("dev_unregister_worktree: pending rollback worktree 不能注销".into());
+        }
+    }
+    if git_worktree_is_listed(&base_path, &canon)? {
+        return Err("dev_unregister_worktree: Git worktree 仍处于 live 状态".into());
+    }
+    if git_branch_exists(&base_path, &branch)? {
+        return Err("dev_unregister_worktree: Worker branch 仍存在".into());
+    }
     let mut st = DEV_STATE.lock().unwrap();
-    st.worktrees.retain(|w| w != &c);
+    if st.base_repo.as_deref() != Some(base.as_str()) || st.generation != generation {
+        return Err("dev_unregister_worktree: session 在 read-back 期间发生变化".into());
+    }
+    if let Some(index) = st
+        .worktrees
+        .iter()
+        .position(|w| path_compare_key(w) == path_compare_key(&c))
+    {
+        st.worktrees.remove(index);
+    }
     Ok(())
 }
 
@@ -986,7 +2180,7 @@ fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
     let state = DEV_STATE.lock().unwrap();
     for w in &state.worktrees {
         let wc = dev_strip_verbatim(std::path::Path::new(w));
-        if norm_abs.starts_with(&wc) {
+        if path_is_same_or_child(&norm_abs, &wc) {
             return Ok(());
         }
     }
@@ -996,9 +2190,87 @@ fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
     ))
 }
 
+/// 在已登记 worktree 内创建一级目录。
+/// 父目录必须已存在并先 canonicalize；目标 symlink 永不跟随，调用方负责逐级创建。
+#[tauri::command]
+fn dev_create_dir(path: String, generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_create_dir")?;
+    let p = std::path::Path::new(&path);
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("dev_create_dir: 路径禁止包含 '..' 逃逸：{path}"));
+    }
+    let base_dir = {
+        let state = DEV_STATE.lock().unwrap();
+        state.base_repo.clone().unwrap_or_default()
+    };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::PathBuf::from(&base_dir).join(p)
+    };
+    let parent = joined
+        .parent()
+        .ok_or_else(|| format!("dev_create_dir: 无法解析父目录：{path}"))?;
+    let canon_parent = parent.canonicalize().map_err(|e| {
+        format!(
+            "dev_create_dir: 无法解析父目录（{}）：{e}",
+            parent.display()
+        )
+    })?;
+    dev_path_allowed(&canon_parent)?;
+    let name = joined
+        .file_name()
+        .ok_or_else(|| "dev_create_dir: 路径缺少目录名".to_string())?;
+    let target = canon_parent.join(name);
+
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "dev_create_dir: 拒绝操作符号链接目录（防 symlink 逃逸）：{}",
+                target.display()
+            ));
+        }
+        if !meta.is_dir() {
+            return Err(format!(
+                "dev_create_dir: 目标已存在但不是目录：{}",
+                target.display()
+            ));
+        }
+        dev_path_allowed(&target)?;
+        return Ok(());
+    }
+
+    dev_path_allowed(&target)?;
+    match fs::create_dir(&target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let meta = fs::symlink_metadata(&target)
+                .map_err(|e| format!("dev_create_dir: 竞态后无法读取目标：{e}"))?;
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(format!(
+                    "dev_create_dir: 竞态后目标不是安全目录：{}",
+                    target.display()
+                ));
+            }
+        }
+        Err(error) => {
+            return Err(format!("dev_create_dir: 创建失败：{path}（{error}）"));
+        }
+    }
+    let real = target
+        .canonicalize()
+        .map_err(|e| format!("dev_create_dir: 目标解析失败：{e}"))?;
+    dev_path_allowed(&real)
+}
+
 /// 读文件（仅 worktree 内；H4 节点 code.read / 状态签名等；相对路径基于主仓库根解析）。
 #[tauri::command]
-fn dev_read_file(path: String) -> Result<String, String> {
+fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_read_file")?;
     let abs = dev_abs_of(&path)?;
     if !abs.is_file() {
         return Err(format!("dev_read_file: 文件不存在：{path}"));
@@ -1007,13 +2279,55 @@ fn dev_read_file(path: String) -> Result<String, String> {
     fs::read_to_string(&abs).map_err(|e| format!("dev_read_file: 读取失败：{path}（{e}）"))
 }
 
-/// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+// 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
+#[cfg(windows)]
+#[repr(C)]
+struct WinByHandleFileInformation {
+    file_attributes: u32,
+    creation_low: u32,
+    creation_high: u32,
+    access_low: u32,
+    access_high: u32,
+    write_low: u32,
+    write_high: u32,
+    volume_serial: u32,
+    size_high: u32,
+    size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetFileInformationByHandle(
+        handle: *mut std::ffi::c_void,
+        info: *mut WinByHandleFileInformation,
+    ) -> i32;
+}
+
+#[cfg(windows)]
+fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    let file = fs::File::open(path).map_err(|e| format!("无法安全检查目标 inode：{e}"))?;
+    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if ok == 0 {
+        return Err("无法安全检查目标 inode".to_string());
+    }
+    Ok(unsafe { info.assume_init() }.number_of_links > 1)
+}
+
 /// P1 审计修复：防符号链接绕过——
 /// - 目标已存在 → `fs::canonicalize` 解析到真实路径（跟随 symlink）后**重新校验**仍在 worktree 内；
 /// - 目标不存在 → 父目录已 canonicalize（真实目录），文件名不跨目录，用 O_EXCL 创建（不跟随已有符号链接）；
 /// - 目标已存在且是 symlink → 直接拒绝（不写入链接目标）。
 #[tauri::command]
-fn dev_write_file(path: String, content: String) -> Result<(), String> {
+fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_write_file")?;
     let p = std::path::Path::new(&path);
     if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -1032,7 +2346,10 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
     };
     let parent = joined.parent().unwrap_or_else(|| std::path::Path::new("."));
     let canon_parent = parent.canonicalize().map_err(|e| {
-        format!("dev_write_file: 无法解析父目录（{}）：{e}", parent.display())
+        format!(
+            "dev_write_file: 无法解析父目录（{}）：{e}",
+            parent.display()
+        )
     })?;
     let name = joined
         .file_name()
@@ -1047,11 +2364,19 @@ fn dev_write_file(path: String, content: String) -> Result<(), String> {
                 abs.display()
             ));
         }
+        #[cfg(windows)]
+        if has_multiple_hardlinks(&abs)? {
+            return Err(format!(
+                "dev_write_file: 拒绝写入 hardlink 目标（防 inode 逃逸）：{}",
+                abs.display()
+            ));
+        }
         let real = abs
             .canonicalize()
             .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
         dev_path_allowed(&real)?;
-        fs::write(&real, content).map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
+        fs::write(&real, content)
+            .map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
         return Ok(());
     }
 
@@ -1076,7 +2401,19 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 自定义标题栏由 WebView 提供；窗口状态插件不能恢复旧的 native decorations，
+        // 否则 decorations:false 会被历史状态里的 decorated:true 覆盖，出现两层标题栏。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                        | tauri_plugin_window_state::StateFlags::VISIBLE
+                        | tauri_plugin_window_state::StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             set_credential,
             get_credential,
@@ -1090,35 +2427,49 @@ pub fn run() {
             list_vaults,
             load_vault_key,
             delete_vault,
+            codex::codex_login_status,
+            codex::codex_login,
+            codex::codex_logout,
+            codex::codex_exec,
+            codex::codex_worker_exec,
+            codex::codex_worker_cancel,
+            event_store::event_lock_acquire,
+            event_store::event_lock_release,
             run_git,
             grant_project_access,
             dev_exec,
             dev_init_session,
             dev_clear_session,
             dev_register_worktree,
+            dev_register_orphan_worktree,
+            dev_cleanup_worktree,
             dev_unregister_worktree,
             dev_read_file,
+            dev_create_dir,
             dev_write_file
         ])
         // 窗口默认可见（tauri.conf.json visible:true）。保留 on_page_load 作为兜底，
         // 万一某些环境初始未显示，页面加载完成后再确保 show 一次。
         .setup(|app| {
             if let Some(win) = app.get_webview_window("main") {
+                // 运行时再次关闭 native decorations，兼容旧的编译上下文/窗口状态缓存。
+                let _ = win.set_decorations(false);
                 let _ = win.show();
             }
             Ok(())
         })
         .on_page_load(|win, _payload| {
             // 页面初次加载完成即确保窗口可见（SPA 仅触发一次）
+            let _ = win.window().set_decorations(false);
             let _ = win.show();
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// 注意：Rust 侧不再实现 LLM HTTP 调用（原 chat_completion 已移除，路线 A）。
-// 所有 LLM 请求由前端 provider（plugin-http）发起，带回 token usage 统计，
-// 且天然规避 CORS。密钥仅存于系统密钥库（keyring），前端按 name 引用、不直接持有明文。
+// 注意：Rust 侧不实现普通 LLM HTTP 调用（原 chat_completion 已移除，路线 A）。
+// OpenAI/Anthropic/Ollama 请求仍由前端 provider（plugin-http）发起；Codex provider
+// 仅在此处通过官方 CLI 受控调用，复用 Codex 自己的 ChatGPT 登录态，不把 token 返回前端。
 // 路线 B 若启用后端执行引擎，将复用此处的密钥/文件能力，而非重新实现 HTTP 客户端。
 
 /* ---------------- 接入点 apiKey 加密（AES-GCM，主密钥存于密钥库） ---------------- */
@@ -1270,11 +2621,8 @@ mod fs_atomic_replace_tests {
     use std::path::PathBuf;
 
     fn tmpdir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "slime_fs_atomic_{}_{}",
-            name,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("slime_fs_atomic_{}_{}", name, std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1329,11 +2677,21 @@ mod fs_atomic_replace_tests {
         fs::write(&tmp, "new").unwrap();
         fs::write(&target, "old").unwrap();
         // 独占共享模式打开目标（share_mode=0：拒绝其它进程读写/删除）
-        let handle = OpenOptions::new().read(true).share_mode(0).open(&target).unwrap();
+        let handle = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&target)
+            .unwrap();
         // 1) 目标被锁时直接 rename 应失败
-        assert!(fs::rename(&tmp, &target).is_err(), "锁定目标时 rename 应失败");
+        assert!(
+            fs::rename(&tmp, &target).is_err(),
+            "锁定目标时 rename 应失败"
+        );
         // 2) remove 被锁目标也应失败 → saveCheckpoints 走「保留 tmp」分支
-        assert!(fs::remove_file(&target).is_err(), "锁定目标时 remove 应失败");
+        assert!(
+            fs::remove_file(&target).is_err(),
+            "锁定目标时 remove 应失败"
+        );
         // 3) tmp 保留（内容完整，供下次覆盖）
         assert_eq!(fs::read_to_string(&tmp).unwrap(), "new");
         drop(handle);
@@ -1376,7 +2734,11 @@ mod vault_crypto_roundtrip_tests {
         let bytes = base64_decode(&b64).unwrap();
         let (nonce_raw, ct_bytes) = bytes.split_at(12);
         let pt = key.decrypt(Nonce::from_slice(nonce_raw), ct_bytes).unwrap();
-        assert_eq!(String::from_utf8(pt).unwrap(), plain, "AES-GCM 往返应还原明文");
+        assert_eq!(
+            String::from_utf8(pt).unwrap(),
+            plain,
+            "AES-GCM 往返应还原明文"
+        );
     }
 }
 
@@ -1384,6 +2746,76 @@ mod vault_crypto_roundtrip_tests {
 #[cfg(test)]
 mod dev_exec_tests {
     use super::*;
+
+    struct TempDirs(Vec<PathBuf>);
+
+    impl Drop for TempDirs {
+        fn drop(&mut self) {
+            for path in &self.0 {
+                let _ = fs::remove_dir_all(path);
+            }
+        }
+    }
+
+    fn make_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            match std::os::windows::fs::symlink_dir(target, link) {
+                Ok(()) => Ok(()),
+                Err(error) if error.raw_os_error() == Some(1314) => {
+                    let target = target.to_string_lossy();
+                    let link = link.to_string_lossy();
+                    if target.chars().any(|c| {
+                        matches!(
+                            c,
+                            '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!' | '(' | ')' | '\r' | '\n'
+                        )
+                    }) || link.chars().any(|c| {
+                        matches!(
+                            c,
+                            '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!' | '(' | ')' | '\r' | '\n'
+                        )
+                    }) {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "test junction path contains cmd metacharacters",
+                        ));
+                    }
+                    let output = Command::new(
+                        std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()),
+                    )
+                    .args(["/D", "/C", "mklink", "/J", link.as_ref(), target.as_ref()])
+                    .output()?;
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!(
+                                "mklink /J failed: {} {}",
+                                String::from_utf8_lossy(&output.stdout),
+                                String::from_utf8_lossy(&output.stderr)
+                            ),
+                        ))
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = target;
+            let _ = link;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "directory symlink is not supported on this platform",
+            ))
+        }
+    }
 
     fn sv(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
@@ -1395,21 +2827,699 @@ mod dev_exec_tests {
         // 只读 git / worktree 生命周期管理 → 放行
         assert!(dev_exec_allowed(&main, &sv(&["git", "rev-parse", "HEAD"])));
         assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "list"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "status", "--porcelain"])));
-        assert!(dev_exec_allowed(&main, &sv(&["git", "diff", "--name-only"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&[
+                "git",
+                "worktree",
+                "remove",
+                "--force",
+                "C:/repo-workers/task-1"
+            ])
+        ));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&[
+                "git",
+                "update-ref",
+                "-d",
+                "refs/heads/worker/task-1",
+                &"a".repeat(40)
+            ])
+        ));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "worktree", "add", "-q", "wt", "-b", "b", "HEAD"])
+        ));
+        assert!(dev_exec_allowed(
+            &main,
+            &sv(&["git", "status", "--porcelain"])
+        ));
+        assert!(dev_exec_allowed(
+            &main,
+            &sv(&["git", "diff", "--name-only"])
+        ));
+        assert!(
+            !dev_main_repo_git_allowed(&sv(&["git", "diff", "--output=outside.patch"])),
+            "main repo diff output must be rejected"
+        );
         // 非白名单命令名 → 拒绝
         assert!(!dev_exec_allowed(&main, &sv(&["npm", "run", "build"])));
         assert!(!dev_exec_allowed(&main, &sv(&["tsx", "scripts/x.ts"])));
         assert!(!dev_exec_allowed(&main, &sv(&["tsc", "--noEmit"])));
         assert!(!dev_exec_allowed(&main, &sv(&["cat", "/etc/passwd"])));
         // 写入型 git → 拒绝
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "apply", "patch.diff"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "apply", "patch.diff"])
+        ));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "commit", "-m", "x"])));
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "push", "origin", "main"])));
-        assert!(!dev_exec_allowed(&main, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "push", "origin", "main"])
+        ));
+        assert!(!dev_exec_allowed(
+            &main,
+            &sv(&["git", "reset", "--hard", "HEAD"])
+        ));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "checkout", "main"])));
         assert!(!dev_exec_allowed(&main, &sv(&["git", "add", "."])));
+    }
+
+    #[test]
+    fn sanitized_env_removes_credential_families() {
+        for name in [
+            "NPM_TOKEN",
+            "NODE_AUTH_TOKEN",
+            "AZURE_CLIENT_SECRET",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "NPM_CONFIG__AUTH",
+            "GITHUB_PAT",
+            "DATABASE_URL",
+            "SERVICE_DSN",
+            "NPM_CONFIG_USERCONFIG",
+            "SESSION_COOKIE",
+            "BEARER",
+            "OPENAI_API_KEY",
+        ] {
+            assert!(
+                is_credential_env_name(name),
+                "expected credential name: {name}"
+            );
+        }
+        assert!(!is_credential_env_name("PATH"));
+        assert!(!is_credential_env_name("SM_NON_SECRET_MODE"));
+        assert!(is_safe_env_name("PATH"));
+        assert!(is_safe_env_name("SystemRoot"));
+        assert!(!is_safe_env_name("SM_NON_SECRET_MODE"));
+        assert!(!is_safe_env_name("NPM_CONFIG_USERCONFIG"));
+    }
+
+    #[test]
+    fn worktree_read_commands_reject_external_file_and_command_options() {
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep",
+            "--file=/outside/patterns",
+            "needle",
+            "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep", "needle", "-R", "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep",
+            "needle",
+            "--directories=recurse",
+            "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "grep", "needle", "-d", "recurse", "."
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "find",
+            ".",
+            "-fprint",
+            "/outside/list"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "find", ".", "-okdir", "touch", "{}", ";"
+        ])));
+    }
+
+    #[test]
+    fn worktree_read_commands_allow_non_shell_glob_operands() {
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "find",
+            "src/components",
+            "-name",
+            "*.tsx"
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&["grep", "needle", "*.tsx"])));
+    }
+
+    #[test]
+    fn legacy_run_git_is_read_only_and_revision_scoped() {
+        assert!(run_git_readonly_args(&sv(&[
+            "rev-parse",
+            "--is-inside-work-tree"
+        ])));
+        assert!(run_git_readonly_args(&sv(&["diff", "HEAD"])));
+        assert!(run_git_readonly_args(&sv(&["log", "--oneline", "-n", "5"])));
+        assert!(!run_git_readonly_args(&sv(&[
+            "diff",
+            "--output=outside.patch"
+        ])));
+        assert!(!run_git_readonly_args(&sv(&["worktree", "prune"])));
+        assert!(!run_git_readonly_args(&sv(&[
+            "worktree", "remove", "--force", "x"
+        ])));
+        assert!(!run_git_readonly_args(&sv(&["branch", "-D", "worker/x"])));
+    }
+
+    #[test]
+    fn main_repo_worktree_lifecycle_is_scoped_to_worker_root() {
+        let repo = std::path::Path::new("C:/Repo/SlimeMold");
+        assert!(main_repo_worktree_args_are_valid(
+            repo,
+            &sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "C:/Repo/SlimeMold-workers/attempt-1",
+                "-b",
+                "worker/attempt-1",
+                "HEAD"
+            ])
+        ));
+        assert!(dev_exec_allowed_at(
+            &DevCwdKind::MainRepo,
+            &sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "C:/Repo/SlimeMold-workers/attempt-1",
+                "-b",
+                "worker/attempt-1",
+                "HEAD"
+            ]),
+            Some(repo)
+        ));
+        assert!(!main_repo_worktree_args_are_valid(
+            repo,
+            &sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "C:/Users/Public/attempt-1",
+                "-b",
+                "worker/attempt-1",
+                "HEAD"
+            ])
+        ));
+        assert!(!main_repo_worktree_args_are_valid(
+            repo,
+            &sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "C:/Repo/SlimeMold-workers/attempt-1",
+                "-b",
+                "worker/other",
+                "HEAD"
+            ])
+        ));
+    }
+
+    #[test]
+    fn main_repo_rejects_git_invalid_worker_name_components() {
+        let repo = std::path::Path::new("C:/Repo/SlimeMold");
+        for name in ["foo..bar", ".hidden", "foo.", "foo.lock"] {
+            assert!(!main_repo_worktree_args_are_valid(
+                repo,
+                &sv(&[
+                    "git",
+                    "worktree",
+                    "add",
+                    "-q",
+                    &format!("C:/Repo/SlimeMold-workers/{name}"),
+                    "-b",
+                    &format!("worker/{name}"),
+                    "HEAD"
+                ])
+            ));
+        }
+    }
+
+    #[test]
+    fn successful_worktree_add_creates_a_scoped_pending_rollback_lease() {
+        let _test_guard = lock_dev_state_tests();
+        let test_root = std::env::temp_dir().join("slimemold-test-runs");
+        let base = test_root.join(format!(
+            "sm-pending-worktree-{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let workers = std::path::PathBuf::from(format!("{}-workers", base.to_string_lossy()));
+        let target = workers.join("attempt-1");
+        let base_str = base.to_string_lossy().to_string();
+        let target_str = target.to_string_lossy().to_string();
+        let branch = "worker/attempt-1".to_string();
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&workers);
+        fs::create_dir_all(&test_root).unwrap();
+        let _cleanup = TempDirs(vec![base.clone(), workers.clone()]);
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&workers).unwrap();
+        fs::write(base.join("README.md"), "fixture").unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let output = Command::new(resolve_dev_program("git"))
+                .args(args)
+                .current_dir(cwd)
+                .env_clear()
+                .envs(dev_sanitized_env())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git fixture command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"], &base);
+        git(&["config", "user.email", "test@example.invalid"], &base);
+        git(&["config", "user.name", "SlimeMold Test"], &base);
+        git(&["add", "README.md"], &base);
+        git(&["commit", "-qm", "fixture"], &base);
+
+        let generation = dev_init_session(base_str.clone()).unwrap();
+        let result = dev_exec(
+            sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                &target_str,
+                "-b",
+                &branch,
+                "HEAD",
+            ]),
+            base_str.clone(),
+            generation,
+        )
+        .unwrap();
+        assert_eq!(result.code, 0, "worktree add should succeed");
+        let branch_ref = format!("refs/heads/{branch}");
+        let revision_arg = format!("{branch_ref}^{{commit}}");
+        let revision_args = sv(&[
+            "git",
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &revision_arg,
+        ]);
+        let revision_result =
+            dev_exec(revision_args.clone(), base_str.clone(), generation).unwrap();
+        assert_eq!(
+            revision_result.code, 0,
+            "worker branch tip read should succeed"
+        );
+        let branch_revision = revision_result.stdout.trim().to_string();
+        assert!(branch_revision.len() == 40 || branch_revision.len() == 64);
+        let remove_allowed = dev_main_repo_git_allowed_at(
+            &sv(&["git", "worktree", "remove", "--force", &target_str]),
+            Some(&base),
+        );
+        let cas_args = sv(&["git", "update-ref", "-d", &branch_ref, &branch_revision]);
+        let branch_allowed_before_remove = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
+        let remove_result = dev_exec(
+            sv(&["git", "worktree", "remove", "--force", &target_str]),
+            base_str.clone(),
+            generation,
+        )
+        .unwrap();
+        let branch_allowed_after_remove = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
+        let branch_result = dev_exec(cas_args.clone(), base_str.clone(), generation).unwrap();
+        let branch_allowed_after_delete = dev_main_repo_git_allowed_at(&cas_args, Some(&base));
+        let other_target = workers.join("attempt-2").to_string_lossy().to_string();
+        let other_branch = "worker/attempt-2";
+        let other_remove_allowed = dev_main_repo_git_allowed_at(
+            &sv(&["git", "worktree", "remove", "--force", &other_target]),
+            Some(&base),
+        );
+        let other_branch_ref = format!("refs/heads/{other_branch}");
+        let other_cas_args = sv(&[
+            "git",
+            "update-ref",
+            "-d",
+            &other_branch_ref,
+            &branch_revision,
+        ]);
+        let other_branch_allowed = dev_main_repo_git_allowed_at(&other_cas_args, Some(&base));
+
+        dev_clear_session(generation).unwrap();
+        let _ = fs::remove_dir_all(&workers);
+        let _ = fs::remove_dir_all(&base);
+
+        assert!(
+            remove_allowed,
+            "only the just-created pending worktree may roll back"
+        );
+        assert_eq!(
+            remove_result.code, 0,
+            "pending worktree remove should succeed"
+        );
+        assert!(
+            !branch_allowed_before_remove,
+            "pending branch delete must wait for worktree remove"
+        );
+        assert!(
+            branch_allowed_after_remove,
+            "pending branch is allowed after worktree remove"
+        );
+        assert_eq!(
+            branch_result.code, 0,
+            "pending branch delete should succeed"
+        );
+        assert!(
+            !branch_allowed_after_delete,
+            "pending branch lease must be consumed after delete"
+        );
+        assert!(
+            !other_remove_allowed,
+            "an unrelated worker target must remain blocked"
+        );
+        assert!(
+            !other_branch_allowed,
+            "an unrelated worker branch must remain blocked"
+        );
+        assert!(!worker_name_is_valid(&"a".repeat(201)));
+    }
+
+    #[test]
+    fn worktree_add_rejects_a_symlinked_worker_root_before_spawning_git() {
+        let _test_guard = lock_dev_state_tests();
+        let test_root = std::env::temp_dir().join("slimemold-test-runs");
+        let base = test_root.join(format!(
+            "sm-realpath-worker-{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let workers = std::path::PathBuf::from(format!("{}-workers", base.to_string_lossy()));
+        let outside = test_root.join(format!(
+            "sm-realpath-outside-{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let target = workers.join("attempt-1");
+        let base_str = base.to_string_lossy().to_string();
+        let target_str = target.to_string_lossy().to_string();
+        let branch = "worker/attempt-1".to_string();
+        let _cleanup = TempDirs(vec![base.clone(), workers.clone(), outside.clone()]);
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&workers);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&test_root).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        make_dir_symlink(&outside, &workers).unwrap();
+        fs::write(base.join("README.md"), "fixture").unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let output = Command::new(resolve_dev_program("git"))
+                .args(args)
+                .current_dir(cwd)
+                .env_clear()
+                .envs(dev_sanitized_env())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git fixture command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"], &base);
+        git(&["config", "user.email", "test@example.invalid"], &base);
+        git(&["config", "user.name", "SlimeMold Test"], &base);
+        git(&["add", "README.md"], &base);
+        git(&["commit", "-qm", "fixture"], &base);
+
+        let generation = dev_init_session(base_str.clone()).unwrap();
+        let result = dev_exec(
+            sv(&[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                &target_str,
+                "-b",
+                &branch,
+                "HEAD",
+            ]),
+            base_str.clone(),
+            generation,
+        );
+        let _ = Command::new(resolve_dev_program("git"))
+            .args(["worktree", "remove", "--force", &target_str])
+            .current_dir(&base)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output();
+        let _ = Command::new(resolve_dev_program("git"))
+            .args(["branch", "-D", &branch])
+            .current_dir(&base)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output();
+        dev_clear_session(generation).unwrap();
+
+        assert!(
+            result.is_err(),
+            "symlinked worker root must be rejected before git worktree add"
+        );
+    }
+
+    #[test]
+    fn registered_worktree_replacement_is_not_recanonicalized_to_outside() {
+        let _test_guard = lock_dev_state_tests();
+        let root = std::path::PathBuf::from(r"D:\Temp\slimemold-test-runs").join(format!(
+            "sm-registered-replace-{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let base = root.join("repo");
+        let worker = root.join("repo-workers");
+        let outside = root.join("outside");
+        let _cleanup = TempDirs(vec![root.clone()]);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&worker).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker.txt"), "outside").unwrap();
+        let registered = worker.canonicalize().unwrap().to_string_lossy().to_string();
+        fs::remove_dir_all(&worker).unwrap();
+        make_dir_symlink(&outside, &worker).unwrap();
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = next_session_generation(state.generation);
+            state.base_repo = Some(base.to_string_lossy().to_string());
+            state.worktrees = vec![registered];
+        }
+
+        let result = dev_cwd_kind(worker.join("marker.txt").to_string_lossy().as_ref());
+
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = next_session_generation(state.generation);
+            state.base_repo = None;
+            state.worktrees.clear();
+        }
+        assert!(
+            result.is_err(),
+            "replaced registered worktree must fail closed"
+        );
+    }
+
+    #[test]
+    fn unregister_is_idempotent_after_safe_cleanup_and_preserves_pending_state() {
+        let _test_guard = lock_dev_state_tests();
+        let test_root = std::env::temp_dir().join("slimemold-test-runs");
+        let base = test_root.join(format!(
+            "sm-unregister-{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let workers = worker_root_path(&base);
+        let registered = workers.join("registered");
+        let pending = workers.join("pending");
+        let other = workers.join("other");
+        let base_str = base.to_string_lossy().to_string();
+        let registered_str = registered.to_string_lossy().to_string();
+        let pending_str = pending.to_string_lossy().to_string();
+        let _cleanup = TempDirs(vec![base.clone(), workers.clone()]);
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&workers);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("README.md"), "fixture").unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let output = Command::new(resolve_dev_program("git"))
+                .args(args)
+                .current_dir(cwd)
+                .env_clear()
+                .envs(dev_sanitized_env())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git fixture command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"], &base);
+        git(&["config", "user.email", "test@example.invalid"], &base);
+        git(&["config", "user.name", "SlimeMold Test"], &base);
+        git(&["add", "README.md"], &base);
+        git(&["commit", "-qm", "fixture"], &base);
+        git(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                &registered_str,
+                "-b",
+                "worker/registered",
+                "HEAD",
+            ],
+            &base,
+        );
+        fs::create_dir_all(&pending).unwrap();
+
+        let generation = dev_init_session(base_str.clone()).unwrap();
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.worktrees = vec![registered_str.clone()];
+            state.pending_worktrees = vec![PendingWorktree {
+                generation,
+                path: pending_str.clone(),
+                branch: "worker/pending".to_string(),
+                removed: false,
+            }];
+        }
+
+        let pending_result = dev_unregister_worktree(pending_str.clone(), generation);
+        let other_result = dev_unregister_worktree(other.to_string_lossy().to_string(), generation);
+        let live_result = dev_unregister_worktree(registered_str.clone(), generation);
+        let pending_still_present = {
+            let state = DEV_STATE.lock().unwrap();
+            state
+                .pending_worktrees
+                .iter()
+                .any(|item| item.path == pending_str)
+        };
+
+        git(&["worktree", "remove", "--force", &registered_str], &base);
+        git(&["branch", "-D", "worker/registered"], &base);
+        let cleaned_result = dev_unregister_worktree(registered_str.clone(), generation);
+        let registered_again = dev_unregister_worktree(registered_str, generation);
+        dev_clear_session(generation).unwrap();
+
+        assert!(
+            pending_result.is_err(),
+            "pending worktree cannot be unregistered"
+        );
+        assert!(
+            other_result.is_ok(),
+            "safe absent worktree unregister is idempotent"
+        );
+        assert!(
+            live_result.is_err(),
+            "live Git worktree cannot be unregistered"
+        );
+        assert!(
+            cleaned_result.is_ok(),
+            "cleaned worktree can be unregistered once"
+        );
+        assert!(
+            registered_again.is_ok(),
+            "unregister must be idempotent after cleanup"
+        );
+        assert!(
+            pending_still_present,
+            "failed unregister must not erase pending rollback state"
+        );
+    }
+
+    #[test]
+    fn session_reset_waits_for_an_inflight_host_operation_lease() {
+        let _test_guard = lock_dev_state_tests();
+        let generation = {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.base_repo = Some("C:/operation-lease-test".to_string());
+            state.generation = next_session_generation(state.generation);
+            state.generation
+        };
+        let operation_guard = lock_dev_operation();
+        let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let completed_in_thread = completed.clone();
+        let handle = std::thread::spawn(move || {
+            dev_clear_session(generation).unwrap();
+            completed_in_thread.store(true, std::sync::atomic::Ordering::Release);
+        });
+
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(
+            !completed.load(std::sync::atomic::Ordering::Acquire),
+            "session reset must wait for an in-flight host operation"
+        );
+        drop(operation_guard);
+        handle.join().unwrap();
+        assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn worktree_add_allows_a_missing_worker_root_with_a_safe_parent() {
+        let test_root = std::env::temp_dir().join("slimemold-test-runs");
+        let base = test_root.join(format!(
+            "sm-missing-worker-root-{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let workers = worker_root_path(&base);
+        let target = workers.join("attempt-1");
+        let _cleanup = TempDirs(vec![base.clone(), workers.clone()]);
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&workers);
+        fs::create_dir_all(&test_root).unwrap();
+        fs::create_dir_all(&base).unwrap();
+
+        let result =
+            worktree_add_target_is_safe(&base, &target.to_string_lossy(), "worker/attempt-1");
+
+        assert!(
+            result.is_ok(),
+            "a safe missing worker root may be created by git"
+        );
+    }
+
+    #[test]
+    fn stale_session_generation_is_rejected_without_mutating_current_session() {
+        let _test_guard = lock_dev_state_tests();
+        let generation = {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.base_repo = Some("C:/stale-generation-test".to_string());
+            state.worktrees.clear();
+            state.pending_worktrees.clear();
+            state.generation = next_session_generation(state.generation);
+            state.generation
+        };
+        let stale = next_session_generation(generation);
+        let exec_result = dev_exec(sv(&["pwd"]), "C:/stale-generation-test".to_string(), stale);
+        let clear_result = dev_clear_session(stale);
+        let still_current = {
+            let state = DEV_STATE.lock().unwrap();
+            state.base_repo.as_deref() == Some("C:/stale-generation-test")
+                && state.generation == generation
+        };
+        let clear_current = dev_clear_session(generation);
+
+        assert!(exec_result.is_err(), "stale dev_exec must be rejected");
+        assert!(
+            clear_result.is_err(),
+            "stale session clear must be rejected"
+        );
+        assert!(
+            still_current,
+            "stale commands must not mutate current session"
+        );
+        assert!(
+            clear_current.is_ok(),
+            "current generation can clear its session"
+        );
     }
 
     #[test]
@@ -1429,42 +3539,75 @@ mod dev_exec_tests {
         assert!(dev_exec_allowed(&wt, &sv(&["ls", "src"])));
         assert!(dev_exec_allowed(&wt, &sv(&["grep", "foo", "src/a.ts"])));
         // 只读 git 精确参数
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&["git", "status", "--porcelain"])
+        ));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD"])));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD"])));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&["git", "ls-files", "--others", "--exclude-standard"])
+        ));
     }
 
     #[test]
     fn worktree_rejects_high_risk_and_unbounded() {
         let wt = DevCwdKind::Worktree(std::path::PathBuf::from("/repo/wt"));
         // 写入型 / 高风险 git → 拒绝
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "push", "origin", "main"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "push", "origin", "main"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "commit", "-m", "x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "reset", "--hard", "HEAD"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "reset", "--hard", "HEAD"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "checkout", "main"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "clean", "-fd"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "merge", "main"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "apply", "patch.diff"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "add", "."])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "config", "user.email", "x@y.z"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "config", "user.email", "x@y.z"])
+        ));
         // 无界 / 白名单外命令 / 危险参数 → 拒绝
         assert!(!dev_exec_allowed(&wt, &sv(&["npm", "run", "evil"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["npm", "install", "lodash"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "src/outside.ts"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/x.ts", "--config"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["tsx", "scripts/x.ts", "--config"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-delete"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["find", ".", "-exec", "rm", "{}", ";"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["find", ".", "-exec", "rm", "{}", ";"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["rm", "-rf", "/"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["sudo", "x"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["node", "-e", "x"])));
         // 精确匹配语义：白名单参数不得被追加额外参数绕过
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "status", "--porcelain", "--extra"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD", "--output=x"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "status", "--porcelain", "--extra"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "HEAD", "--output=x"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "-x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD", "extra"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "rev-parse", "HEAD", "extra"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "ls-files", "--others", "--exclude-standard", "-z"])
+        ));
     }
 
     #[test]
@@ -1475,24 +3618,51 @@ mod dev_exec_tests {
         {
             assert!(!dev_exec_allowed(&wt, &sv(&["cat", "/etc/passwd"])));
             assert!(!dev_exec_allowed(&wt, &sv(&["head", "/var/log/syslog"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["tail", "/home/user/.ssh/id_rsa"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["tail", "/home/user/.ssh/id_rsa"])
+            ));
             assert!(!dev_exec_allowed(&wt, &sv(&["ls", "/"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["grep", "SECRET", "/etc/secret"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["grep", "SECRET", "/etc/secret"])
+            ));
             assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "/etc/passwd"])));
-            assert!(!dev_exec_allowed(&wt, &sv(&["find", "/etc", "-name", "passwd"])));
+            assert!(!dev_exec_allowed(
+                &wt,
+                &sv(&["find", "/etc", "-name", "passwd"])
+            ));
         }
         // Windows drive 绝对路径 / UNC → 拒绝（跨平台均如此：C:\、D:\、\\server\）
-        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "C:\\Windows\\system32\\drivers\\etc\\hosts"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["cat", "C:\\Windows\\system32\\drivers\\etc\\hosts"])
+        ));
         assert!(!dev_exec_allowed(&wt, &sv(&["ls", "D:\\secret"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["cat", "\\\\server\\share\\secret.txt"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["cat", "\\\\server\\share\\secret.txt"])
+        ));
         // .. 父目录逃逸（含折返路径 scripts/foo/../..）→ 拒绝（跨平台）
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "../../outside.txt"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["head", "src/../../secret"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["ls", ".."])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["grep", "x", "a/../b/../../etc/x"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["tsx", "scripts/foo/../../../etc/x.ts"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "../../.git/config"])));
-        assert!(!dev_exec_allowed(&wt, &sv(&["find", "..", "-name", "*.ts"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["grep", "x", "a/../b/../../etc/x"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["tsx", "scripts/foo/../../../etc/x.ts"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "../../.git/config"])
+        ));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["find", "..", "-name", "*.ts"])
+        ));
         // 家目录 / shell 元字符 → 拒绝（跨平台）
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "~/secret"])));
         assert!(!dev_exec_allowed(&wt, &sv(&["cat", "a>file"])));
@@ -1521,7 +3691,9 @@ mod dev_exec_tests {
         }
         // 良性路径：worktree 内文件 → 放行
         std::fs::write(wt_root.join("ok.txt"), "ok").unwrap();
-        assert!(dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "ok.txt"])).is_ok());
+        assert!(
+            dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "ok.txt"])).is_ok()
+        );
         // symlink 逃逸：cat evil_link/secret.txt → canonicalize 后逃出 wt_root → 拒绝
         #[cfg(unix)]
         if std::fs::symlink_metadata(&link).is_ok() {
@@ -1530,7 +3702,11 @@ mod dev_exec_tests {
             let inside = wt_root.join("evil_link/secret.txt");
             if inside.exists() {
                 assert!(
-                    dev_exec_validate_paths(wt_root.to_str().unwrap(), &sv(&["cat", "evil_link/secret.txt"])).is_err(),
+                    dev_exec_validate_paths(
+                        wt_root.to_str().unwrap(),
+                        &sv(&["cat", "evil_link/secret.txt"])
+                    )
+                    .is_err(),
                     "symlink 逃逸应被 canonicalize 层拦截"
                 );
             }
@@ -1567,6 +3743,7 @@ mod dev_exec_tests {
     /// 登记 worktree `wt` 后，cwd=`wt2` 必须被拒绝，而 `wt` 的真实子目录必须被允许。
     #[test]
     fn dev_cwd_kind_no_wt_prefix_collision() {
+        let _test_guard = lock_dev_state_tests();
         let base = std::env::temp_dir().join(format!("sm_wt_prefix_{}", std::process::id()));
         let wt = base.join("wt");
         let wt2 = base.join("wt2");
@@ -1587,13 +3764,93 @@ mod dev_exec_tests {
         // wt 的真实子目录 → 仍属该 worktree（符合设计）
         assert!(dev_cwd_kind(&wt.join("src").to_str().unwrap().to_string()).is_ok());
         // wt2 → 不得误判为 wt 的子路径（前缀碰撞防护）
-        assert!(dev_cwd_kind(&wt2_str).is_err(), "wt2 不得误判为 wt 的子路径");
+        assert!(
+            dev_cwd_kind(&wt2_str).is_err(),
+            "wt2 不得误判为 wt 的子路径"
+        );
 
         // 清理：从全局状态移除登记并删除临时目录
         {
             let mut st = DEV_STATE.lock().unwrap();
             st.worktrees.retain(|w| w != &wt_str);
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn codex_worker_cwd_requires_a_registered_worktree() {
+        let _test_guard = lock_dev_state_tests();
+        let base = std::env::temp_dir().join(format!("sm_codex_worker_cwd_{}", std::process::id()));
+        let workers = std::path::PathBuf::from(format!("{}-workers", base.to_string_lossy()));
+        let wt = workers.join("wt");
+        let child = wt.join("src");
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&workers);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&workers).unwrap();
+        std::fs::write(base.join("README.md"), "fixture").unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let output = Command::new(resolve_dev_program("git"))
+                .args(args)
+                .current_dir(cwd)
+                .env_clear()
+                .envs(dev_sanitized_env())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git fixture command failed");
+        };
+        git(&["init", "-q"], &base);
+        git(&["config", "user.email", "test@example.invalid"], &base);
+        git(&["config", "user.name", "SlimeMold Test"], &base);
+        git(&["add", "README.md"], &base);
+        git(&["commit", "-qm", "fixture"], &base);
+        let wt_str = wt.to_string_lossy().to_string();
+        git(
+            &["worktree", "add", "-q", &wt_str, "-b", "worker/wt", "HEAD"],
+            &base,
+        );
+        std::fs::create_dir_all(&child).unwrap();
+        let base_str = base.to_string_lossy().to_string();
+
+        let generation = dev_init_session(base_str.clone()).unwrap();
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&["git", "worktree", "remove", "--force", &wt_str]),
+            Some(&base),
+        ));
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&["git", "branch", "-D", "worker/wt"]),
+            Some(&base),
+        ));
+        dev_register_worktree(wt_str.clone(), generation).unwrap();
+        let expected = dev_strip_verbatim(&wt.canonicalize().unwrap());
+        assert_eq!(assert_registered_worktree(&wt_str).unwrap(), expected);
+        assert_eq!(
+            assert_registered_worktree(child.to_str().unwrap()).unwrap(),
+            expected
+        );
+        assert!(assert_registered_worktree(&base_str).is_err());
+        dev_clear_session(generation).unwrap();
+        git(&["worktree", "remove", "--force", &wt_str], &base);
+        let _ = std::fs::remove_dir_all(&workers);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn resolves_windows_command_shim_before_spawning() {
+        let base = std::env::temp_dir().join(format!("sm_dev_program_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // Windows 的 Node 安装可能同时包含无扩展名 npm 脚本和可启动的 npm.cmd。
+        std::fs::write(base.join("npm"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(base.join("npm.cmd"), "@echo off\r\n").unwrap();
+
+        let resolved = resolve_dev_program_from_path("npm", Some(base.as_os_str()));
+
+        #[cfg(windows)]
+        assert_eq!(resolved, base.join("npm.cmd"));
+        #[cfg(not(windows))]
+        assert_eq!(resolved, std::path::PathBuf::from("npm"));
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }
@@ -1607,24 +3864,36 @@ mod dev_write_symlink_tests {
 
     /// 在临时目录构造「worktree」，写入/读取经由公开函数走宿主登记态。
     fn with_registered_worktree(f: impl FnOnce(PathBuf)) {
-        let tmp = std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id()));
+        let _test_guard = lock_dev_state_tests();
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir().join(format!("sm_h4_wt_{}_{}", std::process::id(), suffix));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let tmp_str = tmp.to_string_lossy().to_string();
         // 登记为 worktree
         {
             let mut st = DEV_STATE.lock().unwrap();
+            st.generation = next_session_generation(st.generation);
             st.base_repo = Some(tmp_str.clone());
             st.worktrees.clear();
             st.worktrees.push(tmp_str);
         }
+        let cleanup = tmp.clone();
         f(tmp);
-        let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("sm_h4_wt_{}", std::process::id())));
+        let _ = fs::remove_dir_all(&cleanup);
         {
             let mut st = DEV_STATE.lock().unwrap();
+            st.generation = next_session_generation(st.generation);
             st.base_repo = None;
             st.worktrees.clear();
         }
+    }
+
+    fn current_generation() -> u64 {
+        DEV_STATE.lock().unwrap().generation
     }
 
     #[test]
@@ -1648,7 +3917,11 @@ mod dev_write_symlink_tests {
                 }
             }
             // 通过 dev_write_file 写 symlink → 必须拒绝
-            let res = dev_write_file(link.to_string_lossy().to_string(), "overwrite".into());
+            let res = dev_write_file(
+                link.to_string_lossy().to_string(),
+                "overwrite".into(),
+                current_generation(),
+            );
             assert!(res.is_err(), "写入 symlink 应被拒绝（防逃逸）");
             let content = fs::read_to_string(&outside).unwrap();
             assert_eq!(content, "secret", "外部文件不得被篡改");
@@ -1659,12 +3932,82 @@ mod dev_write_symlink_tests {
     fn normal_write_within_worktree_ok() {
         with_registered_worktree(|wt| {
             let target = wt.join("new_file.txt");
-            let res = dev_write_file(target.to_string_lossy().to_string(), "hello".into());
-            if let Err(e) = &res {
-                eprintln!("[diag] dev_write_file err = {e}");
-            }
+            let res = dev_write_file(
+                target.to_string_lossy().to_string(),
+                "hello".into(),
+                current_generation(),
+            );
             assert!(res.is_ok(), "worktree 内普通新文件应可写");
             assert_eq!(fs::read_to_string(&target).unwrap(), "hello");
+        });
+    }
+
+    #[test]
+    fn create_dir_within_worktree_ok() {
+        with_registered_worktree(|wt| {
+            let target = wt.join("src");
+            let res = dev_create_dir(target.to_string_lossy().to_string(), current_generation());
+            assert!(res.is_ok(), "worktree 内新目录应可创建");
+            assert!(target.is_dir());
+        });
+    }
+
+    #[test]
+    fn create_dir_rejects_parent_escape() {
+        with_registered_worktree(|wt| {
+            let res = dev_create_dir(
+                wt.join("..").join("outside").to_string_lossy().to_string(),
+                current_generation(),
+            );
+            assert!(res.is_err(), "目录创建不得包含 .. 逃逸");
+        });
+    }
+
+    #[test]
+    fn create_dir_rejects_symlink_escape() {
+        with_registered_worktree(|wt| {
+            let outside = wt.parent().unwrap().join("sm_h4_outside_dir");
+            fs::create_dir_all(&outside).unwrap();
+            let link = wt.join("linked");
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).unwrap();
+            }
+            #[cfg(windows)]
+            {
+                if std::os::windows::fs::symlink_dir(&outside, &link).is_err() {
+                    eprintln!("[skip] Windows 无 symlink 权限，跳过目录 symlink 逃逸测试");
+                    return;
+                }
+            }
+            let res = dev_create_dir(
+                link.join("child").to_string_lossy().to_string(),
+                current_generation(),
+            );
+            assert!(res.is_err(), "目录创建不得跟随指向 worktree 外部的 symlink");
+            assert!(!outside.join("child").exists());
+            let _ = fs::remove_dir_all(&outside);
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hardlink_escape_write_rejected() {
+        with_registered_worktree(|wt| {
+            let outside = wt.parent().unwrap().join("sm_h4_hardlink_outside.txt");
+            let link = wt.join("hardlink.txt");
+            fs::write(&outside, "secret").unwrap();
+            if fs::hard_link(&outside, &link).is_err() {
+                return;
+            }
+            let result = dev_write_file(
+                link.to_string_lossy().to_string(),
+                "overwrite".into(),
+                current_generation(),
+            );
+            assert!(result.is_err(), "写入 hardlink 应被拒绝（防 inode 逃逸）");
+            assert_eq!(fs::read_to_string(&outside).unwrap(), "secret");
+            let _ = fs::remove_file(&outside);
         });
     }
 }

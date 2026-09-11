@@ -3,6 +3,8 @@ import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { loadPluginFromSource } from './loader';
+import { sandboxManager } from './sandbox';
+import { assertPluginRelativePath } from './pluginPath';
 import { SLIMEMOLD_DIR } from '../io/projectIO';
 import type { NodeDefinition } from '../types';
 
@@ -14,6 +16,12 @@ function sandboxEnabled(): boolean {
 export const PLUGIN_DIR = 'plugins';
 /** 自定义节点目录名（位于程序安装目录下：<程序根>/custom_nodes） */
 export const CUSTOM_NODES_DIR = 'custom_nodes';
+
+export interface ProjectPluginScanContext {
+  projectId?: string | null;
+  projectPath: string | null;
+  signal?: AbortSignal;
+}
 
 function log(level: 'info' | 'error', message: string): void {
   useWorkflowStore.getState().addLog(level, message);
@@ -39,15 +47,13 @@ export async function scanPluginsDir(): Promise<number> {
   const entries = await fs.readDir(PLUGIN_DIR, opts);
   let loaded = 0;
   for (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory || entry.isSymlink) continue;
     const base = `${PLUGIN_DIR}/${entry.name}`;
     try {
       const manifestText = await fs.readTextFile(`${base}/manifest.json`, opts);
       const manifest = JSON.parse(manifestText);
-      const entryCode = await fs.readTextFile(
-        `${base}/${manifest.entry ?? 'index.js'}`,
-        opts,
-      );
+      const entryName = assertPluginRelativePath(manifest.entry ?? 'index.js');
+      const entryCode = await fs.readTextFile(`${base}/${entryName}`, opts);
       const { plugin, defs } = await loadPluginFromSource(
         manifestText,
         entryCode,
@@ -76,8 +82,13 @@ export async function importPluginFiles(files: FileList | File[]): Promise<void>
   }
   const manifestText = await manifestFile.text();
   let entryName = 'index.js';
-  const parsed = JSON.parse(manifestText);
-  if (parsed?.entry) entryName = String(parsed.entry);
+  try {
+    const parsed = JSON.parse(manifestText);
+    entryName = assertPluginRelativePath(parsed?.entry ?? 'index.js');
+  } catch (err) {
+    log('error', `导入失败：manifest.entry 无效（${err instanceof Error ? err.message : String(err)}）`);
+    return;
+  }
 
   const entryFile = list.find((f) => f.name === entryName);
   if (!entryFile) {
@@ -106,17 +117,27 @@ export function removePlugin(pluginId: string): void {
   log('info', `插件已卸载：${pluginId}`);
 }
 
+/** Stop all in-flight plugin workers before a project context is replaced. */
+export function terminatePluginRuntime(): void {
+  sandboxManager.terminateAll();
+}
+
 /**
  * 扫描一个 `custom_nodes/` 目录并加载其中的节点包。
  * @param base 节点包根目录（绝对路径）
  * @param scope 'program' = 程序安装目录（全局生效）；'project' = 当前项目目录（仅本项目）
  */
-async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): Promise<number> {
+async function scanCustomNodesDir(
+  base: string,
+  scope: 'program' | 'project',
+  canRegister: () => boolean = () => true,
+): Promise<number> {
   if (!isTauri) {
     log('info', '浏览器模式不支持自定义节点扫描（需桌面端）');
     return 0;
   }
   const fs = await import('@tauri-apps/plugin-fs');
+  if (!canRegister()) return 0;
   let dirExists = false;
   try {
     dirExists = await fs.exists(base);
@@ -126,25 +147,29 @@ async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): P
     return 0;
   }
   if (!dirExists) {
+    if (!canRegister()) return 0;
     try {
       await fs.mkdir(base, { recursive: true });
+      if (!canRegister()) return 0;
       log('info', `已创建自定义节点目录（${base}），放入节点包后可重新扫描`);
     } catch (e) {
       log('info', `自定义节点目录无法创建（跳过）：${base} —— ${e instanceof Error ? e.message : String(e)}`);
     }
     return 0;
   }
+  if (!canRegister()) return 0;
   const entries = await readDirSafe(base, fs);
   let loaded = 0;
   for (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory || entry.isSymlink) continue;
+    if (!canRegister()) return loaded;
     const packDir = `${base}/${entry.name}`;
     try {
       const manifestText = await fs.readTextFile(`${packDir}/manifest.json`);
       const manifest = JSON.parse(manifestText);
-      const entryCode = await fs.readTextFile(
-        `${packDir}/${manifest.entry ?? 'index.js'}`,
-      );
+      const entryName = assertPluginRelativePath(manifest.entry ?? 'index.js');
+      const entryCode = await fs.readTextFile(`${packDir}/${entryName}`);
+      if (!canRegister()) return loaded;
       const { plugin, defs } = await loadPluginFromSource(
         manifestText,
         entryCode,
@@ -152,6 +177,7 @@ async function scanCustomNodesDir(base: string, scope: 'program' | 'project'): P
         packDir,
         { sandbox: sandboxEnabled() },
       );
+      if (!canRegister()) return loaded;
       // 标注生效范围：程序级全局、项目级仅本项目
       useRegistryStore.getState().registerPlugin({ ...plugin, source: 'custom', scope }, defs);
       loaded += 1;
@@ -178,26 +204,44 @@ export async function scanProgramCustomNodes(): Promise<number> {
 }
 
 /** 当前项目目录下的 custom_nodes（仅本项目内生效；无打开项目则返回 0） */
-export async function scanProjectCustomNodes(): Promise<number> {
+export async function scanProjectCustomNodes(
+  context?: ProjectPluginScanContext,
+): Promise<number> {
   try {
-    const projectPath = useWorkflowStore.getState().projectPath;
+    const current = useWorkflowStore.getState();
+    const projectPath = context?.projectPath ?? current.projectPath;
+    const expectedProjectId =
+      context?.projectId !== undefined ? context.projectId : current.projectId;
     if (!projectPath) return 0;
+    const signal = context?.signal;
+    const canRegister = (): boolean => {
+      const state = useWorkflowStore.getState();
+      return (
+        !signal?.aborted
+        && state.projectPath === projectPath
+        && (expectedProjectId == null || state.projectId === expectedProjectId)
+      );
+    };
+    if (!canRegister()) return 0;
     // 自愈：确保项目根目录已注入 fs:scope 操作权限（openProjectByPath 已授权，此处兜底防竞态）
     if (isTauri) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
+        if (!canRegister()) return 0;
         await invoke('grant_project_access', { path: projectPath.replace(/\\/g, '/') }).catch(() => {});
+        if (!canRegister()) return 0;
       } catch {
         /* 授权失败不阻断扫描（可能已在 scope 内） */
       }
     }
+    if (!canRegister()) return 0;
     const root = projectPath.replace(/\\/g, '/');
     // 2026-08-10：项目级 custom_nodes 迁移到 .slimemold/custom_nodes（与项目配置集中管理）。
     // 兼容旧路径 <项目根>/custom_nodes：仍会扫描，避免已有节点的项目升级后丢节点。
     const newDir = `${root}/${SLIMEMOLD_DIR}/${CUSTOM_NODES_DIR}`;
     const legacyDir = `${root}/${CUSTOM_NODES_DIR}`;
-    const n = await scanCustomNodesDir(newDir, 'project');
-    const m = await scanCustomNodesDir(legacyDir, 'project');
+    const n = await scanCustomNodesDir(newDir, 'project', canRegister);
+    const m = await scanCustomNodesDir(legacyDir, 'project', canRegister);
     return n + m;
   } catch (e) {
     // 兜底：项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT 盘符），静默跳过
@@ -228,9 +272,13 @@ export function unloadProjectCustomNodes(): void {
 async function readDirSafe(
   dir: string,
   fs: typeof import('@tauri-apps/plugin-fs'),
-): Promise<Array<{ name: string; isDirectory: boolean }>> {
+): Promise<Array<{ name: string; isDirectory: boolean; isSymlink: boolean }>> {
   try {
-    return (await fs.readDir(dir)) as Array<{ name: string; isDirectory: boolean }>;
+    return (await fs.readDir(dir)) as Array<{
+      name: string;
+      isDirectory: boolean;
+      isSymlink: boolean;
+    }>;
   } catch {
     return [];
   }

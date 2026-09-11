@@ -5,11 +5,23 @@
  * 无 agent 抛错、候选链生成、复杂度分档、RunContext 特征并入。
  */
 import { describe, it, expect } from 'vitest';
-import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext, resolveAgentScored } from './agentRouter';
+import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext, resolveAgentScored, isAgentCallable } from './agentRouter';
 import type { AgentConfig, AgentRouteTable } from '../types';
 
 const ag = (id: string, model = 'm1'): AgentConfig =>
   ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model, credentialKey: `k:${id}` } as AgentConfig);
+
+describe('isAgentCallable', () => {
+  it('allows a Codex Agent without an API key or HTTP endpoint', () => {
+    expect(isAgentCallable({
+      id: 'codex',
+      name: 'Codex',
+      protocol: 'codex',
+      baseUrl: 'codex://local',
+      model: '',
+    })).toBe(true);
+  });
+});
 
 describe('estimateTier 复杂度分档', () => {
   it('按文本长度与影响域大小分档', () => {
