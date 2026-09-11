@@ -644,9 +644,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           approvedCleanups.set(key, { ...approval, consumed: true });
           return false;
         };
-        if (!expectedFingerprint?.trim()
-          || !trustedCleanupBindings.has(expectedFingerprint)
-          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return false;
+        if (!expectedFingerprint?.trim()) return false;
+        if (!trustedCleanupBindings.has(expectedFingerprint)
+          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return rejectCleanup();
         if (approval.taskStatus !== 'succeeded'
           || approval.cleanupStatus !== 'active'
           || approval.branchRevisionRequired !== true

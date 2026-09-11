@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
 import { createSyntheticBaselineEvents } from '../domain/migration';
 import { createEmptyProjectControlSnapshot } from './persistence';
-import { startProjectSessionCommand } from './commands';
+import { startProjectSessionCommand, transitionIssueCommand } from './commands';
 import { auditProjectControlConsistency } from './projectControlConsistency';
 
 function started() {
@@ -44,6 +44,32 @@ describe('project control consistency audit', () => {
     ]));
   });
 
+  it('reports Issue status drift from a durable IssueStatusChanged fact', () => {
+    const result = started();
+    const transitioned = transitionIssueCommand({
+      snapshot: result.snapshot,
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const events = [
+      ...result.events,
+      { ...transitioned.events[0], sequence: 4, aggregateVersion: 2 },
+    ];
+    const audit = auditProjectControlConsistency({
+      projectId: 'project-1',
+      snapshot: {
+        ...transitioned.snapshot,
+        issues: transitioned.snapshot.issues.map((issue) => ({ ...issue, status: 'approved' as const })),
+      },
+      events,
+    });
+
+    expect(audit.ok).toBe(false);
+    expect(audit.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'issue-status-drift', aggregateId: 'issue-1' }),
+    ]));
+  });
   it('reports a ProjectFile issue whose durable fact is missing', () => {
     const result = started();
     const events = result.events.filter((event) => event.eventType !== 'IssueCreated');

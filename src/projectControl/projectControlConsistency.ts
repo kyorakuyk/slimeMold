@@ -52,8 +52,8 @@ const recognized = new Set([
   'MasterTurnCompleted', 'SessionStatusChanged', 'SessionOrchestrationLinked', 'SessionTaskGraphLinked',
   'BriefProposed', 'LegacyBriefImported', 'BriefApproved',
   'ArchitectureProposed', 'LegacyArchitectureImported', 'ArchitectureApproved',
-  'TaskGraphProposed', 'LegacyTaskGraphImported', 'TaskGraphApproved', 'LegacyTaskImported',
-  'LegacyIssueImported', 'IssueCreated', 'LegacyDecisionImported',
+  'TaskGraphProposed', 'TaskGraphRevisionCreated', 'TaskGraphSuperseded', 'LegacyTaskGraphImported', 'TaskGraphApproved', 'LegacyTaskImported',
+  'IssueStatusChanged', 'LegacyIssueImported', 'IssueCreated', 'LegacyDecisionImported',
 ]);
 
 function objectPayload(value: unknown): Record<string, unknown> {
@@ -125,7 +125,7 @@ function compareVersioned(
   issues: ProjectControlConsistencyIssue[],
   config: {
     aggregateType: 'Brief' | 'Architecture' | 'TaskGraph';
-    normalProposal: string;
+    normalProposal: string | readonly string[];
     legacyImport: string;
     approvalEvent: string;
     versionKey: 'briefVersion' | 'architectureVersion' | 'graphVersion';
@@ -137,11 +137,13 @@ function compareVersioned(
   },
 ): void {
   const facts = aggregate(events, config.aggregateType, item.id);
-  if (!has(facts, [config.normalProposal, config.legacyImport])) {
+  const proposalEvents = Array.isArray(config.normalProposal) ? config.normalProposal : [config.normalProposal];
+  if (!has(facts, [...proposalEvents, config.legacyImport])) {
     add(issues, config.missingCode, `ProjectFile ${config.aggregateType} 缺少 durable fact：${item.id}`, config.aggregateType, item.id);
     return;
   }
-  const versionEvent = last(facts, config.normalProposal) ?? last(facts, config.legacyImport);
+  const versionEvent = [...facts].reverse().find((event) => proposalEvents.includes(event.eventType))
+    ?? last(facts, config.legacyImport);
   const eventVersion = objectPayload(versionEvent?.payload)[config.versionKey];
   if (typeof eventVersion === 'number' && eventVersion !== config.version) {
     add(issues, config.versionCode, `${config.aggregateType} 版本与事件不一致：${item.id}`, config.aggregateType, item.id);
@@ -150,7 +152,7 @@ function compareVersioned(
   if (imported && objectPayload(imported.payload).approval !== config.approval) {
     add(issues, config.approvalCode, `${config.aggregateType} 审批状态与 legacy fact 不一致：${item.id}`, config.aggregateType, item.id);
   }
-  if (last(facts, config.approvalEvent) && config.approval !== 'approved') {
+  if (last(facts, config.approvalEvent) && config.approval !== 'approved' && config.approval !== 'superseded') {
     add(issues, config.approvalCode, `${config.aggregateType} 有批准事实但 ProjectFile 未批准：${item.id}`, config.aggregateType, item.id);
   }
 }
@@ -168,6 +170,10 @@ function compareIssue(
   const created = last(facts, 'IssueCreated');
   if (created && objectPayload(created.payload).projectId !== projectIssue.projectId) {
     add(issues, 'issue-project-drift', `Issue projectId 与事件不一致：${projectIssue.id}`, 'Issue', projectIssue.id);
+  }
+  const status = last(facts, 'IssueStatusChanged');
+  if (status && objectPayload(status.payload).to !== projectIssue.status) {
+    add(issues, 'issue-status-drift', `Issue 状态与事件不一致：${projectIssue.id}`, 'Issue', projectIssue.id);
   }
   const imported = last(facts, 'LegacyIssueImported');
   if (imported) {
@@ -220,7 +226,7 @@ export function auditProjectControlConsistency(input: {
       missingCode: 'missing-architecture-event', versionCode: 'architecture-version-drift', approvalCode: 'architecture-approval-drift',
     });
     for (const item of input.snapshot.taskGraphs ?? []) compareVersioned(item, events, issues, {
-      aggregateType: 'TaskGraph', normalProposal: 'TaskGraphProposed', legacyImport: 'LegacyTaskGraphImported', approvalEvent: 'TaskGraphApproved', versionKey: 'graphVersion', version: item.graphVersion, approval: item.approval,
+      aggregateType: 'TaskGraph', normalProposal: ['TaskGraphProposed', 'TaskGraphRevisionCreated'], legacyImport: 'LegacyTaskGraphImported', approvalEvent: 'TaskGraphApproved', versionKey: 'graphVersion', version: item.graphVersion, approval: item.approval,
       missingCode: 'missing-task-graph-event', versionCode: 'task-graph-version-drift', approvalCode: 'task-graph-approval-drift',
     });
     for (const item of input.snapshot.issues) compareIssue(item, events, issues);

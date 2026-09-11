@@ -186,6 +186,7 @@ describe('DevSession cleanup', () => {
     tip = 'c'.repeat(40);
     await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
     expect(session.manager.get(info!.id)?.status).toBe('created');
+    expect(session.getCleanupApproval(info!.path)?.consumed).toBe(true);
   });
 
   it('consumes approval when cancellation arrives after destructive cleanup completes', async () => {

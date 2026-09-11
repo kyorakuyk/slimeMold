@@ -99,6 +99,17 @@ fn new_cleanup_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn invalidate_cleanup_binding(token: &str) {
+    let mut state = DEV_STATE.lock().unwrap();
+    if let Some(binding) = state
+        .cleanup_bindings
+        .iter_mut()
+        .find(|binding| binding.token == token)
+    {
+        binding.consumed = true;
+    }
+}
+
 #[derive(Clone)]
 struct CleanupBinding {
     token: String,
@@ -2247,6 +2258,8 @@ fn dev_cleanup_worktree(
                 && path_compare_key(&item.path) == path_compare_key(&c)
         });
         if !registered && !orphan {
+            drop(state);
+            invalidate_cleanup_binding(&approval_token);
             return Err("dev_cleanup_worktree: worktree 未被当前 host 登记".into());
         }
         if state
@@ -2254,11 +2267,23 @@ fn dev_cleanup_worktree(
             .iter()
             .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
         {
+            drop(state);
+            invalidate_cleanup_binding(&approval_token);
             return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
         }
     }
-    if canon.is_dir() && !git_worktree_matches(&base_path, &canon, &branch)? {
-        return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
+    if canon.is_dir() {
+        let matches = match git_worktree_matches(&base_path, &canon, &branch) {
+            Ok(matches) => matches,
+            Err(error) => {
+                invalidate_cleanup_binding(&approval_token);
+                return Err(error);
+            }
+        };
+        if !matches {
+            invalidate_cleanup_binding(&approval_token);
+            return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
+        }
     }
     let mut delete = Command::new(resolve_dev_program("git"));
     delete
@@ -2267,8 +2292,15 @@ fn dev_cleanup_worktree(
         .arg(format!("refs/heads/{branch}"))
         .arg(&branch_revision);
     apply_dev_env(&mut delete);
-    let result = run_with_timeout(&mut delete, Duration::from_secs(30))?;
+    let result = match run_with_timeout(&mut delete, Duration::from_secs(30)) {
+        Ok(result) => result,
+        Err(error) => {
+            invalidate_cleanup_binding(&approval_token);
+            return Err(error);
+        }
+    };
     if result.code != 0 {
+        invalidate_cleanup_binding(&approval_token);
         return Err(format!(
             "dev_cleanup_worktree: branch CAS 删除失败：{}",
             result.stderr
@@ -2281,8 +2313,15 @@ fn dev_cleanup_worktree(
             .args(["worktree", "remove", "--force"]);
         remove.arg(&canon);
         apply_dev_env(&mut remove);
-        let result = run_with_timeout(&mut remove, Duration::from_secs(30))?;
+        let result = match run_with_timeout(&mut remove, Duration::from_secs(30)) {
+            Ok(result) => result,
+            Err(error) => {
+                invalidate_cleanup_binding(&approval_token);
+                return Err(error);
+            }
+        };
         if result.code != 0 {
+            invalidate_cleanup_binding(&approval_token);
             return Err(format!(
                 "dev_cleanup_worktree: branch 已按 CAS 删除，但 worktree remove 失败：{}",
                 result.stderr
@@ -2291,6 +2330,8 @@ fn dev_cleanup_worktree(
     }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        drop(state);
+        invalidate_cleanup_binding(&approval_token);
         return Err("dev_cleanup_worktree: session 在清理后发生变化".into());
     }
     if let Some(binding) = state

@@ -2335,6 +2335,13 @@ Issue 工作台采用四个面板：
 - 增加 persistence round-trip regression：重启模拟后旧/new graph history、Task Issue ID、Task/DAG projection 仍可恢复；selection 保持临时状态。
 - 验证：`npm run test` 为 `111` 个测试文件、`1004` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.96 Cleanup capability replay invalidation 与 revision-aware consistency audit
+
+- Rust native cleanup capability 在 path/branch drift、CAS 删除失败、worktree remove 部分失败、session read-back drift 和 host probe error 后都会失效；错误 token 不再留下可重放的 destructive binding。无 fingerprint 的未授权调用仍只拒绝、不消耗合法 approval。
+- Project control consistency audit 识别 `IssueStatusChanged`、`TaskGraphRevisionCreated`、`TaskGraphSuperseded`，能检查 Issue status drift 和 TaskGraph revision graphVersion/approval，不再把新 command/event 当成 orphan 或缺少 proposal。
+- 保留未知 cleanup 的 durable `unknown/needs-user` 和 side-effect lock/claim/replay 约束；未重新执行真实 destructive cleanup。
+- 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
