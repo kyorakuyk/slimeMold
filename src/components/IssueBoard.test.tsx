@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectControlSnapshot, ProjectIssue, ProjectTaskGraph } from '../projectControl/types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { useViewStore } from '../store/viewStore';
 
 const mocks = vi.hoisted(() => {
   const inbox: ProjectIssue = {
@@ -131,6 +132,7 @@ describe('IssueBoard', () => {
     };
     mocks.store.workerRuns = [];
     mocks.store.setProjectControl.mockClear();
+    useViewStore.getState().clearTaskGraphSelection();
   });
 
   afterEach(() => {
@@ -206,5 +208,33 @@ describe('IssueBoard', () => {
     expect(taskLink?.getAttribute('data-task-status')).toBe('in_progress');
     expect(taskLink?.textContent).toContain('task-1');
     expect(taskLink?.textContent).toContain('1');
+  });
+
+  it('publishes the same canonical selection used by the DAG view', async () => {
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: null,
+      sessions: [],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [mocks.inbox, mocks.unassigned],
+      taskGraphs: [mocks.taskGraph],
+    };
+    mocks.store.workerRuns = [mocks.workerRun];
+
+    await act(async () => {
+      root.render(<IssueBoard onBack={vi.fn()} onOpenAdvanced={vi.fn()} />);
+    });
+    await act(async () => {
+      (container.querySelector('[data-testid="issue-task-issue-1"]') as HTMLElement).click();
+    });
+
+    expect(useViewStore.getState().taskGraphSelection).toEqual({
+      projectId: 'project-1',
+      taskGraphId: 'graph-1',
+      taskId: 'task-1',
+      issueId: 'issue-1',
+    });
   });
 });

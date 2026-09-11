@@ -5,6 +5,13 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 export type LocaleCode = string;
 export type WorkspaceMode = 'simple' | 'advanced';
 
+export interface TaskGraphSelection {
+  projectId: string;
+  taskGraphId: string;
+  taskId: string;
+  issueId: string;
+}
+
 /** 旧版欢迎遮罩只属于高级工作台，避免覆盖轻量工作台自己的入口。 */
 export function shouldRenderWelcomeModal(workspaceMode: WorkspaceMode, showWelcome: boolean): boolean {
   return showWelcome && workspaceMode === 'advanced';
@@ -78,6 +85,12 @@ interface ViewState {
   splitWfId: string;
   /** 当前正在编辑的子图作用域 id（双击折叠组进入子图；null=父图） */
   focusedSubgraphId: string | null;
+  /** 当前 Issue/DAG 的 canonical Task selection（临时导航状态，不持久化） */
+  taskGraphSelection: TaskGraphSelection | null;
+  /** 设置 Issue/DAG 共享的 canonical selection */
+  setTaskGraphSelection: (selection: TaskGraphSelection) => void;
+  /** 清除 Issue/DAG 共享的 canonical selection */
+  clearTaskGraphSelection: () => void;
   /** 当前在右侧 Inspector 中查看的资产 id（null=查看节点信息） */
   inspectAssetId: string | null;
   /** 调试模式：开启后画布节点卡片才显示「重跑子图 / 重跑到此节点」等调试动作 */
@@ -133,6 +146,9 @@ export const useViewStore = create<ViewState>()(
       inspectorOpen: true,
       splitWfId: '',
       focusedSubgraphId: null,
+      taskGraphSelection: null,
+      setTaskGraphSelection: (selection) => set({ taskGraphSelection: selection }),
+      clearTaskGraphSelection: () => set({ taskGraphSelection: null }),
       inspectAssetId: null,
       debugMode: false,
       globalProxyUrl: '',
@@ -179,12 +195,17 @@ export const useViewStore = create<ViewState>()(
       // 不能持久化，否则异常退出时残留的 sg id 会让子图编辑层在下次启动时
       // 盖住整个画布，表现为「双击进不了子图」。
       partialize: (s) => {
-        const { focusedSubgraphId: _omit, ...rest } = s;
+        const {
+          focusedSubgraphId: _omitFocusedSubgraph,
+          taskGraphSelection: _omitTaskGraphSelection,
+          ...rest
+        } = s;
         return rest as ViewState;
       },
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.focusedSubgraphId = null;
+          state.taskGraphSelection = null;
           // 持久化的主题（可能是 system）重新套用，并注册系统监听
           applyTheme(state.theme);
           // 恢复持久化的自我学习开关到 reviewer 模块级标志

@@ -25,6 +25,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { confirmDialog } from '../platform/env';
 import {
@@ -46,9 +47,12 @@ import { workerRunViewsFor } from '../projectControl/workerRunView';
 import {
   buildTaskGraphProjection,
   buildTaskGraphProjectionFromWorkerRun,
+  taskIssueId,
 } from '../projectControl/taskGraphProjection';
 import TaskGraphDAGView from './TaskGraphDAGView';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
+import { reviseTaskGraphCommand } from '../projectControl/commands';
+import { recordProjectEvents } from '../projectControl/eventBuffer';
 
 /** 编排整体状态徽标配色 */
 const statusCls: Record<string, string> = {
@@ -114,6 +118,8 @@ export default function OrchestratorPanel({
   const workerCleanupProposals = useWorkflowStore((s) => s.workerCleanupProposals ?? []);
   const projectId = useWorkflowStore((s) => s.projectId);
   const projectControl = useWorkflowStore((s) => s.projectControl);
+  const taskGraphSelection = useViewStore((s) => s.taskGraphSelection);
+  const setTaskGraphSelection = useViewStore((s) => s.setTaskGraphSelection);
 
   // 目标输入与约束
   const [goal, setGoal] = useState('');
@@ -129,6 +135,10 @@ export default function OrchestratorPanel({
   const [cancelling, setCancelling] = useState(false);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [revisionTitle, setRevisionTitle] = useState('');
+  const [revisionDependsOn, setRevisionDependsOn] = useState('');
+  const [revisionDependsOnTouched, setRevisionDependsOnTouched] = useState(false);
+  const [revisionBusy, setRevisionBusy] = useState(false);
 
   const selected = orchestrations.find((o) => o.id === selectedId) ?? null;
   const selectedWorkerRuns = selected
@@ -140,7 +150,9 @@ export default function OrchestratorPanel({
       .filter((run) => run.projectId === projectId && run.orchestrationId === selected.id)
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
     const latestRun = taskGraphRuns.at(-1);
-    const graphId = latestRun?.taskGraphId
+    const selectedGraphId = taskGraphSelection?.projectId === projectId ? taskGraphSelection.taskGraphId : undefined;
+    const graphId = selectedGraphId
+      ?? latestRun?.taskGraphId
       ?? selected.draft?.stages.find((stage) => stage.sourceTaskGraphId)?.sourceTaskGraphId;
     const graph = graphId
       ? projectControl.taskGraphs?.find((item) => item.id === graphId)
@@ -168,7 +180,7 @@ export default function OrchestratorPanel({
         error: cause instanceof Error ? cause.message : String(cause),
       };
     }
-  }, [projectControl.issues, projectControl.taskGraphs, projectId, selected, workerRuns]);
+  }, [projectControl.issues, projectControl.taskGraphs, projectId, selected, taskGraphSelection, workerRuns]);
   const allAgents = [...globalAgents, ...agents];
   const workflowsList = Object.entries(workflows).map(([id, w]) => ({
     id,
@@ -355,6 +367,63 @@ export default function OrchestratorPanel({
         setCleanupBusy(false);
       }
     })();
+  };
+
+  const onReviseTaskGraph = async () => {
+    const projection = taskGraphDAG.projection;
+    const selection = taskGraphSelection;
+    if (!projectId || !projection || !selection || selection.taskGraphId !== projection.graphId) {
+      setErr(t('orchestrator.taskGraph.selectTask'));
+      return;
+    }
+    const task = projection.nodes.find((node) => node.taskId === selection.taskId);
+    const session = projectControl.sessions.find((item) => item.id === projection.sessionId);
+    const sourceGraph = projectControl.taskGraphs?.find((graph) => graph.id === projection.graphId);
+    if (!task || !session || !sourceGraph) {
+      setErr(t('orchestrator.taskGraph.revisionUnavailable'));
+      return;
+    }
+    if (!revisionTitle.trim() && !revisionDependsOnTouched) {
+      setErr(t('orchestrator.taskGraph.revisionEmpty'));
+      return;
+    }
+    setRevisionBusy(true);
+    setErr(null);
+    try {
+      const next = reviseTaskGraphCommand({
+        snapshot: projectControl,
+        sessionId: session.id,
+        sourceTaskGraphId: sourceGraph.id,
+        id: `${sourceGraph.id}:revision:${sourceGraph.graphVersion + 1}`,
+        now: new Date().toISOString(),
+        changes: [{
+          taskId: task.taskId,
+          ...(revisionTitle.trim() ? { title: revisionTitle.trim() } : {}),
+          ...(revisionDependsOnTouched
+            ? { dependsOn: revisionDependsOn.split(',').map((value) => value.trim()).filter(Boolean) }
+            : {}),
+        }],
+      });
+      recordProjectEvents(projectId, next.events);
+      const store = useWorkflowStore.getState();
+      store.setProjectControl(next.snapshot);
+      if (store.projectPath) await store.saveProject();
+      setTaskGraphSelection({
+        projectId,
+        taskGraphId: sourceGraph.id === next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId
+          ? sourceGraph.id
+          : next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId ?? sourceGraph.id,
+        taskId: task.taskId,
+        issueId: taskIssueId(next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId ?? sourceGraph.id, task.taskId),
+      });
+      setRevisionTitle('');
+      setRevisionDependsOn('');
+      setRevisionDependsOnTouched(false);
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRevisionBusy(false);
+    }
   };
 
   const inner = (
@@ -608,7 +677,56 @@ export default function OrchestratorPanel({
             })}
 
             {taskGraphDAG.projection && (
-              <TaskGraphDAGView projection={taskGraphDAG.projection} />
+              <TaskGraphDAGView
+                projection={taskGraphDAG.projection}
+                selectedTaskId={taskGraphSelection?.taskGraphId === taskGraphDAG.projection.graphId ? taskGraphSelection.taskId : undefined}
+                onSelectTask={(node) => {
+                  if (!projectId) return;
+                  setTaskGraphSelection({
+                    projectId,
+                    taskGraphId: taskGraphDAG.projection!.graphId,
+                    taskId: node.taskId,
+                    issueId: node.issueId,
+                  });
+                }}
+              />
+            )}
+            {taskGraphDAG.projection && taskGraphDAG.projection.approval !== 'superseded' && (
+              <details className="rounded border border-line px-2.5 py-2" data-testid="taskgraph-revision-editor">
+                <summary className="cursor-pointer text-[11px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
+                  {t('orchestrator.taskGraph.revise')}
+                </summary>
+                <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
+                  <p style={{ color: 'var(--sm-ink-faint)' }}>
+                    {t('orchestrator.taskGraph.selectedTask')}: {taskGraphSelection?.taskId ?? t('orchestrator.taskGraph.noneSelected')}
+                  </p>
+                  <input
+                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
+                    placeholder={t('orchestrator.taskGraph.titlePlaceholder')}
+                    value={revisionTitle}
+                    onChange={(event) => setRevisionTitle(event.target.value)}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  />
+                  <input
+                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
+                    placeholder={t('orchestrator.taskGraph.dependsOnPlaceholder')}
+                    value={revisionDependsOn}
+                    onChange={(event) => {
+                      setRevisionDependsOn(event.target.value);
+                      setRevisionDependsOnTouched(true);
+                    }}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  />
+                  <button
+                    type="button"
+                    className="sm-btn justify-center hover:border-accent hover:text-accent"
+                    onClick={() => { void onReviseTaskGraph(); }}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  >
+                    {t('orchestrator.taskGraph.applyRevision')}
+                  </button>
+                </div>
+              </details>
             )}
             {taskGraphDAG.error && (
               <div className="rounded border border-dashed border-warn px-2.5 py-1.5 text-[10.5px] text-warn" data-testid="orchestrator-taskgraph-dag-error">

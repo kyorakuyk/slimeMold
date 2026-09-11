@@ -26,7 +26,7 @@ export const SESSION_TRANSITIONS: Record<
   'brief-review': new Set(['clarifying', 'architecture-review', 'ready', 'cancelled']),
   'architecture-review': new Set(['brief-review', 'plan-review', 'awaiting-user', 'cancelled']),
   'plan-review': new Set(['architecture-review', 'ready', 'awaiting-user', 'cancelled']),
-  ready: new Set(['executing', 'paused', 'cancelled']),
+  ready: new Set(['executing', 'paused', 'cancelled', 'plan-review']),
   executing: new Set(['blocked', 'awaiting-user', 'paused', 'delivered', 'cancelled']),
   blocked: new Set(['clarifying', 'plan-review', 'ready', 'paused', 'cancelled']),
   'awaiting-user': new Set(['clarifying', 'brief-review', 'architecture-review', 'plan-review', 'ready', 'paused', 'cancelled']),

@@ -26,6 +26,7 @@ export type TaskGraphProjectionConsistency =
   | 'execution-lineage-drift';
 
 export interface TaskGraphProjectionNode {
+  graphId?: string;
   taskId: string;
   issueId: string;
   title: string;
@@ -359,6 +360,7 @@ export function buildTaskGraphProjection(
     const attemptId = taskExecution?.currentAttemptId;
 
     return {
+      graphId: input.graph.id,
       taskId: task.id,
       issueId,
       title: task.title,

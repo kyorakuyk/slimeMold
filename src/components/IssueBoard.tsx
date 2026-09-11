@@ -11,8 +11,11 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
-import { createIssue, transitionIssue } from '../projectControl/issue';
+import { createIssue } from '../projectControl/issue';
+import { transitionIssueCommand } from '../projectControl/commands';
+import { recordProjectEvents } from '../projectControl/eventBuffer';
 import {
   buildTaskGraphProjection,
   buildTaskGraphProjectionFromWorkerRun,
@@ -58,14 +61,17 @@ function issueId(): string {
   return `issue-${uuid ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`}`;
 }
 
-function updateIssue(issueIdValue: string, update: (issue: ProjectIssue) => ProjectIssue): void {
+async function persistIssueTransition(issueIdValue: string, status: ProjectIssueStatus, now: string): Promise<void> {
   const state = useWorkflowStore.getState();
-  const issue = state.projectControl.issues.find((item) => item.id === issueIdValue);
-  if (!issue) return;
-  state.setProjectControl({
-    ...state.projectControl,
-    issues: state.projectControl.issues.map((item) => (item.id === issueIdValue ? update(item) : item)),
+  const result = transitionIssueCommand({
+    snapshot: state.projectControl,
+    issueId: issueIdValue,
+    status,
+    now,
   });
+  if (state.projectId) recordProjectEvents(state.projectId, result.events);
+  state.setProjectControl(result.snapshot);
+  if (state.projectPath) await state.saveProject();
 }
 
 export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) {
@@ -74,6 +80,8 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
   const projectName = useWorkflowStore((state) => state.projectName);
   const projectControl = useWorkflowStore((state) => state.projectControl);
   const workerRuns = useWorkflowStore((state) => state.workerRuns);
+  const taskGraphSelection = useViewStore((state) => state.taskGraphSelection);
+  const setTaskGraphSelection = useViewStore((state) => state.setTaskGraphSelection);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<ProjectIssueType>('idea');
@@ -133,27 +141,27 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
     }
   };
 
-  const handleQueue = (issueIdValue: string) => {
+  const handleQueue = async (issueIdValue: string) => {
     try {
-      updateIssue(issueIdValue, (issue) => transitionIssue(issue, 'queued', new Date().toISOString()));
+      await persistIssueTransition(issueIdValue, 'queued', new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleApprove = (issueIdValue: string) => {
+  const handleApprove = async (issueIdValue: string) => {
     try {
-      updateIssue(issueIdValue, (issue) => transitionIssue(issue, 'approved', new Date().toISOString()));
+      await persistIssueTransition(issueIdValue, 'approved', new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  const handleTriage = (issueIdValue: string) => {
+  const handleTriage = async (issueIdValue: string) => {
     try {
-      updateIssue(issueIdValue, (issue) => transitionIssue(issue, 'triaging', new Date().toISOString()));
+      await persistIssueTransition(issueIdValue, 'triaging', new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -244,6 +252,16 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
                         key={issue.id}
                         issue={issue}
                         taskNode={taskNodesByIssueId.get(issue.id)}
+                        selected={taskGraphSelection?.projectId === projectId && taskGraphSelection.issueId === issue.id}
+                        onSelectTask={(node) => {
+                          if (!projectId || !node.graphId) return;
+                          setTaskGraphSelection({
+                            projectId,
+                            taskGraphId: node.graphId,
+                            taskId: node.taskId,
+                            issueId: node.issueId,
+                          });
+                        }}
                         t={t}
                         onQueue={handleQueue}
                         onApprove={handleApprove}
@@ -264,6 +282,8 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
 function IssueCard({
   issue,
   taskNode,
+  selected,
+  onSelectTask,
   t,
   onQueue,
   onApprove,
@@ -271,13 +291,19 @@ function IssueCard({
 }: {
   issue: ProjectIssue;
   taskNode?: TaskGraphProjectionNode;
+  selected: boolean;
+  onSelectTask: (node: TaskGraphProjectionNode) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
   onQueue: (id: string) => void;
   onApprove: (id: string) => void;
   onTriage: (id: string) => void;
 }) {
   return (
-    <article className={`sm-beginner-issue-card is-${issue.status}`}>
+    <article
+      className={`sm-beginner-issue-card is-${issue.status}${selected ? ' is-task-selected' : ''}`}
+      data-task-selected={selected ? 'true' : 'false'}
+      onClick={taskNode ? () => onSelectTask(taskNode) : undefined}
+    >
       <div className="sm-beginner-issue-card-meta">
         <span>{t(`issue.type.${issue.type}`)}</span>
         <span className={`sm-beginner-issue-priority is-${issue.priority}`}>{t(`issue.priority.${issue.priority}`)}</span>

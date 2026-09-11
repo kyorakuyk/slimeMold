@@ -2326,6 +2326,15 @@ Issue 工作台采用四个面板：
 - `DevSession` 的 Acceptance 与 Cleanup approval 对外只返回深拷贝，避免调用方反向修改 durable approval snapshot。
 - 验证：`npm run test` 为 `111` 个测试文件、`996` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1000` keys 对齐；Rust `45` tests、Tauri session 定向 `27` tests、`cargo fmt --check` 和 `git diff --check` 通过。
 
+### 7.95 TaskGraph DAG 双向 selection、revision command 与 Issue Command/Event 闭环
+
+- OrchestratorPanel 的 DAG projection 与 IssueBoard 共享 `viewStore.taskGraphSelection`，selection 只保存 `projectId/taskGraphId/taskId/issueId`，不持久化为事实；Issue card 与 DAG node 互相高亮、可定位。
+- DAG 选中 Task 后可提交 title/dependsOn 修改；`reviseTaskGraphCommand` 生成新 graph ID 和递增 graphVersion，写入 `revisionOf`，旧 graph 标记 `superseded`，新 Issue 重新 materialize，所有状态变化通过 DomainEvent 记录，禁止直接 mutate 旧 graph。
+- revision command 拒绝 unknown dependency、self-loop 和 cycle；ready session 可回到 plan-review，executing session 不可修改任务图。
+- IssueBoard 的 queue/approve/triage 改为 `transitionIssueCommand` + `IssueStatusChanged` + project event buffer/save，不再建立第二套 UI snapshot mutation。
+- 增加 persistence round-trip regression：重启模拟后旧/new graph history、Task Issue ID、Task/DAG projection 仍可恢复；selection 保持临时状态。
+- 验证：`npm run test` 为 `111` 个测试文件、`1004` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

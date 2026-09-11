@@ -336,4 +336,13 @@
   <string name="orchestrator.taskGraph.evidence">Evidence</string>
   <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
   <string name="orchestrator.taskGraph.edge">Task dependencies</string>
+  <string name="orchestrator.taskGraph.revise">Create task graph revision</string>
+  <string name="orchestrator.taskGraph.selectedTask">Selected task</string>
+  <string name="orchestrator.taskGraph.noneSelected">Select a DAG node first</string>
+  <string name="orchestrator.taskGraph.titlePlaceholder">New title (blank keeps current)</string>
+  <string name="orchestrator.taskGraph.dependsOnPlaceholder">Dependency task IDs, comma-separated (blank means none)</string>
+  <string name="orchestrator.taskGraph.applyRevision">Create revision</string>
+  <string name="orchestrator.taskGraph.selectTask">Select a TaskGraph node first</string>
+  <string name="orchestrator.taskGraph.revisionUnavailable">The current TaskGraph revision is not editable</string>
+  <string name="orchestrator.taskGraph.revisionEmpty">Change a title or dependency before creating a revision</string>
 </resources>

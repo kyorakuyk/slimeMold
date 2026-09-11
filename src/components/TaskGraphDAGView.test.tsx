@@ -78,4 +78,24 @@ describe('TaskGraphDAGView', () => {
     expect(container.textContent).toContain('issue-build');
     expect(container.textContent).toContain('acceptance-build');
   });
+
+  it('exposes one selection callback keyed by canonical task lineage', async () => {
+    const selected: string[] = [];
+    await act(async () => {
+      root.render(
+        <TaskGraphDAGView
+          projection={projection}
+          selectedTaskId="task-build"
+          onSelectTask={(node) => selected.push(`${node.issueId}:${node.taskId}`)}
+        />,
+      );
+    });
+
+    const node = container.querySelector('[data-testid="taskgraph-node-task-build"]') as HTMLElement;
+    expect(node.getAttribute('aria-current')).toBe('true');
+    await act(async () => {
+      node.click();
+    });
+    expect(selected).toEqual(['issue-build:task-build']);
+  });
 });

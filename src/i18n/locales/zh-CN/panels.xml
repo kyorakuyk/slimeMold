@@ -336,4 +336,13 @@
   <string name="orchestrator.taskGraph.evidence">Evidence</string>
   <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
   <string name="orchestrator.taskGraph.edge">任务依赖</string>
+  <string name="orchestrator.taskGraph.revise">创建任务图 revision</string>
+  <string name="orchestrator.taskGraph.selectedTask">选中任务</string>
+  <string name="orchestrator.taskGraph.noneSelected">请先点击 DAG 节点</string>
+  <string name="orchestrator.taskGraph.titlePlaceholder">新标题（留空表示不修改）</string>
+  <string name="orchestrator.taskGraph.dependsOnPlaceholder">依赖 task id，逗号分隔（留空表示无依赖）</string>
+  <string name="orchestrator.taskGraph.applyRevision">生成新 revision</string>
+  <string name="orchestrator.taskGraph.selectTask">请先选择一个 TaskGraph 节点</string>
+  <string name="orchestrator.taskGraph.revisionUnavailable">当前 TaskGraph revision 不可编辑</string>
+  <string name="orchestrator.taskGraph.revisionEmpty">至少修改标题或依赖关系</string>
 </resources>

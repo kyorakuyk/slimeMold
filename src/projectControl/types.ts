@@ -195,6 +195,13 @@ export interface ProjectTask {
 
 export type TaskGraphApproval = 'draft' | 'approved' | 'superseded';
 
+export interface ProjectTaskGraphRevisionChange {
+  taskId: string;
+  title?: string;
+  description?: string;
+  dependsOn?: string[];
+}
+
 export interface ProjectTaskGraph {
   version: ProjectControlVersion;
   id: string;
@@ -207,6 +214,8 @@ export interface ProjectTaskGraph {
   updatedAt: string;
   approvedBy?: string;
   approvedAt?: string;
+  revisionOf?: string;
+  supersededBy?: string;
 }
 
 export interface ProjectControlSnapshot {

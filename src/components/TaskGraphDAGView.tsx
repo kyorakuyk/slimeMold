@@ -14,8 +14,17 @@ function taskStatusKey(node: TaskGraphProjectionNode): string {
   return 'queued';
 }
 
-export default function TaskGraphDAGView({ projection }: { projection: TaskGraphProjection }) {
+export default function TaskGraphDAGView({
+  projection,
+  selectedTaskId,
+  onSelectTask,
+}: {
+  projection: TaskGraphProjection;
+  selectedTaskId?: string;
+  onSelectTask?: (node: TaskGraphProjectionNode) => void;
+}) {
   const t = useT('panels');
+  const selectNode = (node: TaskGraphProjectionNode) => onSelectTask?.(node);
 
   return (
     <section className="sm-taskgraph-dag" data-testid="taskgraph-dag-view">
@@ -34,10 +43,20 @@ export default function TaskGraphDAGView({ projection }: { projection: TaskGraph
         {projection.nodes.map((node) => (
           <article
             key={node.taskId}
-            className={`sm-taskgraph-dag-node is-${node.projectedStatus}`}
+            className={`sm-taskgraph-dag-node is-${node.projectedStatus}${selectedTaskId === node.taskId ? ' is-selected' : ''}`}
             data-testid={`taskgraph-node-${node.taskId}`}
             data-task-status={node.projectedStatus}
             data-task-consistency={node.consistency}
+            aria-current={selectedTaskId === node.taskId ? 'true' : undefined}
+            role={onSelectTask ? 'button' : undefined}
+            tabIndex={onSelectTask ? 0 : undefined}
+            onClick={onSelectTask ? () => selectNode(node) : undefined}
+            onKeyDown={onSelectTask ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectNode(node);
+              }
+            } : undefined}
           >
             <div className="sm-taskgraph-dag-node-title">
               <strong>{node.title}</strong>
