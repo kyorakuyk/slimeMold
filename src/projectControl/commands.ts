@@ -4,7 +4,7 @@ import {
 } from './persistence';
 import type { ProjectControlSnapshot } from './types';
 import type { Orchestration } from '../types';
-import { createIssue } from './issue';
+import { createIssue, transitionIssue } from './issue';
 import {
   approveArchitecture,
   approveBrief,
@@ -13,6 +13,7 @@ import {
 } from './state';
 import { applyMasterTurn, type ApplyMasterTurnInput } from './session';
 import { approveTaskGraph, createTaskGraphFromArchitecture } from './taskGraph';
+import { materializeTaskIssues, taskIssueId } from './taskGraphProjection';
 
 export interface StartProjectSessionCommandInput {
   projectId: string;
@@ -367,9 +368,16 @@ export function generateTaskGraphCommand(
     now: input.now,
     version: input.version,
   });
+  const taskIssues = materializeTaskIssues({
+    graph,
+    projectId: session.projectId,
+    existingIssues: input.snapshot.issues,
+    now: input.now,
+  });
   const nextSession = transitionSession(session, 'plan-review', input.now);
   const snapshot: ProjectControlSnapshot = {
     ...input.snapshot,
+    issues: taskIssues.issues,
     taskGraphs: [...(input.snapshot.taskGraphs ?? []), graph],
     sessions: input.snapshot.sessions.map((item) =>
       item.id === session.id ? { ...nextSession, taskGraphId: graph.id } : item,
@@ -410,6 +418,31 @@ export function generateTaskGraphCommand(
     source: { objectId: session.id, objectVersion: 1 },
     sensitivity: 'normal',
   });
+  for (const issueId of taskIssues.createdIssueIds) {
+    const issue = taskIssues.issues.find((item) => item.id === issueId);
+    if (!issue) throw new Error(`Task Issue materialization 丢失：${issueId}`);
+    appendFact(events, {
+      eventId: `${issue.id}:created`,
+      streamId: session.projectId,
+      aggregateType: 'Issue',
+      aggregateId: issue.id,
+      eventType: 'IssueCreated',
+      schemaVersion: 1,
+      payload: {
+        issueId: issue.id,
+        projectId: session.projectId,
+        issueType: issue.type,
+        title: issue.title,
+        sourceTaskGraphId: graph.id,
+        taskId: issue.relatedTaskIds[0],
+      },
+      actor: 'master',
+      occurredAt: input.now,
+      correlationId: session.id,
+      source: { objectId: graph.id, objectVersion: graph.graphVersion },
+      sensitivity: 'normal',
+    });
+  }
   return { snapshot, events };
 }
 
@@ -430,9 +463,27 @@ export function approveTaskGraphCommand(
   if (!graph) throw new Error(`任务图不存在：${session.taskGraphId}`);
 
   const approved = approveTaskGraph(graph, input.approvedBy, input.now);
+  const taskIssues = materializeTaskIssues({
+    graph: approved,
+    projectId: session.projectId,
+    existingIssues: input.snapshot.issues,
+    now: input.now,
+  });
+  let nextIssues = taskIssues.issues;
+  const issueTransitions: Array<{ before: ProjectControlSnapshot['issues'][number]; after: ProjectControlSnapshot['issues'][number] }> = [];
+  for (const task of approved.tasks) {
+    const issueId = task.issueId ?? taskIssueId(approved.id, task.id);
+    const issue = nextIssues.find((item) => item.id === issueId);
+    if (!issue) throw new Error(`Task Issue 不存在，不能批准任务图：${issueId}`);
+    if (issue.status !== 'proposed' && issue.status !== 'inbox' && issue.status !== 'triaging') continue;
+    const nextIssue = transitionIssue(issue, 'approved', input.now);
+    nextIssues = nextIssues.map((item) => (item.id === issue.id ? nextIssue : item));
+    issueTransitions.push({ before: issue, after: nextIssue });
+  }
   const nextSession = transitionSession(session, 'ready', input.now);
   const snapshot: ProjectControlSnapshot = {
     ...input.snapshot,
+    issues: nextIssues,
     taskGraphs: (input.snapshot.taskGraphs ?? []).map((item) => (item.id === approved.id ? approved : item)),
     sessions: input.snapshot.sessions.map((item) => (item.id === session.id ? nextSession : item)),
   };
@@ -475,6 +526,53 @@ export function approveTaskGraphCommand(
     source: { objectId: session.id, objectVersion: 1 },
     sensitivity: 'normal',
   });
+  for (const issueId of taskIssues.createdIssueIds) {
+    const issue = taskIssues.issues.find((item) => item.id === issueId);
+    if (!issue) throw new Error(`Task Issue materialization 丢失：${issueId}`);
+    appendFact(events, {
+      eventId: `${issue.id}:created`,
+      streamId: session.projectId,
+      aggregateType: 'Issue',
+      aggregateId: issue.id,
+      eventType: 'IssueCreated',
+      schemaVersion: 1,
+      payload: {
+        issueId: issue.id,
+        projectId: session.projectId,
+        issueType: issue.type,
+        title: issue.title,
+        sourceTaskGraphId: approved.id,
+        taskId: issue.relatedTaskIds[0],
+      },
+      actor: 'user',
+      occurredAt: input.now,
+      correlationId: session.id,
+      source: { objectId: approved.id, objectVersion: approved.graphVersion },
+      sensitivity: 'normal',
+    });
+  }
+  for (const transition of issueTransitions) {
+    appendFact(events, {
+      eventId: `${transition.after.id}:status:${input.now}:approved`,
+      streamId: session.projectId,
+      aggregateType: 'Issue',
+      aggregateId: transition.after.id,
+      eventType: 'IssueStatusChanged',
+      schemaVersion: 1,
+      payload: {
+        issueId: transition.after.id,
+        taskGraphId: approved.id,
+        taskId: transition.after.relatedTaskIds[0],
+        from: transition.before.status,
+        to: transition.after.status,
+      },
+      actor: 'user',
+      occurredAt: input.now,
+      correlationId: session.id,
+      source: { objectId: approved.id, objectVersion: approved.graphVersion },
+      sensitivity: 'normal',
+    });
+  }
   return { snapshot, events };
 }
 

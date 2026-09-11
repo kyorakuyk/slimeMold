@@ -9,6 +9,7 @@ import {
   startProjectSessionCommand,
 } from './commands';
 import type { ProjectControlSnapshot } from './types';
+import { taskIssueId } from './taskGraphProjection';
 
 function architectureSnapshot(approval: 'draft' | 'approved' = 'draft'): ProjectControlSnapshot {
   return {
@@ -235,9 +236,18 @@ describe('startProjectSessionCommand', () => {
       tasks: [expect.objectContaining({ id: 'task-1', status: 'proposed' })],
     });
     expect(result.snapshot.sessions[0].taskGraphId).toBe('task-graph-1');
+    expect(result.snapshot.issues).toEqual([
+      expect.objectContaining({
+        id: taskIssueId('task-graph-1', 'task-1'),
+        projectId: 'project-1',
+        status: 'proposed',
+        relatedTaskIds: ['task-1'],
+      }),
+    ]);
     expect(result.events.map((event) => event.eventType)).toEqual([
       'TaskGraphProposed',
       'SessionTaskGraphLinked',
+      'IssueCreated',
     ]);
   });
 
@@ -256,10 +266,18 @@ describe('startProjectSessionCommand', () => {
     });
 
     expect(result.snapshot.taskGraphs?.[0]).toMatchObject({ approval: 'approved' });
+    expect(result.snapshot.issues).toEqual([
+      expect.objectContaining({
+        id: taskIssueId('task-graph-1', 'task-1'),
+        status: 'approved',
+        relatedTaskIds: ['task-1'],
+      }),
+    ]);
     expect(result.snapshot.sessions[0].status).toBe('ready');
     expect(result.events.map((event) => event.eventType)).toEqual([
       'TaskGraphApproved',
       'SessionStatusChanged',
+      'IssueStatusChanged',
     ]);
   });
 

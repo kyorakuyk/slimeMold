@@ -2292,6 +2292,15 @@ Issue 工作台采用四个面板：
 - reviewer 剩余问题归入 Phase 2 native host authority，而不是继续局部补 TypeScript gate：Rust-owned TaskGraph/Approval authority、destructive mutation capability、worktree identity race fencing、orphan terminal reconciliation、cleanup-unknown inspect/skip UI、conflict-aware side-effect merge 和持久化失败恢复。
 - 同一最终工作树质量门：`npm run test` 为 109 个测试文件、990 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；Rust 43 tests、fmt、diff-check 均通过。
 
+### 7.91 Phase 2 第一条垂直切片：TaskGraph → Issue → execution/DAG projection
+
+- 在独立分支 `phase2/taskgraph-issue-dag-projection` 建立第一条生产化控制面切片：`ProjectTaskGraph` 不再只停留在主控会话侧，生成任务图时同步 materialize 每个 Task 的稳定 Task Issue；批准任务图时把对应 Issue 推进到 `approved`。
+- 新增 `src/projectControl/taskGraphProjection.ts`：用 deterministic `issue:task:<taskGraphId>:<taskId>` 关联同一 Task、Issue、依赖边、TaskExecution、Attempt、Evidence 和 Acceptance；执行状态映射为 Issue/DAG 可读状态；缺失 Issue、Task/Issue 关联漂移、Issue 状态漂移和 execution lineage 漂移显式保留为 consistency 状态，不静默修复。
+- `generateTaskGraphCommand` 与 `approveTaskGraphCommand` 现在同时返回 ProjectControl snapshot 和可审计 `IssueCreated`/`IssueStatusChanged` facts；materialization 幂等，不重复创建 Task Issue。
+- 本轮仍是控制面底座，不宣称完整 UI 双向编辑已完成：下一条切片需要把该 projection 接入 IssueBoard 与 DAG 视图，并让 Worker event projection 回写两者；当前主线仍保留 native host authority 的独立生产验证边界。
+
+验证结果：`npm run test` 为 110 个测试文件、992 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
