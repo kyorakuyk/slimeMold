@@ -61,13 +61,19 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
         };
       }
     },
-    cleanupWorktree: async (path, branch, branchRevision, cwd) => {
+    cleanupWorktree: async (path, branch, branchRevision, _cwd) => {
       try {
+        const approvalToken = await call<string>('dev_approve_cleanup', {
+          path,
+          branch,
+          branchRevision,
+          generation: sessionGeneration,
+        });
         await call<void>('dev_cleanup_worktree', {
           path,
           branch,
           branchRevision,
-          cwd,
+          approvalToken,
           generation: sessionGeneration,
         });
         return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };

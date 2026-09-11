@@ -208,6 +208,14 @@ export interface CleanupApproval {
   consumed: boolean;
 }
 
+function cloneAcceptanceRecord(record: AcceptanceRecord): AcceptanceRecord {
+  return { ...record, failedChecks: [...record.failedChecks] };
+}
+
+function cloneCleanupApproval(approval: CleanupApproval): CleanupApproval {
+  return { ...approval };
+}
+
 export interface DevSession {
   policy: SelfDevelopmentPolicy;
   /** Rust Tauri host session fencing token；Node/headless 无此字段。 */
@@ -491,8 +499,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (!isAcceptanceRecord(rec)) {
         throw new Error('验收记录格式或 lineage 无效');
       }
-      acceptanceStore.set(rec.acceptanceId, rec);
-      return rec;
+      const stored = cloneAcceptanceRecord(rec);
+      acceptanceStore.set(rec.acceptanceId, stored);
+      return cloneAcceptanceRecord(stored);
     },
     async persistAcceptance(rec) {
       const current = acceptanceStore.get(rec.acceptanceId);
@@ -504,7 +513,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         throw new Error('AcceptancePersistence 未配置，拒绝把验收当作 durable 事实');
       }
       try {
-        await acceptancePersistence.append({ ...rec });
+        await acceptancePersistence.append(cloneAcceptanceRecord(rec));
         const persisted = (await acceptancePersistence.load()).find((item) => item.acceptanceId === rec.acceptanceId);
         if (!persisted || JSON.stringify(persisted) !== JSON.stringify(rec)) {
           acceptanceStore.delete(rec.acceptanceId);
@@ -525,19 +534,20 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
           throw new Error(`Acceptance ID 内容冲突：${record.acceptanceId}`);
         }
-        next.set(record.acceptanceId, { ...record });
+        next.set(record.acceptanceId, cloneAcceptanceRecord(record));
       }
       acceptanceStore.clear();
       for (const [id, record] of next) acceptanceStore.set(id, record);
     },
     getAcceptance(acceptanceId) {
-      return acceptanceStore.get(acceptanceId);
+      const record = acceptanceStore.get(acceptanceId);
+      return record ? cloneAcceptanceRecord(record) : undefined;
     },
     listAcceptances() {
-      return [...acceptanceStore.values()].map((item) => ({ ...item }));
+      return [...acceptanceStore.values()].map(cloneAcceptanceRecord);
     },
     listCleanupApprovals() {
-      return [...approvedCleanups.values()].map((item) => ({ ...item }));
+      return [...approvedCleanups.values()].map(cloneCleanupApproval);
     },
     async computeWorktreeSignature(path) {
       // worktree 当前状态指纹：changedFiles（排序）+ diff 文本 + **untracked 文件内容哈希**
@@ -602,14 +612,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       return !!a && !a.consumed;
     },
     getCleanupApproval(path) {
-      return approvedCleanups.get(pathComparisonKey(path));
+      const approval = approvedCleanups.get(pathComparisonKey(path));
+      return approval ? cloneCleanupApproval(approval) : undefined;
     },
     consumeCleanup(path) {
       const key = pathComparisonKey(path);
       const a = approvedCleanups.get(key);
       if (a) {
         trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
-        approvedCleanups.set(key, { ...a, consumed: true });
+        approvedCleanups.set(key, cloneCleanupApproval({ ...a, consumed: true }));
       }
     },
     async forceCleanup(path, reason) {

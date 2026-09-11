@@ -393,4 +393,37 @@ describe('DevSession cleanup', () => {
     await second.loadAcceptances();
     expect(second.getAcceptance(acceptance.acceptanceId)).toEqual(acceptance);
   });
+
+  it('returns cloned acceptance and cleanup approval snapshots', () => {
+    const session = initDevSession({ baseRepoPath: '/repo' });
+    const acceptance: AcceptanceRecord = {
+      acceptanceId: 'acc-clone',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: '/repo-workers/task-1',
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    };
+    const recorded = session.recordAcceptance(acceptance);
+    recorded.failedChecks.push('forged');
+    expect(session.getAcceptance('acc-clone')?.failedChecks).toEqual([]);
+    const listed = session.listAcceptances();
+    listed[0].failedChecks.push('forged-again');
+    expect(session.getAcceptance('acc-clone')?.failedChecks).toEqual([]);
+
+    session.approveCleanup('/repo-workers/task-1', { branch: 'worker/task-1' });
+    const approval = session.getCleanupApproval('/repo-workers/task-1');
+    expect(approval).toBeDefined();
+    approval!.consumed = true;
+    approval!.branch = 'worker/forged';
+    expect(session.getCleanupApproval('/repo-workers/task-1')).toMatchObject({
+      consumed: false,
+      branch: 'worker/task-1',
+    });
+    const approvals = session.listCleanupApprovals();
+    approvals[0].consumed = true;
+    expect(session.getCleanupApproval('/repo-workers/task-1')?.consumed).toBe(false);
+  });
+
 });

@@ -2317,6 +2317,15 @@ Issue 工作台采用四个面板：
 
 验证结果：`npm run test` 为 111 个测试文件、995 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 1000 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.94 Native cleanup capability 与 Worktree identity hardening
+
+- Rust 的 Worktree registration 现在保存 `generation + canonical path + branch`，Cleanup 不再只按 path 认领对象；当前 Git worktree path/branch 漂移时 fail-closed。
+- normal Worktree registration 必须消费当前 host 通过受控 `git worktree add` 产生的 pending lease，重复注册仅允许同一 identity 幂等返回。
+- orphan recovery 对 missing path 要求受控 Worker branch 仍存在；existing path 仍必须与 Git worktree branch 精确匹配。
+- Cleanup 新增 Rust-owned 一次性 capability：native revalidation + 原生确认对话框签发 token，destructive `dev_cleanup_worktree` 必须携带精确 token，成功后立即消费。
+- `DevSession` 的 Acceptance 与 Cleanup approval 对外只返回深拷贝，避免调用方反向修改 durable approval snapshot。
+- 验证：`npm run test` 为 `111` 个测试文件、`996` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1000` keys 对齐；Rust `45` tests、Tauri session 定向 `27` tests、`cargo fmt --check` 和 `git diff --check` 通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

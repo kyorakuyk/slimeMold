@@ -22,6 +22,8 @@ const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =
     throw new Error('transient unregister failure');
   }
   if (command === 'dev_register_orphan_worktree') return undefined;
+  if (command === 'dev_approve_cleanup') return 'native-cleanup-token';
+  if (command === 'dev_cleanup_worktree') return undefined;
   if (command === 'dev_unregister_worktree') return undefined;
   throw new Error(`unexpected command: ${command}`);
 }));

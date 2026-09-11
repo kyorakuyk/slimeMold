@@ -13,6 +13,7 @@
 //! 注意：Rust 侧不实现 LLM HTTP 客户端（原 chat_completion 已移除）。普通 API provider
 //! 由前端发起；Codex provider 是受控例外，只通过官方 Codex CLI 的 Tauri 命令调用。
 
+use rand::RngCore;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod codex;
 mod event_store;
@@ -67,8 +69,60 @@ struct DevState {
     generation: u64,
     base_repo: Option<String>,
     worktrees: Vec<String>,
+    registrations: Vec<RegisteredWorktree>,
+    cleanup_bindings: Vec<CleanupBinding>,
     pending_worktrees: Vec<PendingWorktree>,
     orphan_worktrees: Vec<PendingWorktree>,
+}
+
+#[derive(Clone)]
+struct RegisteredWorktree {
+    generation: u64,
+    path: String,
+    branch: String,
+}
+
+fn registered_worktree_identity_matches(
+    registered: &RegisteredWorktree,
+    generation: u64,
+    path: &str,
+    branch: &str,
+) -> bool {
+    registered.generation == generation
+        && registered.branch == branch
+        && path_compare_key(&registered.path) == path_compare_key(path)
+}
+
+fn new_cleanup_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[derive(Clone)]
+struct CleanupBinding {
+    token: String,
+    generation: u64,
+    path: String,
+    branch: String,
+    branch_revision: String,
+    consumed: bool,
+}
+
+fn cleanup_binding_matches(
+    binding: &CleanupBinding,
+    token: &str,
+    generation: u64,
+    path: &str,
+    branch: &str,
+    branch_revision: &str,
+) -> bool {
+    !binding.consumed
+        && binding.token == token
+        && binding.generation == generation
+        && binding.branch == branch
+        && binding.branch_revision == branch_revision
+        && path_compare_key(&binding.path) == path_compare_key(path)
 }
 
 struct PendingWorktree {
@@ -84,6 +138,8 @@ impl DevState {
             generation: 0,
             base_repo: None,
             worktrees: Vec::new(),
+            registrations: Vec::new(),
+            cleanup_bindings: Vec::new(),
             pending_worktrees: Vec::new(),
             orphan_worktrees: Vec::new(),
         }
@@ -1837,6 +1893,8 @@ fn dev_init_session(base_repo: String) -> Result<u64, String> {
     st.generation = next_session_generation(st.generation);
     st.base_repo = Some(canon.to_string_lossy().to_string());
     st.worktrees.clear();
+    st.registrations.clear();
+    st.cleanup_bindings.clear();
     st.pending_worktrees.clear();
     st.orphan_worktrees.clear();
     Ok(st.generation)
@@ -1851,6 +1909,8 @@ fn dev_clear_session(generation: u64) -> Result<(), String> {
     st.generation = next_session_generation(st.generation);
     st.base_repo = None;
     st.worktrees.clear();
+    st.registrations.clear();
+    st.cleanup_bindings.clear();
     st.pending_worktrees.clear();
     st.orphan_worktrees.clear();
     Ok(())
@@ -1955,20 +2015,46 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
     if !git_worktree_matches(&base_path, &canon, &branch)? {
         return Err("dev_register_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
     }
+    let has_pending_lease = pending_worker_target(&base_path, &path);
     let mut st = DEV_STATE.lock().unwrap();
     if st.base_repo.as_deref() != Some(base.as_str()) || st.generation != registration_generation {
         return Err("dev_register_worktree: 主仓库 session 在校验期间发生变化".into());
     }
+    let already_registered = st.registrations.iter().any(|registered| {
+        registered_worktree_identity_matches(
+            registered,
+            registration_generation,
+            &canon.to_string_lossy(),
+            &branch,
+        )
+    });
+    if !already_registered && !has_pending_lease {
+        return Err("dev_register_worktree: 缺少当前 host 创建的 pending worktree lease".into());
+    }
+    let canonical_path = canon.to_string_lossy().to_string();
     if !st
         .worktrees
         .iter()
-        .any(|w| path_compare_key(w) == path_compare_key(&canon.to_string_lossy()))
+        .any(|w| path_compare_key(w) == path_compare_key(&canonical_path))
     {
-        st.worktrees.push(canon.to_string_lossy().to_string());
+        st.worktrees.push(canonical_path.clone());
     }
-    st.pending_worktrees.retain(|pending| {
-        path_compare_key(&pending.path) != path_compare_key(&canon.to_string_lossy())
-    });
+    if !st.registrations.iter().any(|registered| {
+        registered_worktree_identity_matches(
+            registered,
+            registration_generation,
+            &canonical_path,
+            &branch,
+        )
+    }) {
+        st.registrations.push(RegisteredWorktree {
+            generation: registration_generation,
+            path: canonical_path.clone(),
+            branch: branch.clone(),
+        });
+    }
+    st.pending_worktrees
+        .retain(|pending| path_compare_key(&pending.path) != path_compare_key(&canonical_path));
     Ok(())
 }
 
@@ -1994,7 +2080,9 @@ fn dev_register_orphan_worktree(
     let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
     let listed_match = canon.is_dir() && git_worktree_matches(&base_path, &canon, &branch)?;
-    if (canon.is_dir() && !listed_match)
+    let branch_exists = git_branch_exists(&base_path, &branch)?;
+    if (!listed_match && !branch_exists)
+        || (canon.is_dir() && !listed_match)
         || !main_repo_worktree_target_is_valid(&base_path, &c, &branch)
     {
         return Err(
@@ -2020,13 +2108,100 @@ fn dev_register_orphan_worktree(
     Ok(())
 }
 
-/// Atomic Worker cleanup used after the JS TaskGraph/fingerprint gate.
-/// Generic dev_exec deliberately cannot run `worktree remove` or `update-ref -d`.
+#[tauri::command]
+fn dev_approve_cleanup(
+    app: AppHandle,
+    path: String,
+    branch: String,
+    branch_revision: String,
+    generation: u64,
+) -> Result<String, String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_approve_cleanup")?;
+    if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
+        return Err("dev_approve_cleanup: branch 或 revision 无效".into());
+    }
+    let base = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .base_repo
+            .clone()
+            .ok_or_else(|| "dev_approve_cleanup: 尚未初始化主仓库根".to_string())?
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    let c = canon.to_string_lossy().to_string();
+    if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
+        return Err("dev_approve_cleanup: 路径/分支不属于受控 Worker 根".into());
+    }
+    {
+        let state = DEV_STATE.lock().unwrap();
+        let registered = state
+            .registrations
+            .iter()
+            .any(|item| registered_worktree_identity_matches(item, generation, &c, &branch));
+        let orphan = state.orphan_worktrees.iter().any(|item| {
+            item.generation == generation
+                && item.branch == branch
+                && path_compare_key(&item.path) == path_compare_key(&c)
+        });
+        if !registered && !orphan {
+            return Err("dev_approve_cleanup: worktree 未被当前 host 登记".into());
+        }
+        if state
+            .pending_worktrees
+            .iter()
+            .any(|pending| path_compare_key(&pending.path) == path_compare_key(&c))
+        {
+            return Err("dev_approve_cleanup: pending rollback worktree 不能清理".into());
+        }
+    }
+    if canon.is_dir() && !git_worktree_matches(&base_path, &canon, &branch)? {
+        return Err("dev_approve_cleanup: 当前 Git worktree path/branch 不匹配".into());
+    }
+    let message = format!(
+        "确认清理 Worker worktree？\\n\\n路径：{}\\n分支：{}\\n当前 revision：{}",
+        c, branch, branch_revision
+    );
+    if !app
+        .dialog()
+        .message(message)
+        .title("确认 Worker Cleanup")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show()
+    {
+        return Err("dev_approve_cleanup: 用户拒绝或关闭了原生确认框".into());
+    }
+    let token = new_cleanup_token();
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+        return Err("dev_approve_cleanup: session 在确认后发生变化".into());
+    }
+    if canon.is_dir() && !git_worktree_matches(&base_path, &canon, &branch)? {
+        return Err("dev_approve_cleanup: 确认后 Git worktree path/branch 已漂移".into());
+    }
+    state.cleanup_bindings.retain(|binding| !binding.consumed);
+    state.cleanup_bindings.push(CleanupBinding {
+        token: token.clone(),
+        generation,
+        path: c,
+        branch,
+        branch_revision,
+        consumed: false,
+    });
+    Ok(token)
+}
+
+/// Native cleanup is capability-based: JS-side proposal validation is not sufficient.
+/// `dev_approve_cleanup` issues a one-shot token only after revalidation and a native
+/// confirmation dialog; `dev_cleanup_worktree` refuses every unbound destructive call.
 #[tauri::command]
 fn dev_cleanup_worktree(
     path: String,
     branch: String,
     branch_revision: String,
+    approval_token: String,
     generation: u64,
 ) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
@@ -2049,10 +2224,23 @@ fn dev_cleanup_worktree(
     }
     {
         let state = DEV_STATE.lock().unwrap();
+        let capability = state.cleanup_bindings.iter().any(|binding| {
+            cleanup_binding_matches(
+                binding,
+                &approval_token,
+                generation,
+                &c,
+                &branch,
+                &branch_revision,
+            )
+        });
+        if !capability {
+            return Err("dev_cleanup_worktree: 缺少匹配的 native cleanup capability".into());
+        }
         let registered = state
-            .worktrees
+            .registrations
             .iter()
-            .any(|item| path_compare_key(item) == path_compare_key(&c));
+            .any(|item| registered_worktree_identity_matches(item, generation, &c, &branch));
         let orphan = state.orphan_worktrees.iter().any(|item| {
             item.generation == generation
                 && item.branch == branch
@@ -2068,6 +2256,9 @@ fn dev_cleanup_worktree(
         {
             return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
         }
+    }
+    if canon.is_dir() && !git_worktree_matches(&base_path, &canon, &branch)? {
+        return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
     }
     let mut delete = Command::new(resolve_dev_program("git"));
     delete
@@ -2102,6 +2293,16 @@ fn dev_cleanup_worktree(
     if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
         return Err("dev_cleanup_worktree: session 在清理后发生变化".into());
     }
+    if let Some(binding) = state
+        .cleanup_bindings
+        .iter_mut()
+        .find(|binding| binding.token == approval_token)
+    {
+        binding.consumed = true;
+    }
+    state
+        .registrations
+        .retain(|item| !registered_worktree_identity_matches(item, generation, &c, &branch));
     state
         .worktrees
         .retain(|item| path_compare_key(item) != path_compare_key(&c));
@@ -2161,6 +2362,9 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
     {
         st.worktrees.remove(index);
     }
+    st.registrations.retain(|registered| {
+        !registered_worktree_identity_matches(registered, generation, &c, &branch)
+    });
     Ok(())
 }
 
@@ -2442,6 +2646,7 @@ pub fn run() {
             dev_clear_session,
             dev_register_worktree,
             dev_register_orphan_worktree,
+            dev_approve_cleanup,
             dev_cleanup_worktree,
             dev_unregister_worktree,
             dev_read_file,
@@ -3813,6 +4018,9 @@ mod dev_exec_tests {
         let base_str = base.to_string_lossy().to_string();
 
         let generation = dev_init_session(base_str.clone()).unwrap();
+        assert!(dev_register_worktree(wt_str.clone(), generation).is_err());
+        record_pending_worktree_add(&base, &wt_str, "worker/wt");
+        assert!(dev_register_worktree(wt_str.clone(), generation).is_ok());
         assert!(!dev_main_repo_git_allowed_at(
             &sv(&["git", "worktree", "remove", "--force", &wt_str]),
             Some(&base),
@@ -4009,5 +4217,78 @@ mod dev_write_symlink_tests {
             assert_eq!(fs::read_to_string(&outside).unwrap(), "secret");
             let _ = fs::remove_file(&outside);
         });
+    }
+
+    #[test]
+    fn registered_worktree_identity_requires_generation_path_and_branch() {
+        let registered = RegisteredWorktree {
+            generation: 7,
+            path: "D:/workers/worker-a".into(),
+            branch: "worker/worker-a".into(),
+        };
+        assert!(registered_worktree_identity_matches(
+            &registered,
+            7,
+            "d:/workers/worker-a",
+            "worker/worker-a",
+        ));
+        assert!(!registered_worktree_identity_matches(
+            &registered,
+            7,
+            "D:/workers/worker-a",
+            "worker/worker-b",
+        ));
+        assert!(!registered_worktree_identity_matches(
+            &registered,
+            8,
+            "D:/workers/worker-a",
+            "worker/worker-a",
+        ));
+    }
+
+    #[test]
+    fn cleanup_capability_requires_exact_single_use_identity() {
+        let binding = CleanupBinding {
+            token: "token-1".into(),
+            generation: 3,
+            path: "D:/workers/worker-a".into(),
+            branch: "worker/worker-a".into(),
+            branch_revision: "a".repeat(40),
+            consumed: false,
+        };
+        assert!(cleanup_binding_matches(
+            &binding,
+            "token-1",
+            3,
+            "d:/workers/worker-a",
+            "worker/worker-a",
+            &"a".repeat(40),
+        ));
+        assert!(!cleanup_binding_matches(
+            &binding,
+            "token-2",
+            3,
+            "D:/workers/worker-a",
+            "worker/worker-a",
+            &"a".repeat(40),
+        ));
+        assert!(!cleanup_binding_matches(
+            &binding,
+            "token-1",
+            3,
+            "D:/workers/worker-a",
+            "worker/worker-a",
+            &"b".repeat(40),
+        ));
+        let mut consumed = binding;
+        consumed.consumed = true;
+        assert!(!cleanup_binding_matches(
+            &consumed,
+            "token-1",
+            3,
+            "D:/workers/worker-a",
+            "worker/worker-a",
+            &"a".repeat(40),
+        ));
     }
 }
