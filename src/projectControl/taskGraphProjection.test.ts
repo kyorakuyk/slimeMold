@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainProjection } from '../domain/contracts';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectIssue, ProjectTaskGraph } from './types';
 import {
   buildTaskGraphProjection,
+  buildTaskGraphProjectionFromWorkerRun,
   materializeTaskIssues,
   taskIssueId,
 } from './taskGraphProjection';
@@ -192,5 +194,52 @@ describe('buildTaskGraphProjection', () => {
         consistency: 'consistent',
       }),
     ]);
+  });
+
+  it('adapts the durable WorkerRun registry into the same task projection', () => {
+    const run: WorkerRunQueueState = {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      orchestrationId: 'orchestration-1',
+      taskGraphId: 'task-graph-1',
+      taskGraphVersion: 3,
+      status: 'running',
+      createdAt: '2026-09-12T01:03:00.000Z',
+      updatedAt: '2026-09-12T01:03:00.000Z',
+      tasks: {
+        'task-build': {
+          taskId: 'task-build',
+          taskExecutionId: 'task-execution:run-1:task-build',
+          status: 'running',
+          attempt: 1,
+          currentAttemptId: 'task-execution:run-1:task-build:attempt-1',
+          worktreeId: 'worker-1',
+          worktreePath: 'D:/Temp/worker-1',
+          branch: 'worker/worker-1',
+          baseRevision: 'base-1',
+          evidenceIds: ['evidence-build'],
+          acceptanceId: 'acceptance-build',
+          updatedAt: '2026-09-12T01:03:00.000Z',
+        },
+      },
+    };
+
+    const projection = buildTaskGraphProjectionFromWorkerRun({
+      graph,
+      issues,
+      run,
+    });
+    expect(projection.runId).toBe('run-1');
+    expect(projection.nodes.find((node) => node.taskId === 'task-build')).toEqual(
+      expect.objectContaining({
+        executionStatus: 'running',
+        taskExecutionId: 'task-execution:run-1:task-build',
+        attemptId: 'task-execution:run-1:task-build:attempt-1',
+        projectedStatus: 'in_progress',
+        evidenceIds: ['evidence-build'],
+        acceptanceId: 'acceptance-build',
+      }),
+    );
   });
 });

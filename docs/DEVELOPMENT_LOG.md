@@ -2301,6 +2301,14 @@ Issue 工作台采用四个面板：
 
 验证结果：`npm run test` 为 110 个测试文件、992 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.92 IssueBoard 读通 Task execution lineage
+
+- IssueBoard 现在从 `ProjectTaskGraph`、最新兼容 `WorkerRunQueueState` 和同一组 `taskId` 生成只读 Task projection；Issue 卡片可以显示关联 Task、当前执行列和 Evidence 数量，不再只显示独立 Issue 状态。
+- 新增 Worker registry → canonical `DomainProjection` 适配，校验 `taskGraphId` 与 `taskGraphVersion`，再复用同一个 TaskGraph projection；组件不维护第二套执行状态，也不新增执行副作用入口。
+- Issue、Task、TaskExecution、Attempt、Evidence 和 Acceptance 现在在 IssueBoard 上有第一条可见的 lineage；DAG 画布的同一 projection 接入仍是下一条切片，当前不宣称双向编辑已完成。
+
+验证结果：`npm run test` 为 110 个测试文件、994 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 993 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

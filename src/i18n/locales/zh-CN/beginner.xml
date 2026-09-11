@@ -236,6 +236,8 @@
   <string name="issue.approve">批准进入队列</string>
   <string name="issue.queue">加入待做</string>
   <string name="issue.triage">交给主控分析</string>
+  <string name="issue.taskLink">关联任务</string>
+  <string name="issue.evidenceCount">Evidence {{count}} 条</string>
 
   <string name="masterAgent.back">返回项目</string>
   <string name="masterAgent.openAdvanced">打开高级配置</string>

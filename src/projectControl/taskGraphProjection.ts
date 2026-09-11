@@ -1,8 +1,13 @@
+import {
+  createAttemptId,
+  createTaskExecutionId,
+} from '../domain/execution';
 import type {
   DomainProjection,
   TaskExecutionProjection,
   TaskProjectionStatus,
 } from '../domain/contracts';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createIssue } from './issue';
 import type {
   ProjectIssue,
@@ -22,7 +27,7 @@ export type TaskGraphProjectionConsistency =
 
 export interface TaskGraphProjectionNode {
   taskId: string;
-  issueId?: string;
+  issueId: string;
   title: string;
   description: string;
   taskStatus: ProjectTaskStatus;
@@ -63,6 +68,86 @@ export interface BuildTaskGraphProjectionInput {
   issues: readonly ProjectIssue[];
   execution: DomainProjection;
   runId?: string;
+}
+
+export interface BuildTaskGraphProjectionFromWorkerRunInput {
+  graph: ProjectTaskGraph;
+  issues: readonly ProjectIssue[];
+  run: WorkerRunQueueState;
+}
+
+function workerRunExecutionProjection(run: WorkerRunQueueState): DomainProjection {
+  const taskExecutions: DomainProjection['taskExecutions'] = {};
+  const attempts: DomainProjection['attempts'] = {};
+
+  for (const task of Object.values(run.tasks)) {
+    const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(run.runId, task.taskId);
+    const hasAttempt = task.attempt > 0
+      && (task.status === 'running' || task.status === 'failed' || task.status === 'succeeded');
+    const attemptId = task.currentAttemptId ?? (hasAttempt
+      ? createAttemptId(taskExecutionId, task.attempt)
+      : undefined);
+    const attemptIds = attemptId ? [attemptId] : [];
+    const execution: TaskExecutionProjection = {
+      taskExecutionId,
+      taskId: task.taskId,
+      runId: run.runId,
+      status: task.status,
+      attemptIds,
+      ...(attemptId ? { currentAttemptId: attemptId } : {}),
+      ...(task.evidenceIds.length > 0 ? { evidenceIds: [...task.evidenceIds] } : {}),
+      ...(task.acceptanceId ? { acceptanceId: task.acceptanceId } : {}),
+      ...(task.cleanupStatus ? { cleanupStatus: task.cleanupStatus } : {}),
+      ...(task.cleanupReceiptId ? { cleanupReceiptId: task.cleanupReceiptId } : {}),
+      ...(task.error ? { error: task.error } : {}),
+    };
+    taskExecutions[taskExecutionId] = execution;
+
+    if (attemptId) {
+      attempts[attemptId] = {
+        attemptId,
+        taskExecutionId,
+        taskId: task.taskId,
+        runId: run.runId,
+        attempt: task.attempt,
+        status: task.status,
+        ...(task.worktreeId ? { worktreeId: task.worktreeId } : {}),
+        ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
+        ...(task.branch ? { branch: task.branch } : {}),
+        ...(task.baseRevision ? { baseRevision: task.baseRevision } : {}),
+        ...(task.evidenceIds.length > 0 ? { evidenceIds: [...task.evidenceIds] } : {}),
+        ...(task.acceptanceId ? { acceptanceId: task.acceptanceId } : {}),
+        ...(task.cleanupStatus ? { cleanupStatus: task.cleanupStatus } : {}),
+        ...(task.cleanupReceiptId ? { cleanupReceiptId: task.cleanupReceiptId } : {}),
+        ...(task.error ? { error: task.error } : {}),
+      };
+    }
+  }
+
+  return {
+    lastSequence: 0,
+    runs: { [run.runId]: { status: run.status } },
+    tasks: {},
+    taskExecutions,
+    attempts,
+  };
+}
+
+export function buildTaskGraphProjectionFromWorkerRun(
+  input: BuildTaskGraphProjectionFromWorkerRunInput,
+): TaskGraphProjection {
+  if (input.run.taskGraphId !== input.graph.id) {
+    throw new Error(`Worker Run 与 TaskGraph 不一致：${input.run.taskGraphId} ≠ ${input.graph.id}`);
+  }
+  if (input.run.taskGraphVersion !== input.graph.graphVersion) {
+    throw new Error(`Worker Run 的 TaskGraph version 漂移：${input.run.taskGraphVersion} ≠ ${input.graph.graphVersion}`);
+  }
+  return buildTaskGraphProjection({
+    graph: input.graph,
+    issues: input.issues,
+    execution: workerRunExecutionProjection(input.run),
+    runId: input.run.runId,
+  });
 }
 
 export interface MaterializeTaskIssuesInput {

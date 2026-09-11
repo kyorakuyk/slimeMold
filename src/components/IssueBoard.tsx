@@ -13,7 +13,13 @@ import {
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
 import { createIssue, transitionIssue } from '../projectControl/issue';
+import {
+  buildTaskGraphProjection,
+  buildTaskGraphProjectionFromWorkerRun,
+  type TaskGraphProjectionNode,
+} from '../projectControl/taskGraphProjection';
 import type { ProjectIssue, ProjectIssueStatus, ProjectIssueType } from '../projectControl/types';
+import type { DomainProjection } from '../domain/contracts';
 
 interface IssueBoardProps {
   onBack: () => void;
@@ -35,6 +41,18 @@ const COLUMNS: Array<{
 
 const ISSUE_TYPES: ProjectIssueType[] = ['idea', 'feature', 'bug', 'risk', 'question'];
 
+const EMPTY_DOMAIN_PROJECTION: DomainProjection = {
+  lastSequence: 0,
+  runs: {},
+  tasks: {},
+  taskExecutions: {},
+  attempts: {},
+};
+
+function issueColumnForTaskStatus(status: ProjectIssueStatus): IssueColumnKey {
+  return COLUMNS.find((column) => column.statuses.includes(status))?.key ?? 'inbox';
+}
+
 function issueId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
   return `issue-${uuid ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`}`;
@@ -55,6 +73,7 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
   const projectId = useWorkflowStore((state) => state.projectId);
   const projectName = useWorkflowStore((state) => state.projectName);
   const projectControl = useWorkflowStore((state) => state.projectControl);
+  const workerRuns = useWorkflowStore((state) => state.workerRuns);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<ProjectIssueType>('idea');
@@ -66,6 +85,27 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
     () => projectControl.issues.filter((issue) => issue.projectId === projectId || issue.projectId === null),
     [projectControl.issues, projectId],
   );
+
+  const taskNodesByIssueId = useMemo(() => {
+    const nodes = new Map<string, TaskGraphProjectionNode>();
+    for (const graph of projectControl.taskGraphs ?? []) {
+      const graphRuns = workerRuns
+        .filter((run) => run.projectId === projectId && run.taskGraphId === graph.id)
+        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+      const latestRun = graphRuns.at(-1);
+      const projection = latestRun
+        ? buildTaskGraphProjectionFromWorkerRun({ graph, issues: visibleIssues, run: latestRun })
+        : buildTaskGraphProjection({
+          graph,
+          issues: visibleIssues,
+          execution: EMPTY_DOMAIN_PROJECTION,
+        });
+      for (const node of projection.nodes) {
+        nodes.set(node.issueId, node);
+      }
+    }
+    return nodes;
+  }, [projectControl.taskGraphs, projectId, visibleIssues, workerRuns]);
 
   const handleCreate = (event: FormEvent) => {
     event.preventDefault();
@@ -200,7 +240,15 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
                 ) : (
                   <div className="sm-beginner-issue-list">
                     {issues.map((issue) => (
-                      <IssueCard key={issue.id} issue={issue} t={t} onQueue={handleQueue} onApprove={handleApprove} onTriage={handleTriage} />
+                      <IssueCard
+                        key={issue.id}
+                        issue={issue}
+                        taskNode={taskNodesByIssueId.get(issue.id)}
+                        t={t}
+                        onQueue={handleQueue}
+                        onApprove={handleApprove}
+                        onTriage={handleTriage}
+                      />
                     ))}
                   </div>
                 )}
@@ -215,12 +263,14 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
 
 function IssueCard({
   issue,
+  taskNode,
   t,
   onQueue,
   onApprove,
   onTriage,
 }: {
   issue: ProjectIssue;
+  taskNode?: TaskGraphProjectionNode;
   t: (key: string, options?: Record<string, unknown>) => string;
   onQueue: (id: string) => void;
   onApprove: (id: string) => void;
@@ -236,6 +286,19 @@ function IssueCard({
       <p>{issue.description}</p>
       {issue.tags.length > 0 && (
         <div className="sm-beginner-issue-tags">{issue.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
+      )}
+      {taskNode && (
+        <div
+          className="sm-beginner-issue-task-link"
+          data-testid={`issue-task-${issue.id}`}
+          data-task-id={taskNode.taskId}
+          data-task-status={taskNode.projectedStatus}
+        >
+          <span>{t('issue.taskLink')}</span>
+          <code>{taskNode.taskId}</code>
+          <span>{t(`issue.column.${issueColumnForTaskStatus(taskNode.projectedStatus)}`)}</span>
+          <span>{t('issue.evidenceCount', { count: taskNode.evidenceIds.length })}</span>
+        </div>
       )}
       <div className="sm-beginner-issue-card-footer">
         <span>{issue.projectId ? t('issue.assigned') : t('issue.unclaimed')}</span>

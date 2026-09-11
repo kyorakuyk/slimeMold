@@ -236,6 +236,8 @@
   <string name="issue.approve">Approve for queue</string>
   <string name="issue.queue">Queue it</string>
   <string name="issue.triage">Ask the master to triage</string>
+  <string name="issue.taskLink">Linked task</string>
+  <string name="issue.evidenceCount">{{count}} evidence</string>
 
   <string name="masterAgent.back">Back to project</string>
   <string name="masterAgent.openAdvanced">Open advanced configuration</string>
