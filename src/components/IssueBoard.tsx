@@ -65,6 +65,7 @@ async function persistIssueTransition(issueIdValue: string, status: ProjectIssue
   const state = useWorkflowStore.getState();
   const result = transitionIssueCommand({
     snapshot: state.projectControl,
+    projectId: state.projectId ?? undefined,
     issueId: issueIdValue,
     status,
     now,

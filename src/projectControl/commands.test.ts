@@ -119,6 +119,17 @@ describe('startProjectSessionCommand', () => {
       aggregateId: 'issue-1',
       payload: expect.objectContaining({ from: 'inbox', to: 'triaging', issueId: 'issue-1' }),
     })]);
+    const unassigned = transitionIssueCommand({
+      snapshot: {
+        ...started.snapshot,
+        issues: started.snapshot.issues.map((issue) => ({ ...issue, projectId: null })),
+      },
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:02:00.000Z',
+    });
+    expect(unassigned.events[0].streamId).toBe('project-1');
   });
   it('rejects an empty goal before creating any state or event', () => {
     expect(() => startProjectSessionCommand({

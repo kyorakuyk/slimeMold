@@ -2342,6 +2342,12 @@ Issue 工作台采用四个面板：
 - 保留未知 cleanup 的 durable `unknown/needs-user` 和 side-effect lock/claim/replay 约束；未重新执行真实 destructive cleanup。
 - 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.97 Unassigned Issue transition 的项目事件流修复
+
+- `transitionIssueCommand` 接受显式 project context；Issue 未认领时仍把 `IssueStatusChanged` 写入当前 project stream，避免 IssueBoard 的 event buffer 因 `issue:<id>` stream 与当前项目不一致而 fail。
+- IssueBoard queue/approve/triage 的 command/event 路径现在同时覆盖 project-owned 与 unassigned Issue。
+- 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；此前同一最终工作树的 `npm run build`、`npm run i18n:check`、Rust `45` tests、`cargo fmt --check`、`git diff --check` 均通过。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

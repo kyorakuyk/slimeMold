@@ -134,6 +134,7 @@ export function startProjectSessionCommand(
 
 export interface TransitionIssueCommandInput {
   snapshot: ProjectControlSnapshot;
+  projectId?: string;
   issueId: string;
   status: ProjectIssueStatus;
   now: string;
@@ -153,7 +154,7 @@ export function transitionIssueCommand(
   const events: DomainEvent[] = [];
   appendFact(events, {
     eventId: `${issue.id}:status:${input.now}:${nextIssue.status}`,
-    streamId: issue.projectId ?? `issue:${issue.id}`,
+    streamId: input.projectId ?? issue.projectId ?? `issue:${issue.id}`,
     aggregateType: 'Issue',
     aggregateId: issue.id,
     eventType: 'IssueStatusChanged',
