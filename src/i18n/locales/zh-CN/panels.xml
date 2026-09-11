@@ -329,4 +329,11 @@
   <string name="orchestrator.worker.task.failed">失败</string>
   <string name="orchestrator.worker.task.blocked">阻塞</string>
   <string name="orchestrator.worker.task.cancelled">取消</string>
+  <string name="orchestrator.taskGraph.title">任务图 DAG</string>
+  <string name="orchestrator.taskGraph.version">图版本 {{version}}</string>
+  <string name="orchestrator.taskGraph.run">运行 {{runId}}</string>
+  <string name="orchestrator.taskGraph.issue">Issue</string>
+  <string name="orchestrator.taskGraph.evidence">Evidence</string>
+  <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
+  <string name="orchestrator.taskGraph.edge">任务依赖</string>
 </resources>

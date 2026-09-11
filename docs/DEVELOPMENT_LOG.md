@@ -2309,6 +2309,14 @@ Issue 工作台采用四个面板：
 
 验证结果：`npm run test` 为 110 个测试文件、994 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 993 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.93 专业 OrchestratorPanel 接入 TaskGraph DAG projection
+
+- 新增 `TaskGraphDAGView`，只读渲染 canonical TaskGraph projection：Task 节点、依赖边、Issue、TaskExecution/Attempt、Evidence、Acceptance 和一致性状态均来自同一 projection；不开放第二套画布编辑或执行协议。
+- OrchestratorPanel 根据当前 orchestration 的 `sourceTaskGraphId`/WorkerRun 选择 graph，校验 `taskGraphId` 与 `taskGraphVersion` 后显示 DAG；版本漂移或 lineage 不一致显示恢复边界，不静默画错状态。
+- 现在的可见链路为：主控 TaskGraph → Task Issue → IssueBoard lineage → Orchestrator DAG → WorkerRun/Evidence/Acceptance；DAG 编辑命令、Issue↔DAG 互相定位和 plan revision 写回仍是后续切片。
+
+验证结果：`npm run test` 为 111 个测试文件、995 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 1000 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

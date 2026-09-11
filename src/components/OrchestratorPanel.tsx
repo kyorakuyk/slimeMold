@@ -10,7 +10,7 @@
  *   创建为真实空白工作流（activate:false）并打开编辑；
  * - 废弃只删除编排记录，不触碰用户工作流；运行中须先取消。
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   Target,
@@ -43,6 +43,11 @@ import {
 import type { OrchestratorRequest } from '../orchestrator/types';
 import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
 import { workerRunViewsFor } from '../projectControl/workerRunView';
+import {
+  buildTaskGraphProjection,
+  buildTaskGraphProjectionFromWorkerRun,
+} from '../projectControl/taskGraphProjection';
+import TaskGraphDAGView from './TaskGraphDAGView';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 
 /** 编排整体状态徽标配色 */
@@ -107,6 +112,8 @@ export default function OrchestratorPanel({
   const workerRunEvidence = useWorkflowStore((s) => s.workerRunEvidence ?? []);
   const workerRunSideEffects = useWorkflowStore((s) => s.workerRunSideEffects ?? []);
   const workerCleanupProposals = useWorkflowStore((s) => s.workerCleanupProposals ?? []);
+  const projectId = useWorkflowStore((s) => s.projectId);
+  const projectControl = useWorkflowStore((s) => s.projectControl);
 
   // 目标输入与约束
   const [goal, setGoal] = useState('');
@@ -127,6 +134,41 @@ export default function OrchestratorPanel({
   const selectedWorkerRuns = selected
     ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals)
     : [];
+  const taskGraphDAG = useMemo(() => {
+    if (!selected) return { projection: null, error: null };
+    const taskGraphRuns = workerRuns
+      .filter((run) => run.projectId === projectId && run.orchestrationId === selected.id)
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+    const latestRun = taskGraphRuns.at(-1);
+    const graphId = latestRun?.taskGraphId
+      ?? selected.draft?.stages.find((stage) => stage.sourceTaskGraphId)?.sourceTaskGraphId;
+    const graph = graphId
+      ? projectControl.taskGraphs?.find((item) => item.id === graphId)
+      : undefined;
+    if (!graph) return { projection: null, error: null };
+    const issues = projectControl.issues.filter((issue) => issue.projectId === projectId || issue.projectId === null);
+    try {
+      if (latestRun) {
+        return {
+          projection: buildTaskGraphProjectionFromWorkerRun({ graph, issues, run: latestRun }),
+          error: null,
+        };
+      }
+      return {
+        projection: buildTaskGraphProjection({
+          graph,
+          issues,
+          execution: { lastSequence: 0, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} },
+        }),
+        error: null,
+      };
+    } catch (cause) {
+      return {
+        projection: null,
+        error: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+  }, [projectControl.issues, projectControl.taskGraphs, projectId, selected, workerRuns]);
   const allAgents = [...globalAgents, ...agents];
   const workflowsList = Object.entries(workflows).map(([id, w]) => ({
     id,
@@ -564,6 +606,15 @@ export default function OrchestratorPanel({
                 </div>
               );
             })}
+
+            {taskGraphDAG.projection && (
+              <TaskGraphDAGView projection={taskGraphDAG.projection} />
+            )}
+            {taskGraphDAG.error && (
+              <div className="rounded border border-dashed border-warn px-2.5 py-1.5 text-[10.5px] text-warn" data-testid="orchestrator-taskgraph-dag-error">
+                {taskGraphDAG.error}
+              </div>
+            )}
 
             {/* 草稿阶段间 DAG 边提示 */}
             {selected.draft && selected.draft.edges.length > 0 && (

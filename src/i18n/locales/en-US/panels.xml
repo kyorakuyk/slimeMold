@@ -329,4 +329,11 @@
   <string name="orchestrator.worker.task.failed">Failed</string>
   <string name="orchestrator.worker.task.blocked">Blocked</string>
   <string name="orchestrator.worker.task.cancelled">Cancelled</string>
+  <string name="orchestrator.taskGraph.title">Task graph DAG</string>
+  <string name="orchestrator.taskGraph.version">Graph v{{version}}</string>
+  <string name="orchestrator.taskGraph.run">Run {{runId}}</string>
+  <string name="orchestrator.taskGraph.issue">Issue</string>
+  <string name="orchestrator.taskGraph.evidence">Evidence</string>
+  <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
+  <string name="orchestrator.taskGraph.edge">Task dependencies</string>
 </resources>
