@@ -229,3 +229,196 @@ export interface ProjectControlSnapshot {
   issues: ProjectIssue[];
   taskGraphs?: ProjectTaskGraph[];
 }
+
+export type ProjectPlanApproval = 'draft' | 'approved' | 'superseded';
+export type FeasibilityStatus = 'feasible' | 'conditional' | 'infeasible';
+export type PlanningConfidence = 'low' | 'medium' | 'high';
+
+export interface PlanningReference {
+  id: string;
+  version: number;
+}
+
+export interface RequirementsBaseline {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  sessionId: string;
+  baselineVersion: number;
+  goal: string;
+  scope: string[];
+  nonGoals: string[];
+  acceptanceCriteria: string[];
+  assumptions: string[];
+  unresolvedQuestions: string[];
+  createdAt: string;
+}
+
+export interface CrossDepartmentContract {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  producerDepartmentId: string;
+  consumerDepartmentId: string;
+  name: string;
+  inputs: string[];
+  outputs: string[];
+  acceptanceCriteria: string[];
+  createdAt: string;
+}
+
+export interface SolutionOutline {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  requirementsId: string;
+  overview: string;
+  moduleIds: string[];
+  crossDepartmentContractIds: string[];
+  createdAt: string;
+}
+
+export interface FeasibilityAssessment {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  requirementsId: string;
+  solutionId: string;
+  status: FeasibilityStatus;
+  blockingRisks: string[];
+  dependencies: string[];
+  requiredCapabilities: string[];
+  estimatedCostCents: number;
+  estimatedDurationMs: number;
+  confidence: PlanningConfidence;
+  createdAt: string;
+}
+
+export interface Milestone {
+  id: string;
+  title: string;
+  outcome: string;
+  dependsOn: string[];
+  acceptanceCriteria: string[];
+}
+
+export interface MilestonePlan {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  planVersion: number;
+  milestones: Milestone[];
+  createdAt: string;
+}
+
+export interface DepartmentCharter {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  departmentId: string;
+  name: string;
+  objective: string;
+  scope: string[];
+  nonGoals: string[];
+  milestoneIds: string[];
+  acceptanceCriteria: string[];
+  createdAt: string;
+}
+
+export interface ProjectPlan {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  sessionId: string;
+  planVersion: number;
+  requirementsRef: PlanningReference;
+  solutionRef: PlanningReference;
+  feasibilityRef: PlanningReference;
+  milestonePlanRef: PlanningReference;
+  departmentCharterRefs: PlanningReference[];
+  feasibilityStatus: FeasibilityStatus;
+  blockingQuestionCount: number;
+  approval: ProjectPlanApproval;
+  createdAt: string;
+  updatedAt: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  revisionOf?: string;
+  supersededBy?: string;
+}
+
+export type DepartmentWorkPackageStatus = 'proposed' | 'dispatched' | 'superseded';
+
+export interface DepartmentWorkPackage {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  planId: string;
+  planVersion: number;
+  departmentCharterId: string;
+  taskGraphId: string;
+  milestoneIds: string[];
+  scope: string[];
+  nonGoals: string[];
+  dependencies: string[];
+  acceptanceCriteria: string[];
+  status: DepartmentWorkPackageStatus;
+  createdAt: string;
+  updatedAt: string;
+  dispatchedAt?: string;
+}
+
+export interface ArchitectureDecision {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  planId: string;
+  question: string;
+  options: string[];
+  recommendation?: string;
+  evidenceRefs: PlanningReference[];
+  status: ProjectPlanApproval;
+  decidedBy?: string;
+  decidedAt?: string;
+  createdAt: string;
+}
+
+export interface DebateRequest {
+  version: ProjectControlVersion;
+  id: string;
+  projectId: string;
+  planId: string;
+  question: string;
+  evidencePackRefs: PlanningReference[];
+  maxRounds: number;
+  maxModels: number;
+  maxTokens: number;
+  maxMoneyCents: number;
+  createdAt: string;
+}
+
+export interface DebateOpinion {
+  version: ProjectControlVersion;
+  id: string;
+  debateId: string;
+  role: string;
+  proposal: string;
+  assumptions: string[];
+  risks: string[];
+  evidenceRefs: PlanningReference[];
+  confidence: PlanningConfidence;
+  createdAt: string;
+}
+
+export interface DebateVerdict {
+  version: ProjectControlVersion;
+  id: string;
+  debateId: string;
+  recommendation: string;
+  opinionRefs: PlanningReference[];
+  minorityOpinions: string[];
+  unresolvedQuestions: string[];
+  evidenceRefs: PlanningReference[];
+  status: ProjectPlanApproval;
+  createdAt: string;
+}
