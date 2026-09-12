@@ -2348,6 +2348,13 @@ Issue 工作台采用四个面板：
 - IssueBoard queue/approve/triage 的 command/event 路径现在同时覆盖 project-owned 与 unassigned Issue。
 - 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；此前同一最终工作树的 `npm run build`、`npm run i18n:check`、Rust `45` tests、`cargo fmt --check`、`git diff --check` 均通过。
 
+### 7.98 Phase A/B 层级协议与项目规划闭环
+
+- 新增 `src/projectControl/hierarchy.ts` 与 `protocol.ts`：定义 Master/Project Delivery Architect/Department/Module/Worker/Specialist 及横向审查角色；实现 `ChildScope = ParentScope ∩ PolicyScope ∩ ChildTaskScope`，并对文件、数据类别、工具、角色、depth/fan-out、Token、调用次数、费用、时限做最严格求交；结构化 Agent envelope、ContextPack、DelegationRequest 和 FeedbackRequest 具备第一版运行时边界校验。
+- 新增 `src/projectControl/projectPlanning.ts` 与 planning types：承建方可生成带需求、方案、可行性、里程碑和部门 charter 引用的 `ProjectPlan` 草案；只有可行且无未决阻塞问题的计划才能批准；未批准计划不能创建 dispatched `DepartmentWorkPackage`；多模型 planning review 冻结 EvidencePack、保留全部 opinion 和少数意见。
+- 将 ProjectPlan proposal/approval、Department Work Package dispatch 接入 `src/projectControl/commands.ts` 的 Command/Event；接入 `persistence.ts` 和 `projectControlConsistency.ts`，支持旧快照兼容、规划事实 read-back 和版本 drift 审计。未接入 UI、真实 Agent provider、递归调度或 Tauri Worker 执行，不能据此宣称层级化生产能力已完成。
+- 验证结果：`npm run test` 为 `114` 个测试文件、`1026` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
