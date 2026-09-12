@@ -265,6 +265,8 @@ function executionStatusToIssueStatus(status: TaskProjectionStatus): ProjectIssu
       return 'queued';
     case 'running':
       return 'in_progress';
+    case 'waiting-feedback':
+      return 'blocked';
     case 'succeeded':
       return 'done';
     case 'failed':

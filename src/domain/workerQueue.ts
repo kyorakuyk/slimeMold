@@ -6,6 +6,7 @@ import {
   type TaskProjectionStatus,
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
+import type { FeedbackRequest } from '../projectControl/protocol';
 import {
   createAttemptId,
   createTaskExecutionId,
@@ -44,8 +45,9 @@ export interface WorkerTaskLease {
 }
 
 export interface WorkerExecutionResult {
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'waiting-feedback';
   error?: string;
+  feedbackRequest?: FeedbackRequest;
   evidenceIds?: string[];
   acceptanceId?: string;
 }
@@ -90,6 +92,7 @@ export interface WorkerQueueTask {
   branchRevision?: string;
   cleanupStateSignature?: string;
   evidenceIds: string[];
+  feedbackId?: string;
   acceptanceId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
@@ -217,9 +220,15 @@ function normalizeQueueTask(
   if (!Number.isSafeInteger(task.attempt) || task.attempt < 0) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
-  if ((task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
+  if ((task.status === 'running' || task.status === 'waiting-feedback' || task.status === 'succeeded' || task.status === 'failed')
     && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
+  }
+  if (task.status === 'waiting-feedback' && !task.feedbackId?.trim()) {
+    throw new Error(`waiting-feedback Worker Task 缺少 feedbackId：${task.taskId}`);
+  }
+  if (task.status !== 'waiting-feedback' && task.feedbackId !== undefined) {
+    throw new Error(`非 waiting-feedback Worker Task 不能携带 feedbackId：${task.taskId}`);
   }
   if (task.worktreeStatus !== undefined
     && !['created', 'cleaned', 'orphaned', 'registration-pending'].includes(task.worktreeStatus)) {
@@ -262,7 +271,7 @@ function normalizeQueueTask(
     }
   }
   const currentAttemptId = task.currentAttemptId
-    ?? (task.status === 'running' && task.attempt > 0
+    ?? ((task.status === 'running' || task.status === 'waiting-feedback') && task.attempt > 0
       ? createAttemptId(expected, task.attempt)
       : undefined);
   return cloneQueueTask({
@@ -641,6 +650,49 @@ export class WorkerTaskQueue {
     this.recomputeRunStatus(now);
   }
 
+  markWaitingFeedback(
+    taskId: string,
+    request: FeedbackRequest,
+    now: string,
+    expectedAttemptId: AttemptId,
+  ): void {
+    const current = this.requireRunning(taskId, expectedAttemptId);
+    const feedbackId = requiredText(request.feedbackId, 'feedback id');
+    if (!request.blocking) throw new Error(`非 blocking FeedbackRequest 不能暂停 Worker：${feedbackId}`);
+    if (request.projectId !== this.state.projectId || request.taskId !== taskId) {
+      throw new Error(`FeedbackRequest 不属于当前项目或 Task：${feedbackId}`);
+    }
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const attemptId = current.currentAttemptId ?? createAttemptId(taskExecutionId, current.attempt);
+    if (request.attemptId !== attemptId) {
+      throw new Error(`FeedbackRequest 与当前 Attempt 不一致：${feedbackId}`);
+    }
+    this.state = {
+      ...this.state,
+      status: 'blocked',
+      updatedAt: now,
+      tasks: {
+        ...this.state.tasks,
+        [taskId]: {
+          ...current,
+          status: 'waiting-feedback',
+          feedbackId,
+          error: undefined,
+          updatedAt: now,
+        },
+      },
+    };
+    this.emitTask('TaskFeedbackRequested', taskId, {
+      ...request,
+      runId: this.state.runId,
+      taskId,
+      taskExecutionId,
+      attemptId,
+      attempt: current.attempt,
+    }, now);
+    this.recomputeRunStatus(now);
+  }
+
   private requireRunning(taskId: string, expectedAttemptId: AttemptId): WorkerQueueTask {
     const current = this.state.tasks[taskId];
     if (!current) throw new Error(`队列中不存在任务：${taskId}`);
@@ -697,7 +749,9 @@ export class WorkerTaskQueue {
         ? 'running'
         : statuses.some((status) => status === 'failed')
           ? 'partial'
-          : statuses.some((status) => status === 'blocked')
+          : statuses.some((status) => status === 'waiting-feedback')
+            ? 'blocked'
+            : statuses.some((status) => status === 'blocked')
             ? 'blocked'
             : statuses.some((status) => status === 'cancelled')
               ? 'cancelled'
@@ -889,14 +943,28 @@ export async function runWorkerQueue(
           throwIfCancelled();
           result = await options.executor.execute(lease, { signal: options.signal });
           throwIfCancelled();
-          const completed = options.sideEffects
-            ? await options.sideEffects.complete(sideEffect, result)
-            : sideEffect;
-          sideEffect = completed;
-          if (completed.status !== 'receipt') return;
+          if (result.status === 'waiting-feedback') {
+            if (!result.feedbackRequest) throw new Error('waiting-feedback Worker 结果缺少 FeedbackRequest');
+            if (!options.sideEffects?.markUnknown) {
+              throw new Error('side effect 已 claim，但 Worker feedback 缺少 unknown recovery handler');
+            }
+            sideEffect = await options.sideEffects.markUnknown(
+              sideEffect,
+              'worker-requested-feedback-before-terminal-receipt',
+            );
+          } else {
+            const completed = options.sideEffects
+              ? await options.sideEffects.complete(sideEffect, result)
+              : sideEffect;
+            sideEffect = completed;
+            if (completed.status !== 'receipt') return;
+          }
         }
         if (result.status === 'succeeded') {
           queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId, lease.attemptId);
+        } else if (result.status === 'waiting-feedback') {
+          if (!result.feedbackRequest) throw new Error('waiting-feedback Worker 结果缺少 FeedbackRequest');
+          queue.markWaitingFeedback(taskId, result.feedbackRequest, new Date().toISOString(), lease.attemptId);
         } else {
           queue.markFailed(
             taskId,

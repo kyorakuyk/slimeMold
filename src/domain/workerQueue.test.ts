@@ -10,6 +10,7 @@ import {
   type WorkerTaskLease,
   type WorkerWorktreeAllocator,
 } from './workerQueue';
+import { createFeedbackRequest, type FeedbackRequest } from '../projectControl/protocol';
 import { createAttemptId, createTaskExecutionId } from './execution';
 
 function task(id: string, dependsOn: string[] = []): ProjectTask {
@@ -840,5 +841,58 @@ describe('WorkerTaskQueue', () => {
     expect(transitions.map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted', 'TaskFailed', 'RunPartial']);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: -1 } } } })).toThrow(/attempt/);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
+  });
+
+  it('parks a running Worker on structured feedback instead of marking it failed', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-feedback',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const taskExecutionId = createTaskExecutionId('run-feedback', 'a');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const feedbackRequest: FeedbackRequest = createFeedbackRequest({
+      schemaVersion: 1,
+      feedbackId: 'feedback-a-1',
+      projectId: 'project-1',
+      taskId: 'a',
+      parentTaskId: 'root-task',
+      attemptId,
+      contextVersion: 1,
+      ambiguity: '需要确认接口兼容策略',
+      affectedScope: ['src/a'],
+      affectedAcceptance: [{ projectId: 'project-1', kind: 'acceptance', id: 'acceptance-a', version: 1 }],
+      options: [
+        { id: 'option-a', label: '保持兼容' },
+        { id: 'option-b', label: '允许破坏性变更' },
+      ],
+      recommendation: '保持兼容',
+      blocking: true,
+      requestedBy: {
+        projectId: 'project-1',
+        agentId: 'worker-a',
+        role: 'worker',
+        taskId: 'a',
+      },
+      sourceRefs: [{ projectId: 'project-1', kind: 'evidence', id: 'evidence-a', version: 1 }],
+      expiresAt: '2026-09-01T01:00:00.000Z',
+    });
+
+    const state = await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: {
+        execute: async () => ({ status: 'waiting-feedback', feedbackRequest }),
+      },
+    });
+
+    expect(state.tasks.a).toMatchObject({
+      status: 'waiting-feedback',
+      feedbackId: 'feedback-a-1',
+      currentAttemptId: attemptId,
+    });
+    expect(state.status).toBe('blocked');
+    expect(queue.drainEvents().map((event) => event.eventType)).toContain('TaskFeedbackRequested');
+    expect(state.tasks.a.status).not.toBe('failed');
   });
 });

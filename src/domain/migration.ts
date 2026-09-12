@@ -419,6 +419,7 @@ function taskEventType(status: WorkerRunQueueState['tasks'][string]['status']): 
   switch (status) {
     case 'queued': return 'TaskQueued';
     case 'running': return 'TaskStarted';
+    case 'waiting-feedback': return 'TaskFeedbackRequested';
     case 'succeeded': return 'TaskSucceeded';
     case 'failed': return 'TaskFailed';
     case 'blocked': return 'TaskBlocked';
@@ -573,6 +574,7 @@ function addWorkerTask(
     taskId,
     taskExecutionId,
     ...attemptPayload,
+    ...(task.status === 'waiting-feedback' && task.feedbackId ? { feedbackId: task.feedbackId } : {}),
     ...(task.status === 'queued' && task.attempt > 0 ? { nextAttempt: task.attempt + 1 } : {}),
   };
   add({

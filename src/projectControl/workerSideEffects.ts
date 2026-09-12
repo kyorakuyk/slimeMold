@@ -469,6 +469,9 @@ export function createWorkerSideEffectRecorder(
         && current.attemptId === record.attemptId;
       if (!sameIdentity) throw new Error(`迟到 Worker completion 的 lineage 不一致：${record.idempotencyKey}`);
       if (current.status !== 'started') return current;
+      if (result.status === 'waiting-feedback') {
+        throw new Error(`waiting-feedback 不能写入 terminal side-effect receipt：${record.idempotencyKey}`);
+      }
       const evidenceIds = result.status === 'succeeded'
         ? normalizedEvidenceIds(result.evidenceIds, record.idempotencyKey)
         : result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));

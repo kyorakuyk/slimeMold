@@ -149,6 +149,7 @@ export interface FeedbackRequest {
 }
 
 export interface CreateFeedbackRequestInput {
+  schemaVersion: 1;
   feedbackId: string;
   projectId: string;
   taskId: string;
@@ -504,6 +505,7 @@ export function createDelegationRequest(input: CreateDelegationRequestInput): De
 }
 
 export function createFeedbackRequest(input: CreateFeedbackRequestInput): FeedbackRequest {
+  if (input.schemaVersion !== 1) throw new Error('FeedbackRequest schemaVersion 不受支持');
   const feedbackId = requiredCanonicalString(input.feedbackId, 'feedbackId');
   const projectId = requiredCanonicalString(input.projectId, 'projectId');
   const taskId = requiredCanonicalString(input.taskId, 'taskId');

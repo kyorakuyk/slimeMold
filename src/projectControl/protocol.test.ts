@@ -178,6 +178,7 @@ describe('Phase A hierarchical protocol objects', () => {
 
   it('creates a blocking FeedbackRequest with task and acceptance provenance', () => {
     const feedback = createFeedbackRequest({
+      schemaVersion: 1,
       feedbackId: 'feedback-1',
       projectId: 'project-1',
       taskId: 'task-child',

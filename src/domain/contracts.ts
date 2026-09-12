@@ -33,7 +33,7 @@ export interface DomainEvent<TPayload = unknown> {
   synthetic?: boolean;
 }
 
-export type TaskProjectionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
+export type TaskProjectionStatus = 'queued' | 'running' | 'waiting-feedback' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
 export type RunProjectionStatus = 'queued' | 'running' | 'partial' | 'blocked' | 'failed' | 'cancelled' | 'succeeded';
 
 export interface TaskExecutionProjection {
@@ -46,6 +46,7 @@ export interface TaskExecutionProjection {
   pendingAttempt?: number;
   evidenceIds?: string[];
   acceptanceId?: string;
+  feedbackId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
   error?: string;
@@ -65,6 +66,7 @@ export interface AttemptRecord {
   baseRevision?: string;
   evidenceIds?: string[];
   acceptanceId?: string;
+  feedbackId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
   error?: string;
@@ -78,6 +80,7 @@ export interface DomainProjection {
     runId?: string;
     evidenceIds?: string[];
     acceptanceId?: string;
+    feedbackId?: string;
     cleanupStatus?: 'cleaned';
     cleanupReceiptId?: string;
   }>;
@@ -205,6 +208,7 @@ function taskLineageFor(
   const isAttemptLifecycleEvent = event.eventType === 'TaskStarted'
     || event.eventType === 'TaskSucceeded'
     || event.eventType === 'TaskFailed'
+    || event.eventType === 'TaskFeedbackRequested'
     || event.eventType === 'TaskAttemptMarkedUnknown'
     || event.eventType === 'TaskCleaned';
   const execution = projection.taskExecutions[taskExecutionId];
@@ -234,11 +238,13 @@ function taskLineageFor(
 function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<TaskExecutionProjection> {
   const evidenceIds = payloadEvidenceIds(payload);
   const acceptanceId = payloadText(payload, 'acceptanceId');
+  const feedbackId = payloadText(payload, 'feedbackId');
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
+    ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
     ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
       ? { cleanupStatus: 'cleaned' as const }
@@ -250,6 +256,7 @@ function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<T
 function attemptPatch(payload: EventPayload, eventType: string): Partial<AttemptRecord> {
   const evidenceIds = payloadEvidenceIds(payload);
   const acceptanceId = payloadText(payload, 'acceptanceId');
+  const feedbackId = payloadText(payload, 'feedbackId');
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
@@ -259,6 +266,7 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(typeof payload.baseRevision === 'string' ? { baseRevision: payload.baseRevision } : {}),
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
+    ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
     ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
       ? { cleanupStatus: 'cleaned' as const }
@@ -276,13 +284,15 @@ function applyLegacyTaskProjection(
   payload: EventPayload,
 ): void {
   const base = { status, ...(runId ? { runId } : {}) };
-  if (eventType === 'TaskSucceeded' || eventType === 'TaskFailed') {
+  if (eventType === 'TaskSucceeded' || eventType === 'TaskFailed' || eventType === 'TaskFeedbackRequested') {
     const evidenceIds = payloadEvidenceIds(payload);
     const acceptanceId = payloadText(payload, 'acceptanceId');
+    const feedbackId = payloadText(payload, 'feedbackId');
     projection.tasks[taskId] = {
       ...base,
       ...(evidenceIds !== undefined ? { evidenceIds } : {}),
       ...(acceptanceId ? { acceptanceId } : {}),
+      ...(feedbackId ? { feedbackId } : {}),
     };
     return;
   }
@@ -395,6 +405,13 @@ function applyTaskLineageProjection(
   }
 
   if (previousAttempt) {
+    if (eventType === 'TaskFeedbackRequested'
+      && (previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running')) {
+      throw new Error(`反馈请求只能来自当前 running Attempt：${lineage.attemptId}`);
+    }
+    if (eventType === 'TaskFeedbackRequested' && previousAttempt.status === 'waiting-feedback') {
+      throw new Error(`Attempt 已在等待反馈：${lineage.attemptId}`);
+    }
     if (eventType === 'TaskStarted' && (previousAttempt.status === 'running' || isTerminalAttemptStatus(previousAttempt.status) || previousAttempt.status === 'unknown')) {
       throw new Error(`Attempt 不能重复启动或从终态 reopen：${lineage.attemptId}`);
     }
@@ -426,6 +443,7 @@ function applyTaskLineageProjection(
       ? {
           evidenceIds: undefined,
           acceptanceId: undefined,
+          feedbackId: undefined,
           cleanupStatus: undefined,
           cleanupReceiptId: undefined,
           error: undefined,
@@ -588,6 +606,9 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
         break;
       case 'TaskStarted':
         applyTaskEvent(projection, event, 'running');
+        break;
+      case 'TaskFeedbackRequested':
+        applyTaskEvent(projection, event, 'waiting-feedback');
         break;
       case 'TaskSucceeded':
         applyTaskEvent(projection, event, 'succeeded');
