@@ -2355,6 +2355,14 @@ Issue 工作台采用四个面板：
 - 将 ProjectPlan proposal/approval、Department Work Package dispatch 接入 `src/projectControl/commands.ts` 的 Command/Event；接入 `persistence.ts` 和 `projectControlConsistency.ts`，支持旧快照兼容、规划事实 read-back 和版本 drift 审计。未接入 UI、真实 Agent provider、递归调度或 Tauri Worker 执行，不能据此宣称层级化生产能力已完成。
 - 验证结果：`npm run test` 为 `114` 个测试文件、`1026` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.99 Evidence projection、bounded retrieval 与 Worker feedback gate
+
+- 新增 `progressSummary.ts`、`evidenceIndex.ts` 和 `retrieval.ts`：从 TaskGraph projection 聚合 evidence-backed ManagerBrief/TaskProgressCapsule；Evidence index 只保存结构化 metadata/terms，支持 exact ID、metadata、关键词候选、结果/Token 上限和跨项目拒绝，关键词结果不会单独成为事实或权限。
+- 新增 `contextPack.ts` 与 `delegation.ts`：ContextPack 对文件、数据类别、工具和 Agent role 做显式访问判断；delegation graph 检查 project 隔离、幂等 key、fan-out 与 Task parent/child cycle。
+- WorkerQueue 新增 `waiting-feedback` 状态和 `TaskFeedbackRequested` replay fact；FeedbackRequest 必须绑定当前 project/task/attempt，Run 在无 running 但存在等待反馈时保持 blocked；已 claim 的副作用在 waiting 前先进入 unknown，禁止生成非法 terminal receipt。
+- 当前切片仍未实现 Feedback resolution/PlanRevision 自动重派、完整 Agent provider 调度、UI 投影、真实 Tauri disposable E2E 或独立 reviewer `passed=true`，控制面继续保持 `mvp-closed-unverified`。
+- 验证结果：`npm run test` 为 `119` 个测试文件、`1041` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
