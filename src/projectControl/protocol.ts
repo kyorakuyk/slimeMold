@@ -86,6 +86,8 @@ export interface AgentBudget {
 export interface DelegationRequest {
   schemaVersion: 1;
   delegationId: string;
+  delegationDepth: number;
+  idempotencyKey: string;
   projectId: string;
   parentTaskId: string;
   childTaskId: string;
@@ -105,6 +107,8 @@ export interface DelegationRequest {
 
 export interface CreateDelegationRequestInput {
   delegationId: string;
+  delegationDepth: number;
+  idempotencyKey: string;
   projectId: string;
   parentTaskId: string;
   childTaskId: string;
@@ -431,6 +435,8 @@ export function createContextPack(input: ContextPack): ContextPack {
 
 export function createDelegationRequest(input: CreateDelegationRequestInput): DelegationRequest {
   const delegationId = requiredCanonicalString(input.delegationId, 'delegationId');
+  const delegationDepth = requiredSafeInteger(input.delegationDepth, 'delegationDepth');
+  const idempotencyKey = requiredCanonicalString(input.idempotencyKey, 'idempotencyKey');
   const projectId = requiredCanonicalString(input.projectId, 'projectId');
   const parentTaskId = requiredCanonicalString(input.parentTaskId, 'parentTaskId');
   const childTaskId = requiredCanonicalString(input.childTaskId, 'childTaskId');
@@ -453,6 +459,9 @@ export function createDelegationRequest(input: CreateDelegationRequestInput): De
   if (!effectiveScope.allowedTools.includes('delegate-child')) {
     throw new Error('effective scope 未允许 delegate-child');
   }
+  if (delegationDepth > effectiveScope.maxDelegationDepth) {
+    throw new Error(`delegationDepth 超出 scope：${delegationDepth}`);
+  }
   const allowedEvidenceRefs = parseReferences(
     input.allowedEvidenceRefs,
     projectId,
@@ -469,6 +478,8 @@ export function createDelegationRequest(input: CreateDelegationRequestInput): De
   return {
     schemaVersion: 1,
     delegationId,
+    delegationDepth,
+    idempotencyKey,
     projectId,
     parentTaskId,
     childTaskId,

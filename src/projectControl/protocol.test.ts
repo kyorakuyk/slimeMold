@@ -124,6 +124,8 @@ describe('Phase A hierarchical protocol objects', () => {
   it('creates a delegation request from the strict effective child scope', () => {
     const request = createDelegationRequest({
       delegationId: 'delegation-1',
+      delegationDepth: 1,
+      idempotencyKey: 'delegation:task-parent:task-child',
       projectId: 'project-1',
       parentTaskId: 'task-parent',
       childTaskId: 'task-child',
@@ -156,6 +158,8 @@ describe('Phase A hierarchical protocol objects', () => {
   it('rejects a delegation that asks for an upward or policy-forbidden role', () => {
     expect(() => createDelegationRequest({
       delegationId: 'delegation-2',
+      delegationDepth: 1,
+      idempotencyKey: 'delegation:task-parent:task-child:unauthorized',
       projectId: 'project-1',
       parentTaskId: 'task-parent',
       childTaskId: 'task-child',
