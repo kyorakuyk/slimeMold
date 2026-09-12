@@ -2363,6 +2363,14 @@ Issue 工作台采用四个面板：
 - 当前切片仍未实现 Feedback resolution/PlanRevision 自动重派、完整 Agent provider 调度、UI 投影、真实 Tauri disposable E2E 或独立 reviewer `passed=true`，控制面继续保持 `mvp-closed-unverified`。
 - 验证结果：`npm run test` 为 `119` 个测试文件、`1041` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.100 Bounded Budget、Release Gate 与 DAG expansion
+
+- 新增 `src/projectControl/budget.ts`：以 reserve/settle ledger 控制 token、调用次数、费用和时长；reservation 具备 project/task 归属和幂等重放，超额 settlement 明确返回 `over-budget`，安全整数溢出拒绝。
+- 新增 `releaseGate.ts`：QA、Security、Integration receipt 必须项目一致、通过、独立且无 blocking issue；固定 slot kind 校验和高影响用户批准门只生成 `ready/blocked` candidate，不直接执行 release。
+- 新增 `taskGraphExpansion.ts`：动态新增任务必须引用 Evidence、绑定 source、通过数量/depth/fan-out/依赖环校验；审批前不改图，审批时重新校验 proposal 与 base graph version，并通过既有 `reviseTaskGraph` 生成新 graph revision。
+- 本轮独立 reviewer 曾针对旧 staged snapshot 运行但未在超时前返回；其 verdict 按 interrupted/未验证处理，commit `f136f12` 明确为 `(unverified)`，不得标记 `[verified]` 或宣称生产级 release/DAG 自治。
+- 验证结果：`npm run test` 为 `122` 个测试文件、`1055` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests 与 `cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
