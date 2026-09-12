@@ -14,19 +14,21 @@ updated: 2026-09-02
 1. [产品哲学](principles/SLIMEMOLD_PRODUCT_PHILOSOPHY.md) —— 为什么这样设计，以及必须遵守的规范性原则。
 2. [全局产品与系统审视](strategy/SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md) —— 产品定位、系统风险和战略取舍。
 3. [项目控制面架构](architecture/PROJECT_CONTROL_PLANE_ARCHITECTURE.md) —— 当前项目实体、事实源、状态、权限和恢复契约。
-4. [代码结构审查](architecture/CODEBASE_ARCHITECTURE_REVIEW.md) —— 当前代码与目标架构的差距、阻塞项和迁移顺序。
-5. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
-6. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
-7. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
-8. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
-9. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
-10. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
+4. [产品与架构取舍记录](architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md) —— 跨阶段的决定、替代方案、代价、来源和未决事项。
+5. [代码结构审查](architecture/CODEBASE_ARCHITECTURE_REVIEW.md) —— 当前代码与目标架构的差距、阻塞项和迁移顺序。
+6. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
+7. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
+8. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
+9. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
+10. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
+11. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
 
 ## 权威层级
 
 ```text
 原则（Why）
   → 战略审视（What / Trade-offs）
+  → 产品与架构取舍记录（Decision / Alternatives / Consequences）
   → 控制面架构契约（Model / State / Authority）
   → 专题设计与 UI 转译（How）
   → 近期计划（When）
@@ -58,7 +60,7 @@ updated: 2026-09-02
 |---|---|---|
 | `principles/` | 产品哲学和规范性原则 | 是，限于产品原则 |
 | `strategy/` | 产品定位、系统风险和战略判断 | 是，限于战略判断 |
-| `architecture/` | 控制面契约和代码现实审查 | 是，限于架构/实现边界 |
+| `architecture/` | 控制面契约、架构取舍和代码现实审查 | 是，限于架构/实现边界 |
 | `product/` | UI 与用户认知层级转译 | 是，限于产品交互设计 |
 | `plans/` | 近期计划与长期路线 | 只对开发顺序有效 |
 | `verification/` | 当前质量门和验收入口 | 是，限于验证方法 |
