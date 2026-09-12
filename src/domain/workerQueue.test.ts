@@ -10,7 +10,7 @@ import {
   type WorkerTaskLease,
   type WorkerWorktreeAllocator,
 } from './workerQueue';
-import { createFeedbackRequest, type FeedbackRequest } from '../projectControl/protocol';
+import { createFeedbackRequest, createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
 import { createAttemptId, createTaskExecutionId } from './execution';
 
 function task(id: string, dependsOn: string[] = []): ProjectTask {
@@ -894,5 +894,66 @@ describe('WorkerTaskQueue', () => {
     expect(state.status).toBe('blocked');
     expect(queue.drainEvents().map((event) => event.eventType)).toContain('TaskFeedbackRequested');
     expect(state.tasks.a.status).not.toBe('failed');
+  });
+
+  it('binds a versioned ContextPack to a hierarchical Worker lease', async () => {
+    const contextPack: ContextPack = createContextPack({
+      schemaVersion: 1,
+      contextPackId: 'context-pack-a-v2',
+      projectId: 'project-1',
+      taskId: 'a',
+      taskExecutionId: createTaskExecutionId('run-context', 'a'),
+      attemptId: createAttemptId(createTaskExecutionId('run-context', 'a'), 1),
+      contextVersion: 2,
+      sourceVersion: 7,
+      goal: '实现受限任务',
+      nonGoals: ['读取项目外文件'],
+      decisionRefs: [],
+      evidenceRefs: [],
+      requiredFiles: ['src/a'],
+      requiredDocuments: [],
+      dependencyRefs: [],
+      acceptanceCriteria: ['a 通过测试'],
+      scope: {
+        allowedFiles: ['src/a'],
+        allowedDataClasses: ['task', 'source-file'],
+        allowedTools: ['read-file', 'run-tests'],
+        allowedAgentRoles: ['worker'],
+        maxDelegationDepth: 0,
+        maxFanOut: 0,
+        maxTokens: 1000,
+        maxCalls: 2,
+        maxMoneyCents: 0,
+        maxDurationMs: 1000,
+        expiresAt: '2026-09-01T01:00:00.000Z',
+      },
+    });
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-context',
+      taskGraph: graph([task('a')]),
+      contextPacks: [contextPack],
+      requireContextPack: true,
+      now: '2026-09-01T00:00:01.000Z',
+    });
+
+    const lease = await queue.claimTask('a', allocatorFor([]));
+
+    expect(lease?.contextPack).toMatchObject({ taskId: 'a', contextVersion: 2, sourceVersion: 7 });
+    expect(queue.snapshot().tasks.a).toMatchObject({ contextPackId: expect.any(String), contextPackVersion: 2 });
+    const restored = restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: queue.snapshot(),
+      contextPacks: [contextPack],
+      requireContextPack: true,
+    });
+    expect(restored.snapshot().tasks.a).toMatchObject({ contextPackId: 'context-pack-a-v2', contextPackVersion: 2 });
+    expect(() => createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-context-missing',
+      taskGraph: graph([task('a')]),
+      requireContextPack: true,
+      now: '2026-09-01T00:00:01.000Z',
+    })).toThrow(/ContextPack/);
   });
 });

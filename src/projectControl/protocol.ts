@@ -59,6 +59,7 @@ export interface AgentMessageEnvelope<TPayload extends Record<string, unknown> =
 
 export interface ContextPack {
   schemaVersion: 1;
+  contextPackId: string;
   projectId: string;
   taskId: string;
   taskExecutionId: string;
@@ -385,6 +386,7 @@ function parseFeedbackOptions(value: unknown): FeedbackOption[] {
 export function createContextPack(input: ContextPack): ContextPack {
   const record = requiredRecord(input, 'contextPack');
   const schemaVersion = requiredSchemaVersion(record.schemaVersion, 'contextPack.schemaVersion');
+  const contextPackId = requiredCanonicalString(record.contextPackId, 'contextPack.contextPackId');
   const projectId = requiredCanonicalString(record.projectId, 'contextPack.projectId');
   const taskId = requiredCanonicalString(record.taskId, 'contextPack.taskId');
   const taskExecutionId = requiredCanonicalString(record.taskExecutionId, 'contextPack.taskExecutionId');
@@ -416,6 +418,7 @@ export function createContextPack(input: ContextPack): ContextPack {
 
   return {
     schemaVersion,
+    contextPackId,
     projectId,
     taskId,
     taskExecutionId,

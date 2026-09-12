@@ -18,6 +18,7 @@ const scope = {
 
 const pack: ContextPack = createContextPack({
   schemaVersion: 1,
+  contextPackId: 'context-pack-1',
   projectId: 'project-1',
   taskId: 'task-1',
   taskExecutionId: 'execution-1',

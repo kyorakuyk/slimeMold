@@ -6,7 +6,7 @@ import {
   type TaskProjectionStatus,
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
-import type { FeedbackRequest } from '../projectControl/protocol';
+import { createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
 import {
   createAttemptId,
   createTaskExecutionId,
@@ -42,6 +42,7 @@ export interface WorkerTaskLease {
   attempt: number;
   taskExecutionId: TaskExecutionId;
   attemptId: AttemptId;
+  contextPack?: ContextPack;
 }
 
 export interface WorkerExecutionResult {
@@ -92,6 +93,8 @@ export interface WorkerQueueTask {
   branchRevision?: string;
   cleanupStateSignature?: string;
   evidenceIds: string[];
+  contextPackId?: string;
+  contextPackVersion?: number;
   feedbackId?: string;
   acceptanceId?: string;
   cleanupStatus?: 'cleaned';
@@ -118,12 +121,16 @@ export interface CreateWorkerRunQueueInput {
   runId: string;
   orchestrationId?: string;
   taskGraph: ProjectTaskGraph;
+  contextPacks?: readonly ContextPack[];
+  requireContextPack?: boolean;
   now: string;
 }
 
 export interface RestoreWorkerRunQueueInput {
   taskGraph: ProjectTaskGraph;
   state: WorkerRunQueueState;
+  contextPacks?: readonly ContextPack[];
+  requireContextPack?: boolean;
 }
 
 export interface RunWorkerQueueOptions {
@@ -171,6 +178,41 @@ function cloneTask(task: ProjectTask): ProjectTask {
   };
 }
 
+function cloneContextPack(pack: ContextPack): ContextPack {
+  return createContextPack(pack);
+}
+
+function contextPackMap(
+  projectId: string,
+  runId: string,
+  taskGraph: ProjectTaskGraph,
+  packs: readonly ContextPack[],
+): ReadonlyMap<string, ContextPack> {
+  const byTask = new Map<string, ContextPack>();
+  for (const pack of packs) {
+    const normalized = cloneContextPack(pack);
+    if (normalized.projectId !== projectId) {
+      throw new Error(`ContextPack 不属于当前 project：${normalized.contextPackId}`);
+    }
+    if (!taskGraph.tasks.some((task) => task.id === normalized.taskId)) {
+      throw new Error(`ContextPack 绑定了不存在的 Task：${normalized.taskId}`);
+    }
+    const expectedTaskExecutionId = createTaskExecutionId(runId, normalized.taskId);
+    if (normalized.taskExecutionId !== expectedTaskExecutionId) {
+      throw new Error(`ContextPack 与 run/task execution lineage 不一致：${normalized.contextPackId}`);
+    }
+    const parsedAttempt = parseAttemptId(normalized.attemptId);
+    if (parsedAttempt.taskExecutionId !== expectedTaskExecutionId) {
+      throw new Error(`ContextPack 与 task execution/attempt 不一致：${normalized.contextPackId}`);
+    }
+    if (byTask.has(normalized.taskId)) {
+      throw new Error(`同一 Task 不能绑定多个 ContextPack：${normalized.taskId}`);
+    }
+    byTask.set(normalized.taskId, normalized);
+  }
+  return byTask;
+}
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -188,11 +230,16 @@ function taskState(
   now: string,
   taskDefinitionVersion: 1,
   acceptanceStageId?: string,
+  contextPack?: ContextPack,
 ): WorkerQueueTask {
   return {
     taskId,
     ...(acceptanceStageId === undefined ? {} : { acceptanceStageId }),
     taskDefinitionVersion,
+    ...(contextPack ? {
+      contextPackId: contextPack.contextPackId,
+      contextPackVersion: contextPack.contextVersion,
+    } : {}),
     taskExecutionId: createTaskExecutionId(runId, taskId),
     status: 'queued',
     attempt: 0,
@@ -315,6 +362,8 @@ function validateGraph(taskGraph: ProjectTaskGraph): void {
 
 export class WorkerTaskQueue {
   private readonly tasksById: ReadonlyMap<string, ProjectTask>;
+  private readonly contextPacksByTask: ReadonlyMap<string, ContextPack>;
+  private readonly requireContextPack: boolean;
   private state: WorkerRunQueueState;
   private events: DomainEvent[] = [];
   private readonly claiming = new Set<string>();
@@ -323,9 +372,14 @@ export class WorkerTaskQueue {
     private readonly taskGraph: ProjectTaskGraph,
     initialState: WorkerRunQueueState,
     emitInitialEvents = false,
+    contextPacks: readonly ContextPack[] = [],
+    requireContextPack = false,
   ) {
     validateGraph(taskGraph);
     this.tasksById = new Map(taskGraph.tasks.map((task) => [task.id, task]));
+    this.contextPacksByTask = contextPackMap(initialState.projectId, initialState.runId, taskGraph, contextPacks);
+    this.requireContextPack = requireContextPack
+      || Object.values(initialState.tasks).some((task) => task.contextPackId !== undefined);
     this.state = {
       ...initialState,
       tasks: Object.fromEntries(
@@ -341,14 +395,44 @@ export class WorkerTaskQueue {
           if (!expectedStageId || persistedStageId !== expectedStageId) {
             throw new Error(`Worker Task acceptance stage 与 TaskGraph 不一致：${id}`);
           }
-          return [id, normalizeQueueTask(
+          const contextPack = this.contextPacksByTask.get(id);
+          if (this.requireContextPack && !contextPack) {
+            throw new Error(`hierarchical Worker 缺少 ContextPack：${id}`);
+          }
+          if (task.contextPackId !== undefined
+            && (!contextPack || task.contextPackId !== contextPack.contextPackId
+              || task.contextPackVersion !== contextPack.contextVersion)) {
+            throw new Error(`Worker Task ContextPack binding 不一致：${id}`);
+          }
+          if (contextPack) {
+            const expectedContextAttempt = task.status === 'queued'
+              ? (task.pendingAttempt ?? task.attempt + 1)
+              : task.attempt;
+            if (expectedContextAttempt > 0
+              && task.status !== 'blocked'
+              && task.status !== 'cancelled'
+              && contextPack.attemptId !== createAttemptId(
+                contextPack.taskExecutionId,
+                expectedContextAttempt,
+              )) {
+              throw new Error(`ContextPack 与 Worker attempt 不一致：${id}`);
+            }
+          }
+          const normalized = normalizeQueueTask(
             {
               ...task,
               acceptanceStageId: expectedStageId,
               taskDefinitionVersion: task.taskDefinitionVersion ?? taskDefinition?.version,
             },
             initialState.runId,
-          )] as const;
+          );
+          return [id, {
+            ...normalized,
+            ...(contextPack ? {
+              contextPackId: contextPack.contextPackId,
+              contextPackVersion: contextPack.contextVersion,
+            } : {}),
+          }] as const;
         }),
       ),
     };
@@ -426,6 +510,13 @@ export class WorkerTaskQueue {
     const attempt = current.pendingAttempt ?? current.attempt + 1;
     const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
+    const contextPack = this.contextPacksByTask.get(taskId);
+    if (this.requireContextPack && !contextPack) {
+      throw new Error(`hierarchical Worker claim 缺少 ContextPack：${taskId}`);
+    }
+    if (contextPack && contextPack.attemptId !== attemptId) {
+      throw new Error(`ContextPack 与当前 claim Attempt 不一致：${taskId}`);
+    }
     this.claiming.add(taskId);
     try {
       const assignment = await allocator.allocate({
@@ -496,6 +587,7 @@ export class WorkerTaskQueue {
         attempt,
         taskExecutionId,
         attemptId,
+        ...(contextPack ? { contextPack: cloneContextPack(contextPack) } : {}),
       };
     } catch (cause) {
       if (signal?.aborted) throwIfAborted(signal);
@@ -856,6 +948,11 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
   const runId = requiredText(input.runId, 'Run id');
   const now = requiredText(input.now, '时间');
   validateGraph(input.taskGraph);
+  const contextPacks = input.contextPacks ?? [];
+  const contextPacksByTask = contextPackMap(projectId, runId, input.taskGraph, contextPacks);
+  if (input.requireContextPack && input.taskGraph.tasks.some((task) => !contextPacksByTask.has(task.id))) {
+    throw new Error('hierarchical Worker queue 的每个 Task 都必须有 ContextPack');
+  }
   const state: WorkerRunQueueState = {
     version: 1,
     projectId,
@@ -868,15 +965,27 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     updatedAt: now,
     tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [
       task.id,
-      taskState(task.id, runId, now, task.version, task.stageId),
+      taskState(task.id, runId, now, task.version, task.stageId, contextPacksByTask.get(task.id)),
     ])),
   };
-  return new WorkerTaskQueue(input.taskGraph, state, true);
+  return new WorkerTaskQueue(
+    input.taskGraph,
+    state,
+    true,
+    contextPacks,
+    input.requireContextPack,
+  );
 }
 
 export function restoreWorkerRunQueue(input: RestoreWorkerRunQueueInput): WorkerTaskQueue {
   validateGraph(input.taskGraph);
-  return new WorkerTaskQueue(input.taskGraph, input.state, false);
+  return new WorkerTaskQueue(
+    input.taskGraph,
+    input.state,
+    false,
+    input.contextPacks,
+    input.requireContextPack,
+  );
 }
 
 export async function runWorkerQueue(

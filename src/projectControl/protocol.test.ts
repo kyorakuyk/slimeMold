@@ -92,6 +92,7 @@ describe('Phase A hierarchical protocol objects', () => {
   it('builds a ContextPack whose files stay inside its effective scope', () => {
     const pack = createContextPack({
       schemaVersion: 1,
+      contextPackId: 'context-pack-1',
       projectId: 'project-1',
       taskId: 'task-1',
       taskExecutionId: 'execution-1',
