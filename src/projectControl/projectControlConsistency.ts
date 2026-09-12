@@ -4,8 +4,10 @@ import type {
   ProjectBrief,
   ProjectControlSnapshot,
   ProjectIssue,
+  ProjectPlan,
   ProjectSession,
   ProjectTaskGraph,
+  DepartmentWorkPackage,
 } from './types';
 
 export type ProjectControlConsistencyIssueCode =
@@ -29,6 +31,12 @@ export type ProjectControlConsistencyIssueCode =
   | 'missing-task-graph-event'
   | 'task-graph-version-drift'
   | 'task-graph-approval-drift'
+  | 'missing-project-plan-event'
+  | 'project-plan-version-drift'
+  | 'project-plan-approval-drift'
+  | 'missing-work-package-event'
+  | 'work-package-version-drift'
+  | 'work-package-plan-drift'
   | 'missing-decision-event'
   | 'orphaned-control-event';
 
@@ -53,6 +61,7 @@ const recognized = new Set([
   'BriefProposed', 'LegacyBriefImported', 'BriefApproved',
   'ArchitectureProposed', 'LegacyArchitectureImported', 'ArchitectureApproved',
   'TaskGraphProposed', 'TaskGraphRevisionCreated', 'TaskGraphSuperseded', 'LegacyTaskGraphImported', 'TaskGraphApproved', 'LegacyTaskImported',
+  'ProjectPlanProposed', 'ProjectPlanApproved', 'DepartmentWorkPackageDispatched',
   'IssueStatusChanged', 'LegacyIssueImported', 'IssueCreated', 'LegacyDecisionImported',
 ]);
 
@@ -184,6 +193,54 @@ function compareIssue(
   }
 }
 
+function compareProjectPlan(
+  plan: ProjectPlan,
+  events: readonly DomainEvent[],
+  issues: ProjectControlConsistencyIssue[],
+): void {
+  const facts = aggregate(events, 'ProjectPlan', plan.id);
+  if (!has(facts, ['ProjectPlanProposed'])) {
+    add(issues, 'missing-project-plan-event', `ProjectFile ProjectPlan 缺少 durable fact：${plan.id}`, 'ProjectPlan', plan.id);
+    return;
+  }
+  const proposed = last(facts, 'ProjectPlanProposed');
+  const eventVersion = objectPayload(proposed?.payload).planVersion;
+  if (typeof eventVersion === 'number' && eventVersion !== plan.planVersion) {
+    add(issues, 'project-plan-version-drift', `ProjectPlan 版本与事件不一致：${plan.id}`, 'ProjectPlan', plan.id);
+  }
+  const approved = last(facts, 'ProjectPlanApproved');
+  if (plan.approval === 'approved' && !approved) {
+    add(issues, 'project-plan-approval-drift', `ProjectPlan 已批准但缺少批准事实：${plan.id}`, 'ProjectPlan', plan.id);
+  }
+  if (plan.approval !== 'approved' && approved) {
+    add(issues, 'project-plan-approval-drift', `ProjectPlan 审批状态与事件不一致：${plan.id}`, 'ProjectPlan', plan.id);
+  }
+}
+
+function compareDepartmentWorkPackage(
+  workPackage: DepartmentWorkPackage,
+  plans: readonly ProjectPlan[],
+  events: readonly DomainEvent[],
+  issues: ProjectControlConsistencyIssue[],
+): void {
+  const facts = aggregate(events, 'DepartmentWorkPackage', workPackage.id);
+  if (!has(facts, ['DepartmentWorkPackageDispatched'])) {
+    add(issues, 'missing-work-package-event', `ProjectFile Work Package 缺少 durable fact：${workPackage.id}`, 'DepartmentWorkPackage', workPackage.id);
+    return;
+  }
+  const plan = plans.find((item) => item.id === workPackage.planId);
+  if (!plan || plan.projectId !== workPackage.projectId) {
+    add(issues, 'work-package-plan-drift', `Work Package 的项目计划不存在或项目不一致：${workPackage.id}`, 'DepartmentWorkPackage', workPackage.id);
+  } else if (plan.planVersion !== workPackage.planVersion) {
+    add(issues, 'work-package-version-drift', `Work Package 计划版本与 ProjectPlan 不一致：${workPackage.id}`, 'DepartmentWorkPackage', workPackage.id);
+  }
+  const dispatched = last(facts, 'DepartmentWorkPackageDispatched');
+  const eventVersion = objectPayload(dispatched?.payload).planVersion;
+  if (typeof eventVersion === 'number' && eventVersion !== workPackage.planVersion) {
+    add(issues, 'work-package-version-drift', `Work Package 版本与事件不一致：${workPackage.id}`, 'DepartmentWorkPackage', workPackage.id);
+  }
+}
+
 /** Audit structured control state without pretending summary events contain full private objects. */
 export function auditProjectControlConsistency(input: {
   projectId: string;
@@ -210,6 +267,8 @@ export function auditProjectControlConsistency(input: {
         architectures: input.snapshot.architectures.length,
         issues: input.snapshot.issues.length,
         taskGraphs: input.snapshot.taskGraphs?.length ?? 0,
+        projectPlans: input.snapshot.projectPlans?.length ?? 0,
+        departmentWorkPackages: input.snapshot.departmentWorkPackages?.length ?? 0,
       };
       for (const key of Object.keys(actual) as Array<keyof typeof actual>) {
         if (typeof counts[key] === 'number' && counts[key] !== actual[key]) add(issues, 'project-count-drift', `synthetic baseline 数量与 ProjectFile 不一致：${key}`, 'Project', input.projectId);
@@ -229,6 +288,13 @@ export function auditProjectControlConsistency(input: {
       aggregateType: 'TaskGraph', normalProposal: ['TaskGraphProposed', 'TaskGraphRevisionCreated'], legacyImport: 'LegacyTaskGraphImported', approvalEvent: 'TaskGraphApproved', versionKey: 'graphVersion', version: item.graphVersion, approval: item.approval,
       missingCode: 'missing-task-graph-event', versionCode: 'task-graph-version-drift', approvalCode: 'task-graph-approval-drift',
     });
+    for (const item of input.snapshot.projectPlans ?? []) compareProjectPlan(item, events, issues);
+    for (const item of input.snapshot.departmentWorkPackages ?? []) compareDepartmentWorkPackage(
+      item,
+      input.snapshot.projectPlans ?? [],
+      events,
+      issues,
+    );
     for (const item of input.snapshot.issues) compareIssue(item, events, issues);
     for (const item of input.snapshot.decisions) {
       if (!has(aggregate(events, 'Decision', item.id), ['LegacyDecisionImported'])) add(issues, 'missing-decision-event', `ProjectFile Decision 缺少 durable fact：${item.id}`, 'Decision', item.id);
@@ -239,6 +305,8 @@ export function auditProjectControlConsistency(input: {
       ...input.snapshot.briefs.map((item) => `Brief/${item.id}`),
       ...input.snapshot.architectures.map((item) => `Architecture/${item.id}`),
       ...(input.snapshot.taskGraphs ?? []).map((item) => `TaskGraph/${item.id}`),
+      ...(input.snapshot.projectPlans ?? []).map((item) => `ProjectPlan/${item.id}`),
+      ...(input.snapshot.departmentWorkPackages ?? []).map((item) => `DepartmentWorkPackage/${item.id}`),
       ...input.snapshot.issues.map((item) => `Issue/${item.id}`),
       ...input.snapshot.decisions.map((item) => `Decision/${item.id}`),
       `Project/${input.projectId}`,

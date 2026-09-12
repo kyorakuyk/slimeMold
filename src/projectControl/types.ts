@@ -228,6 +228,8 @@ export interface ProjectControlSnapshot {
   architectures: ProjectArchitecture[];
   issues: ProjectIssue[];
   taskGraphs?: ProjectTaskGraph[];
+  projectPlans?: ProjectPlan[];
+  departmentWorkPackages?: DepartmentWorkPackage[];
 }
 
 export type ProjectPlanApproval = 'draft' | 'approved' | 'superseded';
