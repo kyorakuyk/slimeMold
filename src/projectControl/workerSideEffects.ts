@@ -132,6 +132,18 @@ export function createPersistedWorkerEvidenceVerifier(
   });
 }
 
+export function createPersistedWorkerSideEffectRecorder(
+  repository: SideEffectJournalRepository,
+  persistence: Pick<EvidencePersistence, 'load'>,
+  now: WorkerSideEffectClock = () => new Date().toISOString(),
+): WorkerSideEffectRecorderWithRecovery {
+  return createWorkerSideEffectRecorder(
+    repository,
+    now,
+    createPersistedWorkerEvidenceVerifier(persistence),
+  );
+}
+
 function entryFor(journal: SideEffectJournal, idempotencyKey: string): SideEffectRecord {
   const entry = journal.entries.find((item) => item.idempotencyKey === idempotencyKey);
   if (!entry) throw new Error(`副作用记录未写入：${idempotencyKey}`);

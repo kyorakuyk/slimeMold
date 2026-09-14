@@ -2410,7 +2410,25 @@ Issue 工作台采用四个面板：
 
 本轮仍未执行真实 Tauri Worker/GUI read-back；当前状态继续为 `mvp-closed-unverified`。
 
-## 八、适合拆成的博客系列
+### 7.103 Worker Evidence verifier 三条 Tauri 生产路径收口
+
+- 自验收发现 `runQueuedWorker` 虽已使用持久化 host Evidence verifier，但启动恢复 `recoverInterruptedWorkerEffects` 和手动 retry/skip 恢复路径仍调用无 verifier 的 recorder；这会使恢复阶段遇到 succeeded receipt 时继续 fail-closed，上一轮“全生产路径修复”并不完整。
+- 新增 `createPersistedWorkerSideEffectRecorder`，统一从 durable Evidence persistence 构造 host verifier；`App.tsx` 的 queued execution、启动恢复和手动恢复三处均改用该 factory。
+- 先将 durable persistence 测试改为要求新 factory 并确认 RED（`createPersistedWorkerSideEffectRecorder is not a function`），再实现 factory、运行 targeted GREEN。
+
+验证结果：
+
+- `npx vitest run src/projectControl/workerSideEffects.test.ts`：22 个测试通过；
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disposable fixture 做了文件事实 read-back；该 fixture 被识别为旧通用 workflow（`workerRuns=[]`），不是当前 WorkerQueue 执行。自动化打开项目入口在本次 WebView 输入通道中未获得可靠回读，因此没有把旧 workflow 的 Evidence/Acceptance 记录冒充为当前 Worker E2E。真实 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 仍未通过当前 HEAD 的完整 GUI 闭环，状态继续为 `mvp-closed-unverified`。
+
 
 如果不想一次发布全文，可以拆成下面几篇：
 

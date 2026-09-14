@@ -510,10 +510,9 @@ export default function App() {
       `${projectPath}-workers`,
       'host',
     );
-    const sideEffects = workerSideEffectsModule.createWorkerSideEffectRecorder(
+    const sideEffects = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
       sideEffectRepository,
-      undefined,
-      workerSideEffectsModule.createPersistedWorkerEvidenceVerifier(evidencePersistence),
+      evidencePersistence,
     );
     assertProjectOperation(operation);
     const eventRepository = new EventStreamRepository(
@@ -618,16 +617,23 @@ export default function App() {
   ): Promise<void> => {
     if (!isTauri || !projectPath || runIds.length === 0 || signal?.aborted) return;
     try {
-      const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+      const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
         import('./domain/tauriEventStore'),
+        import('./dev/tauri-run'),
         import('./domain/sideEffects'),
         import('./projectControl/workerSideEffects'),
       ]);
-      const recorder = workerSideEffectsModule.createWorkerSideEffectRecorder(
+      const persistence = createTauriEvidenceStore(
+        `${projectPath}/.slimemold/evidence`,
+        `${projectPath}-workers`,
+        'host',
+      );
+      const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
         new sideEffectsModule.SideEffectJournalRepository(
           createTauriEventStoreAdapter(projectPath),
           projectPath,
         ),
+        persistence,
       );
       for (const runId of runIds) {
         if (signal?.aborted) return;
@@ -734,16 +740,23 @@ export default function App() {
     const operation = getProjectOperation(projectId, projectPath);
     assertProjectOperation(operation);
 
-    const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+    const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
       import('./domain/tauriEventStore'),
+      import('./dev/tauri-run'),
       import('./domain/sideEffects'),
       import('./projectControl/workerSideEffects'),
     ]);
-    const recorder = workerSideEffectsModule.createWorkerSideEffectRecorder(
+    const persistence = createTauriEvidenceStore(
+      `${projectPath}/.slimemold/evidence`,
+      `${projectPath}-workers`,
+      'host',
+    );
+    const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
       new sideEffectsModule.SideEffectJournalRepository(
         createTauriEventStoreAdapter(projectPath),
         projectPath,
       ),
+      persistence,
     );
     assertProjectOperation(operation);
     const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });

@@ -9,7 +9,7 @@ import {
   buildWorkerRunRecoveryPlan,
   createWorkerSideEffectRecorder,
   createWorkerEvidenceVerifier,
-  createPersistedWorkerEvidenceVerifier,
+  createPersistedWorkerSideEffectRecorder,
   decideWorkerRunRecovery,
   applyWorkerRunRecoveryDecision,
 } from './workerSideEffects';
@@ -317,13 +317,12 @@ describe('worker side-effect recorder', () => {
       baseRevision: lease.assignment.baseRevision,
       createdAt: '2026-09-01T00:01:00.000Z',
     };
-    const verifier = createPersistedWorkerEvidenceVerifier({
-      load: async () => [evidence],
-    });
-    const recorder = createWorkerSideEffectRecorder(
+    const recorder = createPersistedWorkerSideEffectRecorder(
       repository,
+      {
+        load: async () => [evidence],
+      },
       () => '2026-09-01T00:02:00.000Z',
-      verifier,
     );
     const started = await recorder.start(lease);
 
