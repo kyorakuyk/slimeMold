@@ -2518,6 +2518,28 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 真实 Tauri Worker GUI 仍未重新验收；本轮只完成执行计划纯逻辑的进程内拆分，不能标记 `[verified]`。
 
+
+### 7.109 执行引擎第二刀：抽离运行生命周期协调器
+
+- 本轮在本地 checkpoint `cbdaaa9` 之后继续执行渐进拆分；未 push/merge，没有修改 `D:/Agents/SMtest`，保留 `.gitignore` 的非本轮改动以及其它未跟踪计划、素材和 `.workbuddy`。
+- 新增 `src/engine/executionCoordinator.ts` 与 `src/engine/executionCoordinator.test.ts`，将 per-workflow 的运行代次、准入、重复运行拦截、force takeover、stop、abort、finish ownership 和 stale completion fencing 从 `executor.ts` 抽出。
+- `executor.ts` 不再维护 `runGens`、直接持有该生命周期的 `AbortController` 或通过旧 generation map 取消；节点调度、运行事件、store 写回、节点副作用、资源清理和持久化仍留在原路径，避免扩大本轮范围。
+- 协调器将 fail-fast abort 与用户 stop 区分：fail-fast 只中止当前 signal、不推进 generation；stop/force takeover 推进 fence。旧运行的 finish 不能清理新运行的取消句柄。
+- 这是第二条进程内垂直切片，不代表 Host Adapter、Evidence/Acceptance/Receipt 或 ProjectControl 持久化已经拆出；真实 Tauri Worker GUI 闭环仍未通过，状态继续为 `mvp-closed-unverified`。
+
+验证结果：
+
+- targeted：`executionCoordinator`、`executorLifecycle`、`executorEvents`、`executorIntervene`、`executor` 共 5 个测试文件、42 个测试通过；
+- `npm run test`：125 个测试文件、1078 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 仍未重新验收；本轮没有标记 `[verified]`。
+
 ---
 
 如果不想一次发布全文，可以拆成下面几篇：
