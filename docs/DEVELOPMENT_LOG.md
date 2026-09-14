@@ -2460,6 +2460,28 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 这些是代码/自动化修复，不改变真实 Tauri Worker GUI 闭环仍未通过的结论；状态继续为 `mvp-closed-unverified`。
 
+### 7.106 对抗性审阅 P0/P1 边界修复
+
+- `66bd610`：Worker acceptance 的 tracked changed-files 现在按 `lease.assignment.baseRevision` 比较，而不是只比较当前 `HEAD`；Worker 先提交 protected 文件不能再通过 preflight 隐藏变更。
+- `193cd75`：Issue status command 拒绝把已归属其它项目的 Issue 写入当前项目事实流；未分配 Issue (`projectId:null`) 仍可由当前项目接管。
+- `da7a936`：Codex Worker 只有在 host Acceptance 返回非空 `acceptanceId` 且 Evidence 存在时才能返回 `succeeded`。
+- `e632111`：loop round cache invalidation 按 `wfId + nodeId` 作用域执行，避免同类型节点跨 workflow/cache scope 被误清除。
+
+本轮明确未宣称已解决的 reviewer 风险：path-policy 与 build/test 之间的 TOCTOU、取消发生在 worktree allocation 后的 orphan rollback，以及 succeeded receipt 对 Acceptance/Evidence 的完整 orchestration/stage provenance read-back。这些仍阻止生产级 `[verified]`。
+
+验证结果：
+
+- targeted：capabilities/workerAcceptance 23 个、commands 14 个、codexWorkerExecutor 7 个、runLoop/nodeCache/executor 42 个测试通过；
+- `npm run test`：123 个测试文件、1070 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 失败结论不变，当前状态继续为 `mvp-closed-unverified`。
+
 
 如果不想一次发布全文，可以拆成下面几篇：
 
