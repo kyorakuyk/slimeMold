@@ -90,7 +90,7 @@ export function createDevWorkerAcceptance(
         // Never execute a Worker-controlled build/test oracle before checking the files it changed.
       // In particular, package scripts, test configuration, and test sources must be rejected
       // before npm/vitest can interpret them.
-      const preflightChangedFiles = await host.service.gitChangedFiles(context);
+      const preflightChangedFiles = await host.service.gitChangedFiles(context, lease.assignment.baseRevision);
       throwIfAborted(signal);
       const preflightProtectedPaths = collectChangedProtectedPaths(host.policy, preflightChangedFiles);
       const preflightDisallowedPaths = preflightChangedFiles.filter((file) => !isPathAllowed(host.policy, file));
@@ -152,7 +152,7 @@ export function createDevWorkerAcceptance(
         throwIfAborted(signal);
         const diff = await host.service.gitDiff(lease.assignment.baseRevision, context);
         throwIfAborted(signal);
-        const changedFiles = await host.service.gitChangedFiles(context);
+        const changedFiles = await host.service.gitChangedFiles(context, lease.assignment.baseRevision);
         throwIfAborted(signal);
         const changedProtectedPaths = collectChangedProtectedPaths(host.policy, changedFiles);
         const changedDisallowedPaths = changedFiles.filter((file) => !isPathAllowed(host.policy, file));

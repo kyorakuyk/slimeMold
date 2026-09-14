@@ -49,7 +49,7 @@ export interface DevCapabilityService {
   gitStatus(ctx: DevContext): Promise<CommandResult>;
   gitDiff(baseRef: string | undefined, ctx: DevContext): Promise<CommandResult>;
   /** 工作树变更文件（tracked diff + untracked），供 path-policy/diff 证据使用。 */
-  gitChangedFiles(ctx: DevContext): Promise<string[]>;
+  gitChangedFiles(ctx: DevContext, baseRef?: string): Promise<string[]>;
   /** 未跟踪文件清单（untracked，供状态签名纳入内容）。 */
   gitUntrackedFiles(ctx: DevContext): Promise<string[]>;
 }
@@ -459,10 +459,12 @@ export function createNodeDevService(
       return result;
     },
 
-    async gitChangedFiles(ctx) {
+    async gitChangedFiles(ctx, baseRef) {
       assertCwd(ctx.cwd);
+      if (baseRef) assertSafeGitRevision(baseRef);
+      const trackedArgs = ['diff', '--name-only', baseRef ?? 'HEAD'];
       const [tracked, untracked] = await Promise.all([
-        run('git', ['diff', '--name-only', 'HEAD'], ctx.cwd),
+        run('git', trackedArgs, ctx.cwd),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),
       ]);
       if (tracked.exitCode !== 0 || untracked.exitCode !== 0) {

@@ -231,13 +231,15 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     await expect(svc.gitDiff('--output=/tmp/out', ctx)).rejects.toThrow(/baseRef|Git/);
   });
 
-  it('gitChangedFiles：合并 tracked diff 与 untracked', async () => {
+  it('gitChangedFiles：按指定 baseRef 合并 tracked diff 与 untracked', async () => {
+    const diffArgs: string[][] = [];
     const svc = createNodeDevService(
       defaultDevPolicy,
       {
         ...fakeDeps,
         runCommand: async (cmd, args, _cwd) => {
           if (cmd === 'git' && args[0] === 'diff') {
+            diffArgs.push(args);
             return { exitCode: 0, stdout: 'src/components/A.tsx\n', stderr: '', durationMs: 1 };
           }
           if (cmd === 'git' && args[0] === 'ls-files') {
@@ -248,7 +250,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       },
       registry,
     );
-    const filesChanged = await svc.gitChangedFiles(ctx);
+    const filesChanged = await svc.gitChangedFiles(ctx, 'base-revision');
+    expect(diffArgs).toEqual([['diff', '--name-only', 'base-revision']]);
     expect(filesChanged).toContain('src/components/A.tsx');
     expect(filesChanged).toContain('docs/new.md');
   });
