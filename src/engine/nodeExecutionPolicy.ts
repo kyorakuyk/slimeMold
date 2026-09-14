@@ -54,7 +54,7 @@ export type NodeDecision =
   | { kind: 'missing-def'; typeId: string }
   | { kind: 'bypass'; outputs: Record<string, unknown> }
   | { kind: 'mute' }
-  | { kind: 'incremental-skip'; prevStatus?: NodeStatus }
+  | { kind: 'incremental-skip'; prevStatus?: NodeStatus; branches?: string[] }
   | { kind: 'pruned' }
   | { kind: 'cut' }
   | { kind: 'cached'; outputs: Record<string, unknown>; branches?: string[] }
@@ -89,8 +89,14 @@ export function decideNodeExecution(input: NodeExecutionDecisionInput): NodeDeci
       return { kind: 'bypass', outputs: bypassOutputs(id, def, incoming, outputsMap) };
     case 'mute':
       return { kind: 'mute' };
-    case 'incremental-skip':
-      return { kind: 'incremental-skip', prevStatus: mode.prevStatus };
+    case 'incremental-skip': {
+      const upstreamOutputs = isolated ? {} : cacheHooks.collectInputs(id, edges, outputsMap);
+      const key = cacheHooks.cacheKey(node.data.typeId, node.data.params ?? {}, upstreamOutputs, cacheScope);
+      const branches = cacheHooks.getCachedBranches?.(key);
+      return branches === undefined
+        ? { kind: 'incremental-skip', prevStatus: mode.prevStatus }
+        : { kind: 'incremental-skip', prevStatus: mode.prevStatus, branches };
+    }
     case 'execute':
       break; // 继续②
   }

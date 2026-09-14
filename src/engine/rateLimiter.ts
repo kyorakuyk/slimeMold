@@ -13,6 +13,9 @@ export class Semaphore {
   }
 
   async acquire(signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
     if (this.permits > 0) {
       this.permits--;
       return () => this.release();

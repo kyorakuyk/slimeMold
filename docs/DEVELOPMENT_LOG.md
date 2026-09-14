@@ -2440,6 +2440,26 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 本次真实 GUI 验收结论：`FAIL / mvp-closed-unverified`。代码/自动化质量门仍通过，但 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 的成功闭环尚未通过当前 HEAD；不得标记 `[verified]`、push 或 merge。
 
+### 7.105 旧快照 reviewer 发现的执行层回归补齐
+
+- 独立 reviewer 返回的是旧快照 `e8a8563` 的 fail-closed 结果，不能外推到当前 HEAD；其中 preflight Evidence/Acceptance 意见已由 `0304041` 修复。
+- 对仍适用于当前 HEAD 的两处机制缺陷先写 RED 回归：已有 permit 时，已中止的 `Semaphore.acquire` 会错误返回 release；增量 skip 不恢复缓存中的 branch handles。
+- 修复 `src/engine/rateLimiter.ts`：先检查 `signal.aborted`，再消费 permit；修复后取消不会拿到许可。
+- 修复 `src/engine/nodeExecutionPolicy.ts` 与 `src/engine/executor.ts`：incremental-skip 按当前 cache scope/key 恢复 branch handles，并把空数组保留为全部屏蔽，避免下游错误执行旧分支。
+
+验证结果：
+
+- targeted：`rateLimiter.test.ts`、`nodeExecutionPolicy.test.ts` 共 29 个测试通过；
+- `npm run test`：123 个测试文件、1069 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+这些是代码/自动化修复，不改变真实 Tauri Worker GUI 闭环仍未通过的结论；状态继续为 `mvp-closed-unverified`。
+
 
 如果不想一次发布全文，可以拆成下面几篇：
 

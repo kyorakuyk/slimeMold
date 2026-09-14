@@ -746,6 +746,9 @@ async function executeNode(
       setStatus(id, 'muted', { startedAt: null, durationMs: null });
       return;
     case 'incremental-skip':
+      if (policy.branches !== undefined) {
+        branchState.set(id, new Set(policy.branches));
+      }
       setStatus(id, policy.prevStatus === 'cached' ? 'cached' : policy.prevStatus ?? 'idle');
       emitNode(runBus, 'node.skipped', nodeCtx, id, {
         reason: 'incremental-skip',
