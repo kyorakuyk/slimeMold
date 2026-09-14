@@ -87,7 +87,22 @@ export function createDevWorkerAcceptance(
       const testLabel = commandLabel(testCommand);
 
       try {
-        const compile = await host.service.testRun(compileCommand, context);
+        // Never execute a Worker-controlled build/test oracle before checking the files it changed.
+      // In particular, package scripts, test configuration, and test sources must be rejected
+      // before npm/vitest can interpret them.
+      const preflightChangedFiles = await host.service.gitChangedFiles(context);
+      throwIfAborted(signal);
+      const preflightProtectedPaths = collectChangedProtectedPaths(host.policy, preflightChangedFiles);
+      const preflightDisallowedPaths = preflightChangedFiles.filter((file) => !isPathAllowed(host.policy, file));
+      if (preflightProtectedPaths.length > 0 || preflightDisallowedPaths.length > 0) {
+        return {
+          passed: false,
+          evidenceIds: [],
+          failureReason: `宿主验收在执行前拒绝路径策略：受保护 ${preflightProtectedPaths.length} 个，越界 ${preflightDisallowedPaths.length} 个`,
+        };
+      }
+
+      const compile = await host.service.testRun(compileCommand, context);
         throwIfAborted(signal);
         const test = await host.service.testRun(testCommand, context);
         throwIfAborted(signal);

@@ -161,7 +161,11 @@ function compareVersioned(
   if (imported && objectPayload(imported.payload).approval !== config.approval) {
     add(issues, config.approvalCode, `${config.aggregateType} 审批状态与 legacy fact 不一致：${item.id}`, config.aggregateType, item.id);
   }
-  if (last(facts, config.approvalEvent) && config.approval !== 'approved' && config.approval !== 'superseded') {
+  const approvalFact = last(facts, config.approvalEvent);
+  if (config.approval === 'approved' && !approvalFact) {
+    add(issues, config.approvalCode, `${config.aggregateType} 已批准但缺少批准事实：${item.id}`, config.aggregateType, item.id);
+  }
+  if (approvalFact && config.approval !== 'approved' && config.approval !== 'superseded') {
     add(issues, config.approvalCode, `${config.aggregateType} 有批准事实但 ProjectFile 未批准：${item.id}`, config.aggregateType, item.id);
   }
 }

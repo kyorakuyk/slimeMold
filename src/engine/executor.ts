@@ -7,6 +7,7 @@ import type {
   SandboxHandle,
 } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
+import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowState';
 import { useRegistryStore } from '../store/registryStore';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
@@ -46,6 +47,7 @@ import {
   composeCacheScope,
   countSkip,
   getCached,
+  getCachedBranches,
   setCached,
   strike,
 } from './nodeCache';
@@ -371,9 +373,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   // 增量运行：保留脏标记，仅执行脏节点及其下游
   if (!opts.incremental && !opts.retryFailed) {
     wf.clearDirty();
-    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '', composeCacheScope(wfId, id));
   } else {
-    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '', composeCacheScope(wfId, id));
   }
   // 执行集（纯计算，来自 graphAlgo.computeExecutionSet）：
   //  - force 节点恒在执行集；增量模式叠加 data.dirty；子图虚拟节点一律视为需执行。
@@ -390,7 +392,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   gen.abort = abortController;
   const signal = abortController.signal;
   wf.setRunning(true, wfId);
-  wf.resetStatuses(wfId);
+  wf.resetStatuses(wfId, { preserveOutputs: Boolean(opts.incremental || opts.retryFailed) });
   // A3：构建贯穿本次运行的 RunContext（A1 定型），并发出运行创建事件。
   // 供统一事件流 / JobBoard / 后续检查点持久化与 AgentRouter 共用。
   const runCtx: RunContext = {
@@ -497,7 +499,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
         signal,
         isCurrent: () => myRun === gen.currentRunId,
         failFast,
-        abort: () => gen.abort?.abort(),
+        abort: () => abortController?.abort(),
         wfId,
         runCtx,
         rt,
@@ -686,8 +688,9 @@ async function executeNode(
   // ---- 缓存隔离环境指纹（细粒度化）：目标工作流的 workspace 上下文。----
   // 文件读写类节点的产物依赖工作区内容，workspace 变化时旧缓存应失效。
   const curStore = useWorkflowStore.getState();
-  const targetWorkflow =
-    targetWfId === curStore.activeWfId ? { workspaceDir: curStore.workspaceDir } : curStore.workflows[targetWfId];
+  const targetWorkflow = targetWfId === curStore.activeWfId
+    ? { workspaceDir: resolveActiveWorkflowWorkspaceDir(curStore) }
+    : curStore.workflows[targetWfId];
   const nodeWorkspaceDir = targetWorkflow?.workspaceDir ?? null;
   // 细粒度缓存 scope：wfId → nodeId → workspaceDir（节点实例级隔离，杜绝同工作流内
   // 相同配置的节点实例互相串产物；workspace 指纹使环境变化自动失效）。
@@ -706,7 +709,7 @@ async function executeNode(
     forced,
     isolated: isolatedIds?.has(id),
     cacheScope,
-    cacheHooks: { collectInputs, cacheKey, getCached },
+    cacheHooks: { collectInputs, cacheKey, getCached, getCachedBranches },
   });
   // 按决策执行副作用（不直接进后续沙箱/执行路径）
   switch (policy.kind) {
@@ -772,7 +775,8 @@ async function executeNode(
     case 'cached': {
       const cached = policy.outputs;
       outputsMap.set(id, cached);
-      branchState.set(id, new Set((def?.outputs ?? []).map((o) => o.id)));
+      const activeBranches = policy.branches ?? (def?.outputs ?? []).map((o) => o.id);
+      branchState.set(id, new Set(activeBranches));
       countSkip();
       setStatus(id, 'cached', { outputs: cached, startedAt: null, durationMs: null });
       emitNode(runBus, 'node.completed', nodeCtx, id, {

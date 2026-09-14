@@ -3,6 +3,7 @@ import {
   cacheKey,
   composeCacheScope,
   getCached,
+  getCachedBranches,
   setCached,
   strike,
   clearCache,
@@ -108,6 +109,13 @@ describe('set/get 缓存读写', () => {
     expect(cacheStats().hits).toBe(1);
   });
 
+  it('缓存命中时保留分支节点声明的激活 handles', () => {
+    const key = cacheKey('flow.if', { condition: true }, {}, 'wf-A:if-1');
+    setCached(key, { true: 'value' }, ['true']);
+    expect(getCached(key)).toEqual({ true: 'value' });
+    expect(getCachedBranches(key)).toEqual(['true']);
+  });
+
   it('命中时 hits 计数自增', () => {
     const key = cacheKey('n', {}, {});
     setCached(key, { v: 1 });
@@ -129,6 +137,21 @@ describe('strike 与 clearCache', () => {
     expect(cacheSize()).toBe(1);
     expect(getCached(k2)).toEqual({ b: 2 });
     expect(getCached(k1)).toBeNull();
+  });
+
+  it('按工作流和节点实例 scope 清除，不影响其它节点或工作流', () => {
+    const target = cacheKey('ai.chat', {}, {}, composeCacheScope('wf-A', 'node-a', 'ws-1'));
+    const sibling = cacheKey('ai.chat', {}, {}, composeCacheScope('wf-A', 'node-b', 'ws-1'));
+    const otherWorkflow = cacheKey('ai.chat', {}, {}, composeCacheScope('wf-B', 'node-a', 'ws-1'));
+    setCached(target, { target: true });
+    setCached(sibling, { sibling: true });
+    setCached(otherWorkflow, { otherWorkflow: true });
+
+    strike('ai.chat', composeCacheScope('wf-A', 'node-a'));
+
+    expect(getCached(target)).toBeNull();
+    expect(getCached(sibling)).toEqual({ sibling: true });
+    expect(getCached(otherWorkflow)).toEqual({ otherWorkflow: true });
   });
 
   it('clearCache 清空全部', () => {

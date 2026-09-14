@@ -52,6 +52,23 @@ describe('Semaphore', () => {
     await expect(p).rejects.toThrow('Aborted');
     release();
   });
+
+  it('取消的排队者不会吞掉 release，后续等待者仍能获得许可', async () => {
+    const sem = new Semaphore(1);
+    const release = await sem.acquire();
+    const cancelled = new AbortController();
+    const cancelledAcquire = sem.acquire(cancelled.signal);
+    cancelled.abort();
+    await expect(cancelledAcquire).rejects.toThrow('Aborted');
+
+    const nextAcquire = sem.acquire();
+    release();
+    await expect(Promise.race([
+      nextAcquire.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+    ])).resolves.toBe(true);
+    (await nextAcquire)();
+  });
 });
 
 describe('sleep', () => {

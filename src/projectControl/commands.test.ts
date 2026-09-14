@@ -5,6 +5,7 @@ import {
   approveBriefCommand,
   approveTaskGraphCommand,
   approveProjectPlanCommand,
+  createIssueCommand,
   dispatchDepartmentWorkPackageCommand,
   linkOrchestrationCommand,
   generateTaskGraphCommand,
@@ -15,6 +16,7 @@ import {
 } from './commands';
 import type { ProjectControlSnapshot, ProjectPlan } from './types';
 import { createDepartmentWorkPackage } from './projectPlanning';
+import { createIssue } from './issue';
 import { parseProjectControlSnapshot, serializeProjectControlSnapshot } from './persistence';
 import { buildTaskGraphProjection, taskIssueId } from './taskGraphProjection';
 
@@ -175,6 +177,40 @@ describe('startProjectSessionCommand', () => {
     ]);
     expect(result.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
     expect(result.events.every((event) => event.actor === 'user' && event.correlationId === 'session-1')).toBe(true);
+  });
+
+  it('creates an Issue projection and IssueCreated fact through one command', () => {
+    const started = startProjectSessionCommand({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      issueId: 'issue-1',
+      projectName: '项目',
+      goal: '目标',
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const issue = createIssue({
+      id: 'issue-2',
+      projectId: null,
+      type: 'bug',
+      title: '发现问题',
+      description: '需要修复',
+      createdAt: '2026-09-01T00:01:00.000Z',
+    });
+    const result = createIssueCommand({
+      snapshot: started.snapshot,
+      projectId: 'project-1',
+      issue,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+
+    expect(result.snapshot.issues).toEqual([issue, ...started.snapshot.issues]);
+    expect(result.events).toEqual([expect.objectContaining({
+      streamId: 'project-1',
+      aggregateType: 'Issue',
+      aggregateId: 'issue-2',
+      eventType: 'IssueCreated',
+      payload: expect.objectContaining({ issueId: 'issue-2', projectId: null, issueType: 'bug' }),
+    })]);
   });
 
   it('routes Issue status changes through one command and auditable fact', () => {

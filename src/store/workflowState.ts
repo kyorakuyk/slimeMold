@@ -22,6 +22,16 @@ import { builtinRoles, createAgent } from '../agents/agentManager';
 import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 
+export function resolveActiveWorkflowWorkspaceDir(input: {
+  workflows: Record<string, Pick<WorkflowFileInMemory, 'workspaceDir'>>;
+  activeWfId: string;
+  workspaceDir?: string | null;
+}): string | null {
+  const active = input.workflows[input.activeWfId];
+  if (active?.workspaceDir !== undefined) return active.workspaceDir;
+  return input.workspaceDir ?? null;
+}
+
 /** 按 id 更新或追加：列表中存在同 id 项则替换，否则追加。纯函数。 */
 export function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
   const exists = list.some((a) => a.id === item.id);

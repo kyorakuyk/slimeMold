@@ -46,6 +46,14 @@ describe('nodeRuntime 纯映射（从 workflowStore 抽离，行为等价）', (
       expect(out[0].position).toEqual({ x: 0, y: 0 });
     });
 
+    it('增量复位可保留既有 outputs，但仍清除运行错误和用量', () => {
+      const out = resetNodeRuntime([mkNode('n1', 'success')], { preserveOutputs: true });
+      expect(out[0].data.status).toBe('idle');
+      expect(out[0].data.outputs).toEqual({ x: 1 });
+      expect(out[0].data.error).toBeUndefined();
+      expect(out[0].data.usage).toBeUndefined();
+    });
+
     it('已是 idle 的节点同样被清洗（幂等）', () => {
       const out = resetNodeRuntime([mkNode('n1', 'idle', { error: 'stale', outputs: { y: 2 } })]);
       expect(out[0].data.status).toBe('idle');

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 import { topoLayers, wouldCreateCycle, topoStages } from './topoSort';
 
@@ -156,5 +157,21 @@ describe('topoStages', () => {
     );
     expect(r.stages.length).toBeGreaterThan(0);
     expect(r.cyclic).toEqual([]);
+  });
+
+  it('loopGate 的 data 回流不会让 stage 计算无限增长', () => {
+    const script = [
+      "import { topoStages } from './src/engine/topoSort.ts';",
+      "const result = topoStages(['gate', 'body'], [{ source: 'body', target: 'gate' }], [{ source: 'gate', target: 'body' }], new Set(['gate']));",
+      'console.log(JSON.stringify(result));',
+    ].join('\n');
+    const output = execFileSync(
+      process.execPath,
+      ['node_modules/tsx/dist/cli.mjs', '-e', script],
+      { cwd: process.cwd(), encoding: 'utf8', timeout: 2_000 },
+    );
+    const result = JSON.parse(output) as { stages: string[][]; cyclic: string[] };
+    expect(result.cyclic).toEqual([]);
+    expect(result.stages.flat()).toEqual(['gate', 'body']);
   });
 });

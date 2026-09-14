@@ -14,7 +14,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { createIssue } from '../projectControl/issue';
-import { transitionIssueCommand } from '../projectControl/commands';
+import { createIssueCommand, transitionIssueCommand } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
 import {
   buildTaskGraphProjection,
@@ -116,7 +116,7 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
     return nodes;
   }, [projectControl.taskGraphs, projectId, visibleIssues, workerRuns]);
 
-  const handleCreate = (event: FormEvent) => {
+  const handleCreate = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;
     try {
@@ -130,7 +130,15 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
         createdAt: now,
       });
       const state = useWorkflowStore.getState();
-      state.setProjectControl({ ...state.projectControl, issues: [issue, ...state.projectControl.issues] });
+      const result = createIssueCommand({
+        snapshot: state.projectControl,
+        projectId: state.projectId ?? undefined,
+        issue,
+        now,
+      });
+      if (state.projectId) recordProjectEvents(state.projectId, result.events);
+      state.setProjectControl(result.snapshot);
+      if (state.projectPath) await state.saveProject();
       setTitle('');
       setDescription('');
       setType('idea');

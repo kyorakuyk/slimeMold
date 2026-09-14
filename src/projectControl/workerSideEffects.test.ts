@@ -9,6 +9,7 @@ import {
   buildWorkerRunRecoveryPlan,
   createWorkerSideEffectRecorder,
   createWorkerEvidenceVerifier,
+  createPersistedWorkerEvidenceVerifier,
   decideWorkerRunRecovery,
   applyWorkerRunRecoveryDecision,
 } from './workerSideEffects';
@@ -297,6 +298,40 @@ describe('worker side-effect recorder', () => {
     });
   });
 
+  it('builds the verifier from the durable Evidence persistence adapter', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const evidence = {
+      id: 'evidence-1',
+      orchestrationId: 'orch-1',
+      stageId: 'stage-1',
+      kind: 'test' as const,
+      status: 'passed' as const,
+      summary: 'host test passed',
+      capturedBy: 'host' as const,
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      worktreePath: lease.assignment.path,
+      baseRevision: lease.assignment.baseRevision,
+      createdAt: '2026-09-01T00:01:00.000Z',
+    };
+    const verifier = createPersistedWorkerEvidenceVerifier({
+      load: async () => [evidence],
+    });
+    const recorder = createWorkerSideEffectRecorder(
+      repository,
+      () => '2026-09-01T00:02:00.000Z',
+      verifier,
+    );
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, succeeded)).resolves.toMatchObject({
+      status: 'receipt',
+      receipt: { outcome: 'succeeded', evidenceIds: ['evidence-1'] },
+    });
+  });
   it('does not let a late completion promote a recovered unknown effect', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');

@@ -5,10 +5,19 @@
 import type { FlowEdge, FlowNode, NodeStatus } from '../types';
 
 /** 把节点列表的运行态字段复位为 idle（供运行结束/中止后清理，避免「卡在 running」） */
-export function resetNodeRuntime(nodes: FlowNode[]): FlowNode[] {
+export function resetNodeRuntime(
+  nodes: FlowNode[],
+  options: { preserveOutputs?: boolean } = {},
+): FlowNode[] {
   return nodes.map((n) => ({
     ...n,
-    data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, outputs: undefined, usage: undefined },
+    data: {
+      ...n.data,
+      status: 'idle' as NodeStatus,
+      error: undefined,
+      outputs: options.preserveOutputs ? n.data.outputs : undefined,
+      usage: undefined,
+    },
   }));
 }
 

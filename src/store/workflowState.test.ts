@@ -11,6 +11,7 @@ import {
   buildOpenProjectState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
+  resolveActiveWorkflowWorkspaceDir,
   upsertById,
 } from './workflowState';
 
@@ -39,6 +40,24 @@ const mkProject = (): ProjectFile =>
     activeId: 'wf1',
     workflows: { wf1: mkWf('工作流1') },
   }) as unknown as ProjectFile;
+
+describe('resolveActiveWorkflowWorkspaceDir', () => {
+  it('uses the active workflow workspace before the legacy top-level fallback', () => {
+    expect(resolveActiveWorkflowWorkspaceDir({
+      activeWfId: 'wf-1',
+      workflows: { 'wf-1': { workspaceDir: 'C:/workspace/wf-1' } },
+      workspaceDir: null,
+    })).toBe('C:/workspace/wf-1');
+  });
+
+  it('falls back to the top-level field for legacy workflows without workspaceDir', () => {
+    expect(resolveActiveWorkflowWorkspaceDir({
+      activeWfId: 'wf-1',
+      workflows: { 'wf-1': {} },
+      workspaceDir: 'C:/workspace/legacy',
+    })).toBe('C:/workspace/legacy');
+  });
+});
 
 describe('upsertById 通用 upsert', () => {
   it('追加新项', () => {

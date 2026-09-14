@@ -11,8 +11,12 @@ import {
   type SideEffectJournal,
 } from '../domain/sideEffects';
 import type {
+  EvidencePersistence,
   EvidenceRecord,
 } from '../dev/evidence';
+import {
+  loadWorkerEvidence,
+} from './workerEvidence';
 import type {
   WorkerExecutionResult,
   WorkerRunQueueState,
@@ -117,6 +121,15 @@ export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): Work
       }
     }
   };
+}
+
+/** Build the host verifier from the same durable Evidence persistence used by the GUI. */
+export function createPersistedWorkerEvidenceVerifier(
+  persistence: Pick<EvidencePersistence, 'load'>,
+): WorkerEvidenceVerifier {
+  return createWorkerEvidenceVerifier({
+    loadPersisted: () => loadWorkerEvidence(persistence),
+  });
 }
 
 function entryFor(journal: SideEffectJournal, idempotencyKey: string): SideEffectRecord {

@@ -251,7 +251,7 @@ interface WorkflowState {
     patch?: Partial<WorkflowNodeData>,
     wfId?: string,
   ) => void;
-  resetStatuses: (wfId?: string) => void;
+  resetStatuses: (wfId?: string, options?: { preserveOutputs?: boolean }) => void;
   /** 标记节点及其下游为脏（需重新执行），用于增量执行 */
   markDirty: (id: string) => void;
   /** 清除全部脏标记（全量运行前调用） */
@@ -777,11 +777,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      resetStatuses: (wfId) => {
+      resetStatuses: (wfId, options) => {
         const target = wfId ?? get().activeWfId;
         set((state) => {
           // 运行态复位纯映射已抽到 nodeRuntime（resetNodeRuntime / resetEdgeRuntime）
-          const resetNodes = (nodes: FlowNode[]): FlowNode[] => resetNodeRuntime(nodes);
+          const resetNodes = (nodes: FlowNode[]): FlowNode[] => resetNodeRuntime(nodes, options);
           const resetEdges = (edges: FlowEdge[]): FlowEdge[] => resetEdgeRuntime(edges);
           // 注意：此处只清节点执行状态，不碰 running 标志位。
           // running 由 executor 的 setRunning 统一管理（启动置 true、停止/收尾置 false）。

@@ -5,6 +5,7 @@ import {
 import type {
   DepartmentWorkPackage,
   ProjectControlSnapshot,
+  ProjectIssue,
   ProjectIssueStatus,
   ProjectPlan,
 } from './types';
@@ -135,6 +136,59 @@ export function startProjectSessionCommand(
     source: { objectId: issueId, objectVersion: 1 },
   });
 
+  return { snapshot, events };
+}
+
+export interface CreateIssueCommandInput {
+  snapshot: ProjectControlSnapshot;
+  issue: ProjectIssue;
+  /** 当前项目的 event stream；允许 issue.projectId 为 null 表示未分配。 */
+  projectId?: string;
+  now: string;
+  actor?: DomainEvent['actor'];
+}
+
+export function createIssueCommand(input: CreateIssueCommandInput): ProjectControlCommandResult {
+  const issueId = requiredText(input.issue.id, 'Issue id');
+  const now = requiredText(input.now, '时间');
+  if (input.snapshot.issues.some((item) => item.id === issueId)) {
+    throw new Error(`Issue 已存在：${issueId}`);
+  }
+  if (input.projectId && input.issue.projectId && input.projectId !== input.issue.projectId) {
+    throw new Error(`Issue 不属于当前项目：${issueId}`);
+  }
+  const issue = {
+    ...input.issue,
+    relatedTaskIds: [...input.issue.relatedTaskIds],
+  };
+  const snapshot: ProjectControlSnapshot = {
+    ...input.snapshot,
+    issues: [issue, ...input.snapshot.issues],
+  };
+  const events: DomainEvent[] = [];
+  appendFact(events, {
+    eventId: `${issueId}:created`,
+    streamId: input.projectId ?? issue.projectId ?? `issue:${issueId}`,
+    aggregateType: 'Issue',
+    aggregateId: issueId,
+    eventType: 'IssueCreated',
+    schemaVersion: 1,
+    payload: {
+      issueId,
+      projectId: issue.projectId,
+      title: issue.title,
+      description: issue.description,
+      sourceSessionId: issue.sourceSessionId,
+      issueType: issue.type,
+      status: issue.status,
+      relatedTaskIds: [...issue.relatedTaskIds],
+    },
+    actor: input.actor ?? 'user',
+    occurredAt: now,
+    correlationId: issue.sourceSessionId ?? issueId,
+    source: { objectId: issueId, objectVersion: issue.version },
+    sensitivity: 'normal',
+  });
   return { snapshot, events };
 }
 

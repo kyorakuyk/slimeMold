@@ -25,6 +25,7 @@ export interface CacheHooks {
   collectInputs: (id: string, edges: FlowEdge[], outputsMap: Map<string, Record<string, unknown>>) => Record<string, unknown>;
   cacheKey: (typeId: string, params: Record<string, unknown>, upstream: Record<string, unknown>, scope: string) => string;
   getCached: (key: string) => Record<string, unknown> | null;
+  getCachedBranches?: (key: string) => string[] | undefined;
 }
 
 /** decideNodeExecution 输入。 */
@@ -56,7 +57,7 @@ export type NodeDecision =
   | { kind: 'incremental-skip'; prevStatus?: NodeStatus }
   | { kind: 'pruned' }
   | { kind: 'cut' }
-  | { kind: 'cached'; outputs: Record<string, unknown> }
+  | { kind: 'cached'; outputs: Record<string, unknown>; branches?: string[] }
   | { kind: 'execute' };
 
 /** 前置决策（纯函数）。 */
@@ -110,7 +111,11 @@ export function decideNodeExecution(input: NodeExecutionDecisionInput): NodeDeci
     const key = cacheHooks.cacheKey(node.data.typeId, node.data.params ?? {}, upstreamOutputs, cacheScope);
     const cached = cacheHooks.getCached(key);
     if (cached) {
-      return { kind: 'cached', outputs: cached };
+      return {
+        kind: 'cached',
+        outputs: cached,
+        branches: cacheHooks.getCachedBranches?.(key),
+      };
     }
   }
 

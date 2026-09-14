@@ -13,6 +13,9 @@ describe('H4 policy', () => {
     expect(defaultDevPolicy.autoTest).toBe(true);
     expect(defaultDevPolicy.autoCommit).toBe(false);
     expect(defaultDevPolicy.protectedPaths).toContain('src/orchestrator/**');
+    expect(defaultDevPolicy.protectedPaths).toContain('package.json');
+    expect(defaultDevPolicy.protectedPaths).toContain('package-lock.json');
+    expect(defaultDevPolicy.protectedPaths).toContain('tests/**');
   });
 
   it('isPathAllowed：目录前缀匹配与子路径', () => {
@@ -35,7 +38,7 @@ describe('H4 policy', () => {
     expect(() => assertPathAllowed(defaultDevPolicy, 'docs/a.md')).not.toThrow();
     expect(() => assertPathAllowed(defaultDevPolicy, 'src/orchestrator/run.ts')).toThrow(/受保护/);
     expect(() => assertPathAllowed(defaultDevPolicy, 'src/store/workflowStore.ts')).toThrow(/受保护/);
-    expect(() => assertPathAllowed(defaultDevPolicy, 'package.json')).toThrow(/不在允许范围/);
+    expect(() => assertPathAllowed(defaultDevPolicy, 'package.json')).toThrow(/受保护/);
   });
 
   it('collectChangedProtectedPaths：从变更清单筛出受保护文件', () => {

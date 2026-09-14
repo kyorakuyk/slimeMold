@@ -41,7 +41,7 @@ export interface NodeSuccessInput {
   stopAfter: Set<string>;
   cache: {
     key: (typeId: string, params: Record<string, unknown>, upstream: Record<string, unknown>, scope: string) => string;
-    set: (key: string, value: Record<string, unknown>) => void;
+    set: (key: string, value: Record<string, unknown>, branches?: readonly string[]) => void;
   };
   outputMap: { set: (id: string, outputs: Record<string, unknown>) => void };
   branchState: { set: (id: string, handles: Set<string | undefined>) => void };
@@ -68,7 +68,8 @@ export function handleNodeSuccess(input: NodeSuccessInput): void {
   outputMap.set(id, outputs);
   // 写入缓存：以「类型+参数+上游输出+工作流scope」为 key，下游命中时自动复用
   const key = cache.key(node.data.typeId, node.data.params, upstreamOutputs, cacheScope);
-  cache.set(key, outputs);
+  if (branchesTaken !== undefined) cache.set(key, outputs, branchesTaken);
+  else cache.set(key, outputs);
   // 登记分支状态：分支节点用其声明的激活 handle，普通节点视为全部输出端口激活
   branchState.set(
     id,

@@ -2371,6 +2371,27 @@ Issue 工作台采用四个面板：
 - 本轮独立 reviewer 曾针对旧 staged snapshot 运行但未在超时前返回；其 verdict 按 interrupted/未验证处理，commit `f136f12` 明确为 `(unverified)`，不得标记 `[verified]` 或宣称生产级 release/DAG 自治。
 - 验证结果：`npm run test` 为 `122` 个测试文件、`1055` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests 与 `cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
 
+### 7.101 对抗性审阅 P0 修复与执行层回归收口
+
+- 修复 Worker 成功路径的生产装配：`App.tsx` 现在为 GUI Worker side-effect recorder 注入基于持久化 EvidenceStore 的 host verifier；`workerSideEffects.ts` 新增 durable persistence adapter helper。成功 receipt 仍必须通过 Evidence provenance、lineage、worktree 和 base revision 校验；本轮没有把该修复冒充为真实 Tauri E2E 通过。
+- 修复执行层的确定性缺陷：`topoStages` 对 loopGate data 回流停止抬高 gate，并增加 bounded fail-closed guard；`Semaphore` 使用真实 queue entry 清理 AbortSignal，取消的 waiter 不再吞掉后续 permit；增量/retry 状态复位保留既有 outputs；旧 run 的 fail-fast callback 不再通过共享 generation abort 新 run；cache strike 按 workflow/node scope 收敛，branch cache 保存并恢复激活 handles。
+- 收紧宿主验收与控制面事实边界：Worker acceptance 在 build/test 前先检查 changed protected/disallowed paths，并将 package/lockfile/Vitest 配置、脚本和测试目录加入默认 protected paths；Issue 创建改走 `createIssueCommand` + `IssueCreated` fact；Brief/Architecture/TaskGraph 的 approval consistency 增加 snapshot-approved 但缺批准事实的反向检查；active workflow workspace 使用统一 resolver。
+- 修复可见产品问题：NodePalette 将 `nodepalette` 纳入 i18n fallback namespace；移除 `topbar.run` 重复 key；i18n checker 按 namespace 文件检测真正重复定义，不把不同 namespace 的同名 key 误报为重复。
+- 本轮所有新增回归均先验证 RED，再验证 targeted GREEN；未修改 `CODEBUDDY.md`、未修改 `D:/Agents/SMtest`，未 push/merge，状态继续保持 `mvp-closed-unverified`。
+
+验证结果：
+
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；仍有既有 dynamic/static import 与大 chunk warning；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 尚未在本轮重跑；独立 reviewer 仍没有针对当前最终工作树返回 `passed=true`，因此不能标记 `[verified]` 或宣称 Phase 2 生产级完成。
+
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：

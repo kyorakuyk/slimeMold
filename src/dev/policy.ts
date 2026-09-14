@@ -19,6 +19,11 @@ export interface SelfDevelopmentPolicy {
 export const defaultDevPolicy: SelfDevelopmentPolicy = {
   allowedPaths: ['src/components', 'src/nodes', 'tests', 'docs'],
   protectedPaths: [
+    'package.json',
+    'package-lock.json',
+    'vitest.config.ts',
+    'scripts/**',
+    'tests/**',
     'src/store/workflowStore.ts',
     'src/engine/executor.ts',
     'src/plugins/sandbox/**',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
-import type { ProjectPlan } from './types';
+import type { ProjectBrief, ProjectPlan } from './types';
 import { createSyntheticBaselineEvents } from '../domain/migration';
 import { createEmptyProjectControlSnapshot } from './persistence';
 import { proposeProjectPlanCommand, startProjectSessionCommand, transitionIssueCommand } from './commands';
@@ -42,6 +42,57 @@ describe('project control consistency audit', () => {
     expect(audit.ok).toBe(false);
     expect(audit.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'session-status-drift', aggregateId: 'session-1' }),
+    ]));
+  });
+
+  it('reports an approved versioned aggregate whose approval fact is missing', () => {
+    const result = started();
+    const brief: ProjectBrief = {
+      version: 1,
+      id: 'brief-1',
+      sessionId: 'session-1',
+      briefVersion: 1,
+      goal: '做一个项目',
+      users: [],
+      scope: ['最小版本'],
+      nonGoals: [],
+      constraints: [],
+      acceptanceCriteria: ['测试通过'],
+      assumptions: [],
+      approval: 'approved',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:01:00.000Z',
+    };
+    const proposed: DomainEvent = {
+      eventId: 'brief-1:proposed',
+      streamId: 'project-1',
+      sequence: 4,
+      aggregateType: 'Brief',
+      aggregateId: 'brief-1',
+      aggregateVersion: 1,
+      eventType: 'BriefProposed',
+      schemaVersion: 1,
+      payload: { briefId: 'brief-1', sessionId: 'session-1', briefVersion: 1 },
+      actor: 'master',
+      occurredAt: '2026-09-01T00:00:30.000Z',
+      correlationId: 'session-1',
+      source: { objectId: 'brief-1', objectVersion: 1 },
+      sensitivity: 'private',
+    };
+    const audit = auditProjectControlConsistency({
+      projectId: 'project-1',
+      snapshot: {
+        ...result.snapshot,
+        briefs: [brief],
+      },
+      events: [...result.events, proposed],
+    });
+
+    expect(audit.ok).toBe(false);
+    expect(audit.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'brief-approval-drift', aggregateId: 'brief-1' }),
     ]));
   });
 

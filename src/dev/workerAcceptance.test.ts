@@ -117,12 +117,40 @@ describe('createDevWorkerAcceptance', () => {
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({ stageId: 'verify' }));
   });
 
+  it('rejects protected changes before executing the host build/test oracle', async () => {
+    const deps = host({
+      policy: {
+        allowedPaths: ['src', 'package.json'],
+        protectedPaths: ['package.json'],
+        requireApprovalFor: [],
+        autoTest: true,
+        autoCommit: false,
+        autoPush: false,
+      },
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'should not run', stderr: '', durationMs: 1 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['package.json']),
+      },
+    });
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost).evaluate({
+      lease,
+      response: { text: '模型报告已完成' },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toContain('受保护');
+    expect(deps.service.testRun).not.toHaveBeenCalled();
+  });
+
   it('fails when tests fail or protected paths changed, regardless of model text', async () => {
     const deps = host({
       service: {
         testRun: vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: 'failed', durationMs: 10 })),
         gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
-        gitChangedFiles: vi.fn(async () => ['src/store/workflowStore.ts']),
+        gitChangedFiles: vi.fn()
+          .mockResolvedValueOnce(['src/feature.ts'])
+          .mockResolvedValueOnce(['src/store/workflowStore.ts']),
       },
     });
     const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);

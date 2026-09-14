@@ -25,6 +25,8 @@ export function composeCacheScope(...parts: Array<string | null | undefined>): s
 
 export interface CacheEntry {
   outputs: Record<string, unknown>;
+  /** 分支节点上次成功运行声明的激活输出 handle；普通节点为空。 */
+  branches?: string[];
   /** 命中次数（仅用于统计/调试） */
   hits: number;
   at: number;
@@ -80,16 +82,36 @@ export function getCached(key: string): Record<string, unknown> | null {
   return entry.outputs;
 }
 
-export function setCached(key: string, outputs: Record<string, unknown>): void {
-  cache.set(key, { outputs, hits: 0, at: Date.now() });
+export function getCachedBranches(key: string): string[] | undefined {
+  const entry = cache.get(key);
+  return entry?.branches ? [...entry.branches] : undefined;
+}
+
+export function setCached(
+  key: string,
+  outputs: Record<string, unknown>,
+  branches?: readonly string[],
+): void {
+  cache.set(key, {
+    outputs,
+    branches: branches ? [...branches] : undefined,
+    hits: 0,
+    at: Date.now(),
+  });
   writeThisRun++;
 }
 
 /** 强制清除某节点的缓存（重跑前调用），使其下次执行不被复用。
  * 兼容带 scope 前缀（`scope|typeId|...`）与不带 scope 两种 key 形态。 */
-export function strike(typeId: string): void {
+export function strike(typeId: string, scopePrefix?: string): void {
+  const typeMarker = `|${typeId}|`;
   for (const k of Array.from(cache.keys())) {
-    if (k === `${typeId}|` || k.startsWith(`${typeId}|`) || k.includes(`|${typeId}|`)) cache.delete(k);
+    if (scopePrefix) {
+      const inScope = k.startsWith(`${scopePrefix}|`) || k.startsWith(`${scopePrefix}:`);
+      if (inScope && k.includes(typeMarker)) cache.delete(k);
+      continue;
+    }
+    if (k === `${typeId}|` || k.startsWith(`${typeId}|`) || k.includes(typeMarker)) cache.delete(k);
   }
 }
 

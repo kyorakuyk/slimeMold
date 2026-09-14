@@ -495,8 +495,9 @@ export default function App() {
     assertProjectOperation(operation);
     const current = useWorkflowStore.getState();
     if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');
-    const [{ createTauriEventStoreAdapter }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
+    const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
       import('./domain/tauriEventStore'),
+      import('./dev/tauri-run'),
       import('./domain/sideEffects'),
       import('./projectControl/workerSideEffects'),
     ]);
@@ -504,7 +505,16 @@ export default function App() {
       createTauriEventStoreAdapter(projectPath),
       projectPath,
     );
-    const sideEffects = workerSideEffectsModule.createWorkerSideEffectRecorder(sideEffectRepository);
+    const evidencePersistence = createTauriEvidenceStore(
+      `${projectPath}/.slimemold/evidence`,
+      `${projectPath}-workers`,
+      'host',
+    );
+    const sideEffects = workerSideEffectsModule.createWorkerSideEffectRecorder(
+      sideEffectRepository,
+      undefined,
+      workerSideEffectsModule.createPersistedWorkerEvidenceVerifier(evidencePersistence),
+    );
     assertProjectOperation(operation);
     const eventRepository = new EventStreamRepository(
       createTauriEventStoreAdapter(projectPath),
