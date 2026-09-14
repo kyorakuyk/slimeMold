@@ -141,6 +141,15 @@ describe('createDevWorkerAcceptance', () => {
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('受保护');
     expect(deps.service.testRun).not.toHaveBeenCalled();
+    expect(result.evidenceIds).toHaveLength(1);
+    expect(result.acceptanceId).toBe('acceptance-1');
+    expect(deps.collector.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'path-policy', status: 'failed' }),
+    ]));
+    expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+      passed: false,
+      failedChecks: ['path-policy'],
+    }));
   });
 
   it('fails when tests fail or protected paths changed, regardless of model text', async () => {

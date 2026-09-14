@@ -95,10 +95,54 @@ export function createDevWorkerAcceptance(
       const preflightProtectedPaths = collectChangedProtectedPaths(host.policy, preflightChangedFiles);
       const preflightDisallowedPaths = preflightChangedFiles.filter((file) => !isPathAllowed(host.policy, file));
       if (preflightProtectedPaths.length > 0 || preflightDisallowedPaths.length > 0) {
+        const failureReason = `宿主验收在执行前拒绝路径策略：受保护 ${preflightProtectedPaths.length} 个，越界 ${preflightDisallowedPaths.length} 个`;
+        const preflightEvidence = await host.collector.addAsync({
+          orchestrationId,
+          stageId,
+          kind: 'path-policy',
+          status: 'failed',
+          summary: failureReason,
+          runId: lease.runId,
+          taskId: lease.task.id,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+          worktreePath: cwd,
+          baseRevision: lease.assignment.baseRevision,
+        });
+        throwIfAborted(signal);
+        const persistedEvidence = await host.collector.flushAndByScope({
+          orchestrationId,
+          stageId,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+          worktreePath: cwd,
+        });
+        throwIfAborted(signal);
+        if (!persistedEvidence.some((record) => record.id === preflightEvidence.id)) {
+          throw new Error('Worker acceptance 的 preflight path-policy Evidence 未完成持久化');
+        }
+        const acceptanceId = host.nextAcceptanceId();
+        const acceptance = host.recordAcceptance({
+          acceptanceId,
+          orchestrationId,
+          stageId,
+          worktreePath: cwd,
+          passed: false,
+          failedChecks: ['path-policy'],
+          at: new Date().toISOString(),
+          runId: lease.runId,
+          taskId: lease.task.id,
+          taskExecutionId: lease.taskExecutionId,
+          attemptId: lease.attemptId,
+        });
+        throwIfAborted(signal);
+        await host.persistAcceptance(acceptance);
+        throwIfAborted(signal);
         return {
           passed: false,
-          evidenceIds: [],
-          failureReason: `宿主验收在执行前拒绝路径策略：受保护 ${preflightProtectedPaths.length} 个，越界 ${preflightDisallowedPaths.length} 个`,
+          evidenceIds: [preflightEvidence.id],
+          acceptanceId,
+          failureReason,
         };
       }
 

@@ -2392,6 +2392,24 @@ Issue 工作台采用四个面板：
 真实 Tauri Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 尚未在本轮重跑；独立 reviewer 仍没有针对当前最终工作树返回 `passed=true`，因此不能标记 `[verified]` 或宣称 Phase 2 生产级完成。
 
 
+### 7.102 前置策略拒绝的失败证据补齐
+
+- 自验收发现：Worker acceptance 的 preflight path-policy 拒绝会阻止宿主 build/test，但原实现直接返回空 `evidenceIds`/`acceptanceId`，使“未执行的原因”无法进入 durable 交付档案。
+- 修复 `src/dev/workerAcceptance.ts`：preflight 拒绝现在先写入并 flush 失败 `path-policy` Evidence，再持久化 `passed:false`、`failedChecks:['path-policy']` 的 Acceptance，之后才返回失败；仍不会执行受保护的 build/test oracle。
+- 新增回归断言，覆盖“不执行 build/test + Evidence/Acceptance 均有 lineage 且持久化”的组合。
+
+验证结果：
+
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+本轮仍未执行真实 Tauri Worker/GUI read-back；当前状态继续为 `mvp-closed-unverified`。
+
 ## 八、适合拆成的博客系列
 
 如果不想一次发布全文，可以拆成下面几篇：
