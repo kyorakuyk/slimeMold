@@ -206,6 +206,9 @@ export function transitionIssueCommand(
 ): ProjectControlCommandResult {
   const issue = input.snapshot.issues.find((item) => item.id === input.issueId);
   if (!issue) throw new Error(`Issue 不存在：${input.issueId}`);
+  if (input.projectId && issue.projectId && issue.projectId !== input.projectId) {
+    throw new Error(`Issue 不属于当前项目：${input.issueId}`);
+  }
   const nextIssue = transitionIssue(issue, input.status, input.now);
   const snapshot: ProjectControlSnapshot = {
     ...input.snapshot,

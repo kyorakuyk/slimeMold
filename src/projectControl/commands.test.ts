@@ -246,6 +246,13 @@ describe('startProjectSessionCommand', () => {
       now: '2026-09-01T00:02:00.000Z',
     });
     expect(unassigned.events[0].streamId).toBe('project-1');
+    expect(() => transitionIssueCommand({
+      snapshot: started.snapshot,
+      projectId: 'project-2',
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:03:00.000Z',
+    })).toThrow(/不属于当前项目/);
   });
   it('rejects an empty goal before creating any state or event', () => {
     expect(() => startProjectSessionCommand({
