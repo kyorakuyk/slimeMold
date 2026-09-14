@@ -2,7 +2,7 @@
 title: SlimeMold 产品与架构取舍记录
 type: architecture-decision-record
 status: active
-updated: 2026-09-12
+updated: 2026-09-15
 authority: decision-log
 ---
 
@@ -565,6 +565,160 @@ authority: decision-log
 - **后果：** 新决定先进入 `Proposed`，用户确认后转为 `共同共识`/`设计基线`；实现完成仍需由源码、测试、宿主 Evidence 或开发日志单独证明。
 - **来源：** [S12 §1–§3、§55–§69、§98–§105]；[S1 §0]；本次文档建立决定。
 
+### ADR-SM-051：Git Worktree 是代码状态与谱系的第二事实源，不是任务成功事实源
+
+- **状态：** `共同共识`
+- **决定：** Git 的 branch、commit、tree、parent、merge-base、diff、worktree 状态和分叉/合并关系，作为独立于 Control Plane 的代码事实观察源。Control Plane 仍负责任务意图、权限、Decision、Task/Attempt 和生命周期；Host Evidence/Acceptance/Receipt 负责执行、可交付性和外部副作用事实。
+- **放弃的方案：** 让 Git branch/commit 存在直接代表 Task 成功、Acceptance 通过、Delivery 批准或 Cleanup 可执行；或把 Git 只当作 Worker 的临时内部目录。
+- **取舍：** 需要保存 GitObservation、Control Plane 和 Evidence 之间的 lineage 并处理观察漂移；换取用户可以通过自己的 IDE 看到真实施工分叉、历史修改和合并关系，上层节点也能独立复查代码状态。
+- **后果：** `GitObservation` 必须区分 declared、observed、accepted、delivered；任何成功结论必须同时引用相应的 Task/Attempt、Evidence、Acceptance 和 Receipt。GitObservation 只能证明代码状态，不能单独证明任务完成。
+- **来源：** [S3 §4、§7、§14]；[S16]。
+
+### ADR-SM-052：以 ChangeSet 作为跨仓库施工和交付的一级对象
+
+- **状态：** `已纳入计划`
+- **决定：** `ChangeSet` 连接一个 Task/TaskExecution/Attempt 与一个或多个 `RepositoryComponent`，每个 component 记录 repository、baseRevision、local worktree/branch、head、remote branch/PR、GitObservation、Evidence、Acceptance 和 Delivery 引用。Worktree 是本地施工现场的 materialization，不再承担跨仓库语义；现有 Task/Attempt 仍是任务事实，不建立第二套任务系统。
+- **放弃的方案：** 以单个 Worktree 作为所有施工语义的中心，或把 GitHub PR 直接当作 Task；每个仓库、Issue、PR 各自维护一套任务状态。
+- **取舍：** 数据模型、跨 component lineage 和集成状态更复杂；换取一个任务可以明确表达前端、后端、基础设施等多仓库变化，并能把本地和远端对象关联起来。
+- **后果：** ChangeSet 需要独立状态、scope、digest、acceptancePolicy 和 integrationPolicy；组件局部成功不能自动升级为整个 ChangeSet 成功。
+- **来源：** [S3 §4、§9、§14]；[S16]；[S17 Phase 0、Phase 5]。
+
+### ADR-SM-053：Repository Registry 与 Project 采用多对多引用，不复制仓库事实
+
+- **状态：** `已纳入计划`
+- **决定：** `Repository` 是带 provider、外部身份、默认分支、ref/branch policy 和权限边界的可复用资源；Project 通过显式引用和 role 使用一个或多个 Repository，同一个 Repository 可以被多个 Project 引用。Project 保存关系、策略和 ChangeSet 引用，不复制完整 Git 历史或远端状态。
+- **放弃的方案：** 一个 Project 只能绑定一个仓库，或每个 Project 复制一份仓库/PR/branch 事实。
+- **取舍：** 需要处理仓库共享、权限隔离、不同 Project 的 branch policy 和外部 provider 变更；换取 monorepo、polyrepo、共享基础库和跨项目依赖可以使用统一控制面。
+- **后果：** Repository identity、Project scope 和 ChangeSet component 必须分别验证；Project 不能因为拥有 Repository 引用就自动获得 push、merge 或删除远端分支权限。
+- **来源：** [S16]；[S17 Phase 0、Phase 5]。
+
+### ADR-SM-054：LocalGitObservation 与 RemoteObservation 分离
+
+- **状态：** `已纳入计划`
+- **决定：** 本地 Git/worktree 观察与 GitHub 等 provider 的远端观察使用不同类型和不同信任边界：`LocalGitObservation` 记录本地 ref/tree/worktree/diff；`RemoteObservation` 记录 remote ref、PR、check、review、branch protection 和 provider 返回状态。二者通过 repository、commit SHA、ChangeSet component 和 observedAt 关联，但不互相冒充。
+- **放弃的方案：** 将 GitHub PR 状态直接写成内部 Delivery 状态，或把本地 Git 命令结果当成远端已经接受的事实。
+- **取舍：** 需要处理最终一致、stale、webhook 丢失、轮询补偿、provider API 版本和权限不足；换取远端状态变化不会静默污染本地控制面。
+- **后果：** 外部观察必须带 provider、externalId、sourceVersion、observedAt、commit/ref 和 digest；过期或不完整的观察进入 stale/unknown/reconciliation，不能直接通过高影响 gate。
+- **来源：** [S16]；[S17 Phase 0、Phase 3]。
+
+### ADR-SM-055：GitHub 是远端协作投影和观察源，不建立第二套控制面
+
+- **状态：** `已纳入计划`
+- **决定：** GitHub Issue、Pull Request、Review、CheckRun、branch protection 和远端 branch 作为外部协作对象及其观察结果，通过稳定 external reference 映射到内部 Project/Issue/ChangeSet/Acceptance/Delivery；SlimeMold Control Plane 仍是任务意图、权限、预算、Decision 和生命周期的事实源。
+- **放弃的方案：** 让 GitHub Issue、PR board 或 CI 状态与 SlimeMold 各自成为任务系统，再靠标题、评论或自然语言同步。
+- **取舍：** 需要维护映射、外部删除/重开/转移/force-push 和 provider drift；换取远端生态可用而不牺牲内部可审计性。
+- **后果：** GitHub 评论、Issue 描述、PR 描述、webhook payload 和 CI 输出都是不可信输入；它们必须经过 schema、scope、commit 和权限检查，不能直接改变内部 Task、Acceptance 或授权。
+- **来源：** [S3 §4、§6、§9]；[S16]；[S17 Phase 3]。
+
+### ADR-SM-056：远端副作用采用 External Operation Ledger 和 read-back
+
+- **状态：** `已纳入计划`
+- **决定：** push branch、create/update PR、request review、rerun check、merge、close PR 和 delete remote branch 等操作，统一登记 `ExternalOperation`，经过 `planned → authorized → started → provider-observed → receipt`；provider API 返回成功不等于操作已完成，必须按预期状态 read-back。
+- **放弃的方案：** 仅依赖 SDK/API 的成功返回、Agent 最终文本或 webhook 到达来宣布远端操作成功；或让 Agent 直接持有并使用 GitHub token。
+- **取舍：** 需要幂等键、请求 digest、provider receipt、重试和 unknown/recovery 状态；换取网络超时、部分成功、重复请求和 provider 最终一致不会被误判或盲目重跑。
+- **后果：** merge read-back 至少要核对 PR merged 状态、merge commit SHA、目标分支 head、源 head、required checks 和 review policy；unknown 时停止高影响 retry，交给 reconciliation/recovery。
+- **来源：** ADR-SM-037；[S11]；[S16]；[S17 Phase 4]。
+
+### ADR-SM-057：多仓库交付采用 Integration Saga，不假装存在跨仓库原子事务
+
+- **状态：** `已纳入计划`
+- **决定：** 跨多个 Repository 的 ChangeSet 采用显式 `IntegrationPlan`/`IntegrationAttempt`/`MergeOrder`/`CompensationPolicy` 协调；准备、分支/PR、检查、审阅、按序合并和逐仓库 read-back 都是可恢复阶段。任一组件失败时，整体进入 `integration-partial` 或 recovery，而不是伪造全局 rollback。
+- **放弃的方案：** 把多个 GitHub merge 当作一个原子事务，或前一个仓库已合并后自动宣称其它仓库也已回滚。
+- **取舍：** 用户需要理解部分交付和兼容窗口，恢复、补偿和依赖编排成本更高；换取系统不会隐藏真实的跨仓库部分成功，也不会对已经被其他提交依赖的合并执行不安全回滚。
+- **后果：** merge 顺序、依赖、兼容性检查、补偿权限和人工接管条件必须显式记录；目标分支漂移或冲突创建新的 Integration/Delivery Attempt，不改写原 Worker branch。
+- **来源：** ADR-SM-033、ADR-SM-037；[S16]；[S17 Phase 5]。
+
+### ADR-SM-058：建立版本化架构协议，禁止静默改变跨边界语义
+
+- **状态：** `已纳入计划`
+- **决定：** 在实现 ChangeSet/GitHub 写操作前，建立统一的 `SlimeMold ChangeSet & External Repository Protocol v1`（暂定名称）作为跨阶段协议，覆盖 `Repository`、`ChangeSet`、`ChangeSetComponent`、`Worktree`、`GitObservation`、`RemoteObservation`、`ExternalOperation`、`IntegrationAttempt`、`Evidence`、`Acceptance`、`Receipt` 和 `CouncilDecision` 的身份、版本、状态、lineage、来源、digest、trust level、权限和恢复语义。
+- **放弃的方案：** 让各个 TypeScript 类型、事件、GitHub adapter 和 UI 各自增加 `version`，但没有统一协议、兼容矩阵和迁移规则；或用文档的静默编辑改变旧事实的解释。
+- **取舍：** 需要维护 protocol version、object schema version、event version、policy version、provider/API/tool version 的多层版本，并为旧事件、旧 ProjectFile 和旧 observation 编写 migration/conformance vectors；换取旧快照可读、可回放、可解释，外部 provider 变化不会悄悄改写历史含义。
+- **后果：** major 版本不兼容时必须迁移或拒绝；minor 版本只能做兼容扩展；未知字段、版本漂移、digest 不匹配、dangling reference 和无法迁移的数据必须 fail-closed 或进入 `needs-repair/recovery`。协议一旦被 runtime 使用，任何语义改变都必须产生新版本或显式 migration。
+- **状态边界：** 当前只是已纳入计划，协议文档、版本常量、兼容矩阵和 conformance fixtures 尚未实现；它不能被写成当前代码已经支持的能力。
+- **来源：** ADR-SM-012、ADR-SM-013、ADR-SM-015；[S16]；[S17 “必须先建立的版本化架构协议”、Phase 0]。
+
+### ADR-SM-059：议会和 Agent 默认使用 snapshot-bound Context Gateway
+
+- **状态：** `共同共识`
+- **决定：** Council 成员和执行 Agent 默认通过绑定 `snapshotId/observationId/baseRevision/headRevision/role/scope/budget` 的有界读取接口获取代码和证据；用户自己的 IDE 可以直接读取真实 branch/worktree，但 Agent 不能直接混用 live mutable worktree。
+- **放弃的方案：** 议会成员自由读取 live worktree，或只记录最后引用范围而不冻结审阅版本。
+- **取舍：** Context Gateway、索引、预算和 ContextRequest 增加系统成本；换取同一轮审阅基于同一版本、读取范围可审计、token/文件范围可控，live 变化会使快照失效而不是污染结论。
+- **后果：** 返回内容必须带路径、范围、digest 和 snapshotId；需要扩展范围必须提出受控请求；Security 只能收到脱敏配置视图，原始 secret 永远留在宿主信任域。
+- **来源：** ADR-SM-026、ADR-SM-027、ADR-SM-028、ADR-SM-042；[S16]；[S17 Phase 6]。
+
+### ADR-SM-060：GitObservation 采用实时轻量观察与里程碑完整快照的混合策略
+
+- **状态：** `共同共识`
+- **决定：** branch HEAD、dirty 状态、文件数量和简要 digest 采用低成本、去抖动的轻量观察；TaskStarted、宿主观察到 Worker commit、Acceptance、Council snapshot、Delivery 和 Recovery 等里程碑生成不可变完整 GitObservation。Council 只使用稳定快照，快照建立后 branch 变化必须使其失效或重新建立。
+- **放弃的方案：** 每个 commit 都保存完整 diff/blob，或只在任务结束时观察 Git。
+- **取舍：** 实时 UI 仍需接受轻量观察的 stale/延迟，完整快照和内容寻址 artifact 需要异步存储；换取大项目不会因重复复制 diff/blob 失控，同时重要决策节点具备可重建证据。
+- **后果：** UI 可以显示 live/stale 状态，但不得把 live metadata 当作审阅快照；artifact 使用 digest 去重，查询按文件、提交、diff 和 token 预算有界执行。
+- **来源：** [S16]；[S17 Snapshot/Context、Phase 1、Phase 7]。
+
+### ADR-SM-061：Worker commit 保留 author，宿主固定 committer 并绑定 Attempt trailers
+
+- **状态：** `共同共识`
+- **决定：** Worker 可以保留可识别的 author；committer 由 SlimeMold 宿主固定；commit 必须写入 `Run`、`Task`、`Attempt` 和 `baseRevision` trailers。宿主验证父链、内容、分支、baseRevision 和归属关系，不能仅信任 author name、时间或 commit message。
+- **放弃的方案：** 让 Worker 同时自由设置 author/committer 并把作者自报当作任务归属，或由宿主完全重建 commit 而丢失 Worker 施工身份。
+- **取舍：** Git identity、host key/config 和跨机器复现需要额外治理；换取用户 IDE 仍能看到 Worker 归属，同时 commit 写入主体和任务关联可由宿主审计。
+- **后果：** author 不等于授权主体，trailer 不等于 Acceptance；真正的成功仍须由 Host Evidence、Acceptance 和 Receipt 证明。
+- **来源：** [S16]。
+
+### ADR-SM-062：交付后保留 branch/worktree，目标漂移创建新 Integration Attempt
+
+- **状态：** `共同共识`
+- **决定：** 交付后默认保留 Worker branch、commit 历史和物理 Worktree，只有用户明确批准 Cleanup 才清理。Worker 通过 Acceptance 后，如果目标分支从 `baseRevision=A` 漂移到 `B`，不 rebase 或改写原 Worker branch；停止当前 Delivery，建立新的 Integration/Delivery Attempt，重新计算 merge-base、冲突和测试。
+- **放弃的方案：** 自动 rebase、force-update Worker branch、交付成功后立即清理，或把旧 Acceptance 直接套用到新目标分支。
+- **取舍：** 磁盘占用、保留策略和用户选择成本增加；换取原始施工证据不被覆盖，目标漂移不会把旧验收误用于新集成目标。
+- **后果：** Cleanup 是独立 destructive operation，必须拥有当前 generation、path、branch、revision、Acceptance 和用户批准；分支保留不等于可以自动 merge 或 push。
+- **来源：** ADR-SM-040；[S16]。
+
+### ADR-SM-063：远端 Security Agent 只接触脱敏配置，凭据留在宿主信任域
+
+- **状态：** `共同共识`
+- **决定：** Security Agent 可以检查字段名、存在性、来源、格式、权限和 digest，但不能读取 API key、token、密码、私钥、Bearer 值、Cookie、连接字符串或其它 secret 原文。GitHub connector 使用宿主托管的 credential handle，原始凭据不进入 Agent Context、DomainEvent、Evidence、Receipt 或共享日志。
+- **放弃的方案：** 为了让 Security Agent“完整判断”而把原始 secret 暴露给模型，或让 Agent 直接持有远端 token。
+- **取舍：** 某些需要 secret 内容的诊断必须由宿主确定性检查或人工完成，模型的可见信息减少；换取远端生态扩展不会扩大凭据泄露面。
+- **后果：** secret 发现、格式检查和权限检查产生脱敏 Evidence；任何日志或 artifact 命中凭据形状都必须写作 `[REDACTED]` 并进入安全处理路径。
+- **来源：** ADR-SM-042；[S11]；[S16]。
+
+### ADR-SM-064：Council 成员可配置，批准目标是共识而非单一成员权威
+
+- **状态：** `共同共识`
+- **决定：** 用户可以指定默认 Council；未指定时按 benchmark 中架构理解、漏洞发现和开发安全等相关领域选择候选成员。批准不能依赖某一个成员的单独判断；与用户需求相去甚远的行为、越权行为或需要修改系统文件/环境设置的行为属于硬风险候选，可触发一票否决。相同模型只有在上下文不共享、互不知道对方身份且被分配不同视角时，才可作为多个独立审阅角色。
+- **放弃的方案：** 固定不可替换的模型名单、单一“强模型”拥有最终批准权，或把同一上下文的多次生成伪装成独立共识。
+- **取舍：** benchmark 新鲜度、模型相关性、权重、公平性和 veto 精度需要额外治理；换取议会成员可以适应项目领域，且决策不依赖单点模型失误。
+- **后果：** 主控 Agent 和用户可以修改议会成员；议会不能修改自己的权限边界；benchmark 版本、成员、角色、权重和规则必须进入 Decision Snapshot。具体 quorum、权重和 Security veto 分类仍是开放协议问题。
+- **来源：** ADR-SM-030；[S16]。
+
+### ADR-SM-065：Council 配置采用 Global → Project → Decision Snapshot 并在决策开始时冻结
+
+- **状态：** `共同共识`
+- **决定：** 新任务默认继承 `Global Council Default`，项目可以通过 `Project Council Override` 覆盖，具体议会启动时生成不可变 `Decision-time Council Snapshot`。议会进行中修改成员、benchmark 版本、权重或规则只影响后续议会，不改变历史决策的解释。
+- **放弃的方案：** 在同一轮审议中热更成员或权重，或只保存最终票而不保存当时的配置。
+- **取舍：** 需要保存配置版本、继承来源、有效时间和 snapshot digest；换取历史决策可复现，后续模型/benchmark 更新不会 retroactively 改变旧结论。
+- **后果：** Council 结果必须引用 exact configuration snapshot；配置修改权限、弃权/quorum 和 benchmark 权重的最终公式仍需另行决策。
+- **来源：** ADR-SM-013、ADR-SM-030；[S16]。
+
+### ADR-SM-066：Worktree/GitObservation 性能数字先作为 provisional guardrails，不作为永久架构承诺
+
+- **状态：** `已纳入计划`
+- **决定：** 初版采用可测量的暂定 guardrails：active Worker worktree 默认 8、项目上限 32；中型仓库轻量观察目标 p95 小于 500ms、完整快照目标 p95 小于 10s；磁盘剩余 20% 报警，10% 或 10GB 停止新增高副作用 Worker，5% 或 5GB 停止 worktree allocation 和 snapshot blob 写入。真实 benchmark 后可以通过新版本化配置/Decision 调整。
+- **放弃的方案：** 在没有仓库规模、Windows 冷热缓存和多 worktree 数据的情况下声称固定容量，或磁盘不足时自动删除 Evidence、Acceptance、Receipt、unknown、quarantined 和用户 pin 内容。
+- **取舍：** 初始数字可能保守或不适用于所有项目，需要 benchmark 和用户可见的限流；换取“大项目支持”先成为可观察的性能目标，而不是无证据承诺。
+- **后果：** 必须 benchmark 1 万/10 万/100 万级文件、8/32/64 worktree、冷/热缓存、untracked scan、完整 snapshot 和 Windows 长路径；guardrail 变更必须保留版本和原因。
+- **来源：** [S16]；[S17 Phase 7]。
+
+### ADR-SM-067：先完成协议和 GitHub read-only observation，再逐步开放远端写操作
+
+- **状态：** `已纳入计划`
+- **决定：** 生态扩展顺序为：版本化协议与 conformance fixtures → 本地 GitObservation → GitHub read-only adapter → External Operation Ledger → push/PR/review → 多仓库 Integration Saga → merge/release/delete 等高影响操作。没有协议版本、兼容矩阵、read-back 和失败恢复，不改变 Worker 成功语义，也不开放远端高影响写操作。
+- **放弃的方案：** 先实现 GitHub push/merge，再补内部事实、协议和恢复；或把 provider API 的成功返回当成系统已经交付。
+- **取舍：** 早期可见的生态功能更少，协议和 fixture 工作占比更高；换取外部副作用不会先于本地事实、权限和恢复能力成熟。
+- **后果：** 每个外部写操作独立 checkpoint、测试和 receipt；当前总体状态继续保持 `mvp-closed-unverified`，未经明确授权不 push、merge 或清理。
+- **来源：** ADR-SM-037、ADR-SM-047、ADR-SM-049；[S16]；[S17]。
+
 ---
 
 ## 6. 当前仍未决定或不能过度宣称的事项
@@ -580,7 +734,16 @@ authority: decision-log
 7. 完整 ProjectControl event source、旧 `workflowStore`/executor cutover、跨文件事务和多实例 execution lease；
 8. 通用文档、配置、设计资产、3D 资产的完整 Artifact acceptance contract；
 9. 真实 Tauri disposable GUI → Worker → Acceptance → Delivery → Cleanup → Restart 的最终快照 reviewer `passed=true`；
-10. Zod 的具体包范围、schema version 和 legacy migration 实施方案。
+10. Zod 的具体包范围、schema version 和 legacy migration 实施方案；
+11. `SlimeMold ChangeSet & External Repository Protocol v1` 的正式命名、稳定 schema、事件/对象版本划分、兼容矩阵和旧数据迁移实现；
+12. ChangeSet、Repository、RepositoryComponent 与现有 Project/Task/TaskExecution/Attempt 的最终字段和持久化布局；
+13. GitHub provider 的认证方式、Project/Repository 权限映射、webhook 与轮询补偿、rate-limit 和 provider version 策略；
+14. ExternalOperation 的具体幂等键、unknown recovery、重试上限以及 push/PR/merge/delete 的逐项批准边界；
+15. 多仓库 Integration Saga 的 merge order、兼容性检查、compensation 是否允许自动执行，以及 `integration-partial` 的用户恢复流程；
+16. Council 的 quorum、弃权、缺席成员、benchmark 权重归一化、同模型角色的相关性上限和 Security veto 精确分类；
+17. 主控 Agent 修改 Council 成员或规则是否需要用户批准，以及 Council 三轮未达成共识后的成员替换权限；
+18. GitObservation 快照的物理存储、artifact 加密/备份/跨机器恢复、成功/失败/unknown/quarantined 的 GC 和磁盘预算细节；
+19. provisional 性能 guardrails 的真实 benchmark 结果，以及它们是否需要按仓库规模、操作系统或 provider 分层。
 
 ### 6.1 重新审议触发条件
 
@@ -612,6 +775,8 @@ authority: decision-log
 - **[S13]** `docs/history/decision-reviews/SLIMEMOLD_ARCHITECTURE_DIRECTION_REVIEW.md`：历史性的产品/架构共同审视和边缘场景推导。
 - **[S14]** `docs/DEVELOPMENT_LOG.md`：已发生的实现和真实验证历史；不能单独证明未记录的设计建议已获批准。
 - **[S15]** `2026-09-12 用户讨论`：摘要/Evidence 查询、ContextPack、子代理 anti-bypass、FeedbackRequest、承建方及横向角色确认；本条来源保留在会话历史和 [S10] 计划中。
+- **[S16]** `2026-09-14–2026-09-15 用户讨论`：Git worktree 第二事实源、GitObservation、Worktree/commit 生命周期、Council 治理、snapshot-bound Context Gateway、性能 guardrails、ChangeSet、GitHub 远端观察和多仓库集成边界。
+- **[S17]** `.hermes/plans/2026-09-14_221205-change-set-github-ecosystem.md`：ChangeSet、Repository、Local/Remote Observation、External Operation Ledger、Integration Saga、版本化架构协议和分阶段实施计划；计划不等于实现验证。
 
 ---
 

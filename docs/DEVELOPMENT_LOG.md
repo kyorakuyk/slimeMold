@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-06
+updated: 2026-09-15
 tags:
   - SlimeMold
   - Agent
@@ -11,7 +11,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-09-06
+period: 2026-07-29 至 2026-09-15
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -2482,6 +2482,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 真实 Tauri Worker GUI 失败结论不变，当前状态继续为 `mvp-closed-unverified`。
 
+
+### 7.107 记录 ChangeSet 与远端开发生态决策边界
+
+- 本轮没有修改生产代码，没有修改 `D:/Agents/SMtest`，没有 push/merge，也没有把计划、图标素材、原始日志或 `.workbuddy` 纳入本轮文档提交；控制面状态继续为 `mvp-closed-unverified`。
+- 按用户要求暂停实现，补充 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md`，新增 ADR-SM-051 至 ADR-SM-067。
+- 文档记录了 Git worktree 作为代码状态/谱系第二事实源、ChangeSet 一级对象、Repository 多对多引用、Local/Remote Observation 分离、GitHub 外部投影、External Operation Ledger、多仓库 Integration Saga、snapshot-bound Context Gateway、混合 GitObservation 采集、宿主 commit 身份、远端 secret 隔离、Council 治理和 provisional 性能 guardrails。
+- 正式记录“版本化架构协议”是后续实现前的协议门禁：当前只纳入计划，尚未声称协议文档、schema、兼容矩阵或 conformance fixtures 已实现。
+- 待议事项同步扩展为协议版本/迁移、ChangeSet 持久化、GitHub 权限与同步、外部操作恢复、多仓库补偿、Council quorum/权重/veto、artifact GC 和 benchmark 等问题。
+
+验证结果：
+
+- `git diff --check`：通过。
+- 本轮为文档决策整理，未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless 或 Rust 测试；不能把本轮文档检查写成生产质量门通过。
+
+---
 
 如果不想一次发布全文，可以拆成下面几篇：
 
