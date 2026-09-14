@@ -2430,6 +2430,17 @@ Issue 工作台采用四个面板：
 GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disposable fixture 做了文件事实 read-back；该 fixture 被识别为旧通用 workflow（`workerRuns=[]`），不是当前 WorkerQueue 执行。自动化打开项目入口在本次 WebView 输入通道中未获得可靠回读，因此没有把旧 workflow 的 Evidence/Acceptance 记录冒充为当前 Worker E2E。真实 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 仍未通过当前 HEAD 的完整 GUI 闭环，状态继续为 `mvp-closed-unverified`。
 
 
+### 7.104 真实 Tauri Worker GUI 自验收：worktree 分配 fail-closed
+
+- 通过当前分支真实 Tauri WebView 加载仓库外 disposable Worker fixture，经过轻量工作台的 `确认执行计划` 产品门，确实写入 `RunCreated`、`TaskQueued`、`RunStarted` 和 `TaskStarted`；这不是 headless 或 Agent 自报结果。
+- 在独立 clone `D:/Temp/slimemold-worker-acceptance-isolated-20260914-094939` 上，Run `run-3973fc2f-cc49-4e69-a59c-0822dda5e28c` 最终为 `partial`，Task 为 `failed`，canonical error 为 `worktree 分配失败：创建 worktree 失败`；目标 `docs/WORKER_E2E_OK.txt` 不存在，`evidence/host.jsonl` 和 `acceptance/records.jsonl` 均没有记录，Git worktree list 没有登记成功 Worker。
+- 同一 identity 在短 disposable clone `D:/Temp/sm-e2e` 上直接执行 `git worktree add` 成功，而长 fixture 的同一次尝试留下 branch 后报 `'$GIT_DIR' too big`；因此本次失败首先暴露了 Windows/Git worktree 路径长度边界，不能冒充 Evidence/Acceptance 成功，也不能据此宣称 Worker 闭环已通过。
+- 另建短根 approval-fact fixture `D:/Temp/sm-e2e-accept`；第二次 GUI 确认动作被自动化执行审批拦截，未产生 Run，未把它计入结果。
+- 失败 Run、branch 和 disposable probe worktree 均保留；没有清理成功 worktree，没有触碰 `D:/Agents/SMtest`。
+
+本次真实 GUI 验收结论：`FAIL / mvp-closed-unverified`。代码/自动化质量门仍通过，但 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 的成功闭环尚未通过当前 HEAD；不得标记 `[verified]`、push 或 merge。
+
+
 如果不想一次发布全文，可以拆成下面几篇：
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
