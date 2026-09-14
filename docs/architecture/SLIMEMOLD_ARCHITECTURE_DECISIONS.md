@@ -719,6 +719,15 @@ authority: decision-log
 - **后果：** 每个外部写操作独立 checkpoint、测试和 receipt；当前总体状态继续保持 `mvp-closed-unverified`，未经明确授权不 push、merge 或清理。
 - **来源：** ADR-SM-037、ADR-SM-047、ADR-SM-049；[S16]；[S17]。
 
+### ADR-SM-068：执行引擎采用分阶段纯内核抽取，不进行一次性重写
+
+- **状态：** `已实现但未完全验证`
+- **决定：** 执行引擎按“确定性计划编译 → 调度状态机 → Runtime/Host Adapter → 控制面持久化与恢复”的顺序渐进拆分。第一阶段先把图展开、执行集、重试范围、层级冲突簇和循环上限抽为无 store、无 I/O 的 `ExecutionKernel`；现有 `executor` 暂时继续拥有节点副作用、缓存失效、运行事件、状态写回和收尾。
+- **放弃的方案：** 立即重写 `executor`/`workflowStore`/`WorkerQueue`，或把执行引擎拆成多个进程/微服务；也不把 WorkerQueue 变成第二套执行引擎。
+- **取舍：** 迁移期会保留旧 executor 和新纯计划边界，短期仍存在双轨运行时；换取每一刀都能通过现有行为回归、真实 Tauri 闭环不被重构噪声掩盖，并允许后续把 Worker、Headless 和 Tauri 接到同一套确定性状态语义。
+- **后果：** 新的 ChangeSet/GitHub/远端副作用不得直接进入 `ExecutionKernel`；只有在最小真实 Tauri 成功、失败/恢复路径和 lineage 契约稳定后，才继续抽离 Host Adapter、Evidence/Acceptance/Receipt 和 ProjectControl 持久化边界。
+- **来源：** [S14] `docs/DEVELOPMENT_LOG.md` §7.108；用户确认开始执行引擎渐进拆分；当前实现为 `src/engine/executionKernel.ts`。
+
 ---
 
 ## 6. 当前仍未决定或不能过度宣称的事项

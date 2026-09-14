@@ -14,12 +14,10 @@ import { Semaphore, withRetry } from './rateLimiter';
 import { ownerRefId } from './subgraph';
 import {
   computeDownstream,
-  computeExecutionSet,
-  planClustersPerStage,
   resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
-import { buildRunPlan } from './runPlan';
+import { compileExecutionPlan } from './executionKernel';
 import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { decideNodeExecution } from './nodeExecutionPolicy';
@@ -334,14 +332,36 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
     return { status: 'aborted', runId: gen.currentRunId, error: '还没放任何节点' };
   }
 
-  let plan: ReturnType<typeof buildRunPlan>;
+  let plan: ReturnType<typeof compileExecutionPlan>;
   try {
-    plan = buildRunPlan(graphNodes, graphEdges, wf.subgraphs);
+    plan = compileExecutionPlan(graphNodes, graphEdges, wf.subgraphs, {
+      incremental: opts.incremental,
+      retryFailed: opts.retryFailed,
+      forceNodes: opts.forceNodes,
+      stopAfterNodes: opts.stopAfterNodes,
+      isolated: opts.isolated,
+      maxLoopsOverride: opts.maxLoopsOverride,
+    });
   } catch (err) {
     wf.addLog('error', err instanceof Error ? err.message : String(err));
     return { status: 'aborted', runId: gen.currentRunId, error: err instanceof Error ? err.message : String(err) };
   }
-  const { nodes, edges, stages, cyclic, loopGateIds, loopVarOf, maxLoopsOf, loopBodyOf, hasLoop } = plan;
+  const {
+    nodes,
+    edges,
+    stages,
+    cyclic,
+    loopGateIds,
+    loopVarOf,
+    loopBodyOf,
+    hasLoop,
+    force,
+    dirtySet,
+    stopAfter,
+    isolatedIds,
+    clusterPlan,
+    maxRounds,
+  } = plan;
   const expandedCount = nodes.length - graphNodes.length;
   if (expandedCount > 0) {
     wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
@@ -358,17 +378,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
     return { status: 'aborted', runId: gen.currentRunId, error: `节点连成了死循环（${labels}）` };
   }
 
-  const force = new Set(opts.forceNodes ?? []);
-  const stopAfter = new Set(opts.stopAfterNodes ?? []);
-  const isolatedIds = opts.isolated ? new Set(opts.forceNodes ?? []) : undefined;
-  // 失败续跑（L1）：把上一轮 error 节点及其全部下游标记为本次需执行集
-  if (opts.retryFailed) {
-    const errored = nodes.filter((n) => n.data.status === 'error').map((n) => n.id);
-    for (const id of errored) {
-      const downstream = computeDownstream(id, edges); // 含 errored 自身
-      for (const d of downstream) force.add(d);
-    }
-  }
   // 全量运行：清除所有脏标记（之后全部节点都视为需执行，命中缓存者跳过）
   // 增量运行：保留脏标记，仅执行脏节点及其下游
   if (!opts.incremental && !opts.retryFailed) {
@@ -377,10 +386,6 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   } else {
     for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '', composeCacheScope(wfId, id));
   }
-  // 执行集（纯计算，来自 graphAlgo.computeExecutionSet）：
-  //  - force 节点恒在执行集；增量模式叠加 data.dirty；子图虚拟节点一律视为需执行。
-  const { dirtySet } = computeExecutionSet(nodes, { ...opts, forceNodes: [...force] });
-
 
   // 强制重跑：清空全局节点缓存，使所有节点都重新执行（不复用上一轮 LLM 结果）
   if (opts.forceRerun) {
@@ -462,11 +467,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   for (const gid of loopGateIds) loopVarsState[loopVarOf.get(gid)!] = 0;
 
   // 整体轮次循环：存在 control 回环时重复跑整个 stage 序列（Step 6 迭代循环）
-  const maxRounds = opts.maxLoopsOverride ?? Math.min(50, Math.max(1, ...maxLoopsOf.values()));
   let round = 0;
   let loopContinued = false;
-  // 预计算每层的 scope 串行化簇划分（层结构 stages 与边 edges 在轮间稳定，无需每轮重算）
-  const clusterPlan = planClustersPerStage(stages, edges);
   // A3：真正开始调度前发出运行开始事件（Node 级事件紧随其后）。
   emitRun(getRunBus(), 'run.started', runCtx);
   do {

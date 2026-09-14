@@ -2496,6 +2496,28 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过。
 - 本轮为文档决策整理，未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless 或 Rust 测试；不能把本轮文档检查写成生产质量门通过。
 
+
+### 7.108 执行引擎第一刀：抽离纯执行计划编译
+
+- 本轮在新的本地 checkpoint `4093b9f` 之后开始实施执行引擎渐进拆分；保留无关未跟踪计划、图标素材、原始日志和 `.workbuddy`，没有 push/merge，也没有修改 `D:/Agents/SMtest`。
+- 新增 `src/engine/executionKernel.ts` 与 `src/engine/executionKernel.test.ts`，把图展开、执行集计算、`retryFailed` 作用域、层内冲突簇、循环最大轮数和运行选项归一收拢为无 store、无 I/O 的纯 `compileExecutionPlan`。
+- `src/engine/executor.ts` 现在消费该计划并继续负责副作用、节点执行、缓存失效、运行事件、状态写回和收尾；本轮没有把 Tauri、Worker、Evidence、Acceptance、Receipt 或 ProjectFile 纳入拆分，避免一次性改变生产事实边界。
+- 测试先固定了“retryFailed 必须包含失败节点自身及其下游”的契约；迁移时补上失败节点本身的 force 标记，修正原有实现只加入下游、可能漏重跑失败节点的问题。
+- 这是执行内核的第一条垂直切片，不代表执行引擎已经完成拆分，也不代表真实 Tauri Worker 闭环已通过；控制面状态继续为 `mvp-closed-unverified`。
+
+验证结果：
+
+- targeted：`executionKernel`、`executorLifecycle`、`runScheduler`、`graphAlgo` 共 4 个测试文件、81 个测试通过；
+- `npm run test`：124 个测试文件、1073 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 仍未重新验收；本轮只完成执行计划纯逻辑的进程内拆分，不能标记 `[verified]`。
+
 ---
 
 如果不想一次发布全文，可以拆成下面几篇：
