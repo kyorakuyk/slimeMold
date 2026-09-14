@@ -113,10 +113,18 @@ export function createCodexWorkerExecutor(options: CodexWorkerExecutorOptions): 
       if (evidenceIds.length === 0) {
         return { status: 'failed', error: '宿主验收通过但没有 Evidence ID' };
       }
+      const acceptanceId = verdict.acceptanceId?.trim();
+      if (!acceptanceId) {
+        return {
+          status: 'failed',
+          evidenceIds,
+          error: '宿主验收通过但缺少 Acceptance ID',
+        };
+      }
       return {
         status: 'succeeded',
         evidenceIds,
-        ...(verdict.acceptanceId ? { acceptanceId: verdict.acceptanceId } : {}),
+        acceptanceId,
       };
     },
   };
