@@ -479,7 +479,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
       dirtySet,
       force,
       loopVarsState,
-      strike,
+      strike: (nodeId, typeId) => strike(typeId, composeCacheScope(wfId, nodeId)),
     });
     // 本轮开始日志（round > 0）
     if (round > 0) {

@@ -33,7 +33,7 @@ export function prepareLoopRound(args: {
   dirtySet: Set<string>;
   force: Set<string>;
   loopVarsState: Record<string, number>;
-  strike: (typeId: string) => void;
+  strike: (nodeId: string, typeId: string) => void;
 }): void {
   const { round, loopBodies, loopVarOf, nodeById, dirtySet, force, loopVarsState, strike } = args;
   if (round <= 0) return;
@@ -41,11 +41,11 @@ export function prepareLoopRound(args: {
     // loopGate 自身每轮强制重算（见上方注释：防缓存命中吞掉分支上报）
     dirtySet.add(gid);
     force.add(gid);
-    strike(nodeById.get(gid)?.data.typeId ?? '');
+    strike(gid, nodeById.get(gid)?.data.typeId ?? '');
     for (const bid of body) {
       dirtySet.add(bid);
       force.add(bid);
-      strike(nodeById.get(bid)?.data.typeId ?? '');
+      strike(bid, nodeById.get(bid)?.data.typeId ?? '');
     }
     const lv = loopVarOf.get(gid);
     if (lv) loopVarsState[lv] = round;
