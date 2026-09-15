@@ -24,6 +24,12 @@ export interface MissingWorkerRunProjectionResult extends WorkerRunRehydrationRe
   restored: boolean;
 }
 
+export interface WorkerRunSnapshotReconciliationResult {
+  runs: WorkerRunQueueState[];
+  changedRunIds: string[];
+  issues: WorkerRunRehydrationIssue[];
+}
+
 function payload(event: DomainEvent): EventPayload {
   return typeof event.payload === 'object' && event.payload !== null && !Array.isArray(event.payload)
     ? event.payload as EventPayload
@@ -46,6 +52,7 @@ function stringList(value: unknown): string[] | undefined {
 function runStatusFor(eventType: string): WorkerRunQueueState['status'] | undefined {
   switch (eventType) {
     case 'RunCreated': return 'queued';
+    case 'RunQueued': return 'queued';
     case 'RunStarted': return 'running';
     case 'RunPartial': return 'partial';
     case 'RunSucceeded': return 'succeeded';
@@ -85,7 +92,8 @@ function applyTaskEvent(
   if (!status && event.eventType !== 'TaskCleaned' && event.eventType !== 'TaskAttemptMarkedUnknown') return state;
 
   const taskExecutionId = text(p.taskExecutionId) ?? current.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
-  const attempt = positiveInteger(p.attempt) ?? current.attempt;
+  const nextAttempt = event.eventType === 'TaskQueued' ? positiveInteger(p.nextAttempt) : undefined;
+  const attempt = nextAttempt !== undefined ? nextAttempt - 1 : positiveInteger(p.attempt) ?? current.attempt;
   const attemptId = text(p.attemptId)
     ?? (attempt > 0 ? createAttemptId(taskExecutionId, attempt) : undefined);
   const next: WorkerQueueTask = {
@@ -127,6 +135,24 @@ function applyTaskEvent(
   if (event.eventType === 'TaskAttemptMarkedUnknown') {
     next.status = 'running';
     next.currentAttemptId = undefined;
+  }
+  if (event.eventType === 'TaskQueued' && nextAttempt !== undefined) {
+    next.status = 'queued';
+    next.pendingAttempt = nextAttempt;
+    next.currentAttemptId = undefined;
+    next.worktreeId = undefined;
+    next.worktreePath = undefined;
+    next.branch = undefined;
+    next.baseRevision = undefined;
+    next.worktreeStatus = undefined;
+    next.branchRevision = undefined;
+    next.cleanupStateSignature = undefined;
+    next.evidenceIds = [];
+    next.acceptanceId = undefined;
+    next.cleanupStatus = undefined;
+    next.cleanupReceiptId = undefined;
+    next.error = undefined;
+    next.feedbackId = undefined;
   }
 
   return {
@@ -224,4 +250,38 @@ export function restoreMissingWorkerRunsFromEvents(input: {
     ...result,
     restored: result.issues.length === 0 && result.runs.length > 0,
   };
+}
+
+/** Reconcile an existing ProjectFile snapshot with durable retry fences. */
+export function reconcileWorkerRunsFromEvents(input: {
+  projectId: string;
+  events: readonly DomainEvent[];
+  runs: readonly WorkerRunQueueState[];
+}): WorkerRunSnapshotReconciliationResult {
+  const issues: WorkerRunRehydrationIssue[] = [];
+  const changedRunIds: string[] = [];
+  const runs = input.runs.map((run) => {
+    let state = run;
+    for (const event of input.events) {
+      if (event.streamId !== input.projectId) continue;
+      const p = payload(event);
+      const eventRunId = text(p.runId) ?? (event.aggregateType === 'Run' ? event.aggregateId : undefined);
+      if (eventRunId !== run.runId) continue;
+      if (event.eventType === 'RunQueued' && state.status !== 'succeeded') {
+        state = { ...state, status: 'queued', updatedAt: event.occurredAt };
+        continue;
+      }
+      const nextAttempt = positiveInteger(p.nextAttempt);
+      if (event.eventType !== 'TaskQueued' || nextAttempt === undefined) continue;
+      const taskId = text(p.taskId) ?? (event.aggregateType === 'Task' ? event.aggregateId : undefined);
+      const current = taskId ? state.tasks[taskId] : undefined;
+      if (!taskId || !current || (current.status === 'succeeded' && current.attempt >= nextAttempt)) continue;
+      const before = JSON.stringify(state);
+      state = applyTaskEvent(state, event, issues);
+      if (JSON.stringify(state) === before) continue;
+    }
+    if (JSON.stringify(state) !== JSON.stringify(run)) changedRunIds.push(run.runId);
+    return state;
+  });
+  return { runs, changedRunIds, issues };
 }

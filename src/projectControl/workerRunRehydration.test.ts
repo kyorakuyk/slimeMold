@@ -6,6 +6,7 @@ import {
 import type { ProjectTaskGraph } from './types';
 import {
   rehydrateWorkerRunsFromEvents,
+  reconcileWorkerRunsFromEvents,
   restoreMissingWorkerRunsFromEvents,
 } from './workerRunRehydration';
 
@@ -100,5 +101,94 @@ describe('rehydrateWorkerRunsFromEvents', () => {
     });
     expect(restored).toMatchObject({ restored: true, issues: [] });
     expect(restored.runs).toHaveLength(1);
+  });
+
+  it('reconciles a stale ProjectFile snapshot with a durable retry fence', () => {
+    const run = createWorkerRunQueue({
+      projectId: 'project-rehydrate-1',
+      runId: 'run-rehydrate-retry',
+      taskGraph: graph,
+      now: '2026-09-15T00:00:00.000Z',
+    }).snapshot();
+    const taskExecutionId = 'task-execution:run-rehydrate-retry:task-marker';
+    const stale = {
+      ...run,
+      status: 'partial' as const,
+      tasks: {
+        ...run.tasks,
+        'task-marker': {
+          ...run.tasks['task-marker'],
+          taskExecutionId,
+          status: 'failed' as const,
+          attempt: 1,
+          currentAttemptId: `${taskExecutionId}:attempt-1`,
+          worktreeId: 'old-worktree',
+          worktreePath: 'D:/old-worktree',
+          branch: 'worker/old-worktree',
+          baseRevision: 'base-1',
+          evidenceIds: ['old-evidence'],
+          acceptanceId: 'old-acceptance',
+          error: 'old failure',
+          updatedAt: '2026-09-15T00:01:00.000Z',
+        },
+      },
+    };
+    const events = [
+      {
+        eventId: 'retry-run-queued',
+        streamId: 'project-rehydrate-1',
+        sequence: 1,
+        aggregateType: 'Run',
+        aggregateId: stale.runId,
+        aggregateVersion: 1,
+        eventType: 'RunQueued',
+        schemaVersion: 1,
+        payload: { runId: stale.runId },
+        actor: 'user' as const,
+        occurredAt: '2026-09-15T00:02:00.000Z',
+        correlationId: stale.runId,
+        source: { objectId: graph.id, objectVersion: graph.graphVersion },
+        sensitivity: 'normal' as const,
+      },
+      {
+        eventId: 'retry-task-queued',
+        streamId: 'project-rehydrate-1',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 1,
+        eventType: 'TaskQueued',
+        schemaVersion: 1,
+        payload: {
+          runId: stale.runId,
+          taskId: 'task-marker',
+          taskExecutionId,
+          nextAttempt: 2,
+        },
+        actor: 'user' as const,
+        occurredAt: '2026-09-15T00:02:00.000Z',
+        correlationId: stale.runId,
+        source: { objectId: graph.id, objectVersion: graph.graphVersion },
+        sensitivity: 'normal' as const,
+      },
+    ];
+
+    const result = reconcileWorkerRunsFromEvents({
+      projectId: 'project-rehydrate-1',
+      events,
+      runs: [stale],
+    });
+
+    expect(result.issues).toEqual([]);
+    expect(result.changedRunIds).toEqual([stale.runId]);
+    expect(result.runs[0]).toMatchObject({ status: 'queued' });
+    expect(result.runs[0].tasks['task-marker']).toMatchObject({
+      status: 'queued',
+      attempt: 1,
+      pendingAttempt: 2,
+      evidenceIds: [],
+    });
+    expect(result.runs[0].tasks['task-marker'].worktreePath).toBeUndefined();
+    expect(result.runs[0].tasks['task-marker'].currentAttemptId).toBeUndefined();
   });
 });

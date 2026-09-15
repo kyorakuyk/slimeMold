@@ -47,7 +47,7 @@ import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency
 import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
 import { auditProjectControlConsistency } from './projectControl/projectControlConsistency';
 import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunOrchestrationProjection';
-import { rehydrateWorkerRunsFromEvents } from './projectControl/workerRunRehydration';
+import { reconcileWorkerRunsFromEvents, rehydrateWorkerRunsFromEvents } from './projectControl/workerRunRehydration';
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
 import type { AcceptanceRecord } from './dev/session';
@@ -391,6 +391,26 @@ export default function App() {
       let current = useWorkflowStore.getState();
       if (!current.projectId || current.projectPath !== projectPath) return;
       const projectId = current.projectId;
+      const reconciledSnapshots = reconcileWorkerRunsFromEvents({
+        projectId,
+        events: parsed.events,
+        runs: current.workerRuns,
+      });
+      if (reconciledSnapshots.issues.length > 0) {
+        current.addLog(
+          'warn',
+          `Worker retry snapshot reconciliation 发现问题：${reconciledSnapshots.issues.map((item) => item.message).join('；')}`,
+        );
+      }
+      if (reconciledSnapshots.changedRunIds.length > 0) {
+        current.setWorkerRuns(reconciledSnapshots.runs);
+        current.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(current.orchestrations, reconciledSnapshots.runs),
+        );
+        await current.saveProject({ projectId, projectPath, signal });
+        if (signal?.aborted) return;
+        current = useWorkflowStore.getState();
+      }
       const rehydrated = current.workerRuns.length === 0
         ? rehydrateWorkerRunsFromEvents({
           projectId,
