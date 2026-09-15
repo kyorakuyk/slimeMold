@@ -160,7 +160,7 @@ export function recoverWorkerRunCommand(
   const failedTaskIds = Object.values(input.state.tasks)
     .filter((task) => task.status === 'failed' || task.status === 'running')
     .map((task) => task.taskId);
-  const plan = buildWorkerRunRecoveryPlan(input.state.runId, input.journal, failedTaskIds);
+  const plan = buildWorkerRunRecoveryPlan(input.state.runId, input.journal, failedTaskIds, input.state);
   const decision = decideWorkerRunRecovery(plan, input.decision, reason);
   const state = applyWorkerRunRecoveryDecision({
     plan,

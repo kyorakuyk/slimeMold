@@ -558,11 +558,17 @@ export function buildWorkerRunRecoveryPlan(
   runId: string,
   journal: SideEffectJournal,
   failedTaskIds: readonly string[] = [],
+  state?: WorkerRunQueueState,
 ): WorkerRunRecoveryPlan {
   const normalizedRunId = requiredText(runId, 'run id');
   const normalizedFailedTaskIds = [...new Set(failedTaskIds.map((taskId) => requiredText(taskId, 'task id')))];
   const effects = journal.entries
     .filter((entry) => entry.runId === normalizedRunId)
+    .map((entry) => {
+      if (state) assertRecoverableWorkerEffect(entry, normalizedRunId);
+      return entry;
+    })
+    .filter((entry) => !state || (entry.taskId !== undefined && effectBelongsToCurrentAttempt(entry, state, entry.taskId)))
     .map((entry) => ({ ...entry }));
   return normalizeWorkerRunRecoveryPlan({
     runId: normalizedRunId,
@@ -637,7 +643,7 @@ export function decideWorkerRunRecovery(
   const normalizedPlan = normalizeWorkerRunRecoveryPlan(plan);
   if (!normalizedPlan.allowedDecisions.includes(decision)) throw new Error(`不允许的恢复决策：${decision}`);
   const normalizedReason = requiredText(reason, '恢复理由');
-  if (!normalizedPlan.requiresUser) throw new Error(`Run 没有待核对的副作用：${normalizedPlan.runId}`);
+  if (!normalizedPlan.requiresUser) throw new Error(`Run 没有待核对的副作用或当前 task/attempt/assignment 不匹配：${normalizedPlan.runId}`);
   return {
     runId: normalizedPlan.runId,
     decision,
