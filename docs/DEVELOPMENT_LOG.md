@@ -2540,6 +2540,26 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 真实 Tauri Worker GUI 仍未重新验收；本轮没有标记 `[verified]`。
 
+
+### 7.110 真实 Tauri Worker 垂直闭环验证：Worktree 成功但验收与恢复失败
+
+- 本轮验证基线为执行生命周期协调器提交 `9fed909`，随后创建仅包含本轮文档变更边界的空 checkpoint `1e94122`；没有修改生产代码，没有 push/merge，没有修改 `D:/Agents/SMtest`，也没有清理成功的 disposable worktree。
+- 第一份短路径 fixture `D:/Temp/sm-tauri` 通过真实 Tauri GUI 的项目选择和执行计划确认入口验证；由于 `.slimemold/acceptance/records.jsonl` 父目录不存在，`dev_init_session` 后的 Acceptance store 初始化失败，错误为 `failed to open file .../.slimemold/acceptance/records.jsonl with os error 3`，UI 显示“开发宿主不可用，Worker 未启动”。重启后其事件流仍有 15 条，但 `workerRuns` 被读回为空，说明该失败路径也暴露了持久化快照覆盖问题。
+- 为隔离前置目录缺陷，第二份 fixture `D:/Temp/sm-tauri2` 以 Git 基线 `3be065e` 创建，并预置空的 `.slimemold/acceptance/records.jsonl` 与 `.slimemold/evidence/host.jsonl`。真实 GUI 确认执行计划后，事件流按顺序产生 `ExecutionDraftApproved → RunCreated → TaskQueued → RunStarted → TaskStarted → TaskFailed → RunPartial`。
+- 第二次运行真实创建了 Worker worktree：`D:/Temp/sm-tauri2-workers/w-7461736b2d657865637574696f6e3a72756e2d31343131383266342d353539302d343434612d383938372d3466643266343139626665623a7461736b2d6372656174652d776f726b65722d6d61726b65723a617474656d70742d31`，branch 为对应的 `worker/w-...`，基线为 `3be065ee082a5c4c10c1c3f0c11226154485b1f5`；worktree 真实存在，`docs/WORKER_E2E_OK.txt` 真实存在且内容为 `SlimeMold Tauri Worker E2E passed.`。这证明了 `确认计划 → Worker Attempt → Tauri worktree → Worker 文件落盘` 已穿过当前 HEAD。
+- Host Acceptance 随后失败在 Rust `dev_exec` 命令白名单：前端 `gitChangedFiles()` 必须调用 `git diff --name-only 3be065ee082a5c4c10c1c3f0c11226154485b1f5`，而 Rust worktree 白名单只覆盖 `git diff --name-only HEAD`，因此返回 `dev_exec: 命令在当前 cwd 不被允许`。本次失败发生在 changed-files 读取之前，host Evidence 为 0 条、Acceptance 为 0 条；Run 为 `partial`，Task 为 `failed`，Orchestration 为 `failed`，没有 Delivery 或 Cleanup。
+- 重启第二份 Tauri 应用后，事件流仍保留 19 条，failed worktree、branch 和 marker 均仍在；但 `project.json` 的 `workerRuns` 从 1 变回 0，UI 回到“准备执行/执行编排已生成”，Orchestration 的 `failed` 与 `runIds` 仍保留。这证明当前 Restart/Recovery 不能可靠恢复 WorkerRun 快照，且不能把保留的 Git worktree 单独解释为控制面恢复成功。
+
+验证结果：
+
+- 真实 Tauri GUI：项目打开、计划确认、Worker 启动、worktree 分配和 marker 文件 read-back 均有实际窗口/磁盘/Git 事实；
+- Worktree：创建成功，未清理，保留现场供后续修复与复核；
+- Host Acceptance：失败，Evidence/Acceptance 均为 0 条；
+- Restart/Recovery/read-back：失败，`workerRuns` 丢失但事件流和 worktree 仍保留；
+- 本轮未重新运行 `npm run test`、`npm run build`、`npm run i18n:check` 或 Rust 测试，不能把此前自动化质量门结果当作本轮 GUI 验证结果。
+
+本轮真实 Tauri 验收结论：`FAIL / mvp-closed-unverified`。下一步应先修复 Acceptance 的 base revision Git 命令 conformance、缺失 JSONL 父目录的首次启动处理，以及 WorkerRun snapshot 与 DomainEvent 的恢复一致性；在此之前不得继续拆 Runtime/Host Adapter、不得标记 `[verified]`、push 或 merge。
+
 ---
 
 如果不想一次发布全文，可以拆成下面几篇：
