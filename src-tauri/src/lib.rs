@@ -1704,6 +1704,23 @@ fn find_option_is_safe(arg: &str) -> bool {
     )
 }
 
+/// 与前端 assertSafeGitRevision 对齐的 base revision 词法校验。
+/// 这里只允许作为 git diff 的 revision 操作数，不允许路径逃逸或 shell 语义。
+fn safe_git_revision_arg(arg: &str) -> bool {
+    let mut chars = arg.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    arg.chars().count() <= 128
+        && first.is_ascii_alphanumeric()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !arg.contains("..")
+        && !arg.contains("//")
+        && !arg.ends_with('/')
+}
+
 /// worktree 内允许的命令参数白名单（与前端 capabilities DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES
 /// 对齐；P1 审计：Rust 侧也做完整参数校验，WebView 直调 dev_exec 无法执行白名单外的高风险操作）。
 fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
@@ -1752,6 +1769,10 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 || rest_eq(&["diff", "--name-only", "HEAD"])
                 || rest_eq(&["diff", "--stat", "HEAD"])
                 || rest_eq(&["diff", "--name-only"])
+                || (rest.len() == 3
+                    && rest[0] == "diff"
+                    && rest[1] == "--name-only"
+                    && safe_git_revision_arg(&rest[2]))
                 // 前端 `git diff <path>`：argsPrefix ['diff']，min/maxExtra=1，禁 dash 额外参数；
                 // 且路径须词法安全（禁绝对路径 / .. / drive）
                 || (rest.len() == 2
@@ -3189,6 +3210,34 @@ mod dev_exec_tests {
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
             "find", ".", "-okdir", "touch", "{}", ";"
+        ])));
+    }
+
+    #[test]
+    fn worktree_git_changed_files_accepts_safe_base_revision() {
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "git",
+            "diff",
+            "--name-only",
+            "3be065ee082a5c4c10c1c3f0c11226154485b1f5",
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "git",
+            "diff",
+            "--name-only",
+            "feature/base-revision",
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "git",
+            "diff",
+            "--name-only",
+            "../outside",
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "git",
+            "diff",
+            "--name-only",
+            &"a".repeat(129),
         ])));
     }
 

@@ -47,6 +47,7 @@ import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency
 import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
 import { auditProjectControlConsistency } from './projectControl/projectControlConsistency';
 import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunOrchestrationProjection';
+import { rehydrateWorkerRunsFromEvents } from './projectControl/workerRunRehydration';
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
 import type { AcceptanceRecord } from './dev/session';
@@ -387,8 +388,36 @@ export default function App() {
       });
       if (signal?.aborted) return;
       const parsed = bootstrapped.stream;
-      const current = useWorkflowStore.getState();
+      let current = useWorkflowStore.getState();
       if (!current.projectId || current.projectPath !== projectPath) return;
+      const projectId = current.projectId;
+      const rehydrated = current.workerRuns.length === 0
+        ? rehydrateWorkerRunsFromEvents({
+          projectId,
+          events: parsed.events,
+          taskGraphs: current.projectControl.taskGraphs ?? [],
+          existingRuns: current.workerRuns,
+        })
+        : { runs: [], issues: [] };
+      if (rehydrated.issues.length > 0) {
+        current.addLog(
+          'warn',
+          `Worker Run 投影恢复被阻止：${rehydrated.issues.map((item) => item.message).join('；')}`,
+        );
+      } else if (rehydrated.runs.length > 0) {
+        if (signal?.aborted) return;
+        current.setWorkerRuns(rehydrated.runs);
+        current.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(current.orchestrations, rehydrated.runs),
+        );
+        await current.saveProject({
+          projectId,
+          projectPath,
+          signal,
+        });
+        if (signal?.aborted) return;
+        current = useWorkflowStore.getState();
+      }
       let report: WorkerRunConsistencyReport;
       let controlReport: ReturnType<typeof auditProjectControlConsistency> | null = null;
       if (parsed.status === 'needs-repair') {
@@ -409,7 +438,7 @@ export default function App() {
         };
       } else {
         report = auditWorkerRunConsistency({
-          projectId: current.projectId,
+          projectId,
           runs: current.workerRuns,
           events: parsed.events,
           evidence: current.workerRunEvidence,
@@ -418,7 +447,7 @@ export default function App() {
           taskGraphs: current.projectControl.taskGraphs ?? [],
         });
         controlReport = auditProjectControlConsistency({
-          projectId: current.projectId,
+          projectId,
           snapshot: current.projectControl,
           events: parsed.events,
         });
@@ -438,7 +467,7 @@ export default function App() {
       }
       if (signal?.aborted) return;
       const runtime = installWorkerRunRuntime({
-        projectId: current.projectId,
+        projectId,
         taskGraphs: current.projectControl.taskGraphs ?? [],
         runs: current.workerRuns,
         consistency: report,
