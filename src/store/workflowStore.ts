@@ -1219,7 +1219,18 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       saveProject: async (guard) => {
-        let s = get();
+        const initial = get();
+        const saveKey = `${initial.projectId ?? 'unsaved'}:${initial.projectPath ?? 'memory'}`;
+        const previous = projectSaveTails.get(saveKey) ?? Promise.resolve();
+        let release!: () => void;
+        const current = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const queued = previous.catch(() => {}).then(() => current);
+        projectSaveTails.set(saveKey, queued);
+        await previous.catch(() => {});
+        try {
+          let s = get();
         assertProjectSaveGuard(s, guard);
         // Never let a startup/recovery save erase a WorkerRun projection that is already
         // durable in the event stream while the in-memory registry is still empty.
@@ -1278,7 +1289,11 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectDirty: false,
           lastSavedSnapshot: JSON.stringify(file),
         });
-        return path;
+          return path;
+        } finally {
+          release();
+          if (projectSaveTails.get(saveKey) === queued) projectSaveTails.delete(saveKey);
+        }
       },
 
       isProjectDirty: () => {
@@ -2111,6 +2126,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 // ---------- P1：项目级脏检测（内存态 vs 磁盘态） ----------
 // 加载/切换期间临时抑制自动脏检测，避免误标
 let suppressDirty = false;
+const projectSaveTails = new Map<string, Promise<void>>();
 
 /** 载入/打开项目后调用：以当前内存态作为"与磁盘一致"的基准，清除脏标记 */
 function finalizeLoaded() {
