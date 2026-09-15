@@ -1852,6 +1852,35 @@ fn dev_exec_allowed_at(
     }
 }
 
+#[cfg(windows)]
+fn windows_cmd_arg(value: &str) -> String {
+    if value.is_empty() || value.chars().any(|c| c.is_whitespace() || c == '"') {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn command_for_dev_exec(args: &[String]) -> std::process::Command {
+    let program = resolve_dev_program(&args[0]);
+    #[cfg(windows)]
+    {
+        let extension = program.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase());
+        if matches!(extension.as_deref(), Some("cmd" | "bat")) {
+            let command_line = std::iter::once(format!("\"{}\"", program.display()))
+                .chain(args[1..].iter().map(|arg| windows_cmd_arg(arg)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut command = std::process::Command::new("cmd.exe");
+            command.args(["/D", "/C"]).arg(command_line);
+            return command;
+        }
+    }
+    let mut command = std::process::Command::new(program);
+    command.args(&args[1..]);
+    command
+}
+
 /// H4 GUI 受控命令执行：
 /// - 命令名白名单（DEV_ALLOWED_CMDS）；
 /// - cwd 归属分级——主仓库根**仅放行严格只读 git 管理命令**（rev-parse/worktree list 等），
@@ -1883,12 +1912,8 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
     dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args)?;
     let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args)?;
-    let program = resolve_dev_program(&spawn_args[0]);
-    let mut cmd = Command::new(program);
+    let mut cmd = command_for_dev_exec(&spawn_args);
     cmd.current_dir(&canonical_cwd);
-    for a in &spawn_args[1..] {
-        cmd.arg(a);
-    }
     cmd.env_clear();
     for (k, v) in dev_sanitized_env() {
         cmd.env(k, v);
