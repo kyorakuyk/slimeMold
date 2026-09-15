@@ -2639,6 +2639,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 引擎实验：1,000 局确定性随机输入，160.25 ms；平均 119.88 步，p95 192 步，平均分 1,110.37，最高观察块 256；token/费用未计量，未写成 0；
 - `git diff --check`：SlimeMold 与独立产品均通过；当前 SlimeMold 控制面仍为 `mvp-closed-unverified`，真实 Master Agent 运行和完整 Worker→Delivery→Cleanup→Restart 闭环仍未宣称完成。
 
+### 7.116 补充 Fourfold 启动入口与 SlimeMold 编排 UI 证据
+
+- 本轮在主项目 checkpoint `e54c3f6` 之后进行；没有修改 SlimeMold 生产代码，没有修改 `D:/Agents/SMtest`，没有 push/merge/cleanup。证据通过隔离 Playwright context 读取当前分支 Vite UI，避免触碰用户浏览器和真实项目。
+- 节点图证据 `ORCH-001`：从 2048 starter template 读回 `6` 个节点、`7` 条连接，包含目标、规划、架构、仲裁回流、Builder 和 handoff；它证明 UI projection，不证明执行。
+- 主控证据 `ORCH-002`/`ORCH-002A`：读回项目级 `Ollama 本地智能体 / qwen2.5:3b` 的显式选择，以及选择前“全局未设置主控”的继承状态；权限边界明确写着主控只能提出结构化方案，不能直接修改/执行/发布；没有把截图解释成 LLM 调用。
+- Issue 证据 `ORCH-003`/`ORCH-003A`：读回空看板到创建 1 条 `需求` Issue 的前后状态，Issue 位于 `收件箱 / 未规划`，内容覆盖 2048 合并、随机生成、胜利和结束条件；隔离 context 不证明生产项目 durable persistence。
+- Fourfold 直接双击 `index.html` 的启动障碍已复现为 Chrome `file://` module CORS；独立产品新增 `run-fourfold.cmd` 和 server `--open`，修复提交为 `0135117`；最终证据档案提交为 `1a4cf7a`。
+
+验证结果：
+
+- 独立产品最终 Acceptance：`acc-fourfold-20260915144800090`，通过；7 个核心测试、5 个 Acceptance 子检查、静态 build 通过；
+- Playwright Chromium：6 个产品浏览器检查通过；5 张产品截图和 5 张 SlimeMold 编排 UI 截图均为有效 PNG 并纳入 Evidence index；
+- 编排 UI 证据机器档案：`artifacts/slimemold-orchestration-evidence.json`（位于独立产品档案仓库）；
+- 当前控制面继续为 `mvp-closed-unverified`；真实 LLM/Worker/Delivery/Cleanup/Restart 仍未被本轮 UI 截图替代。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
