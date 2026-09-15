@@ -262,6 +262,7 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
 /** 测试白名单：typecheck / vitest / 本地脚本（scripts/）/ 仓库自带特定 npm script（精确，禁额外参数）。 */
 const DEFAULT_TEST_RULES: CommandRule[] = [
   { cmd: 'tsc', args: ['--noEmit'] },
+  { cmd: 'node', argsPrefix: ['--check'], minExtraArgs: 1, allowExtraArgs: 1, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 1 },
   { cmd: 'tsc', args: ['-b'] },
   { cmd: 'vitest', args: ['run'] },
   { cmd: 'tsx', argsPrefix: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true },
@@ -441,6 +442,19 @@ export function createNodeDevService(
       assertCwd(ctx.cwd);
       if (cmd.length === 0 || !testAllow(cmd)) {
         return { exitCode: -1, stdout: '', stderr: `测试命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
+      }
+      const testRule = findMatchingRule(DEFAULT_TEST_RULES, cmd);
+      if (testRule?.pathArgs) {
+        try {
+          await guardPathArgs(cmd.slice(1), ctx, testRule.pathArgsFrom ?? 0);
+        } catch (e) {
+          return {
+            exitCode: -1,
+            stdout: '',
+            stderr: `测试命令路径越权：${e instanceof Error ? e.message : String(e)}`,
+            durationMs: 0,
+          };
+        }
       }
       const [c0, ...rest] = cmd;
       return run(c0, rest, ctx.cwd);

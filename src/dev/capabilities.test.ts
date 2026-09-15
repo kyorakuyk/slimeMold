@@ -161,6 +161,10 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(t1.exitCode).toBe(0);
     const t2 = await svc.testRun(['tsc'], ctx);
     expect(t2.exitCode).toBe(-1);
+    const nodeCheck = await svc.testRun(['node', '--check', 'src/components/A.tsx'], ctx);
+    expect(nodeCheck.exitCode).toBe(0);
+    const nodeEscape = await svc.testRun(['node', '--check', 'src/orchestrator/run.ts'], ctx);
+    expect(nodeEscape.exitCode).toBe(-1);
   });
 
   it('grep 外部文件选项在允许 pattern 下也不会调用 runner', async () => {

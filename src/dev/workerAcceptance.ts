@@ -50,6 +50,11 @@ function createTaskScopePolicy(
   };
 }
 
+function usesScaffoldValidation(scope: readonly string[]): boolean {
+  return scope.some((item) => item === 'public/index.html' || /^src\/main\.[*A-Za-z0-9_-]+$/.test(item))
+    && scope.some((item) => /http\s*server/i.test(item));
+}
+
 /**
  * 构造 Worker 的宿主验收器。
  *
@@ -103,8 +108,13 @@ export function createDevWorkerAcceptance(
       const policy = options.taskScopePolicy
         ? createTaskScopePolicy(host.policy, lease.task.scope)
         : host.policy;
-      const compileLabel = commandLabel(compileCommand);
-      const testLabel = commandLabel(testCommand);
+      const scaffoldValidation = options.compileCommand === undefined
+        && options.testCommand === undefined
+        && usesScaffoldValidation(lease.task.scope);
+      const taskCompileCommand = scaffoldValidation ? ['node', '--check', 'src/main.js'] : compileCommand;
+      const taskTestCommand = scaffoldValidation ? ['node', '--check', 'server.mjs'] : testCommand;
+      const compileLabel = commandLabel(taskCompileCommand);
+      const testLabel = commandLabel(taskTestCommand);
 
       try {
         // Never execute a Worker-controlled build/test oracle before checking the files it changed.
@@ -166,9 +176,9 @@ export function createDevWorkerAcceptance(
         };
       }
 
-      const compile = await host.service.testRun(compileCommand, context);
+      const compile = await host.service.testRun(taskCompileCommand, context);
         throwIfAborted(signal);
-        const test = await host.service.testRun(testCommand, context);
+        const test = await host.service.testRun(taskTestCommand, context);
         throwIfAborted(signal);
         const diff = await host.service.gitDiff(lease.assignment.baseRevision, context);
         throwIfAborted(signal);

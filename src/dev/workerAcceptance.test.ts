@@ -144,6 +144,8 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(true);
     expect(deps.service.testRun).toHaveBeenCalledTimes(2);
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['node', '--check', 'src/main.js'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['node', '--check', 'server.mjs'], { cwd: lease.assignment.path });
   });
 
   it('rejects protected changes before executing the host build/test oracle', async () => {

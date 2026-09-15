@@ -70,6 +70,8 @@ function relativeLockPath(root: string, path: string): string {
   return relative;
 }
 
+const localLockTails = new Map<string, Promise<void>>();
+
 /**
  * Tauri adapter for the domain event store. The host owns the lock; plugin-fs
  * only performs scoped text I/O after the project directory is authorized.
@@ -128,20 +130,42 @@ export function createTauriEventStoreAdapter(
       const lockRelativePath = relativeLockPath(normalizedRoot, path);
       const deps = await getDeps();
       await ensureAccess(deps);
-      const token = await deps.invoke<string>('event_lock_acquire', {
-        root: normalizedRoot,
-        relativePath: lockRelativePath,
+      const lockKey = `${comparisonPath(normalizedRoot)}/${lockRelativePath}`;
+      const previous = localLockTails.get(lockKey) ?? Promise.resolve();
+      let releaseLocal!: () => void;
+      const localTurn = new Promise<void>((resolve) => {
+        releaseLocal = resolve;
       });
+      const queued = previous.catch(() => {}).then(() => localTurn);
+      localLockTails.set(lockKey, queued);
+      await previous.catch(() => {});
+
+      let token: string;
+      try {
+        token = await deps.invoke<string>('event_lock_acquire', {
+          root: normalizedRoot,
+          relativePath: lockRelativePath,
+        });
+      } catch (error) {
+        releaseLocal();
+        if (localLockTails.get(lockKey) === queued) localLockTails.delete(lockKey);
+        throw error;
+      }
       let released = false;
       return {
         release: async () => {
           if (released) return;
           released = true;
-          await deps.invoke<void>('event_lock_release', {
-            root: normalizedRoot,
-            token,
-            relativePath: lockRelativePath,
-          });
+          try {
+            await deps.invoke<void>('event_lock_release', {
+              root: normalizedRoot,
+              token,
+              relativePath: lockRelativePath,
+            });
+          } finally {
+            releaseLocal();
+            if (localLockTails.get(lockKey) === queued) localLockTails.delete(lockKey);
+          }
         },
       };
     },
