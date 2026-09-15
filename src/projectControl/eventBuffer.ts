@@ -11,7 +11,7 @@ import { replayDomainEvents } from '../domain/contracts';
 const pendingByProject = new Map<string, DomainEvent[]>();
 const flushTails = new Map<string, Promise<void>>();
 
-type EventWithoutSequence = Omit<DomainEvent, 'sequence'>;
+type EventWithoutPosition = Omit<DomainEvent, 'sequence' | 'aggregateVersion'>;
 
 function requiredProjectId(projectId: string): string {
   const normalized = projectId.trim();
@@ -19,13 +19,13 @@ function requiredProjectId(projectId: string): string {
   return normalized;
 }
 
-function withoutSequence(event: DomainEvent): EventWithoutSequence {
-  const { sequence: _sequence, ...rest } = event;
+function withoutPosition(event: DomainEvent): EventWithoutPosition {
+  const { sequence: _sequence, aggregateVersion: _aggregateVersion, ...rest } = event;
   return rest;
 }
 
-function equivalentIgnoringSequence(left: DomainEvent, right: DomainEvent): boolean {
-  return JSON.stringify(withoutSequence(left)) === JSON.stringify(withoutSequence(right));
+function equivalentIgnoringPosition(left: DomainEvent, right: DomainEvent): boolean {
+  return JSON.stringify(withoutPosition(left)) === JSON.stringify(withoutPosition(right));
 }
 
 function latestAggregateVersion(events: readonly DomainEvent[], event: DomainEvent): number {
@@ -59,7 +59,7 @@ export function recordProjectEvents(projectId: string, incoming: readonly Domain
     }
     const existing = events.find((item) => item.eventId === event.eventId);
     if (existing) {
-      if (!equivalentIgnoringSequence(existing, event)) {
+      if (!equivalentIgnoringPosition(existing, event)) {
         throw new EventStoreError('event-conflict', `pending eventId 内容不同：${event.eventId}`);
       }
       continue;
@@ -117,7 +117,7 @@ export async function flushPendingProjectEvents(
       }
       const existing = working.find((event) => event.eventId === pendingEvent.eventId);
       if (existing) {
-        if (!equivalentIgnoringSequence(existing, pendingEvent)) {
+        if (!equivalentIgnoringPosition(existing, pendingEvent)) {
           throw new EventStoreError('event-conflict', `已落盘 eventId 内容不同：${pendingEvent.eventId}`);
         }
         continue;

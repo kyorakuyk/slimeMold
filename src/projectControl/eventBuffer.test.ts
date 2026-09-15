@@ -135,4 +135,18 @@ describe('project event buffer', () => {
     expect((await repository.readStream()).events).toHaveLength(1);
     expect(getPendingProjectEvents('project-1')).toEqual([]);
   });
+
+  it('treats sequence and aggregate version as persistence positions for idempotent replay', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    await repository.appendBatch([
+      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 1, eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ], 0);
+    recordProjectEvents('project-1', [
+      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 7, eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ]);
+
+    await expect(flushPendingProjectEvents('project-1', repository)).resolves.toMatchObject({ status: 'already-present', count: 1 });
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
 });
