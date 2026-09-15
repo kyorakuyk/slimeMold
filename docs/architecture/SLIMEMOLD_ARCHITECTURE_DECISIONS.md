@@ -54,6 +54,36 @@ authority: decision-log
 
 视觉图标、个人网站风格和一次性的设计试稿不属于本文件的架构决策范围；它们继续由 `docs/design/`、`docs/product/` 或 `docs/history/` 中的相应资料记录。未纳入本文件不表示那些历史资料被删除或否定。
 
+### 0.4 本轮跨来源归并方法
+
+本轮把三类材料放在一起核对，但没有把它们当作同一种证据：
+
+| 来源 | 可以证明什么 | 不能单独证明什么 |
+|---|---|---|
+| 当前 worktree、源码、测试、Git 和真实 read-back | 当前实现、当前分支状态和可复现结果 | 用户是否已经批准未来设计 |
+| `docs/DEVELOPMENT_LOG.md`、架构契约和计划 | 已记录的历史动作、计划边界和当前文档权威关系 | 计划中的能力已经实现，或开发日志未记录的事实 |
+| Codex/CodeBuddy/其它 AI 的原始对话 | 历史问题、候选方案、审查意见和决策形成过程 | AI 自报的完成、未交叉验证的市场判断、截图之外的当前状态 |
+| Hermes 三个会话及会话列表截图 | 用户的会话连续性问题、会话标题和需要保留的历史来源 | 截图本身不能证明代码、事件、Evidence 或文档路径 |
+
+设计权威和实现权威分别判断：
+
+```text
+设计权威：用户明确确认 > 双方形成的共同共识 > 助手独立建议 > AI 审查推测
+实现权威：当前源码/测试/宿主 read-back > 已提交开发日志 > 原始对话/截图
+```
+
+因此，本轮只把经过归并的结论写成 ADR；没有把任何凭据、原始 token、完整个人路径或原始工具输出复制进规范文档。原始日志仍保留在其敏感归档位置，经过整理的结论才进入本文件。
+
+### 0.5 三个 Hermes 会话的作用
+
+截图可辨认的三个会话是：
+
+1. `查看项目代码`：建立早期项目分析、代码事实和控制面文档入口；
+2. `处理会话超限问题`：确认长会话不能继续承载项目上下文，必须依靠新会话和落盘 handoff；
+3. `修复 MasterAgentPage 未使用变量与 workflowState 测试期望`：把项目级 `masterAgentId` 的实现、测试期望和后续作用域澄清连接起来。
+
+截图只显示会话标题，其中第一行被截断，没有显示目标 Markdown 路径。目标文档由仓库文档地图确认是本文，而不是根据截图猜测得出。
+
 ---
 
 ## 1. 产品定位与用户体验
@@ -728,6 +758,146 @@ authority: decision-log
 - **后果：** 新的 ChangeSet/GitHub/远端副作用不得直接进入 `ExecutionKernel` 或 `ExecutionCoordinator`；只有在最小真实 Tauri 成功、失败/恢复路径和 lineage 契约稳定后，才继续抽离 Host Adapter、Evidence/Acceptance/Receipt 和 ProjectControl 持久化边界。
 - **来源：** [S14] `docs/DEVELOPMENT_LOG.md` §7.108–§7.109；用户确认开始执行引擎渐进拆分；当前实现为 `src/engine/executionKernel.ts` 与 `src/engine/executionCoordinator.ts`。
 
+### ADR-SM-069：跨工具对话和截图是决策来源，不是控制面事实源
+
+- **状态：** `共同共识`
+- **决定：** Codex、CodeBuddy、其它 AI 的对话、Hermes 会话记录和截图都作为可追溯的历史来源、用户意图线索或候选方案输入；只有经过用户确认、当前 worktree/测试/read-back 交叉核对并完成来源标注后，结论才进入架构契约或本记录。对话中的助手自报成功、审查模型的推测和截图上的状态不能直接改变 `Project`、`Task`、`Run`、`Acceptance` 或 `[verified]`。
+- **放弃的方案：** 把最近一条 AI 回复、完整 transcript、会话摘要或截图当成当前系统的唯一真相；或让不同 AI 工具各自维护一份不可对账的产品方向。
+- **取舍：** 需要维护来源、状态和“用户确认/助手推导/实现事实”的区分，整理速度较慢；换取跨工具协作不会把错误摘要、旧代码观察或视觉投影升级为隐式规范。
+- **后果：** 原始日志继续位于敏感归档位置，规范文档只保留脱敏后的结论；发生冲突时，设计问题回到用户确认，当前实现问题回到源码、测试、宿主 Evidence 和 Git read-back。
+- **来源：** [S12]；[S18] 三个 Hermes 会话；[S19] 会话列表截图；[S20]–[S24] 其它 AI 工具记录；ADR-SM-010、ADR-SM-050。
+
+### ADR-SM-070：跨会话连续性依靠持久 handoff 和项目事实，不搬运完整 transcript
+
+- **状态：** `设计基线`
+- **决定：** 当 AI 会话达到上下文上限、切换工具或更换模型时，继续工作依靠项目内的 Decision、PlanRevision、Task、Evidence、开发日志和一份短而可验证的 handoff：目标、已完成、当前状态、关键文件、真实验证、未决问题、下一步和原始来源引用。完整会话只用于追溯，不作为每个 Worker 的默认 ContextPack。
+- **放弃的方案：** 把超长会话全文复制到新会话、把“摘要”直接当成事实，或让 Worker 读取所有历史 transcript 来恢复任务。
+- **取舍：** handoff 可能遗漏语境，必须保留原始来源和可回查引用；但上下文成本、会话超限风险、跨工具格式差异和错误历史污染明显降低。
+- **后果：** 摘要必须声明 snapshot/version、来源和截断状态；缺少可验证事实时进入 `unknown`/`needs-repair`，不能用流畅的摘要补洞。跨工具导入的目标是可重新投影的事件/事实 envelope，而不是共享私有 session 文件。
+- **来源：** [S18] 中的 `处理会话超限问题`、`查看项目代码`；[S20] 对话导出边界；ADR-SM-021、ADR-SM-026、ADR-SM-027。
+
+### ADR-SM-071：主控 Agent 采用全局默认、项目覆盖和项目默认的显式作用域
+
+- **状态：** `已实现但未完全验证`
+- **决定：** 主控 Agent 的解析顺序固定为：
+
+  ```text
+  projectControl.masterAgentId
+    → viewStore.globalMasterAgentId
+    → project defaultAgentId
+    → first available enabled Agent
+  ```
+
+  `globalAgents` 是可跨项目复用的 Agent 配置池，不等于当前项目主控；`projectControl.masterAgentId` 是项目级覆盖。空的项目覆盖表示继承，而不是“没有主控”。
+- **放弃的方案：** 只保留一个名为“全局默认”的字段、把项目字段误称为全局设置，或在 `MasterAgentPage` 内部保存一份不经过 ProjectControl 的隐式绑定。
+- **取舍：** 设置界面、迁移、删除 Agent 和测试期望都要处理继承/覆盖关系；换取项目之间不会互相污染，用户能够解释“为什么这个项目现在使用这个主控”。
+- **后果：** 全局主控只能从已提升且启用的全局 Agent 池选择；删除 Agent 时清除悬挂绑定；UI 必须显示绑定来源。当前代码和测试已有该字段及解析路径，但真实多项目 GUI、迁移和重启 read-back 仍需继续验收。
+- **来源：** [S18] 中的 `修复 MasterAgentPage 未使用变量与 workflowState 测试期望`；`src/components/MasterAgentPage.tsx`、`src/projectControl/persistence.ts`、`src/store/workflowState.test.ts`；`docs/DEVELOPMENT_LOG.md` §7.9–§7.10。
+
+### ADR-SM-072：采用 Tauri + React，且把 UI/领域智能与宿主权威能力分开
+
+- **状态：** `共同共识`
+- **决定：** 桌面壳采用 Tauri + React/TypeScript。React/TypeScript 负责 UI、项目控制面、Agent provider 适配和产品逻辑；Rust/Tauri 负责宿主权限、凭据加密/托管、受控文件/进程/Git 命令、跨进程锁和桌面能力。LLM provider 的协议差异经过平台适配层收敛，不能在组件中直接散落 `window.fetch` 或 Tauri 全局调用。
+- **放弃的方案：** 初期改用 Electron；让 Rust 直接成为所有 LLM HTTP 请求的业务客户端；或让 WebView 直接拥有任意文件、进程和凭据权限。
+- **取舍：** Tauri 引入 Rust 工具链、跨语言 conformance 和桌面构建成本；分层后边界更清楚、包体更小，且高影响宿主能力可以独立 fail-closed。前端 provider 与 Rust host 的边界也意味着取消、网络错误和权限错误必须显式归一化。
+- **后果：** 所有平台差异进入 `src/platform/env.ts` 等适配层；当前 `httpFetch` 在 Tauri 下处理 plugin-http 的底层错误并避免不稳定的 `AbortSignal` 透传，provider 不可用应表现为可解释的 capability/error，而不是 WebView `UnhandledRejection`。Rust 端不因此获得产品事实写权限。
+- **来源：** [S21] 初始 CodeBuddy 方案确认；[S20] 早期 Codex 架构审查；[S23] `CODEBUDDY.md`；`src/platform/env.ts`、`src-tauri/src/lib.rs`；ADR-SM-009、ADR-SM-031、ADR-SM-043。
+
+### ADR-SM-073：Provider 协议、认证方式和能力可用性分离
+
+- **状态：** `已实现但未完全验证`
+- **决定：** OpenAI-compatible、Anthropic、Ollama、官方 Codex CLI 等是不同的 provider/执行适配，不把“协议”“认证”“计费来源”“工具能力”和“当前可用性”混成一个字段。`subscription` 只能表达成本/计费语义，不能伪装成已完成的订阅登录；ChatGPT/Claude 网页 Cookie、内部 token 或私有文件不能当作通用 API 凭据。官方订阅接入必须通过厂商允许的官方客户端/登录协议。
+- **放弃的方案：** 把所有 provider 当成相同的 HTTP API、从网页或私有文件复制 token，或在本地 Ollama 不可用时静默切换到另一个模型并继续执行代码任务。
+- **取舍：** 配置、探测、错误和 UI 状态更复杂；换取模型质量、权限、成本和数据边界不会因“fallback”被悄悄改变。只读问答可以按策略 fallback，代码 Worker 必须重新计算能力、scope、Acceptance 和批准。
+- **后果：** “Ollama 未安装/未监听”“Codex 未登录”“API endpoint 无权限”都进入 capability gap 或 provider failure，并保留可核查原因；当前 Codex provider 通过官方 CLI 的 read-only 主控路径接入，Worker/tool-call 和可恢复进程控制仍是独立边界。
+- **来源：** [S20] provider/订阅相关 Codex 对话；[S21] 初始多协议选择；[S23] `CODEBUDDY.md`；`docs/DEVELOPMENT_LOG.md` §7.10–§7.11；ADR-SM-019、ADR-SM-031、ADR-SM-042。
+
+### ADR-SM-074：JS/TS 插件是受限的可信扩展，不宣称为进程级安全沙箱
+
+- **状态：** `设计基线`
+- **决定：** 初期插件采用 JS/TS 包（manifest + entry），通过统一 `NodeDefinition` 和受限 `ctx` 暴露 logger、LLM、storage、signal 等能力；程序级和项目级插件有明确 scope。当前动态 `import()` 与 capability 裁剪属于 API/运行时约束，插件只有在被视为可信本地代码时才适用。
+- **放弃的方案：** 把 manifest 中的 capability 声明当作真正的权限边界，或把网络下载的第三方插件直接当成和 Rust 进程沙箱等价的安全组件。
+- **取舍：** 可信插件开发体验和扩展速度较好，但 WebView 内动态代码仍可能影响同一 JS 信任域；若要支持不可信市场插件，需要独立进程/sidecar、消息协议、资源和凭据隔离，成本显著增加。
+- **后果：** 插件来源、scope、允许的文件/网络/Agent 能力和审计必须进入加载记录；任何“插件安全”文案都必须说明是 capability API 限制而非进程级隔离。项目级 custom node 随项目边界卸载，不能跨项目隐式污染。
+- **来源：** [S21] 初始 JS/TS 插件选择；[S20] Codex 插件审查；[S22] `审查架构与事件溯源设计.md`；[S23] `CODEBUDDY.md`；ADR-SM-034、ADR-SM-043。
+
+### ADR-SM-075：保留 ComfyUI 式专业画布，但把项目驾驶舱作为默认入口
+
+- **状态：** `共同共识`
+- **决定：** 节点画布、连线拓扑、工作流导入导出和专业编排继续作为专家的 Execution/Inspect 投影；普通用户先进入项目驾驶舱和主控会话。两种工作区不合并成一个无限膨胀的页面，而是通过带有 `projectId`、session、Decision/Plan、Task/Graph 和执行偏好的上下文桥连接。
+- **放弃的方案：** 让空白 DAG 成为所有用户的第一入口，或为了“统一”把会话、Issue、画布、Worker 和设置塞进同一个巨型页面；也不把画布数量和节点数量当作核心竞争指标。
+- **取舍：** 专业用户多一次导航，产品需要维护两种认知层级和投影；换取新用户不必先理解 DAG，专家又不会失去局部执行、调试和审计能力。
+- **后果：** 从会话到高级工作台必须携带项目上下文，不能打开无上下文的空白画布；内部 H4、runId、Attempt 和 side-effect 只在开发/审计层展示。当前暗色编排 UI 修复属于该分层的视觉收口，不代表用户路径已最终验收。
+- **来源：** [S21] 初始 ComfyUI/Typora 方案；[S18] `查看项目代码`；[S20] Codex UI/架构分析；[S22] `审查UI交互与前端体验.md`；ADR-SM-004–ADR-SM-006。
+
+### ADR-SM-076：副作用执行默认保留显式运行门，不以编辑器 auto-run 绕过确认
+
+- **状态：** `共同共识`
+- **决定：** 项目控制面采用“计划确认 → 明确开始执行 → Worker/宿主验收”的显式门；编辑器曾经没有 `autoRun`，历史记录中提出的 F5 快捷键只是候选交互，不升级为架构授权。未来即使提供预览级自动运行，也不能自动启动代码写入、外部调用、merge、release 或 cleanup。
+- **放弃的方案：** 每次节点/参数变化都自动触发真实副作用，或把“运行按钮/快捷键”当成绕过 Approval、Policy、Worktree 和 Evidence 的隐式授权。
+- **取舍：** 交互少一些即时感，需要用户明确操作；换取网络、命令和代码写入不会因编辑器保存或 HMR 被误触发，运行事实和批准 fingerprint 保持清楚。
+- **后果：** 运行快捷键只能调用已经满足准入的 Command；`ProjectSessionPanel` 的确认执行计划不是旧普通 Workflow 的“开始执行”替代品，两个路径必须在 UI 中明确区分。auto-run 是否作为低风险只读预览能力开放，仍是独立待议事项。
+- **来源：** [S22] `workbuddy总是需要我手动点“运行”怎么办`；`CODEBUDDY.md` 的执行入口；[S18] 项目会话/编排记录；ADR-SM-007、ADR-SM-037、ADR-SM-045。
+
+### ADR-SM-077：外部 AI 审查采用“采纳、降级、拒绝”三类处理，不照单全收
+
+- **状态：** `共同共识`
+- **决定：** 其它 AI 工具的审查先拆成三类：
+  1. **采纳**：能被当前代码、测试或真实 read-back 复核，并与用户方向一致；
+  2. **降级**：作为风险假设或待验证建议，进入计划/开放问题；
+  3. **拒绝**：与当前约束、权限边界或事实冲突，保留原始记录但不进入规范。
+
+  例如，Rust worktree 白名单分叉、双写漂移、Codex 超时、UI 双工作区断裂属于应核对的工程风险；“市场已经是红海”“某个主题必须改成浅色”等没有当前证据或属于偏好选择的判断，不能直接成为产品决策。
+- **放弃的方案：** 以模型语气、报告篇幅、多个模型重复相同判断或截图视觉印象决定优先级；或把审查报告中的计划建议写成已经完成的安全修复。
+- **取舍：** 决策整理需要更多人工判断和来源链接；换取审查模型不会拥有项目批准权，避免把错误、过时或互相矛盾的建议写入长期规范。
+- **后果：** 每条采纳的审查意见要链接源码/测试/Evidence；降级意见进入 `建议待确认` 或当前未决清单；任何 reviewer verdict 仍遵守 exact snapshot 和 fail-closed 规则。
+- **来源：** [S20] Codex 对话；[S22] `above.md`、`reply.md` 和两份 zcode 审查；ADR-SM-046、ADR-SM-050。
+
+### ADR-SM-078：真实 GUI/宿主闭环优先于继续扩大引擎或生态重构
+
+- **状态：** `共同共识`
+- **决定：** 执行引擎可以按纯计划编译和生命周期协调器渐进拆分，但只要真实 Tauri Worker 暴露 Acceptance、Evidence、Recovery、Delivery 或 Cleanup 缺口，就暂停下一层拆分，先修复事实源、宿主边界、恢复和用户可见状态。自动化质量门绿色不能替代真实 GUI/read-back，也不能把 `mvp-closed-unverified` 升级为 `[verified]`。
+- **放弃的方案：** 因为单元测试、build 或 headless 通过就继续抽 Runtime/Host Adapter、接 GitHub 写操作或扩展虚拟公司层级；或先做更多 UI/连接器再补证据闭环。
+- **取舍：** 短期架构演进和可见功能变慢；换取真实失败尽早暴露，避免在错误的 Acceptance/Recovery 语义上继续堆叠。
+- **后果：** `DEVELOPMENT_LOG.md` 必须记录真实数字和 GUI 边界；成功 Worker Worktree、失败现场和 Receipt 默认保留；Delivery、Cleanup、Restart/Recovery 和独立 reviewer 未闭合时，禁止 push、merge、自动 Cleanup 或生产级宣称。
+- **来源：** [S14] `DEVELOPMENT_LOG.md` §7.108–§7.112；[S18] 最近项目会话；[S22] 架构审查；ADR-SM-047、ADR-SM-068。
+
+### ADR-SM-079：Memory、Experience 和 Skill 只能晋升候选经验，不能自我授予权限
+
+- **状态：** `设计基线`
+- **决定：** 运行经验、错误模式、Skill 和模型建议可以作为候选知识被检索、评估和版本化；它们不能直接覆盖当前项目 Decision、Architecture、TaskGraph、Policy、ContextPack 或副作用授权。Skill 的晋升应有来源、适用范围、验证记录、版本、失效条件和用户/控制面批准。
+- **放弃的方案：** 让主控或 Worker 自动修改自己的长期能力，把所有历史 transcript 注入每个任务，或把“上一次成功”当作当前权限和事实。
+- **取舍：** 经验复用变慢，需要索引、评估和 scope 管理；换取错误偏好、旧项目污染和自我强化的错误策略不会悄悄扩大影响。
+- **后果：** 当前项目事实优先于 Memory；Worker 只读取与 Task/Artifact/Acceptance 相关的经验；失败和负面经验也要作为可审计 Evidence，而不是静默丢弃。
+- **来源：** [S20] Codex 关于自我优化、Memory 和 Skill 的讨论；ADR-SM-020、ADR-SM-026、ADR-SM-027。
+
+### ADR-SM-080：区分业务节点、流程控制节点和能力/工具，不把所有角色或模型都做成节点
+
+- **状态：** `设计基线`
+- **决定：** 用户画布中的节点只表达用户需要理解或调试的业务动作、流程控制、验证和人工接管；模型、部门、角色、provider、工具和权限优先作为运行时配置、能力池或 Control Plane 角色。只有当一个角色拥有独立输入/输出、重试/验收和可视化价值时，才提升为用户可见节点。
+- **放弃的方案：** 为每个模型、角色、部门和内部管理动作创建节点，或让节点图承担完整组织结构和权限系统。
+- **取舍：** 画布表面更少，部分内部能力需要在详情/审计视图展开；换取 DAG 可读性、版本映射、执行成本和普通用户认知负担可控。
+- **后果：** 层级化 Agent 公司不等于画布上复制一棵公司树；CEO、承建方、部门和 Worker 通过 Task/Work Package/Delegation/ContextPack 关联，仍遵守现有 TaskGraph 和权限事实源。
+- **来源：** [S20] Codex 节点/主控 Agent 讨论；[S10] 层级化 Agent 计划；ADR-SM-022、ADR-SM-023、ADR-SM-031。
+
+### ADR-SM-081：前端 watcher 与 Tauri/Cargo 构建产物分离
+
+- **状态：** `已实现但未完全验证`
+- **决定：** Vite 只观察前端源和可热更新资源，排除 `src-tauri/target/**`；Rust/Cargo/Tauri 自己负责宿主编译产物和重启边界。端口、残留进程和 Rust 二进制锁属于开发运行时状态，不能通过重复启动第二个 Tauri/Vite 实例解决。
+- **放弃的方案：** 让 Vite 递归监视 Rust target，或把 Cargo 的文件锁/残留进程误判为前端业务 Bug；也不把一次启动成功当作当前 GUI 运行实例仍然健康。
+- **取舍：** 修改 Rust resource/custom node 后通常需要重启 Tauri，HMR 不再覆盖宿主构建边界；换取不会因 watcher 与 Cargo 争抢 `target/debug` 文件而产生 `EBUSY`/锁定崩溃。
+- **后果：** `vite.config.ts` 保留 `watch.ignored: ['**/src-tauri/target/**']`；启动/验收前检查端口和进程，结束后 read-back；真实 Tauri 进程与旧通知必须按当前 PID/窗口区分。
+- **来源：** [S21] `启动这个项目并修复文件监视器冲突`；[S23] `CODEBUDDY.md`；`vite.config.ts`；ADR-SM-045、ADR-SM-049。
+
+### ADR-SM-082：初始“完整框架”愿景被后续证据优先的垂直切片策略替代
+
+- **状态：** `已替代`
+- **决定：** 初始方案可以保留“节点编辑器、执行引擎、多协议 Agent、导入导出和 JS/TS 插件全部搭好”的完整框架愿景；但当前实施不再把“完整框架”解释成一次性完成所有自治、Provider、Artifact、Delivery 和生态能力。现行顺序是先证明最小、真实、可恢复的项目交付闭环，再逐步扩展。
+- **放弃的方案：** 以早期方案清单覆盖范围作为 MVP 完成标准，或在真实 Worker/Acceptance/Recovery 未稳定前继续增加节点、角色、连接器和远端写操作。
+- **取舍：** 早期看起来覆盖更窄、计划周期更长；换取每个垂直切片都有事实源、权限、Evidence、恢复和停止条件，减少“功能很多但无法交付”的假完成。
+- **后果：** 早期方案仍是历史来源而不是当前验收合同；当前总体状态继续以 `mvp-closed-unverified` 为准，任何新能力都必须说明它是愿景、计划、局部实现还是完整验证。
+- **来源：** [S21] 初始 ComfyUI 方案；[S20] Codex 阶段性审查；[S14] `DEVELOPMENT_LOG.md` §7.107–§7.112；ADR-SM-047、ADR-SM-068。
+
 ---
 
 ## 6. 当前仍未决定或不能过度宣称的事项
@@ -752,7 +922,13 @@ authority: decision-log
 16. Council 的 quorum、弃权、缺席成员、benchmark 权重归一化、同模型角色的相关性上限和 Security veto 精确分类；
 17. 主控 Agent 修改 Council 成员或规则是否需要用户批准，以及 Council 三轮未达成共识后的成员替换权限；
 18. GitObservation 快照的物理存储、artifact 加密/备份/跨机器恢复、成功/失败/unknown/quarantined 的 GC 和磁盘预算细节；
-19. provisional 性能 guardrails 的真实 benchmark 结果，以及它们是否需要按仓库规模、操作系统或 provider 分层。
+19. provisional 性能 guardrails 的真实 benchmark 结果，以及它们是否需要按仓库规模、操作系统或 provider 分层；
+20. 跨工具 handoff/event envelope 的正式 schema、checksum、附件/截图引用、降级清单和导入/重新投影协议；
+21. 编辑器是否提供只读/可逆的 auto-run 预览、F5 快捷键的最终交互，以及它与项目级执行批准的边界；
+22. 不可信第三方插件是否进入独立进程/sidecar 沙箱、如何隔离凭据/网络/文件和如何迁移现有 JS/TS 插件；
+23. Provider capability matrix、Ollama/其它本地服务探测、官方订阅 CLI 的流式输出/取消/恢复，以及代码 Worker 的 fallback 规则；
+24. `masterAgentId` 的多项目 GUI、迁移、删除 Agent 后的悬挂绑定和完整重启 read-back；
+25. 外部 AI 审查记录的长期脱敏、索引、版本和是否允许自动生成候选 ADR 的工具流程。
 
 ### 6.1 重新审议触发条件
 
@@ -786,6 +962,13 @@ authority: decision-log
 - **[S15]** `2026-09-12 用户讨论`：摘要/Evidence 查询、ContextPack、子代理 anti-bypass、FeedbackRequest、承建方及横向角色确认；本条来源保留在会话历史和 [S10] 计划中。
 - **[S16]** `2026-09-14–2026-09-15 用户讨论`：Git worktree 第二事实源、GitObservation、Worktree/commit 生命周期、Council 治理、snapshot-bound Context Gateway、性能 guardrails、ChangeSet、GitHub 远端观察和多仓库集成边界。
 - **[S17]** `.hermes/plans/2026-09-14_221205-change-set-github-ecosystem.md`：ChangeSet、Repository、Local/Remote Observation、External Operation Ledger、Integration Saga、版本化架构协议和分阶段实施计划；计划不等于实现验证。
+- **[S18]** Hermes 会话记录：`查看项目代码`（`20260829_022213_a9ec12`）、`处理会话超限问题`（`20260831_165031_a7a5a2`）和 `修复 MasterAgentPage 未使用变量与 workflowState 测试期望`（`20260831_170016_896980`）；用于追溯用户意图、上下文超限和主控作用域形成过程，不作为当前实现事实源。
+- **[S19]** 2026-09-15 附加的 Hermes 会话列表截图：只确认三个会话标题，其中第一行被截断；截图没有显示目标文档路径，也不能证明代码或验收状态。
+- **[S20]** `docs/log/codex-conversations/README.md` 及其 9 份 Codex 导出：早期架构审查、UI/节点取舍、执行器拆分、成本/记忆/Skill、Tauri/Rust 边界和真实验收观点；目录按敏感归档处理，不是规范事实源。
+- **[S21]** `docs/log/raw/ComfyUI风格工作流桌面端方案_20260829202129.json`、`workbuddy总是需要我手动点“运行”怎么办_20260829202107.json`、`启动这个项目并修复文件监视器冲突_20260829201832.json`、`无法发送消息的原因_20260829202124.json`、Git 远程配置记录：CodeBuddy/其它工具的原始方案、运行门、Provider/宿主错误和仓库操作记录；敏感值不进入本文。
+- **[S22]** `docs/log/raw/zcode/above.md`、`reply.md`、`审查架构与事件溯源设计.md`、`审查UI交互与前端体验.md`：其它 AI 的架构与 UI 只读审查；其中市场判断和未经当前 read-back 的建议只作为待验证意见。
+- **[S23]** `CODEBUDDY.md`：当前另一 AI IDE 的工程约定、Tauri/React/Agent/插件/凭据和开发运行时边界；保留在原位置，不把它的说明自动视为当前实现证明。
+- **[S24]** 本轮当前 worktree 中核对的源码/测试/日志：`src/components/MasterAgentPage.tsx`、`src/projectControl/persistence.ts`、`src/platform/env.ts`、`vite.config.ts`、`docs/DEVELOPMENT_LOG.md` 7.9–7.112 及相关测试；用于确认当前实现和验证边界。
 
 ---
 
@@ -797,3 +980,6 @@ authority: decision-log
 4. 每条实现性结论都要链接源码、测试、宿主 Evidence、reviewer snapshot 或 `DEVELOPMENT_LOG.md`；计划文字只能证明计划存在。
 5. 不在本文写入 API key、token、密码、私钥、Bearer 值、连接字符串或未经脱敏的个人路径；任何凭据统一写作 `[REDACTED]`。
 6. 计划文档引用本记录的条目；架构契约引用决定的 ID；开发日志记录实际实现和验证结果，不重复解释全部设计历史。
+7. 原始 AI 对话和截图只能通过来源 ID 引用；如果其结论没有当前源码、测试、宿主 Evidence、Git read-back 或用户确认支撑，必须标为 `建议待确认`、`未验证` 或 `历史观察`。
+8. 任何跨会话 handoff 都必须保留原始来源、snapshot/version 和截断/降级信息；不得为了“上下文连续”把完整 transcript 或敏感日志注入 Worker。
+9. 新增来源时先脱敏再引用；发现凭据、个人敏感路径或内部运行句柄，文档只写 `[REDACTED]` 或抽象后的来源说明，不复制原值。
