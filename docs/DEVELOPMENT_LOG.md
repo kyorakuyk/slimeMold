@@ -2625,6 +2625,20 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
 - 控制面状态继续为 `mvp-closed-unverified`。
 
+### 7.115 以 2048 机制复现验证独立产品交付档案
+
+- 本轮在本地 checkpoint `1123f67` 之后进行；SlimeMold 主仓库没有新增生产代码，未修改 `D:/Agents/SMtest`，未 push/merge/cleanup。独立产品保存在仓库外的 disposable repo，避免把成品代码混入控制面项目。
+- 真实运行 `npm run headless -- examples/2048.workflow.json`：6 个节点，成功 6，失败 0；该工作流使用 offline simulate，证明规划→架构→Builder→handoff 图连通，不证明真实 LLM 提取质量。
+- 外部产品以 public Steam `2048` 页面仅作可观察玩法参考，由结构化主控提取稿限定范围，再交给 3 个下游工作包：纯棋盘逻辑、原创 UI/持久化、release/acceptance。没有复制 Steam 商标、素材、截图、音频、源代码或私有实现。
+- 独立产品四阶段提交为 `c36485f`、`f3c3312`、`c974382`、`688c343`，最终证据档案提交为 `1c880dd`；档案包括 master extraction、downstream task graph、Acceptance、browser read-back、5 张截图和实验数据。
+
+验证结果：
+
+- 产品 Acceptance：`acc-fourfold-20260915143237462`，通过；7 个核心测试、5 个 Acceptance 子检查、静态 release build 通过；核心测试 294 ms，build 107 ms；
+- Playwright Chromium：6 个浏览器检查通过，覆盖初始棋盘、键盘合并、Undo、刷新持久化、2048 胜利层和无可移动结束层；5 张 1440×1032 PNG 截图已 read-back 并视觉检查；
+- 引擎实验：1,000 局确定性随机输入，160.25 ms；平均 119.88 步，p95 192 步，平均分 1,110.37，最高观察块 256；token/费用未计量，未写成 0；
+- `git diff --check`：SlimeMold 与独立产品均通过；当前 SlimeMold 控制面仍为 `mvp-closed-unverified`，真实 Master Agent 运行和完整 Worker→Delivery→Cleanup→Restart 闭环仍未宣称完成。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
