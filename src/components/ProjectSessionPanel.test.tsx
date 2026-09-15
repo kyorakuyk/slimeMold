@@ -605,6 +605,12 @@ describe('ProjectSessionPanel', () => {
       updatedAt: '2026-09-01T00:00:00.000Z',
       tasks: {},
     }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-queued',
+      projectId: 'project-1',
+      reason: 'unfinished-worker-lease',
+      message: '旧内存 recovery 不应遮蔽 queued Run',
+    }];
     mocks.store.projectControl = {
       version: 1,
       activeSessionId: 'session-1',
