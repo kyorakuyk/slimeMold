@@ -117,6 +117,35 @@ describe('createDevWorkerAcceptance', () => {
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({ stageId: 'verify' }));
   });
 
+  it('uses the approved task scope for a disposable target instead of the host repository policy', async () => {
+    const deps = host({
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tests ok', stderr: '', durationMs: 10 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => [
+          'package.json',
+          'server.mjs',
+          'public/index.html',
+          'src/main.js',
+        ]),
+      },
+    });
+    const scopedLease: WorkerTaskLease = {
+      ...lease,
+      task: {
+        ...lease.task,
+        scope: ['public/index.html', 'src/main.*', '本地 HTTP server 配置'],
+      },
+    };
+
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost, {
+      taskScopePolicy: true,
+    }).evaluate({ lease: scopedLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(true);
+    expect(deps.service.testRun).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects protected changes before executing the host build/test oracle', async () => {
     const deps = host({
       policy: {

@@ -88,7 +88,7 @@ export function createGuiProjectWorkerRunCoordinator(
     ),
     executor: createCodexWorkerExecutor({
       invoker: createCodexWorkerInvoker(hostGeneration),
-      acceptance: createDevWorkerAcceptance(options.session),
+      acceptance: createDevWorkerAcceptance(options.session, { taskScopePolicy: true }),
       model: options.model,
     }),
   });

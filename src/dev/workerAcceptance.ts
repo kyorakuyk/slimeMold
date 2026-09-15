@@ -11,6 +11,8 @@ export interface DevWorkerAcceptanceOptions {
   compileCommand?: string[];
   /** 默认使用项目现有测试入口；命令仍由 DevCapabilityService 的白名单校验。 */
   testCommand?: string[];
+  /** Use approved Task scope instead of the SlimeMold self-development policy for disposable targets. */
+  taskScopePolicy?: boolean;
 }
 
 type DevWorkerAcceptanceHost = Pick<
@@ -31,6 +33,21 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   const error = new Error('Worker acceptance 已取消');
   error.name = 'AbortError';
   throw error;
+}
+
+function createTaskScopePolicy(
+  hostPolicy: DevWorkerAcceptanceHost['policy'],
+  scope: readonly string[],
+): DevWorkerAcceptanceHost['policy'] {
+  const explicitPaths = scope.filter((item) => /^(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.*-]+$/.test(item));
+  const serverPaths = scope.some((item) => /http\s*server/i.test(item))
+    ? ['package.json', 'server.*']
+    : [];
+  return {
+    ...hostPolicy,
+    allowedPaths: [...new Set([...explicitPaths, ...serverPaths])],
+    protectedPaths: ['.slimemold/**', 'artifacts/**'],
+  };
 }
 
 /**
@@ -83,6 +100,9 @@ export function createDevWorkerAcceptance(
         };
       }
       const context = { cwd };
+      const policy = options.taskScopePolicy
+        ? createTaskScopePolicy(host.policy, lease.task.scope)
+        : host.policy;
       const compileLabel = commandLabel(compileCommand);
       const testLabel = commandLabel(testCommand);
 
@@ -92,8 +112,8 @@ export function createDevWorkerAcceptance(
       // before npm/vitest can interpret them.
       const preflightChangedFiles = await host.service.gitChangedFiles(context, lease.assignment.baseRevision);
       throwIfAborted(signal);
-      const preflightProtectedPaths = collectChangedProtectedPaths(host.policy, preflightChangedFiles);
-      const preflightDisallowedPaths = preflightChangedFiles.filter((file) => !isPathAllowed(host.policy, file));
+      const preflightProtectedPaths = collectChangedProtectedPaths(policy, preflightChangedFiles);
+      const preflightDisallowedPaths = preflightChangedFiles.filter((file) => !isPathAllowed(policy, file));
       if (preflightProtectedPaths.length > 0 || preflightDisallowedPaths.length > 0) {
         const failureReason = `宿主验收在执行前拒绝路径策略：受保护 ${preflightProtectedPaths.length} 个，越界 ${preflightDisallowedPaths.length} 个`;
         const preflightEvidence = await host.collector.addAsync({
@@ -154,8 +174,8 @@ export function createDevWorkerAcceptance(
         throwIfAborted(signal);
         const changedFiles = await host.service.gitChangedFiles(context, lease.assignment.baseRevision);
         throwIfAborted(signal);
-        const changedProtectedPaths = collectChangedProtectedPaths(host.policy, changedFiles);
-        const changedDisallowedPaths = changedFiles.filter((file) => !isPathAllowed(host.policy, file));
+        const changedProtectedPaths = collectChangedProtectedPaths(policy, changedFiles);
+        const changedDisallowedPaths = changedFiles.filter((file) => !isPathAllowed(policy, file));
         const hasDiff = diff.exitCode === 0 && changedFiles.length > 0;
         const pathPolicyPassed = changedProtectedPaths.length === 0 && changedDisallowedPaths.length === 0;
 
