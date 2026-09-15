@@ -796,6 +796,24 @@ describe('WorkerTaskQueue', () => {
     expect(queue.drainEvents().filter((event) => event.eventType === 'RunStarted')).toHaveLength(0);
   });
 
+  it('does not re-emit RunStarted after a failed task transitions the run to partial', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-partial-start',
+      taskGraph: graph([task('a'), task('c')]),
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const allocator = allocatorFor([]);
+    const first = await queue.claimTask('a', allocator);
+    expect(first).not.toBeNull();
+    queue.drainEvents();
+    queue.markFailed('a', 'worktree allocation failed', '2026-09-01T00:00:01.000Z', [], undefined, first!.attemptId);
+    queue.drainEvents();
+
+    expect(await queue.claimTask('c', allocator)).not.toBeNull();
+    expect(queue.drainEvents().filter((event) => event.eventType === 'RunStarted')).toHaveLength(0);
+  });
+
   it('fails closed when an allocator reuses a worktree for another task in the same run', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',

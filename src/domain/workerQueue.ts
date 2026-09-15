@@ -366,6 +366,7 @@ export class WorkerTaskQueue {
   private readonly requireContextPack: boolean;
   private state: WorkerRunQueueState;
   private events: DomainEvent[] = [];
+  private runStartedEmitted = false;
   private readonly claiming = new Set<string>();
 
   constructor(
@@ -436,6 +437,7 @@ export class WorkerTaskQueue {
         }),
       ),
     };
+    this.runStartedEmitted = initialState.status !== 'queued';
     this.validateState();
     if (emitInitialEvents) {
       this.emitRun('RunCreated', {
@@ -538,7 +540,6 @@ export class WorkerTaskQueue {
         throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用`);
       }
       const now = new Date().toISOString();
-      const wasRunning = this.state.status === 'running';
       this.state = {
         ...this.state,
         status: 'running',
@@ -563,7 +564,7 @@ export class WorkerTaskQueue {
           },
         },
       };
-      if (!wasRunning) {
+      if (!this.runStartedEmitted) {
         this.emitRun('RunStarted', { runId: this.state.runId }, now);
       }
       this.emitTask('TaskStarted', taskId, {
@@ -593,7 +594,6 @@ export class WorkerTaskQueue {
       if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
       const message = `worktree 分配失败：${errorMessage(cause)}`;
-      const wasRunning = this.state.status === 'running';
       this.state = {
         ...this.state,
         status: 'running',
@@ -611,7 +611,7 @@ export class WorkerTaskQueue {
           },
         },
       };
-      if (!wasRunning) {
+      if (!this.runStartedEmitted) {
         this.emitRun('RunStarted', { runId: this.state.runId }, now);
       }
       this.emitTask('TaskStarted', taskId, {
@@ -860,12 +860,13 @@ export class WorkerTaskQueue {
       succeeded: 'RunSucceeded',
     };
     const type = eventType[next];
-    if (type && !(type === 'RunStarted' && this.events.some((event) => event.eventType === type))) {
+    if (type && !(type === 'RunStarted' && this.runStartedEmitted)) {
       this.emitRun(type, { runId: this.state.runId, taskGraphId: this.state.taskGraphId }, now);
     }
   }
 
   private emitRun(eventType: string, payload: unknown, occurredAt: string): void {
+    if (eventType === 'RunStarted') this.runStartedEmitted = true;
     this.emit({
       eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
       streamId: this.state.projectId,
