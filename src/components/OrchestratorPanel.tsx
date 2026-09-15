@@ -842,7 +842,7 @@ export default function OrchestratorPanel({
                                 ))}
                               </ul>
                             )}
-                            {task.cleanup && (
+                            {task.cleanup ? (
                               task.cleanup.status === 'ready' ? (
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px]" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
                                   <span className="break-all text-ok">
@@ -879,7 +879,11 @@ export default function OrchestratorPanel({
                                   {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.blocked')}: {task.cleanup.reason}
                                 </p>
                               )
-                            )}
+                            ) : task.status === 'succeeded' ? (
+                              <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
+                                {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.unavailable')}
+                              </p>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

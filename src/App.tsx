@@ -39,7 +39,7 @@ import {
 } from './projectControl/workerRunRuntime';
 import {
   approveWorkerCleanupProposal,
-  buildWorkerCleanupProposal,
+  buildWorkerCleanupProposalSafely,
 } from './projectControl/workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './projectControl/workerCleanupExecution';
 import { markWorkerTaskCleaned } from './projectControl/workerCleanupCommand';
@@ -313,7 +313,7 @@ export default function App() {
     const proposals = await Promise.all(
       Object.values(run.tasks)
         .filter((task) => task.worktreePath)
-        .map((task) => buildWorkerCleanupProposal({
+        .map((task) => buildWorkerCleanupProposalSafely({
           run,
           task,
           acceptance: task.acceptanceId ? session.getAcceptance(task.acceptanceId) : undefined,

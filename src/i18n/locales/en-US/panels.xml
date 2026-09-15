@@ -262,7 +262,7 @@
   <string name="orchestrator.empty">No orchestrations yet</string>
   <string name="orchestrator.emptyHint">Enter a goal and click "Generate draft" — the Orchestrator splits it into a multi-stage workflow.</string>
   <string name="orchestrator.back">Back to list</string>
-  <string name="orchestrator.bindLocked">Running/Finished — stage bindings are locked</string>
+  <string name="orchestrator.bindLocked">Stage bindings locked</string>
   <string name="orchestrator.prepare">Materialize workflows</string>
   <string name="orchestrator.prepareHint">Create/validate a workflow per stage and expose its real wfId so you can edit it; recommended before running</string>
   <string name="orchestrator.confirm">Confirm draft</string>
@@ -314,6 +314,7 @@
   <string name="orchestrator.worker.cleanup.approveAction">Approve cleanup</string>
   <string name="orchestrator.worker.cleanup.executeAction">Execute cleanup</string>
   <string name="orchestrator.worker.cleanup.blocked">Cleanup blocked</string>
+  <string name="orchestrator.worker.cleanup.unavailable">Cleanup proposal not generated; host state needs review</string>
   <string name="orchestrator.worker.recovery.retryAction">Confirm new-attempt retry</string>
   <string name="orchestrator.worker.recovery.skipAction">Confirm skip</string>
   <string name="orchestrator.worker.status.queued">Queued</string>

@@ -262,7 +262,7 @@
   <string name="orchestrator.empty">暂无编排</string>
   <string name="orchestrator.emptyHint">输入目标并点击「生成草案」，Orchestrator 会把它分解为多阶段工作流。</string>
   <string name="orchestrator.back">返回列表</string>
-  <string name="orchestrator.bindLocked">执行中/已结束，阶段绑定已锁定</string>
+  <string name="orchestrator.bindLocked">阶段绑定已锁定</string>
   <string name="orchestrator.prepare">固化工作流</string>
   <string name="orchestrator.prepareHint">为每个阶段创建/校验工作流并生成真实 wfId，可打开编辑；运行前建议先固化</string>
   <string name="orchestrator.confirm">确认草案</string>
@@ -314,6 +314,7 @@
   <string name="orchestrator.worker.cleanup.approveAction">批准清理</string>
   <string name="orchestrator.worker.cleanup.executeAction">执行清理</string>
   <string name="orchestrator.worker.cleanup.blocked">暂不可清理</string>
+  <string name="orchestrator.worker.cleanup.unavailable">清理提案尚未生成，宿主状态需要复查</string>
   <string name="orchestrator.worker.recovery.retryAction">确认重试新 attempt</string>
   <string name="orchestrator.worker.recovery.skipAction">确认跳过任务</string>
   <string name="orchestrator.worker.status.queued">已入队</string>

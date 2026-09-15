@@ -275,6 +275,18 @@ export async function buildWorkerCleanupProposal(
   };
 }
 
+/** Convert host-side proposal preparation failures into visible, non-destructive UI state. */
+export async function buildWorkerCleanupProposalSafely(
+  input: BuildWorkerCleanupProposalInput,
+): Promise<WorkerCleanupProposal> {
+  try {
+    return await buildWorkerCleanupProposal(input);
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return blocked(input.run.runId, input.task.taskId, `Cleanup 提案准备失败：${message}`);
+  }
+}
+
 /** Record a one-shot host approval bound to the proposal fingerprint. */
 export function approveWorkerCleanupProposal(
   proposal: WorkerCleanupProposal,

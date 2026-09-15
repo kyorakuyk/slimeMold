@@ -3275,6 +3275,148 @@ textarea.sm-input {
   --sm-pro-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
 }
 
+/* Professional shell: legacy fixed Tailwind palette must follow the active theme. */
+.sm-pro-shell .bg-paper { background-color: var(--sm-pro-surface-raised) !important; }
+.sm-pro-shell .bg-paper-soft { background-color: var(--sm-bg-soft) !important; }
+.sm-pro-shell .bg-paper-deep { background-color: var(--sm-bg-deep) !important; }
+.sm-pro-shell .text-ink { color: var(--sm-ink) !important; }
+.sm-pro-shell .text-ink-soft { color: var(--sm-ink-soft) !important; }
+.sm-pro-shell .text-ink-faint { color: var(--sm-ink-faint) !important; }
+.sm-pro-shell .border-line { border-color: var(--sm-line) !important; }
+.sm-pro-shell .text-accent { color: var(--sm-accent) !important; }
+.sm-pro-shell .text-ok { color: var(--sm-ok) !important; }
+.sm-pro-shell .text-err { color: var(--sm-err) !important; }
+.sm-pro-shell .text-warn { color: var(--sm-run) !important; }
+
+/* TaskGraph metadata is a compact inspector, not an unstyled text stream. */
+.sm-pro-shell .sm-taskgraph-dag {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--sm-line);
+  border-radius: 8px;
+  background: var(--sm-pro-surface);
+  color: var(--sm-ink);
+}
+
+.sm-pro-shell .sm-taskgraph-dag-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-eyebrow {
+  margin: 0 0 3px;
+  color: var(--sm-ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-heading h3 {
+  margin: 0;
+  color: var(--sm-ink);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  max-width: 52%;
+  color: var(--sm-ink-soft);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9.5px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-nodes {
+  display: grid;
+  gap: 6px;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--sm-line);
+  border-radius: 7px;
+  background: var(--sm-pro-surface-raised);
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node.is-succeeded {
+  border-color: color-mix(in srgb, var(--sm-ok) 42%, var(--sm-line));
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node.is-failed,
+.sm-pro-shell .sm-taskgraph-dag-node.is-blocked {
+  border-color: color-mix(in srgb, var(--sm-err) 48%, var(--sm-line));
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node-title strong {
+  min-width: 0;
+  color: var(--sm-ink);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node-title span {
+  flex: 0 0 auto;
+  color: var(--sm-ink-soft);
+  font-size: 10px;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node.is-succeeded .sm-taskgraph-dag-node-title span {
+  color: var(--sm-ok);
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node code,
+.sm-pro-shell .sm-taskgraph-dag-edges code {
+  color: var(--sm-ink-faint);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9.5px;
+  overflow-wrap: anywhere;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node-lineage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--sm-ink-soft);
+  font-size: 9.5px;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-node-lineage span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.sm-pro-shell .sm-taskgraph-dag-edges {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px dashed var(--sm-line);
+  border-radius: 6px;
+  color: var(--sm-ink-soft);
+  font-size: 9.5px;
+  list-style: none;
+}
+
 .sm-pro-shell button:focus-visible,
 .sm-pro-shell input:focus-visible,
 .sm-pro-shell select:focus-visible,
