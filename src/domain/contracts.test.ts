@@ -125,6 +125,22 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('replays duplicate pending retry fences idempotently', () => {
+    const taskExecutionId = createTaskExecutionId('run-duplicate-retry', 'task-1');
+    const base = {
+      runId: 'run-duplicate-retry',
+      taskId: 'task-1',
+      taskExecutionId,
+      nextAttempt: 1,
+    };
+    const projection = replayDomainEvents([
+      event({ eventId: 'duplicate-retry-1', aggregateType: 'TaskExecution', aggregateId: taskExecutionId, eventType: 'TaskQueued', payload: base }),
+      event({ eventId: 'duplicate-retry-2', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskQueued', payload: base }),
+    ]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ pendingAttempt: 1, attemptIds: [] });
+  });
+
   it('replays RunQueued after an explicit Worker recovery retry decision', () => {
     const queued = event({
       eventId: 'evt-run-requeued',
