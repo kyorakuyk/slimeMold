@@ -2582,9 +2582,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 真实 Tauri recovery read-back：修复前遗留的 `D:/Temp/sm-tauri2` 在启动前为 `workerRuns=0`、事件流 19 条、Worktree 保留；修复后真实 Tauri 启动把同一 Run 重建为 `partial`，ProjectFile read-back 为 `workerRuns=1`，UI 显示“Worker 部分失败，需要恢复”，没有启动新 Attempt，既有 Worktree 和 marker 保持不变。该事实证明 Restart/Recovery projection 已修复，但本轮没有再次执行新 Worker，因此 Evidence/Acceptance/Delivery/Cleanup 的成功闭环仍未通过，控制面继续为 `mvp-closed-unverified`。
 
----
+### 7.112 编排界面深色主题与 Worker 收口信息修复
 
-如果不想一次发布全文，可以拆成下面几篇：
+- 本轮在修复前 checkpoint `53b62da` 之后实施，修复提交为 `afa0271`；未修改 `D:/Agents/SMtest`、disposable fixture 或既有 Worker Worktree，没有 push/merge/cleanup。
+- `src/styles/typora.css` 为 `.sm-pro-shell` 增加主题作用域映射，令 legacy `bg-paper`、`text-ink-*`、`border-line`、状态色和专业暗色变量一致；新增 TaskGraph DAG 的标题、节点、lineage、Evidence/Acceptance 字段和边关系布局，避免暗色界面中出现浅色卡片、低对比度文本和字段粘连。
+- `OrchestratorPanel` 对成功 Task 在 Cleanup proposal 尚未生成时显示明确状态；Cleanup proposal 宿主准备异常现在转换为可见的 blocked proposal，不再静默消失，仍保持 fail-closed，不允许绕过批准直接清理。
+- 中英文 `orchestrator.bindLocked` 改为单一明确的“阶段绑定已锁定 / Stage bindings locked”，避免“执行中/已结束”混合状态文案。
+
+验证结果：
+
+- targeted：3 个相关测试文件、17 个测试通过；
+- `npm run test`：126 个测试文件、1080 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1010 个 key 对齐；
+- `git diff --check`：通过；
+- 本轮未重新执行真实 Tauri Worker、Rust 测试或 headless；此前成功 disposable Worker 现场仍保留，当前控制面仍为 `mvp-closed-unverified`。
+
+---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
 2. 一个 1500 行 executor 的重构：为什么我没有选择直接重写
