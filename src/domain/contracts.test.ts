@@ -138,7 +138,7 @@ describe('Phase 0a domain contracts', () => {
       event({ eventId: 'duplicate-retry-2', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskQueued', payload: base }),
     ]);
 
-    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ pendingAttempt: 1, attemptIds: [] });
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ status: 'queued', pendingAttempt: 1, attemptIds: [] });
   });
 
   it('replays RunQueued after an explicit Worker recovery retry decision', () => {
