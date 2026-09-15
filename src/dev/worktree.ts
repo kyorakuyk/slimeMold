@@ -100,6 +100,7 @@ export class WorktreeManager {
   constructor(
     private readonly runner: DevGitRunner,
     private readonly baseRepoPath: string,
+    private readonly ensureParentDirectory?: (path: string) => Promise<void>,
   ) {}
 
   getBaseRepoPath(): string {
@@ -113,6 +114,17 @@ export class WorktreeManager {
   async create(id: string, path: string, opts?: { branch?: string; signal?: AbortSignal }): Promise<WorktreeInfo | null> {
     if (opts?.signal?.aborted) return null;
     if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) return null;
+    if (opts?.branch?.startsWith('worker/') && this.ensureParentDirectory) {
+      const normalizedPath = normalizeAbsolutePath(path);
+      const parent = normalizedPath.slice(0, normalizedPath.lastIndexOf('/')) || '/';
+      try {
+        await this.ensureParentDirectory(parent);
+      } catch {
+        // Git worktree add remains the final authority; a host mkdir probe may
+        // be unavailable in older adapters, while Git still succeeds when the
+        // parent already exists.
+      }
+    }
     const rev = await this.runner.git(['rev-parse', 'HEAD'], this.baseRepoPath);
     if (rev.exitCode !== 0) return null;
     if (opts?.signal?.aborted) return null;

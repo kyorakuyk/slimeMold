@@ -202,7 +202,8 @@ describe('DevSession Tauri orphan cleanup', () => {
     session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
     await expect(session.confirmAndCleanup(info!.path, undefined, retryFingerprint)).resolves.toBe(true);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
-    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenCalledTimes(4);
+    expect(invoke.mock.calls.filter(([command]) => command === 'dev_create_dir')).toHaveLength(1);
     expect(invoke.mock.calls.filter(([command]) => command === 'dev_unregister_worktree')).toHaveLength(2);
   });
 

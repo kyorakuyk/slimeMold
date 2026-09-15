@@ -223,7 +223,7 @@ export function isMissingFileError(error: unknown): boolean {
   if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return true;
   const message = (error instanceof Error ? error.message : String(error)).trim();
   return /^(?:dev_read_file:\s*)?(?:ENOENT|file not found|no such file(?: or directory)?|文件不存在|路径不存在)$/i.test(message)
-    || /(?:^|\s)os error 3$/i.test(message);
+    || /(?:^|[\s(])os error 3(?:\s|$|\))/i.test(message);
 }
 
 /**

@@ -8,6 +8,7 @@ describe('H4 EvidenceCollector', () => {
   it('只把明确的 missing-file 错误视为缺失，不吞权限错误文本', () => {
     expect(isMissingFileError('dev_read_file: 文件不存在')).toBe(true);
     expect(isMissingFileError(new Error('failed to open file D:/project/.slimemold/evidence/host.jsonl with os error 3'))).toBe(true);
+    expect(isMissingFileError(new Error('failed to open file C:/project/.slimemold/acceptance/records.jsonl with error: 系统找不到指定的路径。 (os error 3)'))).toBe(true);
     expect(isMissingFileError(new Error('failed to open file D:/project/.slimemold/evidence/host.jsonl with os error 5'))).toBe(false);
     expect(isMissingFileError('permission denied: file not found')).toBe(false);
     expect(isMissingFileError(new Error('access denied: does not exist'))).toBe(false);

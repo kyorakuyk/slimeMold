@@ -56,7 +56,7 @@ export function getDevGuiError(): string | null {
 }
 export function setDevGuiStatus(s: DevGuiStatus): void {
   devGuiStatus = s;
-  if (s !== 'unavailable') devGuiError = null;
+  if (s === 'ready') devGuiError = null;
 }
 
 export function registerGuiDevDefs(defs: NodeDefinition[]): void {
@@ -74,13 +74,22 @@ function evidenceRootFor(projectPath: string): string {
  * 失败 → status=unavailable，不注册 dev 节点（fail-closed），返回 null。
  */
 async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal): Promise<ReturnType<typeof getDevSession>> {
-  if (signal?.aborted) return null;
+  if (signal?.aborted) {
+    devGuiError = 'project operation was already aborted';
+    return null;
+  }
   const existing = getDevSession();
   if (existing) {
-    if (pathComparisonKey(existing.manager.getBaseRepoPath()) !== pathComparisonKey(projectPath)) return null;
-    registerGuiDevDefs(existing.defs);
-    setDevGuiStatus('ready');
-    return existing;
+    if (pathComparisonKey(existing.manager.getBaseRepoPath()) === pathComparisonKey(projectPath)) {
+      registerGuiDevDefs(existing.defs);
+      setDevGuiStatus('ready');
+      return existing;
+    }
+    await teardownGuiDevSession();
+    if (signal?.aborted) {
+      devGuiError = 'project operation was aborted while replacing a stale session';
+      return null;
+    }
   }
 
   const generation = ++devSessionGeneration;
@@ -160,7 +169,14 @@ export function ensureGuiDevSession(
   projectPath: string | null,
   signal?: AbortSignal,
 ): Promise<ReturnType<typeof getDevSession>> {
-  if (!projectPath || signal?.aborted) return Promise.resolve(null);
+  if (!projectPath) {
+    devGuiError = 'project path is missing';
+    return Promise.resolve(null);
+  }
+  if (signal?.aborted) {
+    devGuiError = 'project operation was already aborted before host initialization';
+    return Promise.resolve(null);
+  }
   const projectKey = pathComparisonKey(projectPath);
   if (ensureInFlight && ensureInFlightProjectKey === projectKey) return ensureInFlight;
   if (ensureInFlight) {

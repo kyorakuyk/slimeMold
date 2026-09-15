@@ -37,6 +37,27 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(calls).toContainEqual(['worktree', 'add', '-q', target, '-b', info!.branch, 'HEAD']);
   });
 
+  it('create：worker branch 先创建 sibling worker parent directory', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      return ok();
+    });
+    const ensureParent = vi.fn(async () => {});
+    const manager = new WorktreeManager({ git }, 'D:/Temp/repo', ensureParent);
+
+    const info = await manager.create('worker-1', 'D:/Temp/repo-workers/worker-1', {
+      branch: 'worker/worker-1',
+    });
+
+    expect(info?.status).toBe('created');
+    expect(ensureParent).toHaveBeenCalledWith('D:/Temp/repo-workers');
+    expect(calls.at(-1)).toEqual([
+      'worktree', 'add', '-q', 'D:/Temp/repo-workers/worker-1', '-b', 'worker/worker-1', 'HEAD',
+    ]);
+  });
+
   it('workerBranchForPath：与 Git/Rust branch 组件规则一致', () => {
     expect(workerBranchForPath('D:/Temp/repo-workers/mvp-gui-success-wt/')).toBe('worker/mvp-gui-success-wt');
     const windowsPath = ['D:', 'Temp', 'repo-workers', 'mvp-gui-success-wt', ''].join(String.fromCharCode(92));

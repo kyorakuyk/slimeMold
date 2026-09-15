@@ -345,9 +345,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   // Tauri（GUI）下的命令/文件/路径通道：全部走 Rust 宿主（dev_exec / dev_read_file / dev_write_file）。
   // tauri-run 顶层无 @tauri-apps 运行时依赖（invoke 均延迟 import），静态 import 对浏览器构建安全。
   const tauriDeps = env === 'tauri' ? createTauriDeps(hostGeneration!) : undefined;
+  const ensureWorktreeParent = tauriDeps?.mkdir ?? (async (path: string) => {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(path, { recursive: true });
+  });
   const manager = new WorktreeManager(
     opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner(hostGeneration!) : createNodeGitRunner()),
     baseRepoPath,
+    ensureWorktreeParent,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
   const registry: WorktreeRegistry = { isTracked: (cwd) => manager.isTracked(cwd) };
