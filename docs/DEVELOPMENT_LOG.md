@@ -2612,21 +2612,6 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
 - 控制面状态继续为 `mvp-closed-unverified`。
 
-### 7.114 增加 Hermes 旧会话时间线与全文导入边界
-
-- 本轮在本地 checkpoint `0ce1e09` 之后进行；只修改 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md` 和本日志，没有修改生产代码、`D:/Agents/SMtest`、disposable fixture 或 Worker Worktree，没有 push/merge/cleanup。
-- 根据 Hermes 会话历史检索补充了 `S25`–`S28`：开发日志整理、外围博客语境、JIT-Agent 研究和跨平台会话互通研究；在来源索引下新增按 Asia/Shanghai 时间排序的 `7.1 Hermes 旧会话时间线与导入边界`。
-- 明确区分：Hermes 原始 transcript 没有全文复制进仓库；相关会话只以稳定 session ID、标题、时间、决策性事件和脱敏引用归并。Codex/CodeBuddy 原始日志仍是独立工具来源，不冒充 Hermes 导出。
-- 明确保留会话覆盖边界：与 SlimeMold 无关的 Hermes 历史没有导入；博客会话只作为外围索引，不升级为架构事实；ADR 编号保持主题顺序，不按时间重编号。
-
-验证结果：
-
-- 时间线检查：7 个条目按会话时间递增、session ID 唯一；
-- ADR 结构脚本：82 条 ADR，编号 `1–82` 连续且唯一；来源引用 `S1–S28` 无缺失/未知；敏感凭据模式匹配 0；
-- `git diff --check`：通过；
-- 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
-- 控制面状态继续为 `mvp-closed-unverified`。
-
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流

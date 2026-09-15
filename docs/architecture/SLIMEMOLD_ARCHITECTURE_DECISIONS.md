@@ -774,7 +774,7 @@ authority: decision-log
 - **放弃的方案：** 把超长会话全文复制到新会话、把“摘要”直接当成事实，或让 Worker 读取所有历史 transcript 来恢复任务。
 - **取舍：** handoff 可能遗漏语境，必须保留原始来源和可回查引用；但上下文成本、会话超限风险、跨工具格式差异和错误历史污染明显降低。
 - **后果：** 摘要必须声明 snapshot/version、来源和截断状态；缺少可验证事实时进入 `unknown`/`needs-repair`，不能用流畅的摘要补洞。跨工具导入的目标是可重新投影的事件/事实 envelope，而不是共享私有 session 文件。
-- **来源：** [S18] 中的 `处理会话超限问题`、`查看项目代码`；[S20] 对话导出边界；[S28] 跨平台会话互通研究；ADR-SM-021、ADR-SM-026、ADR-SM-027。
+- **来源：** [S18] 中的 `处理会话超限问题`、`查看项目代码`；[S20] 对话导出边界；ADR-SM-021、ADR-SM-026、ADR-SM-027。
 
 ### ADR-SM-071：主控 Agent 采用全局默认、项目覆盖和项目默认的显式作用域
 
@@ -869,7 +869,7 @@ authority: decision-log
 - **放弃的方案：** 让主控或 Worker 自动修改自己的长期能力，把所有历史 transcript 注入每个任务，或把“上一次成功”当作当前权限和事实。
 - **取舍：** 经验复用变慢，需要索引、评估和 scope 管理；换取错误偏好、旧项目污染和自我强化的错误策略不会悄悄扩大影响。
 - **后果：** 当前项目事实优先于 Memory；Worker 只读取与 Task/Artifact/Acceptance 相关的经验；失败和负面经验也要作为可审计 Evidence，而不是静默丢弃。
-- **来源：** [S20] Codex 关于自我优化、Memory 和 Skill 的讨论；[S27] JIT-Agent 研究中的 task-level profile/经验归档启示；ADR-SM-020、ADR-SM-026、ADR-SM-027。
+- **来源：** [S20] Codex 关于自我优化、Memory 和 Skill 的讨论；ADR-SM-020、ADR-SM-026、ADR-SM-027。
 
 ### ADR-SM-080：区分业务节点、流程控制节点和能力/工具，不把所有角色或模型都做成节点
 
@@ -969,33 +969,6 @@ authority: decision-log
 - **[S22]** `docs/log/raw/zcode/above.md`、`reply.md`、`审查架构与事件溯源设计.md`、`审查UI交互与前端体验.md`：其它 AI 的架构与 UI 只读审查；其中市场判断和未经当前 read-back 的建议只作为待验证意见。
 - **[S23]** `CODEBUDDY.md`：当前另一 AI IDE 的工程约定、Tauri/React/Agent/插件/凭据和开发运行时边界；保留在原位置，不把它的说明自动视为当前实现证明。
 - **[S24]** 本轮当前 worktree 中核对的源码/测试/日志：`src/components/MasterAgentPage.tsx`、`src/projectControl/persistence.ts`、`src/platform/env.ts`、`vite.config.ts`、`docs/DEVELOPMENT_LOG.md` 7.9–7.112 及相关测试；用于确认当前实现和验证边界。
-- **[S25]** Hermes 会话 `整理doc/log开发记录与经验总结`（`20260829_204456_5e83f1`）：把 `docs/log` 中的 Codex/CodeBuddy 记录按日期、技术栈、踩坑和经验整理进 `DEVELOPMENT_LOG.md`；这是历史整理来源，不是当前实现验证。
-- **[S26]** Hermes 会话 `规划个人博客建设`（`20260829_191744_11483c`）：外围项目展示/博客语境中提到 SlimeMold；不作为产品架构决策来源，仅保留在时间线中说明边界。
-- **[S27]** Hermes 会话 `调研 JIT-Agent 论文`（`20260902_221953_08cefb`）：研究性输入，提出 task-level harness/profile、版本化经验和 Evidence/权限边界的启示；论文研究结论不等于 SlimeMold 已实现能力。
-- **[S28]** Hermes 会话 `调研跨平台 AI 会话互通方案`（`20260906_151118_c37df7`）：研究 DSH/Codex/Claude/OpenCode/Pi 等会话迁移的限制；支持“中立事件/handoff envelope 优先于共享私有 session 文件”的设计判断。
-
-### 7.1 Hermes 旧会话时间线与导入边界
-
-本节是**按会话创建/首个有效用户请求时间排序的归并索引**，不是 Hermes transcript 的全文副本。时间线与 ADR 的职责不同：ADR 编号保持主题稳定，时间线负责回答“哪个会话先发生、贡献了什么、是否纳入”。
-
-| 时间（Asia/Shanghai） | Hermes 会话 | 作用 | 纳入方式 |
-|---|---|---|---|
-| 2026-08-29 02:22 | `查看项目代码` · `20260829_022213_a9ec12` | 早期项目分析；形成“项目驾驶舱 → 主控会话 → 计划 → worktree → Evidence”的黄金路径判断 | 已归并为决策事件，引用 [S18] |
-| 2026-08-29 19:18 | `规划个人博客建设` · `20260829_191744_11483c` | 在博客/项目展示语境中提到 SlimeMold；不属于核心架构会话 | 仅保留外围时间线索引，未导入为 ADR 事实 |
-| 2026-08-29 20:47 | `整理doc/log开发记录与经验总结` · `20260829_204456_5e83f1` | 读取 `docs/log`，整理日期、技术栈、踩坑和经验，写入 `DEVELOPMENT_LOG.md` | 已作为历史整理来源归并，引用 [S25] |
-| 2026-08-31 16:50 | `处理会话超限问题` · `20260831_165031_a7a5a2` | 记录上下文超限、创建新会话和 handoff 的必要性 | 已归并为 ADR-SM-070，引用 [S18] |
-| 2026-08-31 17:00 | `修复 MasterAgentPage 未使用变量与 workflowState 测试期望` · `20260831_170016_896980` | 修复 `MasterAgentPage`、`masterAgentId` 测试期望，并继续承载后续 SlimeMold 工程会话 | 已归并为 ADR-SM-071；后续同一长会话按开发日志/提交核对 |
-| 2026-09-02 22:20 | `调研 JIT-Agent 论文` · `20260902_221953_08cefb` | 研究 task-level harness、profile、经验晋升和 Evidence/权限边界 | 作为研究性输入引用 [S27]，不当作已实现能力 |
-| 2026-09-06 15:11 | `调研跨平台 AI 会话互通方案` · `20260906_151118_c37df7` | 研究 DSH/Codex/Claude/OpenCode/Pi 会话迁移、降级和中立事件层 | 作为 handoff 设计输入引用 [S28] |
-
-#### “导入”在本文中的准确含义
-
-- **没有全文导入：** Hermes 原始会话仍在 Hermes 会话数据库中；没有把完整 transcript、隐藏推理、工具输出和敏感上下文复制进仓库。
-- **已经归并：** 上表中的相关会话已提取稳定 ID、标题、时间、用户问题和决策性结论，并转成 ADR/开发日志中的脱敏事件引用。
-- **Codex/CodeBuddy 记录与 Hermes 分开：** `docs/log/codex-conversations/` 和 `docs/log/raw/` 不是 Hermes 全量会话导出；它们是其它工具的独立归档来源。
-- **不是账户全历史：** 与 SlimeMold 无关的 Hermes 会话没有纳入；外围会话明确标为“仅索引”，没有被升级为架构事实。
-
-时间线排序依据是会话时间和首个有效请求，不是文件名、最近修改时间或 ADR 编号。跨多日的长会话只在首次创建时间占一行，后续实现状态以 Git、`DEVELOPMENT_LOG.md` 和当前 worktree 核对。
 
 ---
 
