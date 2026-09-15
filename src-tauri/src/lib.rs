@@ -660,7 +660,7 @@ struct DevExecResult {
 
 /// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
 const DEV_ALLOWED_CMDS: &[&str] = &[
-    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "tsc", "vitest", "tsx",
+    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "node", "tsc", "vitest", "tsx",
     "npm",
 ];
 
