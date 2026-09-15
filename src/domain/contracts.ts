@@ -372,7 +372,7 @@ function applyTaskLineageProjection(
   }
 
   if (nextAttempt !== undefined) {
-    if (maxAttempt < 1 || nextAttempt !== maxAttempt + 1) {
+    if (nextAttempt !== maxAttempt + 1) {
       throw new Error(`nextAttempt 不是连续的下一次 attempt：期望 ${maxAttempt + 1}，实际 ${nextAttempt}`);
     }
     if (previous?.pendingAttempt !== undefined) {

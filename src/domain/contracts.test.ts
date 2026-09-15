@@ -103,6 +103,28 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('replays the first retry fence when a task has no prior attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-first-retry', 'task-1');
+    const projection = replayDomainEvents([event({
+      eventId: 'first-retry-queued',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskQueued',
+      payload: {
+        runId: 'run-first-retry',
+        taskId: 'task-1',
+        taskExecutionId,
+        nextAttempt: 1,
+      },
+    })]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({
+      status: 'queued',
+      pendingAttempt: 1,
+      attemptIds: [],
+    });
+  });
+
   it('replays RunQueued after an explicit Worker recovery retry decision', () => {
     const queued = event({
       eventId: 'evt-run-requeued',
