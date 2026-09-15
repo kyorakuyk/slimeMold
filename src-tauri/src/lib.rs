@@ -1792,7 +1792,22 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 || rest_eq(&["rev-parse", "HEAD"])
         }
         // 测试命令（与前端 DEFAULT_TEST_RULES 一致）
-        "tsc" => rest_eq(&["--noEmit"]) || rest_eq(&["-b"]),
+        "node" => {
+            rest.len() == 2
+                && rest[0] == "--check"
+                && dev_arg_path_lexically_safe(&rest[1])
+                && !rest[1].starts_with('-')
+        }
+        "tsc" => {
+            rest_eq(&["--noEmit"])
+                || rest_eq(&["-b"])
+                || (rest.len() >= 2
+                    && rest[0] == "--noEmit"
+                    && rest[1..].len() <= 20
+                    && rest[1..].iter().all(|arg| {
+                        !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)
+                    }))
+        }
         "vitest" => rest_eq(&["run"]),
         "tsx" => {
             // 仅本地脚本 scripts/ 前缀 + 最多 2 个额外参数；脚本路径须词法安全
@@ -3238,6 +3253,25 @@ mod dev_exec_tests {
             "diff",
             "--name-only",
             &"a".repeat(129),
+        ])));
+    }
+
+    #[test]
+    fn worktree_code_checks_allow_scoped_relative_files_only() {
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "node", "--check", "src/main.js"
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "tsc", "--noEmit", "src/game/engine.ts", "src/game/rules.ts"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "node", "--check", "C:/outside/main.js"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "tsc", "--noEmit", "../outside.ts"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "node", "--check", "--eval=process.exit(1)"
         ])));
     }
 
