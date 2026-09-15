@@ -88,8 +88,8 @@ describe('createDevWorkerAcceptance', () => {
         attemptId: lease.attemptId,
       }),
     ]));
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['npm', 'run', 'build'], { cwd: lease.assignment.path });
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['npm', 'run', 'test'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
     expect(deps.service.gitDiff).toHaveBeenCalledWith('base-1', { cwd: lease.assignment.path });
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
       acceptanceId: 'acceptance-1',
@@ -146,6 +146,36 @@ describe('createDevWorkerAcceptance', () => {
     expect(deps.service.testRun).toHaveBeenCalledTimes(2);
     expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['node', '--check', 'src/main.js'], { cwd: lease.assignment.path });
     expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['node', '--check', 'server.mjs'], { cwd: lease.assignment.path });
+  });
+
+  it('uses a scoped TypeScript check for an isolated TypeScript task', async () => {
+    const deps = host({
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tsc ok', stderr: '', durationMs: 10 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['src/game/engine.ts', 'src/game/rules.ts']),
+      },
+    });
+    const scopedLease: WorkerTaskLease = {
+      ...lease,
+      task: { ...lease.task, scope: ['src/game/engine.ts', 'src/game/rules.ts'] },
+    };
+
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost, {
+      taskScopePolicy: true,
+    }).evaluate({ lease: scopedLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(true);
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(
+      1,
+      ['tsc', '--noEmit', 'src/game/engine.ts', 'src/game/rules.ts'],
+      { cwd: lease.assignment.path },
+    );
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(
+      2,
+      ['tsc', '--noEmit', 'src/game/engine.ts', 'src/game/rules.ts'],
+      { cwd: lease.assignment.path },
+    );
   });
 
   it('rejects protected changes before executing the host build/test oracle', async () => {
@@ -219,9 +249,9 @@ describe('createDevWorkerAcceptance', () => {
     const deps = host({
       service: {
         testRun: vi.fn(async (command: string[]) => ({
-          exitCode: command[2] === 'build' ? 1 : 0,
-          stdout: command[2] === 'build' ? '' : 'tests ok',
-          stderr: command[2] === 'build' ? 'compile failed' : '',
+          exitCode: command[0] === 'tsc' ? 1 : 0,
+          stdout: command[0] === 'tsc' ? '' : 'tests ok',
+          stderr: command[0] === 'tsc' ? 'compile failed' : '',
           durationMs: 10,
         })),
         gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
@@ -234,7 +264,7 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('compile');
-    expect(deps.service.testRun).toHaveBeenCalledWith(['npm', 'run', 'build'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenCalledWith(['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
   });
 
   it('rejects a forged lease lineage before running host checks', async () => {

@@ -55,6 +55,35 @@ function usesScaffoldValidation(scope: readonly string[]): boolean {
     && scope.some((item) => /http\s*server/i.test(item));
 }
 
+function isCodeFile(file: string): boolean {
+  return /\.(?:[cm]?js|jsx|tsx?|mjs|cjs)$/i.test(file);
+}
+
+function resolveTaskValidationCommands(
+  defaults: { compile: string[]; test: string[]; custom: boolean },
+  scaffold: boolean,
+  changedFiles: readonly string[],
+): { compile: string[]; test: string[] } {
+  if (defaults.custom || scaffold) {
+    return scaffold
+      ? { compile: ['node', '--check', 'src/main.js'], test: ['node', '--check', 'server.mjs'] }
+      : { compile: defaults.compile, test: defaults.test };
+  }
+  const codeFiles = changedFiles.filter(isCodeFile);
+  const onlyCodeChanges = codeFiles.length > 0
+    && changedFiles.every((file) => file === '.gitignore' || codeFiles.includes(file));
+  if (!onlyCodeChanges) return { compile: defaults.compile, test: defaults.test };
+  const typeScriptFiles = codeFiles.filter((file) => /\.tsx?$/i.test(file));
+  if (typeScriptFiles.length > 0) {
+    const command = ['tsc', '--noEmit', ...typeScriptFiles];
+    return { compile: command, test: [...command] };
+  }
+  return {
+    compile: ['node', '--check', codeFiles[0]],
+    test: ['node', '--check', codeFiles[1] ?? codeFiles[0]],
+  };
+}
+
 /**
  * 构造 Worker 的宿主验收器。
  *
@@ -111,10 +140,6 @@ export function createDevWorkerAcceptance(
       const scaffoldValidation = options.compileCommand === undefined
         && options.testCommand === undefined
         && usesScaffoldValidation(lease.task.scope);
-      const taskCompileCommand = scaffoldValidation ? ['node', '--check', 'src/main.js'] : compileCommand;
-      const taskTestCommand = scaffoldValidation ? ['node', '--check', 'server.mjs'] : testCommand;
-      const compileLabel = commandLabel(taskCompileCommand);
-      const testLabel = commandLabel(taskTestCommand);
 
       try {
         // Never execute a Worker-controlled build/test oracle before checking the files it changed.
@@ -175,6 +200,20 @@ export function createDevWorkerAcceptance(
           failureReason,
         };
       }
+
+      const validationCommands = resolveTaskValidationCommands(
+        {
+          compile: compileCommand,
+          test: testCommand,
+          custom: options.compileCommand !== undefined || options.testCommand !== undefined,
+        },
+        scaffoldValidation,
+        preflightChangedFiles,
+      );
+      const taskCompileCommand = validationCommands.compile;
+      const taskTestCommand = validationCommands.test;
+      const compileLabel = commandLabel(taskCompileCommand);
+      const testLabel = commandLabel(taskTestCommand);
 
       const compile = await host.service.testRun(taskCompileCommand, context);
         throwIfAborted(signal);
