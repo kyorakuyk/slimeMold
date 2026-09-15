@@ -77,6 +77,12 @@ function createEvents(
     decision: decision.decision,
     reason: decision.reason,
     effectKeys: plan.effectKeys,
+    taskIds: [
+      ...(plan.failedTaskIds ?? []),
+      ...plan.recoverableEffects
+        ?.map((effect) => effect.taskId)
+        .filter((taskId): taskId is string => !!taskId) ?? [],
+    ].filter((taskId, index, taskIds) => taskIds.indexOf(taskId) === index),
     requiresNewAttempt: decision.requiresNewAttempt,
   });
 
@@ -151,7 +157,10 @@ export function recoverWorkerRunCommand(
   if (input.taskGraph.graphVersion !== input.state.taskGraphVersion) throw new Error('恢复任务图版本已漂移');
   const decisionId = requiredText(input.decisionId, '恢复决策 id');
   const reason = requiredText(input.reason, '恢复理由');
-  const plan = buildWorkerRunRecoveryPlan(input.state.runId, input.journal);
+  const failedTaskIds = Object.values(input.state.tasks)
+    .filter((task) => task.status === 'failed')
+    .map((task) => task.taskId);
+  const plan = buildWorkerRunRecoveryPlan(input.state.runId, input.journal, failedTaskIds);
   const decision = decideWorkerRunRecovery(plan, input.decision, reason);
   const state = applyWorkerRunRecoveryDecision({
     plan,

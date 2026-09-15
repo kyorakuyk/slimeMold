@@ -34,6 +34,8 @@ export interface WorkerRunRecoveryPlan {
   runId: string;
   effects: SideEffectRecord[];
   recoverableEffects?: SideEffectRecord[];
+  /** Terminal failed tasks whose side-effect claim never produced a journal entry. */
+  failedTaskIds?: string[];
   effectKeys: string[];
   requiresUser: boolean;
   allowedDecisions: readonly WorkerRunRecoveryDecision[];
@@ -555,8 +557,10 @@ export function createWorkerSideEffectRecorder(
 export function buildWorkerRunRecoveryPlan(
   runId: string,
   journal: SideEffectJournal,
+  failedTaskIds: readonly string[] = [],
 ): WorkerRunRecoveryPlan {
   const normalizedRunId = requiredText(runId, 'run id');
+  const normalizedFailedTaskIds = [...new Set(failedTaskIds.map((taskId) => requiredText(taskId, 'task id')))];
   const effects = journal.entries
     .filter((entry) => entry.runId === normalizedRunId)
     .map((entry) => ({ ...entry }));
@@ -564,6 +568,7 @@ export function buildWorkerRunRecoveryPlan(
     runId: normalizedRunId,
     effects,
     recoverableEffects: effects.filter((entry) => entry.status === 'started' || entry.status === 'unknown'),
+    failedTaskIds: normalizedFailedTaskIds,
     effectKeys: [],
     requiresUser: false,
     allowedDecisions: ['inspect', 'retry', 'skip'],
@@ -573,6 +578,7 @@ export function buildWorkerRunRecoveryPlan(
 function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunRecoveryPlan {
   const runId = requiredText(plan.runId, 'run id');
   const effects = Array.isArray(plan.effects) ? plan.effects.map((effect) => ({ ...effect })) : [];
+  const failedTaskIds = [...new Set((plan.failedTaskIds ?? []).map((taskId) => requiredText(taskId, 'task id')))];
   const suppliedRecoverable = plan.recoverableEffects;
   const candidates = effects
     .filter((effect) => effect.status === 'started' || effect.status === 'unknown');
@@ -615,8 +621,9 @@ function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunR
     runId,
     effects,
     recoverableEffects: candidates,
+    failedTaskIds,
     effectKeys: candidates.map((effect) => effect.idempotencyKey),
-    requiresUser: candidates.length > 0,
+    requiresUser: candidates.length > 0 || failedTaskIds.length > 0,
     allowedDecisions,
   };
 }
@@ -670,7 +677,26 @@ export function applyWorkerRunRecoveryDecision(input: {
   const effectTaskIds = new Set(
     scopedRecoverableEffects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
   );
+  for (const taskId of plan.failedTaskIds ?? []) effectTaskIds.add(taskId);
   if (effectTaskIds.size === 0) throw new Error(`恢复计划没有绑定可处理的任务：${input.state.runId}`);
+  for (const taskId of plan.failedTaskIds ?? []) {
+    if (input.state.tasks[taskId]?.status !== 'failed') {
+      throw new Error(`恢复计划 failedTaskId 当前不是 failed：${taskId}`);
+    }
+  }
+  if (applied.decision === 'retry') {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const task of input.taskGraph.tasks) {
+        if (effectTaskIds.has(task.id) || input.state.tasks[task.id]?.status !== 'blocked') continue;
+        if (task.dependsOn.some((dependency) => effectTaskIds.has(dependency))) {
+          effectTaskIds.add(task.id);
+          changed = true;
+        }
+      }
+    }
+  }
 
   const tasks = Object.fromEntries(
     Object.entries(input.state.tasks).map(([taskId, task]) => {

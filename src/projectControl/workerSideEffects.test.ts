@@ -752,4 +752,75 @@ describe('worker side-effect recorder', () => {
     expect(skipped.tasks['task-2']).toMatchObject({ status: 'blocked' });
     expect(started.idempotencyKey).toBe(`worker-execution:${lease.attemptId}`);
   });
+
+  it('retries a failed task without a side-effect record and releases blocked descendants', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const dependentTask = {
+      ...lease.task,
+      id: 'task-2',
+      title: '依赖任务',
+      dependsOn: ['task-1'],
+    };
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [lease.task, dependentTask],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const state = {
+      version: 1 as const,
+      projectId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'partial' as const,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          taskExecutionId,
+          taskDefinitionVersion: 1 as const,
+          status: 'failed' as const,
+          attempt: 1,
+          currentAttemptId: createAttemptId(taskExecutionId, 1),
+          evidenceIds: [],
+          error: 'claim failed before side-effect journal entry',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+        'task-2': {
+          taskId: 'task-2',
+          taskExecutionId: createTaskExecutionId('run-1', 'task-2'),
+          taskDefinitionVersion: 1 as const,
+          status: 'blocked' as const,
+          attempt: 0,
+          evidenceIds: [],
+          error: '依赖任务未成功完成：task-1',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    };
+    const plan = buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [] }, ['task-1']);
+
+    expect(plan).toMatchObject({ requiresUser: true, failedTaskIds: ['task-1'] });
+    const retried = applyWorkerRunRecoveryDecision({
+      plan,
+      state,
+      taskGraph,
+      decision: 'retry',
+      reason: '失败发生在 side-effect claim 前，确认可创建新 attempt',
+      now: '2026-09-01T00:02:00.000Z',
+    });
+
+    expect(retried.status).toBe('queued');
+    expect(retried.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1, pendingAttempt: 2 });
+    expect(retried.tasks['task-2']).toMatchObject({ status: 'queued', attempt: 0, pendingAttempt: 1 });
+  });
 });

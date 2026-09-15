@@ -146,6 +146,40 @@ describe('recoverWorkerRunCommand', () => {
     });
   });
 
+  it('retries a terminal failed task even when claim produced no side-effect record', () => {
+    const failedState: WorkerRunQueueState = {
+      ...state,
+      status: 'partial',
+      tasks: {
+        ...state.tasks,
+        'task-1': {
+          ...state.tasks['task-1'],
+          status: 'failed',
+          error: 'side-effect claim failed before journal write',
+          evidenceIds: [],
+          acceptanceId: undefined,
+        },
+      },
+    };
+    const result = recoverWorkerRunCommand({
+      projectId: 'project-1',
+      state: failedState,
+      taskGraph: graph,
+      journal: { schemaVersion: 1, entries: [] },
+      decision: 'retry',
+      reason: '确认失败发生在副作用账本写入之前',
+      decisionId: 'recovery-decision-no-effect',
+      now: '2026-09-01T00:05:00.000Z',
+    });
+
+    expect(result.state.status).toBe('queued');
+    expect(result.state.tasks['task-1']).toMatchObject({ status: 'queued', pendingAttempt: 2 });
+    expect(result.events[0]).toMatchObject({
+      eventType: 'WorkerRunRecoveryDecided',
+      payload: { decision: 'retry', effectKeys: [], taskIds: ['task-1'] },
+    });
+  });
+
   it('records skip as failed/blocked facts and leaves inspect as a non-mutating decision', () => {
     const skipped = recoverWorkerRunCommand({
       projectId: 'project-1',
