@@ -9,6 +9,7 @@ import {
 import { replayDomainEvents } from '../domain/contracts';
 
 const pendingByProject = new Map<string, DomainEvent[]>();
+const flushTails = new Map<string, Promise<void>>();
 
 type EventWithoutSequence = Omit<DomainEvent, 'sequence'>;
 
@@ -88,49 +89,62 @@ export async function flushPendingProjectEvents(
   repository: EventStreamRepository,
 ): Promise<FlushPendingProjectEventsResult> {
   const normalizedProjectId = requiredProjectId(projectId);
-  const pending = getPendingProjectEvents(normalizedProjectId);
-  if (pending.length === 0) return { status: 'empty', count: 0 };
+  const previous = flushTails.get(normalizedProjectId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => {}).then(() => current);
+  flushTails.set(normalizedProjectId, queued);
+  await previous.catch(() => {});
+  try {
+    const pending = getPendingProjectEvents(normalizedProjectId);
+    if (pending.length === 0) return { status: 'empty', count: 0 };
 
-  const parsed = await repository.readStream();
-  if (parsed.status === 'needs-repair') {
-    throw new EventStoreError(
-      'needs-repair',
-      `事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
-    );
-  }
-
-  let working = parsed.events;
-  const newEvents: DomainEvent[] = [];
-  for (const pendingEvent of pending) {
-    if (pendingEvent.streamId !== normalizedProjectId) {
-      throw new EventStoreError('event-conflict', `事件 streamId 与项目不一致：${pendingEvent.streamId}`);
+    const parsed = await repository.readStream();
+    if (parsed.status === 'needs-repair') {
+      throw new EventStoreError(
+        'needs-repair',
+        `事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+      );
     }
-    const existing = working.find((event) => event.eventId === pendingEvent.eventId);
-    if (existing) {
-      if (!equivalentIgnoringSequence(existing, pendingEvent)) {
-        throw new EventStoreError('event-conflict', `已落盘 eventId 内容不同：${pendingEvent.eventId}`);
+
+    let working = parsed.events;
+    const newEvents: DomainEvent[] = [];
+    for (const pendingEvent of pending) {
+      if (pendingEvent.streamId !== normalizedProjectId) {
+        throw new EventStoreError('event-conflict', `事件 streamId 与项目不一致：${pendingEvent.streamId}`);
       }
-      continue;
+      const existing = working.find((event) => event.eventId === pendingEvent.eventId);
+      if (existing) {
+        if (!equivalentIgnoringSequence(existing, pendingEvent)) {
+          throw new EventStoreError('event-conflict', `已落盘 eventId 内容不同：${pendingEvent.eventId}`);
+        }
+        continue;
+      }
+      const candidate: DomainEvent = {
+        ...pendingEvent,
+        sequence: (working.at(-1)?.sequence ?? 0) + 1,
+        aggregateVersion: latestAggregateVersion(working, pendingEvent) + 1,
+      };
+      working = appendDomainEvent(working, candidate);
+      newEvents.push(candidate);
     }
-    const candidate: DomainEvent = {
-      ...pendingEvent,
-      sequence: (working.at(-1)?.sequence ?? 0) + 1,
-      aggregateVersion: latestAggregateVersion(working, pendingEvent) + 1,
-    };
-    working = appendDomainEvent(working, candidate);
-    newEvents.push(candidate);
-  }
 
-  if (newEvents.length === 0) {
-    await repository.writeProjectionSnapshot(replayDomainEvents(working));
+    if (newEvents.length === 0) {
+      await repository.writeProjectionSnapshot(replayDomainEvents(working));
+      clearProjectEventBuffer(normalizedProjectId);
+      return { status: 'already-present', count: pending.length };
+    }
+
+    const appended = await repository.appendBatch(newEvents, parsed.lastSequence);
+    // Keep a verifiable replay checkpoint beside the append-only facts. If this
+    // second write fails, pending events remain available for an idempotent retry.
+    await repository.writeProjectionSnapshot(replayDomainEvents(appended.events));
     clearProjectEventBuffer(normalizedProjectId);
-    return { status: 'already-present', count: pending.length };
+    return { status: 'flushed', count: newEvents.length };
+  } finally {
+    release();
+    if (flushTails.get(normalizedProjectId) === queued) flushTails.delete(normalizedProjectId);
   }
-
-  const appended = await repository.appendBatch(newEvents, parsed.lastSequence);
-  // Keep a verifiable replay checkpoint beside the append-only facts. If this
-  // second write fails, pending events remain available for an idempotent retry.
-  await repository.writeProjectionSnapshot(replayDomainEvents(appended.events));
-  clearProjectEventBuffer(normalizedProjectId);
-  return { status: 'flushed', count: newEvents.length };
 }

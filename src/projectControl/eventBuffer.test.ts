@@ -110,4 +110,29 @@ describe('project event buffer', () => {
       projection: { lastSequence: 1 },
     });
   });
+
+  it('serializes concurrent flushes for one project and avoids false eventId conflicts', async () => {
+    const backing = new InMemoryEventStoreAdapter();
+    const delayedAdapter = {
+      readText: async (path: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return backing.readText(path);
+      },
+      writeTextAtomic: (path: string, text: string) => backing.writeTextAtomic(path, text),
+      acquireLock: (path: string) => backing.acquireLock(path),
+    };
+    const repository = new EventStreamRepository(delayedAdapter, 'project-root');
+    recordProjectEvents('project-1', [
+      event({ eventId: 'recovery-decision', eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ]);
+
+    const results = await Promise.all([
+      flushPendingProjectEvents('project-1', repository),
+      flushPendingProjectEvents('project-1', repository),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(['empty', 'flushed']);
+    expect((await repository.readStream()).events).toHaveLength(1);
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
 });
