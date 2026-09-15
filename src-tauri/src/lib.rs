@@ -1869,8 +1869,39 @@ fn windows_cmd_arg(value: &str) -> String {
     }
 }
 
+fn resolve_dev_exec_program(name: &str) -> std::path::PathBuf {
+    let from_path = resolve_dev_program(name);
+    if from_path.is_file() {
+        return from_path;
+    }
+    #[cfg(windows)]
+    {
+        let base_repo = DEV_STATE.lock().unwrap().base_repo.clone();
+        if let Some(base_repo) = base_repo {
+            let bin = std::path::Path::new(&base_repo).join("node_modules").join(".bin");
+            for extension in [".cmd", ".bat", ".exe"] {
+                let candidate = bin.join(format!("{name}{extension}"));
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+        if name == "node" {
+            for candidate in [
+                std::path::PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
+                std::path::PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe"),
+            ] {
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    from_path
+}
+
 fn command_for_dev_exec(args: &[String]) -> std::process::Command {
-    let program = resolve_dev_program(&args[0]);
+    let program = resolve_dev_exec_program(&args[0]);
     #[cfg(windows)]
     {
         let extension = program.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase());
