@@ -898,6 +898,23 @@ authority: decision-log
 - **后果：** 早期方案仍是历史来源而不是当前验收合同；当前总体状态继续以 `mvp-closed-unverified` 为准，任何新能力都必须说明它是愿景、计划、局部实现还是完整验证。
 - **来源：** [S21] 初始 ComfyUI 方案；[S20] Codex 阶段性审查；[S14] `DEVELOPMENT_LOG.md` §7.107–§7.112；ADR-SM-047、ADR-SM-068。
 
+### ADR-SM-083：检索采用分阶段派生索引，倒排索引以后由实测瓶颈触发
+
+- **状态：** `已纳入计划`
+- **决定：** `EvidenceIndex`、ContextPack 和 ManagerBrief 的检索先以确定性、可重建的结构化 metadata/terms 和线性扫描作为正确性基线；当真实项目规模、查询延迟或 ContextPack 成本证明需要优化时，再引入按 `projectId`、`sourceVersion` 和 scope 隔离的倒排索引：
+
+  ```text
+  term → entryIds
+  entryId → canonical Evidence/Acceptance/Decision
+  ```
+
+  exact ID、Task/Run/Attempt、status 和 scope 过滤优先；倒排索引只生成候选，最终事实仍从 canonical Event/Evidence/Decision read-back。图邻接索引、backlink 索引、词法倒排索引和向量候选索引分别承担不同查询，不建立一个混合且无法解释的“万能搜索索引”。
+- **放弃的方案：** 永久对所有记录做全量文本扫描；在没有规模/延迟数据前提前建设通用搜索平台；用向量相似度替代 Evidence/Decision 事实；或把索引本身当作权限、Acceptance 或 Task 成功的事实源。
+- **取舍：** 派生索引增加增量更新、删除、失效、版本、checksum、重建、压缩和 Unicode/中文分词成本；换取 Evidence/Artifact 数量增长后，关键词交集和 bounded retrieval 不必反复扫描全部 entries。当前先保留较简单的实现，避免过早引入新的持久化事实层。
+- **后果：** 每个索引必须带 `sourceVersion`/digest、project scope、构建状态和 rebuild 路径；索引缺失、过期、损坏或跨项目查询进入 `empty`/`truncated`/`out-of-scope`/`needs-repair`，不能静默回退成无边界全库读取。中文、英文、ID 和路径 tokenization 必须用真实语料 benchmark 决定，不能直接假设空格分词足够。
+- **触发条件：** 先对当前线性 baseline 测量约 1 千、1 万、10 万级 Evidence/Artifact 语料的查询 p50/p95、构建/增量更新时间、内存、召回率、stale/dangling index 和 ContextPack token 成本；只有明确改善目标后，才选择内存倒排结构或 SQLite FTS 等持久化实现。
+- **来源：** `src/projectControl/evidenceIndex.ts`、`src/projectControl/evidenceIndex.test.ts`、`docs/DEVELOPMENT_LOG.md` §7.99；ADR-SM-026、ADR-SM-027、ADR-SM-060；用户已确认将该取舍写入本记录。
+
 ---
 
 ## 6. 当前仍未决定或不能过度宣称的事项
@@ -928,7 +945,8 @@ authority: decision-log
 22. 不可信第三方插件是否进入独立进程/sidecar 沙箱、如何隔离凭据/网络/文件和如何迁移现有 JS/TS 插件；
 23. Provider capability matrix、Ollama/其它本地服务探测、官方订阅 CLI 的流式输出/取消/恢复，以及代码 Worker 的 fallback 规则；
 24. `masterAgentId` 的多项目 GUI、迁移、删除 Agent 后的悬挂绑定和完整重启 read-back；
-25. 外部 AI 审查记录的长期脱敏、索引、版本和是否允许自动生成候选 ADR 的工具流程。
+25. 外部 AI 审查记录的长期脱敏、索引、版本和是否允许自动生成候选 ADR 的工具流程；
+26. Evidence/Artifact/ContextPack 倒排索引的触发阈值、中文/多语言 tokenization、持久化后端、增量更新/重建协议和 benchmark 结果。
 
 ### 6.1 重新审议触发条件
 

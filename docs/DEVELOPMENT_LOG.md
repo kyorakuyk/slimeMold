@@ -2612,6 +2612,19 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
 - 控制面状态继续为 `mvp-closed-unverified`。
 
+### 7.114 记录 Evidence/ContextPack 倒排索引的后置演进决策
+
+- 本轮在本地 checkpoint `8921d2c` 之后进行；只修改 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md` 和本日志，没有修改生产代码、`D:/Agents/SMtest`、disposable fixture 或 Worker Worktree，没有 push/merge/cleanup。
+- 新增 ADR-SM-083：确认未来可能需要倒排索引，但当前 `src/projectControl/evidenceIndex.ts` 的结构化 metadata/terms + 线性扫描先作为正确性基线；索引必须是按 project/sourceVersion/scope 隔离、可重建的派生投影，不能成为 Evidence、Acceptance、权限或 Task 成功的事实源。
+- 记录后续触发条件：先对千级、万级、十万级 Evidence/Artifact 规模测量查询 p50/p95、构建/增量更新时间、内存、召回率、stale/dangling index 和 ContextPack token 成本，再决定内存倒排结构或 SQLite FTS 等实现；中文/多语言 tokenization 仍未决定。
+
+验证结果：
+
+- ADR 结构脚本：83 条 ADR，编号 `1–83` 连续且唯一；来源引用 `S1–S24` 无缺失/未知；敏感凭据模式匹配 0；
+- `git diff --check`：通过；
+- 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
+- 控制面状态继续为 `mvp-closed-unverified`。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
