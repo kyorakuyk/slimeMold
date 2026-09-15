@@ -2560,6 +2560,28 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 本轮真实 Tauri 验收结论：`FAIL / mvp-closed-unverified`。下一步应先修复 Acceptance 的 base revision Git 命令 conformance、缺失 JSONL 父目录的首次启动处理，以及 WorkerRun snapshot 与 DomainEvent 的恢复一致性；在此之前不得继续拆 Runtime/Host Adapter、不得标记 `[verified]`、push 或 merge。
 
+
+### 7.111 修复 Tauri Acceptance 首次启动与 WorkerRun 事件恢复
+
+- 本轮在修复前 checkpoint `dcf4d16` 之后实施，修复提交为 `0fd4d47`；没有修改 `D:/Agents/SMtest`，没有 push/merge，也没有清理既有 disposable Worker worktree。
+- `src/dev/evidence.ts` 与 `src/dev/capabilities.ts` 现在把 Tauri/Windows 的 `os error 3` 识别为缺失文件，仍拒绝 `os error 5` 和权限错误；新增 RED→GREEN 回归覆盖首次缺失 JSONL 文件。
+- `src-tauri/src/lib.rs` 的 worktree Git 白名单现在允许与 TypeScript `assertSafeGitRevision` 同约束的 `git diff --name-only <baseRevision>`，拒绝 `..`、`//`、过长和非法字符；新增 Rust 回归覆盖安全 SHA、branch revision、路径逃逸和长度边界。
+- 新增 `src/projectControl/workerRunRehydration.ts`，从当前项目边界内的 `RunCreated`、批准且版本匹配的 TaskGraph 以及 Task/Run 生命周期事件重建缺失的 WorkerRun projection；缺图、版本漂移和未知 Task 不自动猜测，保持 fail-closed。
+- `App.tsx` 启动 Worker 事实审计前接入该重建：仅当 ProjectFile 的 `workerRuns` 为空且事件流可完整重建时，先保存 projection，再执行一致性审计和恢复 UI；实际状态转换由事件流控制，不新增伪造事件。
+
+验证结果：
+
+- targeted：5 个测试文件、54 个测试通过；
+- `npm run test`：126 个测试文件、1079 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：46 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri recovery read-back：修复前遗留的 `D:/Temp/sm-tauri2` 在启动前为 `workerRuns=0`、事件流 19 条、Worktree 保留；修复后真实 Tauri 启动把同一 Run 重建为 `partial`，ProjectFile read-back 为 `workerRuns=1`，UI 显示“Worker 部分失败，需要恢复”，没有启动新 Attempt，既有 Worktree 和 marker 保持不变。该事实证明 Restart/Recovery projection 已修复，但本轮没有再次执行新 Worker，因此 Evidence/Acceptance/Delivery/Cleanup 的成功闭环仍未通过，控制面继续为 `mvp-closed-unverified`。
+
 ---
 
 如果不想一次发布全文，可以拆成下面几篇：
