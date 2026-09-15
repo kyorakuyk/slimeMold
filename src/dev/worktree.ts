@@ -131,7 +131,19 @@ export class WorktreeManager {
     const baseRevision = rev.stdout.trim();
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
     if (!isSafeBranchName(branch)) return null;
-    const add = await this.runner.git(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], this.baseRepoPath);
+    let addArgs: string[] = ['worktree', 'add', '-q', path, '-b', branch, 'HEAD'];
+    if (opts?.branch) {
+      const branchProbe = await this.runner.git(
+        ['show-ref', '--verify', `refs/heads/${branch}`],
+        this.baseRepoPath,
+      );
+      if (branchProbe.exitCode === 0 && branchProbe.stdout.trim()) {
+        const branchTip = await this.runner.git(['rev-parse', branch], this.baseRepoPath);
+        if (branchTip.exitCode !== 0 || branchTip.stdout.trim() !== baseRevision) return null;
+        addArgs = ['worktree', 'add', '-q', path, branch];
+      }
+    }
+    const add = await this.runner.git(addArgs, this.baseRepoPath);
     if (add.exitCode !== 0) return null;
     const info: WorktreeInfo = {
       id,
