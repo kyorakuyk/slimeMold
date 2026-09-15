@@ -2601,7 +2601,7 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 ### 7.113 归并跨工具会话与 AI 审查中的决策取舍
 
 - 本轮在本地 checkpoint `f3d1bce` 之后进行；只修改 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md` 和本日志，没有修改生产代码、`D:/Agents/SMtest`、disposable fixture 或成功 Worker Worktree，没有 push/merge/cleanup。
-- 读取并交叉核对当前 worktree、`docs/DEVELOPMENT_LOG.md`、`docs/log/codex-conversations/`、`docs/log/raw/`、zcode 架构/UI 审查、`CODEBUDDY.md`，以及 Hermes 中 `查看项目代码`、`处理会话超限问题`、`修复 MasterAgentPage 未使用变量与 workflowState 测试期望` 三个会话和附加会话列表截图。
+- 读取并交叉核对当前 worktree、`docs/DEVELOPMENT_LOG.md`、其它 AI 工具的敏感归档、zcode 架构/UI 审查、`CODEBUDDY.md`，以及 Hermes 中 `查看项目代码`、`处理会话超限问题`、`修复 MasterAgentPage 未使用变量与 workflowState 测试期望` 三个会话和附加会话列表截图。
 - 在 ADR 文档中新增来源归并规则和 0.5 会话用途说明，新增 ADR-SM-069 至 ADR-SM-082，覆盖：原始对话不是事实源、跨会话 handoff、主控 Agent 作用域、Tauri/React 与 Rust/TS 边界、Provider/认证分离、可信插件限制、驾驶舱与专业画布、显式执行门、外部 AI 审查分级、真实 GUI 优先、Memory/Skill 晋升、节点与角色边界、Vite/Cargo watcher 隔离，以及初始完整框架愿景被垂直切片策略替代。
 - 明确保留未决边界：跨工具 handoff schema、auto-run/F5 最终策略、不可信插件进程沙箱、Provider capability matrix/CLI 可恢复控制、多项目 `masterAgentId` read-back 和 AI 审查资料的长期索引；文档没有把这些写成已实现能力。
 

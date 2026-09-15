@@ -964,9 +964,9 @@ authority: decision-log
 - **[S17]** `.hermes/plans/2026-09-14_221205-change-set-github-ecosystem.md`：ChangeSet、Repository、Local/Remote Observation、External Operation Ledger、Integration Saga、版本化架构协议和分阶段实施计划；计划不等于实现验证。
 - **[S18]** Hermes 会话记录：`查看项目代码`（`20260829_022213_a9ec12`）、`处理会话超限问题`（`20260831_165031_a7a5a2`）和 `修复 MasterAgentPage 未使用变量与 workflowState 测试期望`（`20260831_170016_896980`）；用于追溯用户意图、上下文超限和主控作用域形成过程，不作为当前实现事实源。
 - **[S19]** 2026-09-15 附加的 Hermes 会话列表截图：只确认三个会话标题，其中第一行被截断；截图没有显示目标文档路径，也不能证明代码或验收状态。
-- **[S20]** `docs/log/codex-conversations/README.md` 及其 9 份 Codex 导出：早期架构审查、UI/节点取舍、执行器拆分、成本/记忆/Skill、Tauri/Rust 边界和真实验收观点；目录按敏感归档处理，不是规范事实源。
-- **[S21]** `docs/log/raw/ComfyUI风格工作流桌面端方案_20260829202129.json`、`workbuddy总是需要我手动点“运行”怎么办_20260829202107.json`、`启动这个项目并修复文件监视器冲突_20260829201832.json`、`无法发送消息的原因_20260829202124.json`、Git 远程配置记录：CodeBuddy/其它工具的原始方案、运行门、Provider/宿主错误和仓库操作记录；敏感值不进入本文。
-- **[S22]** `docs/log/raw/zcode/above.md`、`reply.md`、`审查架构与事件溯源设计.md`、`审查UI交互与前端体验.md`：其它 AI 的架构与 UI 只读审查；其中市场判断和未经当前 read-back 的建议只作为待验证意见。
+- **[S20]** 外部 Codex 对话归档（敏感原始归档，原始目录和文件名不在本文展开）：早期架构审查、UI/节点取舍、执行器拆分、成本/记忆/Skill、Tauri/Rust 边界和真实验收观点；不是规范事实源。
+- **[S21]** CodeBuddy/其它工具原始记录（敏感归档，原始目录和文件名不在本文展开）：初始方案、运行门、Provider/宿主错误和仓库操作记录；敏感值不进入本文。
+- **[S22]** 其它 AI 的架构与 UI 只读审查记录（敏感归档，原始目录和文件名不在本文展开）：市场判断和未经当前 read-back 的建议只作为待验证意见。
 - **[S23]** `CODEBUDDY.md`：当前另一 AI IDE 的工程约定、Tauri/React/Agent/插件/凭据和开发运行时边界；保留在原位置，不把它的说明自动视为当前实现证明。
 - **[S24]** 本轮当前 worktree 中核对的源码/测试/日志：`src/components/MasterAgentPage.tsx`、`src/projectControl/persistence.ts`、`src/platform/env.ts`、`vite.config.ts`、`docs/DEVELOPMENT_LOG.md` 7.9–7.112 及相关测试；用于确认当前实现和验证边界。
 
