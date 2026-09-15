@@ -8,7 +8,6 @@
  *
  * 安全边界：仅 Tauri 下生效（浏览器预览不初始化，dev 节点保持不可用）。
  */
-import { isTauri } from '../platform/env';
 import { initDevSession, resetDevSession, getDevSession, createHostAcceptanceStoreWithFs } from './session';
 import { useRegistryStore } from '../store/registryStore';
 import { pathComparisonKey } from './path-utils';
@@ -33,6 +32,7 @@ const DEV_TYPE_IDS = [
 /** GUI DevSession 就绪状态（审计 P1：初始化失败须显式可见，不静默吞异常）。 */
 export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
 let devGuiStatus: DevGuiStatus = 'idle';
+let devGuiError: string | null = null;
 let devSessionGeneration = 0;
 let activeHostGeneration: number | null = null;
 let ensureInFlight: Promise<ReturnType<typeof getDevSession>> | null = null;
@@ -51,8 +51,12 @@ async function clearStaleHostSession(generation: number): Promise<void> {
 export function getDevGuiStatus(): DevGuiStatus {
   return devGuiStatus;
 }
+export function getDevGuiError(): string | null {
+  return devGuiError;
+}
 export function setDevGuiStatus(s: DevGuiStatus): void {
   devGuiStatus = s;
+  if (s !== 'unavailable') devGuiError = null;
 }
 
 export function registerGuiDevDefs(defs: NodeDefinition[]): void {
@@ -70,7 +74,6 @@ function evidenceRootFor(projectPath: string): string {
  * 失败 → status=unavailable，不注册 dev 节点（fail-closed），返回 null。
  */
 async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal): Promise<ReturnType<typeof getDevSession>> {
-  if (!isTauri) return null;
   if (signal?.aborted) return null;
   const existing = getDevSession();
   if (existing) {
@@ -104,6 +107,7 @@ async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal
     if (generation !== devSessionGeneration) return null;
     // 审计 P1：不静默吞异常——显式标记不可用，GUI 面板提示
     console.error('[H4] dev_init_session 失败：', e);
+    devGuiError = e instanceof Error ? e.message : String(e);
     setDevGuiStatus('unavailable');
     return null;
   }
@@ -144,6 +148,7 @@ async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal
   } catch (e) {
     if (generation !== devSessionGeneration) return null;
     console.error('[H4] Acceptance store 初始化/加载失败：', e);
+    devGuiError = e instanceof Error ? e.message : String(e);
     await teardownGuiDevSession().catch(() => {});
     resetDevSession();
     setDevGuiStatus('unavailable');
@@ -155,7 +160,7 @@ export function ensureGuiDevSession(
   projectPath: string | null,
   signal?: AbortSignal,
 ): Promise<ReturnType<typeof getDevSession>> {
-  if (!isTauri || !projectPath || signal?.aborted) return Promise.resolve(null);
+  if (!projectPath || signal?.aborted) return Promise.resolve(null);
   const projectKey = pathComparisonKey(projectPath);
   if (ensureInFlight && ensureInFlightProjectKey === projectKey) return ensureInFlight;
   if (ensureInFlight) {
@@ -187,7 +192,7 @@ export async function teardownGuiDevSession(): Promise<void> {
   const lifecycleGeneration = ++devSessionGeneration;
   const hostGeneration = activeHostGeneration;
   // 先清空宿主登记态（切换/关闭项目时旧 worktree 登记不得泄漏到新项目）
-  if (isTauri && hostGeneration !== null) {
+  if (hostGeneration !== null) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('dev_clear_session', { generation: hostGeneration });

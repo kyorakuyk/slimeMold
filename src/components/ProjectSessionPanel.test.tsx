@@ -581,6 +581,60 @@ describe('ProjectSessionPanel', () => {
     expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/));
   });
 
+  it('can start a persisted queued Worker Run after the project is reopened', async () => {
+    const onRunWorker = vi.fn(async () => {});
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-queued'],
+    }];
+    mocks.store.workerRuns = [{
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-queued',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'task-graph-1',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {},
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-1' }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+        />,
+      );
+    });
+
+    const startButton = container.querySelector('[data-testid="beginner-session-start-worker"]') as HTMLButtonElement;
+    expect(startButton).not.toBeNull();
+    await act(async () => {
+      startButton.click();
+    });
+    expect(onRunWorker).toHaveBeenCalledWith('run-queued');
+  });
+
   it('shows a failed Worker Run as the next recovery action', async () => {
     const onRecoverWorkerRun = vi.fn();
     mocks.store.orchestrations = [{

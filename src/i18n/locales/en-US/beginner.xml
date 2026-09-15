@@ -181,6 +181,7 @@
   <string name="session.workerRunQueuedHint">The plan approval is recorded; each task will run in its own worktree and be host-verified.</string>
   <string name="session.workerRun.queued">Worker queued for execution</string>
   <string name="session.workerRun.queuedHint">The plan approval is recorded; each task will run in its own worktree and be host-verified.</string>
+  <string name="session.workerRun.start">Start Worker</string>
   <string name="session.workerRun.running">Worker is building</string>
   <string name="session.workerRun.runningHint">The Worker is running in an isolated worktree; only host acceptance and Evidence determine success.</string>
   <string name="session.workerRun.succeeded">Worker completed</string>

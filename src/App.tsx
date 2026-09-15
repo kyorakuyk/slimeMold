@@ -27,7 +27,7 @@ import { buildProjectFile } from './store/workflowSerialize';
 import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
-import { ensureGuiDevSession, teardownGuiDevSession } from './dev/gui';
+import { ensureGuiDevSession, getDevGuiError, teardownGuiDevSession } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
@@ -508,7 +508,6 @@ export default function App() {
   };
 
   const runQueuedWorker = async (runId: string): Promise<void> => {
-    if (!isTauri) throw new Error('Worker 自动执行需要桌面端项目环境');
     const beforeSave = useWorkflowStore.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
@@ -520,7 +519,10 @@ export default function App() {
     await beforeSave.saveProject({ projectId, projectPath, signal: operation.controller.signal });
     assertProjectOperation(operation);
     const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
-    if (!session) throw new Error('开发宿主不可用，Worker 未启动');
+    if (!session) {
+      const reason = getDevGuiError();
+      throw new Error(`开发宿主不可用，Worker 未启动${reason ? `：${reason}` : ''}`);
+    }
     assertProjectOperation(operation);
     const current = useWorkflowStore.getState();
     if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');

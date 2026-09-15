@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeDefinition } from '../types';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
-import { ensureGuiDevSession, registerGuiDevDefs, teardownGuiDevSession } from './gui';
+import { ensureGuiDevSession, getDevGuiError, registerGuiDevDefs, teardownGuiDevSession } from './gui';
 
 const { invoke } = vi.hoisted(() => ({
   invoke: vi.fn(async (_command: string, _args?: unknown): Promise<string | number> => ''),
@@ -68,5 +68,15 @@ describe('GUI DevSession registry bridge', () => {
     expect(initCalls).toBe(1);
     expect(firstSession).not.toBeNull();
     expect(secondSession).toBe(firstSession);
+  });
+
+  it('keeps the initialization reason observable while remaining unavailable', async () => {
+    invoke.mockImplementation(async (command: string, _args?: unknown) => {
+      if (command === 'dev_init_session') throw new Error('Git top-level probe 失败');
+      return '';
+    });
+
+    expect(await ensureGuiDevSession('C:/repo')).toBeNull();
+    expect(getDevGuiError()).toBe('Git top-level probe 失败');
   });
 });

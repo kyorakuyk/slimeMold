@@ -181,6 +181,7 @@
   <string name="session.workerRunQueuedHint">计划确认已记录；每个任务会在独立 worktree 中执行，并由宿主验收。</string>
   <string name="session.workerRun.queued">Worker 已入队，等待执行</string>
   <string name="session.workerRun.queuedHint">计划确认已记录；每个任务会在独立 worktree 中执行，并由宿主验收。</string>
+  <string name="session.workerRun.start">启动 Worker</string>
   <string name="session.workerRun.running">Worker 正在施工</string>
   <string name="session.workerRun.runningHint">Worker 正在独立 worktree 中执行；状态只以宿主验收和 Evidence 为准。</string>
   <string name="session.workerRun.succeeded">Worker 已完成</string>

@@ -138,6 +138,7 @@ export default function ProjectSessionPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [workerStartBusy, setWorkerStartBusy] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [localResponse, setLocalResponse] = useState<MasterResponse | null>(null);
   const initialTurnStarted = useRef(false);
@@ -231,6 +232,17 @@ export default function ProjectSessionPanel({
         setRecoveryBusy(false);
       }
     })();
+  };
+
+  const handleStartQueuedWorker = () => {
+    if (!onRunWorker || !currentWorkerRun || currentWorkerRun.status !== 'queued' || currentWorkerRunRecovery || workerStartBusy) return;
+    setWorkerStartBusy(true);
+    setError(null);
+    void Promise.resolve(onRunWorker(currentWorkerRun.runId))
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => setWorkerStartBusy(false));
   };
 
   const handleApproveBrief = async () => {
@@ -495,6 +507,17 @@ export default function ProjectSessionPanel({
             {onOpenIssues && (
               <button type="button" className="sm-beginner-text-button" onClick={onOpenIssues}>
                 {t('session.openIssues')} <ArrowRight size={14} />
+              </button>
+            )}
+            {currentWorkerRun?.status === 'queued' && !currentWorkerRunRecovery && onRunWorker && (
+              <button
+                type="button"
+                data-testid="beginner-session-start-worker"
+                className="sm-beginner-text-button"
+                disabled={workerStartBusy}
+                onClick={handleStartQueuedWorker}
+              >
+                {workerStartBusy ? t('session.thinking') : t('session.workerRun.start')} <ArrowRight size={14} />
               </button>
             )}
             <button type="button" className="sm-beginner-text-button" onClick={onOpenAdvanced}>
