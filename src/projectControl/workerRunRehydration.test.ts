@@ -4,7 +4,10 @@ import {
   runWorkerQueue,
 } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
-import { rehydrateWorkerRunsFromEvents } from './workerRunRehydration';
+import {
+  rehydrateWorkerRunsFromEvents,
+  restoreMissingWorkerRunsFromEvents,
+} from './workerRunRehydration';
 
 const graph: ProjectTaskGraph = {
   version: 1,
@@ -88,5 +91,14 @@ describe('rehydrateWorkerRunsFromEvents', () => {
       worktreeStatus: 'created',
       error: 'acceptance failed',
     });
+
+    const restored = restoreMissingWorkerRunsFromEvents({
+      projectId: 'project-rehydrate-1',
+      events,
+      taskGraphs: [graph],
+      existingRuns: [],
+    });
+    expect(restored).toMatchObject({ restored: true, issues: [] });
+    expect(restored.runs).toHaveLength(1);
   });
 });

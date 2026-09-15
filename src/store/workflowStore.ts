@@ -87,6 +87,8 @@ import {
   getPendingProjectEvents,
 } from '../projectControl/eventBuffer';
 import { clearWorkerRunRuntime, installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
+import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunRehydration';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
@@ -1217,7 +1219,40 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       saveProject: async (guard) => {
-        const s = get();
+        let s = get();
+        assertProjectSaveGuard(s, guard);
+        // Never let a startup/recovery save erase a WorkerRun projection that is already
+        // durable in the event stream while the in-memory registry is still empty.
+        if (isTauri && s.projectId && s.projectPath && s.workerRuns.length === 0) {
+          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          const repository = new EventStreamRepository(
+            createTauriEventStoreAdapter(s.projectPath),
+            s.projectPath,
+          );
+          const parsed = await repository.readStream();
+          assertProjectSaveGuard(get(), guard);
+          if (parsed.status === 'needs-repair') {
+            throw new Error(
+              `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+            );
+          }
+          const restored = restoreMissingWorkerRunsFromEvents({
+            projectId: s.projectId,
+            events: parsed.events,
+            taskGraphs: s.projectControl.taskGraphs ?? [],
+            existingRuns: s.workerRuns,
+          });
+          if (restored.issues.length > 0) {
+            throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
+          }
+          if (restored.restored) {
+            set({
+              workerRuns: restored.runs,
+              orchestrations: projectWorkerRunsOntoOrchestrations(s.orchestrations, restored.runs),
+            });
+            s = get();
+          }
+        }
         assertProjectSaveGuard(s, guard);
         const file = buildProjectFile(s);
         const { saveProjectFile } = await import('../io/projectIO');

@@ -20,6 +20,10 @@ export interface WorkerRunRehydrationResult {
   issues: WorkerRunRehydrationIssue[];
 }
 
+export interface MissingWorkerRunProjectionResult extends WorkerRunRehydrationResult {
+  restored: boolean;
+}
+
 function payload(event: DomainEvent): EventPayload {
   return typeof event.payload === 'object' && event.payload !== null && !Array.isArray(event.payload)
     ? event.payload as EventPayload
@@ -198,4 +202,26 @@ export function rehydrateWorkerRunsFromEvents(input: {
   }
 
   return { runs, issues };
+}
+
+/**
+ * Restore a missing ProjectFile WorkerRun projection before another save can erase it.
+ * Existing in-memory runs are authoritative for this narrow guard; the helper is only
+ * intended for the empty-projection race during project startup/recovery.
+ */
+export function restoreMissingWorkerRunsFromEvents(input: {
+  projectId: string;
+  events: readonly DomainEvent[];
+  taskGraphs: readonly ProjectTaskGraph[];
+  existingRuns?: readonly WorkerRunQueueState[];
+}): MissingWorkerRunProjectionResult {
+  const existingRuns = input.existingRuns ?? [];
+  if (existingRuns.length > 0) {
+    return { runs: [...existingRuns], issues: [], restored: false };
+  }
+  const result = rehydrateWorkerRunsFromEvents(input);
+  return {
+    ...result,
+    restored: result.issues.length === 0 && result.runs.length > 0,
+  };
 }
