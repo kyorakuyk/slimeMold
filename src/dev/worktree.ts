@@ -96,6 +96,7 @@ export interface WorktreeInfo {
 
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
+  private lastCreateError: string | null = null;
 
   constructor(
     private readonly runner: DevGitRunner,
@@ -107,13 +108,24 @@ export class WorktreeManager {
     return this.baseRepoPath;
   }
 
+  getLastCreateError(): string | null {
+    return this.lastCreateError;
+  }
+
   /**
    * 创建 worktree：`git worktree add <path> -b <branch> HEAD`。
    * baseRepoPath 非 git 仓库或 git 不可用 → 返回 null（调用方应拒绝自举任务而非降级）。
    */
   async create(id: string, path: string, opts?: { branch?: string; signal?: AbortSignal }): Promise<WorktreeInfo | null> {
-    if (opts?.signal?.aborted) return null;
-    if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) return null;
+    this.lastCreateError = null;
+    if (opts?.signal?.aborted) {
+      this.lastCreateError = 'signal aborted';
+      return null;
+    }
+    if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) {
+      this.lastCreateError = `worker scope rejected: ${path}`;
+      return null;
+    }
     if (opts?.branch?.startsWith('worker/') && this.ensureParentDirectory) {
       const normalizedPath = normalizeAbsolutePath(path);
       const parent = normalizedPath.slice(0, normalizedPath.lastIndexOf('/')) || '/';
@@ -126,11 +138,20 @@ export class WorktreeManager {
       }
     }
     const rev = await this.runner.git(['rev-parse', 'HEAD'], this.baseRepoPath);
-    if (rev.exitCode !== 0) return null;
-    if (opts?.signal?.aborted) return null;
+    if (rev.exitCode !== 0) {
+      this.lastCreateError = `git rev-parse HEAD failed: ${rev.stderr.trim() || `exit ${rev.exitCode}`}`;
+      return null;
+    }
+    if (opts?.signal?.aborted) {
+      this.lastCreateError = 'signal aborted';
+      return null;
+    }
     const baseRevision = rev.stdout.trim();
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
-    if (!isSafeBranchName(branch)) return null;
+    if (!isSafeBranchName(branch)) {
+      this.lastCreateError = `unsafe branch: ${branch}`;
+      return null;
+    }
     let addArgs: string[] = ['worktree', 'add', '-q', path, '-b', branch, 'HEAD'];
     if (opts?.branch) {
       const branchProbe = await this.runner.git(
@@ -139,12 +160,18 @@ export class WorktreeManager {
       );
       if (branchProbe.exitCode === 0 && branchProbe.stdout.trim()) {
         const branchTip = await this.runner.git(['rev-parse', branch], this.baseRepoPath);
-        if (branchTip.exitCode !== 0 || branchTip.stdout.trim() !== baseRevision) return null;
+        if (branchTip.exitCode !== 0 || branchTip.stdout.trim() !== baseRevision) {
+          this.lastCreateError = `existing branch tip mismatch: ${branch}`;
+          return null;
+        }
         addArgs = ['worktree', 'add', '-q', path, branch];
       }
     }
     const add = await this.runner.git(addArgs, this.baseRepoPath);
-    if (add.exitCode !== 0) return null;
+    if (add.exitCode !== 0) {
+      this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
+      return null;
+    }
     const info: WorktreeInfo = {
       id,
       path,

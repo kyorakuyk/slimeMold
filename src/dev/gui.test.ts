@@ -46,6 +46,21 @@ describe('GUI DevSession registry bridge', () => {
     expect(getNodeDef(devDef.typeId)).toBe(devDef);
   });
 
+  it('tears down a stale project session before initializing another project', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'dev_init_session') return 1;
+      return '';
+    });
+
+    const first = await ensureGuiDevSession('C:/repo-one');
+    const second = await ensureGuiDevSession('C:/repo-two');
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(invoke).toHaveBeenCalledWith('dev_clear_session', { generation: 1 });
+    expect(invoke.mock.calls.filter(([command]) => command === 'dev_init_session')).toHaveLength(2);
+  });
+
   it('single-flights concurrent initialization for the same project', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

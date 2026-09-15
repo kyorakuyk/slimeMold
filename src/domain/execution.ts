@@ -65,11 +65,17 @@ export function parseAttemptId(value: string): ParsedAttemptId {
 /** Encode a canonical attempt identity using only Git-safe worker basename characters. */
 export function workerIdentitySegment(value: AttemptId): string {
   parseAttemptId(value);
-  let hex = '';
-  for (let index = 0; index < value.length; index += 1) {
-    hex += value.charCodeAt(index).toString(16).padStart(2, '0');
+  const digests: string[] = [];
+  const seeds = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b];
+  for (const seed of seeds) {
+    let hash = seed >>> 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    digests.push(hash.toString(16).padStart(8, '0'));
   }
-  const segment = `w-${hex}`;
+  const segment = `w-${digests.join('')}`;
   if (segment.length > WORKER_IDENTITY_MAX_LENGTH) {
     throw new Error(`Worker identity 过长：${segment.length}`);
   }
