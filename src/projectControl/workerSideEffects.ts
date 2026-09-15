@@ -34,7 +34,7 @@ export interface WorkerRunRecoveryPlan {
   runId: string;
   effects: SideEffectRecord[];
   recoverableEffects?: SideEffectRecord[];
-  /** Terminal failed tasks whose side-effect claim never produced a journal entry. */
+  /** Failed or interrupted tasks whose current attempt needs explicit recovery. */
   failedTaskIds?: string[];
   effectKeys: string[];
   requiresUser: boolean;
@@ -680,8 +680,9 @@ export function applyWorkerRunRecoveryDecision(input: {
   for (const taskId of plan.failedTaskIds ?? []) effectTaskIds.add(taskId);
   if (effectTaskIds.size === 0) throw new Error(`恢复计划没有绑定可处理的任务：${input.state.runId}`);
   for (const taskId of plan.failedTaskIds ?? []) {
-    if (input.state.tasks[taskId]?.status !== 'failed') {
-      throw new Error(`恢复计划 failedTaskId 当前不是 failed：${taskId}`);
+    const status = input.state.tasks[taskId]?.status;
+    if (status !== 'failed' && status !== 'running') {
+      throw new Error(`恢复计划 taskId 当前不是 failed/running：${taskId}`);
     }
   }
   if (applied.decision === 'retry') {

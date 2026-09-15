@@ -242,16 +242,19 @@ describe('recoverWorkerRunCommand', () => {
       decisionId: 'recovery-wrong-project',
       now: '2026-09-01T00:04:00.000Z',
     })).toThrow(/不属于当前项目/);
-    expect(() => recoverWorkerRunCommand({
+    const interrupted = recoverWorkerRunCommand({
       projectId: 'project-1',
       state,
       taskGraph: graph,
       journal: { schemaVersion: 1, entries: [] },
       decision: 'retry',
-      reason: '没有 effect',
+      reason: '重启后恢复未闭合 lease',
       decisionId: 'recovery-no-effect',
       now: '2026-09-01T00:04:00.000Z',
-    })).toThrow(/待核对的副作用/);
+    });
+    expect(interrupted.state.status).toBe('queued');
+    expect(interrupted.state.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1 });
+    expect(interrupted.events.map((event) => event.eventType)).toContain('TaskAttemptMarkedUnknown');
 
     const partial = {
       ...unknownJournal.entries[0],

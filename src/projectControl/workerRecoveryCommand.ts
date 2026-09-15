@@ -158,7 +158,7 @@ export function recoverWorkerRunCommand(
   const decisionId = requiredText(input.decisionId, '恢复决策 id');
   const reason = requiredText(input.reason, '恢复理由');
   const failedTaskIds = Object.values(input.state.tasks)
-    .filter((task) => task.status === 'failed')
+    .filter((task) => task.status === 'failed' || task.status === 'running')
     .map((task) => task.taskId);
   const plan = buildWorkerRunRecoveryPlan(input.state.runId, input.journal, failedTaskIds);
   const decision = decideWorkerRunRecovery(plan, input.decision, reason);
