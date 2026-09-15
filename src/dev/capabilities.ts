@@ -262,6 +262,7 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
 /** 测试白名单：typecheck / vitest / 本地脚本（scripts/）/ 仓库自带特定 npm script（精确，禁额外参数）。 */
 const DEFAULT_TEST_RULES: CommandRule[] = [
   { cmd: 'tsc', args: ['--noEmit'] },
+  { cmd: 'tsc', argsPrefix: ['--noEmit', '--target', 'es2020'], minExtraArgs: 1, allowExtraArgs: 20, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 3 },
   { cmd: 'tsc', argsPrefix: ['--noEmit'], minExtraArgs: 1, allowExtraArgs: 20, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 0 },
   { cmd: 'node', argsPrefix: ['--check'], minExtraArgs: 1, allowExtraArgs: 1, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 1 },
   { cmd: 'tsc', args: ['-b'] },

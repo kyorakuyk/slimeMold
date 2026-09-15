@@ -75,7 +75,7 @@ function resolveTaskValidationCommands(
   if (!onlyCodeChanges) return { compile: defaults.compile, test: defaults.test };
   const typeScriptFiles = codeFiles.filter((file) => /\.tsx?$/i.test(file));
   if (typeScriptFiles.length > 0) {
-    const command = ['tsc', '--noEmit', ...typeScriptFiles];
+    const command = ['tsc', '--noEmit', '--target', 'es2020', ...typeScriptFiles];
     return { compile: command, test: [...command] };
   }
   return {

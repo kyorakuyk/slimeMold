@@ -88,8 +88,8 @@ describe('createDevWorkerAcceptance', () => {
         attemptId: lease.attemptId,
       }),
     ]));
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
     expect(deps.service.gitDiff).toHaveBeenCalledWith('base-1', { cwd: lease.assignment.path });
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
       acceptanceId: 'acceptance-1',
@@ -168,12 +168,12 @@ describe('createDevWorkerAcceptance', () => {
     expect(result.passed).toBe(true);
     expect(deps.service.testRun).toHaveBeenNthCalledWith(
       1,
-      ['tsc', '--noEmit', 'src/game/engine.ts', 'src/game/rules.ts'],
+      ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
       { cwd: lease.assignment.path },
     );
     expect(deps.service.testRun).toHaveBeenNthCalledWith(
       2,
-      ['tsc', '--noEmit', 'src/game/engine.ts', 'src/game/rules.ts'],
+      ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
       { cwd: lease.assignment.path },
     );
   });
@@ -264,7 +264,7 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('compile');
-    expect(deps.service.testRun).toHaveBeenCalledWith(['tsc', '--noEmit', 'src/feature.ts'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenCalledWith(['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
   });
 
   it('rejects a forged lease lineage before running host checks', async () => {

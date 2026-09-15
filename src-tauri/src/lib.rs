@@ -1801,6 +1801,14 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "tsc" => {
             rest_eq(&["--noEmit"])
                 || rest_eq(&["-b"])
+                || (rest.len() >= 4
+                    && rest[0] == "--noEmit"
+                    && rest[1] == "--target"
+                    && rest[2] == "es2020"
+                    && rest[3..].len() <= 20
+                    && rest[3..].iter().all(|arg| {
+                        !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)
+                    }))
                 || (rest.len() >= 2
                     && rest[0] == "--noEmit"
                     && rest[1..].len() <= 20
@@ -3288,6 +3296,9 @@ mod dev_exec_tests {
         ])));
         assert!(dev_worktree_cmd_allowed(&sv(&[
             "tsc", "--noEmit", "src/game/engine.ts", "src/game/rules.ts"
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "tsc", "--noEmit", "--target", "es2020", "src/game/engine.ts"
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
             "node", "--check", "C:/outside/main.js"
