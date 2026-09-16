@@ -15,6 +15,7 @@ import {
 } from './workerSideEffects';
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   orchestrationId: 'orch-1',
   task: {

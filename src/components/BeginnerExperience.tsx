@@ -48,7 +48,7 @@ interface BeginnerExperienceProps {
   onOpenAdvanced: () => void;
   onNewProject: () => void;
   onStartProjectSession: (goal: string) => void;
-  onRunWorker?: (runId: string) => Promise<void> | void;
+  onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
   onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
 }
 

@@ -5329,6 +5329,30 @@ body:has(.sm-pro-shell) .sm-companion__bar {
   }
 }
 
+.sm-beginner-worker-runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--sm-beginner-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.sm-beginner-worker-runtime select {
+  max-width: 190px;
+  border: 1px solid var(--sm-beginner-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.sm-beginner-worker-runtime select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sm-beginner-blue) 45%, transparent);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sm-pro-shell *,
   .sm-pro-shell *::before,

@@ -2711,3 +2711,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 > 本文是 2026 年的回顾性整理，依据 Git 提交、开发日志和测试记录重建时间线。
 
 不要把事后整理的文章伪装成当时同步发布的开发日记。真实的失败、误判、回退和边界，反而是这段开发经历里最有价值的部分。
+
+### 7.121 Antigravity Worker Runtime Adapter 第一条垂直切片
+
+- 在不修改全局 `~/.gemini/config/mcp_config.json`、不保存凭据、不 push/merge/cleanup 的前提下，实现 `codex | antigravity` Worker Runtime 选择；默认仍为 Codex。
+- `ProjectSessionPanel` 对 queued Run 显示 Runtime selector；选中 Antigravity 后，`App → Project Worker Coordinator → registered Worktree` 使用新的 Runtime Adapter，旧的 Codex 路径保持不变。
+- 新增 `src-tauri/src/antigravity.rs`：校验 session generation 和登记 Worktree，生成 Attempt-scoped `.agents/slimemold-worker/<operationId>/context.json`，只在 workspace `.agents/mcp_config.json` 没有冲突时写入 `slimemold-worker` server，并等待 MCP `result.json`；没有 Attempt result 不返回成功。
+- 新增 `scripts/slimemold-antigravity-mcp.mjs`，暴露 `slimemold_get_task_context`、`slimemold_report_progress`、`slimemold_request_feedback`、`slimemold_submit_attempt_result`。MCP server 只读写当前 Attempt 目录，不能直接写 TaskGraph、Acceptance 或 Receipt。
+- Windows `.cmd` 启动只向 `cmd /C` 传固定启动词；真实任务指令写入 ContextPack 文件，避免把任意任务 prompt 拼入 shell command。CLI basename 限制为 `antigravity-ide.cmd`、`antigravity-ide.exe` 或 `antigravity-ide`。
+- `completed` 回报仍必须经过 Host Acceptance；`blocked` 回报创建绑定 project/task/attempt 的 `FeedbackRequest`。没有把 Antigravity UI、进程启动或 Agent 自报成功当作 TaskSucceeded。
+- 当前只实现 CLI 已确认的 `ask/edit/agent/custom` mode 值；没有把未经官方契约确认的 model、thinking/reasoning、profile 或 quota 映射成可用能力，也没有把 Antigravity 账户订阅伪装成 Gemini API/Vertex AI Provider。
+
+验证结果：
+
+- `npm run test`：127 test files / 1099 tests passed；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1015 keys 对齐；
+- `cargo check`：通过；`cargo test --lib`：50/50 passed；
+- `rustfmt --edition 2021 --check src/antigravity.rs`：通过；完整 `cargo fmt -- --check` 仍被既有 `src-tauri/src/lib.rs` 的 `dev_exec` 与测试格式漂移阻塞，本轮没有重排无关旧代码；
+- MCP stdio 实际 read-back：initialize/tools/get_context，以及 progress/feedback/submit result 写回均通过；
+- `git diff --check`：通过；当前没有独立 reviewer，因此不标记 `[verified]`。

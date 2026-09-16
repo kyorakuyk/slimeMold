@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+mod antigravity;
 mod codex;
 mod event_store;
 
@@ -39,6 +40,16 @@ pub(crate) fn lock_dev_operation() -> std::sync::MutexGuard<'static, ()> {
 
 fn next_session_generation(current: u64) -> u64 {
     current.wrapping_add(1).max(1)
+}
+
+pub(crate) fn dev_base_repo() -> Result<PathBuf, String> {
+    DEV_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .base_repo
+        .clone()
+        .map(PathBuf::from)
+        .ok_or_else(|| "当前尚未初始化 DevSession 主仓库".to_string())
 }
 
 pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Result<(), String> {
@@ -2822,6 +2833,8 @@ pub fn run() {
             codex::codex_exec,
             codex::codex_worker_exec,
             codex::codex_worker_cancel,
+            antigravity::antigravity_worker_exec,
+            antigravity::antigravity_worker_cancel,
             event_store::event_lock_acquire,
             event_store::event_lock_release,
             run_git,

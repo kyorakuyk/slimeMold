@@ -43,7 +43,7 @@ interface ProjectSessionPanelProps {
   onOpenAdvanced: () => void;
   onOpenIssues?: () => void;
   onOpenMasterAgent?: () => void;
-  onRunWorker?: (runId: string) => Promise<void> | void;
+  onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
   onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string) => Promise<void> | void;
 }
 
@@ -141,6 +141,7 @@ export default function ProjectSessionPanel({
   const [error, setError] = useState<string | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [workerStartBusy, setWorkerStartBusy] = useState(false);
+  const [workerRuntime, setWorkerRuntime] = useState<'codex' | 'antigravity'>('codex');
   const [streamingText, setStreamingText] = useState('');
   const [localResponse, setLocalResponse] = useState<MasterResponse | null>(null);
   const initialTurnStarted = useRef(false);
@@ -240,7 +241,7 @@ export default function ProjectSessionPanel({
     if (!onRunWorker || !currentWorkerRun || currentWorkerRun.status !== 'queued' || currentWorkerRunRecovery || workerStartBusy) return;
     setWorkerStartBusy(true);
     setError(null);
-    void Promise.resolve(onRunWorker(currentWorkerRun.runId))
+    void Promise.resolve(onRunWorker(currentWorkerRun.runId, workerRuntime))
       .catch((cause) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -467,7 +468,7 @@ export default function ProjectSessionPanel({
         sensitivity: 'normal',
       }, ...queued.events]);
       if (onRunWorker) {
-        void Promise.resolve(onRunWorker(queued.state.runId)).catch((cause) => {
+        void Promise.resolve(onRunWorker(queued.state.runId, workerRuntime)).catch((cause) => {
           setError(cause instanceof Error ? cause.message : String(cause));
         });
       }
@@ -512,15 +513,29 @@ export default function ProjectSessionPanel({
               </button>
             )}
             {currentWorkerRun?.status === 'queued' && !currentWorkerRunRecovery && onRunWorker && (
-              <button
-                type="button"
-                data-testid="beginner-session-start-worker"
-                className="sm-beginner-text-button"
-                disabled={workerStartBusy}
-                onClick={handleStartQueuedWorker}
-              >
-                {workerStartBusy ? t('session.thinking') : t('session.workerRun.start')} <ArrowRight size={14} />
-              </button>
+              <>
+                <label className="sm-beginner-worker-runtime" title={workerRuntime === 'antigravity' ? t('session.workerRuntime.antigravityHint') : undefined}>
+                  <span>{t('session.workerRuntime.label')}</span>
+                  <select
+                    aria-label={t('session.workerRuntime.label')}
+                    value={workerRuntime}
+                    onChange={(event) => setWorkerRuntime(event.target.value as 'codex' | 'antigravity')}
+                    disabled={workerStartBusy}
+                  >
+                    <option value="codex">{t('session.workerRuntime.codex')}</option>
+                    <option value="antigravity">{t('session.workerRuntime.antigravity')}</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  data-testid="beginner-session-start-worker"
+                  className="sm-beginner-text-button"
+                  disabled={workerStartBusy}
+                  onClick={handleStartQueuedWorker}
+                >
+                  {workerStartBusy ? t('session.thinking') : t('session.workerRun.start')} <ArrowRight size={14} />
+                </button>
+              </>
             )}
             <button type="button" className="sm-beginner-text-button" onClick={onOpenAdvanced}>
               {t('session.openAdvanced')} <ArrowRight size={14} />

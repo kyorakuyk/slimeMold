@@ -45,6 +45,7 @@ export interface WorkerWorktreeAllocator {
 }
 
 export interface WorkerTaskLease {
+  projectId: string;
   runId: string;
   orchestrationId?: string;
   task: ProjectTask;
@@ -606,6 +607,7 @@ export class WorkerTaskQueue {
         attempt,
       }, now);
       return {
+        projectId: this.state.projectId,
         runId: this.state.runId,
         orchestrationId: this.state.orchestrationId,
         task: cloneTask(task),

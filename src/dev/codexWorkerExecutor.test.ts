@@ -25,6 +25,7 @@ const task: ProjectTask = {
 };
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   task,
   assignment: {

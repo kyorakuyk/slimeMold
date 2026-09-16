@@ -10,6 +10,7 @@ import {
 import { runActiveWorkerRun } from './workerRunRuntime';
 import { createWorktreeAllocator } from '../dev/workerAllocator';
 import { createCodexWorkerExecutor, createCodexWorkerInvoker } from '../dev/codexWorkerExecutor';
+import { createAntigravityWorkerExecutor, type AntigravityMode } from '../dev/antigravityWorkerExecutor';
 import { createDevWorkerAcceptance } from '../dev/workerAcceptance';
 import type { DevSession } from '../dev/session';
 
@@ -64,9 +65,14 @@ export interface GuiProjectWorkerRunCoordinatorOptions
   projectPath: string;
   session: DevSession;
   model?: string;
+  workerRuntime?: 'codex' | 'antigravity';
+  antigravity?: {
+    mode?: AntigravityMode;
+    cliPath?: string;
+  };
 }
 
-/** Compose the real Tauri Worker path: worktree allocator → Codex → host acceptance. */
+/** Compose the real Tauri Worker path: worktree allocator → runtime adapter → host acceptance. */
 export function createGuiProjectWorkerRunCoordinator(
   options: GuiProjectWorkerRunCoordinatorOptions,
 ): ProjectWorkerRunCoordinator {
@@ -74,6 +80,18 @@ export function createGuiProjectWorkerRunCoordinator(
   if (typeof hostGeneration !== 'number' || !Number.isSafeInteger(hostGeneration) || hostGeneration <= 0) {
     throw new Error('GUI Worker coordinator requires a Tauri host session generation');
   }
+  const acceptance = createDevWorkerAcceptance(options.session, { taskScopePolicy: true });
+  const executor = options.workerRuntime === 'antigravity'
+    ? createAntigravityWorkerExecutor({
+      generation: hostGeneration,
+      acceptance,
+      ...options.antigravity,
+    })
+    : createCodexWorkerExecutor({
+      invoker: createCodexWorkerInvoker(hostGeneration),
+      acceptance,
+      model: options.model,
+    });
   return createProjectWorkerRunCoordinator({
     projectId: options.projectId,
     runs: options.runs,
@@ -86,11 +104,7 @@ export function createGuiProjectWorkerRunCoordinator(
       options.session.manager,
       (input) => workerWorktreePathFor(options.projectPath, input),
     ),
-    executor: createCodexWorkerExecutor({
-      invoker: createCodexWorkerInvoker(hostGeneration),
-      acceptance: createDevWorkerAcceptance(options.session, { taskScopePolicy: true }),
-      model: options.model,
-    }),
+    executor,
   });
 }
 

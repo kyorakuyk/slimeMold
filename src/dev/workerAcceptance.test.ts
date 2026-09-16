@@ -16,6 +16,7 @@ type TestHost = Omit<AcceptanceHost, 'service' | 'recordAcceptance' | 'persistAc
 };
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   orchestrationId: 'orch-1',
   task: {

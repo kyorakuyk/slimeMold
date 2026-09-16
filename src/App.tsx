@@ -527,7 +527,7 @@ export default function App() {
     }
   };
 
-  const runQueuedWorker = async (runId: string): Promise<void> => {
+  const runQueuedWorker = async (runId: string, workerRuntime: 'codex' | 'antigravity' = 'codex'): Promise<void> => {
     const beforeSave = useWorkflowStore.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
@@ -576,6 +576,7 @@ export default function App() {
       projectPath,
       runs: current.workerRuns,
       session,
+      workerRuntime,
       concurrency: current.maxConcurrency,
       sideEffects,
       signal: operation.controller.signal,

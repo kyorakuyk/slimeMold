@@ -578,7 +578,7 @@ describe('ProjectSessionPanel', () => {
       }),
     ]);
     expect(getActiveWorkerRunRuntime()?.queues.size).toBe(1);
-    expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/));
+    expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/), 'codex');
   });
 
   it('can start a persisted queued Worker Run after the project is reopened', async () => {
@@ -635,10 +635,16 @@ describe('ProjectSessionPanel', () => {
 
     const startButton = container.querySelector('[data-testid="beginner-session-start-worker"]') as HTMLButtonElement;
     expect(startButton).not.toBeNull();
+    const runtimeSelect = container.querySelector('.sm-beginner-worker-runtime select') as HTMLSelectElement;
+    expect(runtimeSelect).not.toBeNull();
+    await act(async () => {
+      runtimeSelect.value = 'antigravity';
+      runtimeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await act(async () => {
       startButton.click();
     });
-    expect(onRunWorker).toHaveBeenCalledWith('run-queued');
+    expect(onRunWorker).toHaveBeenCalledWith('run-queued', 'antigravity');
   });
 
   it('shows a failed Worker Run as the next recovery action', async () => {
