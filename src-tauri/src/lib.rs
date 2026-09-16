@@ -1968,7 +1968,13 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     for (k, v) in dev_sanitized_env() {
         cmd.env(k, v);
     }
-    let result = run_with_timeout(&mut cmd, Duration::from_secs(30))?;
+    let result = match run_with_timeout(&mut cmd, Duration::from_secs(30)) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("[dev_exec] {} cwd={} error={}", args.join(" "), canonical_cwd.display(), error);
+            DevExecResult { stdout: String::new(), stderr: error, code: -1 }
+        }
+    };
     if DEV_STATE.lock().unwrap().generation != operation_generation {
         return Err("dev_exec: session 在命令执行期间发生变化".to_string());
     }
