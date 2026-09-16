@@ -36,6 +36,8 @@ export interface DevPatchResult {
 export interface DevContext {
   /** 工作根（worktree 路径）。所有相对路径基于此解析。 */
   cwd: string;
+  /** One-call approved policy override for task-scoped host validation only. */
+  pathPolicy?: SelfDevelopmentPolicy;
 }
 
 export interface DevCapabilityService {
@@ -376,13 +378,14 @@ export function createNodeDevService(
    * - '.'（worktree 根）放行。
    */
   const guardPathArgs = async (args: string[], ctx: DevContext, fromIndex = 0): Promise<void> => {
+    const activePolicy = ctx.pathPolicy ?? policy;
     for (const a of args.slice(fromIndex)) {
       if (!a || a.startsWith('-')) continue;
       if (a.includes('*') || a.includes('?')) continue;
       const abs = await resolveP(ctx.cwd, a);
       const rel = await relP(ctx.cwd, abs);
       if (rel === '.' || rel === '') continue;
-      assertPathAllowed(policy, rel);
+      assertPathAllowed(activePolicy, rel);
     }
   };
 

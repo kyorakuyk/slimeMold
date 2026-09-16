@@ -143,10 +143,10 @@ export function createDevWorkerAcceptance(
           failureReason: '宿主 EvidenceStore 未配置持久化，拒绝验收',
         };
       }
-      const context = { cwd };
       const policy = options.taskScopePolicy
         ? createTaskScopePolicy(host.policy, lease.task.scope)
         : host.policy;
+      const context = { cwd, pathPolicy: options.taskScopePolicy ? policy : undefined };
       const scaffoldValidation = options.compileCommand === undefined
         && options.testCommand === undefined
         && usesScaffoldValidation(lease.task.scope);

@@ -144,8 +144,8 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(true);
     expect(deps.service.testRun).toHaveBeenCalledTimes(2);
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['node', '--check', 'src/main.js'], { cwd: lease.assignment.path });
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['node', '--check', 'server.mjs'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['node', '--check', 'src/main.js'], { cwd: lease.assignment.path, pathPolicy: expect.any(Object) });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['node', '--check', 'server.mjs'], { cwd: lease.assignment.path, pathPolicy: expect.any(Object) });
   });
 
   it('uses a scoped TypeScript check for an isolated TypeScript task', async () => {
@@ -169,12 +169,12 @@ describe('createDevWorkerAcceptance', () => {
     expect(deps.service.testRun).toHaveBeenNthCalledWith(
       1,
       ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
-      { cwd: lease.assignment.path },
+      { cwd: lease.assignment.path, pathPolicy: expect.any(Object) },
     );
     expect(deps.service.testRun).toHaveBeenNthCalledWith(
       2,
       ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
-      { cwd: lease.assignment.path },
+      { cwd: lease.assignment.path, pathPolicy: expect.any(Object) },
     );
   });
 
