@@ -2680,6 +2680,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Browser Use managed backend仍无法识别 Chromium，但独立 Chrome/CDP已形成真实 DOM/行为 read-back；该 backend限制没有被冒充为产品验收失败。
 - 主仓库最终质量门重新通过：`npm run build`、`npm run i18n:check`（1011 keys）、`npm run test`（126 test files / 1097 tests）、`git diff --check`；没有 push、主仓库 merge、Cleanup 或 reviewer `[verified]`。
 
+### 7.119 TaskGraph Worker 内部时序图
+
+- 新增自包含图示：`docs/diagrams/FOURFOLD_TASKGRAPH_WORKER_SEQUENCE.html`，使用 SVG 泳道表达 `ProjectControl → WorkerQueue → Worktree Host → Codex Worker → Host Acceptance → Evidence/Receipt → Delivery`。
+- 图中明确标出成功判定边界：Codex 文本不是成功事实，必须经过 changed-file scope、Host validation、Evidence 和 Acceptance；同时标出 dependency artifact ContextPack、Restart/Recovery retry loop 和 `RunSucceeded`。
+- 图右侧单独标出普通 Workflow 节点图为另一条路径，避免将 `coord.council` 红色节点、Ollama Agent 配置或节点耗时误读为 TaskGraph Worker 的成功/失败来源。
+- 图示依据本轮 durable facts：TaskGraph v1、13 tasks、RunSucceeded sequence 563、Delivery commit `40fcff6`；HTML 无外部依赖、无凭据。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
