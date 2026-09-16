@@ -56,7 +56,17 @@ function usesScaffoldValidation(scope: readonly string[]): boolean {
 }
 
 function isCodeFile(file: string): boolean {
-  return /\.(?:[cm]?js|jsx|tsx?|mjs|cjs)$/i.test(file);
+  return /\.(?:[cm]?js|jsx|ts|tsx)$/i.test(file);
+}
+
+function commandEvidenceSummary(label: string, result: { exitCode: number; stderr?: string }): string {
+  if (result.exitCode === 0) return `${label}退出码 0`;
+  const detail = (result.stderr ?? '')
+    .replace(/\b(?:api[_-]?key|token|password|secret|authorization|bearer)\s*[:=]\s*[^\s]+/gi, '[REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .trim()
+    .slice(0, 400);
+  return detail ? `${label}退出码 ${result.exitCode}：${detail}` : `${label}退出码 ${result.exitCode}`;
 }
 
 function resolveTaskValidationCommands(
@@ -236,7 +246,7 @@ export function createDevWorkerAcceptance(
           status: compile.exitCode === 0 ? 'passed' : 'failed',
           command: compileLabel,
           exitCode: compile.exitCode,
-          summary: `宿主编译退出码 ${compile.exitCode}`,
+          summary: commandEvidenceSummary('宿主编译', compile),
           runId: lease.runId,
           taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
@@ -252,7 +262,7 @@ export function createDevWorkerAcceptance(
           status: test.exitCode === 0 ? 'passed' : 'failed',
           command: testLabel,
           exitCode: test.exitCode,
-          summary: `宿主测试退出码 ${test.exitCode}`,
+          summary: commandEvidenceSummary('宿主测试', test),
           runId: lease.runId,
           taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,
