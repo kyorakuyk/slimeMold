@@ -1788,6 +1788,12 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                     && rest[1] == "--oneline"
                     && rest[2] == "-n"
                     && rest[3].chars().all(|c| c.is_ascii_digit()))
+                // Worktree allocator 的 branch collision probe：只读、只允许本项目生成的 worker ref。
+                || (rest.len() == 3
+                    && rest[0] == "show-ref"
+                    && rest[1] == "--verify"
+                    && rest[2].starts_with("refs/heads/worker/w-")
+                    && safe_git_revision_arg(&rest[2]))
                 || rest_eq(&["ls-files", "--others", "--exclude-standard"])
                 || rest_eq(&["rev-parse", "HEAD"])
         }
