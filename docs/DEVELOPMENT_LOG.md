@@ -2687,6 +2687,14 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 图右侧单独标出普通 Workflow 节点图为另一条路径，避免将 `coord.council` 红色节点、Ollama Agent 配置或节点耗时误读为 TaskGraph Worker 的成功/失败来源。
 - 图示依据本轮 durable facts：TaskGraph v1、13 tasks、RunSucceeded sequence 563、Delivery commit `40fcff6`；HTML 无外部依赖、无凭据。
 
+### 7.120 分封/认领图重画与 Antigravity 接入勘探
+
+- 原有 `FOURFOLD_TASKGRAPH_WORKER_SEQUENCE.html` 只表达了调用时序，未充分表达 SlimeMold 的核心设计意图；新增 `docs/diagrams/SLIMEMOLD_TASKGRAPH_DELEGATION_AND_CLAIM.html`，分成“目标控制层级”和“Fourfold 实际 TaskGraph 投影”两层。
+- 新图显式表达 Master/CEO → Project Delivery Architect → Department Head → Module Lead → Worker/IC → Specialist 的目标分封链，以及 DelegationRequest、ClaimLease、ContextPack、Worktree/Attempt、ProgressCapsule、Evidence/Acceptance 和 FeedbackRequest 的上下行边界。
+- Fourfold 实际 13 Task 以四个解释性 Work Package 展示，明确声明这些分组不是第二套任务系统；canonical source 仍是 `projectControl.taskGraphs[0].tasks`。
+- 本机已检测到 `D:/Family/Antigravity IDE`：产品元数据 `ideVersion=2.5.5`，CLI 报告 `1.107.0`；CLI 支持 `chat --mode agent`、workspace path 和 `--add-mcp`，官方文档支持全局 `~/.gemini/config/mcp_config.json` 与 workspace `.agents/mcp_config.json`。
+- 接入结论：Antigravity 可以作为 Worker Runtime Adapter 接入，但不能越过 SlimeMold 的 TaskGraph、Worktree、Host Acceptance、Evidence、Receipt 和 Recovery；当前尚未实现 adapter，也未修改用户的 Antigravity MCP 配置。CLI `--list-extensions` 能列出已安装扩展，但随后出现原生 V8 abort，暂不把该命令视为稳定管理接口。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
