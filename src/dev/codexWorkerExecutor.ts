@@ -76,11 +76,17 @@ export function buildCodexWorkerPrompt(lease: WorkerTaskLease): string {
     `任务描述：${task.description}`,
     `允许涉及的范围：${task.scope.length > 0 ? task.scope.join(', ') : '(未声明)'}`,
     `依赖任务：${task.dependsOn.length > 0 ? task.dependsOn.join(', ') : '(无)'}`,
+    ...(lease.dependencyArtifacts && lease.dependencyArtifacts.length > 0
+      ? [
+        '已成功完成的依赖成果（只读参考；只能把需要的内容复制/整合到当前 Worktree，禁止修改这些路径）：',
+        ...lease.dependencyArtifacts.map((artifact) => `- ${artifact.taskId} attempt=${artifact.attempt} path=${artifact.path}${artifact.branchRevision ? ` revision=${artifact.branchRevision}` : ''}`),
+      ]
+      : []),
     '验收标准：',
     ...task.acceptanceCriteria.map((criterion) => `- ${criterion}`),
     '',
     '约束：',
-    '- 只能修改当前 worktree，不要读取或写入其它项目、主仓库或凭据。',
+    '- 只能修改当前 worktree；只读依赖成果路径仅用于读取/复制参考，不得在原依赖 worktree 写入。',
     '- 不要 push、merge、release 或删除远程资源。',
     '- 不要把 API key、token、密码或其它 secret 写入文件、输出或摘要。',
     '- 完成后只报告做了什么；是否成功由宿主运行确定性验收决定。',

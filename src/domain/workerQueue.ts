@@ -22,6 +22,16 @@ export interface WorkerWorktreeAssignment {
   baseRevision: string;
 }
 
+export interface WorkerDependencyArtifact {
+  taskId: string;
+  attempt: number;
+  worktreeId?: string;
+  path: string;
+  branch?: string;
+  baseRevision?: string;
+  branchRevision?: string;
+}
+
 export interface WorkerWorktreeAllocator {
   allocate(input: {
     projectId: string;
@@ -43,6 +53,8 @@ export interface WorkerTaskLease {
   taskExecutionId: TaskExecutionId;
   attemptId: AttemptId;
   contextPack?: ContextPack;
+  /** Read-only references to successful dependency worktrees. */
+  dependencyArtifacts?: readonly WorkerDependencyArtifact[];
 }
 
 export interface WorkerExecutionResult {
@@ -513,6 +525,19 @@ export class WorkerTaskQueue {
     const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
     const contextPack = this.contextPacksByTask.get(taskId);
+    const dependencyArtifacts = task.dependsOn.flatMap((dependencyId): WorkerDependencyArtifact[] => {
+      const dependency = this.state.tasks[dependencyId];
+      if (!dependency || dependency.status !== 'succeeded' || !dependency.worktreePath) return [];
+      return [{
+        taskId: dependencyId,
+        attempt: dependency.attempt,
+        ...(dependency.worktreeId ? { worktreeId: dependency.worktreeId } : {}),
+        path: dependency.worktreePath,
+        ...(dependency.branch ? { branch: dependency.branch } : {}),
+        ...(dependency.baseRevision ? { baseRevision: dependency.baseRevision } : {}),
+        ...(dependency.branchRevision ? { branchRevision: dependency.branchRevision } : {}),
+      }];
+    });
     if (this.requireContextPack && !contextPack) {
       throw new Error(`hierarchical Worker claim 缺少 ContextPack：${taskId}`);
     }
@@ -589,6 +614,7 @@ export class WorkerTaskQueue {
         taskExecutionId,
         attemptId,
         ...(contextPack ? { contextPack: cloneContextPack(contextPack) } : {}),
+        ...(dependencyArtifacts.length > 0 ? { dependencyArtifacts } : {}),
       };
     } catch (cause) {
       if (signal?.aborted) throwIfAborted(signal);

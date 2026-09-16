@@ -46,6 +46,12 @@ describe('Codex Worker executor', () => {
     expect(prompt).toContain('npm run test 通过');
     expect(prompt).toContain('不要 push、merge、release 或删除远程资源');
     expect(prompt).toContain('C:/worktrees/task-1');
+    const dependencyPrompt = buildCodexWorkerPrompt({
+      ...lease,
+      dependencyArtifacts: [{ taskId: 'task-0', attempt: 1, path: 'C:/worktrees/task-0', branchRevision: 'abc123' }],
+    });
+    expect(dependencyPrompt).toContain('task-0 attempt=1 path=C:/worktrees/task-0 revision=abc123');
+    expect(dependencyPrompt).toContain('只读参考');
   });
 
   it('requires host acceptance before returning succeeded with evidence ids', async () => {
