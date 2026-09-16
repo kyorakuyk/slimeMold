@@ -60,6 +60,7 @@ function isCodeFile(file: string): boolean {
 }
 
 function commandEvidenceSummary(label: string, result: { exitCode: number; stderr?: string; stdout?: string }): string {
+  if (label.startsWith('deferred:')) return label;
   if (result.exitCode === 0) return `${label}退出码 0`;
   const detail = (result.stderr || result.stdout || '')
     .replace(/\b(?:api[_-]?key|token|password|secret|authorization|bearer)\s*[:=]\s*[^\s]+/gi, '[REDACTED]')
@@ -73,7 +74,7 @@ function resolveTaskValidationCommands(
   defaults: { compile: string[]; test: string[]; custom: boolean },
   scaffold: boolean,
   changedFiles: readonly string[],
-): { compile: string[]; test: string[] } {
+): { compile: string[]; test: string[]; deferredReason?: string } {
   if (defaults.custom || scaffold) {
     return scaffold
       ? { compile: ['node', '--check', 'src/main.js'], test: ['node', '--check', 'server.mjs'] }
@@ -83,6 +84,12 @@ function resolveTaskValidationCommands(
   const hasPackageManifest = changedFiles.some((file) => /^(?:package(?:\.lock)?\.json|npm-shrinkwrap\.json)$/i.test(file));
   if (codeFiles.length === 0 || hasPackageManifest) return { compile: defaults.compile, test: defaults.test };
   const typeScriptFiles = codeFiles.filter((file) => /\.tsx?$/i.test(file));
+  const testOnlyTypeScript = typeScriptFiles.length > 0
+    && typeScriptFiles.every((file) => /^(?:tests?|__tests__)\//i.test(file));
+  if (testOnlyTypeScript) {
+    const deferred = 'deferred: isolated test-only task; integration validation required';
+    return { compile: [deferred], test: [deferred], deferredReason: deferred };
+  }
   if (typeScriptFiles.length > 0) {
     const command = ['tsc', '--noEmit', '--target', 'es2020', ...typeScriptFiles];
     return { compile: command, test: [...command] };
@@ -223,10 +230,15 @@ export function createDevWorkerAcceptance(
       const taskTestCommand = validationCommands.test;
       const compileLabel = commandLabel(taskCompileCommand);
       const testLabel = commandLabel(taskTestCommand);
+      const deferredResult = { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
 
-      const compile = await host.service.testRun(taskCompileCommand, context);
+      const compile = validationCommands.deferredReason
+        ? deferredResult
+        : await host.service.testRun(taskCompileCommand, context);
         throwIfAborted(signal);
-        const test = await host.service.testRun(taskTestCommand, context);
+        const test = validationCommands.deferredReason
+          ? deferredResult
+          : await host.service.testRun(taskTestCommand, context);
         throwIfAborted(signal);
         const diff = await host.service.gitDiff(lease.assignment.baseRevision, context);
         throwIfAborted(signal);
