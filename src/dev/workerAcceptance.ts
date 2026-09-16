@@ -59,9 +59,9 @@ function isCodeFile(file: string): boolean {
   return /\.(?:[cm]?js|jsx|ts|tsx)$/i.test(file);
 }
 
-function commandEvidenceSummary(label: string, result: { exitCode: number; stderr?: string }): string {
+function commandEvidenceSummary(label: string, result: { exitCode: number; stderr?: string; stdout?: string }): string {
   if (result.exitCode === 0) return `${label}退出码 0`;
-  const detail = (result.stderr ?? '')
+  const detail = (result.stderr || result.stdout || '')
     .replace(/\b(?:api[_-]?key|token|password|secret|authorization|bearer)\s*[:=]\s*[^\s]+/gi, '[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]+/g, '[REDACTED]')
     .trim()
@@ -80,9 +80,8 @@ function resolveTaskValidationCommands(
       : { compile: defaults.compile, test: defaults.test };
   }
   const codeFiles = changedFiles.filter(isCodeFile);
-  const onlyCodeChanges = codeFiles.length > 0
-    && changedFiles.every((file) => file === '.gitignore' || codeFiles.includes(file));
-  if (!onlyCodeChanges) return { compile: defaults.compile, test: defaults.test };
+  const hasPackageManifest = changedFiles.some((file) => /^(?:package(?:\.lock)?\.json|npm-shrinkwrap\.json)$/i.test(file));
+  if (codeFiles.length === 0 || hasPackageManifest) return { compile: defaults.compile, test: defaults.test };
   const typeScriptFiles = codeFiles.filter((file) => /\.tsx?$/i.test(file));
   if (typeScriptFiles.length > 0) {
     const command = ['tsc', '--noEmit', '--target', 'es2020', ...typeScriptFiles];
