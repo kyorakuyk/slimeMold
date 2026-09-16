@@ -2670,6 +2670,16 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 主仓库最新质量门：`npm run build` 通过，`npm run i18n:check` 为 1011 keys 对齐，`npm run test` 为 126 test files / 1097 tests passed，`git diff --check` 通过；
 - 当前控制面仍为 `mvp-closed-unverified`；没有声称 Worker全绿、Delivery verified、browser acceptance passed、Cleanup或push。
 
+### 7.118 Fourfold Worker RunSucceeded 与真实 Delivery Acceptance
+
+- 通过 dependency artifact ContextPack 修复和 queued+failed recovery gate 修复，真实 online Run `run-7db0134c-0f0f-4e5f-b8de-050b8e4789c3` 最终 read-back 为 `RunSucceeded`：13 succeeded、0 failed、0 blocked，最终事件 sequence 563；历史失败 attempts仍保留在 `.slimemold/`。
+- 成功依赖 Worker 的 Worktree path/branch/revision 进入下游 lease 的只读 ContextPack；下游 Task 不再从空 baseline 盲跑。该修复提交于主仓库 `1ecf5bc`；queued+failed recovery显示修复提交于 `93c2608`。
+- integration Worker worktree 增加 `src/main.js` durable session bootstrap facade，真实 `persistence.test.js` 5/5 和 `interaction-flow.test.js` 3/3 通过，并产生 Worker worktree commits `28ffe55`、`41d7442`。
+- online Delivery 仓库组装成功 Worker-derived 产品与测试产物，提交 `40fcff6`，随后 provenance README 提交 `ef70320`；包含 `test:integration`、`test:interaction`、`test:browser` scripts 和 durable receipt `artifacts/online-master/manager-delivery-receipt.json`。
+- Delivery 真实验证：`npm test`、`npm run build`、integration 5/5、interaction 3/3、HTTP 200、Chrome 152.0.7977.83 CDP browser acceptance 1/1通过；browser acceptance覆盖移动、合并、Undo、刷新/重启持久化、offline和storage fallback。
+- Browser Use managed backend仍无法识别 Chromium，但独立 Chrome/CDP已形成真实 DOM/行为 read-back；该 backend限制没有被冒充为产品验收失败。
+- 主仓库最终质量门重新通过：`npm run build`、`npm run i18n:check`（1011 keys）、`npm run test`（126 test files / 1097 tests）、`git diff --check`；没有 push、主仓库 merge、Cleanup 或 reviewer `[verified]`。
+
 ---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
