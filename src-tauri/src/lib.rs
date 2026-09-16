@@ -1928,7 +1928,7 @@ fn command_for_dev_exec(args: &[String]) -> std::process::Command {
     {
         let extension = program.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase());
         if matches!(extension.as_deref(), Some("cmd" | "bat")) {
-            let command_line = std::iter::once(format!("\"{}\"", program.display()))
+            let command_line = std::iter::once(program.display().to_string())
                 .chain(args[1..].iter().map(|arg| windows_cmd_arg(arg)))
                 .collect::<Vec<_>>()
                 .join(" ");
