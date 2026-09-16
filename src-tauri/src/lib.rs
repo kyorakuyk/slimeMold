@@ -1876,9 +1876,19 @@ fn resolve_dev_exec_program(name: &str) -> std::path::PathBuf {
     }
     #[cfg(windows)]
     {
-        let base_repo = DEV_STATE.lock().unwrap().base_repo.clone();
-        if let Some(base_repo) = base_repo {
-            let bin = std::path::Path::new(&base_repo).join("node_modules").join(".bin");
+        let mut roots = DEV_STATE
+            .lock()
+            .unwrap()
+            .base_repo
+            .clone()
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        if let Ok(exe) = std::env::current_exe() {
+            roots.extend(exe.ancestors().map(std::path::Path::to_path_buf));
+        }
+        for root in roots {
+            let bin = root.join("node_modules").join(".bin");
             for extension in [".cmd", ".bat", ".exe"] {
                 let candidate = bin.join(format!("{name}{extension}"));
                 if candidate.is_file() {
@@ -1888,6 +1898,7 @@ fn resolve_dev_exec_program(name: &str) -> std::path::PathBuf {
         }
         if name == "node" {
             for candidate in [
+                std::path::PathBuf::from(r"D:\Hermes\node\node.exe"),
                 std::path::PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
                 std::path::PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe"),
             ] {
