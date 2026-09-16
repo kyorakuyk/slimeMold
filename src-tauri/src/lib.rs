@@ -1939,14 +1939,24 @@ fn command_for_dev_exec(args: &[String]) -> std::process::Command {
 #[tauri::command]
 fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecResult, String> {
     let _operation_guard = lock_dev_operation();
-    assert_session_generation(generation, "dev_exec")?;
+    assert_session_generation(generation, "dev_exec").map_err(|error| {
+        eprintln!("[dev_exec] session reject args={} cwd={} error={error}", args.join(" "), cwd);
+        error
+    })?;
     let operation_generation = generation;
-    let kind = dev_cwd_kind(&cwd)?;
+    let kind = dev_cwd_kind(&cwd).map_err(|error| {
+        eprintln!("[dev_exec] cwd reject args={} cwd={} error={error}", args.join(" "), cwd);
+        error
+    })?;
     let canonical_cwd = match &kind {
-        DevCwdKind::MainRepo => dev_abs_of(&cwd)?,
+        DevCwdKind::MainRepo => dev_abs_of(&cwd).map_err(|error| {
+            eprintln!("[dev_exec] main cwd resolve reject args={} cwd={} error={error}", args.join(" "), cwd);
+            error
+        })?,
         DevCwdKind::Worktree(path) => path.clone(),
     };
     if !dev_exec_allowed_at(&kind, &args, Some(&canonical_cwd)) {
+        eprintln!("[dev_exec] command reject args={} cwd={}", args.join(" "), canonical_cwd.display());
         return Err(format!(
             "dev_exec: 命令在当前 cwd 不被允许：{}",
             args.join(" ")
@@ -1960,8 +1970,14 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         None
     };
     // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
-    dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args)?;
-    let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args)?;
+    dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args).map_err(|error| {
+        eprintln!("[dev_exec] path reject args={} cwd={} error={error}", args.join(" "), canonical_cwd.display());
+        error
+    })?;
+    let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args).map_err(|error| {
+        eprintln!("[dev_exec] argument canonicalization reject args={} cwd={} error={error}", args.join(" "), canonical_cwd.display());
+        error
+    })?;
     let mut cmd = command_for_dev_exec(&spawn_args);
     cmd.current_dir(&canonical_cwd);
     cmd.env_clear();
