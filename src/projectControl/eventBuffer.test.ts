@@ -8,7 +8,7 @@ import {
   recordProjectEvents,
 } from './eventBuffer';
 
-const event = (partial: Partial<DomainEvent> & Pick<DomainEvent, 'eventType' | 'payload'>): DomainEvent => ({
+const event = (partial: Partial<DomainEvent> & { appendGeneration?: number; checksum?: string } & Pick<DomainEvent, 'eventType' | 'payload'>): DomainEvent & { appendGeneration?: number; checksum?: string } => ({
   eventId: partial.eventId ?? `evt-${partial.sequence ?? 1}`,
   streamId: partial.streamId ?? 'project-1',
   sequence: partial.sequence ?? 1,
@@ -20,6 +20,8 @@ const event = (partial: Partial<DomainEvent> & Pick<DomainEvent, 'eventType' | '
   payload: partial.payload,
   actor: partial.actor ?? 'user',
   occurredAt: partial.occurredAt ?? '2026-09-01T00:00:00.000Z',
+  appendGeneration: partial.appendGeneration,
+  checksum: partial.checksum,
 });
 
 beforeEach(() => {
@@ -143,7 +145,7 @@ describe('project event buffer', () => {
       event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 1, eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
     ], 0);
     recordProjectEvents('project-1', [
-      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 7, eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 7, occurredAt: '2026-09-02T00:00:00.000Z', appendGeneration: 999, checksum: 'recomputed', eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
     ]);
 
     await expect(flushPendingProjectEvents('project-1', repository)).resolves.toMatchObject({ status: 'already-present', count: 1 });

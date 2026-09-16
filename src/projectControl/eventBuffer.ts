@@ -11,7 +11,15 @@ import { replayDomainEvents } from '../domain/contracts';
 const pendingByProject = new Map<string, DomainEvent[]>();
 const flushTails = new Map<string, Promise<void>>();
 
-type EventWithoutPosition = Omit<DomainEvent, 'sequence' | 'aggregateVersion'>;
+type PersistedEvent = DomainEvent & {
+  appendGeneration?: number;
+  checksum?: string;
+};
+
+type EventWithoutPosition = Omit<
+  PersistedEvent,
+  'sequence' | 'aggregateVersion' | 'appendGeneration' | 'checksum' | 'occurredAt'
+>;
 
 function requiredProjectId(projectId: string): string {
   const normalized = projectId.trim();
@@ -20,7 +28,14 @@ function requiredProjectId(projectId: string): string {
 }
 
 function withoutPosition(event: DomainEvent): EventWithoutPosition {
-  const { sequence: _sequence, aggregateVersion: _aggregateVersion, ...rest } = event;
+  const {
+    sequence: _sequence,
+    aggregateVersion: _aggregateVersion,
+    appendGeneration: _appendGeneration,
+    checksum: _checksum,
+    occurredAt: _occurredAt,
+    ...rest
+  } = event as PersistedEvent;
   return rest;
 }
 
