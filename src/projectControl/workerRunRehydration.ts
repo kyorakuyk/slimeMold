@@ -133,6 +133,7 @@ function applyTaskEvent(
     if (receiptId) next.cleanupReceiptId = receiptId;
   }
   if (event.eventType === 'TaskStarted'
+    || event.eventType === 'TaskBlocked'
     || event.eventType === 'TaskSucceeded'
     || event.eventType === 'TaskFailed'
     || event.eventType === 'TaskCleaned') {
