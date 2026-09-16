@@ -842,6 +842,11 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
             && args[2] == "--oneline"
             && args[3] == "-n"
             && args[4].chars().all(|c| c.is_ascii_digit()))
+        || (args.len() == 4
+            && args[1] == "show-ref"
+            && args[2] == "--verify"
+            && args[3].starts_with("refs/heads/worker/w-")
+            && safe_git_revision_arg(&args[3]))
 }
 
 fn worker_name_is_valid(name: &str) -> bool {
@@ -3244,6 +3249,12 @@ mod dev_exec_tests {
             &main,
             &sv(&["git", "diff", "--name-only"])
         ));
+        assert!(dev_main_repo_git_allowed(&sv(&[
+            "git", "show-ref", "--verify", "refs/heads/worker/w-0123abcd"
+        ])));
+        assert!(!dev_main_repo_git_allowed(&sv(&[
+            "git", "show-ref", "--verify", "refs/heads/main"
+        ])));
         assert!(
             !dev_main_repo_git_allowed(&sv(&["git", "diff", "--output=outside.patch"])),
             "main repo diff output must be rejected"
