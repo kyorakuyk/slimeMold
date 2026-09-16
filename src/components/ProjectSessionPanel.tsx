@@ -120,7 +120,9 @@ export default function ProjectSessionPanel({
   const currentWorkerRun = session?.orchestrationId
     ? selectLatestWorkerRun(workerRuns, session.orchestrationId)
     : null;
-  const currentWorkerRunRecovery = currentWorkerRun && currentWorkerRun.status !== 'queued'
+  const currentWorkerRunRecovery = currentWorkerRun
+    && (currentWorkerRun.status !== 'queued'
+      || Object.values(currentWorkerRun.tasks).some((task) => ['failed', 'running', 'blocked', 'waiting-feedback'].includes(task.status)))
     ? workerRunRecoveries.find((item) => item.runId === currentWorkerRun.runId) ?? null
     : null;
   const workerRunCopy = currentWorkerRunRecovery

@@ -133,7 +133,7 @@ export function rehydrateWorkerRunRegistry(
     const failedTaskIds = Object.values(run.tasks)
       .filter((task) => task.status === 'failed')
       .map((task) => task.taskId);
-    if (run.status === 'partial' && failedTaskIds.length > 0) {
+    if (['partial', 'queued', 'blocked'].includes(run.status) && failedTaskIds.length > 0) {
       recoveries.push(recovery(
         run,
         'failed-tasks',
