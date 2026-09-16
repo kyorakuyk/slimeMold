@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-15
+updated: 2026-09-16
 tags:
   - SlimeMold
   - Agent
@@ -2653,6 +2653,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Playwright Chromium：6 个产品浏览器检查通过；5 张产品截图和 5 张 SlimeMold 编排 UI 截图均为有效 PNG 并纳入 Evidence index；
 - 编排 UI 证据机器档案：`artifacts/slimemold-orchestration-evidence.json`（位于独立产品档案仓库）；
 - 当前控制面继续为 `mvp-closed-unverified`；真实 LLM/Worker/Delivery/Cleanup/Restart 仍未被本轮 UI 截图替代。
+
+### 7.117 Fourfold online Worker 收口与 Manager Delivery Assembly
+
+- 本轮在现有本地 checkpoint 链之后继续执行，没有修改 `D:/Agents/SMtest`，没有 push、merge 或 Cleanup；所有 Worker worktree 保留为审计现场。
+- 真实 online Run `run-7db0134c-0f0f-4e5f-b8de-050b8e4789c3` 最终 read-back 为 `partial`：9 succeeded、2 failed、2 blocked。失败为 `task_unit_tests`、`task_integration_tests`，阻塞为 `task_browser_acceptance`、`task_docs`；没有标记 `[verified]`。
+- 本轮修复了 task-scoped Host Acceptance、Windows Rust command gate、`.cmd` shim、Node/tsc resolver、event/retry fence、pendingAttempt projection、TaskBlocked replay、并发 event/snapshot flush 等边界；修复后的真实 Evidence 已读到 `node --check` 与 `tsc --noEmit --target es2020` exitCode=0。
+- 成功 Worker worktree 未自动合并；为获得一个可运行的独立 disposable 产品，Manager 在 `C:/Users/rnfmabj/Documents/SlimeMold/Fourfold-online-session` 做了明确标注的 Delivery Assembly，提交 `81ca600`，并写入 `artifacts/online-master/manager-delivery-receipt.json`。这不是原始 Worker Run 全绿的替代声明。
+
+验证结果：
+
+- online assembly `npm test`：通过，输出 `tests passed: merge, move, score, spawn, game-over predicate`；
+- online assembly `npm run build`：通过，输出 `build check passed: 4 delivery files`；
+- local HTTP smoke：`http://127.0.0.1:4173/` 返回 HTTP 200；
+- Browser Use backend无法启动 Chromium，即使安装 `agent-browser` Chromium 后仍未形成可验证 localhost DOM read-back，因此 browser acceptance 明确为 blocked；
+- 主仓库最新质量门：`npm run build` 通过，`npm run i18n:check` 为 1011 keys 对齐，`npm run test` 为 126 test files / 1097 tests passed，`git diff --check` 通过；
+- 当前控制面仍为 `mvp-closed-unverified`；没有声称 Worker全绿、Delivery verified、browser acceptance passed、Cleanup或push。
 
 ---
 
