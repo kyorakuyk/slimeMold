@@ -132,6 +132,12 @@ function applyTaskEvent(
     next.worktreeStatus = 'cleaned';
     if (receiptId) next.cleanupReceiptId = receiptId;
   }
+  if (event.eventType === 'TaskStarted'
+    || event.eventType === 'TaskSucceeded'
+    || event.eventType === 'TaskFailed'
+    || event.eventType === 'TaskCleaned') {
+    next.pendingAttempt = undefined;
+  }
   if (event.eventType === 'TaskAttemptMarkedUnknown') {
     next.status = 'running';
     next.currentAttemptId = undefined;
@@ -280,6 +286,15 @@ export function reconcileWorkerRunsFromEvents(input: {
       state = applyTaskEvent(state, event, issues);
       if (JSON.stringify(state) === before) continue;
     }
+    const repairedTasks = Object.fromEntries(
+      Object.entries(state.tasks).map(([taskId, task]) => [
+        taskId,
+        task.pendingAttempt !== undefined && task.status !== 'queued'
+          ? { ...task, pendingAttempt: undefined }
+          : task,
+      ]),
+    );
+    state = { ...state, tasks: repairedTasks };
     if (JSON.stringify(state) !== JSON.stringify(run)) changedRunIds.push(run.runId);
     return state;
   });

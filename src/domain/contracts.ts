@@ -465,7 +465,7 @@ function applyTaskLineageProjection(
     ...(lineage.attemptId ? { currentAttemptId: lineage.attemptId } : {}),
     ...taskExecutionPatch(payload, eventType),
   };
-  if (eventType === 'TaskStarted') delete nextExecution.pendingAttempt;
+  if (eventType === 'TaskStarted' || isCompletion) delete nextExecution.pendingAttempt;
   projection.taskExecutions[lineage.taskExecutionId] = nextExecution;
 
   if (!lineage.attemptId || lineage.attempt === undefined) return;
