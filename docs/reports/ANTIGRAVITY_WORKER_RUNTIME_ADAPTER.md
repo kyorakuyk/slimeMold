@@ -24,7 +24,8 @@ Antigravity 的聊天界面、进程退出或 Agent 自报完成都不会直接�
 ## 已实现
 
 - `src/agents/providers/antigravity.ts`
-  - Runtime invoker；默认 `agent` mode；支持 CLI 文档已确认的 `ask`、`edit`、`agent`、`custom` 模式值。
+  - Runtime invoker；默认 `agent` mode；支持 CLI 已确认的 `ask`、`edit`、`agent`、`custom` 模式值，以及可选的 Antigravity workspace `profile`。
+  - `profile` 只是 CLI workspace profile，不代表模型或 thinking 配置。
   - 取消信号调用受控的 `antigravity_worker_cancel`。
 - `src/dev/antigravityWorkerExecutor.ts`
   - 使用与 Codex 相同的 Worker lease、ContextPack、dependency artifact、Worktree 和 Host Acceptance 边界。
@@ -51,6 +52,7 @@ Antigravity 的聊天界面、进程退出或 Agent 自报完成都不会直接�
 ## 尚未宣称的能力
 
 - 没有把 Antigravity UI 中出现的模型名称当作稳定 API 契约。
+- `--profile` 只作为 Antigravity workspace profile 传递；没有把它解释为模型、thinking level 或 Gemini API profile。
 - 没有把 thinking/reasoning 强度映射为 CLI 参数；当前没有足够的官方 CLI/MCP 契约证明该参数可编程控制。
 - 没有把 Antigravity 账户订阅伪装成 Gemini API/Vertex AI Provider，也没有记录虚构 token/cost。
 - 没有修改用户的全局 `~/.gemini/config/mcp_config.json`；配置只写入 Worker Worktree。

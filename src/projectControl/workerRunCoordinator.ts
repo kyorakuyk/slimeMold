@@ -68,6 +68,7 @@ export interface GuiProjectWorkerRunCoordinatorOptions
   workerRuntime?: 'codex' | 'antigravity';
   antigravity?: {
     mode?: AntigravityMode;
+    profile?: string;
     cliPath?: string;
   };
 }

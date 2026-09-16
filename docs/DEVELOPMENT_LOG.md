@@ -2720,7 +2720,7 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `scripts/slimemold-antigravity-mcp.mjs`，暴露 `slimemold_get_task_context`、`slimemold_report_progress`、`slimemold_request_feedback`、`slimemold_submit_attempt_result`。MCP server 只读写当前 Attempt 目录，不能直接写 TaskGraph、Acceptance 或 Receipt。
 - Windows `.cmd` 启动只向 `cmd /C` 传固定启动词；真实任务指令写入 ContextPack 文件，避免把任意任务 prompt 拼入 shell command。CLI basename 限制为 `antigravity-ide.cmd`、`antigravity-ide.exe` 或 `antigravity-ide`。
 - `completed` 回报仍必须经过 Host Acceptance；`blocked` 回报创建绑定 project/task/attempt 的 `FeedbackRequest`。没有把 Antigravity UI、进程启动或 Agent 自报成功当作 TaskSucceeded。
-- 当前只实现 CLI 已确认的 `ask/edit/agent/custom` mode 值；没有把未经官方契约确认的 model、thinking/reasoning、profile 或 quota 映射成可用能力，也没有把 Antigravity 账户订阅伪装成 Gemini API/Vertex AI Provider。
+- 当前只实现 CLI 已确认的 `ask/edit/agent/custom` mode 值，并可传递 workspace `profile`；没有把未经官方契约确认的 model、thinking/reasoning 或 quota 映射成可用能力，也没有把 Antigravity 账户订阅伪装成 Gemini API/Vertex AI Provider。
 
 验证结果：
 

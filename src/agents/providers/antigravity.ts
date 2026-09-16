@@ -22,6 +22,7 @@ export interface AntigravityWorkerInvoker {
 export interface AntigravityWorkerInvokerOptions {
   generation: number;
   mode?: AntigravityMode;
+  profile?: string;
   cliPath?: string;
 }
 
@@ -48,6 +49,7 @@ export function createAntigravityWorkerInvoker(
             operationId,
             generation: options.generation,
             mode,
+            profile: options.profile?.trim() || null,
             cliPath: options.cliPath?.trim() || null,
             context,
           },

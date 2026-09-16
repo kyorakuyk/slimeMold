@@ -28,6 +28,8 @@ pub struct AntigravityWorkerRequest {
     #[serde(default = "default_mode")]
     pub mode: String,
     #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
     pub cli_path: Option<String>,
     pub context: Value,
 }
@@ -65,6 +67,14 @@ fn quote_cmd_arg(value: &str) -> String {
         return value.to_string();
     }
     format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+fn valid_profile(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ' '))
 }
 
 fn allowed_cli_file(path: &Path) -> bool {
@@ -162,13 +172,23 @@ fn install_workspace_mcp_config(
     Ok(config_path)
 }
 
-fn build_command(cli: &Path, worktree: &Path, mode: &str, prompt: &str) -> Command {
+fn build_command(
+    cli: &Path,
+    worktree: &Path,
+    mode: &str,
+    profile: Option<&str>,
+    prompt: &str,
+) -> Command {
     let mut args = vec![
         "chat".to_string(),
         "--mode".to_string(),
         mode.to_string(),
         "--new-window".to_string(),
     ];
+    if let Some(profile) = profile.filter(|value| !value.trim().is_empty()) {
+        args.push("--profile".to_string());
+        args.push(profile.to_string());
+    }
     args.push(prompt.to_string());
 
     if cfg!(windows)
@@ -243,6 +263,15 @@ pub async fn antigravity_worker_exec(
     if !valid_mode(&request.mode) {
         return Err(format!("Antigravity mode 不受支持：{}", request.mode));
     }
+    if let Some(profile) = request
+        .profile
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if !valid_profile(profile) {
+            return Err("Antigravity profile 含有不允许的字符".into());
+        }
+    }
     crate::assert_session_generation(request.generation, "antigravity_worker_exec")?;
     let worktree = crate::assert_registered_worktree(&request.cwd)?;
     let cli = resolve_cli(request.cli_path.as_deref())?;
@@ -280,6 +309,7 @@ pub async fn antigravity_worker_exec(
             "{}\n",
             serde_json::to_string_pretty(&json!({
                 "mode": request.mode.clone(),
+                "profile": request.profile.clone(),
                 "cli": cli.to_string_lossy().to_string(),
                 "worktree": worktree.to_string_lossy().to_string(),
                 "mcpConfig": config_path.to_string_lossy().to_string(),
@@ -290,12 +320,18 @@ pub async fn antigravity_worker_exec(
 
     let prompt = "Open the slimemold-worker MCP server, call slimemold_get_task_context, follow its runtime contract, and implement the task in the current workspace.";
 
-    let mut child = build_command(&cli, &worktree, &request.mode, prompt)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("无法启动 Antigravity CLI：{error}"))?;
+    let mut child = build_command(
+        &cli,
+        &worktree,
+        &request.mode,
+        request.profile.as_deref(),
+        prompt,
+    )
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map_err(|error| format!("无法启动 Antigravity CLI：{error}"))?;
 
     let result_path = session_dir.join("result.json");
     let started = Instant::now();
@@ -349,6 +385,7 @@ mod tests {
             Path::new("D:/Family/Antigravity IDE/bin/antigravity-ide.cmd"),
             Path::new("D:/worktrees/task-1"),
             "agent",
+            None,
             "do the task",
         );
         let _ = command;
