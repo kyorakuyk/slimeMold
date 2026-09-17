@@ -720,7 +720,20 @@ fn resolve_dev_program_from_path(
 }
 
 fn resolve_dev_program(name: &str) -> std::path::PathBuf {
-    resolve_dev_program_from_path(name, std::env::var_os("PATH").as_deref())
+    let resolved = resolve_dev_program_from_path(name, std::env::var_os("PATH").as_deref());
+    #[cfg(windows)]
+    {
+        if let Some(trusted) = trusted_windows_program(&resolved) {
+            return trusted;
+        }
+        return std::path::PathBuf::from(
+            r"C:\Windows\System32\__slimemold_untrusted_program__.exe",
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        resolved
+    }
 }
 
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
@@ -826,9 +839,7 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
         || exact(&["git", "branch", "-a"])
         || exact(&["git", "status", "--porcelain"])
         || exact(&["git", "status", "--short"])
-        || exact(&["git", "diff", "HEAD"])
         || exact(&["git", "diff", "--name-only", "HEAD"])
-        || exact(&["git", "diff", "--stat", "HEAD"])
         || exact(&["git", "diff", "--name-only"])
         || exact(&["git", "ls-files", "--others", "--exclude-standard"])
         || (args.len() == 5
@@ -955,6 +966,9 @@ fn main_repo_worktree_args_are_valid(repo: &std::path::Path, args: &[String]) ->
         Some("add") if args.len() == 7 && args[4] == "-b" && args[6] == "HEAD" => {
             main_repo_worktree_target_is_valid(repo, &args[3], &args[5])
         }
+        Some("add") if args.len() == 6 && args[3] == "-q" => {
+            main_repo_worktree_target_is_valid(repo, &args[4], &args[5])
+        }
         Some("remove") if args.len() == 5 && args[3] == "--force" => {
             worker_target_is_safe_for_existing_operation(repo, &args[4])
         }
@@ -977,6 +991,9 @@ fn main_repo_worktree_add_spec(args: &[String]) -> Option<(&str, &str)> {
     }
     if args.len() == 7 && args[4] == "-b" && args[6] == "HEAD" {
         return Some((&args[3], &args[5]));
+    }
+    if args.len() == 6 && args[3] == "-q" {
+        return Some((&args[4], &args[5]));
     }
     None
 }
@@ -1437,7 +1454,7 @@ fn kill_dev_child_tree(child: &mut Child) {
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
+        let _ = Command::new(resolve_dev_program("taskkill"))
             .args(["/PID", &pid, "/T", "/F"])
             .status();
     }
@@ -1623,9 +1640,7 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "git" => {
             rest_eq(&["status", "--porcelain"])
                 || rest_eq(&["status", "--short"])
-                || rest_eq(&["diff", "HEAD"])
                 || rest_eq(&["diff", "--name-only", "HEAD"])
-                || rest_eq(&["diff", "--stat", "HEAD"])
                 || rest_eq(&["diff", "--name-only"])
                 || (rest.len() == 3
                     && rest[0] == "diff"
@@ -1633,6 +1648,16 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                     && safe_git_revision_arg(&rest[2]))
                 // 前端 `git diff <path>`：argsPrefix ['diff']，min/maxExtra=1，禁 dash 额外参数；
                 // 且路径须词法安全（禁绝对路径 / .. / drive）
+                || (rest.len() >= 4
+                    && rest[0] == "diff"
+                    && is_git_diff_revision(&rest[1])
+                    && rest[2] == "--"
+                    && rest[3..].iter().all(|path| {
+                        !path.starts_with('-')
+                            && !path.contains('*')
+                            && !path.contains('?')
+                            && dev_arg_path_lexically_safe(path)
+                    }))
                 || (rest.len() == 2
                     && rest[0] == "diff"
                     && is_git_diff_revision(&rest[1]))
@@ -1641,7 +1666,9 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                     && !is_git_diff_revision(&rest[1])
                     && dev_arg_path_lexically_safe(&rest[1])
                     && !rest[1].starts_with('-')
-                    && rest[1] != "."
+                    && !rest[1].chars().all(|c| matches!(c, '.' | '/' | '\\'))
+                    && !rest[1].contains('*')
+                    && !rest[1].contains('?')
                     && !rest[1].contains("--output=")
                     && !rest[1].contains("--no-index")
                     && !rest[1].contains("--ext-diff"))
@@ -2621,12 +2648,17 @@ fn protected_relative_path(rel: &str) -> bool {
     rel == "package.json"
         || rel == "package-lock.json"
         || rel == "vitest.config.ts"
+        || rel == "scripts"
         || rel.starts_with("scripts/")
+        || rel == "tests"
         || rel.starts_with("tests/")
         || rel == "src/store/workflowstore.ts"
         || rel == "src/engine/executor.ts"
+        || rel == "src/plugins/sandbox"
         || rel.starts_with("src/plugins/sandbox/")
+        || rel == "src-tauri/capabilities"
         || rel.starts_with("src-tauri/capabilities/")
+        || rel == "src/orchestrator"
         || rel.starts_with("src/orchestrator/")
 }
 
@@ -2806,7 +2838,7 @@ fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
             abs.display()
         ));
     }
-    fs::read_to_string(&abs).map_err(|e| format!("dev_read_file: 读取失败：{path}（{e}）"))
+    read_dev_file_bound(&abs)
 }
 
 // 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
@@ -2835,6 +2867,112 @@ unsafe extern "system" {
         handle: *mut std::ffi::c_void,
         info: *mut WinByHandleFileInformation,
     ) -> i32;
+}
+
+#[cfg(windows)]
+fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    use std::mem::MaybeUninit;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| format!("无法绑定读取句柄：{e}"))?;
+    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+        return Err("无法读取绑定文件身份".to_string());
+    }
+    if unsafe { info.assume_init() }.number_of_links > 1 {
+        return Err("拒绝读取 hardlink 目标（防 inode 逃逸）".to_string());
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("读取绑定文件失败：{e}"))?;
+    Ok(content)
+}
+
+#[cfg(unix)]
+fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| format!("无法绑定读取句柄：{e}"))?;
+    if file
+        .metadata()
+        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?
+        .nlink()
+        > 1
+    {
+        return Err("拒绝读取 hardlink 目标（防 inode 逃逸）".to_string());
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("读取绑定文件失败：{e}"))?;
+    Ok(content)
+}
+
+#[cfg(all(not(windows), not(unix)))]
+fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|e| format!("读取文件失败：{e}"))
+}
+
+#[cfg(windows)]
+fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::mem::MaybeUninit;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
+    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+        return Err("无法读取绑定文件身份".to_string());
+    }
+    if unsafe { info.assume_init() }.number_of_links > 1 {
+        return Err("拒绝写入 hardlink 目标（防 inode 逃逸）".to_string());
+    }
+    file.set_len(0)
+        .map_err(|e| format!("无法截断绑定文件：{e}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("写入绑定文件失败：{e}"))
+}
+
+#[cfg(unix)]
+fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
+    if file
+        .metadata()
+        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?
+        .nlink()
+        > 1
+    {
+        return Err("拒绝写入 hardlink 目标（防 inode 逃逸）".to_string());
+    }
+    file.set_len(0)
+        .map_err(|e| format!("无法截断绑定文件：{e}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("写入绑定文件失败：{e}"))
+}
+
+#[cfg(all(not(windows), not(unix)))]
+fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+    fs::write(path, content).map_err(|e| format!("写入文件失败：{e}"))
 }
 
 /// P1 审计修复：防符号链接绕过——
@@ -2891,8 +3029,7 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
             .canonicalize()
             .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
         dev_path_allowed(&real)?;
-        fs::write(&real, content)
-            .map_err(|e| format!("dev_write_file: 写入失败：{path}（{e}）"))?;
+        write_dev_file_bound(&real, &content)?;
         return Ok(());
     }
 
@@ -4223,6 +4360,22 @@ mod dev_exec_tests {
             &sv(&["git", "diff", "HEAD", "--output=x"])
         ));
         assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "-x"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "./"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "src/*.ts"])));
+        assert!(!dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "feature/../src/orchestrator"])
+        ));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&[
+                "git",
+                "diff",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--",
+                "src/components",
+            ])
+        ));
         assert!(!dev_exec_allowed(
             &wt,
             &sv(&["git", "rev-parse", "HEAD", "extra"])
@@ -4681,8 +4834,14 @@ mod dev_write_symlink_tests {
 
     #[test]
     fn host_protected_path_policy_covers_default_sensitive_roots() {
+        assert!(protected_relative_path("scripts"));
         assert!(protected_relative_path("scripts/headless-run.ts"));
+        assert!(protected_relative_path("tests"));
+        assert!(protected_relative_path("tests/unit/example.ts"));
+        assert!(protected_relative_path("src/orchestrator"));
         assert!(protected_relative_path("src/orchestrator/run.ts"));
+        assert!(protected_relative_path("src/plugins/sandbox"));
+        assert!(protected_relative_path("src/plugins/sandbox/loader.ts"));
         assert!(protected_relative_path("src/store/workflowStore.ts"));
         assert!(protected_relative_path(
             "src-tauri/capabilities/default.json"

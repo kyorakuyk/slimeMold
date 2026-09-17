@@ -16,7 +16,7 @@
 import type { SelfDevelopmentPolicy } from './policy';
 import { assertPathAllowed, isPathAllowed, isPathProtected } from './policy';
 import type { CommandResult } from './node-run';
-import { runCommand, readTextFile, writeTextFile, resolveInside, relativePath } from './node-run';
+import { runCommand, readTextFile, writeTextFile, resolveInside, relativePath, assertNoMultipleHardlinks } from './node-run';
 
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -198,13 +198,20 @@ function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
   return findMatchingRule(rules, cmd) !== null;
 }
 
+function isSafeGitRevisionValue(value: string): boolean {
+  if (value === 'HEAD' || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) return true;
+  if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) {
+    return !value.includes('..') && !value.includes('//') && !value.endsWith('/');
+  }
+  if (/^(?:feature|bugfix|hotfix|release|worker)\/[A-Za-z0-9._/-]+$/.test(value)) {
+    const leaf = value.split('/').at(-1) ?? '';
+    return !value.includes('..') && !value.includes('//') && Boolean(leaf) && !leaf.includes('.');
+  }
+  return /^[A-Za-z0-9][A-Za-z0-9_-]*[A-Za-z0-9]$/.test(value) || /^[A-Za-z0-9]$/.test(value);
+}
+
 function assertSafeGitRevision(baseRef: string): void {
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(baseRef)
-    || baseRef.includes('..')
-    || baseRef.includes('//')
-    || baseRef.endsWith('/')
-  ) {
+  if (!isSafeGitRevisionValue(baseRef)) {
     throw new Error(`Git baseRef 非法：${baseRef}`);
   }
 }
@@ -236,17 +243,22 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
     pathArgsFrom: 1,
     denyArgs: [
       '-r', '-R', '--recursive', '-d', '--dereference-recursive',
-      '--file', '--exclude-from',
+      '--file', '--exclude-from', '--directories',
     ],
     denyArgPrefixes: ['--directories=', '--file=', '--exclude-from=', '-f'],
     denyArgPatterns: [/^-[^-]*[rR]/, /^-[^-]*f/],
   },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
-  { cmd: 'git', args: ['diff', 'HEAD'] },
   { cmd: 'git', args: ['diff', '--name-only', 'HEAD'] },
-  { cmd: 'git', args: ['diff', '--stat', 'HEAD'] },
   { cmd: 'git', args: ['diff', '--name-only'] },
+  {
+    cmd: 'git',
+    argsPrefix: ['diff', '--name-only'],
+    minExtraArgs: 1,
+    allowExtraArgs: 1,
+    disallowDashExtra: true,
+  },
   {
     cmd: 'git',
     argsPrefix: ['diff'],
@@ -275,7 +287,7 @@ const DEFAULT_TEST_RULES: CommandRule[] = [
   { cmd: 'node', argsPrefix: ['--check'], minExtraArgs: 1, allowExtraArgs: 1, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 1 },
   { cmd: 'tsc', args: ['-b'] },
   { cmd: 'vitest', args: ['run'] },
-  { cmd: 'tsx', argsPrefixStartsWith: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 0 },
+  { cmd: 'tsx', argsPrefixStartsWith: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true, denyContain: ['..'], pathArgs: true, pathArgsFrom: 0 },
   { cmd: 'npm', args: ['run', 'test'] },
   { cmd: 'npm', args: ['run', 'build'] },
   { cmd: 'npm', args: ['run', 'i18n:check'] },
@@ -295,6 +307,7 @@ export interface NodeDevDeps {
 export interface WorktreeRegistry {
   isTracked(cwd: string): boolean;
   isTrackedOrChild?(cwd: string): boolean;
+  verifyCwd?(cwd: string): Promise<boolean>;
 }
 
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
@@ -341,8 +354,11 @@ export function createNodeDevService(
    * - 未提供 registry → 拒绝执行（不允许「无登记也可运行」的降级）；
    * - 提供了 registry 但 cwd 未登记 → 拒绝（防把 cwd 指向主仓库/任意目录绕过隔离）。
    */
-  const assertCwd = (cwd: string): void => {
+  const assertCwd = async (cwd: string): Promise<void> => {
     if (!registry) throw new Error('未配置 worktree registry：拒绝执行开发能力');
+    if (registry.verifyCwd && !(await registry.verifyCwd(cwd))) {
+      throw new Error(`工作目录 realpath 不属于已登记的 worktree：${cwd}`);
+    }
     if (!registry.isTracked(cwd) && !registry.isTrackedOrChild?.(cwd)) {
       throw new Error(`工作目录不属于已登记的 worktree：${cwd}`);
     }
@@ -354,7 +370,7 @@ export function createNodeDevService(
    * 随后才解析到受保护的 orchestrator——必须 resolve → 转相对 → 再 assertPathAllowed。
    */
   const guardedAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
-    assertCwd(ctx.cwd);
+    await assertCwd(ctx.cwd);
     const abs = await resolveP(ctx.cwd, relPath);
     const rel = await relP(ctx.cwd, abs);
     assertPathAllowed(policy, rel);
@@ -362,7 +378,7 @@ export function createNodeDevService(
   };
 
   const guardedDirectoryAbs = async (relPath: string, ctx: DevContext): Promise<string> => {
-    assertCwd(ctx.cwd);
+    await assertCwd(ctx.cwd);
     const abs = await resolveP(ctx.cwd, relPath);
     const rel = await relP(ctx.cwd, abs);
     const normalized = rel.replace(/\\/g, '/');
@@ -376,16 +392,7 @@ export function createNodeDevService(
     return abs;
   };
 
-  const isSafeGitDiffRevision = (value: string): boolean => {
-    if (value === 'HEAD') return true;
-    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) return true;
-    if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) return true;
-    if (/^(?:feature|bugfix|hotfix|release|worker)\/[A-Za-z0-9._/-]+$/.test(value)) {
-      const leaf = value.split('/').at(-1) ?? '';
-      if (leaf && !leaf.includes('.')) return true;
-    }
-    return false;
-  };
+  const isSafeGitDiffRevision = (value: string): boolean => isSafeGitRevisionValue(value);
 
   const assertCommandOperandGrammar = (cmd: string[]): void => {
     const [name, ...args] = cmd;
@@ -418,15 +425,37 @@ export function createNodeDevService(
       const operand = args[1];
       if (
         !isSafeGitDiffRevision(operand)
-        && (operand === '.'
+        && (/^(?:\.\/?)+$/.test(operand)
           || operand.startsWith('/')
           || operand.startsWith('\\')
-          || operand.split(/[\\/]/).includes('..'))
+          || operand.split(/[\\/]/).includes('..')
+          || operand.includes('*')
+          || operand.includes('?'))
       ) {
         throw new Error('git diff operand 逃逸拒绝');
       }
     }
+    if (
+      name === 'git'
+      && args[0] === 'diff'
+      && args[1] === '--name-only'
+      && args.length === 3
+      && !isSafeGitDiffRevision(args[2])
+    ) {
+      throw new Error('git diff --name-only revision 非法');
+    }
   };
+
+  const safeDiffRoots = (activePolicy: SelfDevelopmentPolicy = policy): string[] => activePolicy.allowedPaths.filter((root) => {
+    const normalizedRoot = root.replace(/\\/g, '/').replace(/\/$/, '');
+    return !activePolicy.protectedPaths.some((pattern) => {
+      const base = pattern.replace(/\\/g, '/').replace(/\/\*\*$/, '').replace(/\/$/, '');
+      return base === normalizedRoot
+        || base.startsWith(`${normalizedRoot}/`)
+        || normalizedRoot.startsWith(`${base}/`);
+    });
+  });
+
   /**
    * 命令白名单只约束「命令形式」，`cat src/orchestrator/run.ts` 这类相对路径参数仍可绕过
    * codeRead/codePatch 的路径策略读取受保护代码。对 pathArgs/pathArgsFrom 命令，从
@@ -440,23 +469,39 @@ export function createNodeDevService(
     args: string[],
     ctx: DevContext,
     fromIndex = 0,
-    allowProtected = false,
-  ): Promise<void> => {
+    protectedPrefix?: string,
+    allowWildcards = false,
+  ): Promise<string[]> => {
     const activePolicy = ctx.pathPolicy ?? policy;
-    for (const a of args.slice(fromIndex)) {
+    const guarded = [...args];
+    for (let index = fromIndex; index < args.length; index += 1) {
+      const a = args[index];
       if (!a || a.startsWith('-')) continue;
-      if (a.includes('*') || a.includes('?')) continue;
+      if (process.platform === 'win32' && a.includes(':')) {
+        throw new Error(`拒绝 Windows ADS/stream 路径：${a}`);
+      }
+      if (a.includes('*') || a.includes('?')) {
+        if (allowWildcards) continue;
+        throw new Error(`文件 operand 不接受通配符：${a}`);
+      }
       const abs = await resolveP(ctx.cwd, a);
-      const rel = await relP(ctx.cwd, abs);
-      if (rel === '.' || rel === '') continue;
-      if (allowProtected) {
-        if (!isPathAllowed(activePolicy, rel)) {
-          throw new Error(`路径不在允许范围内（allowedPaths）：${rel}`);
+      const rel = (await relP(ctx.cwd, abs)).replace(/\\/g, '/');
+      if (allowWildcards && (rel === '.' || rel === '')) {
+        guarded[index] = abs;
+        continue;
+      }
+      if (protectedPrefix) {
+        if (!isPathAllowed(activePolicy, rel)
+          || !(rel === protectedPrefix || rel.startsWith(`${protectedPrefix}/`))) {
+          throw new Error(`脚本路径不在受控前缀内：${rel}`);
         }
       } else {
         assertPathAllowed(activePolicy, rel);
       }
+      await assertNoMultipleHardlinks(abs);
+      guarded[index] = abs;
     }
+    return guarded;
   };
 
   return {
@@ -491,7 +536,7 @@ export function createNodeDevService(
     },
 
     async shellRun(cmd, ctx) {
-      assertCwd(ctx.cwd);
+      await assertCwd(ctx.cwd);
       const rule = findMatchingRule(DEFAULT_SHELL_RULES, cmd);
       if (cmd.length === 0 || !rule) {
         return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
@@ -528,9 +573,16 @@ export function createNodeDevService(
       ) {
         fromIndex = 1;
       }
+      let guardedArgs = cmd.slice(1);
       if (fromIndex >= 0) {
         try {
-          await guardPathArgs(cmd.slice(1), ctx, fromIndex);
+          guardedArgs = await guardPathArgs(
+            guardedArgs,
+            ctx,
+            fromIndex,
+            undefined,
+            rule.cmd === 'find',
+          );
         } catch (e) {
           return {
             exitCode: -1,
@@ -540,24 +592,26 @@ export function createNodeDevService(
           };
         }
       }
-      const [c0, ...rest] = cmd;
+      const [c0, ...rest] = [cmd[0], ...guardedArgs];
       return run(c0, rest, ctx.cwd);
     },
 
     async testRun(cmd, ctx) {
-      assertCwd(ctx.cwd);
+      await assertCwd(ctx.cwd);
       if (cmd.length === 0 || !testAllow(cmd)) {
         return { exitCode: -1, stdout: '', stderr: `测试命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
       const testRule = findMatchingRule(DEFAULT_TEST_RULES, cmd);
       if (testRule?.pathArgs) {
         try {
-          await guardPathArgs(
+          const guardedArgs = await guardPathArgs(
             cmd.slice(1),
             ctx,
             testRule.pathArgsFrom ?? 0,
-            testRule.cmd === 'tsx',
+            testRule.cmd === 'tsx' ? 'scripts' : undefined,
+            false,
           );
+          cmd = [cmd[0], ...guardedArgs];
         } catch (e) {
           return {
             exitCode: -1,
@@ -572,23 +626,26 @@ export function createNodeDevService(
     },
 
     async gitStatus(ctx) {
-      assertCwd(ctx.cwd);
+      await assertCwd(ctx.cwd);
       const result = await run('git', ['status', '--porcelain'], ctx.cwd);
       return result;
     },
 
     async gitDiff(baseRef, ctx) {
-      assertCwd(ctx.cwd);
-      if (baseRef) assertSafeGitRevision(baseRef);
-      const args = baseRef ? ['diff', baseRef] : ['diff', 'HEAD'];
-      const result = await run('git', args, ctx.cwd);
+      await assertCwd(ctx.cwd);
+      const revision = baseRef ?? 'HEAD';
+      assertSafeGitRevision(revision);
+      const roots = safeDiffRoots(ctx.pathPolicy ?? policy);
+      if (roots.length === 0) throw new Error('git diff 没有非保护路径范围');
+      const result = await run('git', ['diff', revision, '--', ...roots], ctx.cwd);
       return result;
     },
 
     async gitChangedFiles(ctx, baseRef) {
-      assertCwd(ctx.cwd);
-      if (baseRef) assertSafeGitRevision(baseRef);
-      const trackedArgs = ['diff', '--name-only', baseRef ?? 'HEAD'];
+      await assertCwd(ctx.cwd);
+      const revision = baseRef ?? 'HEAD';
+      assertSafeGitRevision(revision);
+      const trackedArgs = ['diff', '--name-only', revision];
       const [tracked, untracked] = await Promise.all([
         run('git', trackedArgs, ctx.cwd),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),
@@ -607,7 +664,7 @@ export function createNodeDevService(
     },
 
     async gitUntrackedFiles(ctx) {
-      assertCwd(ctx.cwd);
+      await assertCwd(ctx.cwd);
       const r = await run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd);
       if (r.exitCode !== 0) throw new Error(`git untracked-files 失败：${r.stderr || r.exitCode}`);
       return r.stdout

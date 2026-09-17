@@ -14,7 +14,7 @@
 import type { NodeDefinition } from '../types';
 import { defaultDevPolicy, type SelfDevelopmentPolicy } from './policy';
 import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry } from './capabilities';
-import { WorktreeManager, createNodeGitRunner, type DevGitRunner } from './worktree';
+import { WorktreeManager, createNodeGitRunner, type DevGitRunner, type WorktreePathVerifier } from './worktree';
 import {
   assertEvidenceOutsideWorktree,
   EvidenceCollector,
@@ -325,6 +325,31 @@ function requireHostGeneration(generation: number | undefined): number {
   return generation;
 }
 
+const createNodeWorktreePathVerifier = (): WorktreePathVerifier => async (path, mustExist) => {
+  const { lstat, realpath } = await import('node:fs/promises');
+  const normalized = normalizeAbsolutePath(path);
+  const parent = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
+  let realParent: string;
+  try {
+    realParent = await realpath(parent);
+  } catch {
+    return false;
+  }
+  if (pathComparisonKey(realParent) !== pathComparisonKey(parent)) return false;
+  try {
+    const metadata = await lstat(normalized);
+    if (!mustExist) return false;
+    if (metadata.isSymbolicLink()) return false;
+    const realTarget = await realpath(normalized);
+    return pathComparisonKey(realTarget) === pathComparisonKey(normalized);
+  } catch (error) {
+    if (!mustExist && typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return true;
+    }
+    return false;
+  }
+};
+
 export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   const requestedBaseRepoPath = opts.baseRepoPath ?? process.cwd();
   const env: 'node' | 'tauri' = opts.env ?? 'node';
@@ -353,11 +378,13 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner(hostGeneration!) : createNodeGitRunner()),
     baseRepoPath,
     ensureWorktreeParent,
+    env === 'node' && !opts.gitRunner ? createNodeWorktreePathVerifier() : undefined,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
   const registry: WorktreeRegistry = {
     isTracked: (cwd) => manager.isTracked(cwd),
     isTrackedOrChild: (cwd) => manager.isTrackedOrChild(cwd),
+    verifyCwd: env === 'node' ? (cwd) => manager.verifyCwd(cwd) : undefined,
   };
   const service = env === 'tauri'
     ? createNodeDevService(policy, tauriDeps!, registry, 'tauri')

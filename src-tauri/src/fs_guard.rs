@@ -6,7 +6,10 @@ pub(crate) fn path_compare_key(raw: &str) -> String {
     {
         normalized = normalized.to_ascii_lowercase();
     }
-    if let Some(unc) = normalized.strip_prefix("//?/unc/") {
+    if let Some(unc) = normalized
+        .strip_prefix("//?/UNC/")
+        .or_else(|| normalized.strip_prefix("//?/unc/"))
+    {
         normalized = format!("//{unc}");
     } else if let Some(verbatim) = normalized.strip_prefix("//?/") {
         normalized = verbatim.to_string();
@@ -84,6 +87,8 @@ pub(crate) fn is_git_diff_revision(arg: &str) -> bool {
             .unwrap_or_default();
         return !suffix.is_empty()
             && !arg.ends_with('/')
+            && !arg.contains("..")
+            && !arg.contains("//")
             && arg
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
@@ -95,9 +100,27 @@ pub(crate) fn is_git_diff_revision(arg: &str) -> bool {
         let suffix = arg.split('/').last().unwrap_or_default();
         return !suffix.is_empty()
             && !suffix.contains('.')
+            && !arg.contains("..")
+            && !arg.contains("//")
             && arg
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
+    }
+    if !arg.is_empty()
+        && arg
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && !arg.contains('/')
+        && !arg.contains('\\')
+        && !arg.contains('.')
+        && !arg.ends_with('-')
+        && !arg.ends_with('_')
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    {
+        return true;
     }
     false
 }
@@ -147,6 +170,10 @@ pub(crate) fn dev_arg_path_lexically_safe(arg: &str) -> bool {
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
         return false;
     }
+    #[cfg(windows)]
+    if arg.contains(':') {
+        return false;
+    }
     if arg.starts_with('/') || arg.starts_with('\\') {
         return false;
     }
@@ -192,6 +219,15 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
         }
         Some("find") => {
             for index in find_starting_point_indices(args) {
+                check(&args[index])?;
+            }
+        }
+        Some("git")
+            if args.get(1).map(|value| value.as_str()) == Some("diff")
+                && args.get(2).is_some_and(|value| is_git_diff_revision(value))
+                && args.get(3).map(|value| value.as_str()) == Some("--") =>
+        {
+            for index in 4..args.len() {
                 check(&args[index])?;
             }
         }
@@ -279,6 +315,15 @@ pub(crate) fn canonicalize_dev_exec_args(
             }
         }
         Some("tsx") => replace_if_existing(1)?,
+        Some("git")
+            if args.get(1).map(|value| value.as_str()) == Some("diff")
+                && args.get(2).is_some_and(|value| is_git_diff_revision(value))
+                && args.get(3).map(|value| value.as_str()) == Some("--") =>
+        {
+            for index in 4..args.len() {
+                replace_if_existing(index)?;
+            }
+        }
         Some("git")
             if args.get(1).map(|value| value.as_str()) == Some("diff")
                 && !args.get(2).is_some_and(|value| is_git_diff_revision(value)) =>

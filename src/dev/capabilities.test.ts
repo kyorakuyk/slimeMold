@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile, mkdir, link } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { applyUnifiedPatch, createNodeDevService, type NodeDevDeps } from './capabilities';
 import { defaultDevPolicy } from './policy';
@@ -145,12 +148,17 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['find', '-follow', 'src/components', '-name', '*.ts'],
       ['find', '-files0-from=/outside/list', '-name', '*.ts'],
       ['find', '--files0-from=/outside/list', '-name', '*.ts'],
+      ['grep', '--directories', 'recurse', '.'],
+      ['grep', '-d', 'recurse', '.'],
       ['grep', '-ir', 'secret', 'src/components/A.tsx'],
       ['grep', '-iR', 'secret', 'src/components/A.tsx'],
       ['git', 'diff', 'package.json'],
+      ['git', 'diff', '--name-only', 'package.json'],
       ['git', 'diff', '.'],
       ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
+      ['tsx', 'scripts/../src/components/A.tsx'],
+      ['cat', 'package.json:review'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
@@ -283,6 +291,49 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     expect(diffArgs).toEqual([['diff', '--name-only', 'base-revision']]);
     expect(filesChanged).toContain('src/components/A.tsx');
     expect(filesChanged).toContain('docs/new.md');
+  });
+
+  it('direct gitDiff 仅返回非保护路径范围，并拒绝路径伪装成 revision', async () => {
+    const calls: string[][] = [];
+    const svc = createNodeDevService(
+      defaultDevPolicy,
+      {
+        ...fakeDeps,
+        runCommand: async (_cmd, args) => {
+          calls.push(args);
+          return { exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 };
+        },
+      },
+      registry,
+    );
+    await svc.gitDiff('HEAD', ctx);
+    expect(calls[0]).toEqual(['diff', 'HEAD', '--', 'src/components', 'src/nodes', 'docs']);
+    await expect(svc.gitDiff('package.json', ctx)).rejects.toThrow(/Git baseRef/);
+    await expect(svc.gitDiff('feature/../src/orchestrator', ctx)).rejects.toThrow(/Git baseRef/);
+  });
+
+  it('shell file operands reject hardlinks before the runner sees them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slimemold-shell-hardlink-'));
+    try {
+      const allowed = join(root, 'allowed');
+      await mkdir(allowed);
+      const outside = join(root, 'outside.txt');
+      const hardlink = join(allowed, 'linked.txt');
+      await writeFile(outside, 'outside-secret');
+      await link(outside, hardlink);
+      const shellPolicy = { ...defaultDevPolicy, allowedPaths: ['allowed'], protectedPaths: [] };
+      const runCommand = async () => ({ exitCode: 0, stdout: 'outside-secret', stderr: '', durationMs: 1 });
+      const shell = createNodeDevService(
+        shellPolicy,
+        { runCommand, resolveInside: async (base, rel) => resolve(base, rel), relativePath: async (base, abs) => (await import('node:path')).relative(base, abs) },
+        { isTracked: (cwd) => cwd === root },
+      );
+      const result = await shell.shellRun(['cat', 'allowed/linked.txt'], { cwd: root });
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toMatch(/hardlink|路径参数越权/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('P0 cwd 信任：未配置 registry fail-closed；未登记 cwd 拒绝；登记 cwd 放行', async () => {

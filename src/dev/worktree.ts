@@ -94,6 +94,8 @@ export interface WorktreeInfo {
   status: WorktreeStatus;
 }
 
+export type WorktreePathVerifier = (path: string, mustExist: boolean) => Promise<boolean>;
+
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
   private lastCreateError: string | null = null;
@@ -102,6 +104,7 @@ export class WorktreeManager {
     private readonly runner: DevGitRunner,
     private readonly baseRepoPath: string,
     private readonly ensureParentDirectory?: (path: string) => Promise<void>,
+    private readonly verifyPathIdentity?: WorktreePathVerifier,
   ) {}
 
   getBaseRepoPath(): string {
@@ -136,6 +139,10 @@ export class WorktreeManager {
         // be unavailable in older adapters, while Git still succeeds when the
         // parent already exists.
       }
+    }
+    if (this.verifyPathIdentity && !(await this.verifyPathIdentity(path, false))) {
+      this.lastCreateError = `worktree target identity rejected: ${path}`;
+      return null;
     }
     const rev = await this.runner.git(['rev-parse', 'HEAD'], this.baseRepoPath);
     if (rev.exitCode !== 0) {
@@ -220,6 +227,7 @@ export class WorktreeManager {
     const base = normalizeAbsolutePath(this.baseRepoPath);
     if (pathComparisonKey(path) === pathComparisonKey(base)) return false;
     if (!isWorkerScopedTarget(base, path, info.branch)) return false;
+    if (this.verifyPathIdentity && info.status === 'created' && !(await this.verifyPathIdentity(path, true))) return false;
 
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
@@ -284,6 +292,29 @@ export class WorktreeManager {
       const root = pathComparisonKey(i.path);
       return p === root || p.startsWith(`${root}/`);
     });
+  }
+
+  async verifyCwd(path: string): Promise<boolean> {
+    const { realpath } = await import('node:fs/promises');
+    let candidate: string;
+    try {
+      candidate = await realpath(path);
+    } catch {
+      return false;
+    }
+    const candidateKey = pathComparisonKey(candidate);
+    for (const info of this.infos.values()) {
+      if (info.status !== 'created') continue;
+      let root: string;
+      try {
+        root = await realpath(info.path);
+      } catch {
+        continue;
+      }
+      const rootKey = pathComparisonKey(root);
+      if (candidateKey === rootKey || candidateKey.startsWith(`${rootKey}/`)) return true;
+    }
+    return false;
   }
 
   forget(id: string): void {
@@ -355,6 +386,7 @@ export class WorktreeManager {
     if (!branchRevision) return false;
     if (expectedBranchRevision && await this.readBranchRevision(info.branch) !== expectedBranchRevision) return false;
     if (signal?.aborted) return false;
+    if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
     if (expectedBranchRevision && this.runner.cleanupWorktree) {
       const cleanup = await this.runner.cleanupWorktree(
         info.path,
@@ -406,6 +438,7 @@ export class WorktreeManager {
       const currentRevision = await this.readBranchRevision(info.branch);
       if (opts.signal?.aborted) return false;
       if (currentRevision !== info.branchRevision) return false;
+      if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
       if (this.runner.cleanupWorktree) {
         const cleanup = await this.runner.cleanupWorktree(
           info.path,

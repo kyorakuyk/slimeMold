@@ -78,15 +78,19 @@ function trustedWindowsPath(candidate: string): string | null {
 }
 
 function trustedComSpec(): string {
-  const candidates = [
-    process.env.ComSpec,
-    process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\cmd.exe` : undefined,
-  ].filter((value): value is string => Boolean(value));
-  for (const candidate of candidates) {
-    const trusted = trustedWindowsPath(candidate);
-    if (trusted && /\\cmd\.exe$/i.test(trusted)) return trusted;
+  if (!process.env.SystemRoot) throw new Error('未找到可信的 Windows SystemRoot');
+  const expected = trustedWindowsPath(`${process.env.SystemRoot}\\System32\\cmd.exe`);
+  if (!expected || !/\\cmd\.exe$/i.test(expected)) {
+    throw new Error('未找到可信的 Windows ComSpec');
   }
-  throw new Error('未找到可信的 Windows ComSpec');
+  const configured = process.env.ComSpec;
+  if (configured) {
+    const trustedConfigured = trustedWindowsPath(configured);
+    if (trustedConfigured && pathComparisonKey(trustedConfigured) !== pathComparisonKey(expected)) {
+      throw new Error('ComSpec 不匹配 SystemRoot\\System32\\cmd.exe');
+    }
+  }
+  return expected;
 }
 
 function resolveCommandShim(cmd: string): string {
@@ -131,15 +135,23 @@ export function runCommand(
   return new Promise((resolveResult) => {
     const start = Date.now();
     const executable = resolveCommandShim(cmd);
-    const shim = isWindowsShim(executable);
-    const trustedExecutable = shim ? trustedWindowsPath(executable) : executable;
-    if (shim && !trustedExecutable) {
-      throw new Error(`拒绝执行未绑定的 Windows shim：${executable}`);
+    const trustedExecutable = process.platform === 'win32'
+      ? trustedWindowsPath(executable)
+      : executable;
+    if (!trustedExecutable) {
+      resolveResult({
+        exitCode: -1,
+        stdout: '',
+        stderr: `拒绝执行未绑定的 Windows 程序：${executable}`,
+        durationMs: Date.now() - start,
+      });
+      return;
     }
-    if (shim) assertSafeWindowsShimArgs([trustedExecutable!, ...args]);
-    const command = shim ? trustedComSpec() : (trustedExecutable as string);
+    const shim = isWindowsShim(trustedExecutable);
+    if (shim) assertSafeWindowsShimArgs([trustedExecutable, ...args]);
+    const command = shim ? trustedComSpec() : trustedExecutable;
     const commandArgs = shim
-      ? ['/d', '/s', '/c', `"${[trustedExecutable!, ...args].map(quoteWindowsShimArg).join(' ')}"`]
+      ? ['/d', '/s', '/c', `"${[trustedExecutable, ...args].map(quoteWindowsShimArg).join(' ')}"`]
       : args;
     execFile(
       command,
@@ -172,7 +184,7 @@ export function runCommand(
   });
 }
 
-async function assertNoMultipleHardlinks(absPath: string): Promise<void> {
+export async function assertNoMultipleHardlinks(absPath: string): Promise<void> {
   const { stat } = await import('node:fs/promises');
   try {
     const info = await stat(absPath);
@@ -203,6 +215,9 @@ export async function writeTextFile(absPath: string, content: string): Promise<v
 export async function resolveInside(root: string, relPath: string): Promise<string> {
   const { resolve, dirname, basename, join } = await import('node:path');
   const { realpath, lstat } = await import('node:fs/promises');
+  if (process.platform === 'win32' && relPath.includes(':')) {
+    throw new Error(`拒绝 Windows ADS/stream 路径：${relPath}`);
+  }
   const abs = resolve(root, relPath);
   const rootNorm = resolve(root);
   const absKey = pathComparisonKey(abs);
