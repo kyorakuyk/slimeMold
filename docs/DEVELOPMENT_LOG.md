@@ -2882,3 +2882,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
 - 当前 slice 未涉及 GUI、credentials、endpoint/vault、push、merge 或 Cleanup；下一条 fs_guard slice 需继续保持单一边界并重新建立 reviewer/verified 证据。
+
+### 7.130 跨宿主 native authority hardening 暂停于 unverified checkpoint
+
+- 在 `204105d` unverified checkpoint 后继续收紧 Rust Tauri 与 Node/headless 的命令 grammar、路径 canonicalization、protected path、hardlink、Windows launcher、worktree identity 和 orphan/cleanup 前置校验；新增 Unix `O_NOFOLLOW`、Windows `OPEN_REPARSE_POINT` handle-bound 文件读写，以及 broken symlink、Git pathspec、grep/find/tsx、UNC 和 child-cwd 回归测试。
+- 独立 fail-closed reviewer 针对完整有效 snapshot 返回 `passed: false`。真实发现包括：直接 `gitDiff`/generic diff 的 protected 内容边界仍不统一；Node/Rust command AST/grammar 仍有差异；native `allowedPaths` 与 protected policy 尚未由同一 host-owned contract 管理；worktree、cwd、launcher 和父路径仍存在稳定对象身份/跨组件 no-follow 缺口；cleanup capability 尚未绑定完整 Task/Execution/Attempt/Acceptance lineage；orphan branch-only recovery 与跨平台验证仍未闭合。
+- 已将当前结果保存为本地 checkpoint `ac7a8bb`（`unverified: checkpoint native authority review findings`），工作树干净；没有 push、merge、历史重写或凭据变更。该 checkpoint 不是 `[verified]`，也不代表生产 native authority 已安全通过。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`63 passed / 0 failed`；
+- `npm run test`：`127 test files / 1104 tests passed`；
+- Node authority 定向测试：`39 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，无新增构建失败；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 独立 reviewer：`passed: false`，因此本轮只能记录为 `unverified`，不能标记 verified。下一步需先确认共享 command AST、host-owned policy、stable identity/no-follow 和完整 cleanup lineage 的架构切片，再开始新的代码修改。
