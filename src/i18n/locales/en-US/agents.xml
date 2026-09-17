@@ -40,6 +40,7 @@
   <string name="agent.field.modelLocal">(local Ollama)</string>
   <string name="agent.field.modelApi">(pullable from API)</string>
   <string name="agent.field.modelCodex">(official Codex CLI)</string>
+  <string name="agent.field.modelAntigravity">(Antigravity CLI)</string>
   <string name="agent.model.select">— Select model —</string>
   <string name="agent.model.pullLocal">Pull locally installed models</string>
   <string name="agent.model.pullApi">Pull available models from the API URL</string>
@@ -96,6 +97,18 @@
   <string name="agent.codex.connected">Codex CLI is signed in; the subscription connection is available</string>
   <string name="agent.codex.loginRequired">No ChatGPT sign-in detected. Sign in first.</string>
   <string name="agent.codex.otherAuth">Codex is using another sign-in method (not a ChatGPT plan)</string>
+
+  <!-- AntigravityCliField -->
+  <string name="agent.antigravity.title">Antigravity CLI Runtime</string>
+  <string name="agent.antigravity.desc">Starts an interactive Worker through the local Antigravity CLI; it stays in the current Worktree and still requires an MCP report and Host Acceptance.</string>
+  <string name="agent.antigravity.cliEndpoint">Managed by the local Antigravity CLI (no API Key)</string>
+  <string name="agent.antigravity.mode">Agent mode</string>
+  <string name="agent.antigravity.profile">Workspace profile (optional)</string>
+  <string name="agent.antigravity.profilePlaceholder">e.g. default</string>
+  <string name="agent.antigravity.cliPath">CLI path (optional)</string>
+  <string name="agent.antigravity.cliPathPlaceholder">Leave empty to resolve antigravity-ide.cmd from PATH</string>
+  <string name="agent.antigravity.modelHint">The current CLI has no stable model or thinking/reasoning flags; model and thinking strength remain controlled by the Antigravity Runtime.</string>
+  <string name="agent.antigravity.workerOnly">Antigravity is for TaskGraph Workers only and cannot be the default Agent for ordinary Workflows</string>
 
   <!-- RolesTab -->
   <string name="roles.title">Roles</string>

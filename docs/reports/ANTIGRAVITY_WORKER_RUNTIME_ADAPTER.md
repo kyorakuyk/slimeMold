@@ -48,6 +48,9 @@ Antigravity 的聊天界面、进程退出或 Agent 自报完成都不会直接�
 - `ProjectSessionPanel`
   - queued Run 显示 Runtime selector。
   - 默认 `Codex subscription (headless)`；显式选择 `Antigravity (interactive)` 后才切换 Runtime。
+- `SettingsCenter → AgentPanel`
+  - `Antigravity CLI (interactive)` 是独立 protocol，可保存 mode、workspace profile 和 CLI path。
+  - 这些字段只作为 Worker Runtime 配置；不提供虚假的 model/thinking/reasoning 选择。
 
 ## 尚未宣称的能力
 
@@ -64,7 +67,8 @@ Antigravity 的聊天界面、进程退出或 Agent 自报完成都不会直接�
 - `cargo check`：通过。
 - `cargo test --lib`：50/50 通过，包含 Antigravity mode、operation id 和 Windows command 构造测试。
 - `npm run build`：通过。
-- `npm run i18n:check`：通过，en-US/zh-CN 1015 keys 对齐（后续全量测试以最终日志为准）。
+- `npm run i18n:check`：通过，en-US/zh-CN 1026 keys 对齐。
+- `npm run test`：127 test files / 1099 tests passed。
 - Antigravity executor focused tests：completed → Host Acceptance、blocked → FeedbackRequest 均通过。
 - MCP stdio read-back：initialize/tools/list/get_context 真实通过；Windows native fixture 读取 `context.json` 成功。
 

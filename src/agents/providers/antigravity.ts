@@ -1,7 +1,8 @@
+import type { AntigravityMode } from '../../types';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from '../../platform/env';
 
-export type AntigravityMode = 'ask' | 'edit' | 'agent' | 'custom';
+export type { AntigravityMode };
 
 export interface AntigravityWorkerResponse {
   text: string;

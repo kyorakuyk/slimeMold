@@ -16,7 +16,7 @@ import { loginCodex, codexLoginStatus, logoutCodex } from '../agents/providers/c
 import { saveCredential, removeCredential, loadCredential, defaultCredentialKey, listVaults, loadVaultKey } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
-import type { AgentConfig, ApiVault, Protocol, RoleTemplate } from '../types';
+import type { AgentConfig, AntigravityMode, ApiVault, Protocol, RoleTemplate } from '../types';
 import { useT } from '../i18n/useT';
 
 interface AgentPanelProps {
@@ -345,9 +345,9 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   };
 
   return (
-    <div className={`relative flex flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
+    <div className={`relative flex h-full w-full min-h-0 flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
       {/* 左列：智能体列表 */}
-      <div className={`flex shrink-0 flex-col border-r border-line bg-paper-soft ${variant === 'sidebar' ? 'w-full' : 'w-56'}`}>
+      <div className={`flex h-full min-h-0 shrink-0 flex-col border-r border-line bg-paper-soft ${variant === 'sidebar' ? 'w-full' : 'w-56'}`}>
         <div className="border-b border-line px-3 py-2.5">
           <h2 className="text-[13px] font-semibold text-ink">{t('agent.title')}</h2>
           <p className="mt-0.5 text-[11px] text-ink-faint">{t('agent.subtitle')}</p>
@@ -368,7 +368,8 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         <ul className="min-h-0 flex-1 overflow-y-auto p-2">
           {filteredPool.map((a) => {
             const dot = probeStates[a.id];
-            const isDefault = defaultAgentId === a.id;
+            const isWorkerOnly = a.protocol === 'antigravity';
+            const isDefault = !isWorkerOnly && defaultAgentId === a.id;
             const isGlobal = belongsToGlobal(a.id);
             const disabled = a.enabled === false;
             return (
@@ -409,9 +410,11 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                     )}
                     <button
                       type="button"
-                      title={isDefault ? t('agent.list.default') : t('agent.list.setDefault')}
+                      disabled={isWorkerOnly}
+                      title={isWorkerOnly ? t('agent.antigravity.workerOnly') : isDefault ? t('agent.list.default') : t('agent.list.setDefault')}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (isWorkerOnly) return;
                         setDefaultAgent(isDefault ? null : a.id);
                       }}
                       className={`text-[12px] leading-none ${
@@ -453,7 +456,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
             </li>
           )}
         </ul>
-        <div className="space-y-1.5 border-t border-line p-2">
+        <div className="relative z-10 shrink-0 space-y-1.5 border-t border-line bg-paper-soft p-2">
           <select
             className="sm-input cursor-pointer text-[12px]"
             value=""
@@ -530,7 +533,8 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
           )}
         </div>
         {editing ? (
-          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
             <div>
               <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.name')}</label>
               <input
@@ -560,6 +564,13 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                   {t('agent.codex.cliEndpoint')}
                 </div>
               </div>
+            ) : editing.protocol === 'antigravity' ? (
+              <div>
+                <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
+                <div className="rounded border border-line bg-paper-soft px-3 py-2 text-[11px] text-ink-faint">
+                  {t('agent.antigravity.cliEndpoint')}
+                </div>
+              </div>
             ) : (
               <div>
                 <label className="mb-1 block text-xs text-ink-soft">{t('agent.field.baseUrl')}</label>
@@ -578,6 +589,13 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
               </div>
             ) : editing.protocol === 'codex' ? (
               <CodexAuthField />
+            ) : editing.protocol === 'antigravity' ? (
+              <AntigravityCliField
+                mode={editing.runtimeMode}
+                profile={editing.runtimeProfile}
+                cliPath={editing.runtimeCliPath}
+                onChange={(next) => patch(next)}
+              />
             ) : (
               <ApiKeyField
                 credentialKey={editing.credentialKey}
@@ -589,12 +607,19 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
                 {t('agent.field.model')}
-                {editing.protocol === 'ollama'
-                  ? t('agent.field.modelLocal')
-                  : editing.protocol === 'codex'
-                    ? t('agent.field.modelCodex')
-                    : t('agent.field.modelApi')}
+                {editing.protocol === 'antigravity'
+                  ? t('agent.field.modelAntigravity')
+                  : editing.protocol === 'ollama'
+                    ? t('agent.field.modelLocal')
+                    : editing.protocol === 'codex'
+                      ? t('agent.field.modelCodex')
+                      : t('agent.field.modelApi')}
               </label>
+              {editing.protocol === 'antigravity' ? (
+                <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
+                  <p className="text-[11px] text-ink-faint">{t('agent.antigravity.modelHint')}</p>
+                </div>
+              ) : (
               <div className="space-y-1.5">
                 <div className="flex gap-1.5">
                   <select
@@ -699,6 +724,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                   onChange={(e) => patch({ model: e.target.value })}
                 />
               </div>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs text-ink-soft">
@@ -714,6 +740,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                 onChange={(e) => patch({ temperature: Number(e.target.value) })}
               />
             </div>
+            {editing.protocol !== 'antigravity' && (
             <details className="rounded border border-line bg-paper-soft px-3 py-2.5">
               <summary className="cursor-pointer text-[12px] text-ink-soft">
                 {t('agent.advanced.title')}
@@ -728,6 +755,9 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
                 onChange={(e) => patch({ proxyUrl: e.target.value.trim() || undefined })}
               />
             </details>
+            )}
+          </div>
+          <div className="shrink-0 border-t border-line bg-paper-soft px-4 py-3">
             <div className="flex gap-2">
               <button
                 className={`sm-btn flex-1 justify-center ${editing.enabled === false ? 'text-ok hover:border-ok' : 'text-ink-soft hover:border-line'}`}
@@ -756,6 +786,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
               </button>
             </div>
           </div>
+        </div>
         ) : (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-[13px] text-ink-faint">{t('agent.empty')}</p>
@@ -763,6 +794,58 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         )}
       </div>
       )}
+    </div>
+  );
+}
+
+function AntigravityCliField({
+  mode,
+  profile,
+  cliPath,
+  onChange,
+}: {
+  mode?: AntigravityMode;
+  profile?: string;
+  cliPath?: string;
+  onChange: (patch: Partial<AgentConfig>) => void;
+}) {
+  const t = useT('agents');
+  return (
+    <div className="rounded border border-line bg-paper-soft px-3 py-2.5">
+      <p className="text-[12px] font-medium text-ink">{t('agent.antigravity.title')}</p>
+      <p className="mt-1 text-[11px] text-ink-faint">{t('agent.antigravity.desc')}</p>
+      <label className="mt-2 block text-[11px] text-ink-soft">
+        {t('agent.antigravity.mode')}
+        <select
+          className="sm-input mt-1"
+          value={mode ?? 'agent'}
+          onChange={(event) => onChange({ runtimeMode: event.target.value as AntigravityMode })}
+        >
+          <option value="ask">ask</option>
+          <option value="edit">edit</option>
+          <option value="agent">agent</option>
+          <option value="custom">custom</option>
+        </select>
+      </label>
+      <label className="mt-2 block text-[11px] text-ink-soft">
+        {t('agent.antigravity.profile')}
+        <input
+          className="sm-input mt-1"
+          value={profile ?? ''}
+          placeholder={t('agent.antigravity.profilePlaceholder')}
+          onChange={(event) => onChange({ runtimeProfile: event.target.value.trim() || undefined })}
+        />
+      </label>
+      <label className="mt-2 block text-[11px] text-ink-soft">
+        {t('agent.antigravity.cliPath')}
+        <input
+          className="sm-input mt-1"
+          value={cliPath ?? ''}
+          placeholder={t('agent.antigravity.cliPathPlaceholder')}
+          onChange={(event) => onChange({ runtimeCliPath: event.target.value.trim() || undefined })}
+        />
+      </label>
+      <p className="mt-2 text-[11px] text-ink-faint">{t('agent.antigravity.modelHint')}</p>
     </div>
   );
 }

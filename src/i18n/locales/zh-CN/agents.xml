@@ -40,6 +40,7 @@
   <string name="agent.field.modelLocal">（本地 Ollama）</string>
   <string name="agent.field.modelApi">（API 可拉取）</string>
   <string name="agent.field.modelCodex">（官方 Codex CLI）</string>
+  <string name="agent.field.modelAntigravity">（Antigravity CLI）</string>
   <string name="agent.model.select">— 选择模型 —</string>
   <string name="agent.model.pullLocal">拉取本机已安装模型</string>
   <string name="agent.model.pullApi">从 API 地址拉取可用模型</string>
@@ -96,6 +97,18 @@
   <string name="agent.codex.connected">Codex CLI 已登录，订阅连接可用</string>
   <string name="agent.codex.loginRequired">尚未检测到 ChatGPT 登录，请先登录</string>
   <string name="agent.codex.otherAuth">检测到其他 Codex 登录方式（不是 ChatGPT 计划）</string>
+
+  <!-- AntigravityCliField -->
+  <string name="agent.antigravity.title">Antigravity CLI Runtime</string>
+  <string name="agent.antigravity.desc">通过本机 Antigravity CLI 启动交互式 Worker；只在当前 Worktree 工作，结果仍需 MCP 回报和宿主验收。</string>
+  <string name="agent.antigravity.cliEndpoint">由本机 Antigravity CLI 管理（不使用 API Key）</string>
+  <string name="agent.antigravity.mode">Agent mode</string>
+  <string name="agent.antigravity.profile">Workspace profile（可选）</string>
+  <string name="agent.antigravity.profilePlaceholder">例如 default</string>
+  <string name="agent.antigravity.cliPath">CLI path（可选）</string>
+  <string name="agent.antigravity.cliPathPlaceholder">留空则从 PATH 查找 antigravity-ide.cmd</string>
+  <string name="agent.antigravity.modelHint">当前 CLI 没有稳定的 model 或 thinking/reasoning 参数；模型与思考强度由 Antigravity Runtime 控制。</string>
+  <string name="agent.antigravity.workerOnly">Antigravity 仅用于 TaskGraph Worker，不能设为普通 Workflow 默认 Agent</string>
 
   <!-- RolesTab -->
   <string name="roles.title">角色库</string>

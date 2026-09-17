@@ -3,7 +3,8 @@ import type { ProjectControlSnapshot } from './projectControl/types';
 
 /* ---------- 节点状态与协议 ---------- */
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
-export type Protocol = 'openai' | 'anthropic' | 'ollama' | 'codex';
+export type AntigravityMode = 'ask' | 'edit' | 'agent' | 'custom';
+export type Protocol = 'openai' | 'anthropic' | 'ollama' | 'codex' | 'antigravity';
 
 /* ---------- API 接入点（APIKEYS 分区集中管理的「网址 + 密钥」） ---------- */
 /** 一个 API 接入点：把 Base URL 与密钥绑定成可复用的配置单元（类似 cc-switch 的 API 路由）。
@@ -64,6 +65,10 @@ export interface AgentConfig {
   proxyUrl?: string;
   /** 是否启用：false 表示被禁用，不出现在可选用 agent 候选中（节点/路由表），但保留在智能体库列表中可重新启用。缺省视为启用 */
   enabled?: boolean;
+  /** Antigravity CLI 专属 workspace 运行配置；不代表 Gemini API 模型/计费配置。 */
+  runtimeMode?: AntigravityMode;
+  runtimeProfile?: string;
+  runtimeCliPath?: string;
   /** 经济参数（G3 成本感知路由）：用户可覆盖内置价格表。订阅制模型置 subscription=true 按 0 计价 */
   cost?: {
     /** 每 1M token 输入价（USD），覆盖内置价格表 */

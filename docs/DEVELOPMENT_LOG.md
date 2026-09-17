@@ -2731,3 +2731,19 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `rustfmt --edition 2021 --check src/antigravity.rs`：通过；完整 `cargo fmt -- --check` 仍被既有 `src-tauri/src/lib.rs` 的 `dev_exec` 与测试格式漂移阻塞，本轮没有重排无关旧代码；
 - MCP stdio 实际 read-back：initialize/tools/get_context，以及 progress/feedback/submit result 写回均通过；
 - `git diff --check`：通过；当前没有独立 reviewer，因此不标记 `[verified]`。
+
+### 7.122 Antigravity Agent 配置与设置列表布局修复
+
+- 用户反馈 Antigravity 不能像 Codex CLI 一样配置，以及设置页底部的创建/删除操作被列表越界裁切。本轮将 `antigravity` 增加为独立 Agent protocol/runtime，不伪装成 OpenAI API。
+- Agent 设置现在可配置：Antigravity mode（ask/edit/agent/custom）、workspace profile 和可选 CLI path；当前 CLI 没有稳定的 model/thinking/reasoning 参数，因此 UI 明确显示由 Antigravity Runtime 控制，不提供虚假的模型下拉。
+- 配置的 Antigravity Agent 会被 App 层映射到 TaskGraph Worker Coordinator，启动 Worker 时传递 mode/profile/cliPath；普通 Workflow Engine 使用 Antigravity Agent 会 fail-closed，避免把交互式 CLI 当作普通聊天 API。
+- 修复 `AgentPanel` 的双层 flex 约束：左侧 Agent 列表 `min-h-0 + overflow-y-auto`，创建 footer `shrink-0` 固定在列表底端；右侧编辑表单内容滚动，禁用/删除操作栏移出滚动区并固定在底部。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1026 keys 对齐；
+- `npm run test`：127 test files / 1099 tests passed；
+- 当前运行中的 Tauri 窗口通过 WebView accessibility read-back 确认设置→智能体页面仍可打开；未输入凭据、未修改全局 Antigravity 配置；
+- 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。

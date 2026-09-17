@@ -571,12 +571,22 @@ export default function App() {
       projectPath,
     );
 
+    const antigravityAgent = [...current.globalAgents, ...current.agents].find(
+      (agent) => agent.protocol === 'antigravity' && agent.enabled !== false,
+    );
     const coordinator = createGuiProjectWorkerRunCoordinator({
       projectId,
       projectPath,
       runs: current.workerRuns,
       session,
       workerRuntime,
+      antigravity: antigravityAgent
+        ? {
+          mode: antigravityAgent.runtimeMode,
+          profile: antigravityAgent.runtimeProfile,
+          cliPath: antigravityAgent.runtimeCliPath,
+        }
+        : undefined,
       concurrency: current.maxConcurrency,
       sideEffects,
       signal: operation.controller.signal,
