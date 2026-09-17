@@ -5365,3 +5365,10 @@ body:has(.sm-pro-shell) .sm-companion__bar {
 }
 
 
+
+/* Accessibility Focus Ring */
+*:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 2px;
+}
+

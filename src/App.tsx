@@ -140,13 +140,10 @@ function SplitCanvas({
   return (
     <div className="flex min-w-0 flex-1">
       {/* 左：当前激活工作流 */}
-      <div className="min-w-0 flex-1 border-r" style={{ borderColor: 'var(--sm-line)' }}>
-        <div
-          className="flex h-7 shrink-0 items-center gap-2 border-b px-3 text-[12px]"
-          style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
-        >
-          <span className="font-semibold" style={{ color: 'var(--sm-ink)' }}>主工作流</span>
-          <span className="truncate" style={{ color: 'var(--sm-ink-faint)' }}>
+      <div className="min-w-0 flex-1 border-r border-sm-line">
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-sm-line px-3 text-[12px] text-sm-ink-soft">
+          <span className="font-semibold text-sm-ink">主工作流</span>
+          <span className="truncate text-sm-ink-faint">
             {workflows[activeWfId]?.name ?? ''}
           </span>
         </div>
@@ -157,22 +154,18 @@ function SplitCanvas({
 
       {/* 右：另一个工作流（可在下拉中切换） */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div
-          className="flex h-7 shrink-0 items-center gap-2 border-b px-3"
-          style={{ borderColor: 'var(--sm-line)' }}
-        >
-          <span className="shrink-0 text-[12px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-sm-line px-3">
+          <span className="shrink-0 text-[12px] font-semibold text-sm-ink">
             拆分视图
           </span>
           <select
-            className="max-w-[200px] flex-1 rounded border bg-transparent px-1.5 py-0.5 text-[11.5px] outline-none"
-            style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
+            className="max-w-[200px] flex-1 rounded border border-sm-line bg-transparent px-1.5 py-0.5 text-[11.5px] text-sm-ink-soft outline-none"
             value={targetId}
             onChange={(e) => setSplitWfId(e.target.value)}
             title="选择右侧分栏显示的工作流"
           >
             {ids.map((id) => (
-              <option key={id} value={id} className="bg-[var(--sm-bg)]">
+              <option key={id} value={id} className="bg-sm-bg">
                 {workflows[id]?.name ?? id}
                 {id === activeWfId ? '（主）' : ''}
               </option>
@@ -181,7 +174,7 @@ function SplitCanvas({
         </div>
         <div className="min-h-0 flex-1">
           {ids.length <= 1 ? (
-            <div className="flex h-full items-center justify-center p-6 text-center text-[12.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
+            <div className="flex h-full items-center justify-center p-6 text-center text-[12.5px] text-sm-ink-faint">
               项目中只有一个工作流。新建一个工作流即可在拆分视图中并排查看/编辑不同工作流。
             </div>
           ) : (
@@ -1348,8 +1341,7 @@ export default function App() {
   return (
     <ReactFlowProvider>
       <div
-        className={`flex h-screen flex-col font-app ${workspaceMode === 'advanced' ? 'sm-pro-shell' : 'sm-simple-root'}`}
-        style={{ background: 'var(--sm-bg)', color: 'var(--sm-ink)' }}
+        className={`flex h-screen flex-col font-app bg-sm-bg text-sm-ink ${workspaceMode === 'advanced' ? 'sm-pro-shell' : 'sm-simple-root'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
@@ -1411,8 +1403,7 @@ export default function App() {
                     onCleanupWorkerRun={isTauri ? cleanupWorkerRun : undefined}
                   />
                   <div
-                    className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
-                    style={{ background: 'var(--sm-line)' }}
+                    className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft bg-sm-line"
                     onPointerDown={startResize('x', 'left', leftW)}
                     title="拖动调节展开面板宽度"
                   />
@@ -1435,8 +1426,7 @@ export default function App() {
               <>
                 <Inspector width={rightW} />
                 <div
-                  className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft"
-                  style={{ background: 'var(--sm-line)' }}
+                  className="sm-pro-resize-handle sm-pro-resize-handle-x w-1 shrink-0 cursor-col-resize hover:bg-accent-soft bg-sm-line"
                   onPointerDown={startResize('x', 'right', rightW)}
                   title="拖动调节属性面板宽度"
                 />
@@ -1447,20 +1437,18 @@ export default function App() {
             {shortcutsOpen && (
               <>
                 <div
-                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
-                  style={{ background: 'var(--sm-line)' }}
+                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft bg-sm-line"
                   onPointerDown={startResize('y', 'bottom', shortcutsH)}
                   title="拖动调节快捷键面板高度"
                 />
-                <div className="sm-panel shrink-0" style={{ color: 'var(--sm-ink-soft)' }}>
+                <div className="sm-panel shrink-0 text-sm-ink-soft">
                   <div className="sm-panel-tabs">
                     <button className="sm-panel-tab" data-active={true}>
                       <Keyboard size={12} /> 快捷键
                     </button>
                     <div className="flex flex-1 items-center justify-end">
                       <button
-                        className="flex cursor-pointer items-center gap-1 border-l px-3 text-[11px] transition-colors hover:text-ink"
-                        style={{ color: 'var(--sm-ink-faint)', borderColor: 'var(--sm-line)' }}
+                        className="flex cursor-pointer items-center gap-1 border-l border-sm-line px-3 text-[11px] text-sm-ink-faint transition-colors hover:text-ink"
                         onClick={() => setShortcutsOpen(false)}
                         title="关闭快捷键面板"
                       >
@@ -1475,8 +1463,7 @@ export default function App() {
             {panelOpen && (
               <>
                 <div
-                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft"
-                  style={{ background: 'var(--sm-line)' }}
+                  className="sm-pro-resize-handle sm-pro-resize-handle-y h-1 shrink-0 cursor-row-resize hover:bg-accent-soft bg-sm-line"
                   onPointerDown={startResize('y', 'bottom', panelH)}
                   title="拖动调节底部面板高度"
                 />
@@ -1511,15 +1498,10 @@ export default function App() {
         <InterventionModal />
         {dragActive && (
           <div
-            className="pointer-events-none fixed inset-0 z-[9999] flex items-center justify-center"
-            style={{
-              background: 'color-mix(in srgb, var(--sm-bg) 70%, transparent)',
-              backdropFilter: 'blur(2px)',
-            }}
+            className="pointer-events-none fixed inset-0 z-fatal flex items-center justify-center bg-black/70 backdrop-blur-[2px]"
           >
             <div
-              className="rounded-lg border-2 border-dashed px-10 py-8 text-center text-[15px] font-semibold"
-              style={{ borderColor: 'var(--sm-accent)', color: 'var(--sm-accent)' }}
+              className="rounded-lg border-2 border-dashed border-sm-accent px-10 py-8 text-center text-[15px] font-semibold text-sm-accent"
             >
               松开以打开工作流文件 (.workflow.json)
             </div>

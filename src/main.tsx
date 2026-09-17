@@ -70,27 +70,15 @@ class ErrorBoundary extends React.Component<
     if (this.state.error) {
       return (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            padding: 24,
-            background: '#f7f5f1',
-            color: '#7a3b3b',
-            fontFamily: 'system-ui, sans-serif',
-            whiteSpace: 'pre-wrap',
-            overflow: 'auto',
-            fontSize: 13,
-            lineHeight: 1.6,
-            zIndex: 99999,
-          }}
+          className="fixed inset-0 z-fatal overflow-auto whitespace-pre-wrap bg-red-50 p-6 font-sans text-[13px] leading-relaxed text-red-900"
         >
-          <h2 style={{ color: '#9a2b2b', marginTop: 0 }}>SlimeMold 启动出错</h2>
-          <div style={{ color: '#333', marginBottom: 8 }}>
+          <h2 className="mb-4 mt-0 text-lg font-bold text-red-800">SlimeMold 启动出错</h2>
+          <div className="mb-2 text-red-700">
             请复制以下错误信息反馈：
           </div>
-          <code>{this.state.error.message}</code>
+          <code className="font-mono">{this.state.error.message}</code>
           {this.state.error.stack && (
-            <pre style={{ marginTop: 12, color: '#555' }}>{this.state.error.stack}</pre>
+            <pre className="mt-3 font-mono text-red-600">{this.state.error.stack}</pre>
           )}
         </div>
       );
