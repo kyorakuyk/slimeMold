@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Nutrient Field</title>
+  <desc id="desc">A living slime mold crosses a constrained field, abandoning long detours and retaining a short reinforced channel to a nutrient source.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M181 514C254 357 297 210 470 203c157-7 202 70 365 19" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="23" stroke-dasharray="8 18" opacity=".4"/>
+  <path d="M181 514C282 674 329 821 489 814c155-7 194-91 319-182" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="23" stroke-dasharray="8 18" opacity=".38"/>
+  <path d="M181 514c85 0 142-2 199-3 79-1 110-71 171-78 79-9 91 76 157 81 65 5 112-18 153-34" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="68"/>
+  <path d="M181 514c85 0 142-2 199-3 79-1 110-71 171-78 79-9 91 76 157 81 65 5 112-18 153-34" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="12" opacity=".88"/>
+  <path d="M426 299c33 25 51 60 50 102M604 685c33 20 67 28 99 25M718 310c-12 25-18 48-19 72" fill="none" stroke="#4f5861" stroke-linecap="round" stroke-width="17" opacity=".72"/>
+  <path d="M116 514c0-38 27-65 63-65 37 0 57 28 57 65s-20 65-57 65c-36 0-63-27-63-65Z" fill="#c8f36a"/>
+  <circle cx="179" cy="514" r="19" fill="#121416"/>
+  <circle cx="858" cy="480" r="53" fill="#dfe8ee"/>
+  <circle cx="858" cy="480" r="20" fill="#121416"/>
+  <circle cx="470" cy="203" r="13" fill="#6b757c"/>
+  <circle cx="489" cy="814" r="13" fill="#6b757c"/>
+</svg>

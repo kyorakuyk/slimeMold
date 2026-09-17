@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Rewire</title>
+  <desc id="desc">A slime mold rewires a branching search network, fading unused paths and strengthening the efficient connection.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M205 736C314 604 293 398 444 290c92-66 181-46 300-22" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="24" stroke-dasharray="9 18" opacity=".42"/>
+  <path d="M207 736C380 805 577 852 712 702c62-69 63-177 93-274" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="24" stroke-dasharray="9 18" opacity=".38"/>
+  <path d="M236 708C334 681 377 592 461 548c91-48 141-7 188-69 43-56 68-140 146-196" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="67"/>
+  <path d="M236 708C334 681 377 592 461 548c91-48 141-7 188-69 43-56 68-140 146-196" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="12" opacity=".9"/>
+  <path d="M161 735c-17-35-1-76 31-95 25-15 33-47 69-52 36-5 56 20 80 43 30 28 67 31 73 65 8 39-19 70-56 84-32 12-57-2-87 7-44 13-90-11-110-52Z" fill="#c8f36a"/>
+  <path d="M229 663c36-36 68-53 101-61" fill="none" stroke="#8ca84d" stroke-linecap="round" stroke-width="19" opacity=".8"/>
+  <circle cx="192" cy="760" r="42" fill="#dfe8ee"/>
+  <circle cx="192" cy="760" r="16" fill="#121416"/>
+  <circle cx="832" cy="283" r="52" fill="#dfe8ee"/>
+  <circle cx="832" cy="283" r="20" fill="#121416"/>
+  <circle cx="444" cy="290" r="13" fill="#6b757c"/>
+  <circle cx="712" cy="702" r="13" fill="#6b757c"/>
+</svg>

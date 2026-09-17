@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold S Mark</title>
+  <desc id="desc">A minimal S-shaped path with three nodes for small application surfaces.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#2997ff"/>
+  <path d="M744 292c-70-66-151-98-242-98-118 0-214 63-214 151 0 83 71 116 205 150 133 34 205 73 205 162 0 102-100 173-237 173-102 0-187-31-253-94" fill="none" stroke="#f5f7fa" stroke-linecap="round" stroke-linejoin="round" stroke-width="78"/>
+  <path d="M311 295c-37 28-61 66-61 108M708 653c33-27 53-59 53-104" fill="none" stroke="#bfe2ff" stroke-linecap="round" stroke-width="28"/>
+  <circle cx="288" cy="296" r="45" fill="#15171a"/>
+  <circle cx="744" cy="292" r="45" fill="#15171a"/>
+  <circle cx="208" cy="736" r="45" fill="#15171a"/>
+</svg>

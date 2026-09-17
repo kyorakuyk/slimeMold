@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Plasmodium Route</title>
+  <desc id="desc">A living plasmodium retracts two weak probes and reinforces one shortest route between nutrient points.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M268 613C324 467 429 285 624 252c80-14 137-7 196 9" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="28" stroke-dasharray="10 20" opacity=".42"/>
+  <path d="M271 690C410 818 584 842 711 704c42-46 64-101 82-164" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="28" stroke-dasharray="10 20" opacity=".4"/>
+  <path d="M257 650C356 656 407 595 491 571c123-35 159-173 238-257 35-37 73-51 111-47" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="78"/>
+  <path d="M257 650C356 656 407 595 491 571c123-35 159-173 238-257 35-37 73-51 111-47" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="14" opacity=".9"/>
+  <path d="M246 622c-20-42-12-79 20-103 23-18 29-51 68-60 37-9 60 17 85 41 30 28 65 29 76 64 12 39-12 78-50 94-36 15-67 1-96 10-42 12-81-8-103-46Z" fill="#c8f36a"/>
+  <path d="M288 571c22-27 49-44 81-48M294 692c34 11 67 10 98-5" fill="none" stroke="#8ca84d" stroke-linecap="round" stroke-width="19" opacity=".82"/>
+  <circle cx="181" cy="758" r="45" fill="#dfe8ee"/>
+  <circle cx="181" cy="758" r="17" fill="#121416"/>
+  <circle cx="840" cy="268" r="55" fill="#dfe8ee"/>
+  <circle cx="840" cy="268" r="21" fill="#121416"/>
+  <circle cx="624" cy="252" r="14" fill="#6b757c"/>
+  <circle cx="711" cy="704" r="14" fill="#6b757c"/>
+</svg>

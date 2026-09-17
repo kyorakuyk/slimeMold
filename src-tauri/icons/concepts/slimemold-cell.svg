@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Cell</title>
+  <desc id="desc">An organic cell-like network that suggests slime mold without losing node structure.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#15171a"/>
+  <path d="M512 178c114 0 184 73 246 145 62 73 93 132 81 238-12 107-78 193-176 239-99 47-191 47-292 0-99-46-164-132-176-239-12-106 19-165 81-238 62-72 132-145 236-145Z" fill="#20252b" stroke="#2997ff" stroke-width="28"/>
+  <path d="M298 584c58-16 91-51 119-105 30-57 64-113 135-113 65 0 91 43 123 91 33 49 70 89 151 92" fill="none" stroke="#f5f7fa" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"/>
+  <path d="M431 366c-13-52-2-90 30-126M675 560c52-22 91-17 128 7" fill="none" stroke="#8fcaff" stroke-linecap="round" stroke-width="26"/>
+  <circle cx="298" cy="584" r="42" fill="#2997ff"/>
+  <circle cx="552" cy="366" r="48" fill="#2997ff"/>
+  <circle cx="675" cy="560" r="42" fill="#15171a" stroke="#f5f7fa" stroke-width="18"/>
+  <circle cx="461" cy="240" r="34" fill="#f5f7fa"/>
+  <circle cx="803" cy="568" r="32" fill="#2997ff"/>
+</svg>

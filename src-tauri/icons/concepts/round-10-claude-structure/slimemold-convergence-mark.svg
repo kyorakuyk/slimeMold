@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Convergence Mark</title>
+  <desc id="desc">An original warm organic mark made from independent, uneven strokes converging into a compact living core.</desc>
+  <g fill="none" stroke="#b36f4e" stroke-linecap="butt" stroke-linejoin="round">
+    <path d="M423 441C389 405 355 360 328 302" stroke-width="64"/>
+    <path d="M469 409C457 354 460 297 480 231" stroke-width="76"/>
+    <path d="M535 412C584 363 649 322 744 291" stroke-width="74"/>
+    <path d="M582 466C652 440 729 433 811 456" stroke-width="66"/>
+    <path d="M581 533C639 559 696 610 754 677" stroke-width="56"/>
+    <path d="M535 581C548 649 533 720 495 790" stroke-width="64"/>
+    <path d="M470 582C426 634 394 696 374 768" stroke-width="54"/>
+    <path d="M421 519C355 539 288 539 222 518" stroke-width="62"/>
+  </g>
+</svg>

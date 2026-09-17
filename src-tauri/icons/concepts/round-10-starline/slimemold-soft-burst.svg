@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Soft Burst</title>
+  <desc id="desc">A calm, hand-drawn-feeling rounded-line burst with controlled asymmetry and one longer living reach.</desc>
+  <g fill="none" stroke="#b56f4f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M503 464C468 411 426 332 356 247" stroke-width="58"/>
+    <path d="M526 469C573 416 645 353 768 314" stroke-width="78"/>
+    <path d="M556 498C649 486 752 498 851 535" stroke-width="64"/>
+    <path d="M548 536C622 579 692 635 762 703" stroke-width="52"/>
+    <path d="M512 558C509 639 493 729 447 811" stroke-width="69"/>
+    <path d="M477 538C399 548 315 579 221 625" stroke-width="57"/>
+    <path d="M462 505C417 484 386 461 363 433" stroke-width="40" opacity=".58"/>
+  </g>
+</svg>

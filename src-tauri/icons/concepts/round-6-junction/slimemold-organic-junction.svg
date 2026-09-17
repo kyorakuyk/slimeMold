@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Organic Junction</title>
+  <desc id="desc">A living organic junction keeps the original one-input two-output workflow structure while reinforcing one route and retracting the other.</desc>
+  <defs>
+    <radialGradient id="plasma" cx="30%" cy="24%" r="82%">
+      <stop offset="0" stop-color="#efffc9"/>
+      <stop offset="0.32" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#769541"/>
+    </radialGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e5ff9e"/>
+      <stop offset="0.48" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#89aa45"/>
+    </linearGradient>
+    <linearGradient id="blueCore" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6dd4ff"/>
+      <stop offset="1" stop-color="#2183c6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#111418"/>
+  <rect x="92" y="112" width="840" height="800" rx="206" fill="#1a2025" stroke="#2b343b" stroke-width="10"/>
+  <path d="M110 816 805 206 916 816 188 958Z" fill="#20282d" opacity=".75"/>
+  <path d="M110 816 805 206M188 958 805 206M916 816 805 206" fill="none" stroke="#3e4b53" stroke-linecap="round" stroke-width="10" opacity=".4"/>
+  <path d="M132 824Q474 704 900 544M178 902Q505 782 916 650" fill="none" stroke="#3e4b53" stroke-linecap="round" stroke-width="8" opacity=".3"/>
+  <path d="M310 512C360 512 395 502 438 507" fill="none" stroke="#235b7d" stroke-linecap="round" stroke-width="48" opacity=".65" transform="translate(0 14)"/>
+  <path d="M310 512C360 512 395 502 438 507" fill="none" stroke="#3bade5" stroke-linecap="round" stroke-width="34" opacity=".92"/>
+  <path d="M579 470C635 422 673 373 726 349" fill="none" stroke="#678238" stroke-linecap="round" stroke-width="76" opacity=".8" transform="translate(0 18)"/>
+  <path d="M579 470C635 422 673 373 726 349" fill="none" stroke="url(#tube)" stroke-linecap="round" stroke-width="62"/>
+  <path d="M579 470C635 422 673 373 726 349" fill="none" stroke="#f4ffd8" stroke-linecap="round" stroke-width="9" opacity=".85"/>
+  <path d="M579 554C633 594 674 634 704 670" fill="none" stroke="#56616a" stroke-linecap="round" stroke-width="33" stroke-dasharray="8 18" opacity=".55"/>
+  <path d="M579 554C616 580 640 601 659 620" fill="none" stroke="#8a969d" stroke-linecap="round" stroke-width="17" stroke-dasharray="5 17" opacity=".45"/>
+  <rect x="132" y="446" width="180" height="148" rx="54" fill="#0d1012" opacity=".8" transform="translate(0 17)"/>
+  <rect x="132" y="430" width="180" height="148" rx="54" fill="#f5f7fa"/>
+  <path d="M190 504h62" stroke="#c4d0d7" stroke-linecap="round" stroke-width="16"/>
+  <path d="M424 466C433 439 468 426 500 439C531 423 571 443 582 474C611 491 611 532 587 553C580 585 543 602 512 588C480 604 439 583 431 551C406 531 402 492 424 466Z" fill="#5e7937" transform="translate(0 19)"/>
+  <path d="M424 466C433 439 468 426 500 439C531 423 571 443 582 474C611 491 611 532 587 553C580 585 543 602 512 588C480 604 439 583 431 551C406 531 402 492 424 466Z" fill="url(#plasma)"/>
+  <path d="M455 470C477 448 511 444 537 459M455 551C480 567 518 568 545 549" fill="none" stroke="#efffc9" stroke-linecap="round" stroke-width="12" opacity=".58"/>
+  <circle cx="512" cy="512" r="34" fill="url(#blueCore)" opacity=".92"/>
+  <circle cx="512" cy="512" r="12" fill="#13202a"/>
+  <rect x="724" y="267" width="168" height="168" rx="54" fill="#222b32" stroke="#a4d7f8" stroke-width="19"/>
+  <circle cx="808" cy="351" r="22" fill="#f1f7fb"/>
+  <rect x="724" y="584" width="168" height="168" rx="54" fill="#242a2f" stroke="#69757d" stroke-width="17" opacity=".52"/>
+  <circle cx="808" cy="668" r="20" fill="#b5c1c8" opacity=".52"/>
+</svg>

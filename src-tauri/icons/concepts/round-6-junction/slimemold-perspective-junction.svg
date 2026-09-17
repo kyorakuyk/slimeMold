@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Perspective Junction</title>
+  <desc id="desc">A dimensional living junction uses near and far route segments to show adaptive search from one input toward two possible outputs.</desc>
+  <defs>
+    <radialGradient id="plasma" cx="30%" cy="20%" r="82%">
+      <stop offset="0" stop-color="#f0ffca"/>
+      <stop offset="0.33" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#6f8f3e"/>
+    </radialGradient>
+    <linearGradient id="nearTube" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e9ffa9"/>
+      <stop offset="0.56" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#86a944"/>
+    </linearGradient>
+    <linearGradient id="farTube" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9fa8a"/>
+      <stop offset="1" stop-color="#8db34b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#111518"/>
+  <rect x="88" y="108" width="848" height="808" rx="212" fill="#1b2227" stroke="#2e383f" stroke-width="10"/>
+  <path d="M106 820 822 204 920 820 184 968Z" fill="#222a2f" opacity=".82"/>
+  <path d="M106 820 822 204M184 968 822 204M920 820 822 204" fill="none" stroke="#46535b" stroke-linecap="round" stroke-width="11" opacity=".42"/>
+  <path d="M123 831Q474 708 908 544M164 908Q503 785 918 650" fill="none" stroke="#46535b" stroke-linecap="round" stroke-width="8" opacity=".28"/>
+  <path d="M309 512C363 512 400 500 437 506" fill="none" stroke="#235d7d" stroke-linecap="round" stroke-width="51" opacity=".72" transform="translate(0 16)"/>
+  <path d="M309 512C363 512 400 500 437 506" fill="none" stroke="#41afe3" stroke-linecap="round" stroke-width="35"/>
+  <path d="M574 470C613 443 644 411 673 381" fill="none" stroke="#63803b" stroke-linecap="round" stroke-width="82" opacity=".8" transform="translate(0 18)"/>
+  <path d="M574 470C613 443 644 411 673 381" fill="none" stroke="url(#nearTube)" stroke-linecap="round" stroke-width="67"/>
+  <path d="M673 381C705 350 742 331 783 330" fill="none" stroke="#66843c" stroke-linecap="round" stroke-width="58" opacity=".78" transform="translate(0 14)"/>
+  <path d="M673 381C705 350 742 331 783 330" fill="none" stroke="url(#farTube)" stroke-linecap="round" stroke-width="43"/>
+  <path d="M574 470C613 443 644 411 673 381M673 381C705 350 742 331 783 330" fill="none" stroke="#f4ffd7" stroke-linecap="round" stroke-width="9" opacity=".86"/>
+  <path d="M574 554C620 588 651 620 677 658" fill="none" stroke="#68747b" stroke-linecap="round" stroke-width="30" stroke-dasharray="8 20" opacity=".46"/>
+  <path d="M574 554C607 579 628 600 647 621" fill="none" stroke="#a0abb0" stroke-linecap="round" stroke-width="12" stroke-dasharray="4 18" opacity=".38"/>
+  <rect x="128" y="445" width="184" height="150" rx="55" fill="#0b0e10" opacity=".82" transform="translate(0 18)"/>
+  <rect x="128" y="428" width="184" height="150" rx="55" fill="#f5f7fa"/>
+  <path d="M187 503h66" stroke="#c4d0d7" stroke-linecap="round" stroke-width="16"/>
+  <path d="M420 463C434 435 469 421 503 438C536 420 576 442 586 475C612 494 610 535 586 556C578 588 541 604 510 588C477 603 438 582 428 551C403 530 402 491 420 463Z" fill="#607d39" transform="translate(0 21)"/>
+  <path d="M420 463C434 435 469 421 503 438C536 420 576 442 586 475C612 494 610 535 586 556C578 588 541 604 510 588C477 603 438 582 428 551C403 530 402 491 420 463Z" fill="url(#plasma)"/>
+  <path d="M450 469C477 444 512 443 540 458M450 550C478 567 516 568 545 548" fill="none" stroke="#f0ffca" stroke-linecap="round" stroke-width="12" opacity=".6"/>
+  <circle cx="510" cy="512" r="36" fill="#2997d4"/>
+  <circle cx="510" cy="512" r="13" fill="#12202a"/>
+  <rect x="752" y="277" width="143" height="143" rx="48" fill="#27333b" stroke="#b2def7" stroke-width="18"/>
+  <circle cx="823" cy="348" r="20" fill="#f3f8fb"/>
+  <rect x="738" y="596" width="146" height="146" rx="48" fill="#252c31" stroke="#69757d" stroke-width="15" opacity=".42"/>
+  <circle cx="811" cy="669" r="18" fill="#a8b2b7" opacity=".4"/>
+</svg>

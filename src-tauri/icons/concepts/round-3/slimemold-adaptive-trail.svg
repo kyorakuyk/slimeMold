@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Adaptive Trail</title>
+  <desc id="desc">A compact living trail leaves a weaker probe behind and reinforces an efficient path to a resource.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M194 692C278 422 503 293 837 348" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="25" opacity=".45"/>
+  <path d="M194 692C332 729 450 687 522 572c55-88 116-157 315-211" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="82"/>
+  <path d="M252 680c66 21 121 18 174-11" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-width="16" opacity=".9"/>
+  <path d="M171 648c-4-40 12-78 45-104" fill="none" stroke="#8fae4d" stroke-linecap="round" stroke-width="22" opacity=".78"/>
+  <path d="M118 741c-20-39 1-76 35-96 24-14 32-47 69-51 39-4 52 29 75 51 27 26 59 35 65 71 7 43-23 80-65 91-31 8-58-10-88-5-38 6-73-20-91-61Z" fill="#c8f36a"/>
+  <circle cx="194" cy="692" r="18" fill="#121416"/>
+  <circle cx="837" cy="348" r="51" fill="#dfe8ee"/>
+  <circle cx="837" cy="348" r="20" fill="#121416"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Depth Trail</title>
+  <desc id="desc">A compact perspective mark with a living foreground body, a fading alternative trail and one reinforced route toward a distant nutrient.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#101315"/>
+  <path d="M95 860 850 236 975 860 214 1024Z" fill="#1a2023"/>
+  <path d="M95 860 850 236M214 1024 850 236M975 860 850 236" fill="none" stroke="#3b454b" stroke-width="11" opacity=".45"/>
+  <path d="M190 721C292 443 520 323 842 369" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="25" stroke-dasharray="8 18" opacity=".45"/>
+  <path d="M195 704C334 743 451 695 522 581c55-89 116-157 314-211" fill="none" stroke="#66823a" stroke-linecap="round" stroke-width="105" opacity=".7" transform="translate(0 18)"/>
+  <path d="M195 704C334 743 451 695 522 581c55-89 116-157 314-211" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="84"/>
+  <path d="M195 704C334 743 451 695 522 581c55-89 116-157 314-211" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="12" opacity=".9"/>
+  <path d="M123 766c-19-39 2-76 35-96 25-15 32-47 69-51 39-4 52 29 75 51 27 26 59 35 65 71 7 43-23 80-65 91-31 8-58-10-88-5-38 6-73-20-91-61Z" fill="#c8f36a"/>
+  <circle cx="195" cy="704" r="18" fill="#101315"/>
+  <circle cx="838" cy="369" r="49" fill="#dfe8ee"/>
+  <circle cx="838" cy="369" r="19" fill="#101315"/>
+</svg>

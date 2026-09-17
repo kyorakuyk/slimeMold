@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Living Vanishing</title>
+  <desc id="desc">A living slime mold grows in the foreground, retracts alternative routes and reinforces a shortest path toward a distant nutrient.</desc>
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#171b1e"/>
+      <stop offset="1" stop-color="#252d31"/>
+    </linearGradient>
+    <radialGradient id="body" cx="35%" cy="28%" r="78%">
+      <stop offset="0" stop-color="#eff9c8"/>
+      <stop offset="0.28" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#789343"/>
+    </radialGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="0.7">
+      <stop offset="0" stop-color="#d8fb83"/>
+      <stop offset="0.55" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#98bf4b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#0f1214"/>
+  <path d="M88 884 836 210 986 884 218 1024Z" fill="url(#ground)"/>
+  <path d="M88 884 836 210M218 1024 836 210M986 884 836 210" fill="none" stroke="#465057" stroke-linecap="round" stroke-width="11" opacity=".58"/>
+  <path d="M115 890Q463 746 948 570M159 958Q499 822 971 694M218 1015Q566 903 986 818" fill="none" stroke="#3d464c" stroke-linecap="round" stroke-width="9" opacity=".42"/>
+  <path d="M194 752C299 572 389 345 574 276c87-33 165-31 252-20" fill="none" stroke="#677178" stroke-linecap="round" stroke-width="28" stroke-dasharray="9 21" opacity=".48"/>
+  <path d="M203 788C377 889 596 835 718 648c62-94 91-244 116-385" fill="none" stroke="#677178" stroke-linecap="round" stroke-width="28" stroke-dasharray="9 21" opacity=".42"/>
+  <path d="M246 731C344 726 413 645 502 602" fill="none" stroke="#6a8139" stroke-linecap="round" stroke-width="111" opacity=".76" transform="translate(0 22)"/>
+  <path d="M502 602C621 549 667 400 735 318c31-37 73-58 105-59" fill="none" stroke="#6a8139" stroke-linecap="round" stroke-width="70" opacity=".76" transform="translate(0 19)"/>
+  <path d="M246 731C344 726 413 645 502 602" fill="none" stroke="url(#tube)" stroke-linecap="round" stroke-linejoin="round" stroke-width="91"/>
+  <path d="M502 602C621 549 667 400 735 318c31-37 73-58 105-59" fill="none" stroke="url(#tube)" stroke-linecap="round" stroke-linejoin="round" stroke-width="56"/>
+  <path d="M245 731C344 726 413 645 502 602M502 602C621 549 667 400 735 318c31-37 73-58 105-59" fill="none" stroke="#f3ffd5" stroke-linecap="round" stroke-width="11" opacity=".88"/>
+  <path d="M178 793c-25-46-11-96 27-123 31-22 36-65 83-75 44-10 69 24 100 49 38 30 83 34 95 77 13 49-19 98-68 114-43 14-77-4-116 9-51 17-98-6-121-51Z" fill="#6e8c3d" transform="translate(0 19)"/>
+  <path d="M178 774c-25-46-11-96 27-123 31-22 36-65 83-75 44-10 69 24 100 49 38 30 83 34 95 77 13 49-19 98-68 114-43 14-77-4-116 9-51 17-98-6-121-51Z" fill="url(#body)"/>
+  <path d="M245 701c28-37 64-58 105-66M253 796c45 14 84 11 123-9" fill="none" stroke="#94b34d" stroke-linecap="round" stroke-width="20" opacity=".85"/>
+  <circle cx="166" cy="814" r="31" fill="#dfe8ee"/>
+  <circle cx="166" cy="814" r="12" fill="#0f1214"/>
+  <circle cx="850" cy="253" r="45" fill="#dfe8ee"/>
+  <circle cx="850" cy="253" r="17" fill="#0f1214"/>
+</svg>

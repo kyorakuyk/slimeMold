@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Depth Mini</title>
+  <desc id="desc">A compact perspective mark showing a living slime mold, a fading probe and a reinforced route to a distant nutrient.</desc>
+  <defs>
+    <radialGradient id="body" cx="30%" cy="24%" r="80%">
+      <stop offset="0" stop-color="#eff9c8"/>
+      <stop offset="0.3" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#718a3d"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#101315"/>
+  <path d="M104 850 844 230 972 850 216 1024Z" fill="#1b2225"/>
+  <path d="M104 850 844 230M216 1024 844 230M972 850 844 230" fill="none" stroke="#404a50" stroke-width="11" opacity=".52"/>
+  <path d="M184 708C285 444 504 323 838 368" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="25" stroke-dasharray="8 18" opacity=".48"/>
+  <path d="M196 700C331 738 448 695 520 580c55-88 117-157 316-211" fill="none" stroke="#66813b" stroke-linecap="round" stroke-width="104" opacity=".74" transform="translate(0 18)"/>
+  <path d="M196 700C331 738 448 695 520 580c55-88 117-157 316-211" fill="none" stroke="url(#body)" stroke-linecap="round" stroke-linejoin="round" stroke-width="83"/>
+  <path d="M196 700C331 738 448 695 520 580c55-88 117-157 316-211" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="11" opacity=".88"/>
+  <path d="M119 750c-19-39 2-76 35-96 24-15 32-47 69-51 39-4 52 29 75 51 27 26 59 35 65 71 7 43-23 80-65 91-31 8-58-10-88-5-38 6-73-20-91-61Z" fill="#c8f36a"/>
+  <circle cx="196" cy="700" r="18" fill="#101315"/>
+  <circle cx="838" cy="369" r="50" fill="#dfe8ee"/>
+  <circle cx="838" cy="369" r="19" fill="#101315"/>
+</svg>

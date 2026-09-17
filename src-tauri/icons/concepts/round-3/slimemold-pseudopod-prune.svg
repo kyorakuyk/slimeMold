@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Pseudopod Prune</title>
+  <desc id="desc">An amoeboid slime mold sends out several pseudopods, retracts failed probes and keeps one successful route.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M354 534C409 438 441 331 412 234" fill="none" stroke="#657078" stroke-linecap="round" stroke-width="30" opacity=".42"/>
+  <path d="M362 566C477 520 586 526 682 607" fill="none" stroke="#657078" stroke-linecap="round" stroke-width="30" opacity=".4"/>
+  <path d="M348 592C401 675 437 747 401 826" fill="none" stroke="#657078" stroke-linecap="round" stroke-width="30" opacity=".38"/>
+  <path d="M397 526C493 449 588 370 713 272c44-34 84-40 126-20" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="76"/>
+  <path d="M397 526C493 449 588 370 713 272c44-34 84-40 126-20" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-width="14" opacity=".88"/>
+  <path d="M338 453c-26 42-20 92 21 123 39 30 102 32 145 3 48-31 60-92 30-136-29-43-82-52-131-40-35 8-52 25-65 50Z" fill="#c8f36a"/>
+  <circle cx="334" cy="438" r="15" fill="#8fae4d" opacity=".8"/>
+  <circle cx="682" cy="607" r="15" fill="#69747b" opacity=".72"/>
+  <circle cx="401" cy="826" r="15" fill="#69747b" opacity=".65"/>
+  <circle cx="412" cy="234" r="15" fill="#69747b" opacity=".7"/>
+  <circle cx="842" cy="252" r="53" fill="#dfe8ee"/>
+  <circle cx="842" cy="252" r="20" fill="#121416"/>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Adaptive Terrain</title>
+  <desc id="desc">A living slime mold finds and reinforces a short channel between two resources while longer routes fade around obstacles.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M172 512C270 372 342 224 500 212c116-9 176 35 316 26" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="24" opacity=".42"/>
+  <path d="M172 512C281 672 354 820 512 811c137-8 188-89 304-190" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="24" opacity=".4"/>
+  <path d="M172 512c82 0 137 0 196-2 77-3 112-69 172-75 78-8 92 74 158 80 70 6 109-11 143-26" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="68"/>
+  <path d="M172 512c82 0 137 0 196-2 77-3 112-69 172-75 78-8 92 74 158 80 70 6 109-11 143-26" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-width="13" opacity=".88"/>
+  <path d="M370 302c24 22 40 52 41 86M514 675c33 21 62 31 96 33M649 298c-16 21-25 44-28 68" fill="none" stroke="#4f5861" stroke-linecap="round" stroke-width="18" opacity=".62"/>
+  <circle cx="398" cy="287" r="73" fill="#242a2f" stroke="#4f5861" stroke-width="18"/>
+  <rect x="490" y="424" width="172" height="112" rx="56" fill="#242a2f" stroke="#4f5861" stroke-width="18"/>
+  <circle cx="680" cy="705" r="76" fill="#242a2f" stroke="#4f5861" stroke-width="18"/>
+  <path d="M111 512c0-38 26-65 61-65 37 0 57 28 57 65s-20 65-57 65c-35 0-61-27-61-65Z" fill="#c8f36a"/>
+  <circle cx="172" cy="512" r="19" fill="#121416"/>
+  <circle cx="858" cy="486" r="53" fill="#dfe8ee"/>
+  <circle cx="858" cy="486" r="20" fill="#121416"/>
+</svg>

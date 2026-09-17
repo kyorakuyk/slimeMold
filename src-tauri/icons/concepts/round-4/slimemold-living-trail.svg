@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Living Trail</title>
+  <desc id="desc">A compact living slime mold leaves a fading probe and reinforces one efficient trail to a nutrient source.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M193 684C277 423 507 301 839 350" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="23" stroke-dasharray="8 18" opacity=".46"/>
+  <path d="M193 684C330 722 447 688 518 574c56-90 120-159 319-211" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="82"/>
+  <path d="M193 684C330 722 447 688 518 574c56-90 120-159 319-211" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="13" opacity=".88"/>
+  <path d="M169 640c-1-35 12-62 38-84" fill="none" stroke="#8ca84d" stroke-linecap="round" stroke-width="20" opacity=".82"/>
+  <path d="M119 741c-20-39 1-76 35-96 24-14 32-47 69-51 39-4 52 29 75 51 27 26 59 35 65 71 7 43-23 80-65 91-31 8-58-10-88-5-38 6-73-20-91-61Z" fill="#c8f36a"/>
+  <circle cx="193" cy="684" r="18" fill="#121416"/>
+  <circle cx="837" cy="363" r="51" fill="#dfe8ee"/>
+  <circle cx="837" cy="363" r="20" fill="#121416"/>
+</svg>

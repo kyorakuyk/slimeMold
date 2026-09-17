@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Line Spark</title>
+  <desc id="desc">A restrained original rounded-line mark with an offset center, controlled asymmetry and a slight growth bias.</desc>
+  <g fill="none" stroke="#b56f4f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M496 467C475 406 470 331 478 235" stroke-width="66"/>
+    <path d="M522 468C566 414 628 363 731 325" stroke-width="74"/>
+    <path d="M549 493C632 482 721 495 814 532" stroke-width="61"/>
+    <path d="M548 526C603 576 648 636 680 731" stroke-width="57"/>
+    <path d="M514 550C516 629 497 708 444 797" stroke-width="68"/>
+    <path d="M480 536C413 548 334 578 238 626" stroke-width="56"/>
+    <path d="M463 505C421 483 382 448 352 395" stroke-width="44" opacity=".66"/>
+  </g>
+</svg>

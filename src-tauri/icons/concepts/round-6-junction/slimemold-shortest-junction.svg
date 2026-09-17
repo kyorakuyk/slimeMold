@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Shortest Junction</title>
+  <desc id="desc">A living junction tries two outputs, retracts the weak lower probe and reinforces the shorter upper route to a target.</desc>
+  <defs>
+    <radialGradient id="plasma" cx="28%" cy="22%" r="80%">
+      <stop offset="0" stop-color="#f1ffd1"/>
+      <stop offset="0.3" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#6e8d3d"/>
+    </radialGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eaffaa"/>
+      <stop offset="0.52" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#8bb247"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#101416"/>
+  <path d="M94 836 818 202 950 836 190 974Z" fill="#1b2327"/>
+  <path d="M94 836 818 202M190 974 818 202M950 836 818 202" fill="none" stroke="#445057" stroke-linecap="round" stroke-width="11" opacity=".48"/>
+  <path d="M115 846Q481 724 932 548M158 920Q512 798 944 662" fill="none" stroke="#445057" stroke-linecap="round" stroke-width="8" opacity=".32"/>
+  <path d="M307 512C365 512 402 502 438 507" fill="none" stroke="#2a78a4" stroke-linecap="round" stroke-width="36" opacity=".94"/>
+  <path d="M577 469C633 422 680 368 732 346" fill="none" stroke="#63803b" stroke-linecap="round" stroke-width="88" opacity=".82" transform="translate(0 21)"/>
+  <path d="M577 469C633 422 680 368 732 346" fill="none" stroke="url(#route)" stroke-linecap="round" stroke-width="72"/>
+  <path d="M577 469C633 422 680 368 732 346" fill="none" stroke="#f5ffd9" stroke-linecap="round" stroke-width="10" opacity=".92"/>
+  <path d="M577 554C620 584 648 609 669 632" fill="none" stroke="#6c777e" stroke-linecap="round" stroke-width="30" stroke-dasharray="7 22" opacity=".58"/>
+  <path d="M576 554C602 573 617 585 631 595" fill="none" stroke="#a1abb0" stroke-linecap="round" stroke-width="12" stroke-dasharray="4 18" opacity=".44"/>
+  <circle cx="674" cy="636" r="9" fill="#9ba6ab" opacity=".35"/>
+  <rect x="132" y="446" width="180" height="148" rx="54" fill="#0a0d0e" opacity=".86" transform="translate(0 18)"/>
+  <rect x="132" y="430" width="180" height="148" rx="54" fill="#f5f7fa"/>
+  <path d="M188 504h66" stroke="#c4d0d7" stroke-linecap="round" stroke-width="16"/>
+  <path d="M421 463C436 433 471 423 503 438C537 420 574 444 585 475C613 493 608 535 585 555C576 587 541 602 509 588C478 604 438 583 428 550C404 528 402 490 421 463Z" fill="#5f7d38" transform="translate(0 21)"/>
+  <path d="M421 463C436 433 471 423 503 438C537 420 574 444 585 475C613 493 608 535 585 555C576 587 541 602 509 588C478 604 438 583 428 550C404 528 402 490 421 463Z" fill="url(#plasma)"/>
+  <path d="M450 470C476 445 509 442 540 457M449 549C478 568 518 567 547 547" fill="none" stroke="#f1ffd1" stroke-linecap="round" stroke-width="12" opacity=".62"/>
+  <circle cx="510" cy="512" r="36" fill="#2997d4"/>
+  <circle cx="510" cy="512" r="13" fill="#12202a"/>
+  <rect x="728" y="276" width="158" height="158" rx="51" fill="#253039" stroke="#b4e1fb" stroke-width="21"/>
+  <circle cx="807" cy="355" r="23" fill="#f2f8fb"/>
+  <rect x="736" y="596" width="146" height="146" rx="48" fill="#252b2f" stroke="#69757d" stroke-width="15" opacity=".44"/>
+  <circle cx="809" cy="669" r="18" fill="#a8b2b7" opacity=".42"/>
+</svg>

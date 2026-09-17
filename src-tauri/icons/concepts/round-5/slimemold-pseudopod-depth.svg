@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Pseudopod Depth</title>
+  <desc id="desc">A foreground slime mold sends searching pseudopods into depth, retracting weak probes while a strong tendril reaches a distant nutrient.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#101315"/>
+  <path d="M152 836 844 226 974 835 233 1024Z" fill="#1a2023"/>
+  <path d="M152 836 844 226M233 1024 844 226M974 835 844 226" fill="none" stroke="#3b454b" stroke-width="12" opacity=".48"/>
+  <path d="M360 625C415 511 430 370 384 263" fill="none" stroke="#5f6a71" stroke-linecap="round" stroke-width="32" stroke-dasharray="7 18" opacity=".46"/>
+  <path d="M378 653C505 632 617 681 694 764" fill="none" stroke="#5f6a71" stroke-linecap="round" stroke-width="32" stroke-dasharray="7 18" opacity=".42"/>
+  <path d="M380 603C487 517 584 430 707 309c46-45 88-58 135-43" fill="none" stroke="#668238" stroke-linecap="round" stroke-width="112" opacity=".7" transform="translate(0 20)"/>
+  <path d="M380 603C487 517 584 430 707 309c46-45 88-58 135-43" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="88"/>
+  <path d="M380 603C487 517 584 430 707 309c46-45 88-58 135-43" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="13" opacity=".9"/>
+  <path d="M288 576c-32 43-27 99 15 139 48 46 132 49 183 9 56-44 63-117 18-168-41-46-107-54-166-30-22 9-38 25-50 50Z" fill="#6d8a3d" transform="translate(0 19)"/>
+  <path d="M288 557c-32 43-27 99 15 139 48 46 132 49 183 9 56-44 63-117 18-168-41-46-107-54-166-30-22 9-38 25-50 50Z" fill="#c8f36a"/>
+  <circle cx="384" cy="263" r="17" fill="#6b757c"/>
+  <circle cx="694" cy="764" r="17" fill="#6b757c"/>
+  <circle cx="852" cy="266" r="47" fill="#dfe8ee"/>
+  <circle cx="852" cy="266" r="18" fill="#101315"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Trail</title>
+  <desc id="desc">A compact living trail that retracts a longer route and keeps one efficient path between two sources.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M193 680C276 408 513 296 844 362" fill="none" stroke="#59636c" stroke-linecap="round" stroke-width="25" opacity=".48"/>
+  <path d="M193 680C349 720 449 675 514 568c58-95 108-159 330-206" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="78"/>
+  <path d="M252 672c74 21 126 14 182-18" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-width="18" opacity=".9"/>
+  <path d="M124 724c-16-39 5-75 36-94 24-15 31-46 68-50 39-4 51 29 72 50 25 25 58 34 63 70 6 45-27 80-69 88-31 6-58-11-88-7-38 5-69-19-82-57Z" fill="#c8f36a"/>
+  <circle cx="193" cy="680" r="18" fill="#121416"/>
+  <circle cx="844" cy="362" r="50" fill="#dfe8ee"/>
+  <circle cx="844" cy="362" r="20" fill="#121416"/>
+</svg>
