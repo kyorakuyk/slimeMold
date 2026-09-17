@@ -321,7 +321,7 @@ function AgentSection() {
         )}
       </section>
       {/* 全屏撑满，让 AgentPanel 内部 flex/min-h-0 正确建立滚动约束（智能体列表 + 编辑表单各自滚动） */}
-      <div className="h-full min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1">
         <AgentPanel embedded />
       </div>
     </div>

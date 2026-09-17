@@ -2747,3 +2747,19 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run test`：127 test files / 1099 tests passed；
 - 当前运行中的 Tauri 窗口通过 WebView accessibility read-back 确认设置→智能体页面仍可打开；未输入凭据、未修改全局 Antigravity 配置；
 - 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。
+
+### 7.123 修复 AgentPanel 高度链断裂导致的 footer 裁切
+
+- 复现确认：截图中 Agent 列表的五条记录可见，但“按供应商预设新建…”及编辑区禁用/删除操作不可见；仅给列表添加 `overflow-y-auto` 未建立有效 viewport。
+- 根因：`SettingsCenter → AgentSection` 的嵌入容器是 block wrapper，而 `AgentPanel` 的 `inner` 只有 `flex-1`、没有 `h-full`，导致 `AgentsTab` 高度按内容计算，滚动区和 footer 被外层 `overflow-hidden` 裁切。
+- 修复：AgentPanel inner 增加 `h-full`；SettingsCenter 的 AgentPanel wrapper 改为 `flex min-h-0 flex-1`，让高度约束沿 `SettingsCenter → AgentSection → AgentPanel → AgentsTab → ul` 连续传递。
+- GUI read-back：fresh Tauri build 中左侧“按供应商预设新建…”可见；选中 Ollama Agent 后，右侧“禁用”和“删除此智能体”均位于底部操作栏且可见。当前仅 5 条 Agent，列表内容未超过 viewport，因此没有滚动需求；超过 viewport 时由真实 `ul` 的 `overflow-y-auto` 滚动，footer 位于滚动区外。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1026 keys 对齐；
+- `npm run test`：127 test files / 1099 tests passed；
+- `git diff --check`：通过；
+- 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。

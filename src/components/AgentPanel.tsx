@@ -33,7 +33,7 @@ export default function AgentPanel({ onClose, embedded = false, variant = 'cente
   const [tab, setTab] = useState<'agents' | 'roles'>('agents');
 
   const inner = (
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center border-b border-line px-3">
         <button
           className={`px-3 py-3 text-[13px] font-medium transition-colors ${
