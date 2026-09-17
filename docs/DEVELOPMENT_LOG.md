@@ -2841,3 +2841,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
 - 独立 reviewer 复审发现 DeliveryReceipt 结构校验和 Rust 特殊 allowlist 的 fail-closed 缺口；已增加严格 receipt shape/Acceptance/failedChecks/outputHash/files 校验，并为主仓库特殊分支补充 `args[0] == git` 回归；修复后 targeted 与全量质量门重新通过；
 - 没有 push、merge、Cleanup；Antigravity E2E、Browser Use managed backend 和历史 commit 重写仍未验证。
+
+### 7.128 已批准 Worker CleanupReceipt 与 Worktree/Branch 删除闭合
+
+- 延续 `7.127` 的同一 disposable fixture；用户明确批准的范围仅为 attempt 2 的 Worktree `D:/Temp/sm-tauri2-recovery-v2-174611-workers/w-92fbfecb4bff7a8f8aca59dd` 和 branch `worker/w-92fbfecb4bff7a8f8aca59dd`。没有扩展到主仓库、Delivery destination、其他审计 fixture、push、merge 或历史 commit。
+- 通过真实 Tauri WebView 进入编排详情，点击“批准清理”后执行“执行清理”；native confirmation dialog 再次显示并核对了精确 path、branch 和 revision，随后确认。该 GUI/native 对话框观察未单独归档，属于 manual observation；最终结论以 durable side-effect、event、ProjectFile、Filesystem/Git 和 Delivery read-back 为准。没有使用裸 `git worktree remove`、`git branch -D` 或手工删除绕过 host authority。
+- disposable fixture 的 side-effect journal 新增且仅有一条 `kind=worktree-cleanup` receipt：`cleanup:task-execution:run-141182f4-5590-444a-8987-4fd2f419bfeb:task-create-worker-marker:attempt-2:receipt`；`status=receipt`、`recovery=skip`、`outcome=succeeded`、`outputHash=hxymq3c`，并绑定当前 Run/Task/Execution/Attempt、target 和 inputHash。
+- 实际删除 read-back：Worktree 目录不存在；`worker/w-92fbfecb4bff7a8f8aca59dd` branch ref 不存在；主仓库 `git worktree list --porcelain` 不再列出该 Worktree。ProjectFile 为 `worktreeStatus=cleaned`、`cleanupStatus=cleaned` 并保存 receipt ID。
+- event stream 共 27 条，末尾为唯一的 `TaskCleaned`（`sequence=27`）；UI 显示“清理提案: 已清理”，没有再次 Cleanup 按钮。清理后的 proposal 会投影为 terminal `cleaned`，执行器对已清理 proposal 直接拒绝重复执行；没有产生第二 receipt 或第二 `TaskCleaned`。
+- Delivery destination `D:/Temp/slimemold-delivery-dest-20260917-181500/docs/WORKER_E2E_OK.txt` 仍存在且内容未变；attempt 1 的 `unknown/needs-user` worker-execution side-effect、失败事件和失败 provenance 均保留；attempt 2 的 4 条 Host Evidence 与唯一的 `passed=true` Acceptance 记录保留。完整字段、原始路径和边界见 `docs/reports/WORKER_CLEANUP_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；本轮仍有多处 dynamic/static import warning，主 bundle `index-CIus0AVq.js` 为 `1,145.37 kB`，保留 Vite 大 chunk warning；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `npm run test`：`127 test files / 1101 tests passed`；包含 Cleanup proposal/receipt 定向测试；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`51 passed / 0 failed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍报告 `src-tauri/src/lib.rs` 的既有格式漂移；本轮没有全文件重排；
+- 当前仍不宣称 Antigravity E2E、Browser Use managed backend 或历史 commit 重写已验证；没有 push 或 merge。
