@@ -1498,7 +1498,11 @@ export default function App() {
         <InterventionModal />
         {dragActive && (
           <div
-            className="pointer-events-none fixed inset-0 z-fatal flex items-center justify-center bg-black/70 backdrop-blur-[2px]"
+            className="pointer-events-none fixed inset-0 z-fatal flex items-center justify-center"
+            style={{
+              background: 'color-mix(in srgb, var(--sm-bg) 70%, transparent)',
+              backdropFilter: 'blur(2px)',
+            }}
           >
             <div
               className="rounded-lg border-2 border-dashed border-sm-accent px-10 py-8 text-center text-[15px] font-semibold text-sm-accent"

@@ -98,7 +98,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
     return ordered;
-  }, [defs, query]);
+  }, [defs, query, roleFilter]);
 
   // 项目内已打包的子图，按名称/描述参与同一个搜索框过滤
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
@@ -322,7 +322,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       </div>
       {dragGhost && (
         <div
-          className="pointer-events-none fixed z-overlay rounded border border-sm-line bg-sm-bg px-2 py-1 text-[12px] text-sm-ink shadow-lg"
+          className="pointer-events-none fixed z-drag rounded border border-sm-line bg-sm-bg px-2 py-1 text-[12px] text-sm-ink shadow-lg"
           style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
         >
           {dragGhost.label}

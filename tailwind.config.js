@@ -28,6 +28,7 @@ export default {
         dropdown: '100',
         modal: '200',
         overlay: '300',
+        drag: '10000',
         fatal: '99999',
       },
       fontFamily: {
