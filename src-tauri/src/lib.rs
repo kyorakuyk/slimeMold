@@ -26,6 +26,9 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 mod antigravity;
 mod codex;
 mod event_store;
+mod fs_guard;
+
+use fs_guard::{path_compare_key, path_is_same_or_child};
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
@@ -802,29 +805,6 @@ pub(crate) fn assert_registered_worktree(cwd: &str) -> Result<PathBuf, String> {
             Err("Codex Worker 拒绝在主仓库根执行，必须使用已登记 worktree".into())
         }
     }
-}
-
-fn path_compare_key(raw: &str) -> String {
-    let mut normalized = raw.replace('\\', "/").trim_end_matches('/').to_string();
-    if let Some(unc) = normalized.strip_prefix("//?/UNC/") {
-        normalized = format!("//{unc}");
-    } else if let Some(verbatim) = normalized.strip_prefix("//?/") {
-        normalized = verbatim.to_string();
-    }
-    #[cfg(windows)]
-    {
-        normalized.to_ascii_lowercase()
-    }
-    #[cfg(not(windows))]
-    {
-        normalized
-    }
-}
-
-fn path_is_same_or_child(path: &std::path::Path, root: &std::path::Path) -> bool {
-    let path = path_compare_key(&path.to_string_lossy());
-    let root = path_compare_key(&root.to_string_lossy());
-    path == root || path.starts_with(&(root + "/"))
 }
 
 /// 主仓库根允许的 git 子命令（严格只读 / worktree 生命周期管理）。

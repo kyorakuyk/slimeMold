@@ -2862,3 +2862,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`51 passed / 0 failed`；
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍报告 `src-tauri/src/lib.rs` 的既有格式漂移；本轮没有全文件重排；
 - 当前仍不宣称 Antigravity E2E、Browser Use managed backend 或历史 commit 重写已验证；没有 push 或 merge。
+
+### 7.129 Rust fs_guard 纯路径身份 helper 第一条垂直切片
+
+- 在 checkpoint `f783427` 后开始本轮；保留无关未跟踪 `.workbuddy/memory/2026-09-17.md`，没有修改凭据、`DEV_STATE`、Tauri command 注册、worktree authorization 或 cleanup authority。
+- 将 `path_compare_key` 与 `path_is_same_or_child` 从 `src-tauri/src/lib.rs` 移入新 module `src-tauri/src/fs_guard.rs`；`lib.rs` 继续通过 `pub(crate)` helper 使用同一实现，避免复制第二套路径边界规则。
+- 先写 `path_compare_key` 的失败测试并实际看到 RED；随后完成 module 实现，新增 trailing separator、Windows verbatim UNC 和 component-boundary 测试。命令参数 lexical guard、canonicalize guard、`dev_strip_verbatim` 和 `DEV_STATE` 仍留在 `lib.rs`，作为后续独立 slice，不在本轮混拆。
+
+验证结果：
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib fs_guard::tests`：`3 passed / 0 failed`；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`54 passed / 0 failed`；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `rustfmt --edition 2021 --check src-tauri/src/fs_guard.rs`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import warning 和 `index-CIus0AVq.js` `1,145.37 kB` 大 chunk warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `npm run test`：`127 test files / 1101 tests passed`；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
+- 当前 slice 未涉及 GUI、credentials、endpoint/vault、push、merge 或 Cleanup；下一条 fs_guard slice 需继续保持单一边界并重新建立 reviewer/verified 证据。
