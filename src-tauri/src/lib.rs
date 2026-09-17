@@ -674,8 +674,8 @@ struct DevExecResult {
 
 /// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
 const DEV_ALLOWED_CMDS: &[&str] = &[
-    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "node", "tsc", "vitest", "tsx",
-    "npm",
+    "pwd", "echo", "ls", "cat", "find", "head", "tail", "grep", "git", "node", "tsc", "vitest",
+    "tsx", "npm",
 ];
 
 /// Windows 下 PATH 中的 npm/tsx/tsc/vitest 通常是 `.cmd` shim，
@@ -1253,7 +1253,8 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
     if args.first().map(|value| value.as_str()) == Some("git")
         && args.len() == 5
         && args[1] == "update-ref"
-        && args[2] == "-d" {
+        && args[2] == "-d"
+    {
         return repo.is_some_and(|path| {
             let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
                 return false;
@@ -1774,15 +1775,15 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                     && rest[1] == "--target"
                     && rest[2] == "es2020"
                     && rest[3..].len() <= 20
-                    && rest[3..].iter().all(|arg| {
-                        !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)
-                    }))
+                    && rest[3..]
+                        .iter()
+                        .all(|arg| !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)))
                 || (rest.len() >= 2
                     && rest[0] == "--noEmit"
                     && rest[1..].len() <= 20
-                    && rest[1..].iter().all(|arg| {
-                        !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)
-                    }))
+                    && rest[1..]
+                        .iter()
+                        .all(|arg| !arg.starts_with('-') && dev_arg_path_lexically_safe(arg)))
         }
         "vitest" => rest_eq(&["run"]),
         "tsx" => {
@@ -1883,7 +1884,10 @@ fn command_for_dev_exec(args: &[String]) -> std::process::Command {
     let program = resolve_dev_exec_program(&args[0]);
     #[cfg(windows)]
     {
-        let extension = program.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase());
+        let extension = program
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
         if matches!(extension.as_deref(), Some("cmd" | "bat")) {
             let command_line = std::iter::once(program.display().to_string())
                 .chain(args[1..].iter().map(|arg| windows_cmd_arg(arg)))
@@ -1908,23 +1912,39 @@ fn command_for_dev_exec(args: &[String]) -> std::process::Command {
 fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecResult, String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_exec").map_err(|error| {
-        eprintln!("[dev_exec] session reject args={} cwd={} error={error}", args.join(" "), cwd);
+        eprintln!(
+            "[dev_exec] session reject args={} cwd={} error={error}",
+            args.join(" "),
+            cwd
+        );
         error
     })?;
     let operation_generation = generation;
     let kind = dev_cwd_kind(&cwd).map_err(|error| {
-        eprintln!("[dev_exec] cwd reject args={} cwd={} error={error}", args.join(" "), cwd);
+        eprintln!(
+            "[dev_exec] cwd reject args={} cwd={} error={error}",
+            args.join(" "),
+            cwd
+        );
         error
     })?;
     let canonical_cwd = match &kind {
         DevCwdKind::MainRepo => dev_abs_of(&cwd).map_err(|error| {
-            eprintln!("[dev_exec] main cwd resolve reject args={} cwd={} error={error}", args.join(" "), cwd);
+            eprintln!(
+                "[dev_exec] main cwd resolve reject args={} cwd={} error={error}",
+                args.join(" "),
+                cwd
+            );
             error
         })?,
         DevCwdKind::Worktree(path) => path.clone(),
     };
     if !dev_exec_allowed_at(&kind, &args, Some(&canonical_cwd)) {
-        eprintln!("[dev_exec] command reject args={} cwd={}", args.join(" "), canonical_cwd.display());
+        eprintln!(
+            "[dev_exec] command reject args={} cwd={}",
+            args.join(" "),
+            canonical_cwd.display()
+        );
         return Err(format!(
             "dev_exec: 命令在当前 cwd 不被允许：{}",
             args.join(" ")
@@ -1939,11 +1959,19 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     };
     // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
     dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args).map_err(|error| {
-        eprintln!("[dev_exec] path reject args={} cwd={} error={error}", args.join(" "), canonical_cwd.display());
+        eprintln!(
+            "[dev_exec] path reject args={} cwd={} error={error}",
+            args.join(" "),
+            canonical_cwd.display()
+        );
         error
     })?;
     let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args).map_err(|error| {
-        eprintln!("[dev_exec] argument canonicalization reject args={} cwd={} error={error}", args.join(" "), canonical_cwd.display());
+        eprintln!(
+            "[dev_exec] argument canonicalization reject args={} cwd={} error={error}",
+            args.join(" "),
+            canonical_cwd.display()
+        );
         error
     })?;
     let mut cmd = command_for_dev_exec(&spawn_args);
@@ -1955,8 +1983,17 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     let result = match run_with_timeout(&mut cmd, Duration::from_secs(30)) {
         Ok(result) => result,
         Err(error) => {
-            eprintln!("[dev_exec] {} cwd={} error={}", args.join(" "), canonical_cwd.display(), error);
-            DevExecResult { stdout: String::new(), stderr: error, code: -1 }
+            eprintln!(
+                "[dev_exec] {} cwd={} error={}",
+                args.join(" "),
+                canonical_cwd.display(),
+                error
+            );
+            DevExecResult {
+                stdout: String::new(),
+                stderr: error,
+                code: -1,
+            }
         }
     };
     if DEV_STATE.lock().unwrap().generation != operation_generation {
@@ -3274,10 +3311,16 @@ mod dev_exec_tests {
             &sv(&["git", "diff", "--name-only"])
         ));
         assert!(dev_main_repo_git_allowed(&sv(&[
-            "git", "show-ref", "--verify", "refs/heads/worker/w-0123abcd"
+            "git",
+            "show-ref",
+            "--verify",
+            "refs/heads/worker/w-0123abcd"
         ])));
         assert!(!dev_main_repo_git_allowed(&sv(&[
-            "git", "show-ref", "--verify", "refs/heads/main"
+            "git",
+            "show-ref",
+            "--verify",
+            "refs/heads/main"
         ])));
         assert!(
             !dev_main_repo_git_allowed(&sv(&["git", "diff", "--output=outside.patch"])),
@@ -3397,22 +3440,37 @@ mod dev_exec_tests {
     #[test]
     fn worktree_code_checks_allow_scoped_relative_files_only() {
         assert!(dev_worktree_cmd_allowed(&sv(&[
-            "node", "--check", "src/main.js"
+            "node",
+            "--check",
+            "src/main.js"
         ])));
         assert!(dev_worktree_cmd_allowed(&sv(&[
-            "tsc", "--noEmit", "src/game/engine.ts", "src/game/rules.ts"
+            "tsc",
+            "--noEmit",
+            "src/game/engine.ts",
+            "src/game/rules.ts"
         ])));
         assert!(dev_worktree_cmd_allowed(&sv(&[
-            "tsc", "--noEmit", "--target", "es2020", "src/game/engine.ts"
+            "tsc",
+            "--noEmit",
+            "--target",
+            "es2020",
+            "src/game/engine.ts"
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
-            "node", "--check", "C:/outside/main.js"
+            "node",
+            "--check",
+            "C:/outside/main.js"
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
-            "tsc", "--noEmit", "../outside.ts"
+            "tsc",
+            "--noEmit",
+            "../outside.ts"
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
-            "node", "--check", "--eval=process.exit(1)"
+            "node",
+            "--check",
+            "--eval=process.exit(1)"
         ])));
     }
 
