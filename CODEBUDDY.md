@@ -14,7 +14,9 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - **查看 Tauri 环境**：`npx tauri info`（Rust 工具链、平台、依赖版本）
 - **预览生产构建**：`npm run preview`
 
-> 注：项目**没有测试框架与测试脚本**，不要臆造 `npm test`。`npm run headless` 是唯一的脚本化执行入口。
+> 注：项目**使用 vitest 作为测试框架**（`npm test` = `vitest run`，配置见 `vitest.config.ts`），`src/` 下有 100+ 个 `*.test.ts(x)`；Rust 侧用 `cd src-tauri && cargo test`。改动后至少跑 `npm test` 与 `npx tsc --noEmit`。另有 `npm run headless <file>` 作为无 UI 的工作流脚本化执行入口。
+>
+> ⚠️ 本文档部分章节已落后于代码：`src/engine/` 已细分为数十个文件；`LeftSidebar` 已改为 `SideRail` + `SidePanel`；`src-tauri/src/` 已新增 `codex.rs` / `antigravity.rs` / `event_store.rs` / `fs_guard.rs`。**以代码和 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md`（ADR）为准**；发现冲突时以代码为准，并顺手更新本文档。
 
 ## 高层架构
 
@@ -118,3 +120,17 @@ SlimeMold 是一个类 ComfyUI 的**节点式 Agent 工作流**可视化编辑�
 - `arch_index.md` 记录对象→目录/文件/行号；「被引用处」按需用 ripgrep 现查，不入索引。
 - `summary.md` 按 `decision_id` 关联并滚动压缩早期日志段到 `archive/`。
 - 全部本地，**禁止上传云端**；不应将其内容视为项目运行时的一部分，也勿在构建/提交时特殊处理（除非用户要求）。
+
+## AI 协作行为约束（Working Agreements）
+
+任何 AI 代理在本仓库工作时必须遵守以下规则（这些规则优先于"最佳实践"直觉）：
+
+1. **不引入新的架构风格**：不新建 repository / service layer / manager / event bus 等抽象，不新增依赖。**已有实现方式即使不是最优，也优先保持一致**——二流但统一的架构，强过五套最佳实践混在一起。
+2. **优先复用现有模块**：动手前先搜索是否已有同类能力；新建文件前说明为什么不能复用。禁止出现 `xxx2.ts` / `xxx_new.ts` / `xxx_final.ts` 这类命名。
+3. **最小变更**：一次只完成当前任务；不顺手重构、不顺手重排格式、不顺手改名、不修改无关文件。
+4. **垂直切片**：重构按边界逐个进行（一次只搬一个职责），并在同一次改动里补齐该部分的行为测试；**不要发起整体重构**。
+5. **必须走既有通道**：HTTP 一律走 `src/platform/env.ts` 的 `httpFetch`；节点/连线/参数的任何修改走 `workflowStore` 的方法，禁止直接 mutate（否则 `projectDirty` 与持久化失效）。Rust 侧不可逆操作必须经既有 gate，不得为"让测试通过"放宽白名单。
+6. **提交完成定义**：每次提交必须满足其一——①附带真实 Evidence（测试/构建/真机验收的实际输出），或②显式标注 `behavior-unverified` 并说明阻塞原因。**禁止把"跑过一次"写成"已验证"**；失败与被拦截的尝试也要如实记录。
+7. **质量门**：前端改动跑 `npm test` + `npx tsc --noEmit`；涉及 Rust 跑 `cargo test` + `cargo check`。失败必须如实记录，不得静默跳过或删测试。
+8. **提交前确认未扫入本地产物**：不要用 `git add -A` 无差别提交。`.workbuddy/`、`.hermes/plans/`、`docs/log/raw/`、`docs/log/codex-conversations/`、`token` 一律不进仓库。
+9. **不确定就问**：若任务需要改变已确认的架构决策，先提出，不要静默改写。
