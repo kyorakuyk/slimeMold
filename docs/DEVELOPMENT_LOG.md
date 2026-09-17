@@ -2763,3 +2763,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run test`：127 test files / 1099 tests passed；
 - `git diff --check`：通过；
 - 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。
+
+### 7.124 当前 HEAD Verified Closure：真实 Tauri Host Acceptance 成功
+
+- 本轮代码基线为 `f2b03db`，修复前一轮独立审查发现的主题文件拖拽遮罩和 NodePalette drag ghost 层级回归；同时修正 NodePalette 角色筛选的 `useMemo` 依赖。
+- 在仓库外创建并保留三个 disposable Git fixture。第一份 fixture 的 `runs/history.json` 保留了最早的“worktree 成功→patch preimage 缺失”尝试，随后同路径重复尝试在 `worktree.create` 因路径占用失败；第二份真实 Tauri workflow 暴露 protected `tests/**` 拒绝；没有绕过策略、伪造 Evidence/Acceptance 或删除失败 worktree。
+- 第三次 fixture `D:/Temp/slimemold-verified-closure-20260917-142509` 通过真实 `slime-mold.exe` WebView、GUI 项目菜单和 workflow 按钮执行：run 3 为 `success`；真实创建并保留 Worker worktree；结构化 patch 只修改两个 `src/components` 文件；build/test/diff 全部成功；Host Acceptance 为 `passed: true`、`failedChecks: []`、`changedProtectedPaths: []`。
+- 四条 host Evidence 和 Acceptance record 已写入 fixture 的 `.slimemold/evidence/host.jsonl`、`.slimemold/acceptance/records.jsonl`；完整路径、Evidence ID、Acceptance ID 和失败尝试记录见 `docs/reports/VERIFIED_CLOSURE_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：1026 keys aligned；
+- `npm run test`：127 test files / 1099 tests passed；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：50 passed / 0 failed；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，输出仅涉及本轮未修改的既有 `src-tauri/src/lib.rs` 格式漂移；
+- 真实 Tauri Host Acceptance：`acc-mu55bxiz-0522b09e`，通过；
+- 同一 Tauri WebView 的受控 DOM smoke read-back（原始 JSON 未单独归档，属于未归档的 manual observation）证明 dark/light veil 随 `--sm-bg` 变化、veil 为 `z-index=99999`、NodePalette drag ghost 为 `z-index=10000`；主题已恢复，未释放文件或执行 workflow；
+- 本轮不宣称 Antigravity E2E、WorkerQueue Restart/Recovery、Delivery/Cleanup、Browser Use managed backend 或历史 121 个 `(unverified)` commit 已逐笔 verified；没有 push、merge 或 Cleanup。
