@@ -4,7 +4,9 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
+import type { SideEffectRecord } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { hashContent } from '../dev/capabilities';
 import { auditWorkerRunConsistency } from './workerRunConsistency';
 
 const run: WorkerRunQueueState = {
@@ -112,6 +114,100 @@ describe('worker run consistency audit', () => {
       ok: true,
       issues: [],
       projection: { runs: { 'run-1': { status: 'succeeded' } } },
+    });
+  });
+
+  it('accepts a delivery receipt without treating it as worker execution', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const delivery: SideEffectRecord = {
+      idempotencyKey: 'artifact-delivery:candidate-1',
+      kind: 'artifact-delivery',
+      target: 'D:/Temp/delivery-destination',
+      inputHash: 'delivery-input-hash',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: 'artifact-delivery:candidate-1:receipt',
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outputHash: hashContent('docs/WORKER_E2E_OK.txt\u0000hmarker'),
+        outcome: 'succeeded',
+        acceptanceId: 'acceptance-1',
+        artifactCandidateId: 'candidate-1',
+        approvalId: 'approval-1',
+        files: [{ path: 'docs/WORKER_E2E_OK.txt', contentHash: 'hmarker' }],
+      },
+    };
+    expect(auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [delivery],
+    })).toMatchObject({ ok: true, issues: [] });
+
+    const forged: SideEffectRecord = {
+      ...delivery,
+      receipt: { ...delivery.receipt!, acceptanceId: 'acceptance-other' },
+    };
+    const forgedResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [forged],
+    });
+    expect(forgedResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'side-effect-lineage-drift' }),
+      ]),
+    });
+
+    const malformed: SideEffectRecord = {
+      ...delivery,
+      receipt: {
+        ...delivery.receipt!,
+        artifactCandidateId: 'candidate-other',
+        approvalId: '',
+        outputHash: '',
+        files: [{ path: '../escape.txt', contentHash: '' }],
+      },
+    };
+    const malformedResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [malformed],
+    });
+    expect(malformedResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'side-effect-lineage-drift' }),
+      ]),
+    });
+
+    const failedAcceptanceResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [{ ...acceptance1, failedChecks: ['compile'] }],
+      sideEffects: [delivery],
+    });
+    expect(failedAcceptanceResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'acceptance-lineage-drift' }),
+      ]),
     });
   });
 

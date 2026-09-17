@@ -1153,38 +1153,6 @@ fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
     })
 }
 
-fn pending_worker_branch_any(repo: &std::path::Path, branch: &str) -> bool {
-    let Some(name) = branch.strip_prefix("worker/") else {
-        return false;
-    };
-    if !worker_name_is_valid(name) {
-        return false;
-    }
-    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
-    let state = DEV_STATE.lock().unwrap();
-    state.pending_worktrees.iter().any(|pending| {
-        pending.generation == state.generation
-            && pending.branch == branch
-            && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
-    })
-}
-
-fn orphan_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
-    let Some(name) = branch.strip_prefix("worker/") else {
-        return false;
-    };
-    if !worker_name_is_valid(name) {
-        return false;
-    }
-    let target = std::path::PathBuf::from(format!("{}-workers/{name}", repo.to_string_lossy()));
-    let state = DEV_STATE.lock().unwrap();
-    state.orphan_worktrees.iter().any(|orphan| {
-        orphan.generation == state.generation
-            && orphan.branch == branch
-            && path_compare_key(&orphan.path) == path_compare_key(&target.to_string_lossy())
-    })
-}
-
 fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &str) {
     if !main_repo_worktree_target_is_valid(repo, raw_path, branch) {
         return;
@@ -1263,15 +1231,9 @@ fn registered_worker_target(repo: &std::path::Path, raw_path: &str) -> bool {
         .any(|path| path_compare_key(path) == path_compare_key(&target.to_string_lossy()))
 }
 
-fn registered_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
-    let Some(name) = branch.strip_prefix("worker/") else {
-        return false;
-    };
-    registered_worker_target(repo, &format!("{}-workers/{name}", repo.to_string_lossy()))
-}
-
 fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>) -> bool {
-    if matches!(args.get(1).map(|value| value.as_str()), Some("worktree"))
+    if args.first().map(|value| value.as_str()) == Some("git")
+        && matches!(args.get(1).map(|value| value.as_str()), Some("worktree"))
         && matches!(
             args.get(2).map(|value| value.as_str()),
             Some("add") | Some("remove") | Some("lock") | Some("unlock")
@@ -1293,21 +1255,25 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             }
         });
     }
-    if args.len() == 5
+    if args.first().map(|value| value.as_str()) == Some("git")
+        && args.len() == 5
         && args[1] == "rev-parse"
         && args[2] == "--verify"
         && args[3] == "--end-of-options"
     {
-        return repo.is_some_and(|path| {
-            let Some(branch) = worker_branch_from_tip_arg(&args[4]) else {
-                return false;
-            };
-            registered_worker_branch(path, branch)
-                || pending_worker_branch_any(path, branch)
-                || orphan_worker_branch(path, branch)
+        let Some(branch) = worker_branch_from_tip_arg(&args[4]) else {
+            return false;
+        };
+        return repo.is_some_and(|_path| {
+            // Branch-tip lookup is read-only and is needed after a process restart,
+            // when the live worktree has no current-host pending lease yet.
+            worker_branch_is_valid(branch)
         });
     }
-    if args.len() == 5 && args[1] == "update-ref" && args[2] == "-d" {
+    if args.first().map(|value| value.as_str()) == Some("git")
+        && args.len() == 5
+        && args[1] == "update-ref"
+        && args[2] == "-d" {
         return repo.is_some_and(|path| {
             let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
                 return false;
@@ -2225,6 +2191,70 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result<(), String> {
+    let _operation_guard = lock_dev_operation();
+    assert_session_generation(generation, "dev_restore_worktree")?;
+    if !worker_branch_is_valid(&branch) {
+        return Err("dev_restore_worktree: branch 无效".to_string());
+    }
+    let (base, registration_generation) = {
+        let state = DEV_STATE.lock().unwrap();
+        (
+            state
+                .base_repo
+                .clone()
+                .ok_or_else(|| "dev_restore_worktree: 尚未初始化主仓库根".to_string())?,
+            state.generation,
+        )
+    };
+    let base_path = std::path::PathBuf::from(&base);
+    let canon = dev_abs_of(&path)?;
+    if !canon.is_dir() {
+        return Err(format!(
+            "dev_restore_worktree: worktree 不存在或不是目录：{path}"
+        ));
+    }
+    let canonical_path = canon.to_string_lossy().to_string();
+    if !main_repo_worktree_target_is_valid(&base_path, &canonical_path, &branch) {
+        return Err("dev_restore_worktree: 路径/分支不属于受控 Worker 根".into());
+    }
+    if !git_worktree_matches(&base_path, &canon, &branch)? {
+        return Err("dev_restore_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base.as_str())
+        || state.generation != registration_generation
+    {
+        return Err("dev_restore_worktree: 主仓库 session 在校验期间发生变化".into());
+    }
+    if !state
+        .worktrees
+        .iter()
+        .any(|worktree| path_compare_key(worktree) == path_compare_key(&canonical_path))
+    {
+        state.worktrees.push(canonical_path.clone());
+    }
+    if !state.registrations.iter().any(|registered| {
+        registered_worktree_identity_matches(
+            registered,
+            registration_generation,
+            &canonical_path,
+            &branch,
+        )
+    }) {
+        state.registrations.push(RegisteredWorktree {
+            generation: registration_generation,
+            path: canonical_path.clone(),
+            branch,
+        });
+    }
+    state
+        .pending_worktrees
+        .retain(|pending| path_compare_key(&pending.path) != path_compare_key(&canonical_path));
+    Ok(())
+}
+
+#[tauri::command]
 fn dev_register_orphan_worktree(
     path: String,
     branch: String,
@@ -2843,6 +2873,7 @@ pub fn run() {
             dev_init_session,
             dev_clear_session,
             dev_register_worktree,
+            dev_restore_worktree,
             dev_register_orphan_worktree,
             dev_approve_cleanup,
             dev_cleanup_worktree,
@@ -4234,6 +4265,61 @@ mod dev_exec_tests {
             st.worktrees.retain(|w| w != &wt_str);
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn main_repo_allows_scoped_worker_branch_revision_probe_without_pending_lease() {
+        let args = sv(&[
+            "git",
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "refs/heads/worker/restored-worker^{commit}",
+        ]);
+        assert!(dev_main_repo_git_allowed_at(
+            &args,
+            Some(std::path::Path::new("D:/fixture")),
+        ));
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&[
+                "node",
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "refs/heads/worker/restored-worker^{commit}",
+            ]),
+            Some(std::path::Path::new("D:/fixture")),
+        ));
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&[
+                "tsx",
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "refs/heads/worker/restored-worker^{commit}",
+            ]),
+            Some(std::path::Path::new("D:/fixture")),
+        ));
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&[
+                "git",
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "refs/heads/main^{commit}",
+            ]),
+            Some(std::path::Path::new("D:/fixture")),
+        ));
+        assert!(!dev_main_repo_git_allowed_at(
+            &sv(&[
+                "git",
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "refs/heads/worker/../escape^{commit}",
+            ]),
+            Some(std::path::Path::new("D:/fixture")),
+        ));
     }
 
     #[test]

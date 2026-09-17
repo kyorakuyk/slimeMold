@@ -2819,3 +2819,25 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - marker 文件与 Git worktree read-back：通过；
 - 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；没有 push、merge 或 Cleanup；
 - 本轮不宣称 Delivery/Cleanup、Antigravity E2E、Browser Use managed backend 或历史 commit 重写。
+
+### 7.127 DeliveryReceipt 与 Restart 后 Cleanup Proposal Read-back
+
+- 本轮从 checkpoint `5b874de` 继续，使用 `D:/Temp/sm-tauri2-recovery-v2-174611`；Delivery 实际执行来源保留为 `ab74d13`，没有修改生产项目，没有 push、merge 或 Cleanup。
+- 对 attempt 2 的 accepted marker 生成 `ArtifactCandidate`、用户批准和真实 DeliveryReceipt：destination 为 `D:/Temp/slimemold-delivery-dest-20260917-181500`，receipt=`artifact-delivery:candidate-tauri-worker-attempt-2-20260917:receipt`，file=`docs/WORKER_E2E_OK.txt`，source/content hash=`h16fxepq`，outputHash=`h8tva18`，outcome=`succeeded`。
+- destination 文件真实 read-back 成功；同一 candidate/approval 第二次调用返回相同 receipt，side-effect journal status=`ok`，artifact-delivery entry 为 `receipt/skip`。
+- 发现并修复三个断链：artifact-delivery 被 Worker consistency audit 误判为 worker-execution；重启后 live Worktree 缺少 Rust restore registry 入口；Rust 主仓库只读 gate 未允许重启后安全的 Worker branch-tip probe。新增 `dev_restore_worktree`、Delivery audit 分支和 branch revision regression。
+- 真实 Tauri 重启、产品项目入口和编排详情 read-back 显示：`清理提案: 已通过绑定检查，等待宿主批准 · acc-mu5cm748-b24a9dda`，并显示“批准清理”；proposal 已绑定当前 Run/Task/Execution/Attempt、Worktree、branch revision、state signature、Acceptance 和 stage。
+- 本轮没有点击批准清理，没有生成 CleanupReceipt，没有删除 Worktree/branch；因此闭合的是 DeliveryReceipt + Cleanup proposal ready，不是 CleanupReceipt/删除成功。完整记录见 `docs/reports/WORKER_DELIVERY_CLEANUP_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 Vite chunk/dynamic-import warning 保留；
+- `npm run i18n:check`：1026 keys 对齐；
+- `npm run test`：127 test files / 1101 tests passed；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：51 passed / 0 failed；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
+- 独立 reviewer 复审发现 DeliveryReceipt 结构校验和 Rust 特殊 allowlist 的 fail-closed 缺口；已增加严格 receipt shape/Acceptance/failedChecks/outputHash/files 校验，并为主仓库特殊分支补充 `args[0] == git` 回归；修复后 targeted 与全量质量门重新通过；
+- 没有 push、merge、Cleanup；Antigravity E2E、Browser Use managed backend 和历史 commit 重写仍未验证。

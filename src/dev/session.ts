@@ -371,14 +371,16 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
 
   // Tauri 下：worktree 创建/清理同步 Rust 登记态（dev_register_worktree / dev_unregister_worktree），
   // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
-  const syncRust = async (fn: 'register' | 'register-orphan' | 'unregister', path: string, branch?: string): Promise<void> => {
+  const syncRust = async (fn: 'register' | 'restore' | 'register-orphan' | 'unregister', path: string, branch?: string): Promise<void> => {
     if (env !== 'tauri') return;
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke(fn === 'register'
       ? 'dev_register_worktree'
-      : fn === 'register-orphan'
-        ? 'dev_register_orphan_worktree'
-        : 'dev_unregister_worktree', {
+      : fn === 'restore'
+        ? 'dev_restore_worktree'
+        : fn === 'register-orphan'
+          ? 'dev_register_orphan_worktree'
+          : 'dev_unregister_worktree', {
       path,
       generation: hostGeneration,
       ...(branch ? { branch } : {}),
@@ -430,7 +432,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       }
     }
     try {
-      await syncRust('register', info.path);
+      await syncRust('restore', info.path, info.branch);
       registeredWorktrees.add(info.id);
       return true;
     } catch {

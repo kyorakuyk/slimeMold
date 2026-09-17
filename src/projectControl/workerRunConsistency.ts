@@ -12,6 +12,7 @@ import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import { workerCleanupEffectKey } from './workerCleanup';
+import { isArtifactDeliveryReceiptShape } from './workerDelivery';
 
 export type WorkerRunConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -417,6 +418,7 @@ export function auditWorkerRunConsistency(input: {
         const acceptance = input.acceptances.find((record) => record.acceptanceId === task.acceptanceId);
         const acceptanceScopeMatches = !!acceptance
           && acceptance.passed === (task.status === 'succeeded')
+          && (task.status !== 'succeeded' || acceptance.failedChecks.length === 0)
           && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
           && acceptance.stageId === expectedAcceptanceStageId
           && (!task.worktreePath
@@ -471,6 +473,39 @@ export function auditWorkerRunConsistency(input: {
           `side-effect 未绑定当前 Run/Task/Attempt：${effect.idempotencyKey}`,
           { runId: run.runId, taskId: effectTaskId },
         ));
+      }
+      const isArtifactDelivery = effect.kind === 'artifact-delivery'
+        || effect.idempotencyKey.startsWith('artifact-delivery:');
+      if (isArtifactDelivery) {
+        const candidateId = effect.idempotencyKey.startsWith('artifact-delivery:')
+          ? effect.idempotencyKey.slice('artifact-delivery:'.length)
+          : '';
+        const acceptance = input.acceptances?.find((record) => record.acceptanceId === task.acceptanceId);
+        const deliveryReceiptMatches = !!task.acceptanceId
+          && !!acceptance
+          && acceptance.passed
+          && acceptance.failedChecks.length === 0
+          && isArtifactDeliveryReceiptShape(effect, {
+            candidateId,
+            acceptanceId: task.acceptanceId,
+          });
+        const deliveryUnknownMatches = effect.status === 'unknown'
+          && effect.recovery === 'needs-user'
+          && effect.receipt === undefined
+          && effect.kind === 'artifact-delivery'
+          && !!candidateId
+          && effect.target.trim().length > 0
+          && effect.inputHash.trim().length > 0;
+        const deliveryLifecycleMatches = currentLineageMatches
+          && (deliveryReceiptMatches || deliveryUnknownMatches);
+        if (!deliveryLifecycleMatches) {
+          issues.push(issue(
+            'side-effect-lineage-drift',
+            `artifact-delivery receipt 与当前任务不一致：${effect.idempotencyKey}`,
+            { runId: run.runId, taskId: effectTaskId },
+          ));
+        }
+        continue;
       }
       const isCleanup = effect.idempotencyKey.startsWith('cleanup:');
       const expectedTarget = isCleanup ? task.worktreePath : task.worktreeId;

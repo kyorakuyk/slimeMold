@@ -145,6 +145,60 @@ function deliveryOutputHash(files: readonly ArtifactDeliveryReceiptFile[]): stri
   return hashContent(files.map((file) => `${file.path}\u0000${file.contentHash}`).join('\n'));
 }
 
+export function isArtifactDeliveryReceiptShape(
+  record: SideEffectRecord,
+  expected: {
+    candidateId: string;
+    acceptanceId: string;
+    destinationRoot?: string;
+  },
+): boolean {
+  if (
+    record.kind !== 'artifact-delivery'
+    || record.idempotencyKey !== `artifact-delivery:${expected.candidateId}`
+    || record.status !== 'receipt'
+    || record.recovery !== 'skip'
+    || !record.target.trim()
+    || !record.inputHash.trim()
+    || (expected.destinationRoot !== undefined
+      && pathComparisonKey(record.target) !== pathComparisonKey(expected.destinationRoot))
+  ) return false;
+  const receipt = record.receipt;
+  if (
+    !receipt
+    || receipt.receiptId !== `${record.idempotencyKey}:receipt`
+    || receipt.outcome !== 'succeeded'
+    || receipt.acceptanceId !== expected.acceptanceId
+    || receipt.artifactCandidateId !== expected.candidateId
+    || typeof receipt.approvalId !== 'string'
+    || !receipt.approvalId.trim()
+    || typeof receipt.outputHash !== 'string'
+    || !receipt.outputHash.trim()
+    || !Array.isArray(receipt.files)
+    || receipt.files.length === 0
+  ) return false;
+  const seen = new Set<string>();
+  const files: ArtifactDeliveryReceiptFile[] = [];
+  try {
+    for (const file of receipt.files) {
+      if (
+        !file
+        || typeof file.path !== 'string'
+        || typeof file.contentHash !== 'string'
+        || !file.contentHash.trim()
+      ) return false;
+      assertSafeProjectRelativePath(file.path);
+      const key = file.path.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      files.push({ path: file.path, contentHash: file.contentHash });
+    }
+  } catch {
+    return false;
+  }
+  return receipt.outputHash === deliveryOutputHash(files);
+}
+
 function deliveryEffectKey(candidateId: string): string {
   return `artifact-delivery:${candidateId}`;
 }
@@ -407,6 +461,13 @@ function receiptFromRecord(
   approval: ArtifactDeliveryApproval,
 ): ArtifactDeliveryReceipt {
   const stored = record.receipt;
+  if (!isArtifactDeliveryReceiptShape(record, {
+    candidateId: candidate.candidateId,
+    acceptanceId: candidate.acceptanceId,
+    destinationRoot: approval.destinationRoot,
+  })) {
+    throw new Error('DeliveryReceipt 结构或 lineage 无效');
+  }
   assertDeliveryRecordIdentity(record, candidate, approval);
   if (
     !stored
