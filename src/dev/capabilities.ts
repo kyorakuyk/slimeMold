@@ -140,6 +140,8 @@ interface CommandRule {
   cmd: string;
   args?: string[];
   argsPrefix?: string[];
+  /** 前缀参数使用 startsWith 匹配（例如 tsx 的 scripts/ 脚本路径）。 */
+  argsPrefixStartsWith?: string[];
   /** 前缀后允许的额外参数个数下限/上限 */
   minExtraArgs?: number;
   allowExtraArgs?: number;
@@ -163,11 +165,15 @@ function matchesRule(rule: CommandRule, cmd: string[]): boolean {
     // 精确匹配：参数完全一致才允许
     if (args.length !== rule.args.length) return false;
     if (!rule.args.every((a, i) => args[i] === a)) return false;
-  } else if (rule.argsPrefix) {
+  } else if (rule.argsPrefix || rule.argsPrefixStartsWith) {
     // 前缀匹配 + 额外参数个数上下限 + 禁 '-' 开头额外参数
-    if (args.length < rule.argsPrefix.length) return false;
-    if (!rule.argsPrefix.every((a, i) => args[i] === a)) return false;
-    const extra = args.slice(rule.argsPrefix.length);
+    const exactPrefix = rule.argsPrefix ?? [];
+    const startsWithPrefix = rule.argsPrefixStartsWith ?? [];
+    const prefixLength = exactPrefix.length || startsWithPrefix.length;
+    if (args.length < prefixLength) return false;
+    if (exactPrefix.length && !exactPrefix.every((a, i) => args[i] === a)) return false;
+    if (startsWithPrefix.length && !startsWithPrefix.every((a, i) => args[i].startsWith(a))) return false;
+    const extra = args.slice(prefixLength);
     const minExtra = rule.minExtraArgs ?? 0;
     const maxExtra = rule.allowExtraArgs ?? 0;
     if (extra.length < minExtra || extra.length > maxExtra) return false;
@@ -212,17 +218,17 @@ function assertSafeGitRevision(baseRef: string): void {
 const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'pwd' },
   { cmd: 'echo' },
-  { cmd: 'ls', denyAbsPath: true, pathArgs: true },
-  { cmd: 'cat', denyAbsPath: true, pathArgs: true },
+  { cmd: 'ls', denyAbsPath: true, denyArgPatterns: [/^-/], pathArgs: true },
+  { cmd: 'cat', denyAbsPath: true, denyArgPatterns: [/^-/], pathArgs: true },
   {
     cmd: 'find',
     denyAbsPath: true,
     pathArgs: true,
-    denyArgs: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-L', '-H'],
-    denyArgPrefixes: ['-fprint', '-fls'],
+    denyArgs: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-L', '-H', '-follow', '-files0-from', '--files0-from'],
+    denyArgPrefixes: ['-fprint', '-fls', '-files0-from=', '--files0-from='],
   },
-  { cmd: 'head', denyAbsPath: true, pathArgs: true },
-  { cmd: 'tail', denyAbsPath: true, pathArgs: true },
+  { cmd: 'head', denyAbsPath: true, denyArgPatterns: [/^-/], pathArgs: true },
+  { cmd: 'tail', denyAbsPath: true, denyArgPatterns: [/^-/], pathArgs: true },
   // grep：跳过首参 pattern（pathArgsFrom=1），后续文件路径参数走守卫
   {
     cmd: 'grep',
@@ -233,7 +239,7 @@ const DEFAULT_SHELL_RULES: CommandRule[] = [
       '--file', '--exclude-from',
     ],
     denyArgPrefixes: ['--directories=', '--file=', '--exclude-from=', '-f'],
-    denyArgPatterns: [/^-[^-]*f/],
+    denyArgPatterns: [/^-[^-]*[rR]/, /^-[^-]*f/],
   },
   { cmd: 'git', args: ['status', '--porcelain'] },
   { cmd: 'git', args: ['status', '--short'] },
@@ -269,7 +275,7 @@ const DEFAULT_TEST_RULES: CommandRule[] = [
   { cmd: 'node', argsPrefix: ['--check'], minExtraArgs: 1, allowExtraArgs: 1, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 1 },
   { cmd: 'tsc', args: ['-b'] },
   { cmd: 'vitest', args: ['run'] },
-  { cmd: 'tsx', argsPrefix: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true },
+  { cmd: 'tsx', argsPrefixStartsWith: ['scripts/'], allowExtraArgs: 2, disallowDashExtra: true, pathArgs: true, pathArgsFrom: 0 },
   { cmd: 'npm', args: ['run', 'test'] },
   { cmd: 'npm', args: ['run', 'build'] },
   { cmd: 'npm', args: ['run', 'i18n:check'] },
@@ -288,6 +294,7 @@ export interface NodeDevDeps {
 /** 已登记 worktree 的只读注册表（P0 审计：能力层据此校验 cwd 属于已登记 worktree）。 */
 export interface WorktreeRegistry {
   isTracked(cwd: string): boolean;
+  isTrackedOrChild?(cwd: string): boolean;
 }
 
 /** 快速内容哈希（非密码用途，仅证据指纹）。 */
@@ -336,7 +343,9 @@ export function createNodeDevService(
    */
   const assertCwd = (cwd: string): void => {
     if (!registry) throw new Error('未配置 worktree registry：拒绝执行开发能力');
-    if (!registry.isTracked(cwd)) throw new Error(`工作目录不属于已登记的 worktree：${cwd}`);
+    if (!registry.isTracked(cwd) && !registry.isTrackedOrChild?.(cwd)) {
+      throw new Error(`工作目录不属于已登记的 worktree：${cwd}`);
+    }
   };
 
   /**
@@ -367,8 +376,58 @@ export function createNodeDevService(
     return abs;
   };
 
+  const isSafeGitDiffRevision = (value: string): boolean => {
+    if (value === 'HEAD') return true;
+    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) return true;
+    if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) return true;
+    if (/^(?:feature|bugfix|hotfix|release|worker)\/[A-Za-z0-9._/-]+$/.test(value)) {
+      const leaf = value.split('/').at(-1) ?? '';
+      if (leaf && !leaf.includes('.')) return true;
+    }
+    return false;
+  };
+
+  const assertCommandOperandGrammar = (cmd: string[]): void => {
+    const [name, ...args] = cmd;
+    if (name === 'ls' || name === 'cat' || name === 'head' || name === 'tail') {
+      if (args.some((argument) => argument.startsWith('-'))) {
+        throw new Error(`${name} 不接受命令选项`);
+      }
+    }
+    if (name === 'grep') {
+      let options = true;
+      let patternIndex = -1;
+      for (let index = 0; index < args.length; index += 1) {
+        const argument = args[index];
+        if (options && argument === '--') {
+          options = false;
+          continue;
+        }
+        if (options && argument.startsWith('-')) continue;
+        patternIndex = index;
+        break;
+      }
+      if (patternIndex < 0) throw new Error('grep 缺少 pattern');
+      for (const argument of args.slice(patternIndex + 1)) {
+        if (argument.startsWith('-') || argument.includes('*') || argument.includes('?')) {
+          throw new Error('grep 文件 operand 不接受选项或通配符');
+        }
+      }
+    }
+    if (name === 'git' && args[0] === 'diff' && args.length === 2) {
+      const operand = args[1];
+      if (
+        !isSafeGitDiffRevision(operand)
+        && (operand === '.'
+          || operand.startsWith('/')
+          || operand.startsWith('\\')
+          || operand.split(/[\\/]/).includes('..'))
+      ) {
+        throw new Error('git diff operand 逃逸拒绝');
+      }
+    }
+  };
   /**
-   * P1 审计修复：shell 命令路径参数统一守卫。
    * 命令白名单只约束「命令形式」，`cat src/orchestrator/run.ts` 这类相对路径参数仍可绕过
    * codeRead/codePatch 的路径策略读取受保护代码。对 pathArgs/pathArgsFrom 命令，从
    * fromIndex（默认 0）起的每个参数：
@@ -377,7 +436,12 @@ export function createNodeDevService(
    * - 转规范化相对路径后 assertPathAllowed（allowedPaths 内 + 非 protected）；
    * - '.'（worktree 根）放行。
    */
-  const guardPathArgs = async (args: string[], ctx: DevContext, fromIndex = 0): Promise<void> => {
+  const guardPathArgs = async (
+    args: string[],
+    ctx: DevContext,
+    fromIndex = 0,
+    allowProtected = false,
+  ): Promise<void> => {
     const activePolicy = ctx.pathPolicy ?? policy;
     for (const a of args.slice(fromIndex)) {
       if (!a || a.startsWith('-')) continue;
@@ -385,7 +449,13 @@ export function createNodeDevService(
       const abs = await resolveP(ctx.cwd, a);
       const rel = await relP(ctx.cwd, abs);
       if (rel === '.' || rel === '') continue;
-      assertPathAllowed(activePolicy, rel);
+      if (allowProtected) {
+        if (!isPathAllowed(activePolicy, rel)) {
+          throw new Error(`路径不在允许范围内（allowedPaths）：${rel}`);
+        }
+      } else {
+        assertPathAllowed(activePolicy, rel);
+      }
     }
   };
 
@@ -426,7 +496,38 @@ export function createNodeDevService(
       if (cmd.length === 0 || !rule) {
         return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
       }
-      const fromIndex = rule.pathArgsFrom ?? (rule.pathArgs ? 0 : -1);
+      try {
+        assertCommandOperandGrammar(cmd);
+      } catch (e) {
+        return {
+          exitCode: -1,
+          stdout: '',
+          stderr: `命令参数不安全：${e instanceof Error ? e.message : String(e)}`,
+          durationMs: 0,
+        };
+      }
+      let fromIndex = rule.pathArgsFrom ?? (rule.pathArgs ? 0 : -1);
+      if (rule.cmd === 'grep') {
+        const grepArgs = cmd.slice(1);
+        let options = true;
+        const patternIndex = grepArgs.findIndex((argument) => {
+          if (options && argument === '--') {
+            options = false;
+            return false;
+          }
+          if (options && argument.startsWith('-')) return false;
+          return true;
+        });
+        fromIndex = patternIndex >= 0 ? patternIndex + 1 : grepArgs.length;
+      }
+      if (
+        rule.cmd === 'git'
+        && cmd.length === 3
+        && cmd[1] === 'diff'
+        && !isSafeGitDiffRevision(cmd[2])
+      ) {
+        fromIndex = 1;
+      }
       if (fromIndex >= 0) {
         try {
           await guardPathArgs(cmd.slice(1), ctx, fromIndex);
@@ -451,7 +552,12 @@ export function createNodeDevService(
       const testRule = findMatchingRule(DEFAULT_TEST_RULES, cmd);
       if (testRule?.pathArgs) {
         try {
-          await guardPathArgs(cmd.slice(1), ctx, testRule.pathArgsFrom ?? 0);
+          await guardPathArgs(
+            cmd.slice(1),
+            ctx,
+            testRule.pathArgsFrom ?? 0,
+            testRule.cmd === 'tsx',
+          );
         } catch (e) {
           return {
             exitCode: -1,

@@ -15,9 +15,9 @@ export interface SelfDevelopmentPolicy {
   autoPush: boolean;
 }
 
-/** 初期配置（H4 文档 §5）：开发节点只允许 src/components、src/nodes、tests、docs。 */
+/** 初期配置（H4 文档 §5）：开发节点允许受控读取/执行 src/components、src/nodes、tests、docs、scripts。 */
 export const defaultDevPolicy: SelfDevelopmentPolicy = {
-  allowedPaths: ['src/components', 'src/nodes', 'tests', 'docs'],
+  allowedPaths: ['src/components', 'src/nodes', 'tests', 'docs', 'scripts'],
   protectedPaths: [
     'package.json',
     'package-lock.json',

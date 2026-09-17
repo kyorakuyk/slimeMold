@@ -116,6 +116,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['git', 'log', '--oneline', '-n', '5', '--output=/tmp/pwn'],
       ['npm', 'run', 'test', '--', '--coverage'],
       ['npm', 'run', 'build', '--extra'],
+      ['cat', '--files0-from=/outside/list'],
+      ['head', '--files0-from=/outside/list'],
       ['cat', '/etc/passwd'],
       ['cat', '../secret'],
       // P1：shell 路径参数越权——相对路径读受保护代码
@@ -130,19 +132,30 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['grep', '--recursive', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--directories=recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '-d', 'recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['git', 'diff', '/etc/passwd'],
+      ['git', 'diff', '../outside'],
+      ['git', 'diff', 'src/orchestrator/run.ts'],
       ['grep', '--file=/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--exclude-from=/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '-f/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--file=C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--exclude-from=C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
-      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--', '--', '/etc/passwd'],
+      ['grep', 'needle', '*.tsx'],
+      ['find', '-follow', 'src/components', '-name', '*.ts'],
+      ['find', '-files0-from=/outside/list', '-name', '*.ts'],
+      ['find', '--files0-from=/outside/list', '-name', '*.ts'],
+      ['grep', '-ir', 'secret', 'src/components/A.tsx'],
+      ['grep', '-iR', 'secret', 'src/components/A.tsx'],
+      ['git', 'diff', 'package.json'],
+      ['git', 'diff', '.'],
       ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
       // 命令被白名单拒 或 路径参数被越权守卫拒
-      expect(r.stderr).toMatch(/白名单|路径参数越权/);
+      expect(r.stderr).toMatch(/白名单|路径参数越权|命令参数不安全/);
     }
     // 只读命令放行（allowed 内路径可通过 shell 读取）
     const ok1 = await svc.shellRun(['git', 'status', '--porcelain'], ctx);
@@ -156,6 +169,18 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     // grep 允许路径在 allowed 内
     const ok5 = await svc.shellRun(['grep', 'secret', 'src/components/A.tsx'], ctx);
     expect(ok5.exitCode).toBe(0);
+    const grepWithOptions = await svc.shellRun(['grep', '-n', '--', 'secret', 'src/components/A.tsx'], ctx);
+    expect(grepWithOptions.exitCode).toBe(0);
+    const findWithDepthOption = await svc.shellRun(['find', '-P', 'src/components', '-name', '*.tsx'], ctx);
+    expect(findWithDepthOption.exitCode).toBe(0);
+    const gitHead = await svc.shellRun(['git', 'diff', 'HEAD'], ctx);
+    expect(gitHead.exitCode).toBe(0);
+    const gitSha = await svc.shellRun(['git', 'diff', '0123456789abcdef0123456789abcdef01234567'], ctx);
+    expect(gitSha.exitCode).toBe(0);
+    const gitRoot = await svc.shellRun(['git', 'diff', '.'], ctx);
+    expect(gitRoot.exitCode).toBe(-1);
+    const tsx = await svc.testRun(['tsx', 'scripts/headless-run.ts'], ctx);
+    expect(tsx.exitCode).toBe(0);
     // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
     const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
     expect(t1.exitCode).toBe(0);

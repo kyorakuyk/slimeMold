@@ -180,6 +180,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(() => m.assertTracked('/repo')).toThrow(/不属于任何已登记的 worktree/);
     // P1（审计）：resolve 规范化后，折返路径也判定为同一 worktree（合法放行，防误拒）
     expect(m.isTracked('/wt/t1/../t1')).toBe(true);
+    expect(m.isTrackedOrChild('/wt/t1/src')).toBe(true);
+    expect(m.isTrackedOrChild('/wt/t1-sibling/src')).toBe(false);
     expect(m.isTracked('C:/wt/t1')).toBe(false); // 不同盘符 ≠ 匹配
 
     // 审计确认门：未显式 confirm 拒绝清理（防误删未提交改动）

@@ -1,5 +1,8 @@
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { runCommand, sanitizeEnv } from './node-run';
+import { resolveInside, runCommand, sanitizeEnv } from './node-run';
 
 describe('sanitizeEnv', () => {
   it('removes credential families while preserving execution essentials', () => {
@@ -53,5 +56,20 @@ describe('sanitizeEnv', () => {
     const result = await runCommand('npm', ['--version'], process.cwd(), 30_000);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toMatch(/\d+\.\d+/);
+  });
+});
+
+describe('resolveInside', () => {
+  it('rejects a broken final symlink instead of treating it as a new file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slimemold-resolve-'));
+    try {
+      await symlink(join(root, 'missing-target.txt'), join(root, 'broken-link.txt'));
+      await expect(resolveInside(root, 'broken-link.txt')).rejects.toThrow(/broken symlink/);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== 'EPERM' && code !== 'EACCES') throw error;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

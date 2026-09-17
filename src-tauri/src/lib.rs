@@ -28,7 +28,10 @@ mod codex;
 mod event_store;
 mod fs_guard;
 
-use fs_guard::{path_compare_key, path_is_same_or_child};
+use fs_guard::{
+    canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
+    dev_exec_validate_paths, is_git_diff_revision, path_compare_key, path_is_same_or_child,
+};
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
 static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
@@ -789,7 +792,7 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         // could make an outside directory appear to be the old worktree.
         let norm_wc = dev_strip_verbatim(std::path::Path::new(w));
         if path_is_same_or_child(&norm_canon, &norm_wc) {
-            return Ok(DevCwdKind::Worktree(norm_wc));
+            return Ok(DevCwdKind::Worktree(norm_canon));
         }
     }
     Err(format!(
@@ -900,6 +903,28 @@ fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
         && worker_name_is_valid(name)
 }
 
+fn worker_target_is_safe_for_existing_operation(repo: &std::path::Path, raw_path: &str) -> bool {
+    if !worker_target_is_valid(repo, raw_path) {
+        return false;
+    }
+    let target = repo_target_path(repo, raw_path);
+    let worker_root = worker_root_path(repo);
+    let Ok(real_root) = worker_root.canonicalize() else {
+        return false;
+    };
+    let Ok(metadata) = fs::symlink_metadata(&target) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        return false;
+    }
+    let Ok(real_target) = target.canonicalize() else {
+        return false;
+    };
+    path_compare_key(&real_target.to_string_lossy()) == path_compare_key(&target.to_string_lossy())
+        && path_is_same_or_child(&real_target, &real_root)
+}
+
 fn main_repo_worktree_target_is_valid(
     repo: &std::path::Path,
     raw_path: &str,
@@ -931,9 +956,11 @@ fn main_repo_worktree_args_are_valid(repo: &std::path::Path, args: &[String]) ->
             main_repo_worktree_target_is_valid(repo, &args[3], &args[5])
         }
         Some("remove") if args.len() == 5 && args[3] == "--force" => {
-            worker_target_is_valid(repo, &args[4])
+            worker_target_is_safe_for_existing_operation(repo, &args[4])
         }
-        Some("lock") | Some("unlock") if args.len() == 4 => worker_target_is_valid(repo, &args[3]),
+        Some("lock") | Some("unlock") if args.len() == 4 => {
+            worker_target_is_safe_for_existing_operation(repo, &args[3])
+        }
         _ => false,
     }
 }
@@ -1472,152 +1499,6 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResul
     })
 }
 
-/// worktree 内命令的文件路径参数**词法级**校验（纯函数，无 IO，可单测）。
-/// 拦截：绝对路径（POSIX `/`、Windows `C:\`、UNC `\\`）、`..` 逃逸、`~`、shell 元字符重定向。
-/// `*`/`?` 保留为直接 spawn 的 find/grep 模式操作数；Rust 不经过 shell，不会发生 shell 展开。
-/// 注意：词法校验不解析符号链接，symlink 逃逸由 dev_exec_validate_paths 的 canonicalize 层兜底。
-fn dev_arg_path_lexically_safe(arg: &str) -> bool {
-    if arg.is_empty() || arg == "." || arg == ".." {
-        return false;
-    }
-    let p = std::path::Path::new(arg);
-    // 绝对路径：POSIX 根 / Windows drive / UNC
-    if p.is_absolute() {
-        return false;
-    }
-    // Windows drive 前缀（如 `C:` / `C:\`）在 is_absolute 上未必为 true，需显式排除
-    let bytes = arg.as_bytes();
-    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        return false;
-    }
-    if arg.starts_with("\\\\") || arg.starts_with("//") {
-        return false;
-    }
-    // `..` 任意位置的父目录逃逸
-    if p.components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return false;
-    }
-    // 家目录展开符号
-    if arg == "~" || arg.starts_with("~/") || arg.starts_with("~\\") {
-        return false;
-    }
-    // shell 元字符（重定向 / 管道 / 命令拼接）——Command spawn 不经 shell，但保守拒绝
-    const META: &[char] = &['>', '<', '|', '&', ';', '`', '$', '\'', '"', '(', ')', ' '];
-    if arg.chars().any(|c| META.contains(&c)) {
-        return false;
-    }
-    true
-}
-
-/// dev_exec 实际 spawn 前，对**文件路径参数**做 canonicalize 校验（解析符号链接），
-/// 确认其规范化后路径仍落在 cwd（worktree 根）之内。防止通过 symlink 读取 worktree 外文件。
-/// 仅对带路径参数的只读文件命令（cat/head/tail/ls/grep/find/git diff/tsx）生效。
-/// 规则：不存在的路径（canonicalize 失败）按"词法已通过"放行——只读命令读不存在文件无害；
-/// 但若路径存在且 canonicalize 后逃出 cwd，则拒绝。
-fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
-    let name = args.first().map(|s| s.as_str());
-    // 每个待校验参数：与 cwd 拼接后 canonicalize，确认落在 cwd 内
-    let check = |arg: &str| -> Result<(), String> {
-        let wt_root = dev_strip_verbatim(std::path::Path::new(cwd));
-        let joined = wt_root.join(arg);
-        if let Ok(canon) = joined.canonicalize() {
-            let norm = dev_strip_verbatim(&canon);
-            if !path_is_same_or_child(&norm, &wt_root) {
-                return Err(format!("dev_exec: 参数路径逃逸出 worktree：{arg}"));
-            }
-        }
-        Ok(())
-    };
-    match name {
-        Some("cat") | Some("head") | Some("tail") => {
-            // 单个文件参数（如 cat src/a.ts）；多个参数合并读也是允许的，逐个校验
-            for a in args.iter().skip(1) {
-                if !a.starts_with('-') {
-                    check(a)?;
-                }
-            }
-        }
-        Some("ls") | Some("grep") => {
-            // 相对路径参数逐个校验（跳过 - 开头选项）
-            for a in args.iter().skip(1) {
-                if !a.starts_with('-') {
-                    check(a)?;
-                }
-            }
-        }
-        Some("find") => {
-            // find <根> [-options] —— 根若是相对路径（非 - 开头且非 .）则校验
-            if let Some(root) = args.get(1) {
-                if !root.starts_with('-') && root != "." {
-                    check(root)?;
-                }
-            }
-        }
-        Some("git") => {
-            // git diff <path>：最后一个非选项参数为路径
-            if args.get(1).map(|s| s.as_str()) == Some("diff") {
-                if let Some(path) = args.get(2) {
-                    if !path.starts_with('-') {
-                        check(path)?;
-                    }
-                }
-            }
-        }
-        Some("tsx") => {
-            // tsx scripts/xxx.ts：第一个参数为脚本路径
-            if let Some(script) = args.get(1) {
-                check(script)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn canonicalize_dev_exec_args(
-    cwd: &std::path::Path,
-    args: &[String],
-) -> Result<Vec<String>, String> {
-    let mut result = args.to_vec();
-    let mut replace_if_existing = |index: usize| -> Result<(), String> {
-        let Some(raw) = result.get(index).cloned() else {
-            return Ok(());
-        };
-        if raw.starts_with('-') || raw == "." {
-            return Ok(());
-        }
-        let joined = cwd.join(&raw);
-        if let Ok(canon) = joined.canonicalize() {
-            if !path_is_same_or_child(&canon, cwd) {
-                return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
-            }
-            result[index] = dev_strip_verbatim(&canon).to_string_lossy().to_string();
-        }
-        Ok(())
-    };
-    match args.first().map(|value| value.as_str()) {
-        Some("cat") | Some("head") | Some("tail") | Some("ls") => {
-            for index in 1..args.len() {
-                replace_if_existing(index)?;
-            }
-        }
-        Some("find") | Some("tsx") => replace_if_existing(1)?,
-        Some("git") if args.get(1).map(|value| value.as_str()) == Some("diff") => {
-            replace_if_existing(2)?;
-        }
-        Some("grep") => {
-            // DEFAULT_GREP_RULES 不接受 -e；第一个非 option 是 pattern，后续才是文件 operand。
-            for index in 2..args.len() {
-                replace_if_existing(index)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(result)
-}
-
 fn grep_option_is_safe(arg: &str) -> bool {
     matches!(
         arg,
@@ -1636,6 +1517,34 @@ fn grep_option_is_safe(arg: &str) -> bool {
             | "--fixed-strings"
             | "--invert-match"
     )
+}
+
+fn grep_args_are_safe(args: &[String]) -> bool {
+    let mut options = true;
+    let mut pattern_index = None;
+    for (index, argument) in args.iter().enumerate() {
+        if options && argument == "--" {
+            options = false;
+            continue;
+        }
+        if options && argument.starts_with('-') {
+            if !grep_option_is_safe(argument) {
+                return false;
+            }
+        } else {
+            pattern_index = Some(index);
+            break;
+        }
+    }
+    let Some(pattern_index) = pattern_index else {
+        return false;
+    };
+    args.iter().skip(pattern_index + 1).all(|argument| {
+        !argument.starts_with('-')
+            && !argument.contains('*')
+            && !argument.contains('?')
+            && dev_arg_path_lexically_safe(argument)
+    })
 }
 
 fn find_option_is_safe(arg: &str) -> bool {
@@ -1670,18 +1579,7 @@ fn find_option_is_safe(arg: &str) -> bool {
 /// 与前端 assertSafeGitRevision 对齐的 base revision 词法校验。
 /// 这里只允许作为 git diff 的 revision 操作数，不允许路径逃逸或 shell 语义。
 fn safe_git_revision_arg(arg: &str) -> bool {
-    let mut chars = arg.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    arg.chars().count() <= 128
-        && first.is_ascii_alphanumeric()
-        && arg
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
-        && !arg.contains("..")
-        && !arg.contains("//")
-        && !arg.ends_with('/')
+    arg.len() <= 128 && is_git_diff_revision(arg)
 }
 
 /// worktree 内允许的命令参数白名单（与前端 capabilities DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES
@@ -1694,15 +1592,13 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
     let rest = &args[1..];
     let rest_eq = |want: &[&str]| rest.iter().map(|s| s.as_str()).eq(want.iter().copied());
     match name {
-        // 只读查询命令（无写盘能力：pwd/echo/ls/cat/head/tail）；文件路径参数须词法安全
+        // 只读查询命令（无写盘能力：pwd/echo/ls/cat/head/tail）；路径参数须词法安全，
+        // 暂不接受命令选项，避免选项携带第二套外部文件输入协议（如 head --files0-from）。
         "pwd" => rest.is_empty(),
         "echo" => true, // 直接 spawn 无 shell 重定向，echo 仅输出，无害
-        "ls" | "cat" | "head" | "tail" => {
-            // 每个非选项参数都须为 worktree 内合法相对路径
-            rest.iter()
-                .filter(|a| !a.starts_with('-'))
-                .all(|a| dev_arg_path_lexically_safe(a))
-        }
+        "ls" | "cat" | "head" | "tail" => rest
+            .iter()
+            .all(|argument| !argument.starts_with('-') && dev_arg_path_lexically_safe(argument)),
         "find" => {
             !rest
                 .iter()
@@ -1711,19 +1607,18 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                     .iter()
                     .filter(|a| !a.starts_with('-'))
                     .all(|a| *a == "." || dev_arg_path_lexically_safe(a))
-                && match rest.first().map(|s| s.as_str()) {
+                && match rest
+                    .iter()
+                    .skip_while(|argument| matches!(argument.as_str(), "-P" | "-L" | "-H"))
+                    .next()
+                    .map(|value| value.as_str())
+                {
                     None | Some(".") => true,
                     Some(root) => dev_arg_path_lexically_safe(root),
                 }
         }
         // grep 只读；未知选项一律拒绝，避免 --file/--exclude-from 等外部文件输入。
-        "grep" => rest.iter().all(|a| {
-            if a.starts_with('-') {
-                grep_option_is_safe(a)
-            } else {
-                dev_arg_path_lexically_safe(a)
-            }
-        }),
+        "grep" => grep_args_are_safe(rest),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
         "git" => {
             rest_eq(&["status", "--porcelain"])
@@ -1740,8 +1635,13 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 // 且路径须词法安全（禁绝对路径 / .. / drive）
                 || (rest.len() == 2
                     && rest[0] == "diff"
+                    && is_git_diff_revision(&rest[1]))
+                || (rest.len() == 2
+                    && rest[0] == "diff"
+                    && !is_git_diff_revision(&rest[1])
                     && dev_arg_path_lexically_safe(&rest[1])
                     && !rest[1].starts_with('-')
+                    && rest[1] != "."
                     && !rest[1].contains("--output=")
                     && !rest[1].contains("--no-index")
                     && !rest[1].contains("--ext-diff"))
@@ -1793,7 +1693,9 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
                 && !rest[0].starts_with("scripts/../")
                 && dev_arg_path_lexically_safe(&rest[0])
                 && rest.len() <= 3
-                && !rest[1..].iter().any(|a| a.starts_with('-'))
+                && rest[1..]
+                    .iter()
+                    .all(|argument| !argument.starts_with('-') && dev_arg_shell_safe(argument))
         }
         "npm" => {
             rest_eq(&["run", "test"])
@@ -1880,8 +1782,42 @@ fn resolve_dev_exec_program(name: &str) -> std::path::PathBuf {
     from_path
 }
 
-fn command_for_dev_exec(args: &[String]) -> std::process::Command {
+#[cfg(windows)]
+fn trusted_windows_program(candidate: &std::path::Path) -> Option<std::path::PathBuf> {
+    let metadata = fs::symlink_metadata(candidate).ok()?;
+    if metadata.file_type().is_symlink() {
+        return None;
+    }
+    let canonical = candidate.canonicalize().ok()?;
+    (path_compare_key(&canonical.to_string_lossy())
+        == path_compare_key(&candidate.to_string_lossy()))
+    .then_some(canonical)
+}
+
+#[cfg(windows)]
+fn trusted_windows_comspec() -> Result<std::path::PathBuf, String> {
+    let candidates = [
+        std::env::var_os("ComSpec").map(std::path::PathBuf::from),
+        std::env::var_os("SystemRoot")
+            .map(|root| std::path::PathBuf::from(root).join("System32\\cmd.exe")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| {
+            trusted_windows_program(&candidate).filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("cmd.exe"))
+            })
+        })
+        .ok_or_else(|| "dev_exec: 找不到可信的 Windows ComSpec".to_string())
+}
+
+fn command_for_dev_exec(args: &[String]) -> Result<std::process::Command, String> {
     let program = resolve_dev_exec_program(&args[0]);
+    #[cfg(windows)]
+    let program = trusted_windows_program(&program)
+        .ok_or_else(|| format!("dev_exec: 命令未解析为可信绝对程序：{}", program.display()))?;
     #[cfg(windows)]
     {
         let extension = program
@@ -1889,18 +1825,20 @@ fn command_for_dev_exec(args: &[String]) -> std::process::Command {
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase());
         if matches!(extension.as_deref(), Some("cmd" | "bat")) {
-            let command_line = std::iter::once(program.display().to_string())
+            let command_line = std::iter::once(windows_cmd_arg(&program.display().to_string()))
                 .chain(args[1..].iter().map(|arg| windows_cmd_arg(arg)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let mut command = std::process::Command::new("cmd.exe");
-            command.args(["/D", "/C"]).arg(command_line);
-            return command;
+            use std::os::windows::process::CommandExt;
+            let mut command = std::process::Command::new(trusted_windows_comspec()?);
+            command.args(["/D", "/S", "/C"]);
+            command.raw_arg(format!("\"{command_line}\""));
+            return Ok(command);
         }
     }
     let mut command = std::process::Command::new(program);
     command.args(&args[1..]);
-    command
+    Ok(command)
 }
 
 /// H4 GUI 受控命令执行：
@@ -1974,7 +1912,50 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         );
         error
     })?;
-    let mut cmd = command_for_dev_exec(&spawn_args);
+    if matches!(kind, DevCwdKind::Worktree(_)) {
+        let allow_execution_only_scripts = spawn_args
+            .first()
+            .and_then(|program| std::path::Path::new(program).file_stem())
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.eq_ignore_ascii_case("tsx"));
+        for argument in spawn_args.iter().skip(1) {
+            let candidate = std::path::Path::new(argument);
+            if candidate.is_absolute() {
+                dev_exec_path_allowed(candidate, allow_execution_only_scripts)?;
+                if candidate.is_file() && has_multiple_hardlinks(candidate)? {
+                    return Err(format!(
+                        "dev_exec: 拒绝执行 hardlink 文件 operand（防 inode 逃逸）：{}",
+                        candidate.display()
+                    ));
+                }
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let resolved_program = resolve_dev_exec_program(&spawn_args[0]);
+        let resolved_program_text = resolved_program.to_string_lossy();
+        let extension = resolved_program
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
+        if matches!(extension.as_deref(), Some("cmd" | "bat"))
+            && (!dev_arg_shell_safe(&resolved_program_text)
+                || spawn_args
+                    .iter()
+                    .any(|argument| !dev_arg_shell_safe(argument)))
+        {
+            return Err("dev_exec: Windows shell 参数包含未允许的控制字符或元字符".into());
+        }
+    }
+    let mut cmd = command_for_dev_exec(&spawn_args).map_err(|error| {
+        eprintln!(
+            "[dev_exec] command resolution reject args={} cwd={} error={error}",
+            args.join(" "),
+            canonical_cwd.display()
+        );
+        error
+    })?;
     cmd.current_dir(&canonical_cwd);
     cmd.env_clear();
     for (k, v) in dev_sanitized_env() {
@@ -2430,6 +2411,11 @@ fn dev_cleanup_worktree(
             .ok_or_else(|| "dev_cleanup_worktree: 尚未初始化主仓库根".to_string())?
     };
     let base_path = std::path::PathBuf::from(&base);
+    if !worker_target_is_safe_for_existing_operation(&base_path, &path) {
+        return Err(
+            "dev_cleanup_worktree: worktree target 不是已存在且未被链接替换的受控目录".into(),
+        );
+    }
     let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
     if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
@@ -2615,19 +2601,99 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
 fn dev_strip_verbatim(p: &std::path::Path) -> std::path::PathBuf {
     let s = p.to_string_lossy();
     #[cfg(windows)]
-    let s = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
-    std::path::PathBuf::from(s)
+    {
+        let value = s.as_ref();
+        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            return std::path::PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(verbatim) = value.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(verbatim);
+        }
+    }
+    std::path::PathBuf::from(s.as_ref())
 }
 
-/// 路径必须属于某个已登记 worktree（dev_read_file / dev_write_file 的前置校验）。
-/// 两侧先剥离 Windows `\\?\` 前缀再组件级比较（`Path::starts_with`），
-/// 不受扩展前缀 / 大小写差异影响（P1 审计修复）。
-fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
+fn protected_relative_path(rel: &str) -> bool {
+    let rel = rel
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase();
+    rel == "package.json"
+        || rel == "package-lock.json"
+        || rel == "vitest.config.ts"
+        || rel.starts_with("scripts/")
+        || rel.starts_with("tests/")
+        || rel == "src/store/workflowstore.ts"
+        || rel == "src/engine/executor.ts"
+        || rel.starts_with("src/plugins/sandbox/")
+        || rel.starts_with("src-tauri/capabilities/")
+        || rel.starts_with("src/orchestrator/")
+}
+
+fn protected_path_error(abs: &std::path::Path, root: &std::path::Path) -> Option<String> {
+    let abs_key = path_compare_key(&abs.to_string_lossy());
+    let root_key = path_compare_key(&root.to_string_lossy());
+    let rel = if abs_key == root_key {
+        String::new()
+    } else {
+        abs_key.strip_prefix(&(root_key + "/"))?.to_string()
+    };
+    protected_relative_path(&rel)
+        .then(|| format!("dev_file: 路径受 host protected policy 保护：{rel}"))
+}
+
+fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use std::mem::MaybeUninit;
+        use std::os::windows::io::AsRawHandle;
+        let file = fs::File::open(path).map_err(|e| format!("无法安全检查目标 inode：{e}"))?;
+        let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+        if ok == 0 {
+            return Err("无法安全检查目标 inode".to_string());
+        }
+        return Ok(unsafe { info.assume_init() }.number_of_links > 1);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Ok(fs::metadata(path)
+            .map_err(|e| format!("无法安全检查目标 inode：{e}"))?
+            .nlink()
+            > 1);
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Ok(false)
+    }
+}
+
+fn protected_path_is_execution_only_script(abs: &std::path::Path, root: &std::path::Path) -> bool {
+    let abs_key = path_compare_key(&abs.to_string_lossy());
+    let root_key = path_compare_key(&root.to_string_lossy());
+    abs_key
+        .strip_prefix(&(root_key + "/"))
+        .is_some_and(|rel| rel.starts_with("scripts/"))
+}
+
+fn dev_path_allowed_with_options(
+    abs: &std::path::Path,
+    allow_execution_only_scripts: bool,
+) -> Result<(), String> {
     let norm_abs = dev_strip_verbatim(abs);
     let state = DEV_STATE.lock().unwrap();
     for w in &state.worktrees {
         let wc = dev_strip_verbatim(std::path::Path::new(w));
         if path_is_same_or_child(&norm_abs, &wc) {
+            if let Some(error) = protected_path_error(&norm_abs, &wc) {
+                if !(allow_execution_only_scripts
+                    && protected_path_is_execution_only_script(&norm_abs, &wc))
+                {
+                    return Err(error);
+                }
+            }
             return Ok(());
         }
     }
@@ -2635,6 +2701,17 @@ fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
         "dev_file: 路径不属于任何已登记 worktree：{}",
         abs.display()
     ))
+}
+
+fn dev_path_allowed(abs: &std::path::Path) -> Result<(), String> {
+    dev_path_allowed_with_options(abs, false)
+}
+
+fn dev_exec_path_allowed(
+    abs: &std::path::Path,
+    allow_execution_only_scripts: bool,
+) -> Result<(), String> {
+    dev_path_allowed_with_options(abs, allow_execution_only_scripts)
 }
 
 /// 在已登记 worktree 内创建一级目录。
@@ -2723,6 +2800,12 @@ fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
         return Err(format!("dev_read_file: 文件不存在：{path}"));
     }
     dev_path_allowed(&abs)?;
+    if has_multiple_hardlinks(&abs)? {
+        return Err(format!(
+            "dev_read_file: 拒绝读取 hardlink 目标（防 inode 逃逸）：{}",
+            abs.display()
+        ));
+    }
     fs::read_to_string(&abs).map_err(|e| format!("dev_read_file: 读取失败：{path}（{e}）"))
 }
 
@@ -2752,19 +2835,6 @@ unsafe extern "system" {
         handle: *mut std::ffi::c_void,
         info: *mut WinByHandleFileInformation,
     ) -> i32;
-}
-
-#[cfg(windows)]
-fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
-    use std::mem::MaybeUninit;
-    use std::os::windows::io::AsRawHandle;
-    let file = fs::File::open(path).map_err(|e| format!("无法安全检查目标 inode：{e}"))?;
-    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
-    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
-    if ok == 0 {
-        return Err("无法安全检查目标 inode".to_string());
-    }
-    Ok(unsafe { info.assume_init() }.number_of_links > 1)
 }
 
 /// P1 审计修复：防符号链接绕过——
@@ -2811,7 +2881,6 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
                 abs.display()
             ));
         }
-        #[cfg(windows)]
         if has_multiple_hardlinks(&abs)? {
             return Err(format!(
                 "dev_write_file: 拒绝写入 hardlink 目标（防 inode 逃逸）：{}",
@@ -3399,6 +3468,14 @@ mod dev_exec_tests {
             "grep", "needle", "-d", "recurse", "."
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "head",
+            "--files0-from=/outside/list"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "cat",
+            "--files0-from=/outside/list"
+        ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
             "find",
             ".",
             "-fprint",
@@ -3472,17 +3549,35 @@ mod dev_exec_tests {
             "--check",
             "--eval=process.exit(1)"
         ])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&[
+            "tsx",
+            "scripts/check.ts",
+            "&whoami"
+        ])));
     }
 
     #[test]
-    fn worktree_read_commands_allow_non_shell_glob_operands() {
+    fn worktree_read_commands_allow_find_glob_but_reject_grep_literal_glob() {
         assert!(dev_worktree_cmd_allowed(&sv(&[
             "find",
             "src/components",
             "-name",
             "*.tsx"
         ])));
-        assert!(dev_worktree_cmd_allowed(&sv(&["grep", "needle", "*.tsx"])));
+        assert!(!dev_worktree_cmd_allowed(&sv(&["grep", "needle", "*.tsx"])));
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "grep",
+            "--",
+            "--",
+            "src/file.tsx"
+        ])));
+        assert!(dev_worktree_cmd_allowed(&sv(&[
+            "find",
+            "-P",
+            "src/components",
+            "-name",
+            "*.tsx"
+        ])));
     }
 
     #[test]
@@ -4410,15 +4505,23 @@ mod dev_exec_tests {
         dev_register_worktree(wt_str.clone(), generation).unwrap();
         let expected = dev_strip_verbatim(&wt.canonicalize().unwrap());
         assert_eq!(assert_registered_worktree(&wt_str).unwrap(), expected);
+        let expected_child = dev_strip_verbatim(&child.canonicalize().unwrap());
         assert_eq!(
             assert_registered_worktree(child.to_str().unwrap()).unwrap(),
-            expected
+            expected_child
         );
         assert!(assert_registered_worktree(&base_str).is_err());
         dev_clear_session(generation).unwrap();
         git(&["worktree", "remove", "--force", &wt_str], &base);
         let _ = std::fs::remove_dir_all(&workers);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dev_strip_verbatim_preserves_unc_root() {
+        let stripped = dev_strip_verbatim(std::path::Path::new(r"\\?\UNC\server\share\wt"));
+        assert_eq!(stripped, std::path::PathBuf::from(r"\\server\share\wt"));
     }
 
     #[test]
@@ -4576,7 +4679,18 @@ mod dev_write_symlink_tests {
         });
     }
 
-    #[cfg(windows)]
+    #[test]
+    fn host_protected_path_policy_covers_default_sensitive_roots() {
+        assert!(protected_relative_path("scripts/headless-run.ts"));
+        assert!(protected_relative_path("src/orchestrator/run.ts"));
+        assert!(protected_relative_path("src/store/workflowStore.ts"));
+        assert!(protected_relative_path(
+            "src-tauri/capabilities/default.json"
+        ));
+        assert!(!protected_relative_path("src/components/TopBar.tsx"));
+    }
+
+    #[cfg(any(unix, windows))]
     #[test]
     fn hardlink_escape_write_rejected() {
         with_registered_worktree(|wt| {

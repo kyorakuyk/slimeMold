@@ -355,7 +355,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     ensureWorktreeParent,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
-  const registry: WorktreeRegistry = { isTracked: (cwd) => manager.isTracked(cwd) };
+  const registry: WorktreeRegistry = {
+    isTracked: (cwd) => manager.isTracked(cwd),
+    isTrackedOrChild: (cwd) => manager.isTrackedOrChild(cwd),
+  };
   const service = env === 'tauri'
     ? createNodeDevService(policy, tauriDeps!, registry, 'tauri')
     : createNodeDevService(policy, {}, registry);

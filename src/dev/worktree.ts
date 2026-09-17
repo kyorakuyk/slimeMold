@@ -277,6 +277,15 @@ export class WorktreeManager {
     );
   }
 
+  isTrackedOrChild(path: string): boolean {
+    const p = pathComparisonKey(path);
+    return [...this.infos.values()].some((i) => {
+      if (i.status !== 'created') return false;
+      const root = pathComparisonKey(i.path);
+      return p === root || p.startsWith(`${root}/`);
+    });
+  }
+
   forget(id: string): void {
     this.infos.delete(id);
   }
