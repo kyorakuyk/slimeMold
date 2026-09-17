@@ -85,3 +85,8 @@ dev-i18n.log
 # Sensitive documentation exports (SENSITIVE / DO NOT COMMIT)
 /docs/log/raw/
 /docs/log/codex-conversations/
+
+# Agent working memory / scratch notes (local-only — do not commit)
+# 智能体工作记忆与草稿：仅本地使用，不进仓库
+.workbuddy/
+.hermes/
