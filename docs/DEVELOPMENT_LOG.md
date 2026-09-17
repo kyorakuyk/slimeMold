@@ -2784,3 +2784,20 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 真实 Tauri Host Acceptance：`acc-mu55bxiz-0522b09e`，通过；
 - 同一 Tauri WebView 的受控 DOM smoke read-back（原始 JSON 未单独归档，属于未归档的 manual observation）证明 dark/light veil 随 `--sm-bg` 变化、veil 为 `z-index=99999`、NodePalette drag ghost 为 `z-index=10000`；主题已恢复，未释放文件或执行 workflow；
 - 本轮不宣称 Antigravity E2E、WorkerQueue Restart/Recovery、Delivery/Cleanup、Browser Use managed backend 或历史 121 个 `(unverified)` commit 已逐笔 verified；没有 push、merge 或 Cleanup。
+
+### 7.125 当前 HEAD Worker Restart/Recovery 与 Skip 决策 read-back
+
+- 本轮在已验证 checkpoint `43fbcb6` 上继续，未修改生产代码；使用新的仓库外 disposable fixture `D:/Temp/sm-tauri2-recovery-v2-154444`，保留失败 fixture、真实 Worker worktree 和 side-effect journal，没有 Cleanup。
+- fixture 初始 ProjectFile 的 `workerRuns=0`，但保留 19 条合法 checksum 事件、批准 TaskGraph、失败 Attempt、`worker-execution` receipt 和真实 worktree；另一份 `...-153618` fixture 因路径替换后未重算 checksum，被当前 HEAD fail-closed，未冒充恢复成功。
+- 真实 Tauri 进程重启后，当前 ProjectFile read-back 为 `workerRuns=1`；Run=`partial`、Task=`failed`、attempt=`1`、worktree/branch/baseRevision/error lineage 完整；事件仍为 19 条，没有自动创建新 attempt。UI 明确显示“Worker 等待恢复核对”，并禁止自动重跑。
+- 通过真实恢复 UI 执行 `skip` 后，事件增至 20 条，新增 `WorkerRunRecoveryDecided`；`decision=skip`、`requiresNewAttempt=false`、`effectKeys=[]`；ProjectFile error 更新为恢复决策，attempt 仍为 1，worktree 仍保留。
+- 完整路径、事件 payload、ProjectFile 字段和未验证边界见 `docs/reports/WORKER_RECOVERY_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- 真实 Tauri restart/read-back：通过；
+- 真实 recovery UI：通过；
+- durable `WorkerRunRecoveryDecided(skip)`：通过；
+- ProjectFile / event stream / side-effect / Git worktree read-back：通过；
+- 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；当前代码质量门与独立 reviewer 结论仍绑定 `43fbcb6`；
+- 本轮不宣称 retry 新 attempt、Delivery/Cleanup、Antigravity E2E 或历史 commit 重写；没有 push、merge 或 Cleanup。
