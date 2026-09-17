@@ -2801,3 +2801,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - ProjectFile / event stream / side-effect / Git worktree read-back：通过；
 - 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；当前代码质量门与独立 reviewer 结论仍绑定 `43fbcb6`；
 - 本轮不宣称 retry 新 attempt、Delivery/Cleanup、Antigravity E2E 或历史 commit 重写；没有 push、merge 或 Cleanup。
+
+### 7.126 当前 HEAD Worker Retry 新 Attempt 与 Host Acceptance 成功
+
+- 本轮在 `79dae6c` 上继续，没有修改生产代码；使用 `D:/Temp/sm-tauri2-recovery-v2-174611` disposable fixture。初始 `workerRuns=0`，事件 19 条，attempt 1 的副作用为 `unknown/needs-user`。
+- 真实 Tauri 重启后，轻量工作台显示 recovery gate；通过真实 UI 选择 retry，系统创建 attempt 2、新 worktree、新 branch 和新 idempotency key，没有复用 attempt 1 的未知副作用。
+- attempt 2 最终 `Run/Task=succeeded`；真实 marker 文件落盘；Host build/test/diff/path-policy 四条 Evidence 通过；Acceptance `acc-mu5cm748-b24a9dda` 为 `passed=true`、`failedChecks=[]`。
+- 事件尾部为 `WorkerRunRecoveryDecided → RunQueued → TaskQueued → RunStarted → TaskStarted → TaskSucceeded → RunSucceeded`；attempt 1 的 unknown receipt 仍保留，成功事实全部绑定 attempt 2。
+- 完整 Evidence ID、worktree/branch、attempt lineage 和未验证边界见 `docs/reports/WORKER_RETRY_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- 真实 Tauri recovery UI：通过；
+- retry 新 attempt/worktree：通过；
+- Host compile/test/diff/path-policy Evidence：4/4 通过；
+- Host Acceptance：通过；
+- marker 文件与 Git worktree read-back：通过；
+- 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；没有 push、merge 或 Cleanup；
+- 本轮不宣称 Delivery/Cleanup、Antigravity E2E、Browser Use managed backend 或历史 commit 重写。
