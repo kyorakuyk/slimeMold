@@ -33,7 +33,7 @@ mod event_store;
 mod fs_guard;
 
 pub(crate) use dev_process::drain_child_output;
-use dev_process::DevExecResult;
+use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
     dev_exec_validate_paths, is_git_diff_revision, path_compare_key, path_is_same_or_child,
@@ -1700,6 +1700,13 @@ fn dev_sanitized_env_with_home(isolate_home: bool) -> HashMap<String, String> {
 
 /// 统一子进程生命周期入口；实际捕获/超时/等待编排位于 `dev_process`。
 fn kill_dev_child_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        unsafe {
+            let _ = libc::kill(-pid, libc::SIGKILL);
+        }
+    }
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
@@ -2329,8 +2336,6 @@ fn dev_clear_session(generation: u64) -> Result<(), String> {
     st.orphan_worktrees.clear();
     Ok(())
 }
-
-const DEV_OUTPUT_CAP: usize = 16 * 1024 * 1024;
 
 fn validate_git_worktree_porcelain(output: &str) -> Result<(), String> {
     if output.is_empty() || output.len() >= DEV_OUTPUT_CAP {

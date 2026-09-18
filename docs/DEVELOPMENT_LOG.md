@@ -3465,3 +3465,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.160 收紧 process timeout cleanup、checked output capture 与process-group lifecycle 于 unverified checkpoint
+
+- `dev_process`共享`DEV_OUTPUT_CAP`，`drain_child_output_checked`对Interrupted重试、对其他I/O错误显式返回；不再把读取错误静默当作EOF。
+- timeout错误使用实际timeout毫秒；stdout/stderr通过channel bounded receive，超时或pipe descendant不再无界join阻塞host operation lock。
+- Unix process启动时建立process group，timeout callback尝试kill整个group后再direct kill；Windows继续使用taskkill tree + direct kill，Job Object级别完整保证仍是Windows residual。
+- 新增process模块直测：output cap、Interrupted reader、non-zero exit；本轮仍不宣称Windows current_dir race、native Linux/macOS matrix和hardlink atomicity已闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
