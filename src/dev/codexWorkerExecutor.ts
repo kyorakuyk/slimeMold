@@ -50,7 +50,7 @@ export function createCodexWorkerInvoker(generation: number): CodexWorkerInvoker
       if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
       const operationId = `worker-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       const onAbort = () => {
-        void import('../agents/providers/codex').then(({ cancelCodexWorker }) => cancelCodexWorker(operationId));
+        void import('../agents/providers/codex').then(({ cancelCodexWorker }) => cancelCodexWorker(operationId, generation));
       };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {

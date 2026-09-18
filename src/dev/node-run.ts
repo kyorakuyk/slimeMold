@@ -172,14 +172,15 @@ export function runCommand(
           return;
         }
         // execFile 错误可能带 code（数字退出码 / ENOENT 等字符串）
-        const code = typeof (err as { code?: unknown }).code === 'number'
-          ? ((err as { code: number }).code)
-          : 1;
+        const rawCode = (err as { code?: unknown }).code;
+        const code = typeof rawCode === 'number' ? rawCode : 1;
+        const spawnFailed = rawCode === 'ENOENT' || rawCode === 'EACCES' || rawCode === 'EPERM';
         resolveResult({
           exitCode: code,
           stdout: (stdout ?? '') as string,
           stderr: ((stderr ?? '') as string) || String(err.message ?? err),
           durationMs,
+          unknownEffects: !spawnFailed && typeof rawCode !== 'number',
         });
       },
     );

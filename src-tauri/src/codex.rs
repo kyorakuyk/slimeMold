@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,15 +16,21 @@ static CODEX_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CODEX_OUTPUT_CAP: usize = 16 * 1024 * 1024;
 type ChildHandle = Arc<Mutex<Option<std::process::Child>>>;
-static ACTIVE_CODEX_CHILDREN: OnceLock<Mutex<HashMap<String, ChildHandle>>> = OnceLock::new();
+struct ActiveChild {
+    session_generation: u64,
+    handle: ChildHandle,
+}
 
-fn active_codex_children() -> &'static Mutex<HashMap<String, ChildHandle>> {
+static ACTIVE_CODEX_CHILDREN: OnceLock<Mutex<HashMap<String, ActiveChild>>> = OnceLock::new();
+
+fn active_codex_children() -> &'static Mutex<HashMap<String, ActiveChild>> {
     ACTIVE_CODEX_CHILDREN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(Clone, Copy)]
 struct PendingOperation {
     generation: u64,
+    session_generation: u64,
     cancellation_requested: bool,
 }
 
@@ -35,7 +42,7 @@ fn pending_codex_operations() -> &'static Mutex<HashMap<String, PendingOperation
     PENDING_CODEX_OPERATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn begin_pending_operation(operation_id: &str) -> Result<u64, String> {
+fn begin_pending_operation(operation_id: &str, session_generation: u64) -> Result<u64, String> {
     let mut pending = pending_codex_operations()
         .lock()
         .map_err(|_| "Codex pending registry 已损坏".to_string())?;
@@ -47,6 +54,7 @@ fn begin_pending_operation(operation_id: &str) -> Result<u64, String> {
         operation_id.to_string(),
         PendingOperation {
             generation,
+            session_generation,
             cancellation_requested: false,
         },
     );
@@ -83,6 +91,33 @@ fn valid_operation_id(operation_id: &str) -> bool {
         && operation_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn create_codex_output() -> Result<PathBuf, String> {
+    let temp_root = env::temp_dir();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let sequence = CODEX_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let directory = temp_root.join(format!(
+        "slimemold-codex-{stamp}-{}-{sequence}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).map_err(|error| format!("创建Codex output私有目录失败：{error}"))?;
+    let output_path = directory.join("last-message.txt");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    if let Err(error) = options.open(&output_path) {
+        let _ = fs::remove_dir(&directory);
+        return Err(format!("创建Codex output exclusive file失败：{error}"));
+    }
+    Ok(output_path)
 }
 
 fn read_codex_output(path: &std::path::Path) -> Result<Option<String>, String> {
@@ -131,10 +166,19 @@ fn read_codex_output(path: &std::path::Path) -> Result<Option<String>, String> {
 }
 
 fn remove_codex_output(path: &std::path::Path) -> Result<(), String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("删除Codex output-last-message失败：{error}")),
+    if let Err(error) = fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!("删除Codex output-last-message失败：{error}"));
+        }
+    }
+    if let Some(directory) = path.parent() {
+        match fs::remove_dir(directory) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("删除Codex output私有目录失败：{error}")),
+        }
+    } else {
+        Ok(())
     }
 }
 
@@ -148,10 +192,12 @@ fn kill_child_tree(child: &mut std::process::Child) {
     }
     #[cfg(windows)]
     {
-        let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid, "/T", "/F"])
-            .status();
+        if let Ok(taskkill) = trusted_windows_system_executable("taskkill.exe") {
+            let pid = child.id().to_string();
+            let _ = Command::new(taskkill)
+                .args(["/PID", &pid, "/T", "/F"])
+                .status();
+        }
     }
     let _ = child.kill();
 }
@@ -167,7 +213,11 @@ fn apply_login_sanitized_env(command: &mut Command) {
     apply_env(command, dev_login_sanitized_env());
 }
 
-fn register_child(operation_id: &str, child: ChildHandle) -> Result<(), String> {
+fn register_child(
+    operation_id: &str,
+    session_generation: u64,
+    child: ChildHandle,
+) -> Result<(), String> {
     let mut active = active_codex_children()
         .lock()
         .map_err(|_| "Codex operation registry 已损坏".to_string())?;
@@ -185,7 +235,13 @@ fn register_child(operation_id: &str, child: ChildHandle) -> Result<(), String> 
     if active.contains_key(operation_id) {
         return Err("Codex operation id 已在使用".into());
     }
-    active.insert(operation_id.to_string(), child);
+    active.insert(
+        operation_id.to_string(),
+        ActiveChild {
+            session_generation,
+            handle: child,
+        },
+    );
     Ok(())
 }
 
@@ -193,7 +249,7 @@ fn unregister_child(operation_id: &str, expected: &ChildHandle) {
     if let Ok(mut active) = active_codex_children().lock() {
         let matches = active
             .get(operation_id)
-            .is_some_and(|current| Arc::ptr_eq(current, expected));
+            .is_some_and(|current| Arc::ptr_eq(&current.handle, expected));
         if matches {
             active.remove(operation_id);
         }
@@ -240,6 +296,27 @@ pub struct CodexExecResult {
     pub usage: Option<CodexUsage>,
 }
 
+fn trusted_native_file(path: &std::path::Path) -> Option<PathBuf> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    let canonical = path.canonicalize().ok()?;
+    let canonical_metadata = fs::symlink_metadata(&canonical).ok()?;
+    if canonical_metadata.file_type().is_symlink() || !canonical_metadata.is_file() {
+        return None;
+    }
+    Some(canonical)
+}
+
+#[cfg(windows)]
+fn trusted_windows_system_executable(name: &str) -> Result<PathBuf, String> {
+    let root =
+        env::var_os("SystemRoot").ok_or_else(|| "未找到可信的 Windows SystemRoot".to_string())?;
+    let candidate = PathBuf::from(root).join("System32").join(name);
+    trusted_native_file(&candidate).ok_or_else(|| format!("未找到可信的 Windows {name}"))
+}
+
 fn codex_program() -> Result<PathBuf, String> {
     let names: &[&str] = if cfg!(windows) {
         &["codex.cmd", "codex.exe", "codex"]
@@ -251,8 +328,8 @@ fn codex_program() -> Result<PathBuf, String> {
         for dir in env::split_paths(&path) {
             for name in names {
                 let candidate = dir.join(name);
-                if candidate.is_file() {
-                    return Ok(candidate);
+                if let Some(trusted) = trusted_native_file(&candidate) {
+                    return Ok(trusted);
                 }
             }
         }
@@ -261,13 +338,13 @@ fn codex_program() -> Result<PathBuf, String> {
     if cfg!(windows) {
         if let Some(app_data) = env::var_os("APPDATA") {
             let candidate = PathBuf::from(app_data).join("npm").join("codex.cmd");
-            if candidate.is_file() {
-                return Ok(candidate);
+            if let Some(trusted) = trusted_native_file(&candidate) {
+                return Ok(trusted);
             }
         }
     }
 
-    Err("未找到 Codex CLI。请先安装 @openai/codex，并确保 codex 在 PATH 中。".into())
+    Err("未找到可信的 Codex CLI。请先安装 @openai/codex，并确保 codex 在 PATH 中。".into())
 }
 
 fn command_detail(output: &std::process::Output) -> String {
@@ -448,6 +525,36 @@ fn join_child_output(
     crate::receive_output("Codex", thread, receiver)
 }
 
+fn spawn_stdin_writer(
+    mut stdin: std::process::ChildStdin,
+    prompt: String,
+) -> Receiver<Result<(), String>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|error| format!("向 Codex CLI 写入请求失败：{error}"));
+        drop(stdin);
+        let _ = sender.send(result);
+    });
+    receiver
+}
+
+fn await_stdin_write(receiver: Option<&Receiver<Result<(), String>>>) -> Result<(), String> {
+    let Some(receiver) = receiver else {
+        return Ok(());
+    };
+    match receiver.recv_timeout(Duration::from_secs(1)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err("Codex stdin writer 未在清理窗口内结束；side effects unknown".into())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("Codex stdin writer 已断开；side effects unknown".into())
+        }
+    }
+}
+
 fn run_exec(
     program: PathBuf,
     prompt: String,
@@ -455,21 +562,19 @@ fn run_exec(
     cwd: Option<PathBuf>,
     sandbox_mode: &str,
     operation_id: Option<String>,
+    session_generation: Option<u64>,
 ) -> Result<CodexExecResult, String> {
     if let Some(operation_id) = operation_id.as_deref() {
         if !valid_operation_id(operation_id) {
             return Err("Codex operation id 非法".into());
         }
     }
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let sequence = CODEX_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let output_path = env::temp_dir().join(format!(
-        "slimemold-codex-{stamp}-{}-{sequence}.txt",
-        std::process::id()
-    ));
+    let spawn_cwd = cwd.clone().unwrap_or_else(env::temp_dir);
+    let expected_cwd_identity = cwd
+        .as_ref()
+        .map(|path| crate::dev_cwd_binding(&path.to_string_lossy()).map(|(_, identity)| identity))
+        .transpose()?;
+    let output_path = create_codex_output()?;
 
     let mut command = Command::new(program);
     command.args(build_exec_args(sandbox_mode));
@@ -484,7 +589,7 @@ fn run_exec(
         command.env(key, value);
     }
     command
-        .current_dir(cwd.unwrap_or_else(env::temp_dir))
+        .current_dir(&spawn_cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -501,6 +606,15 @@ fn run_exec(
         }
     }
 
+    if let Some(expected_identity) = expected_cwd_identity {
+        let current_identity =
+            crate::dev_cwd_binding(&spawn_cwd.to_string_lossy()).map(|(_, identity)| identity)?;
+        if current_identity != expected_identity {
+            let _ = remove_codex_output(&output_path);
+            return Err("Codex cwd identity 在最终spawn前发生变化".into());
+        }
+    }
+
     let mut child = command
         .spawn()
         .map_err(|e| format!("无法启动 Codex CLI：{e}"))?;
@@ -514,7 +628,12 @@ fn run_exec(
         .map(|stream| crate::spawn_output_reader(stream));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(operation_id) = operation_id.as_deref() {
-        if let Err(error) = register_child(operation_id, handle.clone()) {
+        if let Err(error) = register_child(
+            operation_id,
+            session_generation
+                .ok_or_else(|| "Codex active child缺少session generation".to_string())?,
+            handle.clone(),
+        ) {
             if let Ok(mut guard) = handle.lock() {
                 if let Some(child) = guard.as_mut() {
                     kill_child_tree(child);
@@ -528,28 +647,12 @@ fn run_exec(
         }
     }
 
-    let mut stdin = handle
+    let stdin_result = handle
         .lock()
         .map_err(|_| "Codex child handle 已损坏".to_string())?
         .as_mut()
-        .and_then(|child| child.stdin.take());
-    if let Some(mut stdin) = stdin.take() {
-        if let Err(error) = stdin.write_all(prompt.as_bytes()) {
-            if let Ok(mut guard) = handle.lock() {
-                if let Some(child) = guard.as_mut() {
-                    kill_child_tree(child);
-                    let _ = child.wait();
-                }
-            }
-            if let Some(operation_id) = operation_id.as_deref() {
-                unregister_child(operation_id, &handle);
-            }
-            if let Err(cleanup_error) = remove_codex_output(&output_path) {
-                eprintln!("[codex] {cleanup_error}; side effects unknown");
-            }
-            return Err(format!("向 Codex CLI 写入请求失败：{error}"));
-        }
-    }
+        .and_then(|child| child.stdin.take())
+        .map(|stdin| spawn_stdin_writer(stdin, prompt));
 
     let started_at = std::time::Instant::now();
     let status = loop {
@@ -605,6 +708,18 @@ fn run_exec(
         if let Some(child) = guard.as_mut() {
             kill_child_tree(child);
             let _ = child.wait();
+        }
+    }
+
+    if let Err(error) = await_stdin_write(stdin_result.as_ref()) {
+        cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
+        return Err(error);
+    }
+
+    if let Some(operation_id) = operation_id.as_deref() {
+        if take_cancelled_operation(operation_id) {
+            cleanup_codex_run(&handle, Some(operation_id), &output_path);
+            return Err("Codex Worker 已取消；side effects unknown".into());
         }
     }
 
@@ -693,7 +808,7 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
     }
     let program = codex_program()?;
     tauri::async_runtime::spawn_blocking(move || {
-        run_exec(program, prompt, model, None, "read-only", None)
+        run_exec(program, prompt, model, None, "read-only", None, None)
     })
     .await
     .map_err(|e| format!("Codex 后台任务失败：{e}"))?
@@ -719,7 +834,7 @@ pub async fn codex_worker_exec(
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation id 非法".into());
     }
-    let pending_generation = begin_pending_operation(&operation_id)?;
+    let pending_generation = begin_pending_operation(&operation_id, generation)?;
     let operation_for_task = operation_id.clone();
     let result = async {
         let auth = codex_login_status()?;
@@ -744,6 +859,7 @@ pub async fn codex_worker_exec(
                 Some(worktree),
                 "workspace-write",
                 Some(operation_for_task.clone()),
+                Some(generation_for_task),
             )
         })
         .await
@@ -757,14 +873,21 @@ pub async fn codex_worker_exec(
 
 /// 取消当前 SlimeMold 进程注册的 Codex Worker；未知 operation 视为幂等成功。
 #[tauri::command]
-pub fn codex_worker_cancel(operation_id: String) -> Result<(), String> {
+pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), String> {
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation id 非法".into());
+    }
+    if generation == 0 {
+        return Err("Codex Worker session generation 无效".into());
     }
     let mut active = active_codex_children()
         .lock()
         .map_err(|_| "Codex operation registry 已损坏".to_string())?;
-    if let Some(handle) = active.get(&operation_id).cloned() {
+    if let Some(entry) = active.get(&operation_id) {
+        if entry.session_generation != generation {
+            return Ok(());
+        }
+        let handle = entry.handle.clone();
         let mut guard = handle
             .lock()
             .map_err(|_| "Codex child handle 已损坏".to_string())?;
@@ -773,12 +896,21 @@ pub fn codex_worker_cancel(operation_id: String) -> Result<(), String> {
             let _ = child.wait();
         }
         active.remove(&operation_id);
-    } else {
         if let Some(entry) = pending_codex_operations()
             .lock()
-            .map_err(|_| "Codex pending registry 已损坏")?
+            .map_err(|_| "Codex pending registry 已损坏".to_string())?
             .get_mut(&operation_id)
         {
+            if entry.session_generation == generation {
+                entry.cancellation_requested = true;
+            }
+        }
+    } else if let Some(entry) = pending_codex_operations()
+        .lock()
+        .map_err(|_| "Codex pending registry 已损坏".to_string())?
+        .get_mut(&operation_id)
+    {
+        if entry.session_generation == generation {
             entry.cancellation_requested = true;
         }
     }
@@ -832,7 +964,7 @@ mod tests {
 
     #[test]
     fn cancellation_is_idempotent_and_operation_ids_are_bounded() {
-        codex_worker_cancel("not-running".into()).expect("unknown operation is a no-op");
+        codex_worker_cancel("not-running".into(), 1).expect("unknown operation is a no-op");
         assert!(valid_operation_id("worker-abc_123"));
         assert!(!valid_operation_id(""));
         assert!(!valid_operation_id("worker/with-slash"));
@@ -847,8 +979,9 @@ mod tests {
             CODEX_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         let generation =
-            begin_pending_operation(&operation).expect("pending operation should register");
-        codex_worker_cancel(operation.clone()).expect("pending cancellation should be idempotent");
+            begin_pending_operation(&operation, 1).expect("pending operation should register");
+        codex_worker_cancel(operation.clone(), 1)
+            .expect("pending cancellation should be idempotent");
         assert!(take_cancelled_operation(&operation));
         finish_pending_operation(&operation, generation);
     }
@@ -860,11 +993,11 @@ mod tests {
             std::process::id(),
             CODEX_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        let first = begin_pending_operation(&operation).expect("first lease should register");
+        let first = begin_pending_operation(&operation, 1).expect("first lease should register");
         finish_pending_operation(&operation, first);
-        let second = begin_pending_operation(&operation).expect("second lease should register");
+        let second = begin_pending_operation(&operation, 1).expect("second lease should register");
         finish_pending_operation(&operation, first);
-        assert!(begin_pending_operation(&operation).is_err());
+        assert!(begin_pending_operation(&operation, 1).is_err());
         finish_pending_operation(&operation, second);
     }
 }

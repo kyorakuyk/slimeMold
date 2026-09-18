@@ -140,7 +140,8 @@ export async function codexWorkerExec(
 }
 
 /** 请求宿主终止一个由当前前端 operation id 注册的 Codex Worker child。 */
-export async function cancelCodexWorker(operationId: string): Promise<void> {
+export async function cancelCodexWorker(operationId: string, generation: number): Promise<void> {
   if (!isTauri || !operationId.trim()) return;
-  await invokeRaw<void>('codex_worker_cancel', { operationId });
+  if (!Number.isSafeInteger(generation) || generation <= 0) return;
+  await invokeRaw<void>('codex_worker_cancel', { operationId, generation });
 }

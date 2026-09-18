@@ -3558,3 +3558,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.165 收紧Codex launch authority、session-generation cancellation与stdin/output lifecycle 于 unverified checkpoint
+
+- Codex output改为temp下唯一私有目录中的`create_new` regular file，Unix使用0600权限；cleanup同时处理文件和私有目录，read阶段继续使用no-follow/nonblock和16MiB上限。
+- Codex Worker在最终spawn前重新通过Rust `dev_cwd_binding`比较cwd stable identity；本检查降低path replacement窗口，但不宣称Windows `current_dir`到CreateProcess已原子闭合。
+- stdin写入改为独立writer并纳入30分钟执行预算，主执行线程不再被阻塞式`write_all`永久卡住；writer无法在收尾窗口结束时返回unknown-effects。
+- Codex executable解析拒绝最终symlink并使用canonical regular file；Windows cleanup使用SystemRoot下可信`taskkill.exe`，不再依赖PATH裸命令。
+- `codex_worker_cancel`携带session generation，pending/active entry保存并比较generation；前端abort链路已传递同一generation，旧session取消不会触碰新child。
+- Windows Job Object、Windows current_dir原子spawn、Unix setsid/pidfd级descendant containment、operation-id调用方唯一性、native Linux/macOS matrix、hardlink atomicity及unknownEffects在所有上层recovery消费者中的完整传播仍未闭合；本轮不宣称Codex launch/process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.40 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

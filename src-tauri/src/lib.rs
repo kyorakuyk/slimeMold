@@ -135,7 +135,7 @@ struct DevState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct StableDirectoryIdentity {
+pub(crate) struct StableDirectoryIdentity {
     canonical_path: String,
     volume_or_device: u64,
     file_or_inode: u64,
@@ -922,13 +922,13 @@ fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
 /// cwd 归属：主仓库根 或 已登记 worktree（或其子目录）。
 /// 支持相对路径（基于主仓库根解析）。
 #[derive(PartialEq, Clone)]
-enum DevCwdKind {
+pub(crate) enum DevCwdKind {
     MainRepo,
     Worktree(std::path::PathBuf),
 }
 
 /// 判定 cwd 归属（主仓库根 / 已登记 worktree）。
-fn dev_cwd_binding(cwd: &str) -> Result<(DevCwdKind, StableDirectoryIdentity), String> {
+pub(crate) fn dev_cwd_binding(cwd: &str) -> Result<(DevCwdKind, StableDirectoryIdentity), String> {
     let p = std::path::Path::new(cwd);
     if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
