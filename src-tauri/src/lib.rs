@@ -2160,7 +2160,7 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         error
     })?;
     let operation_generation = generation;
-    let kind = dev_cwd_kind(&cwd).map_err(|error| {
+    let (kind, initial_cwd_identity) = dev_cwd_binding(&cwd).map_err(|error| {
         eprintln!(
             "[dev_exec] cwd reject args={} cwd={} error={error}",
             args.join(" "),
@@ -2272,9 +2272,9 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
             return Err("dev_exec: Windows shell 参数包含未允许的控制字符或元字符".into());
         }
     }
-    let (spawn_kind, _spawn_cwd_identity) = dev_cwd_binding(&cwd)?;
-    if spawn_kind != kind {
-        return Err("dev_exec: spawn 前 cwd ownership 已变化".into());
+    let (spawn_kind, spawn_cwd_identity) = dev_cwd_binding(&cwd)?;
+    if spawn_kind != kind || spawn_cwd_identity != initial_cwd_identity {
+        return Err("dev_exec: spawn 前 cwd ownership 或 identity 已变化".into());
     }
     let mut cmd = command_for_dev_exec(&spawn_args).map_err(|error| {
         eprintln!(
