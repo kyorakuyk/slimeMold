@@ -3579,3 +3579,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.166 修复Codex finalization lock order、stdin bounded cleanup与spawn failure cleanup 于 unverified checkpoint
+
+- `cleanup_codex_run`现在先按 active-registry→child-handle顺序释放exact handle，再kill/reap；与cancel路径统一锁序，消除并发cleanup/cancel的ABBA deadlock。
+- timeout与`try_wait`错误路径等待stdin writer的bounded收尾窗口；writer未结束会保留unknown-effects语义，不再随执行线程无界遗留。
+- `Command::spawn`失败现在清理已创建的exclusive output file和私有目录；此前命令未启动也可能留下临时工件。
+- Windows Job Object/current_dir原子spawn、Unix setsid/pidfd descendant containment、host-issued worker capability、operation-id调用方唯一性、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.40 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

@@ -261,14 +261,14 @@ fn cleanup_codex_run(
     operation_id: Option<&str>,
     output_path: &std::path::Path,
 ) {
+    if let Some(operation_id) = operation_id {
+        unregister_child(operation_id, handle);
+    }
     if let Ok(mut guard) = handle.lock() {
         if let Some(child) = guard.as_mut() {
             kill_child_tree(child);
             let _ = child.wait();
         }
-    }
-    if let Some(operation_id) = operation_id {
-        unregister_child(operation_id, &handle);
     }
     if let Err(error) = remove_codex_output(output_path) {
         eprintln!("[codex] {error}; side effects unknown");
@@ -615,9 +615,15 @@ fn run_exec(
         }
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("无法启动 Codex CLI：{e}"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            if let Err(cleanup_error) = remove_codex_output(&output_path) {
+                eprintln!("[codex] {cleanup_error}; side effects unknown");
+            }
+            return Err(format!("无法启动 Codex CLI：{error}"));
+        }
+    };
     let stdout_thread = child
         .stdout
         .take()
@@ -674,6 +680,7 @@ fn run_exec(
                         let _ = child.wait();
                     }
                 }
+                let stdin_cleanup = await_stdin_write(stdin_result.as_ref());
                 if let Some(operation_id) = operation_id.as_deref() {
                     unregister_child(operation_id, &handle);
                 }
@@ -681,6 +688,9 @@ fn run_exec(
                 let _ = join_child_output(stderr_thread);
                 if let Err(cleanup_error) = remove_codex_output(&output_path) {
                     eprintln!("[codex] {cleanup_error}; side effects unknown");
+                }
+                if let Err(stdin_error) = stdin_cleanup {
+                    return Err(format!("Codex 执行超时；{stdin_error}"));
                 }
                 return Err("Codex 执行超时（30 分钟）".into());
             }
@@ -692,6 +702,7 @@ fn run_exec(
                         let _ = child.wait();
                     }
                 }
+                let stdin_cleanup = await_stdin_write(stdin_result.as_ref());
                 if let Some(operation_id) = operation_id.as_deref() {
                     unregister_child(operation_id, &handle);
                 }
@@ -699,6 +710,9 @@ fn run_exec(
                 let _ = join_child_output(stderr_thread);
                 if let Err(cleanup_error) = remove_codex_output(&output_path) {
                     eprintln!("[codex] {cleanup_error}; side effects unknown");
+                }
+                if let Err(stdin_error) = stdin_cleanup {
+                    return Err(format!("等待 Codex CLI 结束失败；{stdin_error}"));
                 }
                 return Err(format!("等待 Codex CLI 结束失败：{error}"));
             }
