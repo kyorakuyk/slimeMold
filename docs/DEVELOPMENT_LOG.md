@@ -3379,7 +3379,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - Unix read/write bound path改用逐级 directory-fd `openat`，每层使用 `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`，最终文件使用 `O_NOFOLLOW`；parent被替换为symlink时操作失败，不跟随到外部目录。
 - Unix missing-target create改用parent-fd `openat(O_CREAT|O_EXCL|O_NOFOLLOW)`；unsupported平台的bound read/write fallback改为显式error，避免未来call-site绕过identity gate。
-- Windows仍保留reparse-aware final handle与StableFileIdentity校验；Windows parent-relative完整原子mutation、最终spawn cwd binding、macOS/Linux native matrix仍需后续平台专项验证。
+- Windows仍保留reparse-aware final handle与StableFileIdentity校验；Windows parent-relative完整原子mutation、macOS/Linux native matrix仍需后续平台专项验证。
+- Unix `dev_exec` spawn前绑定cwd directory fd，并在子进程中使用 `fchdir`；Unix路径不再在最终spawn阶段重新解析cwd。Windows仍使用pathname `current_dir`，该平台race保持明确 residual。
 
 验证结果：
 

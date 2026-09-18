@@ -2267,6 +2267,21 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         );
         error
     })?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let cwd_handle = open_unix_file_relative(&canonical_cwd, libc::O_RDONLY, 0)?;
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::fchdir(cwd_handle.as_raw_fd()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(unix))]
     cmd.current_dir(&canonical_cwd);
     cmd.env_clear();
     for (k, v) in dev_sanitized_env() {
