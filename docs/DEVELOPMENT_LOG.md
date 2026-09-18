@@ -2939,3 +2939,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；当前仍不能标记 verified。
+
+### 7.133 共享 command grammar 扩展至 generic path、read 与 typecheck 于 unverified checkpoint
+
+- 针对最终 reviewer 发现的 generic embedded `..`、控制字符、Windows device basename、Git invalid ref、find predicate 缺 operand 和 shared corpus 覆盖不足，Node/Rust 两侧同步收紧。
+- `find` 现在按 predicate arity 解析：`-name/-path/-maxdepth/-mindepth/-type` 等必须带安全 operand；缺失或未知 predicate fail-closed。
+- shared contract 新增 `ls/cat/head/tail` 的 scoped read intent，以及 `tsc --noEmit/-b`、`node --check scripts/...` 的 typecheck intent；`node -e` 和 option injection 保持拒绝。
+- launcher/ComSpec、child-cwd、stable filesystem identity 和真实 runtime 接入仍属于后续 host authority slices，本轮不宣称已解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。

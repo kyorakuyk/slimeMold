@@ -10,6 +10,29 @@ struct PolicyVector {
     name: String,
 }
 
+fn is_safe_git_ref(value: &str) -> bool {
+    if value.is_empty()
+        || !value.is_ascii()
+        || value == "@"
+        || value.contains("..")
+        || value.chars().any(|c| {
+            c.is_ascii_control()
+                || c.is_ascii_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
+    {
+        return false;
+    }
+    value.split('/').all(|part| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !part.starts_with('.')
+            && !part.ends_with('.')
+            && !part.to_ascii_lowercase().ends_with(".lock")
+    })
+}
+
 fn safe_revision(value: &str) -> bool {
     if value == "HEAD"
         || (matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit()))
@@ -17,25 +40,17 @@ fn safe_revision(value: &str) -> bool {
         return true;
     }
     if value.starts_with("refs/heads/") || value.starts_with("refs/tags/") {
-        return !value.contains("..")
-            && !value.contains("//")
-            && !value.ends_with('/')
-            && value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
+        return value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+            && is_safe_git_ref(value);
     }
     if ["feature/", "bugfix/", "hotfix/", "release/", "worker/"]
         .iter()
         .any(|prefix| value.starts_with(prefix))
     {
         let leaf = value.rsplit('/').next().unwrap_or_default();
-        return !value.contains("..")
-            && !value.contains("//")
-            && !leaf.is_empty()
-            && !leaf.contains('.')
-            && value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
+        return is_safe_git_ref(value) && !leaf.is_empty() && !leaf.contains('.');
     }
     !value.is_empty()
         && value
@@ -52,12 +67,49 @@ fn safe_revision(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 
+fn is_windows_device_name(component: &str) -> bool {
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "AUX"
+            | "CLOCK$"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "CON"
+            | "CONIN$"
+            | "CONOUT$"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "NUL"
+            | "PRN"
+    )
+}
+
 fn safe_path(value: &str) -> bool {
     let normalized = value.replace('\\', "/");
     let comparable = normalized.to_ascii_lowercase();
     let components: Vec<&str> = normalized.split('/').collect();
     if normalized.is_empty()
         || !normalized.is_ascii()
+        || normalized.chars().any(|c| c.is_ascii_control())
         || normalized.starts_with('-')
         || normalized.starts_with('/')
         || normalized.starts_with('\\')
@@ -69,6 +121,7 @@ fn safe_path(value: &str) -> bool {
                 || *part == ".."
                 || part.ends_with('.')
                 || part.ends_with(' ')
+                || is_windows_device_name(part)
         })
         || normalized.contains('*')
         || normalized.contains('?')
@@ -92,7 +145,79 @@ fn safe_path(value: &str) -> bool {
     .all(|root| comparable != *root && !comparable.starts_with(&format!("{root}/")))
 }
 
+fn is_safe_find_value(predicate: &str, value: &str) -> bool {
+    if value.is_empty() || value.starts_with('-') || value.chars().any(|c| c.is_ascii_control()) {
+        return false;
+    }
+    match predicate {
+        "-maxdepth" | "-mindepth" => value.chars().all(|c| c.is_ascii_digit()),
+        "-type" => matches!(value, "b" | "c" | "d" | "f" | "l" | "p" | "s"),
+        _ => true,
+    }
+}
+
+fn are_find_predicates_safe(predicates: &[String]) -> bool {
+    let value_predicates = [
+        "-name",
+        "-iname",
+        "-path",
+        "-ipath",
+        "-type",
+        "-maxdepth",
+        "-mindepth",
+        "-printf",
+        "-regex",
+        "-iregex",
+    ];
+    let flag_predicates = [
+        "-mount", "-xdev", "-prune", "-print", "-print0", "-ls", "-not", "!", "-o", "-or", "-a",
+        "-and", "-quit",
+    ];
+    let mut index = 0;
+    while index < predicates.len() {
+        let predicate = predicates[index].as_str();
+        if flag_predicates.contains(&predicate) {
+            index += 1;
+            continue;
+        }
+        if value_predicates.contains(&predicate)
+            && predicates
+                .get(index + 1)
+                .is_some_and(|value| is_safe_find_value(predicate, value))
+        {
+            index += 2;
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn is_safe_script_path(script: &str) -> bool {
+    script
+        .strip_prefix("scripts/")
+        .map(|relative| safe_path(&format!("src/{relative}")))
+        .unwrap_or(false)
+}
+
+fn is_safe_typecheck(command: &[String]) -> bool {
+    (command.len() == 2 && command[0] == "tsc" && matches!(command[1].as_str(), "--noEmit" | "-b"))
+        || (command.len() == 3
+            && command[0] == "node"
+            && command[1] == "--check"
+            && is_safe_script_path(&command[2]))
+}
+
 pub(crate) fn command_is_supported(command: &[String]) -> bool {
+    if is_safe_typecheck(command) {
+        return true;
+    }
+    if matches!(
+        command.first().map(String::as_str),
+        Some("ls" | "cat" | "head" | "tail")
+    ) {
+        return command.len() > 1 && command[1..].iter().all(|path| safe_path(path));
+    }
     if command.len() == 4
         && command[0] == "git"
         && command[1] == "diff"
@@ -166,31 +291,6 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
             "-fprint",
             "-fprint0",
         ];
-        let safe_predicates = [
-            "-name",
-            "-iname",
-            "-path",
-            "-ipath",
-            "-type",
-            "-maxdepth",
-            "-mindepth",
-            "-mount",
-            "-xdev",
-            "-prune",
-            "-print",
-            "-print0",
-            "-ls",
-            "-printf",
-            "-regex",
-            "-iregex",
-            "-not",
-            "!",
-            "-o",
-            "-or",
-            "-a",
-            "-and",
-            "-quit",
-        ];
         if command.iter().any(|argument| {
             forbidden
                 .iter()
@@ -213,21 +313,13 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
         {
             return false;
         }
-        return command[index..].iter().all(|argument| {
-            !argument.starts_with('-') || safe_predicates.contains(&argument.as_str())
-        });
+        return are_find_predicates_safe(&command[index..]);
     }
     if command.first().map(String::as_str) == Some("tsx") {
         let Some(script) = command.get(1) else {
             return false;
         };
-        let script_path = script
-            .strip_prefix("scripts/")
-            .map(|relative| format!("src/{relative}"));
-        let Some(script_path) = script_path else {
-            return false;
-        };
-        return safe_path(&script_path)
+        return is_safe_script_path(script)
             && command[2..].iter().all(|arg| {
                 !arg.contains("..")
                     && !arg.starts_with('/')
@@ -245,6 +337,18 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
 pub(crate) fn command_intent_kind(command: &[String]) -> Option<&'static str> {
     if !command_is_supported(command) {
         return None;
+    }
+    if is_safe_typecheck(command)
+        || matches!(
+            command.first().map(String::as_str),
+            Some("ls" | "cat" | "head" | "tail")
+        )
+    {
+        return if is_safe_typecheck(command) {
+            Some("typecheck")
+        } else {
+            Some("read-files")
+        };
     }
     if command.len() == 4 && command[0] == "git" && command[2] == "--name-only" {
         return Some("git-names-only");

@@ -3,6 +3,8 @@ export type WorkerCommandIntent =
   | { kind: 'git-diff-scoped'; revision: string; pathspecs: string[] }
   | { kind: 'grep-files'; pattern: string; files: string[] }
   | { kind: 'find'; roots: string[]; predicates: string[] }
+  | { kind: 'read-files'; command: 'ls' | 'cat' | 'head' | 'tail'; files: string[] }
+  | { kind: 'typecheck'; command: 'tsc' | 'node'; args: string[] }
   | { kind: 'tsx-script'; script: string; args: string[] };
 
 export type WorkerCommandResult =
@@ -20,15 +22,37 @@ const PROTECTED_ROOTS = new Set([
   'src-tauri/capabilities',
 ]);
 
+const WINDOWS_DEVICE_NAMES = new Set([
+  'AUX', 'CLOCK$', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'CON', 'CONIN$', 'CONOUT$', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+  'NUL', 'PRN',
+]);
+
+function isWindowsDeviceName(component: string): boolean {
+  return WINDOWS_DEVICE_NAMES.has(component.split('.')[0].toUpperCase());
+}
+
+function isSafeGitRef(value: string): boolean {
+  if (!value || !/^[\x00-\x7F]*$/.test(value) || /[\x00-\x20~^:?*\\[\\]]/.test(value)) return false;
+  if (value === '@' || value.includes('..')) return false;
+  const components = value.split('/');
+  return components.every((part) => (
+    part.length > 0
+    && part !== '.'
+    && part !== '..'
+    && !part.startsWith('.')
+    && !part.endsWith('.')
+    && !part.toLowerCase().endsWith('.lock')
+  ));
+}
+
 function isSafeRevision(value: string): boolean {
   if (value === 'HEAD') return true;
   if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) return true;
-  if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) {
-    return !value.includes('..') && !value.includes('//') && !value.endsWith('/');
-  }
+  if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) return isSafeGitRef(value);
   if (/^(?:feature|bugfix|hotfix|release|worker)\/[A-Za-z0-9._/-]+$/.test(value)) {
     const leaf = value.split('/').at(-1) ?? '';
-    return !value.includes('..') && !value.includes('//') && Boolean(leaf) && !leaf.includes('.');
+    return isSafeGitRef(value) && Boolean(leaf) && !leaf.includes('.');
   }
   return /^[A-Za-z0-9][A-Za-z0-9_-]*[A-Za-z0-9]$/.test(value) || /^[A-Za-z0-9]$/.test(value);
 }
@@ -37,16 +61,74 @@ function isSafePathspec(value: string): boolean {
   const normalized = value.replace(/\\/g, '/');
   const comparable = normalized.toLowerCase();
   const components = normalized.split('/');
-  if (!normalized || !/^[\x00-\x7F]*$/.test(normalized)) return false;
+  if (!normalized || !/^[\x00-\x7F]*$/.test(normalized) || /[\x00-\x1F\x7F]/.test(normalized)) return false;
   if (normalized.startsWith('-') || normalized.startsWith('/') || normalized.startsWith('\\')) return false;
   if (/^[A-Za-z]:/.test(normalized) || normalized.includes(':')) return false;
-  if (components.some((part) => part === '' || part === '.' || part === '..' || /[. ]$/.test(part))) return false;
+  if (normalized.includes('..')) return false;
+  if (components.some((part) => part === '' || part === '.' || part === '..' || /[. ]$/.test(part) || isWindowsDeviceName(part))) return false;
   if (normalized.includes('*') || normalized.includes('?') || normalized.includes('[') || normalized.includes(']')) return false;
   if (normalized === '.' || /^(?:\.\/?)+$/.test(normalized)) return false;
   return ![...PROTECTED_ROOTS].some((root) => comparable === root || comparable.startsWith(`${root}/`));
 }
 
+const FIND_VALUE_PREDICATES = new Set(['-name', '-iname', '-path', '-ipath', '-type', '-maxdepth', '-mindepth', '-printf', '-regex', '-iregex']);
+const FIND_FLAG_PREDICATES = new Set(['-mount', '-xdev', '-prune', '-print', '-print0', '-ls', '-not', '!', '-o', '-or', '-a', '-and', '-quit']);
+
+function isSafeFindValue(predicate: string, value: string): boolean {
+  if (!value || value.startsWith('-') || /[\x00-\x1F\x7F]/.test(value)) return false;
+  if (predicate === '-maxdepth' || predicate === '-mindepth') return /^[0-9]+$/.test(value);
+  if (predicate === '-type') return /^[bcdpfls]$/.test(value);
+  return true;
+}
+
+function areFindPredicatesSafe(predicates: string[]): boolean {
+  let index = 0;
+  while (index < predicates.length) {
+    const predicate = predicates[index];
+    if (FIND_FLAG_PREDICATES.has(predicate)) {
+      index += 1;
+      continue;
+    }
+    if (FIND_VALUE_PREDICATES.has(predicate) && isSafeFindValue(predicate, predicates[index + 1] ?? '')) {
+      index += 2;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+function isSafeScriptPath(script: string): boolean {
+  return script.startsWith('scripts/')
+    && !script.includes('..')
+    && isSafePathspec(script.replace(/^scripts\//, 'src/'));
+}
+
+function parseSafeTypecheck(command: string[]): WorkerCommandIntent | null {
+  if (command[0] === 'tsc' && (command.length === 2 && (command[1] === '--noEmit' || command[1] === '-b'))) {
+    return { kind: 'typecheck', command: 'tsc', args: command.slice(1) };
+  }
+  if (command[0] === 'node' && command.length === 3 && command[1] === '--check' && isSafeScriptPath(command[2])) {
+    return { kind: 'typecheck', command: 'node', args: command.slice(1) };
+  }
+  return null;
+}
+
 export function parseWorkerCommand(command: string[]): WorkerCommandResult {
+  const typecheck = parseSafeTypecheck(command);
+  if (typecheck) return { ok: true, intent: typecheck };
+
+  if (['ls', 'cat', 'head', 'tail'].includes(command[0] as 'ls' | 'cat' | 'head' | 'tail')) {
+    const files = command.slice(1);
+    if (files.length > 0 && files.every(isSafePathspec)) {
+      return {
+        ok: true,
+        intent: { kind: 'read-files', command: command[0] as 'ls' | 'cat' | 'head' | 'tail', files },
+      };
+    }
+    return { ok: false, error: 'read command file operands are not safe' };
+  }
+
   if (command.length === 4 && command[0] === 'git' && command[1] === 'diff' && command[2] === '--name-only') {
     return isSafeRevision(command[3])
       ? { ok: true, intent: { kind: 'git-names-only', revision: command[3] } }
@@ -64,7 +146,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
 
   if (command[0] === 'tsx') {
     const script = command[1] ?? '';
-    if (!script.startsWith('scripts/') || script.includes('..') || !isSafePathspec(script.replace(/^scripts\//, 'src/'))) {
+    if (!isSafeScriptPath(script)) {
       return { ok: false, error: 'tsx script path is not safe' };
     }
     const args = command.slice(2);
@@ -85,7 +167,6 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
 
   if (command[0] === 'find') {
     const forbidden = ['-L', '-H', '-follow', '-files0-from', '--files0-from', '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fls', '-fprint', '-fprint0'];
-    const safePredicates = new Set(['-name', '-iname', '-path', '-ipath', '-type', '-maxdepth', '-mindepth', '-mount', '-xdev', '-prune', '-print', '-print0', '-ls', '-printf', '-regex', '-iregex', '-not', '!', '-o', '-or', '-a', '-and', '-quit']);
     if (command.some((argument) => forbidden.some((option) => argument === option || argument.startsWith(`${option}=`)))) {
       return { ok: false, error: 'find traversal mode is not safe' };
     }
@@ -97,7 +178,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
       index += 1;
     }
     const predicates = command.slice(index);
-    if (predicates.some((argument) => argument.startsWith('-') && !safePredicates.has(argument))) {
+    if (!areFindPredicatesSafe(predicates)) {
       return { ok: false, error: 'find traversal mode is not safe' };
     }
     if (roots.length > 0 && roots.every(isSafePathspec)) {
