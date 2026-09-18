@@ -3520,3 +3520,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.163 收紧Codex cancellation atomicity、success descendant cleanup与output-last-message cap 于 unverified checkpoint
+
+- active Codex registry与cancel现在按同一lock顺序处理；cancel在child kill/reap完成前不移除active entry，避免operation id过早复用和stale PID cleanup。
+- Codex leader退出后主动清理其process group；`--output-last-message`改为16MiB bounded read，overflow/read failure标记side effects unknown并清理registry/temp file。
+- Windows Job Object、Windows current_dir race、native Linux/macOS matrix和hardlink atomicity仍未闭合；本轮不宣称Codex/所有native process lifecycle全部verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

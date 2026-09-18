@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static CODEX_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const CODEX_OUTPUT_CAP: usize = 16 * 1024 * 1024;
 type ChildHandle = Arc<Mutex<Option<std::process::Child>>>;
 static ACTIVE_CODEX_CHILDREN: OnceLock<Mutex<HashMap<String, ChildHandle>>> = OnceLock::new();
 
@@ -69,6 +70,24 @@ fn valid_operation_id(operation_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
+fn read_codex_output(path: &std::path::Path) -> Result<Option<String>, String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("读取Codex output-last-message失败：{error}")),
+    };
+    let mut bytes = Vec::new();
+    file.take((CODEX_OUTPUT_CAP + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("读取Codex output-last-message失败：{error}"))?;
+    if bytes.len() > CODEX_OUTPUT_CAP {
+        return Err("Codex output-last-message 超过16MiB上限".into());
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| format!("Codex output-last-message不是UTF-8：{error}"))
+}
+
 fn kill_child_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
@@ -99,12 +118,16 @@ fn apply_login_sanitized_env(command: &mut Command) {
 }
 
 fn register_child(operation_id: &str, child: ChildHandle) -> Result<(), String> {
-    if take_cancelled_operation(operation_id) {
-        return Err("Codex Worker 已取消".into());
-    }
     let mut active = active_codex_children()
         .lock()
         .map_err(|_| "Codex operation registry 已损坏".to_string())?;
+    if cancelled_codex_operations()
+        .lock()
+        .map_err(|_| "Codex cancellation registry 已损坏".to_string())?
+        .remove(operation_id)
+    {
+        return Err("Codex Worker 已取消".into());
+    }
     if active.contains_key(operation_id) {
         return Err("Codex operation id 已在使用".into());
     }
@@ -509,6 +532,12 @@ fn run_exec(
             }
         }
     };
+    if let Ok(mut guard) = handle.lock() {
+        if let Some(child) = guard.as_mut() {
+            kill_child_tree(child);
+            let _ = child.wait();
+        }
+    }
 
     let out_buf = match join_child_output(stdout_thread) {
         Ok(buffer) => buffer,
@@ -539,7 +568,15 @@ fn run_exec(
     let stdout = String::from_utf8_lossy(&out_buf).to_string();
     let stderr = String::from_utf8_lossy(&err_buf).to_string();
     let (event_message, usage, event_failure) = parse_json_events(&stdout);
-    let file_message = fs::read_to_string(&output_path).ok();
+    let file_message = match read_codex_output(&output_path) {
+        Ok(message) => message,
+        Err(error) => {
+            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
+            return Err(format!(
+                "Codex output capture failed; side effects unknown: {error}"
+            ));
+        }
+    };
     let _ = fs::remove_file(&output_path);
 
     if !status.success() {
@@ -650,17 +687,18 @@ pub fn codex_worker_cancel(operation_id: String) -> Result<(), String> {
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation id 非法".into());
     }
-    let handle = active_codex_children()
+    let mut active = active_codex_children()
         .lock()
-        .map_err(|_| "Codex operation registry 已损坏".to_string())?
-        .remove(&operation_id);
-    if let Some(handle) = handle {
+        .map_err(|_| "Codex operation registry 已损坏".to_string())?;
+    if let Some(handle) = active.get(&operation_id).cloned() {
         let mut guard = handle
             .lock()
             .map_err(|_| "Codex child handle 已损坏".to_string())?;
         if let Some(child) = guard.as_mut() {
             kill_child_tree(child);
+            let _ = child.wait();
         }
+        active.remove(&operation_id);
     } else {
         let was_pending = pending_codex_operations()
             .lock()
