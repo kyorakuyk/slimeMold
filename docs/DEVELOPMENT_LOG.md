@@ -3311,21 +3311,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
 
-### 7.152 收紧 target metadata、cleanup capability identity 与 lifecycle rebind 于 unverified checkpoint
+### 7.152 收紧 target metadata、cleanup capability identity、trusted restore 与 branch-only cleanup 于 unverified checkpoint
 
 - `assert_base_identity_current` 增加 filesystem check 后的 session read-back；Antigravity Worker 纳入 `lock_dev_operation`，避免项目切换与 workspace writes/CLI spawn 并发交错。
-- register/restore 在 Git probe 后重新比较 target directory identity；`dev_path_allowed` 对已登记 registration 重新绑定 root identity，防止替换后的 worktree继续放行文件操作。
+- register/restore 在 Git probe 后重新比较 target directory identity；restore 仅接受已有 trusted host registration 提供的 historical identity，跨重启缺少 trusted identity 时 fail-closed，不把当前同路径目录重绑定为历史 worktree。
+- `dev_path_allowed` 对已登记 registration 重新绑定 root identity，防止替换后的 worktree继续放行文件操作。
 - orphan recovery 使用 `symlink_metadata` 区分目录、regular file、broken symlink 和缺失路径；无论目标目录是否存在都执行 Git listing/branch probe，并拒绝 live listed、branch 已在其他 worktree checkout 或重新出现的 target。
 - `worker_target_is_safe_for_existing_operation` 现在要求真实目录，regular file不能进入 cleanup/update-ref 路径。
-- cleanup binding 绑定 base identity 与 target identity；approval dialog 后、branch CAS 前后、worktree remove 前和 state read-back 均重新验证 identity；base/target漂移会使 capability失效并按 unknown 返回，不继续宣称成功。
-- generic `dev_exec` 在 spawn 前再次执行 cwd/registration identity gate；`dev_create_dir`、`dev_read_file`、`dev_write_file` 在相对路径解析前重新绑定 base identity。
-- 新增 partial base 的真实 temp-path regression、regular-file worker target regression；文件 handle-relative/no-follow、parent replacement 与 spawn check/use race仍是明确 residual，Node 对等 identity尚未实现。
+- cleanup approval要求 registered target identity与原 registration一致；orphan capability只能绑定缺失 target。cleanup binding同时绑定 base identity与target identity；approval dialog后、branch CAS前后、worktree remove前和state read-back均重新验证 identity。
+- branch-only orphan cleanup允许缺失目录在branch-tip CAS后完成；registered target若CAS后Git listing消失、Git probe失败或target identity漂移，则保持未知结果并不清除host lineage。
+- pending rollback lease保存creation-time target identity；worktree remove/lock/unlock只接受identity仍匹配的当前target。
+- generic `dev_exec` 在spawn前再次执行cwd/registration identity gate；`dev_create_dir`、`dev_read_file`、`dev_write_file` 在相对路径解析前重新绑定base identity。
+- 新增 partial base真实temp-path、regular-file target、branch-only cleanup identity回归；文件 handle-relative/no-follow、parent replacement 与 spawn check/use race仍是明确 residual，Node 对等 identity尚未实现。
 
 验证结果：
 
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
 - `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`78 passed / 0 failed`；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`79 passed / 0 failed`；
 - `npm run test`：`128 test files / 1111 tests passed`；
 - `npx tsc --noEmit`：通过；
 - `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；

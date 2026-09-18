@@ -296,6 +296,7 @@ struct PendingWorktree {
     generation: u64,
     path: String,
     branch: String,
+    identity: Option<StableDirectoryIdentity>,
     removed: bool,
 }
 
@@ -1396,11 +1397,17 @@ fn pending_worker_target(repo: &std::path::Path, raw_path: &str) -> bool {
     }
     let target = repo_target_path(repo, raw_path);
     let state = DEV_STATE.lock().unwrap();
-    state.pending_worktrees.iter().any(|pending| {
+    let Some(pending) = state.pending_worktrees.iter().find(|pending| {
         pending.generation == state.generation
             && !pending.removed
             && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
-    })
+    }) else {
+        return false;
+    };
+    let Some(expected_identity) = &pending.identity else {
+        return false;
+    };
+    stable_directory_identity(&target).is_ok_and(|current| current == *expected_identity)
 }
 
 fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
@@ -1430,6 +1437,7 @@ fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &
         .unwrap_or(target)
         .to_string_lossy()
         .to_string();
+    let target_identity = stable_directory_identity(std::path::Path::new(&stored_path)).ok();
     let mut state = DEV_STATE.lock().unwrap();
     if state
         .base_repo
@@ -1447,6 +1455,7 @@ fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &
             generation,
             path: stored_path,
             branch: branch.to_string(),
+            identity: target_identity,
             removed: false,
         });
     }
@@ -2554,12 +2563,35 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
         return Err("dev_restore_worktree: 主仓库 directory identity 已变化".into());
     }
     let canon = dev_abs_of(&path)?;
+    let trusted_target_identity = {
+        let state = DEV_STATE.lock().unwrap();
+        state
+            .registrations
+            .iter()
+            .find(|registered| {
+                registered_worktree_identity_matches(
+                    registered,
+                    registration_generation,
+                    &canon.to_string_lossy(),
+                    &branch,
+                )
+            })
+            .map(|registered| registered.identity.clone())
+            .ok_or_else(|| {
+                "dev_restore_worktree: 缺少 trusted target identity，拒绝重绑定当前路径".to_string()
+            })?
+    };
     if !canon.is_dir() {
         return Err(format!(
             "dev_restore_worktree: worktree 不存在或不是目录：{path}"
         ));
     }
     let identity = stable_directory_identity(&canon)?;
+    if identity != trusted_target_identity {
+        return Err(
+            "dev_restore_worktree: current target identity 不匹配 trusted registration".into(),
+        );
+    }
     let canonical_path = canon.to_string_lossy().to_string();
     if !main_repo_worktree_target_is_valid(&base_path, &canonical_path, &branch) {
         return Err("dev_restore_worktree: 路径/分支不属于受控 Worker 根".into());
@@ -2729,6 +2761,7 @@ fn dev_register_orphan_worktree(
             generation,
             path: c,
             branch,
+            identity: None,
             removed: true,
         });
     }
@@ -2783,16 +2816,32 @@ fn dev_approve_cleanup(
     }
     {
         let state = DEV_STATE.lock().unwrap();
-        let registered = state
+        let registered_identity = state
             .registrations
             .iter()
-            .any(|item| registered_worktree_identity_matches(item, generation, &c, &branch));
+            .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
+            .map(|item| item.identity.clone());
         let orphan = state.orphan_worktrees.iter().any(|item| {
             item.generation == generation
                 && item.branch == branch
                 && path_compare_key(&item.path) == path_compare_key(&c)
         });
-        if !registered && !orphan {
+        if registered_identity.is_some() && orphan {
+            return Err("dev_approve_cleanup: target 同时存在 registered/orphan lineage".into());
+        }
+        if let Some(expected_identity) = registered_identity {
+            if target_identity.as_ref() != Some(&expected_identity) {
+                return Err(
+                    "dev_approve_cleanup: 当前 target identity 不匹配原登记 identity".into(),
+                );
+            }
+        } else if orphan {
+            if target_identity.is_some() || git_branch_is_listed(&base_path, &branch)? {
+                return Err(
+                    "dev_approve_cleanup: orphan target 已重新出现或仍被 Git checkout".into(),
+                );
+            }
+        } else {
             return Err("dev_approve_cleanup: worktree 未被当前 host 登记".into());
         }
         if state
@@ -2868,6 +2917,35 @@ fn dev_approve_cleanup(
 /// Native cleanup is capability-based: JS-side proposal validation is not sufficient.
 /// `dev_approve_cleanup` issues a one-shot token only after revalidation and a native
 /// confirmation dialog; `dev_cleanup_worktree` refuses every unbound destructive call.
+fn cleanup_target_identity_is_current(
+    repo: &std::path::Path,
+    target: &std::path::Path,
+    branch: &str,
+    expected: Option<&StableDirectoryIdentity>,
+) -> Result<bool, String> {
+    match expected {
+        Some(expected) => {
+            let metadata = match fs::symlink_metadata(target) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(format!("无法读取 cleanup target metadata：{error}")),
+            };
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Ok(false);
+            }
+            Ok(stable_directory_identity(target)? == *expected)
+        }
+        None => {
+            let absent = match fs::symlink_metadata(target) {
+                Ok(_) => false,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => return Err(format!("无法读取 orphan target metadata：{error}")),
+            };
+            Ok(absent && !git_branch_is_listed(repo, branch)?)
+        }
+    }
+}
+
 #[tauri::command]
 fn dev_cleanup_worktree(
     path: String,
@@ -2897,20 +2975,14 @@ fn dev_cleanup_worktree(
     if stable_directory_identity(&base_path)? != base_identity {
         return Err("dev_cleanup_worktree: 主仓库 directory identity 已变化".into());
     }
-    if !worker_target_is_safe_for_existing_operation(&base_path, &path) {
-        return Err(
-            "dev_cleanup_worktree: worktree target 不是已存在且未被链接替换的受控目录".into(),
-        );
-    }
     let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
     if !main_repo_worktree_target_is_valid(&base_path, &c, &branch) {
         return Err("dev_cleanup_worktree: 路径/分支不属于受控 Worker 根".into());
     }
-    let target_identity = stable_directory_identity(&canon)?;
-    {
+    let expected_target_identity = {
         let state = DEV_STATE.lock().unwrap();
-        let capability = state.cleanup_bindings.iter().find(|binding| {
+        let Some(capability) = state.cleanup_bindings.iter().find(|binding| {
             cleanup_binding_matches(
                 binding,
                 &approval_token,
@@ -2919,30 +2991,32 @@ fn dev_cleanup_worktree(
                 &branch,
                 &branch_revision,
             )
-        });
-        let Some(capability) = capability else {
+        }) else {
             return Err("dev_cleanup_worktree: 缺少匹配的 native cleanup capability".into());
         };
-        if capability.base_identity != base_identity
-            || capability.target_identity.as_ref() != Some(&target_identity)
-        {
+        if capability.base_identity != base_identity {
             drop(state);
             invalidate_cleanup_binding(&approval_token);
-            return Err("dev_cleanup_worktree: cleanup capability identity 已漂移".into());
+            return Err("dev_cleanup_worktree: cleanup capability base identity 已漂移".into());
         }
-        let registered = state
+        let registered_identity = state
             .registrations
             .iter()
-            .any(|item| registered_worktree_identity_matches(item, generation, &c, &branch));
+            .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
+            .map(|item| item.identity.clone());
         let orphan = state.orphan_worktrees.iter().any(|item| {
             item.generation == generation
                 && item.branch == branch
                 && path_compare_key(&item.path) == path_compare_key(&c)
         });
-        if !registered && !orphan {
-            drop(state);
-            invalidate_cleanup_binding(&approval_token);
-            return Err("dev_cleanup_worktree: worktree 未被当前 host 登记".into());
+        match (&capability.target_identity, registered_identity, orphan) {
+            (Some(expected), Some(current), false) if expected == &current => {}
+            (None, None, true) => {}
+            _ => {
+                drop(state);
+                invalidate_cleanup_binding(&approval_token);
+                return Err("dev_cleanup_worktree: cleanup lineage/identity 不匹配".into());
+            }
         }
         if state
             .pending_worktrees
@@ -2953,14 +3027,20 @@ fn dev_cleanup_worktree(
             invalidate_cleanup_binding(&approval_token);
             return Err("dev_cleanup_worktree: pending rollback worktree 不能清理".into());
         }
-    }
-    if stable_directory_identity(&base_path)? != base_identity
-        || stable_directory_identity(&canon)? != target_identity
-    {
+        capability.target_identity.clone()
+    };
+    if !cleanup_target_identity_is_current(
+        &base_path,
+        &canon,
+        &branch,
+        expected_target_identity.as_ref(),
+    )? {
         invalidate_cleanup_binding(&approval_token);
-        return Err("dev_cleanup_worktree: destructive probe 前 identity 已漂移".into());
+        return Err(
+            "dev_cleanup_worktree: cleanup target identity 已漂移或 orphan 已重新出现".into(),
+        );
     }
-    if canon.is_dir() {
+    if expected_target_identity.is_some() {
         let matches = match git_worktree_matches(&base_path, &canon, &branch) {
             Ok(matches) => matches,
             Err(error) => {
@@ -2974,7 +3054,12 @@ fn dev_cleanup_worktree(
         }
     }
     if stable_directory_identity(&base_path)? != base_identity
-        || stable_directory_identity(&canon)? != target_identity
+        || !cleanup_target_identity_is_current(
+            &base_path,
+            &canon,
+            &branch,
+            expected_target_identity.as_ref(),
+        )?
     {
         invalidate_cleanup_binding(&approval_token);
         return Err("dev_cleanup_worktree: branch CAS 前 identity 已漂移".into());
@@ -3001,16 +3086,48 @@ fn dev_cleanup_worktree(
         ));
     }
     if stable_directory_identity(&base_path)? != base_identity
-        || stable_directory_identity(&canon)? != target_identity
+        || !cleanup_target_identity_is_current(
+            &base_path,
+            &canon,
+            &branch,
+            expected_target_identity.as_ref(),
+        )?
     {
         invalidate_cleanup_binding(&approval_token);
         return Err(
             "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理".into(),
         );
     }
-    if git_worktree_is_listed(&base_path, &canon)? {
+    let listed_after_cas = match git_worktree_is_listed(&base_path, &canon) {
+        Ok(listed) => listed,
+        Err(error) => {
+            invalidate_cleanup_binding(&approval_token);
+            return Err(format!(
+                "dev_cleanup_worktree: branch CAS 后无法确认 worktree 状态：{error}"
+            ));
+        }
+    };
+    if expected_target_identity.is_some() && !listed_after_cas {
+        invalidate_cleanup_binding(&approval_token);
+        return Err(
+            "dev_cleanup_worktree: branch CAS 后 worktree listing 消失，结果必须按 unknown 处理"
+                .into(),
+        );
+    }
+    if expected_target_identity.is_none() && listed_after_cas {
+        invalidate_cleanup_binding(&approval_token);
+        return Err(
+            "dev_cleanup_worktree: branch-only orphan 在 CAS 后重新出现在 worktree listing".into(),
+        );
+    }
+    if listed_after_cas {
         if stable_directory_identity(&base_path)? != base_identity
-            || stable_directory_identity(&canon)? != target_identity
+            || !cleanup_target_identity_is_current(
+                &base_path,
+                &canon,
+                &branch,
+                expected_target_identity.as_ref(),
+            )?
         {
             invalidate_cleanup_binding(&approval_token);
             return Err("dev_cleanup_worktree: worktree remove 前 identity 已漂移".into());
@@ -4746,6 +4863,7 @@ mod dev_exec_tests {
                 generation,
                 path: pending_str.clone(),
                 branch: "worker/pending".to_string(),
+                identity: None,
                 removed: false,
             }];
         }
@@ -5831,6 +5949,44 @@ mod dev_write_symlink_tests {
             result.is_err(),
             "base alias must not reach canonical fallback"
         );
+    }
+
+    #[test]
+    fn cleanup_target_identity_allows_absent_unlisted_orphan_only() {
+        let root =
+            std::env::temp_dir().join(format!("slimemold-cleanup-target-{}", std::process::id()));
+        let repo = root.join("repo");
+        let missing = std::path::PathBuf::from(format!("{}-workers", repo.to_string_lossy()))
+            .join("worker-a");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&repo).unwrap();
+        let output = Command::new(resolve_dev_program("git"))
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(
+            cleanup_target_identity_is_current(&repo, &missing, "worker/worker-a", None).unwrap()
+        );
+        fs::write(&missing, "regular file").unwrap_or_else(|_| {
+            fs::create_dir_all(missing.parent().unwrap()).unwrap();
+            fs::write(&missing, "regular file").unwrap();
+        });
+        assert!(!cleanup_target_identity_is_current(
+            &repo,
+            &missing,
+            "worker/worker-a",
+            Some(&StableDirectoryIdentity {
+                canonical_path: missing.to_string_lossy().to_string(),
+                volume_or_device: 1,
+                file_or_inode: 2,
+            }),
+        )
+        .unwrap());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
