@@ -3039,3 +3039,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.138 使用 trusted snapshot 拒绝 exotic Node argv 于 unverified checkpoint
+
+- Node parser 在 grammar 前读取 own data descriptors，拒绝 inherited getter、own accessor 和 descriptor 读取异常；只把可信 token snapshot 交给后续解析，caller 自带的 `slice/some` shadow 不再影响 intent。
+- 新增 inherited getter 不触发、own accessor 拒绝和 shadowed `slice` 仍按可信 token 正确解析的回归。
+- 本轮仍未接入真实 runtime authority；8.3 alias、launcher/ComSpec、cwd/identity 和 cleanup/recovery 保持后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。

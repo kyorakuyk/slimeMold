@@ -33,18 +33,26 @@ function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function isBoundedCommand(command: unknown[]): command is string[] {
-  if (!Array.isArray(command) || command.length === 0 || command.length > MAX_COMMAND_ARGS) return false;
+function snapshotBoundedCommand(command: unknown[]): string[] | null {
+  if (!Array.isArray(command) || command.length === 0 || command.length > MAX_COMMAND_ARGS) return null;
+  const snapshot = new Array<string>(command.length);
   let totalBytes = 0;
-  for (let index = 0; index < command.length; index += 1) {
-    const token = command[index];
-    if (!Object.prototype.hasOwnProperty.call(command, index) || typeof token !== 'string' || hasUnpairedSurrogate(token)) return false;
-    const tokenBytes = utf8ByteLength(token);
-    if (tokenBytes > MAX_COMMAND_TOKEN_BYTES) return false;
-    totalBytes += tokenBytes;
-    if (totalBytes > MAX_COMMAND_TOTAL_BYTES) return false;
+  try {
+    for (let index = 0; index < command.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(command, String(index));
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
+      const token = descriptor.value;
+      if (typeof token !== 'string' || hasUnpairedSurrogate(token)) return null;
+      const tokenBytes = utf8ByteLength(token);
+      if (tokenBytes > MAX_COMMAND_TOKEN_BYTES) return null;
+      totalBytes += tokenBytes;
+      if (totalBytes > MAX_COMMAND_TOTAL_BYTES) return null;
+      snapshot[index] = token;
+    }
+  } catch {
+    return null;
   }
-  return true;
+  return snapshot;
 }
 
 const PROTECTED_ROOTS = new Set([
@@ -179,7 +187,9 @@ function parseSafeTypecheck(command: string[]): WorkerCommandIntent | null {
 }
 
 export function parseWorkerCommand(command: string[]): WorkerCommandResult {
-  if (!isBoundedCommand(command)) return { ok: false, error: 'command input is not bounded and well-formed' };
+  const snapshot = snapshotBoundedCommand(command);
+  if (!snapshot) return { ok: false, error: 'command input is not bounded and well-formed' };
+  command = snapshot;
 
   const typecheck = parseSafeTypecheck(command);
   if (typecheck) return { ok: true, intent: typecheck };
