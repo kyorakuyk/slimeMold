@@ -3618,3 +3618,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.168 收紧prepared lease TTL/identity、cancel consumption与finalization linearization 于 unverified checkpoint
+
+- prepared lease增加5分钟TTL与128条cap；prepare先在host operation lock内校验session/worktree并清理过期entry，避免abandoned prepare造成无界内存增长。
+- lease绑定stable directory identity；exec同时比较session、canonical path与identity，same-path replacement/re-registration不会重新授权旧lease。
+- prepared cancel现在消费匹配generation的lease；exec在prepared race失败时finish pending，避免prepared/pending registry泄漏。
+- pending finish改为与cancel共享锁的线性化点：cancel先写入标记则Worker返回unknown-effects，finish先移除则后到cancel视为已完成，不会在finalization竞态下错误报告成功。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

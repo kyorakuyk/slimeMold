@@ -10,11 +10,13 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static CODEX_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CODEX_OUTPUT_CAP: usize = 16 * 1024 * 1024;
+const CODEX_PREPARED_LEASE_TTL: Duration = Duration::from_secs(5 * 60);
+const CODEX_PREPARED_LEASE_CAP: usize = 128;
 type ChildHandle = Arc<Mutex<Option<std::process::Child>>>;
 struct ActiveChild {
     session_generation: u64,
@@ -31,6 +33,8 @@ fn active_codex_children() -> &'static Mutex<HashMap<String, ActiveChild>> {
 struct PreparedLease {
     session_generation: u64,
     cwd: PathBuf,
+    identity: crate::StableDirectoryIdentity,
+    created_at: Instant,
     cancellation_requested: bool,
 }
 
@@ -54,24 +58,33 @@ pub fn codex_worker_prepare(cwd: String, generation: u64) -> Result<String, Stri
     if generation == 0 {
         return Err("Codex Worker session generation 无效".into());
     }
+    let _operation_guard = crate::lock_dev_operation();
     crate::assert_session_generation(generation, "codex_worker_prepare")?;
     let worktree = crate::assert_registered_worktree(&cwd)?;
+    let (_, identity) = crate::dev_cwd_binding(&cwd)?;
     let token = format!(
         "lease-{}-{}",
         std::process::id(),
         CODEX_OPERATION_GENERATION.fetch_add(1, Ordering::Relaxed)
     );
-    prepared_codex_leases()
+    let mut leases = prepared_codex_leases()
         .lock()
-        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-        .insert(
-            token.clone(),
-            PreparedLease {
-                session_generation: generation,
-                cwd: worktree,
-                cancellation_requested: false,
-            },
-        );
+        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?;
+    let now = Instant::now();
+    leases.retain(|_, lease| now.duration_since(lease.created_at) < CODEX_PREPARED_LEASE_TTL);
+    if leases.len() >= CODEX_PREPARED_LEASE_CAP {
+        return Err("Codex prepared lease数量超过上限".into());
+    }
+    leases.insert(
+        token.clone(),
+        PreparedLease {
+            session_generation: generation,
+            cwd: worktree,
+            identity,
+            created_at: now,
+            cancellation_requested: false,
+        },
+    );
     Ok(token)
 }
 #[derive(Clone, Copy)]
@@ -108,15 +121,17 @@ fn begin_pending_operation(operation_id: &str, session_generation: u64) -> Resul
     Ok(generation)
 }
 
-fn finish_pending_operation(operation_id: &str, generation: u64) {
+fn finish_pending_operation(operation_id: &str, generation: u64) -> bool {
     if let Ok(mut pending) = pending_codex_operations().lock() {
-        if pending
-            .get(operation_id)
-            .is_some_and(|entry| entry.generation == generation)
-        {
-            pending.remove(operation_id);
+        if let Some(entry) = pending.get(operation_id) {
+            if entry.generation == generation {
+                let cancelled = entry.cancellation_requested;
+                pending.remove(operation_id);
+                return cancelled;
+            }
         }
     }
+    false
 }
 
 fn take_cancelled_operation(operation_id: &str) -> bool {
@@ -903,6 +918,7 @@ pub async fn codex_worker_exec(
     }
     crate::assert_session_generation(generation, "codex_worker_exec")?;
     let worktree = crate::assert_registered_worktree(&cwd)?;
+    let (_, current_identity) = crate::dev_cwd_binding(&cwd)?;
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation token 非法".into());
     }
@@ -912,15 +928,24 @@ pub async fn codex_worker_exec(
         .get(&operation_id)
         .cloned()
         .ok_or_else(|| "Codex Worker lease不存在或已使用".to_string())?;
-    if prepared.session_generation != generation || !same_cwd_path(&prepared.cwd, &worktree) {
+    if prepared.session_generation != generation
+        || !same_cwd_path(&prepared.cwd, &worktree)
+        || prepared.identity != current_identity
+    {
         return Err("Codex Worker lease与当前session/cwd不匹配".into());
     }
     let pending_generation = begin_pending_operation(&operation_id, generation)?;
-    let prepared = prepared_codex_leases()
+    let prepared = match prepared_codex_leases()
         .lock()
         .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
         .remove(&operation_id)
-        .ok_or_else(|| "Codex Worker lease在启动前消失".to_string())?;
+    {
+        Some(prepared) => prepared,
+        None => {
+            finish_pending_operation(&operation_id, pending_generation);
+            return Err("Codex Worker lease在启动前消失".into());
+        }
+    };
     if prepared.cancellation_requested {
         finish_pending_operation(&operation_id, pending_generation);
         return Err("Codex Worker 已取消".into());
@@ -957,8 +982,12 @@ pub async fn codex_worker_exec(
         Ok(result)
     }
     .await;
-    finish_pending_operation(&operation_id, pending_generation);
-    result
+    let cancelled_during_finalization = finish_pending_operation(&operation_id, pending_generation);
+    if cancelled_during_finalization {
+        Err("Codex Worker 在finalization期间被取消；side effects unknown".into())
+    } else {
+        result
+    }
 }
 
 /// 取消当前 SlimeMold 进程注册的 Codex Worker；未知 operation 视为幂等成功。
@@ -996,15 +1025,16 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
             }
         }
     } else {
-        if let Some(entry) = prepared_codex_leases()
+        let mut prepared = prepared_codex_leases()
             .lock()
-            .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-            .get_mut(&operation_id)
-        {
-            if entry.session_generation == generation {
-                entry.cancellation_requested = true;
-            }
+            .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?;
+        let remove_prepared = prepared
+            .get(&operation_id)
+            .is_some_and(|entry| entry.session_generation == generation);
+        if remove_prepared {
+            prepared.remove(&operation_id);
         }
+        drop(prepared);
         if let Some(entry) = pending_codex_operations()
             .lock()
             .map_err(|_| "Codex pending registry 已损坏".to_string())?
