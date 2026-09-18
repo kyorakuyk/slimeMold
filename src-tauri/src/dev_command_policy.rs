@@ -276,6 +276,7 @@ fn hardened_git_diff_pathspec_safe(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('-')
         && !value.chars().any(|c| c.is_ascii_control())
+        && !value.starts_with(':')
         && !value.contains('*')
         && !value.contains('?')
         && !value.contains('[')
@@ -582,6 +583,24 @@ mod tests {
             .map(|value| value.replace("src/components/App.tsx", "package[.]json"))
             .collect::<Vec<_>>();
         assert!(!hardened_git_diff_is_supported(&bracket_alias));
+        for magic in [
+            ":(icase)package.json",
+            ":(top)package.json",
+            ":/package.json",
+            ":!package.json",
+            ":^package.json",
+            ":(attr:filter=lfs)package.json",
+            ":(literal)package.json",
+        ] {
+            let magic_path = scoped
+                .iter()
+                .map(|value| value.replace("C:/repo/wt/src/components/App.tsx", magic))
+                .collect::<Vec<_>>();
+            assert!(
+                !hardened_git_diff_is_supported(&magic_path),
+                "must reject Git pathspec magic: {magic}"
+            );
+        }
     }
 
     #[test]
