@@ -90,11 +90,14 @@ export interface WorktreeInfo {
   baseRevision: string;
   /** Branch tip captured immediately before worktree removal; required for CAS branch retry. */
   branchRevision?: string;
+  /** Host/runtime stable object identity captured at creation. */
+  targetIdentity?: string;
   createdAt: string;
   status: WorktreeStatus;
 }
 
 export type WorktreePathVerifier = (path: string, mustExist: boolean) => Promise<boolean>;
+export type WorktreeIdentityReader = (path: string, mustExist: boolean) => Promise<string | null>;
 
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
@@ -105,6 +108,7 @@ export class WorktreeManager {
     private readonly baseRepoPath: string,
     private readonly ensureParentDirectory?: (path: string) => Promise<void>,
     private readonly verifyPathIdentity?: WorktreePathVerifier,
+    private readonly readPathIdentity?: WorktreeIdentityReader,
   ) {}
 
   getBaseRepoPath(): string {
@@ -179,15 +183,25 @@ export class WorktreeManager {
       this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
       return null;
     }
+    const targetIdentity = this.readPathIdentity
+      ? await this.readPathIdentity(path, true)
+      : undefined;
     const info: WorktreeInfo = {
       id,
       path,
       branch,
       baseRevision,
+      ...(targetIdentity ? { targetIdentity } : {}),
       createdAt: new Date().toISOString(),
       status: 'created',
     };
     this.infos.set(id, info);
+    if (this.readPathIdentity && !targetIdentity) {
+      this.lastCreateError = `worktree target identity unavailable: ${path}`;
+      const rolledBack = await this.cleanupCreated(info);
+      if (rolledBack) this.forget(id);
+      return null;
+    }
     if (opts?.signal?.aborted) {
       const rolledBack = await this.cleanupCreated(info);
       if (rolledBack) this.forget(id);
@@ -228,6 +242,11 @@ export class WorktreeManager {
     if (pathComparisonKey(path) === pathComparisonKey(base)) return false;
     if (!isWorkerScopedTarget(base, path, info.branch)) return false;
     if (this.verifyPathIdentity && info.status === 'created' && !(await this.verifyPathIdentity(path, true))) return false;
+    if (this.readPathIdentity && info.status === 'created') {
+      if (!info.targetIdentity) return false;
+      const currentIdentity = await this.readPathIdentity(path, true);
+      if (currentIdentity !== info.targetIdentity) return false;
+    }
 
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
@@ -386,7 +405,10 @@ export class WorktreeManager {
     if (!branchRevision) return false;
     if (expectedBranchRevision && await this.readBranchRevision(info.branch) !== expectedBranchRevision) return false;
     if (signal?.aborted) return false;
-    if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
+    if (this.readPathIdentity) {
+      const currentIdentity = await this.readPathIdentity(info.path, true);
+      if (info.targetIdentity ? currentIdentity !== info.targetIdentity : currentIdentity !== null) return false;
+    } else if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
     if (expectedBranchRevision && this.runner.cleanupWorktree) {
       const cleanup = await this.runner.cleanupWorktree(
         info.path,
@@ -408,6 +430,10 @@ export class WorktreeManager {
       return false;
     }
     if (rm.exitCode !== 0) return false;
+    if (this.readPathIdentity && await this.readPathIdentity(info.path, true) !== null) {
+      this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
+      return false;
+    }
     if (!(await this.deleteBranchAtRevision(info.branch, branchRevision))) {
       this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
       return false;
@@ -438,7 +464,10 @@ export class WorktreeManager {
       const currentRevision = await this.readBranchRevision(info.branch);
       if (opts.signal?.aborted) return false;
       if (currentRevision !== info.branchRevision) return false;
-      if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
+      if (this.readPathIdentity) {
+        const currentIdentity = await this.readPathIdentity(info.path, true);
+        if (info.targetIdentity ? currentIdentity !== info.targetIdentity : currentIdentity !== null) return false;
+      } else if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
       if (this.runner.cleanupWorktree) {
         const cleanup = await this.runner.cleanupWorktree(
           info.path,

@@ -3335,3 +3335,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.153 收紧 strict Git listing、rollback branch CAS、Node identity 与 unregister gate 于 unverified checkpoint
+
+- `git worktree list --porcelain` 现在要求非空、未截断且结构完整的 worktree/HEAD blocks；malformed、unknown field、empty/truncated output统一 fail-closed，不再把 probe异常当作 absence。
+- pending rollback lease保存创建时 branch revision；`update-ref -d` rollback gate必须匹配该host-owned revision，不能由调用方用同名branch的新tip替代。
+- `dev_unregister_worktree` 对仍有 registered/orphan lineage的路径拒绝裸注销；只有native cleanup已清除lineage后的幂等 read-back可返回成功。
+- Node `WorktreeInfo` 在默认 Node runtime保存 creation-time `dev:ino` identity；restore、created cleanup和orphan cleanup重新比较当前对象，替换目录不再复用旧lineage；Tauri路径继续由Rust authority负责。
+- Node/Tauri仍保留平台相关 handle-relative/no-follow、parent replacement与最终spawn check/use race为明确 residual；Node custom fake runner和跨重启无trusted identity的恢复仍需后续专门证据。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`79 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

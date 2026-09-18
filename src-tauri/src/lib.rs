@@ -297,6 +297,7 @@ struct PendingWorktree {
     path: String,
     branch: String,
     identity: Option<StableDirectoryIdentity>,
+    branch_revision: Option<String>,
     removed: bool,
 }
 
@@ -1410,7 +1411,7 @@ fn pending_worker_target(repo: &std::path::Path, raw_path: &str) -> bool {
     stable_directory_identity(&target).is_ok_and(|current| current == *expected_identity)
 }
 
-fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
+fn pending_worker_branch(repo: &std::path::Path, branch: &str, expected_revision: &str) -> bool {
     let Some(name) = branch.strip_prefix("worker/") else {
         return false;
     };
@@ -1423,6 +1424,7 @@ fn pending_worker_branch(repo: &std::path::Path, branch: &str) -> bool {
         pending.generation == state.generation
             && pending.removed
             && pending.branch == branch
+            && pending.branch_revision.as_deref() == Some(expected_revision)
             && path_compare_key(&pending.path) == path_compare_key(&target.to_string_lossy())
     })
 }
@@ -1438,6 +1440,7 @@ fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &
         .to_string_lossy()
         .to_string();
     let target_identity = stable_directory_identity(std::path::Path::new(&stored_path)).ok();
+    let branch_revision = git_branch_revision(repo, branch).ok();
     let mut state = DEV_STATE.lock().unwrap();
     if state
         .base_repo
@@ -1456,6 +1459,7 @@ fn record_pending_worktree_add(repo: &std::path::Path, raw_path: &str, branch: &
             path: stored_path,
             branch: branch.to_string(),
             identity: target_identity,
+            branch_revision,
             removed: false,
         });
     }
@@ -1555,7 +1559,7 @@ fn dev_main_repo_git_allowed_at(args: &[String], repo: Option<&std::path::Path>)
             let Some(branch) = worker_branch_from_ref_arg(&args[3]) else {
                 return false;
             };
-            is_full_object_id(&args[4]) && pending_worker_branch(path, branch)
+            is_full_object_id(&args[4]) && pending_worker_branch(path, branch, &args[4])
         });
     }
     dev_main_repo_git_allowed(args)
@@ -1684,7 +1688,6 @@ fn dev_sanitized_env_with_home(isolate_home: bool) -> HashMap<String, String> {
 
 /// 带超时的子进程执行，返回 stdout/stderr/exitCode（非零退出码不视为错误）。
 fn drain_child_output<R: std::io::Read>(mut reader: R) -> Vec<u8> {
-    const CAP: usize = 16 * 1024 * 1024;
     let mut captured = Vec::new();
     let mut total = 0usize;
     let mut buffer = [0u8; 8192];
@@ -1693,8 +1696,8 @@ fn drain_child_output<R: std::io::Read>(mut reader: R) -> Vec<u8> {
             Ok(0) | Err(_) => break,
             Ok(size) => size,
         };
-        if total < CAP {
-            let keep = read.min(CAP - total);
+        if total < DEV_OUTPUT_CAP {
+            let keep = read.min(DEV_OUTPUT_CAP - total);
             captured.extend_from_slice(&buffer[..keep]);
         }
         total = total.saturating_add(read);
@@ -2357,6 +2360,52 @@ fn dev_clear_session(generation: u64) -> Result<(), String> {
     Ok(())
 }
 
+const DEV_OUTPUT_CAP: usize = 16 * 1024 * 1024;
+
+fn validate_git_worktree_porcelain(output: &str) -> Result<(), String> {
+    if output.is_empty() || output.len() >= DEV_OUTPUT_CAP {
+        return Err("Git worktree list 输出为空或可能被截断".into());
+    }
+    let mut block_count = 0usize;
+    for block in output
+        .split("\n\n")
+        .filter(|block| !block.trim().is_empty())
+    {
+        let mut has_worktree = false;
+        let mut has_head = false;
+        for line in block.lines().map(str::trim_end) {
+            if let Some(path) = line.strip_prefix("worktree ") {
+                if path.trim().is_empty() || has_worktree {
+                    return Err("Git worktree list porcelain 结构无效".into());
+                }
+                has_worktree = true;
+            } else if let Some(head) = line.strip_prefix("HEAD ") {
+                if !is_full_object_id(head.trim()) || has_head {
+                    return Err("Git worktree list HEAD 无效".into());
+                }
+                has_head = true;
+            } else if line.starts_with("branch refs/heads/")
+                || line == "detached"
+                || line == "bare"
+                || line.starts_with("locked")
+                || line.starts_with("prunable")
+            {
+                continue;
+            } else {
+                return Err("Git worktree list porcelain 含未知字段".into());
+            }
+        }
+        if !has_worktree || !has_head {
+            return Err("Git worktree list porcelain 缺少 worktree/HEAD 字段".into());
+        }
+        block_count += 1;
+    }
+    if block_count == 0 {
+        return Err("Git worktree list porcelain 没有有效 block".into());
+    }
+    Ok(())
+}
+
 /// 登记一个 worktree（前端 dev.worktree.create 成功后调用；支持相对路径基于主仓库根解析）。
 fn git_worktree_list(repo: &std::path::Path) -> Result<String, String> {
     let mut cmd = Command::new(resolve_dev_program("git"));
@@ -2371,6 +2420,7 @@ fn git_worktree_list(repo: &std::path::Path) -> Result<String, String> {
     if result.code != 0 {
         return Err("Git worktree list probe 失败".to_string());
     }
+    validate_git_worktree_porcelain(&result.stdout)?;
     Ok(result.stdout)
 }
 
@@ -2411,6 +2461,27 @@ fn git_branch_is_listed(repo: &std::path::Path, branch: &str) -> Result<bool, St
     Ok(git_worktree_list(repo)?
         .lines()
         .any(|line| line.trim() == expected))
+}
+
+fn git_branch_revision(repo: &std::path::Path, branch: &str) -> Result<String, String> {
+    let mut cmd = Command::new(resolve_dev_program("git"));
+    cmd.arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--end-of-options"])
+        .arg(format!("refs/heads/{branch}^{{commit}}"));
+    cmd.env_clear();
+    for (key, value) in dev_sanitized_env() {
+        cmd.env(key, value);
+    }
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(5))?;
+    if result.code != 0 {
+        return Err("Git branch revision probe 失败".into());
+    }
+    let revision = result.stdout.trim().to_string();
+    if !is_full_object_id(&revision) {
+        return Err("Git branch revision 输出无效".into());
+    }
+    Ok(revision)
 }
 
 fn git_branch_exists(repo: &std::path::Path, branch: &str) -> Result<bool, String> {
@@ -2762,6 +2833,7 @@ fn dev_register_orphan_worktree(
             path: c,
             branch,
             identity: None,
+            branch_revision: None,
             removed: true,
         });
     }
@@ -3239,6 +3311,18 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
         || stable_directory_identity(&base_path)? != base_identity
     {
         return Err("dev_unregister_worktree: session 在 read-back 期间发生变化".into());
+    }
+    let has_lineage = st.registrations.iter().any(|registered| {
+        registered_worktree_identity_matches(registered, generation, &c, &branch)
+    }) || st.orphan_worktrees.iter().any(|item| {
+        item.generation == generation
+            && item.branch == branch
+            && path_compare_key(&item.path) == path_compare_key(&c)
+    });
+    if has_lineage {
+        return Err(
+            "dev_unregister_worktree: lineage 仍存在，必须使用 native cleanup capability".into(),
+        );
     }
     if let Some(index) = st
         .worktrees
@@ -4864,6 +4948,7 @@ mod dev_exec_tests {
                 path: pending_str.clone(),
                 branch: "worker/pending".to_string(),
                 identity: None,
+                branch_revision: None,
                 removed: false,
             }];
         }

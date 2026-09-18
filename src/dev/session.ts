@@ -14,7 +14,7 @@
 import type { NodeDefinition } from '../types';
 import { defaultDevPolicy, type SelfDevelopmentPolicy } from './policy';
 import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry } from './capabilities';
-import { WorktreeManager, createNodeGitRunner, type DevGitRunner, type WorktreePathVerifier } from './worktree';
+import { WorktreeManager, createNodeGitRunner, type DevGitRunner, type WorktreeIdentityReader, type WorktreePathVerifier } from './worktree';
 import {
   assertEvidenceOutsideWorktree,
   EvidenceCollector,
@@ -350,6 +350,18 @@ const createNodeWorktreePathVerifier = (): WorktreePathVerifier => async (path, 
   }
 };
 
+const createNodeWorktreeIdentityReader = (): WorktreeIdentityReader => async (path, mustExist) => {
+  const { lstat } = await import('node:fs/promises');
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return null;
+    return `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+  } catch (error) {
+    if (!mustExist && typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return null;
+    return null;
+  }
+};
+
 export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   const requestedBaseRepoPath = opts.baseRepoPath ?? process.cwd();
   const env: 'node' | 'tauri' = opts.env ?? 'node';
@@ -379,6 +391,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     baseRepoPath,
     ensureWorktreeParent,
     env === 'node' && !opts.gitRunner ? createNodeWorktreePathVerifier() : undefined,
+    env === 'node' && !opts.gitRunner ? createNodeWorktreeIdentityReader() : undefined,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
   const registry: WorktreeRegistry = {
