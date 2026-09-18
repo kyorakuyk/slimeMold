@@ -64,7 +64,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
 
   if (command[0] === 'tsx') {
     const script = command[1] ?? '';
-    if (!script.toLowerCase().startsWith('scripts/') || script.includes('..') || !isSafePathspec(script.replace(/^scripts\//i, 'src/'))) {
+    if (!script.startsWith('scripts/') || script.includes('..') || !isSafePathspec(script.replace(/^scripts\//, 'src/'))) {
       return { ok: false, error: 'tsx script path is not safe' };
     }
     const args = command.slice(2);

@@ -61,7 +61,8 @@ fn safe_path(value: &str) -> bool {
         || normalized.starts_with('-')
         || normalized.starts_with('/')
         || normalized.starts_with('\\')
-        || normalized.contains(':')
+        || normalized.contains(":")
+        || normalized.contains("..")
         || components.iter().any(|part| {
             part.is_empty()
                 || *part == "."

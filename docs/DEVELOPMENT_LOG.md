@@ -2920,3 +2920,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待新的独立 fail-closed reviewer，当前不能标记 verified。
+
+### 7.132 统一 tsx root 与 dot-dot grammar 于 unverified checkpoint
+
+- 根据 reviewer 反馈，Node `tsx` parser 不再对 script root 做大小写折叠，必须精确使用 `scripts/`；Rust 同步拒绝任意包含 `..` 的 script path，消除两宿主 accepted language 漂移。
+- shared vectors 新增 `Scripts/check.ts`、`scripts/foo..bar.ts` 和 trailing-space protected path，日志覆盖声明与实际 vectors 对齐。
+- 本轮仍只收敛 shared command grammar/parity contract，没有接管现有 native runtime authority；Slice 0 完成与否仍以独立 reviewer 的 fail-closed verdict 为准。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；当前仍不能标记 verified。
