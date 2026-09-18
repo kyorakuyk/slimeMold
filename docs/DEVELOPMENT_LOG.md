@@ -3215,3 +3215,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.147 为已登记 Worker worktree 绑定 stable directory identity 于 unverified checkpoint
+
+- Rust `RegisteredWorktree` 现在保存 registration-time directory identity：Unix 使用 device/inode，Windows 使用 volume serial/file index，并保留 canonical path。
+- `dev_register_worktree`、`dev_restore_worktree` 在登记时绑定 identity；后续 `dev_cwd_kind` 重新读取已登记根目录 identity，检测同路径目录替换后 fail-closed。
+- 新增 same-path replacement regression；本轮只闭合“已登记 worktree 根目录 identity”这条 slice，文件 operand handle/no-follow、parent replacement、spawn 前 TOCTOU 和 Node WorktreeManager 对等 identity 仍未完成。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`71 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

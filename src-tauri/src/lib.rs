@@ -93,11 +93,85 @@ struct DevState {
     orphan_worktrees: Vec<PendingWorktree>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StableDirectoryIdentity {
+    canonical_path: String,
+    volume_or_device: u64,
+    file_or_inode: u64,
+}
+
+fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryIdentity, String> {
+    let canonical = path.canonicalize().map_err(|error| {
+        format!(
+            "无法绑定 worktree directory identity（{}）：{error}",
+            path.display()
+        )
+    })?;
+    let metadata = fs::metadata(&canonical).map_err(|error| {
+        format!(
+            "无法读取 worktree directory identity（{}）：{error}",
+            canonical.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "worktree identity target 不是目录：{}",
+            canonical.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Ok(StableDirectoryIdentity {
+            canonical_path: canonical.to_string_lossy().to_string(),
+            volume_or_device: metadata.dev(),
+            file_or_inode: metadata.ino(),
+        });
+    }
+    #[cfg(windows)]
+    {
+        use std::mem::MaybeUninit;
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&canonical)
+            .map_err(|error| {
+                format!(
+                    "无法打开 worktree directory identity（{}）：{error}",
+                    canonical.display()
+                )
+            })?;
+        let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+            return Err(format!(
+                "无法读取 worktree directory identity：{}",
+                canonical.display()
+            ));
+        }
+        let info = unsafe { info.assume_init() };
+        return Ok(StableDirectoryIdentity {
+            canonical_path: canonical.to_string_lossy().to_string(),
+            volume_or_device: info.volume_serial as u64,
+            file_or_inode: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
+        });
+    }
+    #[cfg(not(any(unix, windows)))]
+    Ok(StableDirectoryIdentity {
+        canonical_path: canonical.to_string_lossy().to_string(),
+        volume_or_device: 0,
+        file_or_inode: 0,
+    })
+}
+
 #[derive(Clone)]
 struct RegisteredWorktree {
     generation: u64,
     path: String,
     branch: String,
+    identity: StableDirectoryIdentity,
 }
 
 fn registered_worktree_identity_matches(
@@ -800,10 +874,22 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
             return Ok(DevCwdKind::MainRepo);
         }
     }
+    for registered in &state.registrations {
+        let norm_wc = dev_strip_verbatim(std::path::Path::new(&registered.path));
+        if path_is_same_or_child(&norm_canon, &norm_wc) {
+            let current_identity = stable_directory_identity(&norm_wc).map_err(|error| {
+                format!("dev_exec: 无法重新绑定已登记 worktree identity：{error}")
+            })?;
+            if current_identity != registered.identity {
+                return Err(format!(
+                    "dev_exec: 已登记 worktree identity 已变化：{}",
+                    registered.path
+                ));
+            }
+            return Ok(DevCwdKind::Worktree(norm_canon));
+        }
+    }
     for w in &state.worktrees {
-        // `worktrees` stores the canonical path captured at registration.
-        // Re-canonicalizing here would follow a replacement junction and
-        // could make an outside directory appear to be the old worktree.
         let norm_wc = dev_strip_verbatim(std::path::Path::new(w));
         if path_is_same_or_child(&norm_canon, &norm_wc) {
             return Ok(DevCwdKind::Worktree(norm_canon));
@@ -2190,6 +2276,7 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
             "dev_register_worktree: worktree 不存在或不是目录：{path}"
         ));
     }
+    let identity = stable_directory_identity(&canon)?;
     let name = canon
         .file_name()
         .and_then(|value| value.to_str())
@@ -2237,6 +2324,7 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
             generation: registration_generation,
             path: canonical_path.clone(),
             branch: branch.clone(),
+            identity: identity.clone(),
         });
     }
     st.pending_worktrees
@@ -2268,6 +2356,7 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
             "dev_restore_worktree: worktree 不存在或不是目录：{path}"
         ));
     }
+    let identity = stable_directory_identity(&canon)?;
     let canonical_path = canon.to_string_lossy().to_string();
     if !main_repo_worktree_target_is_valid(&base_path, &canonical_path, &branch) {
         return Err("dev_restore_worktree: 路径/分支不属于受控 Worker 根".into());
@@ -2300,6 +2389,7 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
             generation: registration_generation,
             path: canonical_path.clone(),
             branch,
+            identity,
         });
     }
     state
@@ -5020,6 +5110,11 @@ mod dev_write_symlink_tests {
             generation: 7,
             path: "D:/workers/worker-a".into(),
             branch: "worker/worker-a".into(),
+            identity: StableDirectoryIdentity {
+                canonical_path: "D:/workers/worker-a".into(),
+                volume_or_device: 1,
+                file_or_inode: 2,
+            },
         };
         assert!(registered_worktree_identity_matches(
             &registered,
@@ -5039,6 +5134,26 @@ mod dev_write_symlink_tests {
             "D:/workers/worker-a",
             "worker/worker-a",
         ));
+    }
+
+    #[test]
+    fn stable_directory_identity_detects_same_path_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "slimemold-identity-{}-{}",
+            std::process::id(),
+            next_session_generation(0)
+        ));
+        let backup = root.with_extension("old");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&backup);
+        fs::create_dir_all(&root).unwrap();
+        let original = stable_directory_identity(&root).unwrap();
+        fs::rename(&root, &backup).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let replacement = stable_directory_identity(&root).unwrap();
+        assert_ne!(original, replacement);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&backup);
     }
 
     #[test]
