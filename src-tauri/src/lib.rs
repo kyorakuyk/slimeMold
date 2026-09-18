@@ -25,6 +25,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod antigravity;
 mod codex;
+#[cfg(test)]
+mod dev_command_policy;
 mod event_store;
 mod fs_guard;
 

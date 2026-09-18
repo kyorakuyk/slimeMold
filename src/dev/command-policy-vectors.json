@@ -1,0 +1,52 @@
+[
+  {
+    "name": "reject unscoped git diff",
+    "command": ["git", "diff", "HEAD"],
+    "accepted": false
+  },
+  {
+    "name": "accept git names only",
+    "command": ["git", "diff", "--name-only", "HEAD"],
+    "accepted": true
+  },
+  {
+    "name": "accept scoped git diff",
+    "command": ["git", "diff", "HEAD", "--", "src/components", "docs"],
+    "accepted": true
+  },
+  {
+    "name": "reject git protected path",
+    "command": ["git", "diff", "package.json"],
+    "accepted": false
+  },
+  {
+    "name": "reject grep option argument bypass",
+    "command": ["grep", "-e", "-x", "src/orchestrator/run.ts"],
+    "accepted": false
+  },
+  {
+    "name": "accept grep after terminator",
+    "command": ["grep", "-n", "--", "needle", "src/components/App.tsx"],
+    "accepted": true
+  },
+  {
+    "name": "reject find symlink traversal",
+    "command": ["find", "-L", "src/components", "-name", "*.tsx"],
+    "accepted": false
+  },
+  {
+    "name": "accept find physical root",
+    "command": ["find", "-P", "src/components", "-name", "*.tsx"],
+    "accepted": true
+  },
+  {
+    "name": "reject tsx traversal",
+    "command": ["tsx", "scripts/../src/components/App.tsx"],
+    "accepted": false
+  },
+  {
+    "name": "accept tsx script",
+    "command": ["tsx", "scripts/check.ts", "--reporter=dot"],
+    "accepted": true
+  }
+]
