@@ -145,17 +145,12 @@ fn finish_pending_operation(operation_id: &str, generation: u64) -> Result<bool,
 }
 
 fn take_cancelled_operation(operation_id: &str) -> Result<bool, String> {
-    let mut pending = pending_codex_operations()
+    let pending = pending_codex_operations()
         .lock()
         .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
-    if pending
+    Ok(pending
         .get(operation_id)
-        .is_some_and(|entry| entry.cancellation_requested)
-    {
-        pending.remove(operation_id);
-        return Ok(true);
-    }
-    Ok(false)
+        .is_some_and(|entry| entry.cancellation_requested))
 }
 
 fn valid_operation_id(operation_id: &str) -> bool {
@@ -284,38 +279,6 @@ fn apply_env(command: &mut Command, values: HashMap<String, String>) {
 
 fn apply_login_sanitized_env(command: &mut Command) {
     apply_env(command, dev_login_sanitized_env());
-}
-
-fn register_child(
-    operation_id: &str,
-    session_generation: u64,
-    child: ChildHandle,
-) -> Result<(), String> {
-    let mut active = active_codex_children()
-        .lock()
-        .map_err(|_| "Codex operation registry 已损坏".to_string())?;
-    let mut pending = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏".to_string())?;
-    let cancellation_requested = pending
-        .get(operation_id)
-        .map(|entry| entry.cancellation_requested)
-        .ok_or_else(|| "Codex Worker 已取消或operation lease已结束".to_string())?;
-    if cancellation_requested {
-        pending.remove(operation_id);
-        return Err("Codex Worker 已取消".into());
-    }
-    if active.contains_key(operation_id) {
-        return Err("Codex operation id 已在使用".into());
-    }
-    active.insert(
-        operation_id.to_string(),
-        ActiveChild {
-            session_generation,
-            handle: child,
-        },
-    );
-    Ok(())
 }
 
 fn unregister_child(operation_id: &str, expected: &ChildHandle) {
@@ -653,6 +616,30 @@ fn run_exec(
             })
             .transpose()?,
     };
+    let mut active_reservation: Option<
+        std::sync::MutexGuard<'static, HashMap<String, ActiveChild>>,
+    > = None;
+    let mut pending_reservation: Option<
+        std::sync::MutexGuard<'static, HashMap<String, PendingOperation>>,
+    > = None;
+    if let Some(operation_id) = operation_id.as_deref() {
+        let active = active_codex_children()
+            .lock()
+            .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
+        let pending = pending_codex_operations()
+            .lock()
+            .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
+        let cancelled = pending
+            .get(operation_id)
+            .map(|entry| entry.cancellation_requested)
+            .ok_or_else(|| "Codex pending lease已丢失；side effects unknown".to_string())?;
+        if cancelled || active.contains_key(operation_id) {
+            return Err("Codex Worker 已取消或operation token已在使用".into());
+        }
+        active_reservation = Some(active);
+        pending_reservation = Some(pending);
+    }
+
     let output_path = create_codex_output()?;
 
     let mut command = Command::new(program);
@@ -724,24 +711,21 @@ fn run_exec(
         .map(|stream| crate::spawn_output_reader(stream));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(operation_id) = operation_id.as_deref() {
-        if let Err(error) = register_child(
-            operation_id,
-            session_generation
-                .ok_or_else(|| "Codex active child缺少session generation".to_string())?,
-            handle.clone(),
-        ) {
-            if let Ok(mut guard) = handle.lock() {
-                if let Some(child) = guard.as_mut() {
-                    kill_child_tree(child);
-                    let _ = child.wait();
-                }
-            }
-            if let Err(cleanup_error) = remove_codex_output(&output_path) {
-                eprintln!("[codex] {cleanup_error}; side effects unknown");
-            }
-            return Err(error);
-        }
+        let active = active_reservation
+            .as_mut()
+            .ok_or_else(|| "Codex active reservation丢失；side effects unknown".to_string())?;
+        let session_generation = session_generation
+            .ok_or_else(|| "Codex active child缺少session generation".to_string())?;
+        active.insert(
+            operation_id.to_string(),
+            ActiveChild {
+                session_generation,
+                handle: handle.clone(),
+            },
+        );
     }
+    drop(pending_reservation);
+    drop(active_reservation);
 
     let stdin_result = handle
         .lock()
@@ -959,18 +943,26 @@ pub async fn codex_worker_exec(
         return Err("Codex Worker lease与当前session/cwd不匹配".into());
     }
     let pending_generation = begin_pending_operation(&operation_id, generation)?;
-    let prepared = match prepared_codex_leases()
-        .lock()
-        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-        .remove(&operation_id)
-    {
-        Some(prepared) => prepared,
-        None => {
-            if let Err(finish_error) = finish_pending_operation(&operation_id, pending_generation) {
-                return Err(finish_error);
-            }
-            return Err("Codex Worker lease在启动前消失".into());
+    let prepared = match prepared_codex_leases().lock() {
+        Err(error) => {
+            let finish_error = finish_pending_operation(&operation_id, pending_generation)
+                .err()
+                .unwrap_or_else(|| "pending lease cleanup attempted".to_string());
+            return Err(format!(
+                "Codex prepared lease registry 已损坏：{error}; {finish_error}"
+            ));
         }
+        Ok(mut leases) => match leases.remove(&operation_id) {
+            Some(prepared) => prepared,
+            None => {
+                if let Err(finish_error) =
+                    finish_pending_operation(&operation_id, pending_generation)
+                {
+                    return Err(finish_error);
+                }
+                return Err("Codex Worker lease在启动前消失".into());
+            }
+        },
     };
     if prepared.cancellation_requested {
         if let Err(finish_error) = finish_pending_operation(&operation_id, pending_generation) {
