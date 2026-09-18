@@ -3290,3 +3290,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.151 收紧 base rebind、registration identity conflict 与 orphan live-target gate 于 unverified checkpoint
+
+- 新增统一 `assert_base_identity_current`；`assert_session_generation`、`dev_cwd_kind` 和 `dev_base_repo` 在使用主仓库路径前重新绑定 stable identity，registered worktree early-return 不再绕过 base replacement 检查。
+- `dev_register_worktree` 在 duplicate registration 中比较 target identity；same path/branch 的 replacement identity 不再 consume lease 或保留旧 binding。
+- register/restore/orphan 在 Git probe 后、state commit 前和最终 state read-back 继续比较 base identity；orphan 只接受受控、branch 仍存在且目标目录已消失的 branch-only lineage，live listed/existing target 拒绝。
+- 新增 partial base + registered candidate、same-path registration identity conflict、live orphan target 和真实 temp session fixture 回归。
+- 文件 operand handle/no-follow、parent replacement after cwd validation、spawn TOCTOU 与 Node 对等 identity仍保留为后续 slice；本轮未宣称 check/use race 已完全消除。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`77 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

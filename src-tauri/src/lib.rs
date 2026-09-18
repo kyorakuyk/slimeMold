@@ -50,27 +50,52 @@ fn next_session_generation(current: u64) -> u64 {
 }
 
 pub(crate) fn dev_base_repo() -> Result<PathBuf, String> {
-    DEV_STATE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .base_repo
-        .clone()
-        .map(PathBuf::from)
-        .ok_or_else(|| "当前尚未初始化 DevSession 主仓库".to_string())
+    assert_base_identity_current("dev_base_repo")
+}
+
+fn assert_base_identity_current(operation: &str) -> Result<PathBuf, String> {
+    let (base, expected_identity) = {
+        let state = DEV_STATE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            state
+                .base_repo
+                .clone()
+                .ok_or_else(|| format!("{operation}: 尚未初始化主仓库根"))?,
+            state
+                .base_identity
+                .clone()
+                .ok_or_else(|| format!("{operation}: 主仓库缺少 stable directory identity"))?,
+        )
+    };
+    let base_path = PathBuf::from(&base);
+    let current_identity = stable_directory_identity(&base_path)
+        .map_err(|error| format!("{operation}: 无法重新绑定主仓库 identity：{error}"))?;
+    if current_identity != expected_identity {
+        return Err(format!("{operation}: 主仓库 directory identity 已变化"));
+    }
+    Ok(base_path)
 }
 
 pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Result<(), String> {
     if expected == 0 {
         return Err(format!("{operation}: 缺少有效 session generation"));
     }
-    let state = DEV_STATE.lock().unwrap();
-    if state.base_repo.is_none() || state.base_identity.is_none() || state.generation != expected {
+    let (has_base, has_identity, current_generation) = {
+        let state = DEV_STATE.lock().unwrap();
+        (
+            state.base_repo.is_some(),
+            state.base_identity.is_some(),
+            state.generation,
+        )
+    };
+    if !has_base || !has_identity || current_generation != expected {
         return Err(format!(
-            "{operation}: session generation 已失效（expected={expected}, current={}）",
-            state.generation
+            "{operation}: session generation 已失效（expected={expected}, current={current_generation}）"
         ));
     }
-    Ok(())
+    assert_base_identity_current(operation).map(|_| ())
 }
 
 #[cfg(test)]
@@ -897,6 +922,10 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+    }
+    let has_base = DEV_STATE.lock().unwrap().base_repo.is_some();
+    if has_base {
+        assert_base_identity_current("dev_cwd_kind")?;
     }
     let lexical_cwd = dev_lexical_abs_of(cwd)?;
     let (lexical_is_base, registered_candidate, has_registrations, has_base) = {
@@ -2416,25 +2445,38 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
         return Err("dev_register_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
     }
     let has_pending_lease = pending_worker_target(&base_path, &path);
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_register_worktree: commit 前主仓库 directory identity 已变化".into());
+    }
+    let canonical_path = canon.to_string_lossy().to_string();
     let mut st = DEV_STATE.lock().unwrap();
     if st.base_repo.as_deref() != Some(base.as_str())
         || st.base_identity.as_ref() != Some(&base_identity)
         || st.generation != registration_generation
+        || stable_directory_identity(&base_path)? != base_identity
     {
         return Err("dev_register_worktree: 主仓库 session 在校验期间发生变化".into());
+    }
+    if registered_worktree_identity_conflicts(
+        &st.registrations,
+        registration_generation,
+        &canonical_path,
+        &branch,
+        &identity,
+    ) {
+        return Err("dev_register_worktree: 已登记 worktree identity 冲突".into());
     }
     let already_registered = st.registrations.iter().any(|registered| {
         registered_worktree_identity_matches(
             registered,
             registration_generation,
-            &canon.to_string_lossy(),
+            &canonical_path,
             &branch,
-        )
+        ) && registered.identity == identity
     });
     if !already_registered && !has_pending_lease {
         return Err("dev_register_worktree: 缺少当前 host 创建的 pending worktree lease".into());
     }
-    let canonical_path = canon.to_string_lossy().to_string();
     if !st
         .worktrees
         .iter()
@@ -2503,10 +2545,14 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
     if !git_worktree_matches(&base_path, &canon, &branch)? {
         return Err("dev_restore_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
     }
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_restore_worktree: commit 前主仓库 directory identity 已变化".into());
+    }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str())
         || state.base_identity.as_ref() != Some(&base_identity)
         || state.generation != registration_generation
+        || stable_directory_identity(&base_path)? != base_identity
     {
         return Err("dev_restore_worktree: 主仓库 session 在校验期间发生变化".into());
     }
@@ -2559,6 +2605,15 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
     Ok(())
 }
 
+fn orphan_target_is_deleted_candidate(
+    listed_match: bool,
+    path_exists: bool,
+    branch_exists: bool,
+    target_is_scoped: bool,
+) -> bool {
+    !listed_match && !path_exists && branch_exists && target_is_scoped
+}
+
 #[tauri::command]
 fn dev_register_orphan_worktree(
     path: String,
@@ -2600,18 +2655,27 @@ fn dev_register_orphan_worktree(
         );
     }
     let branch_exists = git_branch_exists(&base_path, &branch)?;
-    if (!listed_match && !branch_exists)
-        || (canon.is_dir() && !listed_match)
-        || !main_repo_worktree_target_is_valid(&base_path, &c, &branch)
-    {
+    let target_is_scoped = main_repo_worktree_target_is_valid(&base_path, &c, &branch);
+    if !orphan_target_is_deleted_candidate(
+        listed_match,
+        canon.is_dir(),
+        branch_exists,
+        target_is_scoped,
+    ) {
         return Err(
             "dev_register_orphan_worktree: 目标必须是受控且已删除的 Worker worktree".into(),
+        );
+    }
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err(
+            "dev_register_orphan_worktree: commit 前主仓库 directory identity 已变化".into(),
         );
     }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str())
         || state.base_identity.as_ref() != Some(&base_identity)
         || state.generation != generation
+        || stable_directory_identity(&base_path)? != base_identity
     {
         return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
     }
@@ -4560,14 +4624,15 @@ mod dev_exec_tests {
     #[test]
     fn session_reset_waits_for_an_inflight_host_operation_lease() {
         let _test_guard = lock_dev_state_tests();
+        let base =
+            std::env::temp_dir().join(format!("slimemold-operation-lease-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let base_str = base.to_string_lossy().to_string();
         let generation = {
             let mut state = DEV_STATE.lock().unwrap();
-            state.base_repo = Some("C:/operation-lease-test".to_string());
-            state.base_identity = Some(StableDirectoryIdentity {
-                canonical_path: "C:/operation-lease-test".to_string(),
-                volume_or_device: 1,
-                file_or_inode: 1,
-            });
+            state.base_repo = Some(base_str);
+            state.base_identity = Some(stable_directory_identity(&base).unwrap());
             state.generation = next_session_generation(state.generation);
             state.generation
         };
@@ -4587,6 +4652,7 @@ mod dev_exec_tests {
         drop(operation_guard);
         handle.join().unwrap();
         assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -4617,26 +4683,26 @@ mod dev_exec_tests {
     #[test]
     fn stale_session_generation_is_rejected_without_mutating_current_session() {
         let _test_guard = lock_dev_state_tests();
+        let base =
+            std::env::temp_dir().join(format!("slimemold-stale-generation-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let base_str = base.to_string_lossy().to_string();
         let generation = {
             let mut state = DEV_STATE.lock().unwrap();
-            state.base_repo = Some("C:/stale-generation-test".to_string());
-            state.base_identity = Some(StableDirectoryIdentity {
-                canonical_path: "C:/stale-generation-test".to_string(),
-                volume_or_device: 1,
-                file_or_inode: 1,
-            });
+            state.base_repo = Some(base_str.clone());
+            state.base_identity = Some(stable_directory_identity(&base).unwrap());
             state.worktrees.clear();
             state.pending_worktrees.clear();
             state.generation = next_session_generation(state.generation);
             state.generation
         };
         let stale = next_session_generation(generation);
-        let exec_result = dev_exec(sv(&["pwd"]), "C:/stale-generation-test".to_string(), stale);
+        let exec_result = dev_exec(sv(&["pwd"]), base_str.clone(), stale);
         let clear_result = dev_clear_session(stale);
         let still_current = {
             let state = DEV_STATE.lock().unwrap();
-            state.base_repo.as_deref() == Some("C:/stale-generation-test")
-                && state.generation == generation
+            state.base_repo.as_deref() == Some(base_str.as_str()) && state.generation == generation
         };
         let clear_current = dev_clear_session(generation);
 
@@ -4653,6 +4719,7 @@ mod dev_exec_tests {
             clear_current.is_ok(),
             "current generation can clear its session"
         );
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -5049,6 +5116,29 @@ mod dev_exec_tests {
         assert!(dev_register_worktree(wt_str.clone(), generation).is_err());
         record_pending_worktree_add(&base, &wt_str, "worker/wt");
         assert!(dev_register_worktree(wt_str.clone(), generation).is_ok());
+        let actual_identity = stable_directory_identity(&wt).unwrap();
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            let registered = state
+                .registrations
+                .iter_mut()
+                .find(|item| item.path == wt.canonicalize().unwrap().to_string_lossy())
+                .unwrap();
+            registered.identity.file_or_inode = registered.identity.file_or_inode.saturating_add(1);
+        }
+        assert!(
+            dev_register_worktree(wt_str.clone(), generation).is_err(),
+            "same-path registration with a replacement identity must fail"
+        );
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            let registered = state
+                .registrations
+                .iter_mut()
+                .find(|item| item.path == wt.canonicalize().unwrap().to_string_lossy())
+                .unwrap();
+            registered.identity = actual_identity;
+        }
         assert!(!dev_main_repo_git_allowed_at(
             &sv(&["git", "worktree", "remove", "--force", &wt_str]),
             Some(&base),
@@ -5300,6 +5390,32 @@ mod dev_write_symlink_tests {
     }
 
     #[test]
+    fn cwd_rejects_partial_base_binding_before_registered_candidate() {
+        let _test_guard = lock_dev_state_tests();
+        let mut state = DEV_STATE.lock().unwrap();
+        *state = DevState::new();
+        state.generation = 1;
+        state.base_repo = Some("C:/partial-base".into());
+        state.registrations.push(RegisteredWorktree {
+            generation: 1,
+            path: "C:/partial-base-workers/worker-a".into(),
+            branch: "worker/worker-a".into(),
+            identity: StableDirectoryIdentity {
+                canonical_path: "C:/partial-base-workers/worker-a".into(),
+                volume_or_device: 1,
+                file_or_inode: 2,
+            },
+        });
+        drop(state);
+        let result = dev_cwd_kind("C:/partial-base-workers/worker-a");
+        *DEV_STATE.lock().unwrap() = DevState::new();
+        assert!(
+            result.is_err(),
+            "partial base binding must fail before worker match"
+        );
+    }
+
+    #[test]
     fn registered_worktree_identity_conflict_checks_all_duplicate_bindings() {
         let first = RegisteredWorktree {
             generation: 7,
@@ -5537,6 +5653,19 @@ mod dev_write_symlink_tests {
             result.is_err(),
             "base alias must not reach canonical fallback"
         );
+    }
+
+    #[test]
+    fn orphan_candidate_rejects_live_listed_and_existing_targets() {
+        assert!(!orphan_target_is_deleted_candidate(true, true, true, true));
+        assert!(!orphan_target_is_deleted_candidate(false, true, true, true));
+        assert!(!orphan_target_is_deleted_candidate(
+            false, false, false, true
+        ));
+        assert!(!orphan_target_is_deleted_candidate(
+            false, false, true, false
+        ));
+        assert!(orphan_target_is_deleted_candidate(false, false, true, true));
     }
 
     #[test]
