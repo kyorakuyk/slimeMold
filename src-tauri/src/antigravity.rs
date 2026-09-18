@@ -272,6 +272,7 @@ pub async fn antigravity_worker_exec(
             return Err("Antigravity profile 含有不允许的字符".into());
         }
     }
+    let _operation_guard = crate::lock_dev_operation();
     crate::assert_session_generation(request.generation, "antigravity_worker_exec")?;
     let worktree = crate::assert_registered_worktree(&request.cwd)?;
     let cli = resolve_cli(request.cli_path.as_deref())?;
