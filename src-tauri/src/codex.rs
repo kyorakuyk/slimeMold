@@ -70,6 +70,13 @@ fn valid_operation_id(operation_id: &str) -> bool {
 }
 
 fn kill_child_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        unsafe {
+            let _ = libc::kill(-pid, libc::SIGKILL);
+        }
+    }
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
@@ -109,6 +116,23 @@ fn unregister_child(operation_id: &str) {
     if let Ok(mut active) = active_codex_children().lock() {
         active.remove(operation_id);
     }
+}
+
+fn cleanup_codex_run(
+    handle: &ChildHandle,
+    operation_id: Option<&str>,
+    output_path: &std::path::Path,
+) {
+    if let Ok(mut guard) = handle.lock() {
+        if let Some(child) = guard.as_mut() {
+            kill_child_tree(child);
+            let _ = child.wait();
+        }
+    }
+    if let Some(operation_id) = operation_id {
+        unregister_child(operation_id);
+    }
+    let _ = fs::remove_file(output_path);
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -334,12 +358,10 @@ fn build_exec_args(sandbox_mode: &str) -> Vec<String> {
 }
 
 fn join_child_output(
-    thread: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+    output: Option<(crate::OutputThread, crate::OutputReceiver)>,
 ) -> Result<Vec<u8>, String> {
-    thread
-        .ok_or_else(|| "Codex output reader 未启动".to_string())?
-        .join()
-        .map_err(|_| "Codex output reader 线程失败".to_string())?
+    let (thread, receiver) = output.ok_or_else(|| "Codex output reader 未启动".to_string())?;
+    crate::receive_output("Codex", thread, receiver)
 }
 
 fn run_exec(
@@ -382,6 +404,18 @@ fn run_exec(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
 
     let mut child = command
         .spawn()
@@ -389,11 +423,11 @@ fn run_exec(
     let stdout_thread = child
         .stdout
         .take()
-        .map(|stream| std::thread::spawn(move || crate::drain_child_output_checked(stream)));
+        .map(|stream| crate::spawn_output_reader(stream));
     let stderr_thread = child
         .stderr
         .take()
-        .map(|stream| std::thread::spawn(move || crate::drain_child_output_checked(stream)));
+        .map(|stream| crate::spawn_output_reader(stream));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(operation_id) = operation_id.as_deref() {
         if let Err(error) = register_child(operation_id, handle.clone()) {
@@ -476,8 +510,24 @@ fn run_exec(
         }
     };
 
-    let out_buf = join_child_output(stdout_thread)?;
-    let err_buf = join_child_output(stderr_thread)?;
+    let out_buf = match join_child_output(stdout_thread) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
+            return Err(format!(
+                "Codex output capture failed; side effects unknown: {error}"
+            ));
+        }
+    };
+    let err_buf = match join_child_output(stderr_thread) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
+            return Err(format!(
+                "Codex output capture failed; side effects unknown: {error}"
+            ));
+        }
+    };
     let _child = handle
         .lock()
         .map_err(|_| "Codex child handle 已损坏".to_string())?

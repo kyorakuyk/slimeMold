@@ -34,10 +34,12 @@ pub(crate) fn drain_child_output_checked<R: Read>(mut reader: R) -> Result<Vec<u
     Ok(captured)
 }
 
-type OutputReceiver = Receiver<Result<Vec<u8>, String>>;
-type OutputThread = JoinHandle<()>;
+pub(crate) type OutputReceiver = Receiver<Result<Vec<u8>, String>>;
+pub(crate) type OutputThread = JoinHandle<()>;
 
-fn spawn_output_reader<R: Read + Send + 'static>(reader: R) -> (OutputThread, OutputReceiver) {
+pub(crate) fn spawn_output_reader<R: Read + Send + 'static>(
+    reader: R,
+) -> (OutputThread, OutputReceiver) {
     let (sender, receiver) = mpsc::channel();
     let thread = thread::spawn(move || {
         let _ = sender.send(drain_child_output_checked(reader));
@@ -45,7 +47,7 @@ fn spawn_output_reader<R: Read + Send + 'static>(reader: R) -> (OutputThread, Ou
     (thread, receiver)
 }
 
-fn receive_output(
+pub(crate) fn receive_output(
     label: &str,
     thread: OutputThread,
     receiver: OutputReceiver,
