@@ -64,7 +64,7 @@ pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Resul
         return Err(format!("{operation}: 缺少有效 session generation"));
     }
     let state = DEV_STATE.lock().unwrap();
-    if state.base_repo.is_none() || state.generation != expected {
+    if state.base_repo.is_none() || state.base_identity.is_none() || state.generation != expected {
         return Err(format!(
             "{operation}: session generation 已失效（expected={expected}, current={}）",
             state.generation
@@ -123,10 +123,18 @@ fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryId
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let volume_or_device = metadata.dev();
+        let file_or_inode = metadata.ino();
+        if volume_or_device == 0 || file_or_inode == 0 {
+            return Err(format!(
+                "worktree identity platform identifiers 不可用：{}",
+                canonical.display()
+            ));
+        }
         return Ok(StableDirectoryIdentity {
             canonical_path: canonical.to_string_lossy().to_string(),
-            volume_or_device: metadata.dev(),
-            file_or_inode: metadata.ino(),
+            volume_or_device,
+            file_or_inode,
         });
     }
     #[cfg(windows)]
@@ -153,10 +161,19 @@ fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryId
             ));
         }
         let info = unsafe { info.assume_init() };
+        let volume_or_device = info.volume_serial as u64;
+        let file_or_inode =
+            (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low);
+        if volume_or_device == 0 || file_or_inode == 0 {
+            return Err(format!(
+                "worktree identity platform identifiers 不可用：{}",
+                canonical.display()
+            ));
+        }
         return Ok(StableDirectoryIdentity {
             canonical_path: canonical.to_string_lossy().to_string(),
-            volume_or_device: info.volume_serial as u64,
-            file_or_inode: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
+            volume_or_device,
+            file_or_inode,
         });
     }
     #[cfg(not(any(unix, windows)))]
@@ -180,6 +197,19 @@ fn registered_worktree_identity_matches(
     registered.generation == generation
         && registered.branch == branch
         && path_compare_key(&registered.path) == path_compare_key(path)
+}
+
+fn registered_worktree_identity_conflicts(
+    registrations: &[RegisteredWorktree],
+    generation: u64,
+    path: &str,
+    branch: &str,
+    identity: &StableDirectoryIdentity,
+) -> bool {
+    registrations.iter().any(|registered| {
+        registered_worktree_identity_matches(registered, generation, path, branch)
+            && registered.identity != *identity
+    })
 }
 
 fn new_cleanup_token() -> String {
@@ -869,7 +899,7 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
     }
     let lexical_cwd = dev_lexical_abs_of(cwd)?;
-    let (lexical_is_base, registered_candidate, has_registrations) = {
+    let (lexical_is_base, registered_candidate, has_registrations, has_base) = {
         let state = DEV_STATE.lock().unwrap();
         let base_match = state.base_repo.as_ref().is_some_and(|base| {
             path_compare_key(&lexical_cwd.to_string_lossy()) == path_compare_key(base)
@@ -884,7 +914,12 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
                 )
             })
             .cloned();
-        (base_match, candidate, !state.registrations.is_empty())
+        (
+            base_match,
+            candidate,
+            !state.registrations.is_empty(),
+            state.base_repo.is_some(),
+        )
     };
     if let Some(registered) = registered_candidate {
         let registered_path = dev_strip_verbatim(std::path::Path::new(&registered.path));
@@ -910,11 +945,19 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
             "dev_exec: cwd 未按 lexical path 命中已登记 worktree：{cwd}"
         ));
     }
+    if has_base && !lexical_is_base {
+        return Err(format!(
+            "dev_exec: cwd 未按 lexical path 命中当前主仓库根：{cwd}"
+        ));
+    }
     if lexical_is_base {
         let (base_path, base_identity) = {
             let state = DEV_STATE.lock().unwrap();
             (state.base_repo.clone(), state.base_identity.clone())
         };
+        if base_path.is_some() && base_identity.is_none() {
+            return Err("dev_exec: 主仓库 registration 缺少 stable directory identity".into());
+        }
         if let (Some(base_path), Some(expected_identity)) = (base_path, base_identity) {
             let base = std::path::PathBuf::from(&base_path);
             let current_identity = stable_directory_identity(&base)
@@ -2334,17 +2377,23 @@ fn git_branch_exists(repo: &std::path::Path, branch: &str) -> Result<bool, Strin
 fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_register_worktree")?;
-    let (base, registration_generation) = {
+    let (base, base_identity, registration_generation) = {
         let state = DEV_STATE.lock().unwrap();
         (
             state
                 .base_repo
                 .clone()
                 .ok_or_else(|| "dev_register_worktree: 尚未初始化主仓库根".to_string())?,
+            state.base_identity.clone().ok_or_else(|| {
+                "dev_register_worktree: 主仓库缺少 stable directory identity".to_string()
+            })?,
             state.generation,
         )
     };
     let base_path = std::path::PathBuf::from(&base);
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_register_worktree: 主仓库 directory identity 已变化".into());
+    }
     let canon = dev_abs_of(&path)?;
     if !canon.is_dir() {
         return Err(format!(
@@ -2360,12 +2409,18 @@ fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
     if !main_repo_worktree_target_is_valid(&base_path, &canon.to_string_lossy(), &branch) {
         return Err("dev_register_worktree: 路径/分支不属于受控 Worker 根".into());
     }
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_register_worktree: Git probe 前主仓库 directory identity 已变化".into());
+    }
     if !git_worktree_matches(&base_path, &canon, &branch)? {
         return Err("dev_register_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
     }
     let has_pending_lease = pending_worker_target(&base_path, &path);
     let mut st = DEV_STATE.lock().unwrap();
-    if st.base_repo.as_deref() != Some(base.as_str()) || st.generation != registration_generation {
+    if st.base_repo.as_deref() != Some(base.as_str())
+        || st.base_identity.as_ref() != Some(&base_identity)
+        || st.generation != registration_generation
+    {
         return Err("dev_register_worktree: 主仓库 session 在校验期间发生变化".into());
     }
     let already_registered = st.registrations.iter().any(|registered| {
@@ -2414,17 +2469,23 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
     if !worker_branch_is_valid(&branch) {
         return Err("dev_restore_worktree: branch 无效".to_string());
     }
-    let (base, registration_generation) = {
+    let (base, base_identity, registration_generation) = {
         let state = DEV_STATE.lock().unwrap();
         (
             state
                 .base_repo
                 .clone()
                 .ok_or_else(|| "dev_restore_worktree: 尚未初始化主仓库根".to_string())?,
+            state.base_identity.clone().ok_or_else(|| {
+                "dev_restore_worktree: 主仓库缺少 stable directory identity".to_string()
+            })?,
             state.generation,
         )
     };
     let base_path = std::path::PathBuf::from(&base);
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_restore_worktree: 主仓库 directory identity 已变化".into());
+    }
     let canon = dev_abs_of(&path)?;
     if !canon.is_dir() {
         return Err(format!(
@@ -2436,14 +2497,27 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
     if !main_repo_worktree_target_is_valid(&base_path, &canonical_path, &branch) {
         return Err("dev_restore_worktree: 路径/分支不属于受控 Worker 根".into());
     }
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_restore_worktree: Git probe 前主仓库 directory identity 已变化".into());
+    }
     if !git_worktree_matches(&base_path, &canon, &branch)? {
         return Err("dev_restore_worktree: 目标不是主仓库登记的匹配 Worker worktree".into());
     }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str())
+        || state.base_identity.as_ref() != Some(&base_identity)
         || state.generation != registration_generation
     {
         return Err("dev_restore_worktree: 主仓库 session 在校验期间发生变化".into());
+    }
+    if registered_worktree_identity_conflicts(
+        &state.registrations,
+        registration_generation,
+        &canonical_path,
+        &branch,
+        &identity,
+    ) {
+        return Err("dev_restore_worktree: 已登记 worktree identity 冲突".into());
     }
     if let Some(existing) = state.registrations.iter().find(|registered| {
         registered_worktree_identity_matches(
@@ -2496,17 +2570,35 @@ fn dev_register_orphan_worktree(
     if !worker_branch_is_valid(&branch) {
         return Err("dev_register_orphan_worktree: branch 无效".into());
     }
-    let base = {
+    let (base, base_identity) = {
         let state = DEV_STATE.lock().unwrap();
-        state
-            .base_repo
-            .clone()
-            .ok_or_else(|| "dev_register_orphan_worktree: 尚未初始化主仓库根".to_string())?
+        (
+            state
+                .base_repo
+                .clone()
+                .ok_or_else(|| "dev_register_orphan_worktree: 尚未初始化主仓库根".to_string())?,
+            state.base_identity.clone().ok_or_else(|| {
+                "dev_register_orphan_worktree: 主仓库缺少 stable directory identity".to_string()
+            })?,
+        )
     };
     let base_path = std::path::PathBuf::from(&base);
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err("dev_register_orphan_worktree: 主仓库 directory identity 已变化".into());
+    }
     let canon = dev_abs_of(&path)?;
     let c = canon.to_string_lossy().to_string();
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err(
+            "dev_register_orphan_worktree: Git probe 前主仓库 directory identity 已变化".into(),
+        );
+    }
     let listed_match = canon.is_dir() && git_worktree_matches(&base_path, &canon, &branch)?;
+    if stable_directory_identity(&base_path)? != base_identity {
+        return Err(
+            "dev_register_orphan_worktree: branch probe 前主仓库 directory identity 已变化".into(),
+        );
+    }
     let branch_exists = git_branch_exists(&base_path, &branch)?;
     if (!listed_match && !branch_exists)
         || (canon.is_dir() && !listed_match)
@@ -2517,7 +2609,10 @@ fn dev_register_orphan_worktree(
         );
     }
     let mut state = DEV_STATE.lock().unwrap();
-    if state.base_repo.as_deref() != Some(base.as_str()) || state.generation != generation {
+    if state.base_repo.as_deref() != Some(base.as_str())
+        || state.base_identity.as_ref() != Some(&base_identity)
+        || state.generation != generation
+    {
         return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
     }
     if !state
@@ -4468,6 +4563,11 @@ mod dev_exec_tests {
         let generation = {
             let mut state = DEV_STATE.lock().unwrap();
             state.base_repo = Some("C:/operation-lease-test".to_string());
+            state.base_identity = Some(StableDirectoryIdentity {
+                canonical_path: "C:/operation-lease-test".to_string(),
+                volume_or_device: 1,
+                file_or_inode: 1,
+            });
             state.generation = next_session_generation(state.generation);
             state.generation
         };
@@ -4520,6 +4620,11 @@ mod dev_exec_tests {
         let generation = {
             let mut state = DEV_STATE.lock().unwrap();
             state.base_repo = Some("C:/stale-generation-test".to_string());
+            state.base_identity = Some(StableDirectoryIdentity {
+                canonical_path: "C:/stale-generation-test".to_string(),
+                volume_or_device: 1,
+                file_or_inode: 1,
+            });
             state.worktrees.clear();
             state.pending_worktrees.clear();
             state.generation = next_session_generation(state.generation);
@@ -4826,6 +4931,7 @@ mod dev_exec_tests {
         // 向全局 DEV_STATE 登记 wt（不含 wt2）
         {
             let mut st = DEV_STATE.lock().unwrap();
+            *st = DevState::new();
             st.worktrees.push(wt.to_str().unwrap().to_string());
         }
         let wt_str = wt.to_str().unwrap().to_string();
@@ -5016,6 +5122,7 @@ mod dev_write_symlink_tests {
             let mut st = DEV_STATE.lock().unwrap();
             st.generation = next_session_generation(st.generation);
             st.base_repo = Some(tmp_str.clone());
+            st.base_identity = Some(stable_directory_identity(&tmp).unwrap());
             st.worktrees.clear();
             st.worktrees.push(tmp_str);
         }
@@ -5026,6 +5133,7 @@ mod dev_write_symlink_tests {
             let mut st = DEV_STATE.lock().unwrap();
             st.generation = next_session_generation(st.generation);
             st.base_repo = None;
+            st.base_identity = None;
             st.worktrees.clear();
         }
     }
@@ -5192,6 +5300,36 @@ mod dev_write_symlink_tests {
     }
 
     #[test]
+    fn registered_worktree_identity_conflict_checks_all_duplicate_bindings() {
+        let first = RegisteredWorktree {
+            generation: 7,
+            path: "D:/workers/worker-a".into(),
+            branch: "worker/worker-a".into(),
+            identity: StableDirectoryIdentity {
+                canonical_path: "D:/workers/worker-a".into(),
+                volume_or_device: 1,
+                file_or_inode: 2,
+            },
+        };
+        let conflicting = RegisteredWorktree {
+            identity: StableDirectoryIdentity {
+                canonical_path: "D:/workers/replacement".into(),
+                volume_or_device: 1,
+                file_or_inode: 3,
+            },
+            ..first.clone()
+        };
+        let expected = first.identity.clone();
+        assert!(registered_worktree_identity_conflicts(
+            &[first, conflicting],
+            7,
+            "D:/workers/worker-a",
+            "worker/worker-a",
+            &expected,
+        ));
+    }
+
+    #[test]
     fn registered_worktree_identity_requires_generation_path_and_branch() {
         let registered = RegisteredWorktree {
             generation: 7,
@@ -5256,6 +5394,7 @@ mod dev_write_symlink_tests {
         fs::create_dir_all(worktree_b.join("sub")).unwrap();
         let identity_a = stable_directory_identity(&worktree_a).unwrap();
         let identity_b = stable_directory_identity(&worktree_b).unwrap();
+        let base_identity = stable_directory_identity(&base).unwrap();
         fs::rename(&worktree_a, root.join("a-original")).unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&worktree_b, &worktree_a).unwrap();
@@ -5279,6 +5418,7 @@ mod dev_write_symlink_tests {
             let mut state = DEV_STATE.lock().unwrap();
             state.generation = 1;
             state.base_repo = Some(base.to_string_lossy().to_string());
+            state.base_identity = Some(base_identity);
             state.worktrees = vec![
                 worktree_a.to_string_lossy().to_string(),
                 worktree_b.to_string_lossy().to_string(),
@@ -5363,6 +5503,39 @@ mod dev_write_symlink_tests {
         assert!(
             result.is_err(),
             "base repo redirect to a registered worktree must be rejected"
+        );
+    }
+
+    #[test]
+    fn cwd_rejects_noncanonical_base_alias_after_base_replacement() {
+        let _test_guard = lock_dev_state_tests();
+        let root =
+            std::env::temp_dir().join(format!("slimemold-base-alias-{}", std::process::id()));
+        let base = root.join("base");
+        let original = root.join("base-original");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&base).unwrap();
+        let original_identity = stable_directory_identity(&base).unwrap();
+        fs::rename(&base, &original).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = 1;
+            state.base_repo = Some(base.to_string_lossy().to_string());
+            state.base_identity = Some(original_identity);
+            state.worktrees.clear();
+            state.registrations.clear();
+        }
+        let alias = format!("{}//.", base.to_string_lossy());
+        let result = dev_cwd_kind(&alias);
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            *state = DevState::new();
+        }
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.is_err(),
+            "base alias must not reach canonical fallback"
         );
     }
 

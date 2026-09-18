@@ -3269,3 +3269,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.150 强制 base identity invariant 并收紧 register/restore/orphan rebind 于 unverified checkpoint
+
+- `assert_session_generation` 现在要求 `base_repo` 与 `base_identity` 同时存在；partial session state 直接 fail-closed。
+- `dev_cwd_kind` 不再允许非 lexical base alias 落入旧 canonical-path fallback；base replacement、重复分隔符/`.` alias 均拒绝。
+- `dev_register_worktree`、`dev_restore_worktree`、`dev_register_orphan_worktree` 在初始读取、Git probe 前和最终 state read-back 均重新比较 base identity。
+- `stable_directory_identity` 拒绝 Unix `dev/ino` 或 Windows volume/file-index 为零的不可用标识。
+- restore 使用 all-duplicate conflict 检查；新增 duplicate identity conflict、base alias regression，并迁移 direct-state tests 到 stable identity invariant。
+- 文件 operand handle/no-follow、parent replacement after cwd validation、spawn TOCTOU 与 Node 对等 identity仍留在后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`75 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
