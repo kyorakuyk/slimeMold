@@ -161,15 +161,20 @@ fn safe_path(value: &str) -> bool {
         "vitest.config.ts",
         "scripts",
         "tests",
+        "src/store/workflowStore.ts",
+        "src/engine/executor.ts",
         "src/orchestrator",
         "src/plugins/sandbox",
         "src-tauri/capabilities",
+        ".git",
+        ".slimemold",
     ]
     .iter()
     .all(|root| {
-        comparable != *root
-            && !comparable.starts_with(&format!("{root}/"))
-            && !root.starts_with(&format!("{comparable}/"))
+        let comparable_root = root.to_ascii_lowercase();
+        comparable != comparable_root
+            && !comparable.starts_with(&format!("{comparable_root}/"))
+            && !comparable_root.starts_with(&format!("{comparable}/"))
     })
 }
 

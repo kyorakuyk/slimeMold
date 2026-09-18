@@ -64,9 +64,13 @@ const PROTECTED_ROOTS = new Set([
   'vitest.config.ts',
   'scripts',
   'tests',
+  'src/store/workflowStore.ts',
+  'src/engine/executor.ts',
   'src/orchestrator',
   'src/plugins/sandbox',
   'src-tauri/capabilities',
+  '.git',
+  '.slimemold',
 ]);
 
 const WINDOWS_DEVICE_NAMES = new Set([
@@ -115,11 +119,12 @@ function isSafePathspec(value: string): boolean {
   if (components.some((part) => part === '' || part === '.' || part === '..' || /[. ]$/.test(part) || isWindowsDeviceName(part))) return false;
   if (normalized.includes('*') || normalized.includes('?') || normalized.includes('[') || normalized.includes(']')) return false;
   if (normalized === '.' || /^(?:\.\/?)+$/.test(normalized)) return false;
-  return ![...PROTECTED_ROOTS].some((root) => (
-    comparable === root
-    || comparable.startsWith(`${root}/`)
-    || root.startsWith(`${comparable}/`)
-  ));
+  return ![...PROTECTED_ROOTS].some((root) => {
+    const comparableRoot = root.toLowerCase();
+    return comparable === comparableRoot
+      || comparable.startsWith(`${comparableRoot}/`)
+      || comparableRoot.startsWith(`${comparable}/`);
+  });
 }
 
 function isSafeTextToken(value: string | undefined): value is string {

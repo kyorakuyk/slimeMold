@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-16
+updated: 2026-09-18
 tags:
   - SlimeMold
   - Agent
@@ -11,7 +11,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-09-15
+period: 2026-07-29 至 2026-09-18
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -3064,6 +3064,26 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Node snapshot 在 try/catch 内一次捕获并验证 length：必须是 `1..256` 的 safe integer；随后只遍历固定长度的 own data descriptor，并在结束时 recheck live length，拒绝 revoked、throwing-length、fractional-length、growth/shrink Proxy。
 - 新增 Proxy 回归：revoked、throwing length、非整数 length、mutable shrink/growth；避免预算绕过、sparse intent 和未捕获异常。
 - 本轮仍未接入真实 runtime authority；下一步仍是 shared Git-diff intent 接入 Node capabilities 与 Rust dev_exec。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.140 补齐 shared protected roots 与日志时间范围于 unverified checkpoint
+
+- shared Node/Rust protected roots 与既有 `defaultDevPolicy` 对齐，新增 `src/store/workflowStore.ts`、`src/engine/executor.ts`，并将 `.git`、`.slimemold` metadata roots 明确列为不可读的 protected roots。
+- vectors 覆盖 exact file、ancestor、case-fold alias、metadata root 和 `git/cat/ls/grep/find` 多入口；修复了 `workflowStore.ts` 大小写比较导致的 Windows protected-path 漏洞。
+- DEVELOPMENT_LOG front matter 更新为 `updated: 2026-09-18`、period 至 `2026-09-18`。
+- 本轮仍未接入真实 runtime authority；Slice 0 reviewer 通过前不标记 verified。
 
 验证结果：
 
