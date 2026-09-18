@@ -3484,3 +3484,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.161 收紧 descendant pipe error、Codex checked capture 与unknown propagation 于 unverified checkpoint
+
+- process output receiver在post-exit pipe descendant/reader failure时先调用同一kill callback再返回；dev_exec不再把capture/timeout错误伪装成普通`DevExecResult{code:-1}`，错误文本明确标记`side effects unknown`。
+- Codex stdout/stderr reader改用Result-returning checked capture；正常完成时I/O错误上抛，移除legacy silent EOF helper。
+- 保留Unix process-group kill与Windows taskkill/direct-kill策略；Windows Job Object、Windows current_dir race、native Linux/macOS matrix和hardlink atomicity仍未闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

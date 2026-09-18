@@ -14,7 +14,7 @@ pub(crate) struct DevExecResult {
     pub(crate) code: i32,
 }
 
-fn drain_child_output_checked<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
+pub(crate) fn drain_child_output_checked<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
     let mut captured = Vec::new();
     let mut total = 0usize;
     let mut buffer = [0u8; 8192];
@@ -32,11 +32,6 @@ fn drain_child_output_checked<R: Read>(mut reader: R) -> Result<Vec<u8>, String>
         total = total.saturating_add(read);
     }
     Ok(captured)
-}
-
-/// Legacy Codex compatibility helper. The managed process path uses the checked variant above.
-pub(crate) fn drain_child_output<R: Read>(reader: R) -> Vec<u8> {
-    drain_child_output_checked(reader).unwrap_or_default()
 }
 
 type OutputReceiver = Receiver<Result<Vec<u8>, String>>;
@@ -102,14 +97,34 @@ pub(crate) fn run_with_timeout(
             }
         }
     };
-    let out_buf = stdout
+    let out_buf = match stdout
         .map(|(thread, receiver)| receive_output("stdout", thread, receiver))
-        .transpose()?
-        .unwrap_or_default();
-    let err_buf = stderr
+        .transpose()
+    {
+        Ok(Some(buffer)) => buffer,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            kill_child(&mut child);
+            let _ = child.wait();
+            return Err(format!(
+                "dev_exec output capture failed; side effects unknown: {error}"
+            ));
+        }
+    };
+    let err_buf = match stderr
         .map(|(thread, receiver)| receive_output("stderr", thread, receiver))
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()
+    {
+        Ok(Some(buffer)) => buffer,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            kill_child(&mut child);
+            let _ = child.wait();
+            return Err(format!(
+                "dev_exec output capture failed; side effects unknown: {error}"
+            ));
+        }
+    };
     Ok(DevExecResult {
         stdout: String::from_utf8_lossy(&out_buf).to_string(),
         stderr: String::from_utf8_lossy(&err_buf).to_string(),

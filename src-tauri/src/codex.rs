@@ -333,10 +333,13 @@ fn build_exec_args(sandbox_mode: &str) -> Vec<String> {
     args
 }
 
-fn join_child_output(thread: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+fn join_child_output(
+    thread: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+) -> Result<Vec<u8>, String> {
     thread
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default()
+        .ok_or_else(|| "Codex output reader 未启动".to_string())?
+        .join()
+        .map_err(|_| "Codex output reader 线程失败".to_string())?
 }
 
 fn run_exec(
@@ -386,11 +389,11 @@ fn run_exec(
     let stdout_thread = child
         .stdout
         .take()
-        .map(|stream| std::thread::spawn(move || crate::drain_child_output(stream)));
+        .map(|stream| std::thread::spawn(move || crate::drain_child_output_checked(stream)));
     let stderr_thread = child
         .stderr
         .take()
-        .map(|stream| std::thread::spawn(move || crate::drain_child_output(stream)));
+        .map(|stream| std::thread::spawn(move || crate::drain_child_output_checked(stream)));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(operation_id) = operation_id.as_deref() {
         if let Err(error) = register_child(operation_id, handle.clone()) {
@@ -473,8 +476,8 @@ fn run_exec(
         }
     };
 
-    let out_buf = join_child_output(stdout_thread);
-    let err_buf = join_child_output(stderr_thread);
+    let out_buf = join_child_output(stdout_thread)?;
+    let err_buf = join_child_output(stderr_thread)?;
     let _child = handle
         .lock()
         .map_err(|_| "Codex child handle 已损坏".to_string())?

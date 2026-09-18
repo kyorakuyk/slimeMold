@@ -32,7 +32,7 @@ mod dev_process;
 mod event_store;
 mod fs_guard;
 
-pub(crate) use dev_process::drain_child_output;
+pub(crate) use dev_process::drain_child_output_checked;
 use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
@@ -2249,22 +2249,15 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     for (k, v) in dev_sanitized_env() {
         cmd.env(k, v);
     }
-    let result = match run_with_timeout(&mut cmd, Duration::from_secs(30)) {
-        Ok(result) => result,
-        Err(error) => {
-            eprintln!(
-                "[dev_exec] {} cwd={} error={}",
-                args.join(" "),
-                canonical_cwd.display(),
-                error
-            );
-            DevExecResult {
-                stdout: String::new(),
-                stderr: error,
-                code: -1,
-            }
-        }
-    };
+    let result = run_with_timeout(&mut cmd, Duration::from_secs(30)).map_err(|error| {
+        eprintln!(
+            "[dev_exec] {} cwd={} error={}",
+            args.join(" "),
+            canonical_cwd.display(),
+            error
+        );
+        format!("dev_exec: {error}")
+    })?;
     if DEV_STATE.lock().unwrap().generation != operation_generation {
         return Err("dev_exec: session 在命令执行期间发生变化".to_string());
     }
