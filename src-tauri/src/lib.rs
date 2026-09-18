@@ -930,7 +930,7 @@ enum DevCwdKind {
 }
 
 /// 判定 cwd 归属（主仓库根 / 已登记 worktree）。
-fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
+fn dev_cwd_binding(cwd: &str) -> Result<(DevCwdKind, StableDirectoryIdentity), String> {
     let p = std::path::Path::new(cwd);
     if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -981,7 +981,9 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
                 "dev_exec: cwd canonical target 脱离原已登记 worktree：{cwd}"
             ));
         }
-        return Ok(DevCwdKind::Worktree(norm_canon));
+        let cwd_identity = stable_directory_identity(&norm_canon)
+            .map_err(|error| format!("dev_exec: 无法绑定 cwd identity：{error}"))?;
+        return Ok((DevCwdKind::Worktree(norm_canon), cwd_identity));
     }
     if !lexical_is_base && has_registrations {
         return Err(format!(
@@ -1012,7 +1014,9 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
             if path_compare_key(&canon.to_string_lossy()) != path_compare_key(&base_path) {
                 return Err("dev_exec: 主仓库 canonical target 已变化".into());
             }
-            return Ok(DevCwdKind::MainRepo);
+            let cwd_identity = stable_directory_identity(&canon)
+                .map_err(|error| format!("dev_exec: 无法绑定 cwd identity：{error}"))?;
+            return Ok((DevCwdKind::MainRepo, cwd_identity));
         }
     }
     let canon = dev_abs_of(cwd)?; // 相对路径基于 base_repo 解析；绝对路径 canonicalize
@@ -1029,7 +1033,9 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         if path_compare_key(&norm_canon.to_string_lossy())
             == path_compare_key(&bc.to_string_lossy())
         {
-            return Ok(DevCwdKind::MainRepo);
+            let cwd_identity = stable_directory_identity(&norm_canon)
+                .map_err(|error| format!("dev_exec: 无法绑定 cwd identity：{error}"))?;
+            return Ok((DevCwdKind::MainRepo, cwd_identity));
         }
     }
     for registered in &state.registrations {
@@ -1044,18 +1050,26 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
                     registered.path
                 ));
             }
-            return Ok(DevCwdKind::Worktree(norm_canon));
+            let cwd_identity = stable_directory_identity(&norm_canon)
+                .map_err(|error| format!("dev_exec: 无法绑定 cwd identity：{error}"))?;
+            return Ok((DevCwdKind::Worktree(norm_canon), cwd_identity));
         }
     }
     for w in &state.worktrees {
         let norm_wc = dev_strip_verbatim(std::path::Path::new(w));
         if path_is_same_or_child(&norm_canon, &norm_wc) {
-            return Ok(DevCwdKind::Worktree(norm_canon));
+            let cwd_identity = stable_directory_identity(&norm_canon)
+                .map_err(|error| format!("dev_exec: 无法绑定 cwd identity：{error}"))?;
+            return Ok((DevCwdKind::Worktree(norm_canon), cwd_identity));
         }
     }
     Err(format!(
         "dev_exec: cwd 不属于已登记 worktree 或主仓库根：{cwd}"
     ))
+}
+
+fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
+    Ok(dev_cwd_binding(cwd)?.0)
 }
 
 /// Codex Worker 专用 cwd 守卫：只允许已登记 worktree，不允许主仓库根或任意子路径。
@@ -2258,7 +2272,10 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
             return Err("dev_exec: Windows shell 参数包含未允许的控制字符或元字符".into());
         }
     }
-    let _spawn_cwd_identity = dev_cwd_kind(&cwd)?;
+    let (spawn_kind, _spawn_cwd_identity) = dev_cwd_binding(&cwd)?;
+    if spawn_kind != kind {
+        return Err("dev_exec: spawn 前 cwd ownership 已变化".into());
+    }
     let mut cmd = command_for_dev_exec(&spawn_args).map_err(|error| {
         eprintln!(
             "[dev_exec] command resolution reject args={} cwd={} error={error}",
@@ -2271,10 +2288,14 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
-        let cwd_identity = stable_directory_identity(&canonical_cwd)?;
-        let cwd_handle =
-            open_unix_file_relative(&canonical_cwd, libc::O_RDONLY | libc::O_DIRECTORY, 0, None)?;
-        if stable_file_identity_from_file(&cwd_handle)? != cwd_identity {
+        let cwd_handle = open_unix_file_relative(
+            &canonical_cwd,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+            None,
+            Some(&_spawn_cwd_identity),
+        )?;
+        if stable_file_identity_from_file(&cwd_handle)? != _spawn_cwd_identity {
             return Err("spawn cwd directory identity 已变化".into());
         }
         unsafe {
@@ -3630,17 +3651,18 @@ fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
         return Err(format!("dev_read_file: 文件不存在：{path}"));
     }
     dev_path_allowed(&abs)?;
+    let expected_identity = stable_file_identity(&abs)?;
+    let expected_parent_path = abs
+        .parent()
+        .ok_or_else(|| "dev_read_file: parent identity unavailable".to_string())?;
+    dev_path_allowed(expected_parent_path)?;
+    let expected_parent = stable_file_identity(expected_parent_path)?;
     if has_multiple_hardlinks(&abs)? {
         return Err(format!(
             "dev_read_file: 拒绝读取 hardlink 目标（防 inode 逃逸）：{}",
             abs.display()
         ));
     }
-    let expected_identity = stable_file_identity(&abs)?;
-    let expected_parent = stable_file_identity(
-        abs.parent()
-            .ok_or_else(|| "dev_read_file: parent identity unavailable".to_string())?,
-    )?;
     read_dev_file_bound(&abs, &expected_identity, &expected_parent)
 }
 
@@ -3741,6 +3763,7 @@ fn open_unix_file_relative(
     flags: i32,
     mode: libc::mode_t,
     expected_parent: Option<&StableFileIdentity>,
+    expected_final: Option<&StableFileIdentity>,
 ) -> Result<fs::File, String> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -3766,6 +3789,11 @@ fn open_unix_file_relative(
     if components.len() == 1 {
         if flags & libc::O_DIRECTORY == 0 {
             return Err(format!("根路径不能作为文件：{}", path.display()));
+        }
+        if let Some(expected_final) = expected_final {
+            if stable_file_identity_from_file(&directory)? != *expected_final {
+                return Err("Unix root cwd identity 已变化".into());
+            }
         }
         return Ok(directory);
     }
@@ -3810,7 +3838,13 @@ fn open_unix_file_relative(
     if fd < 0 {
         return Err(format!("无法绑定文件：{}", std::io::Error::last_os_error()));
     }
-    Ok(unsafe { fs::File::from_raw_fd(fd) })
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    if let Some(expected_final) = expected_final {
+        if stable_file_identity_from_file(&file)? != *expected_final {
+            return Err(format!("文件final identity 已变化：{}", path.display()));
+        }
+    }
+    Ok(file)
 }
 
 #[cfg(unix)]
@@ -3825,6 +3859,7 @@ fn create_unix_file_relative(
         libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
         0o644,
         Some(expected_parent),
+        None,
     )?;
     file.write_all(content.as_bytes())
         .map_err(|error| format!("创建绑定文件失败：{error}"))
@@ -3905,7 +3940,13 @@ fn read_dev_file_bound(
 ) -> Result<String, String> {
     use std::io::Read;
     use std::os::unix::fs::MetadataExt;
-    let mut file = open_unix_file_relative(path, libc::O_RDONLY, 0, Some(expected_parent))?;
+    let mut file = open_unix_file_relative(
+        path,
+        libc::O_RDONLY,
+        0,
+        Some(expected_parent),
+        Some(expected_identity),
+    )?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
@@ -3951,6 +3992,13 @@ fn write_dev_file_bound(
         .open(path)
         .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
     let actual_identity = stable_file_identity_from_handle(file.as_raw_handle())?;
+    if !file
+        .metadata()
+        .map_err(|error| format!("无法读取写入目标类型：{error}"))?
+        .is_file()
+    {
+        return Err("拒绝写入非 regular file".into());
+    }
     if actual_identity != *expected_identity {
         return Err("写入绑定文件 identity 已变化".into());
     }
@@ -3976,10 +4024,19 @@ fn write_dev_file_bound(
 ) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
-    let mut file = open_unix_file_relative(path, libc::O_WRONLY, 0, Some(expected_parent))?;
+    let mut file = open_unix_file_relative(
+        path,
+        libc::O_WRONLY,
+        0,
+        Some(expected_parent),
+        Some(expected_identity),
+    )?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
+    if !metadata.is_file() {
+        return Err("拒绝写入非 regular file".into());
+    }
     let actual_identity = stable_file_identity_from_metadata(&metadata)?;
     if actual_identity != *expected_identity {
         return Err("写入绑定文件 identity 已变化".into());
@@ -4036,6 +4093,7 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
             parent.display()
         )
     })?;
+    dev_path_allowed(&canon_parent)?;
     let expected_parent_identity = stable_file_identity(&canon_parent)?;
     let name = joined
         .file_name()
@@ -4047,6 +4105,12 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
         if meta.file_type().is_symlink() {
             return Err(format!(
                 "dev_write_file: 拒绝写入符号链接目标（防 symlink 逃逸）：{}",
+                abs.display()
+            ));
+        }
+        if !meta.is_file() {
+            return Err(format!(
+                "dev_write_file: 拒绝写入非 regular file：{}",
                 abs.display()
             ));
         }

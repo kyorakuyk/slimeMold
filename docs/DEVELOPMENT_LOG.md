@@ -3412,3 +3412,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.157 让授权 cwd/file identity贯穿最终Unix fd acquisition 于 unverified checkpoint
+
+- `dev_cwd_binding`现在在同一授权流程中返回 `DevCwdKind + StableDirectoryIdentity`；spawn前检查ownership未变化，并把这份exact identity传入Unix cwd `openat` final fd compare，不再在最后一步从可能已替换的路径重新生成expected。
+- Unix read/write/create在`dev_path_allowed(parent)`之后capture parent identity；bound open同时比较parent fd与final file identity。Windows仍保留final handle identity，并显式拒绝非regular write target。
+- existing write target与bound write fd都拒绝FIFO/device等非regular object；hardlink count检查仍保留。新增逻辑不宣称 hardlink addition after open、Windows parent-relative atomic mutation、Linux/macOS native matrix已完全闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
