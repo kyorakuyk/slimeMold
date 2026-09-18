@@ -3161,3 +3161,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.144 对齐 Rust recursive Git protected matcher 的跨平台 case-fold 于 unverified checkpoint
+
+- 修复 Unix/macOS 下 `git_diff_pathspec_allowed` 未 lower-case relative key 的差异；现在 `workflowStore.ts`、`src/Store`、`.GIT`、`.SLIMEMOLD` 等大小写 alias 与 Windows protected policy 一致拒绝。
+- 保留 `src/components` 安全路径放行和 root/ancestor/exact/descendant 递归语义；新增跨平台 alias regression。
+- stable check/canonicalize/spawn identity TOCTOU 仍是下一条 stable worktree/file identity slice，不在本轮宣称已解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

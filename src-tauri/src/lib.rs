@@ -2706,14 +2706,15 @@ fn protected_path_error(abs: &std::path::Path, root: &std::path::Path) -> Option
 fn git_diff_pathspec_allowed(cwd: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
     let cwd_key = path_compare_key(&dev_strip_verbatim(cwd).to_string_lossy());
     let path_key = path_compare_key(&dev_strip_verbatim(path).to_string_lossy());
-    let rel = if path_key == cwd_key {
+    let rel = (if path_key == cwd_key {
         String::new()
     } else {
         path_key
             .strip_prefix(&(cwd_key.clone() + "/"))
             .ok_or_else(|| format!("dev_exec: Git pathspec 不属于 worktree：{}", path.display()))?
             .to_string()
-    };
+    })
+    .to_ascii_lowercase();
     let protected_roots = [
         "package.json",
         "package-lock.json",
@@ -4962,8 +4963,11 @@ mod dev_write_symlink_tests {
             "C:/repo/wt/src",
             "C:/repo/wt/src/store",
             "C:/repo/wt/src/store/workflowStore.ts",
+            "C:/repo/wt/src/Store",
             "C:/repo/wt/.git",
+            "C:/repo/wt/.GIT",
             "C:/repo/wt/.slimemold",
+            "C:/repo/wt/.SLIMEMOLD",
         ] {
             assert!(
                 git_diff_pathspec_allowed(cwd, std::path::Path::new(path)).is_err(),
