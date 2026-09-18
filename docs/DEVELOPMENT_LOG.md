@@ -3657,3 +3657,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.170 收紧Codex pending registry poison、missing finalization与pre-spawn cancellation fail-closed 于 unverified checkpoint
+
+- `take_cancelled_operation`现在返回Result，pending registry poison在spawn前直接阻断，不再被解释为false/未取消。
+- `finish_pending_operation`对missing或generation mismatch显式返回unknown/fail-closed错误；finalization不再把异常状态当作成功完成。
+- 所有begin后prepared registry获取失败路径都先尝试finish pending，再返回错误，避免操作token永久卡在pending。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

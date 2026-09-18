@@ -133,27 +133,29 @@ fn finish_pending_operation(operation_id: &str, generation: u64) -> Result<bool,
     let mut pending = pending_codex_operations()
         .lock()
         .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
-    if let Some(entry) = pending.get(operation_id) {
-        if entry.generation == generation {
-            let cancelled = entry.cancellation_requested;
-            pending.remove(operation_id);
-            return Ok(cancelled);
-        }
+    let entry = pending
+        .get(operation_id)
+        .ok_or_else(|| "Codex pending lease已丢失；side effects unknown".to_string())?;
+    if entry.generation != generation {
+        return Err("Codex pending lease generation不匹配；side effects unknown".into());
     }
-    Ok(false)
+    let cancelled = entry.cancellation_requested;
+    pending.remove(operation_id);
+    Ok(cancelled)
 }
 
-fn take_cancelled_operation(operation_id: &str) -> bool {
-    if let Ok(mut pending) = pending_codex_operations().lock() {
-        if pending
-            .get(operation_id)
-            .is_some_and(|entry| entry.cancellation_requested)
-        {
-            pending.remove(operation_id);
-            return true;
-        }
+fn take_cancelled_operation(operation_id: &str) -> Result<bool, String> {
+    let mut pending = pending_codex_operations()
+        .lock()
+        .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
+    if pending
+        .get(operation_id)
+        .is_some_and(|entry| entry.cancellation_requested)
+    {
+        pending.remove(operation_id);
+        return Ok(true);
     }
-    false
+    Ok(false)
 }
 
 fn valid_operation_id(operation_id: &str) -> bool {
@@ -819,7 +821,7 @@ fn run_exec(
     }
 
     if let Some(operation_id) = operation_id.as_deref() {
-        if take_cancelled_operation(operation_id) {
+        if take_cancelled_operation(operation_id)? {
             cleanup_codex_run(&handle, Some(operation_id), &output_path);
             return Err("Codex Worker 已取消；side effects unknown".into());
         }
@@ -980,7 +982,7 @@ pub async fn codex_worker_exec(
     let prepared_identity = prepared.identity.clone();
     let result = async {
         let auth = codex_login_status()?;
-        if take_cancelled_operation(&operation_for_task) {
+        if take_cancelled_operation(&operation_for_task)? {
             return Err("Codex Worker 已取消".into());
         }
         if !auth.logged_in {
@@ -1145,7 +1147,7 @@ mod tests {
             begin_pending_operation(&operation, 1).expect("pending operation should register");
         codex_worker_cancel(operation.clone(), 1)
             .expect("pending cancellation should be idempotent");
-        assert!(take_cancelled_operation(&operation));
+        assert!(take_cancelled_operation(&operation).expect("pending registry should be healthy"));
         let _ = finish_pending_operation(&operation, generation);
     }
 
