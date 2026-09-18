@@ -3355,3 +3355,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.154 收紧 bound file identity 与 Node headless replacement fencing 于 unverified checkpoint
+
+- Rust `dev_read_file`/existing-target `dev_write_file` 在 preflight capture file identity，并在真实 `O_NOFOLLOW`/reparse-aware bound handle打开后重新比较 device/inode 或 volume/file-index；same-path file replacement被拒绝，旧对象不会写入新路径对象。
+- 新增 bound file replacement regression；新增 `StableFileIdentity` platform helper，hardlink检查与bound handle identity检查同时保留。
+- Node默认 headless `WorktreeManager`保存 creation-time `dev:ino` identity；create失败时尝试回滚，restore、created cleanup、orphan cleanup和remove后 read-back均拒绝替换对象。
+- parent-directory replacement、missing-target create/openat、Windows完整 handle-relative mutation、最终spawn check/use race与Node custom fake runner仍为明确 residual；本轮不宣称所有外部filesystem race已原子消除。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

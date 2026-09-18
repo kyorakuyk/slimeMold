@@ -3616,7 +3616,8 @@ fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
             abs.display()
         ));
     }
-    read_dev_file_bound(&abs)
+    let expected_identity = stable_file_identity(&abs)?;
+    read_dev_file_bound(&abs, &expected_identity)
 }
 
 // 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
@@ -3647,8 +3648,78 @@ unsafe extern "system" {
     ) -> i32;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StableFileIdentity {
+    volume_or_device: u64,
+    file_or_inode: u64,
+}
+
+#[cfg(unix)]
+fn stable_file_identity_from_metadata(
+    metadata: &std::fs::Metadata,
+) -> Result<StableFileIdentity, String> {
+    use std::os::unix::fs::MetadataExt;
+    let identity = StableFileIdentity {
+        volume_or_device: metadata.dev(),
+        file_or_inode: metadata.ino(),
+    };
+    if identity.volume_or_device == 0 || identity.file_or_inode == 0 {
+        return Err("文件 identity platform identifiers 不可用".into());
+    }
+    Ok(identity)
+}
+
 #[cfg(windows)]
-fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+fn stable_file_identity_from_handle(
+    handle: *mut std::ffi::c_void,
+) -> Result<StableFileIdentity, String> {
+    use std::mem::MaybeUninit;
+    let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
+    if unsafe { GetFileInformationByHandle(handle, info.as_mut_ptr()) } == 0 {
+        return Err("无法读取绑定文件 identity".into());
+    }
+    let info = unsafe { info.assume_init() };
+    let identity = StableFileIdentity {
+        volume_or_device: info.volume_serial as u64,
+        file_or_inode: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
+    };
+    if identity.volume_or_device == 0 || identity.file_or_inode == 0 {
+        return Err("文件 identity platform identifiers 不可用".into());
+    }
+    Ok(identity)
+}
+
+fn stable_file_identity(path: &std::path::Path) -> Result<StableFileIdentity, String> {
+    #[cfg(unix)]
+    {
+        return stable_file_identity_from_metadata(
+            &fs::metadata(path).map_err(|error| format!("无法读取文件 identity：{error}"))?,
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|error| format!("无法绑定文件 identity：{error}"))?;
+        return stable_file_identity_from_handle(file.as_raw_handle());
+    }
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        let _ = path;
+        Err("当前平台不支持稳定文件 identity".into())
+    }
+}
+
+#[cfg(windows)]
+fn read_dev_file_bound(
+    path: &std::path::Path,
+    expected_identity: &StableFileIdentity,
+) -> Result<String, String> {
     use std::io::Read;
     use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
@@ -3659,6 +3730,10 @@ fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(|e| format!("无法绑定读取句柄：{e}"))?;
+    let actual_identity = stable_file_identity_from_handle(file.as_raw_handle())?;
+    if actual_identity != *expected_identity {
+        return Err("读取绑定文件 identity 已变化".into());
+    }
     let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
         return Err("无法读取绑定文件身份".to_string());
@@ -3673,7 +3748,10 @@ fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(unix)]
-fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+fn read_dev_file_bound(
+    path: &std::path::Path,
+    expected_identity: &StableFileIdentity,
+) -> Result<String, String> {
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let mut file = fs::OpenOptions::new()
@@ -3681,12 +3759,14 @@ fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|e| format!("无法绑定读取句柄：{e}"))?;
-    if file
+    let metadata = file
         .metadata()
-        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?
-        .nlink()
-        > 1
-    {
+        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
+    let actual_identity = stable_file_identity_from_metadata(&metadata)?;
+    if actual_identity != *expected_identity {
+        return Err("读取绑定文件 identity 已变化".into());
+    }
+    if metadata.nlink() > 1 {
         return Err("拒绝读取 hardlink 目标（防 inode 逃逸）".to_string());
     }
     let mut content = String::new();
@@ -3696,12 +3776,19 @@ fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(all(not(windows), not(unix)))]
-fn read_dev_file_bound(path: &std::path::Path) -> Result<String, String> {
+fn read_dev_file_bound(
+    path: &std::path::Path,
+    expected_identity: &StableFileIdentity,
+) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("读取文件失败：{e}"))
 }
 
 #[cfg(windows)]
-fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+fn write_dev_file_bound(
+    path: &std::path::Path,
+    content: &str,
+    expected_identity: &StableFileIdentity,
+) -> Result<(), String> {
     use std::io::Write;
     use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
@@ -3712,6 +3799,10 @@ fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), Str
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
+    let actual_identity = stable_file_identity_from_handle(file.as_raw_handle())?;
+    if actual_identity != *expected_identity {
+        return Err("写入绑定文件 identity 已变化".into());
+    }
     let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
         return Err("无法读取绑定文件身份".to_string());
@@ -3726,7 +3817,11 @@ fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), Str
 }
 
 #[cfg(unix)]
-fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+fn write_dev_file_bound(
+    path: &std::path::Path,
+    content: &str,
+    expected_identity: &StableFileIdentity,
+) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let mut file = fs::OpenOptions::new()
@@ -3734,12 +3829,14 @@ fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), Str
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
-    if file
+    let metadata = file
         .metadata()
-        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?
-        .nlink()
-        > 1
-    {
+        .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
+    let actual_identity = stable_file_identity_from_metadata(&metadata)?;
+    if actual_identity != *expected_identity {
+        return Err("写入绑定文件 identity 已变化".into());
+    }
+    if metadata.nlink() > 1 {
         return Err("拒绝写入 hardlink 目标（防 inode 逃逸）".to_string());
     }
     file.set_len(0)
@@ -3749,7 +3846,11 @@ fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), Str
 }
 
 #[cfg(all(not(windows), not(unix)))]
-fn write_dev_file_bound(path: &std::path::Path, content: &str) -> Result<(), String> {
+fn write_dev_file_bound(
+    path: &std::path::Path,
+    content: &str,
+    expected_identity: &StableFileIdentity,
+) -> Result<(), String> {
     fs::write(path, content).map_err(|e| format!("写入文件失败：{e}"))
 }
 
@@ -3808,7 +3909,8 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
             .canonicalize()
             .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
         dev_path_allowed(&real)?;
-        write_dev_file_bound(&real, &content)?;
+        let expected_identity = stable_file_identity(&real)?;
+        write_dev_file_bound(&real, &content, &expected_identity)?;
         return Ok(());
     }
 
@@ -6034,6 +6136,27 @@ mod dev_write_symlink_tests {
             result.is_err(),
             "base alias must not reach canonical fallback"
         );
+    }
+
+    #[test]
+    fn bound_file_write_rejects_same_path_replacement() {
+        let root =
+            std::env::temp_dir().join(format!("slimemold-file-identity-{}", std::process::id()));
+        let target = root.join("target.txt");
+        let old = root.join("target.old");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&target, "old").unwrap();
+        let expected = stable_file_identity(&target).unwrap();
+        fs::rename(&target, &old).unwrap();
+        fs::write(&target, "replacement").unwrap();
+        let result = write_dev_file_bound(&target, "new", &expected);
+        assert!(
+            result.is_err(),
+            "bound write must reject same-path file replacement"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "replacement");
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
