@@ -3179,3 +3179,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.145 拒绝 hardened Git pathspec bracket magic 于 unverified checkpoint
+
+- reviewer 发现 Rust hardened pathspec 只拒绝 `*`/`?`，未拒绝 `[`/`]`；Git 可将 `package[.]json`解释为 glob，绕过 literal protected-path 检查。
+- hardened pathspec grammar 现在与 shared literal path policy 对齐，拒绝 bracket magic；新增固定 hardened argv 回归，保留安全 path 和 protected ancestor/case-fold 检查。
+- stable check/canonicalize/spawn identity TOCTOU 仍保留为下一条独立 identity slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

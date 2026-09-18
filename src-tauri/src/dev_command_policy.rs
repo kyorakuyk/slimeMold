@@ -278,6 +278,8 @@ fn hardened_git_diff_pathspec_safe(value: &str) -> bool {
         && !value.chars().any(|c| c.is_ascii_control())
         && !value.contains('*')
         && !value.contains('?')
+        && !value.contains('[')
+        && !value.contains(']')
 }
 
 pub(crate) fn hardened_git_diff_is_supported(command: &[String]) -> bool {
@@ -575,6 +577,11 @@ mod tests {
             .map(|value| value.replace("--no-ext-diff", "--ext-diff"))
             .collect::<Vec<_>>();
         assert!(!hardened_git_diff_is_supported(&wrong_ext_diff));
+        let bracket_alias = scoped
+            .iter()
+            .map(|value| value.replace("src/components/App.tsx", "package[.]json"))
+            .collect::<Vec<_>>();
+        assert!(!hardened_git_diff_is_supported(&bracket_alias));
     }
 
     #[test]
