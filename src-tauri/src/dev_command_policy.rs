@@ -272,6 +272,35 @@ fn is_safe_typecheck(command: &[String]) -> bool {
             && is_safe_script_path(&command[2]))
 }
 
+fn hardened_git_diff_pathspec_safe(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value.chars().any(|c| c.is_ascii_control())
+        && !value.contains('*')
+        && !value.contains('?')
+}
+
+pub(crate) fn hardened_git_diff_is_supported(command: &[String]) -> bool {
+    if !is_bounded_command(command)
+        || command.len() < 8
+        || command[0] != "git"
+        || command[1] != "--no-pager"
+        || command[2] != "diff"
+        || command[3] != "--no-ext-diff"
+        || command[4] != "--no-textconv"
+    {
+        return false;
+    }
+    if command[5] == "--name-only" {
+        return command.len() == 8 && safe_revision(&command[6]) && command[7] == "--";
+    }
+    safe_revision(&command[5])
+        && command[6] == "--"
+        && command[7..]
+            .iter()
+            .all(|path| hardened_git_diff_pathspec_safe(path))
+}
+
 pub(crate) fn command_is_supported(command: &[String]) -> bool {
     if !is_bounded_command(command) {
         return false;
@@ -509,6 +538,43 @@ mod tests {
         command.extend(std::iter::repeat_n("!".to_string(), 129));
         command.extend(["-name".to_string(), "*.tsx".to_string()]);
         assert!(!command_is_supported(&command));
+    }
+
+    #[test]
+    fn accepts_only_hardened_git_diff_invocations() {
+        let scoped = vec![
+            "git",
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+            "--",
+            "C:/repo/wt/src/components/App.tsx",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert!(hardened_git_diff_is_supported(&scoped));
+        let names = vec![
+            "git",
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "HEAD",
+            "--",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert!(hardened_git_diff_is_supported(&names));
+        let wrong_ext_diff = scoped
+            .iter()
+            .map(|value| value.replace("--no-ext-diff", "--ext-diff"))
+            .collect::<Vec<_>>();
+        assert!(!hardened_git_diff_is_supported(&wrong_ext_diff));
     }
 
     #[test]

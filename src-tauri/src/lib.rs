@@ -1639,6 +1639,9 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "grep" => grep_args_are_safe(rest),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
         "git" => {
+            if rest.first().map(String::as_str) == Some("--no-pager") {
+                return dev_command_policy::hardened_git_diff_is_supported(args);
+            }
             if rest.first().map(String::as_str) == Some("diff") {
                 return dev_command_policy::command_intent_kind(args).is_some();
             }
@@ -1926,29 +1929,34 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     } else {
         None
     };
-    // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
-    dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &args).map_err(|error| {
-        eprintln!(
-            "[dev_exec] path reject args={} cwd={} error={error}",
-            args.join(" "),
-            canonical_cwd.display()
-        );
-        error
-    })?;
-    let mut spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args).map_err(|error| {
-        eprintln!(
-            "[dev_exec] argument canonicalization reject args={} cwd={} error={error}",
-            args.join(" "),
-            canonical_cwd.display()
-        );
-        error
-    })?;
-    if args.first().map(String::as_str) == Some("git")
+    let effective_args = if args.first().map(String::as_str) == Some("git")
         && args.get(1).map(String::as_str) == Some("diff")
     {
-        spawn_args = dev_command_policy::git_diff_execution_args(&spawn_args)
-            .ok_or_else(|| "dev_exec: Git diff intent 无法构造安全 invocation".to_string())?;
-    }
+        dev_command_policy::git_diff_execution_args(&args)
+            .ok_or_else(|| "dev_exec: Git diff intent 无法构造安全 invocation".to_string())?
+    } else {
+        args.clone()
+    };
+    // P1 兜底：对文件路径参数做 canonicalize（解析符号链接）校验，确认未逃逸出 worktree
+    dev_exec_validate_paths(&canonical_cwd.to_string_lossy(), &effective_args).map_err(
+        |error| {
+            eprintln!(
+                "[dev_exec] path reject args={} cwd={} error={error}",
+                args.join(" "),
+                canonical_cwd.display()
+            );
+            error
+        },
+    )?;
+    let spawn_args =
+        canonicalize_dev_exec_args(&canonical_cwd, &effective_args).map_err(|error| {
+            eprintln!(
+                "[dev_exec] argument canonicalization reject args={} cwd={} error={error}",
+                args.join(" "),
+                canonical_cwd.display()
+            );
+            error
+        })?;
     if matches!(kind, DevCwdKind::Worktree(_)) {
         let allow_execution_only_scripts = spawn_args
             .first()
@@ -4329,7 +4337,6 @@ mod dev_exec_tests {
         assert!(dev_exec_allowed(&wt, &sv(&["cat", "src/a.ts"])));
         assert!(dev_exec_allowed(&wt, &sv(&["ls", "src"])));
         assert!(dev_exec_allowed(&wt, &sv(&["grep", "foo", "src/a.ts"])));
-        // 只读 git 精确参数
         assert!(dev_exec_allowed(
             &wt,
             &sv(&["git", "status", "--porcelain"])
@@ -4338,7 +4345,33 @@ mod dev_exec_tests {
             &wt,
             &sv(&["git", "diff", "HEAD", "--", "src/a.ts"])
         ));
-        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&[
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "HEAD",
+                "--",
+                "C:/repo/wt/src/a.ts",
+            ])
+        ));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&[
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "HEAD",
+                "--",
+            ])
+        ));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD"])));
         assert!(dev_exec_allowed(
             &wt,

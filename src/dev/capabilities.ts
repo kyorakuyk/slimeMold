@@ -299,6 +299,8 @@ export interface NodeDevDeps {
   resolveInside?: (root: string, relPath: string) => Promise<string>;
   relativePath?: (root: string, abs: string) => Promise<string>;
   testAllow?: (cmd: string[]) => boolean;
+  /** Tauri 将 inode/hardlink authority 下沉给 Rust；Node 默认使用 node-run 实现。 */
+  assertNoMultipleHardlinks?: (absPath: string) => Promise<void>;
 }
 
 /** 已登记 worktree 的只读注册表（P0 审计：能力层据此校验 cwd 属于已登记 worktree）。 */
@@ -346,6 +348,7 @@ export function createNodeDevService(
   const resolveP = deps.resolveInside ?? resolveInside;
   const relP = deps.relativePath ?? relativePath;
   const testAllow = deps.testAllow ?? ((cmd: string[]) => matchesAnyRule(DEFAULT_TEST_RULES, cmd));
+  const checkHardlinks = deps.assertNoMultipleHardlinks ?? assertNoMultipleHardlinks;
 
   /**
    * P0 审计修复：cwd 必须属于已登记 worktree（fail-closed）。
@@ -496,7 +499,7 @@ export function createNodeDevService(
       } else {
         assertPathAllowed(activePolicy, rel);
       }
-      await assertNoMultipleHardlinks(abs);
+      await checkHardlinks(abs);
       guarded[index] = abs;
     }
     return guarded;

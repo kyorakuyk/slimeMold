@@ -79,6 +79,31 @@ fn canonicalize_dev_exec_args_normalizes_existing_in_worktree_path() {
 }
 
 #[test]
+fn canonicalize_hardened_git_diff_normalizes_pathspecs() {
+    let base = TestDir::new("canonicalize-hardened-git");
+    let worktree = base.path().join("wt");
+    std::fs::create_dir_all(worktree.join("src/components")).unwrap();
+    std::fs::write(worktree.join("src/components/App.tsx"), "export {}\n").unwrap();
+
+    let args = vec![
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "HEAD",
+        "--",
+        "src/components/App.tsx",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect::<Vec<_>>();
+    let canonical = canonicalize_dev_exec_args(&worktree, &args).unwrap();
+    assert!(Path::new(&canonical[7]).is_absolute());
+    assert!(canonical[7].ends_with("App.tsx"));
+}
+
+#[test]
 fn canonicalize_dev_exec_args_rejects_existing_symlink_escape() {
     let base = TestDir::new("canonicalize-symlink");
     let worktree = base.path().join("wt");

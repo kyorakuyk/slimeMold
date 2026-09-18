@@ -223,6 +223,16 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
             }
         }
         Some("git")
+            if args.get(1).map(|value| value.as_str()) == Some("--no-pager")
+                && args.get(2).map(|value| value.as_str()) == Some("diff") =>
+        {
+            if args.get(5).map(|value| value.as_str()) != Some("--name-only") {
+                for index in 7..args.len() {
+                    check(&args[index])?;
+                }
+            }
+        }
+        Some("git")
             if args.get(1).map(|value| value.as_str()) == Some("diff")
                 && args.get(2).is_some_and(|value| is_git_diff_revision(value))
                 && args.get(3).map(|value| value.as_str()) == Some("--") =>
@@ -315,6 +325,16 @@ pub(crate) fn canonicalize_dev_exec_args(
             }
         }
         Some("tsx") => replace_if_existing(1)?,
+        Some("git")
+            if args.get(1).map(|value| value.as_str()) == Some("--no-pager")
+                && args.get(2).map(|value| value.as_str()) == Some("diff") =>
+        {
+            if args.get(5).map(|value| value.as_str()) != Some("--name-only") {
+                for index in 7..args.len() {
+                    replace_if_existing(index)?;
+                }
+            }
+        }
         Some("git")
             if args.get(1).map(|value| value.as_str()) == Some("diff")
                 && args.get(2).is_some_and(|value| is_git_diff_revision(value))

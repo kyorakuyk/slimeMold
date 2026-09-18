@@ -131,7 +131,10 @@ export function createTauriDeps(generation: number): NodeDevDeps {
       return abs;
     },
     relativePath: async (root, abs) => relativeWeb(root, abs),
+    // WebView shims do not expose node:fs/promises.stat; Rust dev_exec performs the authoritative hardlink check.
+    assertNoMultipleHardlinks: async () => {},
   };
+
 }
 
 /** Tauri 证据 JSONL 持久化（plugin-fs 落盘；仅 GUI 用，宿主固定路径在 worktree 外）。 */

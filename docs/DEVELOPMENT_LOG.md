@@ -3120,3 +3120,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - disposable Git probe：配置 `diff.external` helper 后执行固定 `--no-pager --no-ext-diff --no-textconv` invocation，marker 未生成，exit 0；
 - 本轮未 push、未 merge、未修改凭据或外部系统；Slice 1 当前仍为 unverified。
+
+### 7.142 修复 Tauri hardened Git diff gate 与 WebView hardlink hook 于 unverified checkpoint
+
+- Rust worktree gate 现在接受 Node/Tauri builder 的完整 `git --no-pager diff --no-ext-diff --no-textconv ...` argv，并拒绝缺少或替换固定控制参数的变体；raw `git diff` 仍在 host 内重写为 hardened invocation。
+- raw Git diff 在 Rust `dev_exec` 的 path validation/canonicalization 前完成 rewrite，避免 canonicalized absolute pathspec 被再次当作 raw grammar 拒绝。
+- `fs_guard` 的 `dev_exec_validate_paths` 与 `canonicalize_dev_exec_args` 同步识别 hardened Git diff，继续对 `--` 后 pathspec 做存在性、symlink/real-path 和 worktree containment 检查。
+- Node capability 增加可注入 hardlink checker；headless 默认使用 `node-run` stat 检查，Tauri WebView 不再调用缺失的 `node:fs/promises.stat` shim，最终 hardlink authority 由 Rust `dev_exec` 执行。
+- 新增 Tauri exact argv、Rust hardened gate、Rust fs_guard canonicalization 和 WebView hardlink delegation 回归；本轮修复后尚未重新获得独立 reviewer verdict。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`69 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/tauri-run.test.ts src/dev/capabilities.test.ts src/dev/commandPolicy.test.ts`：`3 files / 31 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
