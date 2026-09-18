@@ -159,11 +159,7 @@ fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryId
         });
     }
     #[cfg(not(any(unix, windows)))]
-    Ok(StableDirectoryIdentity {
-        canonical_path: canonical.to_string_lossy().to_string(),
-        volume_or_device: 0,
-        file_or_inode: 0,
-    })
+    Err("当前平台不支持稳定 worktree directory identity".to_string())
 }
 
 #[derive(Clone)]
@@ -811,6 +807,19 @@ fn resolve_dev_program(name: &str) -> std::path::PathBuf {
     }
 }
 
+fn dev_lexical_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::Path::new(raw);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let state = DEV_STATE.lock().unwrap();
+    let base = state
+        .base_repo
+        .as_ref()
+        .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
+    Ok(std::path::Path::new(base).join(path))
+}
+
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
 fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(raw);
@@ -856,6 +865,48 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
+    }
+    let lexical_cwd = dev_lexical_abs_of(cwd)?;
+    let (lexical_is_base, registered_candidate, has_registrations) = {
+        let state = DEV_STATE.lock().unwrap();
+        let base_match = state.base_repo.as_ref().is_some_and(|base| {
+            path_compare_key(&lexical_cwd.to_string_lossy()) == path_compare_key(base)
+        });
+        let candidate = state
+            .registrations
+            .iter()
+            .find(|registered| {
+                path_is_same_or_child(
+                    &dev_strip_verbatim(&lexical_cwd),
+                    &dev_strip_verbatim(std::path::Path::new(&registered.path)),
+                )
+            })
+            .cloned();
+        (base_match, candidate, !state.registrations.is_empty())
+    };
+    if let Some(registered) = registered_candidate {
+        let registered_path = dev_strip_verbatim(std::path::Path::new(&registered.path));
+        let current_identity = stable_directory_identity(&registered_path)
+            .map_err(|error| format!("dev_exec: 无法重新绑定已登记 worktree identity：{error}"))?;
+        if current_identity != registered.identity {
+            return Err(format!(
+                "dev_exec: 已登记 worktree identity 已变化：{}",
+                registered.path
+            ));
+        }
+        let canon = dev_abs_of(cwd)?;
+        let norm_canon = dev_strip_verbatim(&canon);
+        if !path_is_same_or_child(&norm_canon, &registered_path) {
+            return Err(format!(
+                "dev_exec: cwd canonical target 脱离原已登记 worktree：{cwd}"
+            ));
+        }
+        return Ok(DevCwdKind::Worktree(norm_canon));
+    }
+    if !lexical_is_base && has_registrations {
+        return Err(format!(
+            "dev_exec: cwd 未按 lexical path 命中已登记 worktree：{cwd}"
+        ));
     }
     let canon = dev_abs_of(cwd)?; // 相对路径基于 base_repo 解析；绝对路径 canonicalize
     if !canon.is_dir() {
@@ -5154,6 +5205,73 @@ mod dev_write_symlink_tests {
         assert_ne!(original, replacement);
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&backup);
+    }
+
+    #[test]
+    fn cwd_rejects_registered_worktree_redirect_to_another_registered_worktree() {
+        let _test_guard = lock_dev_state_tests();
+        let root = std::env::temp_dir().join(format!("slimemold-redirect-{}", std::process::id()));
+        let base = root.join("base");
+        let worktree_a = root.join("a");
+        let worktree_b = root.join("b");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(worktree_a.join("sub")).unwrap();
+        fs::create_dir_all(worktree_b.join("sub")).unwrap();
+        let identity_a = stable_directory_identity(&worktree_a).unwrap();
+        let identity_b = stable_directory_identity(&worktree_b).unwrap();
+        fs::rename(&worktree_a, root.join("a-original")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&worktree_b, &worktree_a).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_dir;
+            if let Err(error) = symlink_dir(&worktree_b, &worktree_a) {
+                let unsupported = error.raw_os_error() == Some(1314)
+                    || matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                    );
+                if unsupported {
+                    let _ = fs::remove_dir_all(&root);
+                    return;
+                }
+                panic!("unexpected directory symlink error: {error}");
+            }
+        }
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = 1;
+            state.base_repo = Some(base.to_string_lossy().to_string());
+            state.worktrees = vec![
+                worktree_a.to_string_lossy().to_string(),
+                worktree_b.to_string_lossy().to_string(),
+            ];
+            state.registrations = vec![
+                RegisteredWorktree {
+                    generation: 1,
+                    path: worktree_a.to_string_lossy().to_string(),
+                    branch: "worker/a".into(),
+                    identity: identity_a,
+                },
+                RegisteredWorktree {
+                    generation: 1,
+                    path: worktree_b.to_string_lossy().to_string(),
+                    branch: "worker/b".into(),
+                    identity: identity_b,
+                },
+            ];
+        }
+        let result = dev_cwd_kind(&worktree_a.join("sub").to_string_lossy());
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            *state = DevState::new();
+        }
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.is_err(),
+            "registered A redirected to registered B must be rejected"
+        );
     }
 
     #[test]

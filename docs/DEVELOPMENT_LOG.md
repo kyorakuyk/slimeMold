@@ -3233,3 +3233,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.148 修复 lexical registration 先于 canonicalization 的 worktree redirect bypass 于 unverified checkpoint
+
+- reviewer 发现 `dev_cwd_kind` 先 canonicalize cwd 后再选择 registration：registered A 被 junction/symlink 重定向到 registered B 时，可能借用 B identity 放行。
+- 新增 lexical cwd → registration 选择；只有 lexical path 命中原 registration，且原 worktree identity 仍匹配、canonical target 仍在原 root 内时才允许执行；未命中 registration 的 canonical alias 在存在 registrations 时 fail-closed。
+- 新增真实 A→B directory-link regression；非 Unix/Windows 平台 identity 不再使用 `(0,0)` 伪稳定值。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`72 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
