@@ -44,6 +44,14 @@ fn prepared_codex_leases() -> &'static Mutex<HashMap<String, PreparedLease>> {
     PREPARED_CODEX_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(crate) fn clear_prepared_codex_leases() -> Result<(), String> {
+    prepared_codex_leases()
+        .lock()
+        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+        .clear();
+    Ok(())
+}
+
 fn same_cwd_path(left: &std::path::Path, right: &std::path::Path) -> bool {
     if cfg!(windows) {
         left.to_string_lossy()
@@ -121,17 +129,18 @@ fn begin_pending_operation(operation_id: &str, session_generation: u64) -> Resul
     Ok(generation)
 }
 
-fn finish_pending_operation(operation_id: &str, generation: u64) -> bool {
-    if let Ok(mut pending) = pending_codex_operations().lock() {
-        if let Some(entry) = pending.get(operation_id) {
-            if entry.generation == generation {
-                let cancelled = entry.cancellation_requested;
-                pending.remove(operation_id);
-                return cancelled;
-            }
+fn finish_pending_operation(operation_id: &str, generation: u64) -> Result<bool, String> {
+    let mut pending = pending_codex_operations()
+        .lock()
+        .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
+    if let Some(entry) = pending.get(operation_id) {
+        if entry.generation == generation {
+            let cancelled = entry.cancellation_requested;
+            pending.remove(operation_id);
+            return Ok(cancelled);
         }
     }
-    false
+    Ok(false)
 }
 
 fn take_cancelled_operation(operation_id: &str) -> bool {
@@ -625,6 +634,7 @@ fn run_exec(
     sandbox_mode: &str,
     operation_id: Option<String>,
     session_generation: Option<u64>,
+    prepared_cwd_identity: Option<crate::StableDirectoryIdentity>,
 ) -> Result<CodexExecResult, String> {
     if let Some(operation_id) = operation_id.as_deref() {
         if !valid_operation_id(operation_id) {
@@ -632,10 +642,15 @@ fn run_exec(
         }
     }
     let spawn_cwd = cwd.clone().unwrap_or_else(env::temp_dir);
-    let expected_cwd_identity = cwd
-        .as_ref()
-        .map(|path| crate::dev_cwd_binding(&path.to_string_lossy()).map(|(_, identity)| identity))
-        .transpose()?;
+    let expected_cwd_identity = match prepared_cwd_identity {
+        Some(identity) => Some(identity),
+        None => cwd
+            .as_ref()
+            .map(|path| {
+                crate::dev_cwd_binding(&path.to_string_lossy()).map(|(_, identity)| identity)
+            })
+            .transpose()?,
+    };
     let output_path = create_codex_output()?;
 
     let mut command = Command::new(program);
@@ -895,7 +910,7 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
     }
     let program = codex_program()?;
     tauri::async_runtime::spawn_blocking(move || {
-        run_exec(program, prompt, model, None, "read-only", None, None)
+        run_exec(program, prompt, model, None, "read-only", None, None, None)
     })
     .await
     .map_err(|e| format!("Codex 后台任务失败：{e}"))?
@@ -928,6 +943,13 @@ pub async fn codex_worker_exec(
         .get(&operation_id)
         .cloned()
         .ok_or_else(|| "Codex Worker lease不存在或已使用".to_string())?;
+    if Instant::now().duration_since(prepared.created_at) >= CODEX_PREPARED_LEASE_TTL {
+        prepared_codex_leases()
+            .lock()
+            .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+            .remove(&operation_id);
+        return Err("Codex Worker lease已过期".into());
+    }
     if prepared.session_generation != generation
         || !same_cwd_path(&prepared.cwd, &worktree)
         || prepared.identity != current_identity
@@ -942,15 +964,20 @@ pub async fn codex_worker_exec(
     {
         Some(prepared) => prepared,
         None => {
-            finish_pending_operation(&operation_id, pending_generation);
+            if let Err(finish_error) = finish_pending_operation(&operation_id, pending_generation) {
+                return Err(finish_error);
+            }
             return Err("Codex Worker lease在启动前消失".into());
         }
     };
     if prepared.cancellation_requested {
-        finish_pending_operation(&operation_id, pending_generation);
+        if let Err(finish_error) = finish_pending_operation(&operation_id, pending_generation) {
+            return Err(finish_error);
+        }
         return Err("Codex Worker 已取消".into());
     }
     let operation_for_task = operation_id.clone();
+    let prepared_identity = prepared.identity.clone();
     let result = async {
         let auth = codex_login_status()?;
         if take_cancelled_operation(&operation_for_task) {
@@ -975,6 +1002,7 @@ pub async fn codex_worker_exec(
                 "workspace-write",
                 Some(operation_for_task.clone()),
                 Some(generation_for_task),
+                Some(prepared_identity),
             )
         })
         .await
@@ -982,7 +1010,11 @@ pub async fn codex_worker_exec(
         Ok(result)
     }
     .await;
-    let cancelled_during_finalization = finish_pending_operation(&operation_id, pending_generation);
+    let cancelled_during_finalization =
+        match finish_pending_operation(&operation_id, pending_generation) {
+            Ok(cancelled) => cancelled,
+            Err(error) => return Err(error),
+        };
     if cancelled_during_finalization {
         Err("Codex Worker 在finalization期间被取消；side effects unknown".into())
     } else {
@@ -1114,7 +1146,7 @@ mod tests {
         codex_worker_cancel(operation.clone(), 1)
             .expect("pending cancellation should be idempotent");
         assert!(take_cancelled_operation(&operation));
-        finish_pending_operation(&operation, generation);
+        let _ = finish_pending_operation(&operation, generation);
     }
 
     #[test]
@@ -1125,10 +1157,10 @@ mod tests {
             CODEX_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         let first = begin_pending_operation(&operation, 1).expect("first lease should register");
-        finish_pending_operation(&operation, first);
+        let _ = finish_pending_operation(&operation, first);
         let second = begin_pending_operation(&operation, 1).expect("second lease should register");
-        finish_pending_operation(&operation, first);
+        let _ = finish_pending_operation(&operation, first);
         assert!(begin_pending_operation(&operation, 1).is_err());
-        finish_pending_operation(&operation, second);
+        let _ = finish_pending_operation(&operation, second);
     }
 }
