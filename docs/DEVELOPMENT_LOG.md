@@ -2959,3 +2959,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.134 收紧 protected ancestor、tsx extras 与 find expression 于 unverified checkpoint
+
+- 针对 reviewer 发现的 protected root ancestor 绕过，Node/Rust 现在同时拒绝覆盖 protected root 的上级 operand，例如 `src`、`src/plugins`、`src-tauri`；不仅拒绝直接命中 protected root 或其子路径。
+- `tsx` extras 收紧为显式 allowlist `--reporter=dot`，拒绝 protected path、控制字符和任意未建模 positional argument；Node/Rust 保持同一语言。
+- Git ref 两侧使用同一 ASCII grammar，拒绝 `@{` 等 Git-invalid revision；grep pattern 现在必须非空且无控制字符。
+- `find` expression 改为 primary/unary/binary 结构校验：`!/-not` 必须有 operand，`-o/-or/-a/-and` 两侧必须有 expression，root scanner 正确识别 `!`；补充对应 RED vectors。
+- 8.3 short-name alias、真实 runtime 接入、launcher/ComSpec、child-cwd 和 stable filesystem identity 仍留在后续 host slice，未被本轮宣称解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。

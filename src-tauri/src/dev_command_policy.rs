@@ -15,6 +15,9 @@ fn is_safe_git_ref(value: &str) -> bool {
         || !value.is_ascii()
         || value == "@"
         || value.contains("..")
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
         || value.chars().any(|c| {
             c.is_ascii_control()
                 || c.is_ascii_whitespace()
@@ -142,7 +145,11 @@ fn safe_path(value: &str) -> bool {
         "src-tauri/capabilities",
     ]
     .iter()
-    .all(|root| comparable != *root && !comparable.starts_with(&format!("{root}/")))
+    .all(|root| {
+        comparable != *root
+            && !comparable.starts_with(&format!("{root}/"))
+            && !root.starts_with(&format!("{comparable}/"))
+    })
 }
 
 fn is_safe_find_value(predicate: &str, value: &str) -> bool {
@@ -156,39 +163,55 @@ fn is_safe_find_value(predicate: &str, value: &str) -> bool {
     }
 }
 
+fn parse_find_primary(predicates: &[String], start: usize) -> Option<usize> {
+    let predicate = predicates.get(start)?.as_str();
+    if matches!(predicate, "-not" | "!") {
+        return parse_find_primary(predicates, start + 1);
+    }
+    if matches!(
+        predicate,
+        "-mount" | "-xdev" | "-prune" | "-print" | "-print0" | "-ls" | "-quit"
+    ) {
+        return Some(start + 1);
+    }
+    if matches!(
+        predicate,
+        "-name"
+            | "-iname"
+            | "-path"
+            | "-ipath"
+            | "-type"
+            | "-maxdepth"
+            | "-mindepth"
+            | "-printf"
+            | "-regex"
+            | "-iregex"
+    ) && predicates
+        .get(start + 1)
+        .is_some_and(|value| is_safe_find_value(predicate, value))
+    {
+        return Some(start + 2);
+    }
+    None
+}
+
 fn are_find_predicates_safe(predicates: &[String]) -> bool {
-    let value_predicates = [
-        "-name",
-        "-iname",
-        "-path",
-        "-ipath",
-        "-type",
-        "-maxdepth",
-        "-mindepth",
-        "-printf",
-        "-regex",
-        "-iregex",
-    ];
-    let flag_predicates = [
-        "-mount", "-xdev", "-prune", "-print", "-print0", "-ls", "-not", "!", "-o", "-or", "-a",
-        "-and", "-quit",
-    ];
-    let mut index = 0;
+    let mut index = match parse_find_primary(predicates, 0) {
+        Some(index) => index,
+        None => return false,
+    };
     while index < predicates.len() {
-        let predicate = predicates[index].as_str();
-        if flag_predicates.contains(&predicate) {
-            index += 1;
+        if matches!(predicates[index].as_str(), "-o" | "-or" | "-a" | "-and") {
+            index = match parse_find_primary(predicates, index + 1) {
+                Some(index) => index,
+                None => return false,
+            };
             continue;
         }
-        if value_predicates.contains(&predicate)
-            && predicates
-                .get(index + 1)
-                .is_some_and(|value| is_safe_find_value(predicate, value))
-        {
-            index += 2;
-            continue;
-        }
-        return false;
+        index = match parse_find_primary(predicates, index) {
+            Some(index) => index,
+            None => return false,
+        };
     }
     true
 }
@@ -271,8 +294,9 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
                 break;
             }
         }
-        return pattern.is_some_and(|value| !value.is_empty())
-            && index < command.len()
+        return pattern.is_some_and(|value| {
+            !value.is_empty() && !value.chars().any(|c| c.is_ascii_control())
+        }) && index < command.len()
             && command[index..].iter().all(|path| safe_path(path));
     }
     if command.first().map(String::as_str) == Some("find") {
@@ -303,7 +327,7 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
             index += 1;
         }
         let root_start = index;
-        while index < command.len() && !command[index].starts_with('-') {
+        while index < command.len() && !command[index].starts_with('-') && command[index] != "!" {
             index += 1;
         }
         if index == root_start
@@ -320,16 +344,7 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
             return false;
         };
         return is_safe_script_path(script)
-            && command[2..].iter().all(|arg| {
-                !arg.contains("..")
-                    && !arg.starts_with('/')
-                    && !arg.starts_with('\\')
-                    && !arg.contains(':')
-                    && (!arg.starts_with('-') || arg == "--reporter=dot")
-                    && !arg
-                        .chars()
-                        .any(|c| matches!(c, '&' | ';' | '|' | '`' | '<' | '>'))
-            });
+            && command[2..].iter().all(|arg| arg == "--reporter=dot");
     }
     false
 }

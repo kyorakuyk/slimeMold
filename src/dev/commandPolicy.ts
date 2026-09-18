@@ -33,7 +33,7 @@ function isWindowsDeviceName(component: string): boolean {
 }
 
 function isSafeGitRef(value: string): boolean {
-  if (!value || !/^[\x00-\x7F]*$/.test(value) || /[\x00-\x20~^:?*\\[\\]]/.test(value)) return false;
+  if (!value || !/^[\x00-\x7F]*$/.test(value) || !/^[A-Za-z0-9._/-]+$/.test(value) || /[\x00-\x20~^:?*\\[\\]]/.test(value)) return false;
   if (value === '@' || value.includes('..')) return false;
   const components = value.split('/');
   return components.every((part) => (
@@ -68,11 +68,21 @@ function isSafePathspec(value: string): boolean {
   if (components.some((part) => part === '' || part === '.' || part === '..' || /[. ]$/.test(part) || isWindowsDeviceName(part))) return false;
   if (normalized.includes('*') || normalized.includes('?') || normalized.includes('[') || normalized.includes(']')) return false;
   if (normalized === '.' || /^(?:\.\/?)+$/.test(normalized)) return false;
-  return ![...PROTECTED_ROOTS].some((root) => comparable === root || comparable.startsWith(`${root}/`));
+  return ![...PROTECTED_ROOTS].some((root) => (
+    comparable === root
+    || comparable.startsWith(`${root}/`)
+    || root.startsWith(`${comparable}/`)
+  ));
+}
+
+function isSafeTextToken(value: string | undefined): value is string {
+  return typeof value === 'string' && value.length > 0 && !/[\x00-\x1F\x7F]/.test(value);
 }
 
 const FIND_VALUE_PREDICATES = new Set(['-name', '-iname', '-path', '-ipath', '-type', '-maxdepth', '-mindepth', '-printf', '-regex', '-iregex']);
-const FIND_FLAG_PREDICATES = new Set(['-mount', '-xdev', '-prune', '-print', '-print0', '-ls', '-not', '!', '-o', '-or', '-a', '-and', '-quit']);
+const FIND_ATOMIC_PREDICATES = new Set(['-mount', '-xdev', '-prune', '-print', '-print0', '-ls', '-quit']);
+const FIND_UNARY_PREDICATES = new Set(['-not', '!']);
+const FIND_BINARY_PREDICATES = new Set(['-o', '-or', '-a', '-and']);
 
 function isSafeFindValue(predicate: string, value: string): boolean {
   if (!value || value.startsWith('-') || /[\x00-\x1F\x7F]/.test(value)) return false;
@@ -81,19 +91,27 @@ function isSafeFindValue(predicate: string, value: string): boolean {
   return true;
 }
 
+function parseFindPrimary(predicates: string[], start: number): number | null {
+  const predicate = predicates[start];
+  if (!predicate) return null;
+  if (FIND_UNARY_PREDICATES.has(predicate)) return parseFindPrimary(predicates, start + 1);
+  if (FIND_ATOMIC_PREDICATES.has(predicate)) return start + 1;
+  if (FIND_VALUE_PREDICATES.has(predicate) && isSafeFindValue(predicate, predicates[start + 1] ?? '')) return start + 2;
+  return null;
+}
+
 function areFindPredicatesSafe(predicates: string[]): boolean {
-  let index = 0;
+  let index = parseFindPrimary(predicates, 0);
+  if (index === null) return false;
   while (index < predicates.length) {
-    const predicate = predicates[index];
-    if (FIND_FLAG_PREDICATES.has(predicate)) {
-      index += 1;
+    if (FIND_BINARY_PREDICATES.has(predicates[index])) {
+      index = parseFindPrimary(predicates, index + 1);
+      if (index === null) return false;
       continue;
     }
-    if (FIND_VALUE_PREDICATES.has(predicate) && isSafeFindValue(predicate, predicates[index + 1] ?? '')) {
-      index += 2;
-      continue;
-    }
-    return false;
+    const next = parseFindPrimary(predicates, index);
+    if (next === null) return false;
+    index = next;
   }
   return true;
 }
@@ -151,15 +169,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
     }
     const args = command.slice(2);
     const safeOptions = new Set(['--reporter=dot']);
-    if (args.some((argument) => (
-      argument.includes('..')
-      || argument.startsWith('/')
-      || argument.startsWith('\\')
-      || /^[A-Za-z]:/.test(argument)
-      || argument.includes(':')
-      || /[;&|`<>]/.test(argument)
-      || (argument.startsWith('-') && !safeOptions.has(argument))
-    ))) {
+    if (args.some((argument) => !safeOptions.has(argument))) {
       return { ok: false, error: 'tsx argument is not safe' };
     }
     return { ok: true, intent: { kind: 'tsx-script', script, args } };
@@ -173,7 +183,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
     let index = 1;
     if (command[index] === '-P') index += 1;
     const roots: string[] = [];
-    while (index < command.length && !command[index].startsWith('-')) {
+    while (index < command.length && !command[index].startsWith('-') && command[index] !== '!') {
       roots.push(command[index]);
       index += 1;
     }
@@ -200,7 +210,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
       }
       if (argument === '-e' || argument === '--regexp') {
         const value = command[index + 1];
-        if (!value || value.startsWith('-')) {
+        if (!isSafeTextToken(value) || value.startsWith('-')) {
           return { ok: false, error: 'grep option arguments must be explicit and safe' };
         }
         pattern = value;
@@ -219,7 +229,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
       break;
     }
     const files = command.slice(index);
-    if (!pattern || files.length === 0 || !files.every(isSafePathspec)) {
+    if (!isSafeTextToken(pattern) || files.length === 0 || !files.every(isSafePathspec)) {
       return { ok: false, error: 'grep file operands are not safe' };
     }
     return { ok: true, intent: { kind: 'grep-files', pattern, files } };
