@@ -15,6 +15,8 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  /** Host-side spawn/capture/cleanup failed after the command may have started. */
+  unknownEffects?: boolean;
 }
 
 /** 常见凭据/密钥环境变量名（执行子命令时剥离，防止开发节点读取宿主凭据）。 */

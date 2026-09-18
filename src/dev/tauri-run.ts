@@ -58,6 +58,7 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },
@@ -83,6 +84,7 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },
@@ -107,6 +109,7 @@ export function createTauriDeps(generation: number): NodeDevDeps {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },

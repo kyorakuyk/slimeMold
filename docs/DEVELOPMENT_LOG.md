@@ -3538,3 +3538,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.164 收紧Codex generation lease、output file authority与unknown-effects transport 于 unverified checkpoint
+
+- pending Codex operation改为单一 generation-tagged registry；cancel、begin、register和finish共享状态边界，旧run的finish不能移除新run的同ID lease；新增 stale-generation regression。
+- active child unregister改为按 `Arc` exact handle compare-and-remove，不再仅凭operation id删除可能已复用的active entry；output/read finalization完成前保持active lease。
+- `--output-last-message`先用 `symlink_metadata`拒绝symlink、directory、FIFO等非regular object，再使用Unix `O_NOFOLLOW|O_NONBLOCK`或Windows reparse-aware open，并限制16MiB读取；unlink失败显式进入unknown-effects路径或记录cleanup uncertainty。
+- Node/Tauri `CommandResult`增加可选 `unknownEffects`，Tauri host invoke/cleanup失败不再只表现为普通 `exitCode: -1`。
+- Windows Job Object、Windows current_dir race、native Linux/macOS matrix、Unix process-group escape和hardlink atomicity仍未闭合；本轮不宣称process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.35 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
