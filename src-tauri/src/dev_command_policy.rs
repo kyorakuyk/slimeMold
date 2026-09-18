@@ -55,16 +55,24 @@ fn safe_revision(value: &str) -> bool {
 fn safe_path(value: &str) -> bool {
     let normalized = value.replace('\\', "/");
     let comparable = normalized.to_ascii_lowercase();
+    let components: Vec<&str> = normalized.split('/').collect();
     if normalized.is_empty()
+        || !normalized.is_ascii()
         || normalized.starts_with('-')
         || normalized.starts_with('/')
         || normalized.starts_with('\\')
         || normalized.contains(':')
-        || normalized
-            .split('/')
-            .any(|part| part == "." || part == "..")
+        || components.iter().any(|part| {
+            part.is_empty()
+                || *part == "."
+                || *part == ".."
+                || part.ends_with('.')
+                || part.ends_with(' ')
+        })
         || normalized.contains('*')
         || normalized.contains('?')
+        || normalized.contains('[')
+        || normalized.contains(']')
         || normalized.chars().all(|c| matches!(c, '.' | '/'))
     {
         return false;
@@ -98,22 +106,22 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
     }
     if command.first().map(String::as_str) == Some("grep") {
         let mut index = 1;
-        let mut pattern = false;
+        let mut pattern: Option<&str> = None;
         while index < command.len() {
             let argument = &command[index];
             if argument == "--" {
-                pattern = command.get(index + 1).is_some();
+                pattern = command.get(index + 1).map(String::as_str);
                 index += 2;
                 break;
             }
             if matches!(argument.as_str(), "-e" | "--regexp") {
-                if command
-                    .get(index + 1)
-                    .is_none_or(|value| value.is_empty() || value.starts_with('-'))
-                {
+                let Some(value) = command.get(index + 1) else {
+                    return false;
+                };
+                if value.is_empty() || value.starts_with('-') {
                     return false;
                 }
-                pattern = true;
+                pattern = Some(value);
                 index += 2;
                 break;
             }
@@ -132,12 +140,12 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
                 }
                 index += 1;
             } else {
-                pattern = true;
+                pattern = Some(argument);
                 index += 1;
                 break;
             }
         }
-        return pattern
+        return pattern.is_some_and(|value| !value.is_empty())
             && index < command.len()
             && command[index..].iter().all(|path| safe_path(path));
     }
@@ -212,11 +220,17 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
         let Some(script) = command.get(1) else {
             return false;
         };
-        return script.to_ascii_lowercase().starts_with("scripts/")
-            && !script.contains("..")
+        let script_path = script
+            .strip_prefix("scripts/")
+            .map(|relative| format!("src/{relative}"));
+        let Some(script_path) = script_path else {
+            return false;
+        };
+        return safe_path(&script_path)
             && command[2..].iter().all(|arg| {
                 !arg.contains("..")
                     && !arg.starts_with('/')
+                    && !arg.starts_with('\\')
                     && !arg.contains(':')
                     && (!arg.starts_with('-') || arg == "--reporter=dot")
                     && !arg

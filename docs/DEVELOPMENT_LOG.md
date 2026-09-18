@@ -2901,3 +2901,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 独立 reviewer：`passed: false`，因此本轮只能记录为 `unverified`，不能标记 verified。下一步需先确认共享 command AST、host-owned policy、stable identity/no-follow 和完整 cleanup lineage 的架构切片，再开始新的代码修改。
+
+### 7.131 共享 command policy parity 继续收紧于 unverified checkpoint
+
+- 针对 Slice 0 reviewer 发现的 Git pathspec、Windows 路径规范化、grep 空 pattern、tsx 参数和 Node/Rust 分歧，新增 shared negative vectors，并同步收紧 Node 与 Rust parser。
+- 当前 vectors 覆盖 Git bracket glob、重复分隔符、Windows trailing dot/space、Unicode 非 ASCII path、grep 空 pattern、find 多 root/action、tsx dot/colon/wildcard script 与 Windows root-relative extra；accepted vectors 同时校验 `intentKind`，不再只比较 boolean。
+- 本轮只建立 command grammar/parity contract，没有接管现有 native runtime authority；旧的 cross-host hardening 仍保持 `unverified`，不能据此宣称 native authority 已安全闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待新的独立 fail-closed reviewer，当前不能标记 verified。

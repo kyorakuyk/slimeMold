@@ -36,10 +36,12 @@ function isSafeRevision(value: string): boolean {
 function isSafePathspec(value: string): boolean {
   const normalized = value.replace(/\\/g, '/');
   const comparable = normalized.toLowerCase();
-  if (!normalized || normalized.startsWith('-') || normalized.startsWith('/') || normalized.startsWith('\\')) return false;
+  const components = normalized.split('/');
+  if (!normalized || !/^[\x00-\x7F]*$/.test(normalized)) return false;
+  if (normalized.startsWith('-') || normalized.startsWith('/') || normalized.startsWith('\\')) return false;
   if (/^[A-Za-z]:/.test(normalized) || normalized.includes(':')) return false;
-  if (normalized.split('/').some((part) => part === '.' || part === '..')) return false;
-  if (normalized.includes('*') || normalized.includes('?')) return false;
+  if (components.some((part) => part === '' || part === '.' || part === '..' || /[. ]$/.test(part))) return false;
+  if (normalized.includes('*') || normalized.includes('?') || normalized.includes('[') || normalized.includes(']')) return false;
   if (normalized === '.' || /^(?:\.\/?)+$/.test(normalized)) return false;
   return ![...PROTECTED_ROOTS].some((root) => comparable === root || comparable.startsWith(`${root}/`));
 }
@@ -70,6 +72,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
     if (args.some((argument) => (
       argument.includes('..')
       || argument.startsWith('/')
+      || argument.startsWith('\\')
       || /^[A-Za-z]:/.test(argument)
       || argument.includes(':')
       || /[;&|`<>]/.test(argument)
