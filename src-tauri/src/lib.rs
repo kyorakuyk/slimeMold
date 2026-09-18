@@ -2271,7 +2271,12 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
     {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
-        let cwd_handle = open_unix_file_relative(&canonical_cwd, libc::O_RDONLY, 0)?;
+        let cwd_identity = stable_directory_identity(&canonical_cwd)?;
+        let cwd_handle =
+            open_unix_file_relative(&canonical_cwd, libc::O_RDONLY | libc::O_DIRECTORY, 0, None)?;
+        if stable_file_identity_from_file(&cwd_handle)? != cwd_identity {
+            return Err("spawn cwd directory identity 已变化".into());
+        }
         unsafe {
             cmd.pre_exec(move || {
                 if libc::fchdir(cwd_handle.as_raw_fd()) != 0 {
@@ -3632,7 +3637,11 @@ fn dev_read_file(path: String, generation: u64) -> Result<String, String> {
         ));
     }
     let expected_identity = stable_file_identity(&abs)?;
-    read_dev_file_bound(&abs, &expected_identity)
+    let expected_parent = stable_file_identity(
+        abs.parent()
+            .ok_or_else(|| "dev_read_file: parent identity unavailable".to_string())?,
+    )?;
+    read_dev_file_bound(&abs, &expected_identity, &expected_parent)
 }
 
 // 写文件（仅 worktree 内；H4 节点 code.patch 落盘等；相对路径基于主仓库根解析）。
@@ -3704,11 +3713,34 @@ fn stable_file_identity_from_handle(
     Ok(identity)
 }
 
+#[allow(dead_code)]
+fn stable_file_identity_from_file(file: &fs::File) -> Result<StableFileIdentity, String> {
+    #[cfg(unix)]
+    {
+        return stable_file_identity_from_metadata(
+            &file
+                .metadata()
+                .map_err(|error| format!("无法读取bound fd metadata：{error}"))?,
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        return stable_file_identity_from_handle(file.as_raw_handle());
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = file;
+        Err("当前平台不支持 bound fd identity".into())
+    }
+}
+
 #[cfg(unix)]
 fn open_unix_file_relative(
     path: &std::path::Path,
     flags: i32,
     mode: libc::mode_t,
+    expected_parent: Option<&StableFileIdentity>,
 ) -> Result<fs::File, String> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -3728,8 +3760,14 @@ fn open_unix_file_relative(
         unsafe { fs::File::from_raw_fd(fd) }
     };
     let components: Vec<_> = path.components().collect();
-    if !path.is_absolute() || components.len() < 2 {
+    if !path.is_absolute() || components.is_empty() {
         return Err(format!("文件路径必须是绝对路径：{}", path.display()));
+    }
+    if components.len() == 1 {
+        if flags & libc::O_DIRECTORY == 0 {
+            return Err(format!("根路径不能作为文件：{}", path.display()));
+        }
+        return Ok(directory);
     }
     for component in &components[1..components.len() - 1] {
         let Component::Normal(name) = component else {
@@ -3749,19 +3787,26 @@ fn open_unix_file_relative(
         }
         directory = unsafe { fs::File::from_raw_fd(fd) };
     }
+    if let Some(expected_parent) = expected_parent {
+        let actual_parent = stable_file_identity_from_file(&directory)?;
+        if actual_parent != *expected_parent {
+            return Err(format!("文件父目录 identity 已变化：{}", path.display()));
+        }
+    }
     let Component::Normal(name) = components.last().unwrap() else {
         return Err(format!("文件名 component 无效：{}", path.display()));
     };
     let name =
         CString::new(name.as_bytes()).map_err(|_| format!("文件名包含 NUL：{}", path.display()))?;
-    let fd = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            mode,
-        )
-    };
+    let final_flags = flags
+        | libc::O_CLOEXEC
+        | libc::O_NOFOLLOW
+        | if flags & libc::O_DIRECTORY == 0 {
+            libc::O_NONBLOCK
+        } else {
+            0
+        };
+    let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), final_flags, mode) };
     if fd < 0 {
         return Err(format!("无法绑定文件：{}", std::io::Error::last_os_error()));
     }
@@ -3769,15 +3814,30 @@ fn open_unix_file_relative(
 }
 
 #[cfg(unix)]
-fn create_unix_file_relative(path: &std::path::Path, content: &str) -> Result<(), String> {
+fn create_unix_file_relative(
+    path: &std::path::Path,
+    content: &str,
+    expected_parent: &StableFileIdentity,
+) -> Result<(), String> {
     use std::io::Write;
-    let mut file =
-        open_unix_file_relative(path, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o644)?;
+    let mut file = open_unix_file_relative(
+        path,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+        0o644,
+        Some(expected_parent),
+    )?;
     file.write_all(content.as_bytes())
         .map_err(|error| format!("创建绑定文件失败：{error}"))
 }
 
 fn stable_file_identity(path: &std::path::Path) -> Result<StableFileIdentity, String> {
+    if path.is_dir() {
+        let directory = stable_directory_identity(path)?;
+        return Ok(StableFileIdentity {
+            volume_or_device: directory.volume_or_device,
+            file_or_inode: directory.file_or_inode,
+        });
+    }
     #[cfg(unix)]
     {
         return stable_file_identity_from_metadata(
@@ -3807,11 +3867,13 @@ fn stable_file_identity(path: &std::path::Path) -> Result<StableFileIdentity, St
 fn read_dev_file_bound(
     path: &std::path::Path,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<String, String> {
     use std::io::Read;
     use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
+    let _ = expected_parent;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
     let mut file = fs::OpenOptions::new()
         .read(true)
@@ -3839,10 +3901,11 @@ fn read_dev_file_bound(
 fn read_dev_file_bound(
     path: &std::path::Path,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<String, String> {
     use std::io::Read;
     use std::os::unix::fs::MetadataExt;
-    let mut file = open_unix_file_relative(path, libc::O_RDONLY, 0)?;
+    let mut file = open_unix_file_relative(path, libc::O_RDONLY, 0, Some(expected_parent))?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
@@ -3863,8 +3926,9 @@ fn read_dev_file_bound(
 fn read_dev_file_bound(
     path: &std::path::Path,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<String, String> {
-    let _ = (path, expected_identity);
+    let _ = (path, expected_identity, expected_parent);
     Err("当前平台不支持 bound file identity read".into())
 }
 
@@ -3873,11 +3937,13 @@ fn write_dev_file_bound(
     path: &std::path::Path,
     content: &str,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
+    let _ = expected_parent;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -3906,10 +3972,11 @@ fn write_dev_file_bound(
     path: &std::path::Path,
     content: &str,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
-    let mut file = open_unix_file_relative(path, libc::O_WRONLY, 0)?;
+    let mut file = open_unix_file_relative(path, libc::O_WRONLY, 0, Some(expected_parent))?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
@@ -3931,8 +3998,9 @@ fn write_dev_file_bound(
     path: &std::path::Path,
     content: &str,
     expected_identity: &StableFileIdentity,
+    expected_parent: &StableFileIdentity,
 ) -> Result<(), String> {
-    let _ = (path, content, expected_identity);
+    let _ = (path, content, expected_identity, expected_parent);
     Err("当前平台不支持 bound file identity write".into())
 }
 
@@ -3968,6 +4036,7 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
             parent.display()
         )
     })?;
+    let expected_parent_identity = stable_file_identity(&canon_parent)?;
     let name = joined
         .file_name()
         .ok_or_else(|| "dev_write_file: 路径缺少文件名".to_string())?;
@@ -3992,7 +4061,12 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
             .map_err(|e| format!("dev_write_file: 目标路径解析失败：{e}"))?;
         dev_path_allowed(&real)?;
         let expected_identity = stable_file_identity(&real)?;
-        write_dev_file_bound(&real, &content, &expected_identity)?;
+        write_dev_file_bound(
+            &real,
+            &content,
+            &expected_identity,
+            &expected_parent_identity,
+        )?;
         return Ok(());
     }
 
@@ -4001,7 +4075,7 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
     dev_path_allowed(&abs)?;
     #[cfg(unix)]
     {
-        return create_unix_file_relative(&abs, &content)
+        return create_unix_file_relative(&abs, &content, &expected_parent_identity)
             .map_err(|error| format!("dev_write_file: 创建失败：{path}（{error}）"));
     }
     #[cfg(not(unix))]
@@ -6238,9 +6312,10 @@ mod dev_write_symlink_tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(&target, "old").unwrap();
         let expected = stable_file_identity(&target).unwrap();
+        let expected_parent = stable_file_identity(root.as_path()).unwrap();
         fs::rename(&target, &old).unwrap();
         fs::write(&target, "replacement").unwrap();
-        let result = write_dev_file_bound(&target, "new", &expected);
+        let result = write_dev_file_bound(&target, "new", &expected, &expected_parent);
         assert!(
             result.is_err(),
             "bound write must reject same-path file replacement"
