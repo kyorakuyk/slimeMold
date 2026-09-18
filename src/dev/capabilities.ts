@@ -13,6 +13,8 @@
  * 2. DevCapabilityService 接口 + createNodeDevService：Node/headless 真实实现（命令/文件可注入
  *    便于单测）；Tauri/浏览器环境由上层按 env 分支（浏览器经 shim 抛错，GUI 下开发节点不执行任意命令）。
  */
+import type { GitDiffIntent } from './commandPolicy';
+import { buildSafeGitDiffArgs, parseWorkerCommand } from './commandPolicy';
 import type { SelfDevelopmentPolicy } from './policy';
 import { assertPathAllowed, isPathAllowed, isPathProtected } from './policy';
 import type { CommandResult } from './node-run';
@@ -198,6 +200,14 @@ function matchesAnyRule(rules: CommandRule[], cmd: string[]): boolean {
   return findMatchingRule(rules, cmd) !== null;
 }
 
+
+
+/**
+ * shell 白名单（只读）：基础查询命令（pathArgs：参数按路径校验，禁读 protected 外代码）+ 只读 git（精确参数）。
+ * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
+ * git diff/log 的 --output= 与 --no-index 等。
+ * grep 不设 pathArgs（首个参数是正则 pattern 而非路径，避免误伤）。
+ */
 function isSafeGitRevisionValue(value: string): boolean {
   if (value === 'HEAD' || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) return true;
   if (/^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/.test(value)) {
@@ -210,18 +220,6 @@ function isSafeGitRevisionValue(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]*[A-Za-z0-9]$/.test(value) || /^[A-Za-z0-9]$/.test(value);
 }
 
-function assertSafeGitRevision(baseRef: string): void {
-  if (!isSafeGitRevisionValue(baseRef)) {
-    throw new Error(`Git baseRef 非法：${baseRef}`);
-  }
-}
-
-/**
- * shell 白名单（只读）：基础查询命令（pathArgs：参数按路径校验，禁读 protected 外代码）+ 只读 git（精确参数）。
- * 明确排除：git push/commit/config/remote、node -e、npx、npm install/任意 npm run、
- * git diff/log 的 --output= 与 --no-index 等。
- * grep 不设 pathArgs（首个参数是正则 pattern 而非路径，避免误伤）。
- */
 const DEFAULT_SHELL_RULES: CommandRule[] = [
   { cmd: 'pwd' },
   { cmd: 'echo' },
@@ -504,6 +502,28 @@ export function createNodeDevService(
     return guarded;
   };
 
+  const runSafeGitDiff = async (cmd: string[], ctx: DevContext): Promise<CommandResult> => {
+    const parsed = parseWorkerCommand(cmd);
+    if (!parsed.ok || (parsed.intent.kind !== 'git-names-only' && parsed.intent.kind !== 'git-diff-scoped')) {
+      return { exitCode: -1, stdout: '', stderr: 'Git diff grammar rejected', durationMs: 0 };
+    }
+    const intent: GitDiffIntent = parsed.intent;
+    try {
+      const guardedPathspecs = intent.kind === 'git-diff-scoped'
+        ? await guardPathArgs(intent.pathspecs, ctx, 0, undefined, false)
+        : [];
+      const safeArgs = buildSafeGitDiffArgs(intent, guardedPathspecs);
+      return run(safeArgs[0], safeArgs.slice(1), ctx.cwd);
+    } catch (error) {
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: `Git diff path/policy rejected: ${error instanceof Error ? error.message : String(error)}`,
+        durationMs: 0,
+      };
+    }
+  };
+
   return {
     env,
 
@@ -537,6 +557,7 @@ export function createNodeDevService(
 
     async shellRun(cmd, ctx) {
       await assertCwd(ctx.cwd);
+      if (cmd[0] === 'git' && cmd[1] === 'diff') return runSafeGitDiff(cmd, ctx);
       const rule = findMatchingRule(DEFAULT_SHELL_RULES, cmd);
       if (cmd.length === 0 || !rule) {
         return { exitCode: -1, stdout: '', stderr: `命令不在白名单内：${cmd.join(' ') || '(空)'}`, durationMs: 0 };
@@ -634,20 +655,26 @@ export function createNodeDevService(
     async gitDiff(baseRef, ctx) {
       await assertCwd(ctx.cwd);
       const revision = baseRef ?? 'HEAD';
-      assertSafeGitRevision(revision);
       const roots = safeDiffRoots(ctx.pathPolicy ?? policy);
       if (roots.length === 0) throw new Error('git diff 没有非保护路径范围');
-      const result = await run('git', ['diff', revision, '--', ...roots], ctx.cwd);
-      return result;
+      const rawCommand = ['git', 'diff', revision, '--', ...roots];
+      const parsed = parseWorkerCommand(rawCommand);
+      if (!parsed.ok || parsed.intent.kind !== 'git-diff-scoped') {
+        throw new Error(`Git baseRef 非法：${revision}`);
+      }
+      return runSafeGitDiff(rawCommand, ctx);
     },
 
     async gitChangedFiles(ctx, baseRef) {
       await assertCwd(ctx.cwd);
       const revision = baseRef ?? 'HEAD';
-      assertSafeGitRevision(revision);
-      const trackedArgs = ['diff', '--name-only', revision];
+      const rawTrackedCommand = ['git', 'diff', '--name-only', revision, '--'];
+      const parsed = parseWorkerCommand(rawTrackedCommand);
+      if (!parsed.ok || parsed.intent.kind !== 'git-names-only') {
+        throw new Error(`Git baseRef 非法：${revision}`);
+      }
       const [tracked, untracked] = await Promise.all([
-        run('git', trackedArgs, ctx.cwd),
+        runSafeGitDiff(rawTrackedCommand, ctx),
         run('git', ['ls-files', '--others', '--exclude-standard'], ctx.cwd),
       ]);
       if (tracked.exitCode !== 0 || untracked.exitCode !== 0) {

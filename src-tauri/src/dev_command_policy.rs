@@ -1,3 +1,4 @@
+#[cfg(test)]
 use serde::Deserialize;
 
 const MAX_COMMAND_ARGS: usize = 256;
@@ -21,6 +22,7 @@ fn is_bounded_command(command: &[String]) -> bool {
     true
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct PolicyVector {
     command: Vec<String>,
@@ -436,6 +438,43 @@ pub(crate) fn command_intent_kind(command: &[String]) -> Option<&'static str> {
     None
 }
 
+pub(crate) fn git_diff_execution_args(command: &[String]) -> Option<Vec<String>> {
+    if !command_is_supported(command) {
+        return None;
+    }
+    if command.len() == 5
+        && command[0] == "git"
+        && command[1] == "diff"
+        && command[2] == "--name-only"
+        && command[4] == "--"
+    {
+        return Some(vec![
+            "git".into(),
+            "--no-pager".into(),
+            "diff".into(),
+            "--no-ext-diff".into(),
+            "--no-textconv".into(),
+            "--name-only".into(),
+            command[3].clone(),
+            "--".into(),
+        ]);
+    }
+    if command.len() >= 5 && command[0] == "git" && command[1] == "diff" && command[3] == "--" {
+        let mut args = vec![
+            "git".into(),
+            "--no-pager".into(),
+            "diff".into(),
+            "--no-ext-diff".into(),
+            "--no-textconv".into(),
+            command[2].clone(),
+            "--".into(),
+        ];
+        args.extend(command[4..].iter().cloned());
+        return Some(args);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +509,50 @@ mod tests {
         command.extend(std::iter::repeat_n("!".to_string(), 129));
         command.extend(["-name".to_string(), "*.tsx".to_string()]);
         assert!(!command_is_supported(&command));
+    }
+
+    #[test]
+    fn builds_config_independent_git_diff_args() {
+        let scoped = vec![
+            "git".to_string(),
+            "diff".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+            "src/components".to_string(),
+        ];
+        assert_eq!(
+            git_diff_execution_args(&scoped).unwrap(),
+            vec![
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "HEAD",
+                "--",
+                "src/components"
+            ]
+        );
+        let names = vec![
+            "git".to_string(),
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+        ];
+        assert_eq!(
+            git_diff_execution_args(&names).unwrap(),
+            vec![
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "HEAD",
+                "--"
+            ]
+        );
     }
 
     #[test]

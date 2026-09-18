@@ -25,7 +25,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod antigravity;
 mod codex;
-#[cfg(test)]
 mod dev_command_policy;
 mod event_store;
 mod fs_guard;
@@ -1640,6 +1639,9 @@ fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "grep" => grep_args_are_safe(rest),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
         "git" => {
+            if rest.first().map(String::as_str) == Some("diff") {
+                return dev_command_policy::command_intent_kind(args).is_some();
+            }
             rest_eq(&["status", "--porcelain"])
                 || rest_eq(&["status", "--short"])
                 || rest_eq(&["diff", "--name-only", "HEAD"])
@@ -1933,7 +1935,7 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         );
         error
     })?;
-    let spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args).map_err(|error| {
+    let mut spawn_args = canonicalize_dev_exec_args(&canonical_cwd, &args).map_err(|error| {
         eprintln!(
             "[dev_exec] argument canonicalization reject args={} cwd={} error={error}",
             args.join(" "),
@@ -1941,6 +1943,12 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
         );
         error
     })?;
+    if args.first().map(String::as_str) == Some("git")
+        && args.get(1).map(String::as_str) == Some("diff")
+    {
+        spawn_args = dev_command_policy::git_diff_execution_args(&spawn_args)
+            .ok_or_else(|| "dev_exec: Git diff intent 无法构造安全 invocation".to_string())?;
+    }
     if matches!(kind, DevCwdKind::Worktree(_)) {
         let allow_execution_only_scripts = spawn_args
             .first()
@@ -3584,6 +3592,25 @@ mod dev_exec_tests {
         assert!(is_safe_env_name("SystemRoot"));
         assert!(!is_safe_env_name("SM_NON_SECRET_MODE"));
         assert!(!is_safe_env_name("NPM_CONFIG_USERCONFIG"));
+        for name in [
+            "GIT_EXTERNAL_DIFF",
+            "GIT_DIFF_OPTS",
+            "GIT_PAGER",
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ] {
+            assert!(
+                !is_safe_env_name(name),
+                "unexpected Git env allowlist entry: {name}"
+            );
+        }
     }
 
     #[test]
@@ -3632,12 +3659,14 @@ mod dev_exec_tests {
             "diff",
             "--name-only",
             "3be065ee082a5c4c10c1c3f0c11226154485b1f5",
+            "--",
         ])));
         assert!(dev_worktree_cmd_allowed(&sv(&[
             "git",
             "diff",
             "--name-only",
             "feature/base-revision",
+            "--",
         ])));
         assert!(!dev_worktree_cmd_allowed(&sv(&[
             "git",
@@ -4305,8 +4334,11 @@ mod dev_exec_tests {
             &wt,
             &sv(&["git", "status", "--porcelain"])
         ));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "HEAD"])));
-        assert!(dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
+        assert!(dev_exec_allowed(
+            &wt,
+            &sv(&["git", "diff", "HEAD", "--", "src/a.ts"])
+        ));
+        assert!(!dev_exec_allowed(&wt, &sv(&["git", "diff", "src/a.ts"])));
         assert!(dev_exec_allowed(&wt, &sv(&["git", "rev-parse", "HEAD"])));
         assert!(dev_exec_allowed(
             &wt,

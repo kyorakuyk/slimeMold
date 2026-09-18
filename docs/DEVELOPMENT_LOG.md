@@ -3097,3 +3097,26 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.141 shared Git-diff intent 接入 Node/Rust runtime 于 unverified checkpoint
+
+- Node `createNodeDevService` 的 `shellRun`、`gitDiff`、`gitChangedFiles` 现在先通过 shared `parseWorkerCommand`，再由 `buildSafeGitDiffArgs` 构造固定 invocation；raw `git diff` 不再绕过 parser。
+- Rust 将 `dev_command_policy` 编译进 production host；worktree `git diff` gate 使用 shared intent，`dev_exec` 在 canonicalization 后重写为固定 argv。
+- 所有 scoped/name-only Git diff 均强制 `--no-pager`、`--no-ext-diff`、`--no-textconv`，并保留 Node/Rust sanitized environment：不继承 `GIT_EXTERNAL_DIFF`、`GIT_DIFF_OPTS`、`GIT_PAGER`、`GIT_CONFIG_*`、`GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE` 等配置驱动入口。
+- 旧 unscoped/path-ambiguous Git diff 断言改为显式 `revision -- pathspecs`；H4 fake runner 同步新的 invocation contract。
+- 当前仍未处理 main-repo legacy `run_git`、stable filesystem identity、launcher lifecycle、cleanup lineage 与 orphan recovery；本轮不宣称这些边界已完成。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`67 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts src/dev/capabilities.test.ts`：`2 files / 22 tests passed`；
+- `npx vitest run src/dev/node-run.test.ts src/nodes/dev/index.test.ts`：`4 files / 46 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- disposable Git probe：配置 `diff.external` helper 后执行固定 `--no-pager --no-ext-diff --no-textconv` invocation，marker 未生成，exit 0；
+- 本轮未 push、未 merge、未修改凭据或外部系统；Slice 1 当前仍为 unverified。

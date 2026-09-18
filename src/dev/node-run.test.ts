@@ -22,6 +22,18 @@ describe('sanitizeEnv', () => {
       SERVICE_DSN: credentialFixture,
       NPM_CONFIG_USERCONFIG: credentialFixture,
       SESSION_COOKIE: credentialFixture,
+      GIT_EXTERNAL_DIFF: credentialFixture,
+      GIT_DIFF_OPTS: credentialFixture,
+      GIT_PAGER: credentialFixture,
+      GIT_CONFIG: credentialFixture,
+      GIT_CONFIG_GLOBAL: credentialFixture,
+      GIT_CONFIG_SYSTEM: credentialFixture,
+      GIT_CONFIG_COUNT: credentialFixture,
+      GIT_CONFIG_KEY_0: credentialFixture,
+      GIT_CONFIG_VALUE_0: credentialFixture,
+      GIT_DIR: credentialFixture,
+      GIT_WORK_TREE: credentialFixture,
+      GIT_INDEX_FILE: credentialFixture,
       BEARER: credentialFixture,
       NODE_ENV: 'test',
       SM_NON_SECRET_MODE: 'worker',
@@ -49,6 +61,13 @@ describe('sanitizeEnv', () => {
     expect(sanitized.NPM_CONFIG_USERCONFIG).toBe('C:/temp/slimemold-worker-home/npmrc');
     expect(sanitized).not.toHaveProperty('SESSION_COOKIE');
     expect(sanitized).not.toHaveProperty('BEARER');
+    for (const name of [
+      'GIT_EXTERNAL_DIFF', 'GIT_DIFF_OPTS', 'GIT_PAGER', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL',
+      'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0',
+      'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE',
+    ]) {
+      expect(sanitized).not.toHaveProperty(name);
+    }
     expect(sanitized).not.toHaveProperty('SM_NON_SECRET_MODE');
   });
 

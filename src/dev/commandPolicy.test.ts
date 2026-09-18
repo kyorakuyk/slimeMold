@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vectors from './command-policy-vectors.json';
-import { parseWorkerCommand } from './commandPolicy';
+import { buildSafeGitDiffArgs, parseWorkerCommand } from './commandPolicy';
 
 describe('worker command policy', () => {
   it('rejects unscoped git diff content and accepts explicit scoped pathspecs', () => {
@@ -14,7 +14,7 @@ describe('worker command policy', () => {
     });
     expect(parseWorkerCommand(['git', 'diff', '--name-only', 'HEAD', '--'])).toEqual({
       ok: true,
-      intent: { kind: 'git-names-only', revision: 'HEAD' },
+      intent: { kind: 'git-names-only', revision: 'HEAD', pathspecs: [] },
     });
     expect(parseWorkerCommand([
       'git',
@@ -122,6 +122,16 @@ describe('worker command policy', () => {
         args: ['--reporter=dot'],
       },
     });
+  });
+
+  it('builds config-independent Git diff argv', () => {
+    const parsed = parseWorkerCommand(['git', 'diff', 'HEAD', '--', 'src/components']);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.intent.kind === 'git-diff-scoped') {
+      expect(buildSafeGitDiffArgs(parsed.intent)).toEqual([
+        'git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', 'src/components',
+      ]);
+    }
   });
 
   it('rejects malformed and oversized runtime command arrays', () => {

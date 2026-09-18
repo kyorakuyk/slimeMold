@@ -54,7 +54,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       if (cmd === 'git' && args[0] === 'status') {
         return { exitCode: 0, stdout: ' M src/components/A.tsx\n', stderr: '', durationMs: 1 };
       }
-      if (cmd === 'git' && args[0] === 'diff') {
+      if (cmd === 'git' && (args[0] === 'diff' || args[1] === 'diff')) {
         return { exitCode: 0, stdout: 'diff --git a/src/components/A.tsx b/src/components/A.tsx\n', stderr: '', durationMs: 1 };
       }
       if (cmd === 'npm' && args[0] === 'run') {
@@ -163,7 +163,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
       // 命令被白名单拒 或 路径参数被越权守卫拒
-      expect(r.stderr).toMatch(/白名单|路径参数越权|命令参数不安全/);
+      expect(r.stderr).toMatch(/白名单|路径参数越权|命令参数不安全|Git diff grammar/);
     }
     // 只读命令放行（allowed 内路径可通过 shell 读取）
     const ok1 = await svc.shellRun(['git', 'status', '--porcelain'], ctx);
@@ -182,9 +182,11 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     const findWithDepthOption = await svc.shellRun(['find', '-P', 'src/components', '-name', '*.tsx'], ctx);
     expect(findWithDepthOption.exitCode).toBe(0);
     const gitHead = await svc.shellRun(['git', 'diff', 'HEAD'], ctx);
-    expect(gitHead.exitCode).toBe(0);
+    expect(gitHead.exitCode).toBe(-1);
     const gitSha = await svc.shellRun(['git', 'diff', '0123456789abcdef0123456789abcdef01234567'], ctx);
-    expect(gitSha.exitCode).toBe(0);
+    expect(gitSha.exitCode).toBe(-1);
+    const gitScoped = await svc.shellRun(['git', 'diff', 'HEAD', '--', 'src/components/A.tsx'], ctx);
+    expect(gitScoped.exitCode).toBe(0);
     const gitRoot = await svc.shellRun(['git', 'diff', '.'], ctx);
     expect(gitRoot.exitCode).toBe(-1);
     const tsx = await svc.testRun(['tsx', 'scripts/headless-run.ts'], ctx);
@@ -275,7 +277,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       {
         ...fakeDeps,
         runCommand: async (cmd, args, _cwd) => {
-          if (cmd === 'git' && args[0] === 'diff') {
+          if (cmd === 'git' && args[1] === 'diff') {
             diffArgs.push(args);
             return { exitCode: 0, stdout: 'src/components/A.tsx\n', stderr: '', durationMs: 1 };
           }
@@ -288,7 +290,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       registry,
     );
     const filesChanged = await svc.gitChangedFiles(ctx, 'base-revision');
-    expect(diffArgs).toEqual([['diff', '--name-only', 'base-revision']]);
+    expect(diffArgs).toEqual([['--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--name-only', 'base-revision', '--']]);
     expect(filesChanged).toContain('src/components/A.tsx');
     expect(filesChanged).toContain('docs/new.md');
   });
@@ -307,7 +309,12 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       registry,
     );
     await svc.gitDiff('HEAD', ctx);
-    expect(calls[0]).toEqual(['diff', 'HEAD', '--', 'src/components', 'src/nodes', 'docs']);
+    expect(calls[0]).toEqual([
+      '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--',
+      resolve(ctx.cwd, 'src/components'),
+      resolve(ctx.cwd, 'src/nodes'),
+      resolve(ctx.cwd, 'docs'),
+    ]);
     await expect(svc.gitDiff('package.json', ctx)).rejects.toThrow(/Git baseRef/);
     await expect(svc.gitDiff('feature/../src/orchestrator', ctx)).rejects.toThrow(/Git baseRef/);
   });

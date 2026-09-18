@@ -1,6 +1,9 @@
+export type GitDiffIntent =
+  | { kind: 'git-names-only'; revision: string; pathspecs: [] }
+  | { kind: 'git-diff-scoped'; revision: string; pathspecs: string[] };
+
 export type WorkerCommandIntent =
-  | { kind: 'git-names-only'; revision: string }
-  | { kind: 'git-diff-scoped'; revision: string; pathspecs: string[] }
+  | GitDiffIntent
   | { kind: 'grep-files'; pattern: string; files: string[] }
   | { kind: 'find'; roots: string[]; predicates: string[] }
   | { kind: 'read-files'; command: 'ls' | 'cat' | 'head' | 'tail'; files: string[] }
@@ -216,7 +219,7 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
 
   if (command.length === 5 && command[0] === 'git' && command[1] === 'diff' && command[2] === '--name-only' && command[4] === '--') {
     return isSafeRevision(command[3])
-      ? { ok: true, intent: { kind: 'git-names-only', revision: command[3] } }
+      ? { ok: true, intent: { kind: 'git-names-only', revision: command[3], pathspecs: [] } }
       : { ok: false, error: 'git revision is not safe' };
   }
 
@@ -306,4 +309,18 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
     return { ok: false, error: 'git diff content requires explicit non-protected pathspecs' };
   }
   return { ok: false, error: 'command is not supported' };
+}
+
+export function buildSafeGitDiffArgs(intent: GitDiffIntent, pathspecs = intent.pathspecs): string[] {
+  return [
+    'git',
+    '--no-pager',
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    ...(intent.kind === 'git-names-only' ? ['--name-only'] : []),
+    intent.revision,
+    '--',
+    ...pathspecs,
+  ];
 }
