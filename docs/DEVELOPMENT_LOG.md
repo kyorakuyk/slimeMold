@@ -3374,3 +3374,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.155 引入 Unix handle-relative parent/file open seam 于 unverified checkpoint
+
+- Unix read/write bound path改用逐级 directory-fd `openat`，每层使用 `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`，最终文件使用 `O_NOFOLLOW`；parent被替换为symlink时操作失败，不跟随到外部目录。
+- Unix missing-target create改用parent-fd `openat(O_CREAT|O_EXCL|O_NOFOLLOW)`；unsupported平台的bound read/write fallback改为显式error，避免未来call-site绕过identity gate。
+- Windows仍保留reparse-aware final handle与StableFileIdentity校验；Windows parent-relative完整原子mutation、最终spawn cwd binding、macOS/Linux native matrix仍需后续平台专项验证。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

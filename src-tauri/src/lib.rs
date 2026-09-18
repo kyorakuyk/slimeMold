@@ -3689,6 +3689,79 @@ fn stable_file_identity_from_handle(
     Ok(identity)
 }
 
+#[cfg(unix)]
+fn open_unix_file_relative(
+    path: &std::path::Path,
+    flags: i32,
+    mode: libc::mode_t,
+) -> Result<fs::File, String> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Component;
+    const DIRECTORY_FLAGS: i32 =
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    let mut directory = {
+        let root = CString::new("/").map_err(|_| "无法构造 Unix root".to_string())?;
+        let fd = unsafe { libc::open(root.as_ptr(), DIRECTORY_FLAGS, 0) };
+        if fd < 0 {
+            return Err(format!(
+                "无法打开 Unix root：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        unsafe { fs::File::from_raw_fd(fd) }
+    };
+    let components: Vec<_> = path.components().collect();
+    if !path.is_absolute() || components.len() < 2 {
+        return Err(format!("文件路径必须是绝对路径：{}", path.display()));
+    }
+    for component in &components[1..components.len() - 1] {
+        let Component::Normal(name) = component else {
+            return Err(format!(
+                "文件父路径包含不安全 component：{}",
+                path.display()
+            ));
+        };
+        let name = CString::new(name.as_bytes())
+            .map_err(|_| format!("文件父路径包含 NUL：{}", path.display()))?;
+        let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), DIRECTORY_FLAGS, 0) };
+        if fd < 0 {
+            return Err(format!(
+                "无法绑定文件父目录：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        directory = unsafe { fs::File::from_raw_fd(fd) };
+    }
+    let Component::Normal(name) = components.last().unwrap() else {
+        return Err(format!("文件名 component 无效：{}", path.display()));
+    };
+    let name =
+        CString::new(name.as_bytes()).map_err(|_| format!("文件名包含 NUL：{}", path.display()))?;
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            mode,
+        )
+    };
+    if fd < 0 {
+        return Err(format!("无法绑定文件：{}", std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(unix)]
+fn create_unix_file_relative(path: &std::path::Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut file =
+        open_unix_file_relative(path, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o644)?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("创建绑定文件失败：{error}"))
+}
+
 fn stable_file_identity(path: &std::path::Path) -> Result<StableFileIdentity, String> {
     #[cfg(unix)]
     {
@@ -3753,12 +3826,8 @@ fn read_dev_file_bound(
     expected_identity: &StableFileIdentity,
 ) -> Result<String, String> {
     use std::io::Read;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|e| format!("无法绑定读取句柄：{e}"))?;
+    use std::os::unix::fs::MetadataExt;
+    let mut file = open_unix_file_relative(path, libc::O_RDONLY, 0)?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
@@ -3780,7 +3849,8 @@ fn read_dev_file_bound(
     path: &std::path::Path,
     expected_identity: &StableFileIdentity,
 ) -> Result<String, String> {
-    fs::read_to_string(path).map_err(|e| format!("读取文件失败：{e}"))
+    let _ = (path, expected_identity);
+    Err("当前平台不支持 bound file identity read".into())
 }
 
 #[cfg(windows)]
@@ -3823,12 +3893,8 @@ fn write_dev_file_bound(
     expected_identity: &StableFileIdentity,
 ) -> Result<(), String> {
     use std::io::Write;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|e| format!("无法绑定写入句柄：{e}"))?;
+    use std::os::unix::fs::MetadataExt;
+    let mut file = open_unix_file_relative(path, libc::O_WRONLY, 0)?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("无法读取绑定文件身份：{e}"))?;
@@ -3851,7 +3917,8 @@ fn write_dev_file_bound(
     content: &str,
     expected_identity: &StableFileIdentity,
 ) -> Result<(), String> {
-    fs::write(path, content).map_err(|e| format!("写入文件失败：{e}"))
+    let _ = (path, content, expected_identity);
+    Err("当前平台不支持 bound file identity write".into())
 }
 
 /// P1 审计修复：防符号链接绕过——
@@ -3917,15 +3984,23 @@ fn dev_write_file(path: String, content: String, generation: u64) -> Result<(), 
     // 目标不存在：父目录已 canonicalize（真实目录，无 symlink），文件名不跨目录；
     // 用 create_new（O_CREAT|O_EXCL）避免跟随并发创建的符号链接
     dev_path_allowed(&abs)?;
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&abs)
-        .and_then(|mut f| {
-            use std::io::Write;
-            f.write_all(content.as_bytes())
-        })
-        .map_err(|e| format!("dev_write_file: 创建失败：{path}（{e}）"))
+    #[cfg(unix)]
+    {
+        return create_unix_file_relative(&abs, &content)
+            .map_err(|error| format!("dev_write_file: 创建失败：{path}（{error}）"));
+    }
+    #[cfg(not(unix))]
+    {
+        return fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&abs)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(content.as_bytes())
+            })
+            .map_err(|e| format!("dev_write_file: 创建失败：{path}（{e}）"));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
