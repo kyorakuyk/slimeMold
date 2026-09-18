@@ -1957,6 +1957,17 @@ fn dev_exec(args: Vec<String>, cwd: String, generation: u64) -> Result<DevExecRe
             );
             error
         })?;
+    if spawn_args.len() >= 8
+        && spawn_args[0] == "git"
+        && spawn_args[1] == "--no-pager"
+        && spawn_args[2] == "diff"
+        && spawn_args[6] == "--"
+        && spawn_args[5] != "--name-only"
+    {
+        for pathspec in &spawn_args[7..] {
+            git_diff_pathspec_allowed(&canonical_cwd, std::path::Path::new(pathspec))?;
+        }
+    }
     if matches!(kind, DevCwdKind::Worktree(_)) {
         let allow_execution_only_scripts = spawn_args
             .first()
@@ -2690,6 +2701,46 @@ fn protected_path_error(abs: &std::path::Path, root: &std::path::Path) -> Option
     };
     protected_relative_path(&rel)
         .then(|| format!("dev_file: 路径受 host protected policy 保护：{rel}"))
+}
+
+fn git_diff_pathspec_allowed(cwd: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+    let cwd_key = path_compare_key(&dev_strip_verbatim(cwd).to_string_lossy());
+    let path_key = path_compare_key(&dev_strip_verbatim(path).to_string_lossy());
+    let rel = if path_key == cwd_key {
+        String::new()
+    } else {
+        path_key
+            .strip_prefix(&(cwd_key.clone() + "/"))
+            .ok_or_else(|| format!("dev_exec: Git pathspec 不属于 worktree：{}", path.display()))?
+            .to_string()
+    };
+    let protected_roots = [
+        "package.json",
+        "package-lock.json",
+        "vitest.config.ts",
+        "scripts",
+        "tests",
+        "src/store/workflowstore.ts",
+        "src/engine/executor.ts",
+        "src/plugins/sandbox",
+        "src-tauri/capabilities",
+        "src/orchestrator",
+        ".git",
+        ".slimemold",
+    ];
+    if rel.is_empty()
+        || protected_roots.iter().any(|root| {
+            rel == *root
+                || rel.starts_with(&format!("{root}/"))
+                || root.starts_with(&(rel.clone() + "/"))
+        })
+    {
+        return Err(format!(
+            "dev_exec: Git pathspec 命中 protected root 或其 ancestor：{}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
@@ -4897,6 +4948,28 @@ mod dev_write_symlink_tests {
             assert!(!outside.join("child").exists());
             let _ = fs::remove_dir_all(&outside);
         });
+    }
+
+    #[test]
+    fn git_diff_pathspec_rejects_recursive_protected_ancestors() {
+        let cwd = std::path::Path::new("C:/repo/wt");
+        assert!(
+            git_diff_pathspec_allowed(cwd, std::path::Path::new("C:/repo/wt/src/components"))
+                .is_ok()
+        );
+        for path in [
+            "C:/repo/wt",
+            "C:/repo/wt/src",
+            "C:/repo/wt/src/store",
+            "C:/repo/wt/src/store/workflowStore.ts",
+            "C:/repo/wt/.git",
+            "C:/repo/wt/.slimemold",
+        ] {
+            assert!(
+                git_diff_pathspec_allowed(cwd, std::path::Path::new(path)).is_err(),
+                "must reject recursive protected pathspec: {path}"
+            );
+        }
     }
 
     #[test]

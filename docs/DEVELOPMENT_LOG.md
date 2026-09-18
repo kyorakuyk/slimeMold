@@ -3141,3 +3141,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.143 收紧 Rust hardened Git recursive pathspec 于 unverified checkpoint
+
+- reviewer 发现 direct Tauri `git --no-pager diff --no-ext-diff --no-textconv HEAD -- .` 可绕过 Node path policy；Rust hardened gate 现在在 canonicalization 后按 worktree-relative key 重新检查 Git pathspec。
+- 拒绝 worktree root、`.`、dot-segment canonical root、`src`/`src/store` 等 protected ancestor、protected exact/descendant、`.git` 和 `.slimemold`；安全的 `src/components` pathspec 保持可用。
+- 新增 Rust recursive protected-path regression，并保留 hardened gate、fs_guard canonicalization、Tauri exact argv 和 Node/Rust 全量回归。
+- reviewer 同时指出 check/canonicalize/spawn 之间仍存在 path identity TOCTOU；本轮不伪称 race 已闭合，stable worktree/file identity 是下一条独立 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/tauri-run.test.ts src/dev/capabilities.test.ts src/dev/commandPolicy.test.ts`：`3 files / 31 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
