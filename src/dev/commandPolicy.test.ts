@@ -144,6 +144,40 @@ describe('worker command policy', () => {
     const ownAccessor = ['cat', 'src/components/App.tsx'] as unknown[];
     Object.defineProperty(ownAccessor, '1', { configurable: true, get: () => 'NUL' });
     expect(parseWorkerCommand(ownAccessor as string[]).ok).toBe(false);
+    const revoked = Proxy.revocable(['cat', 'src/components/App.tsx'], {});
+    revoked.revoke();
+    expect(() => parseWorkerCommand(revoked.proxy as string[])).not.toThrow();
+    expect(parseWorkerCommand(revoked.proxy as string[]).ok).toBe(false);
+    const throwingLength = new Proxy(['cat', 'src/components/App.tsx'], {
+      get(target, property, receiver) {
+        if (property === 'length') throw new Error('length trap');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(parseWorkerCommand(throwingLength as string[]).ok).toBe(false);
+    const fractionalLength = new Proxy(['cat', 'src/components/App.tsx'], {
+      get(target, property, receiver) {
+        if (property === 'length') return 1.5;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(parseWorkerCommand(fractionalLength as string[]).ok).toBe(false);
+    let shrinkingReads = 0;
+    const shrinkingLength = new Proxy(['cat', 'src/components/App.tsx'], {
+      get(target, property, receiver) {
+        if (property === 'length') return shrinkingReads++ === 0 ? 2 : 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(parseWorkerCommand(shrinkingLength as string[]).ok).toBe(false);
+    let growingReads = 0;
+    const growingLength = new Proxy(['cat'], {
+      get(target, property, receiver) {
+        if (property === 'length') return growingReads++ === 0 ? 1 : 2;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(parseWorkerCommand(growingLength as string[]).ok).toBe(false);
     const shadowedMethods = ['cat', 'src/components/App.tsx'] as string[];
     Object.defineProperty(shadowedMethods, 'slice', { configurable: true, value: null });
     expect(parseWorkerCommand(shadowedMethods)).toEqual({

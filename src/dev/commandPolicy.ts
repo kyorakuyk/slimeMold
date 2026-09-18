@@ -34,11 +34,13 @@ function utf8ByteLength(value: string): number {
 }
 
 function snapshotBoundedCommand(command: unknown[]): string[] | null {
-  if (!Array.isArray(command) || command.length === 0 || command.length > MAX_COMMAND_ARGS) return null;
-  const snapshot = new Array<string>(command.length);
-  let totalBytes = 0;
   try {
-    for (let index = 0; index < command.length; index += 1) {
+    if (!Array.isArray(command)) return null;
+    const length = command.length;
+    if (!Number.isSafeInteger(length) || length < 1 || length > MAX_COMMAND_ARGS) return null;
+    const snapshot = new Array<string>(length);
+    let totalBytes = 0;
+    for (let index = 0; index < length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(command, String(index));
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
       const token = descriptor.value;
@@ -49,10 +51,11 @@ function snapshotBoundedCommand(command: unknown[]): string[] | null {
       if (totalBytes > MAX_COMMAND_TOTAL_BYTES) return null;
       snapshot[index] = token;
     }
+    if (command.length !== length) return null;
+    return snapshot;
   } catch {
     return null;
   }
-  return snapshot;
 }
 
 const PROTECTED_ROOTS = new Set([

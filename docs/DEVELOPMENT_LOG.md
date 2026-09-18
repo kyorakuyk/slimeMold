@@ -3058,3 +3058,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.139 采用固定 length trusted snapshot 收紧 Proxy argv 于 unverified checkpoint
+
+- Node snapshot 在 try/catch 内一次捕获并验证 length：必须是 `1..256` 的 safe integer；随后只遍历固定长度的 own data descriptor，并在结束时 recheck live length，拒绝 revoked、throwing-length、fractional-length、growth/shrink Proxy。
+- 新增 Proxy 回归：revoked、throwing length、非整数 length、mutable shrink/growth；避免预算绕过、sparse intent 和未捕获异常。
+- 本轮仍未接入真实 runtime authority；下一步仍是 shared Git-diff intent 接入 Node capabilities 与 Rust dev_exec。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
