@@ -19,16 +19,21 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod antigravity;
 mod codex;
 mod dev_command_policy;
+mod dev_process;
 mod event_store;
 mod fs_guard;
 
+pub(crate) use dev_process::drain_child_output;
+use dev_process::DevExecResult;
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
     dev_exec_validate_paths, is_git_diff_revision, path_compare_key, path_is_same_or_child,
@@ -809,13 +814,6 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
  * 前端仍保留完整的参数级白名单（capabilities DEFAULT_SHELL_RULES/DEFAULT_TEST_RULES），
  * Rust 侧命令名 + cwd 白名单作为纵深防御（WebView 被 XSS 也不能在 worktree 外执行命令）。
  */
-
-#[derive(serde::Serialize)]
-struct DevExecResult {
-    stdout: String,
-    stderr: String,
-    code: i32,
-}
 
 /// 命令名白名单（与前端 capabilities 的 DEFAULT_SHELL_RULES / DEFAULT_TEST_RULES 命令名一致）。
 const DEV_ALLOWED_CMDS: &[&str] = &[
@@ -1700,25 +1698,7 @@ fn dev_sanitized_env_with_home(isolate_home: bool) -> HashMap<String, String> {
     env
 }
 
-/// 带超时的子进程执行，返回 stdout/stderr/exitCode（非零退出码不视为错误）。
-fn drain_child_output<R: std::io::Read>(mut reader: R) -> Vec<u8> {
-    let mut captured = Vec::new();
-    let mut total = 0usize;
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(size) => size,
-        };
-        if total < DEV_OUTPUT_CAP {
-            let keep = read.min(DEV_OUTPUT_CAP - total);
-            captured.extend_from_slice(&buffer[..keep]);
-        }
-        total = total.saturating_add(read);
-    }
-    captured
-}
-
+/// 统一子进程生命周期入口；实际捕获/超时/等待编排位于 `dev_process`。
 fn kill_dev_child_tree(child: &mut Child) {
     #[cfg(windows)]
     {
@@ -1731,58 +1711,7 @@ fn kill_dev_child_tree(child: &mut Child) {
 }
 
 fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<DevExecResult, String> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child: Child = cmd.spawn().map_err(|e| format!("命令启动失败：{e}"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .map(|stream| std::thread::spawn(move || drain_child_output(stream)));
-    let stderr = child
-        .stderr
-        .take()
-        .map(|stream| std::thread::spawn(move || drain_child_output(stream)));
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() > timeout => {
-                kill_dev_child_tree(&mut child);
-                let _ = child.wait();
-                let _ = stdout.map(|thread| thread.join());
-                let _ = stderr.map(|thread| thread.join());
-                return Err("dev_exec 执行超时（30s）".into());
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(error) => {
-                kill_dev_child_tree(&mut child);
-                let _ = child.wait();
-                let _ = stdout.map(|thread| thread.join());
-                let _ = stderr.map(|thread| thread.join());
-                return Err(format!("等待子进程失败：{error}"));
-            }
-        }
-    };
-    let out_buf = stdout
-        .map(|thread| {
-            thread
-                .join()
-                .map_err(|_| "读取 stdout 线程失败".to_string())
-        })
-        .transpose()?
-        .unwrap_or_default();
-    let err_buf = stderr
-        .map(|thread| {
-            thread
-                .join()
-                .map_err(|_| "读取 stderr 线程失败".to_string())
-        })
-        .transpose()?
-        .unwrap_or_default();
-    Ok(DevExecResult {
-        stdout: String::from_utf8_lossy(&out_buf).to_string(),
-        stderr: String::from_utf8_lossy(&err_buf).to_string(),
-        code: status.code().unwrap_or(-1),
-    })
+    dev_process::run_with_timeout(cmd, timeout, kill_dev_child_tree)
 }
 
 fn grep_option_is_safe(arg: &str) -> bool {

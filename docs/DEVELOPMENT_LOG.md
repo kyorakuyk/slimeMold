@@ -3447,3 +3447,21 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.159 抽取 Rust process capture/timeout lifecycle seam 于 unverified checkpoint
+
+- 新增 `src-tauri/src/dev_process.rs`，集中持有 `DevExecResult`、stdout/stderr bounded capture、timeout polling、wait、join和错误收敛。
+- `lib.rs`保留 `kill_dev_child_tree` 作为平台相关launcher policy注入点，通过薄wrapper调用 `dev_process::run_with_timeout`；Codex复用的crate-private output helper保留单一实现转发，不复制逻辑。
+- 本轮未移动 command policy、cwd/identity、Windows trusted program/ComSpec resolution；Windows `current_dir`→CreateProcess race、native Linux/macOS runtime evidence和hardlink atomicity仍明确为后续残余。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
