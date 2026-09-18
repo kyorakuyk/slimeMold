@@ -2980,3 +2980,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.135 收紧 names-only Git、tail legacy option 与 find unary depth 于 unverified checkpoint
+
+- `git diff --name-only` 现在必须使用显式 `--` 分隔符，拒绝无分隔符的 path-looking revision ambiguity；shared vectors 同步更新。
+- `find` unary parser 从递归改为最多 128 层的迭代解析，超限直接拒绝；Node/Rust 都增加 129 层回归，避免 RangeError 或 native stack overflow。
+- `tail` read intent 拒绝 `+N` legacy offset operand，避免把它解释为 stdin/起始行选项而绕过 scoped file grammar。
+- 本轮仍未接入真实 Node/Rust runtime authority；8.3 alias、launcher/ComSpec、child-cwd 和 stable filesystem identity继续留在后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`65 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。

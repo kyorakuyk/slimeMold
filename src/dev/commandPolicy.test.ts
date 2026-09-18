@@ -9,6 +9,10 @@ describe('worker command policy', () => {
       error: 'git diff content requires explicit non-protected pathspecs',
     });
     expect(parseWorkerCommand(['git', 'diff', '--name-only', 'HEAD'])).toEqual({
+      ok: false,
+      error: 'git diff content requires explicit non-protected pathspecs',
+    });
+    expect(parseWorkerCommand(['git', 'diff', '--name-only', 'HEAD', '--'])).toEqual({
       ok: true,
       intent: { kind: 'git-names-only', revision: 'HEAD' },
     });
@@ -85,6 +89,11 @@ describe('worker command policy', () => {
         roots: ['src/components'],
         predicates: ['-name', '*.tsx'],
       },
+    });
+    const excessiveUnary = ['find', 'src/components', ...Array.from({ length: 129 }, () => '!'), '-name', '*.tsx'];
+    expect(parseWorkerCommand(excessiveUnary)).toEqual({
+      ok: false,
+      error: 'find traversal mode is not safe',
     });
   });
 

@@ -92,11 +92,17 @@ function isSafeFindValue(predicate: string, value: string): boolean {
 }
 
 function parseFindPrimary(predicates: string[], start: number): number | null {
-  const predicate = predicates[start];
+  let index = start;
+  let unaryDepth = 0;
+  while (FIND_UNARY_PREDICATES.has(predicates[index])) {
+    unaryDepth += 1;
+    if (unaryDepth > 128) return null;
+    index += 1;
+  }
+  const predicate = predicates[index];
   if (!predicate) return null;
-  if (FIND_UNARY_PREDICATES.has(predicate)) return parseFindPrimary(predicates, start + 1);
-  if (FIND_ATOMIC_PREDICATES.has(predicate)) return start + 1;
-  if (FIND_VALUE_PREDICATES.has(predicate) && isSafeFindValue(predicate, predicates[start + 1] ?? '')) return start + 2;
+  if (FIND_ATOMIC_PREDICATES.has(predicate)) return index + 1;
+  if (FIND_VALUE_PREDICATES.has(predicate) && isSafeFindValue(predicate, predicates[index + 1] ?? '')) return index + 2;
   return null;
 }
 
@@ -114,6 +120,10 @@ function areFindPredicatesSafe(predicates: string[]): boolean {
     index = next;
   }
   return true;
+}
+
+function isSafeReadOperand(command: 'ls' | 'cat' | 'head' | 'tail', value: string): boolean {
+  return isSafePathspec(value) && !(command === 'tail' && value.startsWith('+'));
 }
 
 function isSafeScriptPath(script: string): boolean {
@@ -137,17 +147,18 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
   if (typecheck) return { ok: true, intent: typecheck };
 
   if (['ls', 'cat', 'head', 'tail'].includes(command[0] as 'ls' | 'cat' | 'head' | 'tail')) {
+    const readCommand = command[0] as 'ls' | 'cat' | 'head' | 'tail';
     const files = command.slice(1);
-    if (files.length > 0 && files.every(isSafePathspec)) {
+    if (files.length > 0 && files.every((file) => isSafeReadOperand(readCommand, file))) {
       return {
         ok: true,
-        intent: { kind: 'read-files', command: command[0] as 'ls' | 'cat' | 'head' | 'tail', files },
+        intent: { kind: 'read-files', command: readCommand, files },
       };
     }
     return { ok: false, error: 'read command file operands are not safe' };
   }
 
-  if (command.length === 4 && command[0] === 'git' && command[1] === 'diff' && command[2] === '--name-only') {
+  if (command.length === 5 && command[0] === 'git' && command[1] === 'diff' && command[2] === '--name-only' && command[4] === '--') {
     return isSafeRevision(command[3])
       ? { ok: true, intent: { kind: 'git-names-only', revision: command[3] } }
       : { ok: false, error: 'git revision is not safe' };

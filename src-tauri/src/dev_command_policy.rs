@@ -164,15 +164,24 @@ fn is_safe_find_value(predicate: &str, value: &str) -> bool {
 }
 
 fn parse_find_primary(predicates: &[String], start: usize) -> Option<usize> {
-    let predicate = predicates.get(start)?.as_str();
-    if matches!(predicate, "-not" | "!") {
-        return parse_find_primary(predicates, start + 1);
+    let mut index = start;
+    let mut unary_depth = 0;
+    while matches!(
+        predicates.get(index).map(String::as_str),
+        Some("-not" | "!")
+    ) {
+        unary_depth += 1;
+        if unary_depth > 128 {
+            return None;
+        }
+        index += 1;
     }
+    let predicate = predicates.get(index)?.as_str();
     if matches!(
         predicate,
         "-mount" | "-xdev" | "-prune" | "-print" | "-print0" | "-ls" | "-quit"
     ) {
-        return Some(start + 1);
+        return Some(index + 1);
     }
     if matches!(
         predicate,
@@ -187,10 +196,10 @@ fn parse_find_primary(predicates: &[String], start: usize) -> Option<usize> {
             | "-regex"
             | "-iregex"
     ) && predicates
-        .get(start + 1)
+        .get(index + 1)
         .is_some_and(|value| is_safe_find_value(predicate, value))
     {
-        return Some(start + 2);
+        return Some(index + 2);
     }
     None
 }
@@ -216,6 +225,10 @@ fn are_find_predicates_safe(predicates: &[String]) -> bool {
     true
 }
 
+fn is_safe_read_operand(command: &str, path: &str) -> bool {
+    safe_path(path) && !(command == "tail" && path.starts_with('+'))
+}
+
 fn is_safe_script_path(script: &str) -> bool {
     script
         .strip_prefix("scripts/")
@@ -239,12 +252,16 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
         command.first().map(String::as_str),
         Some("ls" | "cat" | "head" | "tail")
     ) {
-        return command.len() > 1 && command[1..].iter().all(|path| safe_path(path));
+        return command.len() > 1
+            && command[1..]
+                .iter()
+                .all(|path| is_safe_read_operand(command[0].as_str(), path));
     }
-    if command.len() == 4
+    if command.len() == 5
         && command[0] == "git"
         && command[1] == "diff"
         && command[2] == "--name-only"
+        && command[4] == "--"
     {
         return safe_revision(&command[3]);
     }
@@ -267,7 +284,10 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
                 let Some(value) = command.get(index + 1) else {
                     return false;
                 };
-                if value.is_empty() || value.starts_with('-') {
+                if value.is_empty()
+                    || value.starts_with('-')
+                    || value.chars().any(|c| c.is_ascii_control())
+                {
                     return false;
                 }
                 pattern = Some(value);
@@ -365,7 +385,11 @@ pub(crate) fn command_intent_kind(command: &[String]) -> Option<&'static str> {
             Some("read-files")
         };
     }
-    if command.len() == 4 && command[0] == "git" && command[2] == "--name-only" {
+    if command.len() == 5
+        && command[0] == "git"
+        && command[2] == "--name-only"
+        && command[4] == "--"
+    {
         return Some("git-names-only");
     }
     if command.first().map(String::as_str) == Some("git") {
@@ -409,5 +433,13 @@ mod tests {
                 vector.name
             );
         }
+    }
+
+    #[test]
+    fn rejects_excessive_find_unary_depth_without_recursion() {
+        let mut command = vec!["find".to_string(), "src/components".to_string()];
+        command.extend(std::iter::repeat_n("!".to_string(), 129));
+        command.extend(["-name".to_string(), "*.tsx".to_string()]);
+        assert!(!command_is_supported(&command));
     }
 }
