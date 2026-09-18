@@ -86,6 +86,7 @@ fn lock_dev_state_tests() -> std::sync::MutexGuard<'static, ()> {
 struct DevState {
     generation: u64,
     base_repo: Option<String>,
+    base_identity: Option<StableDirectoryIdentity>,
     worktrees: Vec<String>,
     registrations: Vec<RegisteredWorktree>,
     cleanup_bindings: Vec<CleanupBinding>,
@@ -236,6 +237,7 @@ impl DevState {
         DevState {
             generation: 0,
             base_repo: None,
+            base_identity: None,
             worktrees: Vec::new(),
             registrations: Vec::new(),
             cleanup_bindings: Vec::new(),
@@ -907,6 +909,25 @@ fn dev_cwd_kind(cwd: &str) -> Result<DevCwdKind, String> {
         return Err(format!(
             "dev_exec: cwd 未按 lexical path 命中已登记 worktree：{cwd}"
         ));
+    }
+    if lexical_is_base {
+        let (base_path, base_identity) = {
+            let state = DEV_STATE.lock().unwrap();
+            (state.base_repo.clone(), state.base_identity.clone())
+        };
+        if let (Some(base_path), Some(expected_identity)) = (base_path, base_identity) {
+            let base = std::path::PathBuf::from(&base_path);
+            let current_identity = stable_directory_identity(&base)
+                .map_err(|error| format!("dev_exec: 无法重新绑定主仓库 identity：{error}"))?;
+            if current_identity != expected_identity {
+                return Err("dev_exec: 主仓库 directory identity 已变化".into());
+            }
+            let canon = dev_abs_of(cwd)?;
+            if path_compare_key(&canon.to_string_lossy()) != path_compare_key(&base_path) {
+                return Err("dev_exec: 主仓库 canonical target 已变化".into());
+            }
+            return Ok(DevCwdKind::MainRepo);
+        }
     }
     let canon = dev_abs_of(cwd)?; // 相对路径基于 base_repo 解析；绝对路径 canonicalize
     if !canon.is_dir() {
@@ -2212,9 +2233,11 @@ fn dev_init_session(base_repo: String) -> Result<u64, String> {
     if path_compare_key(&top.to_string_lossy()) != path_compare_key(&canon.to_string_lossy()) {
         return Err("dev_init_session: baseRepo 必须是 Git repository top-level".to_string());
     }
+    let base_identity = stable_directory_identity(&canon)?;
     let mut st = DEV_STATE.lock().unwrap();
     st.generation = next_session_generation(st.generation);
     st.base_repo = Some(canon.to_string_lossy().to_string());
+    st.base_identity = Some(base_identity);
     st.worktrees.clear();
     st.registrations.clear();
     st.cleanup_bindings.clear();
@@ -2231,6 +2254,7 @@ fn dev_clear_session(generation: u64) -> Result<(), String> {
     let mut st = DEV_STATE.lock().unwrap();
     st.generation = next_session_generation(st.generation);
     st.base_repo = None;
+    st.base_identity = None;
     st.worktrees.clear();
     st.registrations.clear();
     st.cleanup_bindings.clear();
@@ -2420,6 +2444,18 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
         || state.generation != registration_generation
     {
         return Err("dev_restore_worktree: 主仓库 session 在校验期间发生变化".into());
+    }
+    if let Some(existing) = state.registrations.iter().find(|registered| {
+        registered_worktree_identity_matches(
+            registered,
+            registration_generation,
+            &canonical_path,
+            &branch,
+        )
+    }) {
+        if existing.identity != identity {
+            return Err("dev_restore_worktree: 已登记 worktree identity 冲突".into());
+        }
     }
     if !state
         .worktrees
@@ -5271,6 +5307,62 @@ mod dev_write_symlink_tests {
         assert!(
             result.is_err(),
             "registered A redirected to registered B must be rejected"
+        );
+    }
+
+    #[test]
+    fn cwd_rejects_base_repo_redirect_to_registered_worktree() {
+        let _test_guard = lock_dev_state_tests();
+        let root =
+            std::env::temp_dir().join(format!("slimemold-base-redirect-{}", std::process::id()));
+        let base = root.join("base");
+        let other = root.join("other");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let base_identity = stable_directory_identity(&base).unwrap();
+        let other_identity = stable_directory_identity(&other).unwrap();
+        fs::rename(&base, root.join("base-original")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&other, &base).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_dir;
+            if let Err(error) = symlink_dir(&other, &base) {
+                let unsupported = error.raw_os_error() == Some(1314)
+                    || matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                    );
+                if unsupported {
+                    let _ = fs::remove_dir_all(&root);
+                    return;
+                }
+                panic!("unexpected directory symlink error: {error}");
+            }
+        }
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            state.generation = 1;
+            state.base_repo = Some(base.to_string_lossy().to_string());
+            state.base_identity = Some(base_identity);
+            state.worktrees = vec![other.to_string_lossy().to_string()];
+            state.registrations = vec![RegisteredWorktree {
+                generation: 1,
+                path: other.to_string_lossy().to_string(),
+                branch: "worker/other".into(),
+                identity: other_identity,
+            }];
+        }
+        let result = dev_cwd_kind(&base.to_string_lossy());
+        {
+            let mut state = DEV_STATE.lock().unwrap();
+            *state = DevState::new();
+        }
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.is_err(),
+            "base repo redirect to a registered worktree must be rejected"
         );
     }
 
