@@ -130,8 +130,17 @@ describe('worker command policy', () => {
     sparse[2] = 'src/components/App.tsx';
     expect(parseWorkerCommand(sparse as string[]).ok).toBe(false);
     expect(parseWorkerCommand(['cat', null] as unknown as string[]).ok).toBe(false);
+    const inherited = new Array(2) as unknown[];
+    inherited[0] = 'cat';
+    Object.setPrototypeOf(inherited, { 1: 'src/components/App.tsx' });
+    expect(parseWorkerCommand(inherited as string[]).ok).toBe(false);
+    expect(parseWorkerCommand(['grep', String.fromCharCode(0xD800), 'src/components/App.tsx']).ok).toBe(false);
+    expect(parseWorkerCommand(['cat', 'x'.repeat(4096)]).ok).toBe(true);
     expect(parseWorkerCommand(['cat', 'x'.repeat(4097)]).ok).toBe(false);
-    expect(parseWorkerCommand(['cat', ...Array.from({ length: 256 }, () => 'x')]).ok).toBe(false);
+    const totalAtLimit = ['cat', ...Array.from({ length: 7 }, () => 'x'.repeat(4096)), 'x'.repeat(4093)];
+    const totalOverLimit = ['cat', ...Array.from({ length: 7 }, () => 'x'.repeat(4096)), 'x'.repeat(4094)];
+    expect(parseWorkerCommand(totalAtLimit).ok).toBe(true);
+    expect(parseWorkerCommand(totalOverLimit).ok).toBe(false);
   });
 
   it('keeps the parity vectors executable', () => {

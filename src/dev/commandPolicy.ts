@@ -15,6 +15,20 @@ const MAX_COMMAND_ARGS = 256;
 const MAX_COMMAND_TOKEN_BYTES = 4096;
 const MAX_COMMAND_TOTAL_BYTES = 32768;
 
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = value.charCodeAt(index + 1);
+      if (Number.isNaN(next) || next < 0xDC00 || next > 0xDFFF) return true;
+      index += 1;
+    } else if (code >= 0xDC00 && code <= 0xDFFF) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
@@ -24,7 +38,7 @@ function isBoundedCommand(command: unknown[]): command is string[] {
   let totalBytes = 0;
   for (let index = 0; index < command.length; index += 1) {
     const token = command[index];
-    if (!(index in command) || typeof token !== 'string') return false;
+    if (!Object.prototype.hasOwnProperty.call(command, index) || typeof token !== 'string' || hasUnpairedSurrogate(token)) return false;
     const tokenBytes = utf8ByteLength(token);
     if (tokenBytes > MAX_COMMAND_TOKEN_BYTES) return false;
     totalBytes += tokenBytes;

@@ -468,11 +468,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_oversized_command_inputs() {
+    fn enforces_exact_command_input_budgets() {
+        assert!(command_is_supported(&vec![
+            "cat".to_string(),
+            "x".repeat(4096)
+        ]));
         assert!(!command_is_supported(&vec![
             "cat".to_string(),
             "x".repeat(4097)
         ]));
+
+        let mut total_at_limit = vec!["cat".to_string()];
+        total_at_limit.extend(std::iter::repeat_n("x".repeat(4096), 7));
+        total_at_limit.push("x".repeat(4093));
+        assert!(command_is_supported(&total_at_limit));
+
+        let mut total_over_limit = vec!["cat".to_string()];
+        total_over_limit.extend(std::iter::repeat_n("x".repeat(4096), 7));
+        total_over_limit.push("x".repeat(4094));
+        assert!(!command_is_supported(&total_over_limit));
+
         let mut many_args = vec!["cat".to_string()];
         many_args.extend(std::iter::repeat_n("x".to_string(), 256));
         assert!(!command_is_supported(&many_args));
