@@ -27,6 +27,53 @@ fn active_codex_children() -> &'static Mutex<HashMap<String, ActiveChild>> {
     ACTIVE_CODEX_CHILDREN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Clone)]
+struct PreparedLease {
+    session_generation: u64,
+    cwd: PathBuf,
+    cancellation_requested: bool,
+}
+
+static PREPARED_CODEX_LEASES: OnceLock<Mutex<HashMap<String, PreparedLease>>> = OnceLock::new();
+
+fn prepared_codex_leases() -> &'static Mutex<HashMap<String, PreparedLease>> {
+    PREPARED_CODEX_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn same_cwd_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+#[tauri::command]
+pub fn codex_worker_prepare(cwd: String, generation: u64) -> Result<String, String> {
+    if generation == 0 {
+        return Err("Codex Worker session generation 无效".into());
+    }
+    crate::assert_session_generation(generation, "codex_worker_prepare")?;
+    let worktree = crate::assert_registered_worktree(&cwd)?;
+    let token = format!(
+        "lease-{}-{}",
+        std::process::id(),
+        CODEX_OPERATION_GENERATION.fetch_add(1, Ordering::Relaxed)
+    );
+    prepared_codex_leases()
+        .lock()
+        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+        .insert(
+            token.clone(),
+            PreparedLease {
+                session_generation: generation,
+                cwd: worktree,
+                cancellation_requested: false,
+            },
+        );
+    Ok(token)
+}
 #[derive(Clone, Copy)]
 struct PendingOperation {
     generation: u64,
@@ -607,10 +654,21 @@ fn run_exec(
     }
 
     if let Some(expected_identity) = expected_cwd_identity {
-        let current_identity =
-            crate::dev_cwd_binding(&spawn_cwd.to_string_lossy()).map(|(_, identity)| identity)?;
+        let current_identity = match crate::dev_cwd_binding(&spawn_cwd.to_string_lossy()) {
+            Ok((_, identity)) => identity,
+            Err(error) => {
+                if let Err(cleanup_error) = remove_codex_output(&output_path) {
+                    eprintln!("[codex] {cleanup_error}; side effects unknown");
+                }
+                return Err(error);
+            }
+        };
         if current_identity != expected_identity {
-            let _ = remove_codex_output(&output_path);
+            if let Err(cleanup_error) = remove_codex_output(&output_path) {
+                return Err(format!(
+                    "Codex cwd identity 在最终spawn前发生变化；output cleanup失败：{cleanup_error}"
+                ));
+            }
             return Err("Codex cwd identity 在最终spawn前发生变化".into());
         }
     }
@@ -846,9 +904,27 @@ pub async fn codex_worker_exec(
     crate::assert_session_generation(generation, "codex_worker_exec")?;
     let worktree = crate::assert_registered_worktree(&cwd)?;
     if !valid_operation_id(&operation_id) {
-        return Err("Codex operation id 非法".into());
+        return Err("Codex operation token 非法".into());
+    }
+    let prepared = prepared_codex_leases()
+        .lock()
+        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+        .get(&operation_id)
+        .cloned()
+        .ok_or_else(|| "Codex Worker lease不存在或已使用".to_string())?;
+    if prepared.session_generation != generation || !same_cwd_path(&prepared.cwd, &worktree) {
+        return Err("Codex Worker lease与当前session/cwd不匹配".into());
     }
     let pending_generation = begin_pending_operation(&operation_id, generation)?;
+    let prepared = prepared_codex_leases()
+        .lock()
+        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+        .remove(&operation_id)
+        .ok_or_else(|| "Codex Worker lease在启动前消失".to_string())?;
+    if prepared.cancellation_requested {
+        finish_pending_operation(&operation_id, pending_generation);
+        return Err("Codex Worker 已取消".into());
+    }
     let operation_for_task = operation_id.clone();
     let result = async {
         let auth = codex_login_status()?;
@@ -919,13 +995,24 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
                 entry.cancellation_requested = true;
             }
         }
-    } else if let Some(entry) = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏".to_string())?
-        .get_mut(&operation_id)
-    {
-        if entry.session_generation == generation {
-            entry.cancellation_requested = true;
+    } else {
+        if let Some(entry) = prepared_codex_leases()
+            .lock()
+            .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+            .get_mut(&operation_id)
+        {
+            if entry.session_generation == generation {
+                entry.cancellation_requested = true;
+            }
+        }
+        if let Some(entry) = pending_codex_operations()
+            .lock()
+            .map_err(|_| "Codex pending registry 已损坏".to_string())?
+            .get_mut(&operation_id)
+        {
+            if entry.session_generation == generation {
+                entry.cancellation_requested = true;
+            }
         }
     }
     Ok(())

@@ -3598,3 +3598,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.167 引入host-issued Codex Worker lease与abort-before-begin fencing 于 unverified checkpoint
+
+- 新增 `codex_worker_prepare`：Rust在当前session与已登记worktree校验通过后生成一次性lease token，并绑定session generation与canonical worktree path；`codex_worker_exec`不再接受renderer自造operation id作为active capability。
+- 前端Codex Worker先申请host lease，再执行；AbortSignal在lease申请前置为pending abort，lease返回后立即调用generation-matched cancel，避免abort-before-begin丢失。
+- prepared、pending、active三阶段均比较session generation；cancel只标记匹配generation，旧session/旧lease不能触碰新child；exec要求token未使用且cwd与prepare绑定路径一致。
+- `dev_cwd_binding`最终recheck的错误和identity mismatch路径显式清理output file/directory；host lease不宣称已经完成task/attempt lineage capability或Windows/Unix原子spawn containment。
+- Windows Job Object/current_dir原子spawn、Unix setsid/pidfd descendant containment、renderer prompt/task lineage授权、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。

@@ -3,7 +3,7 @@ import type {
   WorkerExecutor,
   WorkerTaskLease,
 } from '../domain/workerQueue';
-import { codexWorkerExec } from '../agents/providers/codex';
+import { codexWorkerExec, prepareCodexWorker } from '../agents/providers/codex';
 
 export interface CodexWorkerResponse {
   text: string;
@@ -47,14 +47,24 @@ export function createCodexWorkerInvoker(generation: number): CodexWorkerInvoker
   }
   return {
     async execute({ prompt, model, cwd, signal }): Promise<CodexWorkerResponse> {
-      if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
-      const operationId = `worker-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+      let leaseToken: string | undefined;
+      let abortBeforeLease = Boolean(signal?.aborted);
       const onAbort = () => {
-        void import('../agents/providers/codex').then(({ cancelCodexWorker }) => cancelCodexWorker(operationId, generation));
+        if (leaseToken) {
+          void import('../agents/providers/codex')
+            .then(({ cancelCodexWorker }) => cancelCodexWorker(leaseToken!, generation));
+        } else {
+          abortBeforeLease = true;
+        }
       };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        const result = await codexWorkerExec(prompt, model, cwd, operationId, generation);
+        leaseToken = await prepareCodexWorker(cwd, generation);
+        if (abortBeforeLease || signal?.aborted) {
+          await import('../agents/providers/codex').then(({ cancelCodexWorker }) => cancelCodexWorker(leaseToken!, generation));
+          throw new Error('Codex Worker 请求已取消');
+        }
+        const result = await codexWorkerExec(prompt, model, cwd, leaseToken, generation);
         if (signal?.aborted) throw new Error('Codex Worker 请求已取消');
         return { text: result.text, usage: result.usage };
       } finally {

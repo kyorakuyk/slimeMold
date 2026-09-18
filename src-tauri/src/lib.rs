@@ -4120,6 +4120,7 @@ pub fn run() {
             codex::codex_login,
             codex::codex_logout,
             codex::codex_exec,
+            codex::codex_worker_prepare,
             codex::codex_worker_exec,
             codex::codex_worker_cancel,
             antigravity::antigravity_worker_exec,
