@@ -35,6 +35,10 @@ describe('worker command policy', () => {
       ok: false,
       error: 'grep option arguments must be explicit and safe',
     });
+    expect(parseWorkerCommand(['grep', '-e', '', 'src/components/App.tsx'])).toEqual({
+      ok: false,
+      error: 'grep option arguments must be explicit and safe',
+    });
     expect(parseWorkerCommand(['grep', '-n', '--', 'needle', 'src/components/App.tsx'])).toEqual({
       ok: true,
       intent: {
@@ -43,10 +47,22 @@ describe('worker command policy', () => {
         files: ['src/components/App.tsx'],
       },
     });
+    expect(parseWorkerCommand(['grep', 'needle', '--file=/outside'])).toEqual({
+      ok: false,
+      error: 'grep file operands are not safe',
+    });
   });
 
-  it('rejects symlink-following and external-root find modes', () => {
+  it('rejects symlink-following, actions, and external-root find modes', () => {
     expect(parseWorkerCommand(['find', '-L', 'src/components', '-name', '*.tsx'])).toEqual({
+      ok: false,
+      error: 'find traversal mode is not safe',
+    });
+    expect(parseWorkerCommand(['find', '-H', 'src/components', '-name', '*.tsx'])).toEqual({
+      ok: false,
+      error: 'find traversal mode is not safe',
+    });
+    expect(parseWorkerCommand(['find', '-follow', 'src/components', '-name', '*.tsx'])).toEqual({
       ok: false,
       error: 'find traversal mode is not safe',
     });
@@ -54,11 +70,20 @@ describe('worker command policy', () => {
       ok: false,
       error: 'find traversal mode is not safe',
     });
+    expect(parseWorkerCommand(['find', '-P', 'src/components', '-exec', 'cat', '{}', ';'])).toEqual({
+      ok: false,
+      error: 'find traversal mode is not safe',
+    });
+    expect(parseWorkerCommand(['find', 'src/components', 'src/orchestrator', '-name', '*.tsx'])).toEqual({
+      ok: false,
+      error: 'find roots are not safe',
+    });
     expect(parseWorkerCommand(['find', '-P', 'src/components', '-name', '*.tsx'])).toEqual({
       ok: true,
       intent: {
         kind: 'find',
         roots: ['src/components'],
+        predicates: ['-name', '*.tsx'],
       },
     });
   });
@@ -69,6 +94,14 @@ describe('worker command policy', () => {
       error: 'tsx script path is not safe',
     });
     expect(parseWorkerCommand(['tsx', 'scripts/check.ts', '../outside'])).toEqual({
+      ok: false,
+      error: 'tsx argument is not safe',
+    });
+    expect(parseWorkerCommand(['tsx', 'scripts/check.ts', '--tsconfig=/outside/tsconfig.json'])).toEqual({
+      ok: false,
+      error: 'tsx argument is not safe',
+    });
+    expect(parseWorkerCommand(['tsx', 'scripts/check.ts', '/outside/config.json'])).toEqual({
       ok: false,
       error: 'tsx argument is not safe',
     });
@@ -84,7 +117,12 @@ describe('worker command policy', () => {
 
   it('keeps the parity vectors executable', () => {
     for (const vector of vectors) {
-      expect(parseWorkerCommand(vector.command).ok, vector.name).toBe(vector.accepted);
+      const result = parseWorkerCommand(vector.command);
+      expect(result.ok, vector.name).toBe(vector.accepted);
+      if (vector.accepted) {
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.intent.kind, vector.name).toBe(vector.intentKind);
+      }
     }
   });
 });

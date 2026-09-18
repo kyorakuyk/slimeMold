@@ -4,6 +4,8 @@ use serde::Deserialize;
 struct PolicyVector {
     command: Vec<String>,
     accepted: bool,
+    #[serde(rename = "intentKind")]
+    intent_kind: Option<String>,
     #[allow(dead_code)]
     name: String,
 }
@@ -52,11 +54,15 @@ fn safe_revision(value: &str) -> bool {
 
 fn safe_path(value: &str) -> bool {
     let normalized = value.replace('\\', "/");
+    let comparable = normalized.to_ascii_lowercase();
     if normalized.is_empty()
+        || normalized.starts_with('-')
         || normalized.starts_with('/')
         || normalized.starts_with('\\')
         || normalized.contains(':')
-        || normalized.split('/').any(|part| part == "..")
+        || normalized
+            .split('/')
+            .any(|part| part == "." || part == "..")
         || normalized.contains('*')
         || normalized.contains('?')
         || normalized.chars().all(|c| matches!(c, '.' | '/'))
@@ -74,7 +80,7 @@ fn safe_path(value: &str) -> bool {
         "src-tauri/capabilities",
     ]
     .iter()
-    .all(|root| normalized != *root && !normalized.starts_with(&format!("{root}/")))
+    .all(|root| comparable != *root && !comparable.starts_with(&format!("{root}/")))
 }
 
 pub(crate) fn command_is_supported(command: &[String]) -> bool {
@@ -103,7 +109,7 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
             if matches!(argument.as_str(), "-e" | "--regexp") {
                 if command
                     .get(index + 1)
-                    .is_none_or(|value| value.starts_with('-'))
+                    .is_none_or(|value| value.is_empty() || value.starts_with('-'))
                 {
                     return false;
                 }
@@ -136,8 +142,48 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
             && command[index..].iter().all(|path| safe_path(path));
     }
     if command.first().map(String::as_str) == Some("find") {
+        let forbidden = [
+            "-L",
+            "-H",
+            "-follow",
+            "-files0-from",
+            "--files0-from",
+            "-delete",
+            "-exec",
+            "-execdir",
+            "-ok",
+            "-okdir",
+            "-fls",
+            "-fprint",
+            "-fprint0",
+        ];
+        let safe_predicates = [
+            "-name",
+            "-iname",
+            "-path",
+            "-ipath",
+            "-type",
+            "-maxdepth",
+            "-mindepth",
+            "-mount",
+            "-xdev",
+            "-prune",
+            "-print",
+            "-print0",
+            "-ls",
+            "-printf",
+            "-regex",
+            "-iregex",
+            "-not",
+            "!",
+            "-o",
+            "-or",
+            "-a",
+            "-and",
+            "-quit",
+        ];
         if command.iter().any(|argument| {
-            ["-L", "-H", "-follow", "-files0-from", "--files0-from"]
+            forbidden
                 .iter()
                 .any(|option| argument == option || argument.starts_with(&format!("{option}=")))
         }) {
@@ -147,24 +193,60 @@ pub(crate) fn command_is_supported(command: &[String]) -> bool {
         if command.get(index).map(String::as_str) == Some("-P") {
             index += 1;
         }
-        return index < command.len()
-            && !command[index].starts_with('-')
-            && safe_path(&command[index]);
+        let root_start = index;
+        while index < command.len() && !command[index].starts_with('-') {
+            index += 1;
+        }
+        if index == root_start
+            || !command[root_start..index]
+                .iter()
+                .all(|root| safe_path(root))
+        {
+            return false;
+        }
+        return command[index..].iter().all(|argument| {
+            !argument.starts_with('-') || safe_predicates.contains(&argument.as_str())
+        });
     }
     if command.first().map(String::as_str) == Some("tsx") {
         let Some(script) = command.get(1) else {
             return false;
         };
-        return script.starts_with("scripts/")
+        return script.to_ascii_lowercase().starts_with("scripts/")
             && !script.contains("..")
             && command[2..].iter().all(|arg| {
                 !arg.contains("..")
+                    && !arg.starts_with('/')
+                    && !arg.contains(':')
+                    && (!arg.starts_with('-') || arg == "--reporter=dot")
                     && !arg
                         .chars()
                         .any(|c| matches!(c, '&' | ';' | '|' | '`' | '<' | '>'))
             });
     }
     false
+}
+
+pub(crate) fn command_intent_kind(command: &[String]) -> Option<&'static str> {
+    if !command_is_supported(command) {
+        return None;
+    }
+    if command.len() == 4 && command[0] == "git" && command[2] == "--name-only" {
+        return Some("git-names-only");
+    }
+    if command.first().map(String::as_str) == Some("git") {
+        return Some("git-diff-scoped");
+    }
+    if command.first().map(String::as_str) == Some("grep") {
+        return Some("grep-files");
+    }
+    if command.first().map(String::as_str) == Some("find") {
+        return Some("find");
+    }
+    if command.first().map(String::as_str) == Some("tsx") {
+        return Some("tsx-script");
+    }
+    None
 }
 
 #[cfg(test)]
@@ -184,6 +266,12 @@ mod tests {
                 command_is_supported(&vector.command),
                 vector.accepted,
                 "{}",
+                vector.name
+            );
+            assert_eq!(
+                command_intent_kind(&vector.command),
+                vector.intent_kind.as_deref(),
+                "intent: {}",
                 vector.name
             );
         }

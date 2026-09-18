@@ -1,52 +1,23 @@
 [
-  {
-    "name": "reject unscoped git diff",
-    "command": ["git", "diff", "HEAD"],
-    "accepted": false
-  },
-  {
-    "name": "accept git names only",
-    "command": ["git", "diff", "--name-only", "HEAD"],
-    "accepted": true
-  },
-  {
-    "name": "accept scoped git diff",
-    "command": ["git", "diff", "HEAD", "--", "src/components", "docs"],
-    "accepted": true
-  },
-  {
-    "name": "reject git protected path",
-    "command": ["git", "diff", "package.json"],
-    "accepted": false
-  },
-  {
-    "name": "reject grep option argument bypass",
-    "command": ["grep", "-e", "-x", "src/orchestrator/run.ts"],
-    "accepted": false
-  },
-  {
-    "name": "accept grep after terminator",
-    "command": ["grep", "-n", "--", "needle", "src/components/App.tsx"],
-    "accepted": true
-  },
-  {
-    "name": "reject find symlink traversal",
-    "command": ["find", "-L", "src/components", "-name", "*.tsx"],
-    "accepted": false
-  },
-  {
-    "name": "accept find physical root",
-    "command": ["find", "-P", "src/components", "-name", "*.tsx"],
-    "accepted": true
-  },
-  {
-    "name": "reject tsx traversal",
-    "command": ["tsx", "scripts/../src/components/App.tsx"],
-    "accepted": false
-  },
-  {
-    "name": "accept tsx script",
-    "command": ["tsx", "scripts/check.ts", "--reporter=dot"],
-    "accepted": true
-  }
+  {"name":"reject unscoped git diff","command":["git","diff","HEAD"],"accepted":false},
+  {"name":"accept git names only","command":["git","diff","--name-only","HEAD"],"accepted":true,"intentKind":"git-names-only"},
+  {"name":"accept scoped git diff","command":["git","diff","HEAD","--","src/components","docs"],"accepted":true,"intentKind":"git-diff-scoped"},
+  {"name":"reject git protected path","command":["git","diff","HEAD","--","package.json"],"accepted":false},
+  {"name":"reject git dot protected path","command":["git","diff","HEAD","--","./package.json"],"accepted":false},
+  {"name":"reject git case protected path","command":["git","diff","HEAD","--","src/ORCHESTRATOR/run.ts"],"accepted":false},
+  {"name":"reject grep option argument bypass","command":["grep","-e","-x","src/orchestrator/run.ts"],"accepted":false},
+  {"name":"reject grep empty option argument","command":["grep","-e","","src/components/App.tsx"],"accepted":false},
+  {"name":"accept grep after terminator","command":["grep","-n","--","needle","src/components/App.tsx"],"accepted":true,"intentKind":"grep-files"},
+  {"name":"reject grep option file","command":["grep","needle","--file=/outside"],"accepted":false},
+  {"name":"reject find symlink traversal","command":["find","-L","src/components","-name","*.tsx"],"accepted":false},
+  {"name":"reject find hard traversal","command":["find","-H","src/components","-name","*.tsx"],"accepted":false},
+  {"name":"reject find follow","command":["find","-follow","src/components","-name","*.tsx"],"accepted":false},
+  {"name":"reject find external roots","command":["find","-files0-from=/outside/list","-name","*.tsx"],"accepted":false},
+  {"name":"reject find action","command":["find","-P","src/components","-exec","cat","{}",";"],"accepted":false},
+  {"name":"reject find protected later root","command":["find","src/components","src/orchestrator","-name","*.tsx"],"accepted":false},
+  {"name":"accept find physical root","command":["find","-P","src/components","-name","*.tsx"],"accepted":true,"intentKind":"find"},
+  {"name":"reject tsx traversal","command":["tsx","scripts/../src/components/App.tsx"],"accepted":false},
+  {"name":"reject tsx config extra","command":["tsx","scripts/check.ts","--tsconfig=/outside/tsconfig.json"],"accepted":false},
+  {"name":"reject tsx absolute extra","command":["tsx","scripts/check.ts","/outside/config.json"],"accepted":false},
+  {"name":"accept tsx script","command":["tsx","scripts/check.ts","--reporter=dot"],"accepted":true,"intentKind":"tsx-script"}
 ]

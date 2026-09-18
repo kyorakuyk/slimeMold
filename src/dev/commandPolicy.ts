@@ -2,7 +2,7 @@ export type WorkerCommandIntent =
   | { kind: 'git-names-only'; revision: string }
   | { kind: 'git-diff-scoped'; revision: string; pathspecs: string[] }
   | { kind: 'grep-files'; pattern: string; files: string[] }
-  | { kind: 'find'; roots: string[] }
+  | { kind: 'find'; roots: string[]; predicates: string[] }
   | { kind: 'tsx-script'; script: string; args: string[] };
 
 export type WorkerCommandResult =
@@ -35,13 +35,13 @@ function isSafeRevision(value: string): boolean {
 
 function isSafePathspec(value: string): boolean {
   const normalized = value.replace(/\\/g, '/');
-  if (!normalized || normalized.startsWith('/') || normalized.startsWith('\\')) return false;
+  const comparable = normalized.toLowerCase();
+  if (!normalized || normalized.startsWith('-') || normalized.startsWith('/') || normalized.startsWith('\\')) return false;
   if (/^[A-Za-z]:/.test(normalized) || normalized.includes(':')) return false;
-  if (normalized.split('/').includes('..')) return false;
+  if (normalized.split('/').some((part) => part === '.' || part === '..')) return false;
   if (normalized.includes('*') || normalized.includes('?')) return false;
-  if (/^(?:\.\/?)+$/.test(normalized)) return false;
-  return !PROTECTED_ROOTS.has(normalized)
-    && ![...PROTECTED_ROOTS].some((root) => normalized.startsWith(`${root}/`));
+  if (normalized === '.' || /^(?:\.\/?)+$/.test(normalized)) return false;
+  return ![...PROTECTED_ROOTS].some((root) => comparable === root || comparable.startsWith(`${root}/`));
 }
 
 export function parseWorkerCommand(command: string[]): WorkerCommandResult {
@@ -62,18 +62,27 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
 
   if (command[0] === 'tsx') {
     const script = command[1] ?? '';
-    if (!script.startsWith('scripts/') || script.includes('..') || !isSafePathspec(script.replace(/^scripts\//, 'src/'))) {
+    if (!script.toLowerCase().startsWith('scripts/') || script.includes('..') || !isSafePathspec(script.replace(/^scripts\//i, 'src/'))) {
       return { ok: false, error: 'tsx script path is not safe' };
     }
     const args = command.slice(2);
-    if (args.some((argument) => argument.includes('..') || /[;&|`<>]/.test(argument))) {
+    const safeOptions = new Set(['--reporter=dot']);
+    if (args.some((argument) => (
+      argument.includes('..')
+      || argument.startsWith('/')
+      || /^[A-Za-z]:/.test(argument)
+      || argument.includes(':')
+      || /[;&|`<>]/.test(argument)
+      || (argument.startsWith('-') && !safeOptions.has(argument))
+    ))) {
       return { ok: false, error: 'tsx argument is not safe' };
     }
     return { ok: true, intent: { kind: 'tsx-script', script, args } };
   }
 
   if (command[0] === 'find') {
-    const forbidden = ['-L', '-H', '-follow', '-files0-from', '--files0-from'];
+    const forbidden = ['-L', '-H', '-follow', '-files0-from', '--files0-from', '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fls', '-fprint', '-fprint0'];
+    const safePredicates = new Set(['-name', '-iname', '-path', '-ipath', '-type', '-maxdepth', '-mindepth', '-mount', '-xdev', '-prune', '-print', '-print0', '-ls', '-printf', '-regex', '-iregex', '-not', '!', '-o', '-or', '-a', '-and', '-quit']);
     if (command.some((argument) => forbidden.some((option) => argument === option || argument.startsWith(`${option}=`)))) {
       return { ok: false, error: 'find traversal mode is not safe' };
     }
@@ -84,8 +93,12 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
       roots.push(command[index]);
       index += 1;
     }
+    const predicates = command.slice(index);
+    if (predicates.some((argument) => argument.startsWith('-') && !safePredicates.has(argument))) {
+      return { ok: false, error: 'find traversal mode is not safe' };
+    }
     if (roots.length > 0 && roots.every(isSafePathspec)) {
-      return { ok: true, intent: { kind: 'find', roots } };
+      return { ok: true, intent: { kind: 'find', roots, predicates } };
     }
     return { ok: false, error: 'find roots are not safe' };
   }
