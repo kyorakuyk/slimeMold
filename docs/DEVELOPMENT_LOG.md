@@ -3694,3 +3694,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.172 verified：Codex pre-spawn active/pending reservation
+
+- 最终fail-closed reviewer针对精确HEAD `73aec5081ee9e1ebe46a7e27653efe48c235881a`返回：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- verified tag：`checkpoint/native-codex-pre-spawn-reservation-verified`，指向上述reviewed HEAD；该tag创建后未修改代码。
+- 本slice验证锁序、spawn前reservation、child注册与cancel竞争边界；reviewer建议后续增加确定性interleaving regression，但不构成当前slice阻塞。
+- task/attempt lineage与prompt capability、Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍属于未完成残余。
+
+验证结果：
+
+- Rust：`84 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有dynamic/static import与大bundle warning保留，最大产物约`1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN对齐；
+- `git diff --check`：通过；
+- 本轮未push、未merge、未修改凭据或外部系统。
