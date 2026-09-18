@@ -124,6 +124,16 @@ describe('worker command policy', () => {
     });
   });
 
+  it('rejects malformed and oversized runtime command arrays', () => {
+    const sparse = [] as unknown[];
+    sparse[0] = 'cat';
+    sparse[2] = 'src/components/App.tsx';
+    expect(parseWorkerCommand(sparse as string[]).ok).toBe(false);
+    expect(parseWorkerCommand(['cat', null] as unknown as string[]).ok).toBe(false);
+    expect(parseWorkerCommand(['cat', 'x'.repeat(4097)]).ok).toBe(false);
+    expect(parseWorkerCommand(['cat', ...Array.from({ length: 256 }, () => 'x')]).ok).toBe(false);
+  });
+
   it('keeps the parity vectors executable', () => {
     for (const vector of vectors) {
       const result = parseWorkerCommand(vector.command);

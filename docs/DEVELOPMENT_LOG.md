@@ -3000,3 +3000,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.136 增加 Node/Rust command input budget 与 malformed argv fail-closed 于 unverified checkpoint
+
+- 针对 reviewer 发现的 sparse array、非字符串 token 和无界 argv，Node/Rust 共享并执行同一输入预算：最多 `256` 个 token、单 token 最多 `4096` UTF-8 bytes、总命令最多 `32768` UTF-8 bytes。
+- Node 先检查数组密度和 token 类型，再进入 grammar；Rust 在 parser 入口执行同等预算检查；超限、hole、非字符串和超长 operand 均直接拒绝。
+- 新增 Node sparse/non-string/oversized 回归，以及 Rust oversized command 回归；这仍是 test contract，不代表 parser 已接入真实 runtime authority。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。

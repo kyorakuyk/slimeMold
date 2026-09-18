@@ -11,6 +11,28 @@ export type WorkerCommandResult =
   | { ok: true; intent: WorkerCommandIntent }
   | { ok: false; error: string };
 
+const MAX_COMMAND_ARGS = 256;
+const MAX_COMMAND_TOKEN_BYTES = 4096;
+const MAX_COMMAND_TOTAL_BYTES = 32768;
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function isBoundedCommand(command: unknown[]): command is string[] {
+  if (!Array.isArray(command) || command.length === 0 || command.length > MAX_COMMAND_ARGS) return false;
+  let totalBytes = 0;
+  for (let index = 0; index < command.length; index += 1) {
+    const token = command[index];
+    if (!(index in command) || typeof token !== 'string') return false;
+    const tokenBytes = utf8ByteLength(token);
+    if (tokenBytes > MAX_COMMAND_TOKEN_BYTES) return false;
+    totalBytes += tokenBytes;
+    if (totalBytes > MAX_COMMAND_TOTAL_BYTES) return false;
+  }
+  return true;
+}
+
 const PROTECTED_ROOTS = new Set([
   'package.json',
   'package-lock.json',
@@ -143,6 +165,8 @@ function parseSafeTypecheck(command: string[]): WorkerCommandIntent | null {
 }
 
 export function parseWorkerCommand(command: string[]): WorkerCommandResult {
+  if (!isBoundedCommand(command)) return { ok: false, error: 'command input is not bounded and well-formed' };
+
   const typecheck = parseSafeTypecheck(command);
   if (typecheck) return { ok: true, intent: typecheck };
 

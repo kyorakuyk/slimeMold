@@ -1,5 +1,26 @@
 use serde::Deserialize;
 
+const MAX_COMMAND_ARGS: usize = 256;
+const MAX_COMMAND_TOKEN_BYTES: usize = 4096;
+const MAX_COMMAND_TOTAL_BYTES: usize = 32768;
+
+fn is_bounded_command(command: &[String]) -> bool {
+    if command.is_empty() || command.len() > MAX_COMMAND_ARGS {
+        return false;
+    }
+    let mut total_bytes = 0usize;
+    for token in command {
+        if token.len() > MAX_COMMAND_TOKEN_BYTES {
+            return false;
+        }
+        total_bytes = match total_bytes.checked_add(token.len()) {
+            Some(total) if total <= MAX_COMMAND_TOTAL_BYTES => total,
+            _ => return false,
+        };
+    }
+    true
+}
+
 #[derive(Debug, Deserialize)]
 struct PolicyVector {
     command: Vec<String>,
@@ -245,6 +266,9 @@ fn is_safe_typecheck(command: &[String]) -> bool {
 }
 
 pub(crate) fn command_is_supported(command: &[String]) -> bool {
+    if !is_bounded_command(command) {
+        return false;
+    }
     if is_safe_typecheck(command) {
         return true;
     }
@@ -441,5 +465,16 @@ mod tests {
         command.extend(std::iter::repeat_n("!".to_string(), 129));
         command.extend(["-name".to_string(), "*.tsx".to_string()]);
         assert!(!command_is_supported(&command));
+    }
+
+    #[test]
+    fn rejects_oversized_command_inputs() {
+        assert!(!command_is_supported(&vec![
+            "cat".to_string(),
+            "x".repeat(4097)
+        ]));
+        let mut many_args = vec!["cat".to_string()];
+        many_args.extend(std::iter::repeat_n("x".to_string(), 256));
+        assert!(!command_is_supported(&many_args));
     }
 }
