@@ -4030,3 +4030,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewed HEAD：`263b232ebb71448c75a63b5433c0e6e94d62cc54`；独立 reviewer 返回 `passed=true`、`security_concerns=[]`、`logic_errors=[]`。
 - reviewer 确认 `credentials.rs` 是 semantics-preserving extraction；12 个 Tauri command 名称与注册顺序保持不变，未发现新增安全或逻辑问题。
 - verified tag：`checkpoint/lib-credentials-storage-verified`。Reviewer 建议将 crypto round-trip 测试进一步靠近 credentials 模块，并补 Linux/macOS keyring/AppData CI；两项均为非阻塞后续事项。
+
+### 7.198 unverified：抽出 session/cwd authority seam
+
+- 新增 `src-tauri/src/session_authority.rs`，承接 `dev_base_repo`、SessionStamp validation/recheck、generation assertion、relative/canonical path resolution、`DevCwdKind`、cwd binding 和 registered-worktree assertion。
+- `DEV_STATE`、`DEV_OPERATION_LOCK`、SessionStamp/carrier storage 继续由 `dev_state.rs` 所有；Git/worktree registration、pending/orphan/cleanup lifecycle 仍留在 `lib.rs`，本轮不改变 lock order、identity probe 顺序或 session transition。
+- 保留 crate-private root re-export 供 Codex、Antigravity、dev/file commands 和 test modules 使用；`dev_cwd_kind` 与 `PathBuf` 仅在 cfg(test) 下保留测试兼容 seam。
+- 验证：cwd prefix targeted `1 passed / 0 failed`；stale generation targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `3417` 行，新 `session_authority.rs` `236` 行。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
