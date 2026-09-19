@@ -578,6 +578,7 @@ export function auditWorkerRunConsistency(input: {
             return !!record
               && record.capturedBy === 'host'
               && record.status === 'passed'
+              && record.orchestrationId === (run.orchestrationId ?? run.runId)
               && record.runId === run.runId
               && record.taskId === effectTaskId
               && record.stageId === expectedStageId

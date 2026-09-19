@@ -97,6 +97,20 @@ describe('EventStreamRepository', () => {
     expect(adapter.lockAcquisitions).toBe(5);
   });
 
+  it('rejects an orphan TaskCleaned before writing it to the durable stream', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    const orphan = event({
+      eventId: 'orphan-cleanup',
+      aggregateType: 'Task',
+      aggregateId: 'task-orphan',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-orphan', receiptId: 'cleanup-receipt' },
+    });
+
+    await expect(repository.append(orphan, 0)).rejects.toMatchObject({ code: 'sequence-conflict' });
+    expect((await repository.readStream()).status).toBe('empty');
+  });
   it('uses a valid matching snapshot and replays when the snapshot is stale or malformed', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new EventStreamRepository(adapter, 'project-root');

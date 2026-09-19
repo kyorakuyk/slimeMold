@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Orchestration } from '../types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from './workerRunOrchestrationProjection';
+import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun, suppressInvalidWorkerRunProjection } from './workerRunOrchestrationProjection';
 
 function orchestration(): Orchestration {
   return {
@@ -143,6 +143,21 @@ describe('Worker Run → Orchestration projection', () => {
     expect(projected.stageLogs.every((log) => log.error === '宿主验收失败：tests')).toBe(true);
   });
 
+  it('suppresses completed orchestration projection when Worker facts are invalid', () => {
+    const current = orchestration();
+    current.status = 'done';
+    current.stageLogs = current.stageLogs.map((log) => ({ ...log, status: 'success' as const }));
+    current.stageLogsByRun = {
+      'run-1': current.stageLogs,
+    };
+
+    const [suppressed] = suppressInvalidWorkerRunProjection([current], 'Worker facts invalid');
+
+    expect(suppressed.status).toBe('failed');
+    expect(suppressed.stageLogs.every((log) => log.status === 'pending')).toBe(true);
+    expect(suppressed.stageLogs.every((log) => log.error === 'Worker facts invalid')).toBe(true);
+    expect(suppressed.stageLogsByRun?.['run-1']?.every((log) => log.status === 'pending')).toBe(true);
+  });
   it('keeps stage logs isolated for multiple runs of one orchestration', () => {
     const first = run('succeeded', 'succeeded');
     const second = {

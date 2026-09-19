@@ -46,7 +46,7 @@ import { markWorkerTaskCleaned } from './projectControl/workerCleanupCommand';
 import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency';
 import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
 import { auditProjectControlConsistency } from './projectControl/projectControlConsistency';
-import { projectWorkerRunsOntoOrchestrations } from './projectControl/workerRunOrchestrationProjection';
+import { projectWorkerRunsOntoOrchestrations, suppressInvalidWorkerRunProjection } from './projectControl/workerRunOrchestrationProjection';
 import { reconcileWorkerRunsFromEvents, rehydrateWorkerRunsFromEvents } from './projectControl/workerRunRehydration';
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
@@ -487,9 +487,19 @@ export default function App() {
       });
       current.setWorkerRunRecoveries(runtime.recoveries);
       if (current.workerRuns.length > 0) {
-        current.setOrchestrations(
-          projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
-        );
+        const controlOk = controlReport === null || controlReport.ok;
+        if (report.ok && controlOk) {
+          current.setOrchestrations(
+            projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
+          );
+        } else {
+          const reason = report.issues[0]?.message
+            ?? controlReport?.issues[0]?.message
+            ?? 'Worker facts audit failed';
+          current.setOrchestrations(
+            suppressInvalidWorkerRunProjection(current.orchestrations, `Worker facts invalid：${reason}`),
+          );
+        }
       }
       if (!report.ok) {
         current.setWorkerCleanupProposals([]);
@@ -554,9 +564,14 @@ export default function App() {
       `${projectPath}-workers`,
       'host',
     );
+    const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
+      load: async () => session.listAcceptances(),
+    });
     const sideEffects = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
       sideEffectRepository,
       evidencePersistence,
+      undefined,
+      acceptanceVerifier,
     );
     assertProjectOperation(operation);
     const eventRepository = new EventStreamRepository(
@@ -678,17 +693,24 @@ export default function App() {
         import('./domain/sideEffects'),
         import('./projectControl/workerSideEffects'),
       ]);
+      const session = await ensureGuiDevSession(projectPath, signal);
+      if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
       const persistence = createTauriEvidenceStore(
         `${projectPath}/.slimemold/evidence`,
         `${projectPath}-workers`,
         'host',
       );
+      const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
+        load: async () => session.listAcceptances(),
+      });
       const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
         new sideEffectsModule.SideEffectJournalRepository(
           createTauriEventStoreAdapter(projectPath),
           projectPath,
         ),
         persistence,
+        undefined,
+        acceptanceVerifier,
       );
       for (const runId of runIds) {
         if (signal?.aborted) return;
@@ -801,17 +823,24 @@ export default function App() {
       import('./domain/sideEffects'),
       import('./projectControl/workerSideEffects'),
     ]);
+    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
+    if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
     const persistence = createTauriEvidenceStore(
       `${projectPath}/.slimemold/evidence`,
       `${projectPath}-workers`,
       'host',
     );
+    const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
+      load: async () => session.listAcceptances(),
+    });
     const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
       new sideEffectsModule.SideEffectJournalRepository(
         createTauriEventStoreAdapter(projectPath),
         projectPath,
       ),
       persistence,
+      undefined,
+      acceptanceVerifier,
     );
     assertProjectOperation(operation);
     const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });

@@ -127,6 +127,28 @@ export function projectWorkerRunsOntoOrchestrations(
   );
 }
 
+export function suppressInvalidWorkerRunProjection(
+  orchestrations: readonly Orchestration[],
+  reason: string,
+): Orchestration[] {
+  const suppressLogs = (logs: readonly StageLog[]): StageLog[] => logs.map((log) => (
+    log.status === 'success'
+      ? { ...log, status: 'pending' as const, error: reason }
+      : log
+  ));
+  return orchestrations.map((orchestration) => ({
+    ...orchestration,
+    status: orchestration.status === 'done' ? 'failed' : orchestration.status,
+    stageLogs: suppressLogs(orchestration.stageLogs),
+    ...(orchestration.stageLogsByRun
+      ? {
+          stageLogsByRun: Object.fromEntries(
+            Object.entries(orchestration.stageLogsByRun).map(([runId, logs]) => [runId, suppressLogs(logs)]),
+          ),
+        }
+      : {}),
+  }));
+}
 export function selectLatestWorkerRun(
   runs: readonly WorkerRunQueueState[],
   orchestrationId: string,

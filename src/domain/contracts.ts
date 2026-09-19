@@ -253,7 +253,7 @@ function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<T
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
-    ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
+    ...(eventType === 'TaskCleaned'
       ? { cleanupStatus: 'cleaned' as const }
       : {}),
     ...(receiptId ? { cleanupReceiptId: receiptId } : {}),
@@ -275,7 +275,7 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
-    ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
+    ...(eventType === 'TaskCleaned'
       ? { cleanupStatus: 'cleaned' as const }
       : {}),
     ...(receiptId ? { cleanupReceiptId: receiptId } : {}),
@@ -363,6 +363,9 @@ function applyTaskLineageProjection(
   const isCompletion = eventType === 'TaskSucceeded'
     || eventType === 'TaskFailed'
     || eventType === 'TaskCleaned';
+  if (payload.cleanupStatus === 'cleaned' && eventType !== 'TaskCleaned') {
+    throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${lineage.taskExecutionId}`);
+  }
   if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
     evidenceIds: payloadEvidenceIds(payload),
     acceptanceId: payloadText(payload, 'acceptanceId'),
@@ -938,6 +941,8 @@ export interface SideEffectRecord {
   taskId?: string;
   taskExecutionId?: TaskExecutionId;
   attemptId?: AttemptId;
+  orchestrationId?: string;
+  acceptanceStageId?: string;
   status: SideEffectStatus;
   recovery: SideEffectRecovery;
   receipt?: SideEffectReceipt;

@@ -68,6 +68,21 @@ describe('project event buffer', () => {
     });
   });
 
+  it('rejects malformed pending lifecycle facts before event-buffer flush writes them', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    recordProjectEvents('project-1', [event({
+      eventId: 'pending-orphan-cleanup',
+      aggregateType: 'Task',
+      aggregateId: 'task-pending-orphan',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-pending-orphan', receiptId: 'cleanup-receipt' },
+    })]);
+
+    await expect(flushPendingProjectEvents('project-1', repository)).rejects.toMatchObject({ code: 'sequence-conflict' });
+    expect(getPendingProjectEvents('project-1')).toHaveLength(1);
+    expect((await repository.readStream()).status).toBe('empty');
+  });
   it('keeps pending events when the destination stream needs repair', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new EventStreamRepository(adapter, 'project-root');

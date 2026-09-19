@@ -315,7 +315,7 @@ describe('worker side-effect recorder', () => {
     const evidence = {
       id: 'evidence-1',
       orchestrationId: 'orch-1',
-      stageId: 'stage-1',
+      stageId: 'task-1',
       kind: 'test' as const,
       status: 'passed' as const,
       summary: 'host test passed',
@@ -350,7 +350,7 @@ describe('worker side-effect recorder', () => {
     const evidence = {
       id: 'evidence-1',
       orchestrationId: 'orch-1',
-      stageId: 'stage-1',
+      stageId: 'task-1',
       kind: 'test' as const,
       status: 'passed' as const,
       summary: 'host test passed',
@@ -404,6 +404,10 @@ describe('worker side-effect recorder', () => {
 
     await expect(verifier({ record: started, acceptanceId: 'acceptance-1' })).resolves.toBeUndefined();
     await expect(verifier({ record: started, acceptanceId: 'acceptance-forged' })).rejects.toThrow(/Acceptance/);
+    const forgedScopeVerifier = createPersistedWorkerAcceptanceVerifier({
+      load: async () => [{ ...acceptance, orchestrationId: 'orch-forged', stageId: 'stage-forged' }],
+    });
+    await expect(forgedScopeVerifier({ record: started, acceptanceId: 'acceptance-1' })).rejects.toThrow(/Acceptance/);
   });
   it('does not let a late completion promote a recovered unknown effect', async () => {
     const adapter = new InMemoryEventStoreAdapter();

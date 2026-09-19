@@ -1,5 +1,6 @@
 import {
   createWorkerRunQueue,
+  restoreWorkerRunQueue,
   type WorkerQueueTask,
   type WorkerRunQueueState,
 } from '../domain/workerQueue';
@@ -136,7 +137,7 @@ function applyTaskEvent(
   if (acceptanceId) next.acceptanceId = acceptanceId;
   if (error) next.error = error;
   if (feedbackId) next.feedbackId = feedbackId;
-  if (event.eventType === 'TaskCleaned' || text(p.cleanupStatus) === 'cleaned') {
+  if (event.eventType === 'TaskCleaned') {
     next.cleanupStatus = 'cleaned';
     next.worktreeStatus = 'cleaned';
     if (receiptId) next.cleanupReceiptId = receiptId;
@@ -267,6 +268,12 @@ export function rehydrateWorkerRunsFromEvents(input: {
       }
     }
     if (issues.length > runIssueStart) {
+      continue;
+    }
+    try {
+      state = restoreWorkerRunQueue({ taskGraph, state }).snapshot();
+    } catch (cause) {
+      issues.push({ runId, message: `Run ${runId} 恢复后的 Worker 状态校验失败：${cause instanceof Error ? cause.message : String(cause)}` });
       continue;
     }
     runs.push(state);

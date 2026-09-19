@@ -454,10 +454,22 @@ function storedEvent(event: DomainEvent, appendGeneration: number): StoredDomain
   };
 }
 
+function assertReplayableEvents(events: readonly DomainEvent[]): void {
+  try {
+    replayDomainEvents(events);
+  } catch (error) {
+    throw new EventStoreError(
+      'sequence-conflict',
+      `事件生命周期无效：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export function serializeEventStream(events: readonly DomainEvent[]): string {
   if (events.length === 0) return '';
   return `${events.map((event, index) => JSON.stringify(storedEvent(event, index + 1))).join('\n')}\n`;
 }
+
 
 export interface ProjectionSnapshot {
   schemaVersion: 1;
@@ -600,6 +612,7 @@ export class EventStreamRepository {
         appendedCount += 1;
       }
 
+      assertReplayableEvents(events);
       if (appendedCount > 0) {
         await this.adapter.writeTextAtomic(this.eventsPath, serializeEventStream(events));
       }
@@ -653,6 +666,7 @@ export class EventStreamRepository {
           error instanceof Error ? error.message : String(error),
         );
       }
+      assertReplayableEvents(events);
       await this.adapter.writeTextAtomic(this.eventsPath, serializeEventStream(events));
       return {
         appended: true,

@@ -27,7 +27,7 @@ import type {
   WorkerSideEffectRecorder,
   WorkerTaskLease,
 } from '../domain/workerQueue';
-import { restoreWorkerRunQueue } from '../domain/workerQueue';
+import { restoreWorkerRunQueue, resolveWorkerAcceptanceStageId } from '../domain/workerQueue';
 import { normalizeWorkerSuccessProvenance } from '../domain/workerSuccess';
 import { assertTaskExecutionLineage, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
@@ -59,6 +59,8 @@ export type WorkerSideEffectClock = () => string;
 export interface WorkerEvidenceVerificationInput {
   record: SideEffectRecord;
   evidenceIds: readonly string[];
+  expectedOrchestrationId?: string;
+  expectedStageId?: string;
 }
 
 export type WorkerEvidenceVerifier = (
@@ -68,6 +70,8 @@ export type WorkerEvidenceVerifier = (
 export interface WorkerAcceptanceVerificationInput {
   record: SideEffectRecord;
   acceptanceId: string;
+  expectedOrchestrationId?: string;
+  expectedStageId?: string;
 }
 
 export type WorkerAcceptanceVerifier = (
@@ -103,8 +107,13 @@ function comparableWorkerPath(value: string): string {
 }
 
 export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): WorkerEvidenceVerifier {
-  return async ({ record, evidenceIds }) => {
+  return async ({ record, evidenceIds, expectedOrchestrationId, expectedStageId }) => {
     assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    const boundOrchestrationId = expectedOrchestrationId ?? record.orchestrationId;
+    const boundStageId = expectedStageId ?? record.acceptanceStageId;
+    if (!boundOrchestrationId || !boundStageId) {
+      throw new Error(`Worker Evidence verifier 缺少 orchestration/stage binding：${record.idempotencyKey}`);
+    }
     let hash: unknown;
     try {
       hash = JSON.parse(record.inputHash);
@@ -124,6 +133,8 @@ export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): Work
       if (
         evidence.capturedBy !== 'host'
         || evidence.status !== 'passed'
+        || evidence.orchestrationId !== boundOrchestrationId
+        || evidence.stageId !== boundStageId
         || evidence.runId !== record.runId
         || evidence.taskId !== record.taskId
         || evidence.taskExecutionId !== record.taskExecutionId
@@ -151,8 +162,13 @@ export interface WorkerAcceptanceSource {
 }
 
 export function createWorkerAcceptanceVerifier(source: WorkerAcceptanceSource): WorkerAcceptanceVerifier {
-  return async ({ record, acceptanceId }) => {
+  return async ({ record, acceptanceId, expectedOrchestrationId, expectedStageId }) => {
     assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    const boundOrchestrationId = expectedOrchestrationId ?? record.orchestrationId;
+    const boundStageId = expectedStageId ?? record.acceptanceStageId;
+    if (!boundOrchestrationId || !boundStageId) {
+      throw new Error(`Worker Acceptance verifier 缺少 orchestration/stage binding：${record.idempotencyKey}`);
+    }
     let hash: unknown;
     try {
       hash = JSON.parse(record.inputHash);
@@ -170,6 +186,8 @@ export function createWorkerAcceptanceVerifier(source: WorkerAcceptanceSource): 
     if (
       !acceptance.passed
       || acceptance.failedChecks.length !== 0
+      || acceptance.orchestrationId !== boundOrchestrationId
+      || acceptance.stageId !== boundStageId
       || acceptance.runId !== record.runId
       || acceptance.taskId !== record.taskId
       || acceptance.taskExecutionId !== record.taskExecutionId
@@ -183,7 +201,7 @@ export function createWorkerAcceptanceVerifier(source: WorkerAcceptanceSource): 
 
 /** Build the host verifier from the same durable Acceptance persistence used by the GUI. */
 export function createPersistedWorkerAcceptanceVerifier(
-  persistence: { load(): Promise<AcceptanceRecord[]> },
+  persistence: { load(): Promise<readonly AcceptanceRecord[]> },
 ): WorkerAcceptanceVerifier {
   return createWorkerAcceptanceVerifier({
     loadPersisted: () => persistence.load(),
@@ -469,8 +487,18 @@ async function assertWorkerExecutionReceipt(
     const evidenceIds = success.evidenceIds;
     if (!verifyEvidence) throw new Error(`成功 Worker receipt 缺少 host Evidence verifier：${key}`);
     if (!verifyAcceptance) throw new Error(`成功 Worker receipt 缺少 host Acceptance verifier：${key}`);
-    await verifyEvidence({ record, evidenceIds });
-    await verifyAcceptance({ record, acceptanceId: success.acceptanceId });
+    await verifyEvidence({
+      record,
+      evidenceIds,
+      expectedOrchestrationId: lease.orchestrationId,
+      expectedStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
+    });
+    await verifyAcceptance({
+      record,
+      acceptanceId: success.acceptanceId,
+      expectedOrchestrationId: lease.orchestrationId,
+      expectedStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
+    });
   }
 }
 
@@ -491,6 +519,8 @@ export function createWorkerSideEffectRecorder(
       taskId: lease.task.id,
       taskExecutionId: lease.taskExecutionId,
       attemptId: lease.attemptId,
+      ...(lease.orchestrationId ? { orchestrationId: lease.orchestrationId } : {}),
+      acceptanceStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
     });
     const legacyPlanned = createSideEffect({
       idempotencyKey: legacyEffectKeyFor(lease),
@@ -501,6 +531,8 @@ export function createWorkerSideEffectRecorder(
       taskId: lease.task.id,
       taskExecutionId: lease.taskExecutionId,
       attemptId: lease.attemptId,
+      ...(lease.orchestrationId ? { orchestrationId: lease.orchestrationId } : {}),
+      acceptanceStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
     });
     const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
     if (!claimed.claimed && claimed.record.status === 'receipt') {
@@ -560,8 +592,18 @@ export function createWorkerSideEffectRecorder(
       if (result.status === 'succeeded') {
         if (!verifyEvidence) throw new Error(`Worker succeeded receipt 缺少 host Evidence verifier：${record.idempotencyKey}`);
         if (!verifyAcceptance) throw new Error(`Worker succeeded receipt 缺少 host Acceptance verifier：${record.idempotencyKey}`);
-        await verifyEvidence({ record: current, evidenceIds: evidenceIds! });
-        await verifyAcceptance({ record: current, acceptanceId: acceptanceId! });
+        await verifyEvidence({
+          record: current,
+          evidenceIds: evidenceIds!,
+          expectedOrchestrationId: current.orchestrationId,
+          expectedStageId: current.acceptanceStageId,
+        });
+        await verifyAcceptance({
+          record: current,
+          acceptanceId: acceptanceId!,
+          expectedOrchestrationId: current.orchestrationId,
+          expectedStageId: current.acceptanceStageId,
+        });
       }
       const receipt = {
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,

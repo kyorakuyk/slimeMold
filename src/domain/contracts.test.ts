@@ -259,6 +259,16 @@ describe('Phase 0a domain contracts', () => {
 
     expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/receipt|TaskCleaned/i);
   });
+  it('rejects cleanupStatus on a non-TaskCleaned lifecycle event', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'fake-cleanup-status',
+      eventType: 'TaskStarted',
+      payload: {
+        runId: 'run-fake-cleanup',
+        cleanupStatus: 'cleaned',
+      },
+    })])).toThrow(/cleanupStatus|TaskCleaned/i);
+  });
   it('keeps separate task executions and attempts when one task runs twice', () => {
     const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
     const secondExecutionId = createTaskExecutionId('run-b', 'task-1');
