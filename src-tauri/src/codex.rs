@@ -1050,10 +1050,17 @@ fn join_child_output_recoverable(
             "读取Codex子进程 output 超时；reader retained".to_string(),
             Some((thread, receiver)),
         )),
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err((
-            "Codex output reader channel disconnected；reader retained".to_string(),
-            Some((thread, receiver)),
-        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let detail = match thread.join() {
+                Ok(()) => {
+                    "Codex output reader channel disconnected；reader terminal failure".to_string()
+                }
+                Err(_) => {
+                    "Codex output reader channel disconnected and thread panicked".to_string()
+                }
+            };
+            Err((detail, None))
+        }
     }
 }
 
@@ -1636,16 +1643,17 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
     if prompt.trim().is_empty() {
         return Err("Codex 请求不能为空。".into());
     }
-    retry_unscoped_codex_recoveries()?;
-    let auth = codex_login_status()?;
-    if !auth.logged_in {
-        return Err("未检测到 Codex 的 ChatGPT 登录，请先登录。".into());
-    }
-    if auth.auth_mode != "chatgpt" {
-        return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
-    }
-    let program = codex_program()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _operation_guard = crate::lock_dev_operation();
+        retry_unscoped_codex_recoveries()?;
+        let auth = codex_login_status()?;
+        if !auth.logged_in {
+            return Err("未检测到 Codex 的 ChatGPT 登录，请先登录。".into());
+        }
+        if auth.auth_mode != "chatgpt" {
+            return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
+        }
+        let program = codex_program()?;
         run_exec(CodexExecRequest {
             program,
             prompt,
@@ -1677,99 +1685,89 @@ pub async fn codex_worker_exec(
     if prompt.trim().is_empty() {
         return Err("Codex Worker 请求不能为空。".into());
     }
-    crate::assert_session_generation(generation, "codex_worker_exec")?;
-    let worktree = crate::assert_registered_worktree(&cwd)?;
-    let (_, current_identity) = crate::dev_cwd_binding(&cwd)?;
     if !valid_operation_id(&operation_id) {
         return Err("Codex operation token 非法".into());
     }
-    let prepared = prepared_codex_leases()
-        .lock()
-        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-        .get(&operation_id)
-        .cloned()
-        .ok_or_else(|| "Codex Worker lease不存在或已使用".to_string())?;
-    if Instant::now().duration_since(prepared.created_at) >= CODEX_PREPARED_LEASE_TTL {
-        prepared_codex_leases()
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation_guard = crate::lock_dev_operation();
+        crate::assert_session_generation(generation, "codex_worker_exec")?;
+        let worktree = crate::assert_registered_worktree(&cwd)?;
+        let (_, current_identity) = crate::dev_cwd_binding(&cwd)?;
+        let prepared = prepared_codex_leases()
             .lock()
             .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-            .remove(&operation_id);
-        return Err("Codex Worker lease已过期".into());
-    }
-    if prepared.session_generation != generation
-        || !same_cwd_path(&prepared.cwd, &worktree)
-        || prepared.identity != current_identity
-    {
-        return Err("Codex Worker lease与当前session/cwd不匹配".into());
-    }
-    let pending_generation = begin_pending_operation(&operation_id, generation)?;
-    let prepared = match prepared_codex_leases().lock() {
-        Err(error) => {
-            let finish_error = finish_pending_operation(&operation_id, pending_generation)
-                .err()
-                .unwrap_or_else(|| "pending lease cleanup attempted".to_string());
-            return Err(format!(
-                "Codex prepared lease registry 已损坏：{error}; {finish_error}"
-            ));
+            .get(&operation_id)
+            .cloned()
+            .ok_or_else(|| "Codex Worker lease不存在或已使用".to_string())?;
+        if Instant::now().duration_since(prepared.created_at) >= CODEX_PREPARED_LEASE_TTL {
+            prepared_codex_leases()
+                .lock()
+                .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
+                .remove(&operation_id);
+            return Err("Codex Worker lease已过期".into());
         }
-        Ok(mut leases) => match leases.remove(&operation_id) {
-            Some(prepared) => prepared,
-            None => {
-                drop(leases);
-                finish_pending_operation(&operation_id, pending_generation)?;
-                return Err("Codex Worker lease在启动前消失".into());
+        if prepared.session_generation != generation
+            || !same_cwd_path(&prepared.cwd, &worktree)
+            || prepared.identity != current_identity
+        {
+            return Err("Codex Worker lease与当前session/cwd不匹配".into());
+        }
+        let pending_generation = begin_pending_operation(&operation_id, generation)?;
+        let prepared = match prepared_codex_leases().lock() {
+            Err(error) => {
+                let finish_error = finish_pending_operation(&operation_id, pending_generation)
+                    .err()
+                    .unwrap_or_else(|| "pending lease cleanup attempted".to_string());
+                return Err(format!(
+                    "Codex prepared lease registry 已损坏：{error}; {finish_error}"
+                ));
             }
-        },
-    };
-    if prepared.cancellation_requested {
-        finish_pending_operation(&operation_id, pending_generation)?;
-        return Err("Codex Worker 已取消".into());
-    }
-    let operation_for_task = operation_id.clone();
-    let prepared_identity = prepared.identity.clone();
-    let result = async {
-        let auth = codex_login_status()?;
-        if take_cancelled_operation(&operation_for_task)? {
+            Ok(mut leases) => match leases.remove(&operation_id) {
+                Some(prepared) => prepared,
+                None => {
+                    drop(leases);
+                    finish_pending_operation(&operation_id, pending_generation)?;
+                    return Err("Codex Worker lease在启动前消失".into());
+                }
+            },
+        };
+        if prepared.cancellation_requested {
+            finish_pending_operation(&operation_id, pending_generation)?;
             return Err("Codex Worker 已取消".into());
         }
-        if !auth.logged_in {
-            return Err("未检测到 Codex 的 ChatGPT 登录，请先登录。".into());
-        }
-        if auth.auth_mode != "chatgpt" {
-            return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
-        }
-        let program = codex_program()?;
-        let generation_for_task = generation;
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            let _operation_guard = crate::lock_dev_operation();
-            crate::assert_session_generation(generation_for_task, "codex_worker_exec")?;
+        let result = (|| {
+            let auth = codex_login_status()?;
+            if take_cancelled_operation(&operation_id)? {
+                return Err("Codex Worker 已取消".into());
+            }
+            if !auth.logged_in {
+                return Err("未检测到 Codex 的 ChatGPT 登录，请先登录。".into());
+            }
+            if auth.auth_mode != "chatgpt" {
+                return Err("当前 Codex 使用的不是 ChatGPT 计划登录（可能是 API Key）。请先执行 Codex 登出，再用 ChatGPT 登录。".into());
+            }
+            let program = codex_program()?;
             run_exec(CodexExecRequest {
                 program,
                 prompt,
                 model,
                 cwd: Some(worktree),
                 sandbox_mode: "workspace-write",
-                operation_id: Some(operation_for_task.clone()),
-                session_generation: Some(generation_for_task),
+                operation_id: Some(operation_id.clone()),
+                session_generation: Some(generation),
                 pending_operation_generation: Some(pending_generation),
-                prepared_cwd_identity: Some(prepared_identity),
+                prepared_cwd_identity: Some(prepared.identity),
             })
-        })
-        .await
-        .map_err(|e| format!("Codex Worker 后台任务失败：{e}"))??;
-        Ok(result)
-    }
-    .await;
-    let cancelled_during_finalization =
-        match finish_pending_operation(&operation_id, pending_generation) {
-            Ok(cancelled) => cancelled,
-            Err(error) => return Err(error),
-        };
-    if cancelled_during_finalization {
-        Err("Codex Worker 在finalization期间被取消；side effects unknown".into())
-    } else {
-        result
-    }
+        })();
+        let cancelled_during_finalization = finish_pending_operation(&operation_id, pending_generation)?;
+        if cancelled_during_finalization {
+            Err("Codex Worker 在finalization期间被取消；side effects unknown".into())
+        } else {
+            result
+        }
+    })
+    .await
+    .map_err(|e| format!("Codex Worker 后台任务失败：{e}"))?
 }
 
 /// 取消当前 SlimeMold 进程注册的 Codex Worker；未知 operation 视为幂等成功。
@@ -2255,6 +2253,29 @@ mod tests {
                 .expect_err("terminal reader error should remain visible"),
             "synthetic reader failure"
         );
+    }
+    #[test]
+    fn disconnected_reader_is_terminal_and_joined() {
+        let (sender, receiver) = mpsc::channel::<Result<Vec<u8>, String>>();
+        drop(sender);
+        let thread = thread::spawn(|| {});
+        let cleanup = Arc::new(Mutex::new(CodexCleanupContext {
+            output_path: PathBuf::new(),
+            stdout: Some((thread, receiver)),
+            stderr: None,
+            stdout_done: false,
+            stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
+            stdout_joining: false,
+            stderr_joining: false,
+        }));
+        let error = join_cleanup_reader(&cleanup, true).expect_err("disconnect should fail closed");
+        assert!(error.contains("terminal failure"));
+        let state = cleanup.lock().expect("cleanup state should remain healthy");
+        assert!(state.stdout_done);
+        assert!(state.stdout.is_none());
+        assert!(state.stdout_error.is_some());
     }
     #[test]
     fn unregistered_child_cleanup_reaps_readers_and_artifact() {

@@ -3881,3 +3881,24 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.181 unverified：Codex execution/session lock boundary 与 terminal reader disconnect
+
+- 普通只读 `codex_exec` 的 retry、auth、program resolve、spawn、cleanup和recovery owner现在都在 `DEV_OPERATION_LOCK` 内；session init/clear不会与 unscoped Codex process或recovery retry并发。
+- Worker `prepare → pending begin → prepared lease consume → auth → spawn → cleanup → finish_pending`整体移动到同一 blocking host operation lease；不再在等待 host lock前创建 pending，session quiescence不会错过旧 worker。
+- `clear_codex_session_state`只在同一 host lock内执行，未取消 pending、active cleanup failure或unscoped recovery failure都会阻止session切换；pending的最终移除仍由worker finalization负责。
+- `RecvTimeoutError::Disconnected`现在join reader thread并记录terminal failure，不再保留已终止的JoinHandle；新增 disconnected-reader回归测试。
+- 本 checkpoint 不标记 verified；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`95 passed / 0 failed`；Codex targeted：`17 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
