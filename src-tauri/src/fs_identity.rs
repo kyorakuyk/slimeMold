@@ -1,7 +1,7 @@
 use std::fs;
 
 #[cfg(windows)]
-use super::{GetFileInformationByHandle, WinByHandleFileInformation};
+use crate::file_authority::{GetFileInformationByHandle, WinByHandleFileInformation};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StableDirectoryIdentity {

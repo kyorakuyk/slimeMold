@@ -4054,3 +4054,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 没有新增 state carrier、operation lock 或权限旁路；所有 lifecycle command 继续使用同一 `DEV_OPERATION_LOCK`、SessionStamp/generation、StableDirectoryIdentity、pending lease、cleanup capability 和 branch CAS/read-back顺序。
 - 验证：Codex cwd targeted `1 passed / 0 failed`；unregister targeted `1 passed / 0 failed`；cleanup capability targeted `1 passed / 0 failed`；orphan candidate targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `2030` 行，新 `worktree_authority.rs` `1440` 行。
 - build 仍保留既有动态/静态 import 与大 chunk warning（最大约 `1,159.81 kB`）；本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.201 unverified：抽出 file authority
+
+- 新增 `src-tauri/src/file_authority.rs`，承接 stateful registered-worktree path gate、hardlink rejection、StableFileIdentity、Windows handle/reparse FFI、Unix openat/no-follow parent/final binding、bound read/write/create helpers及三个 file commands。
+- `lib.rs` 保留 dev_exec/process authority、session init/clear、Tauri bootstrap；dev_exec通过crate-private seam继续调用 `dev_exec_path_allowed`、hardlink与Unix bound cwd identity helpers，`fs_identity.rs`通过同一 file authority FFI实现，未复制第二份平台实现。
+- file commands 的 Tauri name、参数、返回值和 handler 顺序保持不变；SessionStamp/generation、DEV_OPERATION_LOCK、worktree registration和protected-path policy ownership未改变。
+- 验证：file targeted `6 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `1357` 行，新 `file_authority.rs` `695` 行。
+- 当前验证发生在 Windows；Unix/macOS openat/no-follow 原生矩阵、Windows reparse/junction adversarial matrix仍未验证。build保留既有大 chunk warning（最大约 `1,159.81 kB`）；本 checkpoint 不标记 verified。
