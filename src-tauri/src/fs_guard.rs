@@ -1,5 +1,20 @@
 use std::path::{Path, PathBuf};
 
+pub(crate) fn dev_strip_verbatim(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    #[cfg(windows)]
+    {
+        let value = s.as_ref();
+        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(verbatim) = value.strip_prefix(r"\\?\") {
+            return PathBuf::from(verbatim);
+        }
+    }
+    PathBuf::from(s.as_ref())
+}
+
 pub(crate) fn path_compare_key(raw: &str) -> String {
     let mut normalized = raw.replace('\\', "/").trim_end_matches('/').to_string();
     #[cfg(windows)]
@@ -200,10 +215,10 @@ pub(crate) fn dev_arg_path_lexically_safe(arg: &str) -> bool {
 pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
     let name = args.first().map(|value| value.as_str());
     let check = |arg: &str| -> Result<(), String> {
-        let worktree_root = super::dev_strip_verbatim(Path::new(cwd));
+        let worktree_root = dev_strip_verbatim(Path::new(cwd));
         let joined = worktree_root.join(arg);
         let canonical = canonicalize_required(&joined, arg)?;
-        let normalized = super::dev_strip_verbatim(&canonical);
+        let normalized = dev_strip_verbatim(&canonical);
         if !path_is_same_or_child(&normalized, &worktree_root) {
             return Err(format!("dev_exec: 参数路径逃逸出 worktree：{arg}"));
         }
@@ -300,9 +315,7 @@ pub(crate) fn canonicalize_dev_exec_args(
         if !path_is_same_or_child(&canonical, cwd) {
             return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
         }
-        result[index] = super::dev_strip_verbatim(&canonical)
-            .to_string_lossy()
-            .to_string();
+        result[index] = dev_strip_verbatim(&canonical).to_string_lossy().to_string();
         Ok(())
     };
     match args.first().map(|value| value.as_str()) {

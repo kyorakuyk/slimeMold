@@ -36,7 +36,8 @@ pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
-    dev_exec_validate_paths, is_git_diff_revision, path_compare_key, path_is_same_or_child,
+    dev_exec_validate_paths, dev_strip_verbatim, is_git_diff_revision, path_compare_key,
+    path_is_same_or_child,
 };
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
@@ -3305,22 +3306,6 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
         !registered_worktree_identity_matches(registered, generation, &c, &branch)
     });
     Ok(())
-}
-
-/// Windows `\\?\` 扩展前缀（canonicalize 在长路径/UNC 下的产物）——比较前统一剥离。
-fn dev_strip_verbatim(p: &std::path::Path) -> std::path::PathBuf {
-    let s = p.to_string_lossy();
-    #[cfg(windows)]
-    {
-        let value = s.as_ref();
-        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-            return std::path::PathBuf::from(format!(r"\\{unc}"));
-        }
-        if let Some(verbatim) = value.strip_prefix(r"\\?\") {
-            return std::path::PathBuf::from(verbatim);
-        }
-    }
-    std::path::PathBuf::from(s.as_ref())
 }
 
 fn protected_relative_path(rel: &str) -> bool {

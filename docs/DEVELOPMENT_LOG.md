@@ -3945,3 +3945,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs`仅保留两个 `#[cfg(test)] mod ...;` 声明；测试继续通过 `super::*` 访问同一宿主私有 API，保持测试语义和权限边界不变。
 - 验证：Rust `95 passed / 0 failed`；`cargo fmt`、`cargo check`、`git diff --check`通过；迁移后 `lib.rs` 实测 `4447` 行，两个外置测试文件分别为 `1376` 和 `609` 行。
 - 本轮未运行前端门（仅移动 Rust 内联测试，不涉及 TypeScript/前端产物）；本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.186 unverified：抽出 fs_guard 的 verbatim path normalizer
+
+- 将纯函数 `dev_strip_verbatim` 从 `src-tauri/src/lib.rs` 迁移到已有 `src-tauri/src/fs_guard.rs`，保留 Windows `\\?\`/UNC 分支和非 Windows 透传语义。
+- `lib.rs`通过 crate 内可见 import 保持原调用名；`fs_guard`内部改为直接使用本模块 helper，未移动 `DEV_STATE`、identity rebinding 或文件生命周期逻辑。
+- 验证：`fs_guard` `11 passed / 0 failed`；`dev_exec_tests` `26 passed / 0 failed`；`dev_write_symlink_tests` `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4432` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
