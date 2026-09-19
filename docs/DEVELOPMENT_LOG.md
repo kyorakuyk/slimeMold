@@ -4046,3 +4046,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 保留明确 crate-private root re-export：生产 caller 使用 lifecycle helper，测试 helper 仅在 cfg(test) 暴露；未增加第二套 state carrier 或 lock。
 - 验证：worktree lifecycle targeted `1 passed / 0 failed`；pending rollback targeted `1 passed / 0 failed`；identity-conflict targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `2953` 行，新 `worktree_authority.rs` `503` 行。
 - build 保留既有动态/静态 import 与大 chunk warning（最大约 `1,159.81 kB`）；本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.200 unverified：抽出 worktree Git/lifecycle authority
+
+- `worktree_authority.rs`继续承接 Git worktree/branch probes、porcelain validation、registration、trusted restore、orphan lineage、native cleanup approval/CAS/removal 与 unregister；`dev_init_session`/`dev_clear_session`仍留在 `lib.rs`，保留Codex session teardown顺序。
+- Tauri handler 改为 module-qualified registration；command names、参数、返回值和前端 IPC 字符串保持不变。`cleanup_lineage_policy`直接依赖 `dev_state::CleanupBinding`，测试所需 carrier/policy 仅通过 cfg(test) root seam 暴露。
+- 没有新增 state carrier、operation lock 或权限旁路；所有 lifecycle command 继续使用同一 `DEV_OPERATION_LOCK`、SessionStamp/generation、StableDirectoryIdentity、pending lease、cleanup capability 和 branch CAS/read-back顺序。
+- 验证：Codex cwd targeted `1 passed / 0 failed`；unregister targeted `1 passed / 0 failed`；cleanup capability targeted `1 passed / 0 failed`；orphan candidate targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `2030` 行，新 `worktree_authority.rs` `1440` 行。
+- build 仍保留既有动态/静态 import 与大 chunk warning（最大约 `1,159.81 kB`）；本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
