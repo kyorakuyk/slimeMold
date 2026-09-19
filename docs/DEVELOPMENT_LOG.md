@@ -4248,3 +4248,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - App 删除重复实现并改为导入 recovery facts；新增 direct tests，验证无可信 receipt时不改变 Worker state、unknown/needs-user effect只产生对应 Run recovery集合。
 - GREEN：focused `4 files / 16 tests`；完整 Node `131 test files / 1151 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是新的纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续抽 WorkerRecovery/receipt controller 的 I/O wiring，再进行真实 Tauri E2E；历史 unverified继续后置。
+
+### 7.227 verified：Worker recovery facts slice review closure
+
+- exact HEAD `fd74927` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认抽出函数与原 App 实现语义等价，App调用方已切换到唯一 owner，I/O/store/UI边界未移动，底层 cleanup receipt lineage/attempt/hash校验保持有效。
+- 同一代码快照质量门：Node `131 test files / 1151 tests`；focused `24 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-recovery-facts-verified`。该 tag只证明 recovery facts结构切片，不代表 Worker blocker、真实 GUI/E2E、native hardening或历史 unverified已关闭。Reviewer建议的额外 valid/cross-attempt direct fixture为非阻塞建议。
