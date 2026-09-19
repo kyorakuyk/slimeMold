@@ -17,6 +17,7 @@ const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CODEX_OUTPUT_CAP: usize = 16 * 1024 * 1024;
 const CODEX_PREPARED_LEASE_TTL: Duration = Duration::from_secs(5 * 60);
 const CODEX_PREPARED_LEASE_CAP: usize = 128;
+const CODEX_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 type ChildHandle = Arc<Mutex<Option<std::process::Child>>>;
 struct ActiveChild {
     session_generation: u64,
@@ -211,6 +212,16 @@ impl CodexSpawnReservation {
         );
         Ok(())
     }
+
+    fn retain_child_for_recovery(&mut self, handle: ChildHandle) {
+        self.active.insert(
+            self.operation_id.clone(),
+            ActiveChild {
+                session_generation: self.session_generation,
+                handle,
+            },
+        );
+    }
 }
 
 fn reserve_codex_operation(
@@ -218,6 +229,8 @@ fn reserve_codex_operation(
     session_generation: u64,
     pending_generation: u64,
 ) -> Result<CodexSpawnReservation, String> {
+    // Lock-order invariant: every path that holds both registries acquires active first, then pending.
+    // Cancellation uses the same order so it cannot consume pending state around spawn registration.
     let active = active_codex_children()
         .lock()
         .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
@@ -342,24 +355,97 @@ fn remove_codex_output(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
-fn kill_child_tree(child: &mut std::process::Child) {
+fn request_child_tree_kill(child: &mut std::process::Child) -> Vec<String> {
+    let mut errors = Vec::new();
     #[cfg(unix)]
     {
         let pid = child.id() as i32;
-        unsafe {
-            let _ = libc::kill(-pid, libc::SIGKILL);
+        let result = unsafe { libc::kill(-pid, libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                errors.push(format!("Codex process-group termination failed: {error}"));
+            }
         }
     }
     #[cfg(windows)]
     {
-        if let Ok(taskkill) = trusted_windows_system_executable("taskkill.exe") {
-            let pid = child.id().to_string();
-            let _ = Command::new(taskkill)
-                .args(["/PID", &pid, "/T", "/F"])
-                .status();
+        match trusted_windows_system_executable("taskkill.exe") {
+            Ok(taskkill) => {
+                let pid = child.id().to_string();
+                match Command::new(taskkill)
+                    .args(["/PID", &pid, "/T", "/F"])
+                    .status()
+                {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => errors.push(format!(
+                        "Codex taskkill failed with status {}",
+                        status
+                            .code()
+                            .map_or_else(|| "unknown".to_string(), |code| code.to_string())
+                    )),
+                    Err(error) => errors.push(format!("Codex taskkill failed: {error}")),
+                }
+            }
+            Err(error) => errors.push(error),
         }
     }
-    let _ = child.kill();
+    if let Err(error) = child.kill() {
+        if error.kind() != std::io::ErrorKind::InvalidInput
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            errors.push(format!("Codex direct child termination failed: {error}"));
+        }
+    }
+    errors
+}
+
+fn terminate_child_checked(child: &mut std::process::Child) -> Result<(), String> {
+    match child.try_wait() {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {}
+        Err(error) => {
+            return Err(format!(
+                "Codex child termination status could not be read: {error}"
+            ));
+        }
+    }
+    let errors = request_child_tree_kill(child);
+    let deadline = Instant::now() + CODEX_CLEANUP_WAIT_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                if errors.is_empty() {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "Codex child exited but termination fencing failed: {}",
+                    errors.join("; ")
+                ));
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let detail = if errors.is_empty() {
+                    "termination request did not end the child".to_string()
+                } else {
+                    errors.join("; ")
+                };
+                return Err(format!(
+                    "Codex child remains alive after bounded termination wait: {detail}"
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(error) => {
+                return Err(format!(
+                    "Codex child termination status could not be read: {error}; {}",
+                    errors.join("; ")
+                ));
+            }
+        }
+    }
+}
+
+fn kill_child_tree(child: &mut std::process::Child) {
+    let _ = request_child_tree_kill(child);
 }
 
 fn apply_env(command: &mut Command, values: HashMap<String, String>) {
@@ -388,18 +474,76 @@ fn cleanup_codex_run(
     handle: &ChildHandle,
     operation_id: Option<&str>,
     output_path: &std::path::Path,
-) {
-    if let Some(operation_id) = operation_id {
-        unregister_child(operation_id, handle);
-    }
-    if let Ok(mut guard) = handle.lock() {
-        if let Some(child) = guard.as_mut() {
-            kill_child_tree(child);
-            let _ = child.wait();
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let terminated = match handle.lock() {
+        Ok(mut guard) => match guard.as_mut() {
+            Some(child) => match terminate_child_checked(child) {
+                Ok(()) => {
+                    let _ = guard.take();
+                    true
+                }
+                Err(error) => {
+                    errors.push(error);
+                    false
+                }
+            },
+            None => true,
+        },
+        Err(_) => {
+            errors.push("Codex child handle 已损坏".to_string());
+            false
         }
+    };
+    if terminated {
+        if let Some(operation_id) = operation_id {
+            unregister_child(operation_id, handle);
+        }
+        if let Err(error) = remove_codex_output(output_path) {
+            errors.push(error);
+        }
+    } else {
+        errors.push("Codex child termination未确认；active handle retained".to_string());
     }
-    if let Err(error) = remove_codex_output(output_path) {
-        eprintln!("[codex] {error}; side effects unknown");
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn append_cleanup_failure(primary: String, cleanup: Result<(), String>) -> String {
+    match cleanup {
+        Ok(()) => primary,
+        Err(error) => format!("{primary}; cleanup failed: {error}; side effects unknown"),
+    }
+}
+
+fn cleanup_failed_codex_run(
+    handle: &ChildHandle,
+    operation_id: Option<&str>,
+    output_path: &std::path::Path,
+    stdin_result: Option<&Receiver<Result<(), String>>>,
+    stdout_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
+    stderr_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if let Err(error) = cleanup_codex_run(handle, operation_id, output_path) {
+        errors.push(error);
+    }
+    if let Err(error) = await_stdin_write(stdin_result) {
+        errors.push(error);
+    }
+    if let Err(error) = join_child_output(stdout_thread) {
+        errors.push(error);
+    }
+    if let Err(error) = join_child_output(stderr_thread) {
+        errors.push(error);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -422,6 +566,19 @@ pub struct CodexUsage {
 pub struct CodexExecResult {
     pub text: String,
     pub usage: Option<CodexUsage>,
+}
+
+#[derive(Debug)]
+struct CodexExecRequest {
+    program: PathBuf,
+    prompt: String,
+    model: Option<String>,
+    cwd: Option<PathBuf>,
+    sandbox_mode: &'static str,
+    operation_id: Option<String>,
+    session_generation: Option<u64>,
+    pending_operation_generation: Option<u64>,
+    prepared_cwd_identity: Option<crate::StableDirectoryIdentity>,
 }
 
 fn trusted_native_file(path: &std::path::Path) -> Option<PathBuf> {
@@ -653,22 +810,34 @@ fn join_child_output(
     crate::receive_output("Codex", thread, receiver)
 }
 
+struct UnregisteredChildCleanupError {
+    message: String,
+    child_may_be_alive: bool,
+}
+
 fn cleanup_unregistered_codex_child(
     handle: &ChildHandle,
     stdout_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
     stderr_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
     output_path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), UnregisteredChildCleanupError> {
     let mut errors = Vec::new();
+    let mut child_may_be_alive = false;
     match handle.lock() {
         Ok(mut guard) => {
             if let Some(child) = guard.as_mut() {
-                kill_child_tree(child);
-                let _ = child.wait();
+                if let Err(error) = terminate_child_checked(child) {
+                    child_may_be_alive = true;
+                    errors.push(error);
+                } else {
+                    let _ = guard.take();
+                }
             }
-            let _ = guard.take();
         }
-        Err(_) => errors.push("Codex child handle 已损坏".to_string()),
+        Err(_) => {
+            child_may_be_alive = true;
+            errors.push("Codex child handle 已损坏".to_string());
+        }
     }
     if let Err(error) = join_child_output(stdout_thread) {
         errors.push(error);
@@ -682,7 +851,10 @@ fn cleanup_unregistered_codex_child(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("; "))
+        Err(UnregisteredChildCleanupError {
+            message: errors.join("; "),
+            child_may_be_alive,
+        })
     }
 }
 
@@ -716,17 +888,18 @@ fn await_stdin_write(receiver: Option<&Receiver<Result<(), String>>>) -> Result<
     }
 }
 
-fn run_exec(
-    program: PathBuf,
-    prompt: String,
-    model: Option<String>,
-    cwd: Option<PathBuf>,
-    sandbox_mode: &str,
-    operation_id: Option<String>,
-    session_generation: Option<u64>,
-    pending_operation_generation: Option<u64>,
-    prepared_cwd_identity: Option<crate::StableDirectoryIdentity>,
-) -> Result<CodexExecResult, String> {
+fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
+    let CodexExecRequest {
+        program,
+        prompt,
+        model,
+        cwd,
+        sandbox_mode,
+        operation_id,
+        session_generation,
+        pending_operation_generation,
+        prepared_cwd_identity,
+    } = request;
     validate_operation_binding(
         operation_id.as_deref(),
         session_generation,
@@ -823,29 +996,32 @@ fn run_exec(
             return Err(format!("无法启动 Codex CLI：{error}"));
         }
     };
-    let stdout_thread = child
-        .stdout
-        .take()
-        .map(|stream| crate::spawn_output_reader(stream));
-    let stderr_thread = child
-        .stderr
-        .take()
-        .map(|stream| crate::spawn_output_reader(stream));
+    let stdout_thread = child.stdout.take().map(crate::spawn_output_reader);
+    let stderr_thread = child.stderr.take().map(crate::spawn_output_reader);
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(reservation) = spawn_reservation.as_mut() {
         if let Err(error) = reservation.register_child(handle.clone()) {
-            let cleanup_result = cleanup_unregistered_codex_child(
+            match cleanup_unregistered_codex_child(
                 &handle,
                 stdout_thread,
                 stderr_thread,
                 &output_path,
-            );
-            return Err(match cleanup_result {
-                Ok(()) => format!("Codex child registration failed; child/output cleaned: {error}"),
-                Err(cleanup_error) => format!(
-                    "Codex child registration failed; cleanup failed: {cleanup_error}; side effects unknown: {error}"
-                ),
-            });
+            ) {
+                Ok(()) => {
+                    return Err(format!(
+                        "Codex child registration failed; child/output cleaned: {error}"
+                    ));
+                }
+                Err(cleanup_error) => {
+                    if cleanup_error.child_may_be_alive {
+                        reservation.retain_child_for_recovery(handle.clone());
+                    }
+                    return Err(format!(
+                        "Codex child registration failed; cleanup failed: {}; side effects unknown: {error}",
+                        cleanup_error.message
+                    ));
+                }
+            }
         }
     }
     drop(spawn_reservation);
@@ -871,84 +1047,80 @@ fn run_exec(
         match status {
             Ok(Some(status)) => break status,
             Ok(None) if started_at.elapsed() >= CODEX_EXEC_TIMEOUT => {
-                if let Ok(mut guard) = handle.lock() {
-                    if let Some(child) = guard.as_mut() {
-                        kill_child_tree(child);
-                        let _ = child.wait();
-                    }
-                }
-                let stdin_cleanup = await_stdin_write(stdin_result.as_ref());
-                if let Some(operation_id) = operation_id.as_deref() {
-                    unregister_child(operation_id, &handle);
-                }
-                let _ = join_child_output(stdout_thread);
-                let _ = join_child_output(stderr_thread);
-                if let Err(cleanup_error) = remove_codex_output(&output_path) {
-                    eprintln!("[codex] {cleanup_error}; side effects unknown");
-                }
-                if let Err(stdin_error) = stdin_cleanup {
-                    return Err(format!("Codex 执行超时；{stdin_error}"));
-                }
-                return Err("Codex 执行超时（30 分钟）".into());
+                let cleanup = cleanup_failed_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &output_path,
+                    stdin_result.as_ref(),
+                    stdout_thread,
+                    stderr_thread,
+                );
+                return Err(append_cleanup_failure(
+                    "Codex 执行超时（30 分钟）".into(),
+                    cleanup,
+                ));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
             Err(error) => {
-                if let Ok(mut guard) = handle.lock() {
-                    if let Some(child) = guard.as_mut() {
-                        kill_child_tree(child);
-                        let _ = child.wait();
-                    }
-                }
-                let stdin_cleanup = await_stdin_write(stdin_result.as_ref());
-                if let Some(operation_id) = operation_id.as_deref() {
-                    unregister_child(operation_id, &handle);
-                }
-                let _ = join_child_output(stdout_thread);
-                let _ = join_child_output(stderr_thread);
-                if let Err(cleanup_error) = remove_codex_output(&output_path) {
-                    eprintln!("[codex] {cleanup_error}; side effects unknown");
-                }
-                if let Err(stdin_error) = stdin_cleanup {
-                    return Err(format!("等待 Codex CLI 结束失败；{stdin_error}"));
-                }
-                return Err(format!("等待 Codex CLI 结束失败：{error}"));
+                let cleanup = cleanup_failed_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &output_path,
+                    stdin_result.as_ref(),
+                    stdout_thread,
+                    stderr_thread,
+                );
+                return Err(append_cleanup_failure(
+                    format!("等待 Codex CLI 结束失败：{error}"),
+                    cleanup,
+                ));
             }
         }
     };
-    if let Ok(mut guard) = handle.lock() {
-        if let Some(child) = guard.as_mut() {
-            kill_child_tree(child);
-            let _ = child.wait();
+    match handle.lock() {
+        Ok(mut guard) => {
+            if let Some(child) = guard.as_mut() {
+                if let Err(error) = terminate_child_checked(child) {
+                    return Err(format!(
+                        "Codex child termination failed after process exit; side effects unknown: {error}"
+                    ));
+                }
+                let _ = guard.take();
+            }
         }
+        Err(_) => return Err("Codex child handle 已损坏；side effects unknown".into()),
     }
-
     if let Err(error) = await_stdin_write(stdin_result.as_ref()) {
-        cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
-        return Err(error);
+        return Err(append_cleanup_failure(
+            error,
+            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path),
+        ));
     }
 
     if let Some(operation_id) = operation_id.as_deref() {
         if take_cancelled_operation(operation_id)? {
-            cleanup_codex_run(&handle, Some(operation_id), &output_path);
-            return Err("Codex Worker 已取消；side effects unknown".into());
+            return Err(append_cleanup_failure(
+                "Codex Worker 已取消；side effects unknown".into(),
+                cleanup_codex_run(&handle, Some(operation_id), &output_path),
+            ));
         }
     }
 
     let out_buf = match join_child_output(stdout_thread) {
         Ok(buffer) => buffer,
         Err(error) => {
-            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
-            return Err(format!(
-                "Codex output capture failed; side effects unknown: {error}"
+            return Err(append_cleanup_failure(
+                format!("Codex output capture failed; side effects unknown: {error}"),
+                cleanup_codex_run(&handle, operation_id.as_deref(), &output_path),
             ));
         }
     };
     let err_buf = match join_child_output(stderr_thread) {
         Ok(buffer) => buffer,
         Err(error) => {
-            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
-            return Err(format!(
-                "Codex output capture failed; side effects unknown: {error}"
+            return Err(append_cleanup_failure(
+                format!("Codex output capture failed; side effects unknown: {error}"),
+                cleanup_codex_run(&handle, operation_id.as_deref(), &output_path),
             ));
         }
     };
@@ -958,9 +1130,9 @@ fn run_exec(
     let file_message = match read_codex_output(&output_path) {
         Ok(message) => message,
         Err(error) => {
-            cleanup_codex_run(&handle, operation_id.as_deref(), &output_path);
-            return Err(format!(
-                "Codex output capture failed; side effects unknown: {error}"
+            return Err(append_cleanup_failure(
+                format!("Codex output capture failed; side effects unknown: {error}"),
+                cleanup_codex_run(&handle, operation_id.as_deref(), &output_path),
             ));
         }
     };
@@ -1019,17 +1191,17 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
     }
     let program = codex_program()?;
     tauri::async_runtime::spawn_blocking(move || {
-        run_exec(
+        run_exec(CodexExecRequest {
             program,
             prompt,
             model,
-            None,
-            "read-only",
-            None,
-            None,
-            None,
-            None,
-        )
+            cwd: None,
+            sandbox_mode: "read-only",
+            operation_id: None,
+            session_generation: None,
+            pending_operation_generation: None,
+            prepared_cwd_identity: None,
+        })
     })
     .await
     .map_err(|e| format!("Codex 后台任务失败：{e}"))?
@@ -1088,19 +1260,13 @@ pub async fn codex_worker_exec(
         Ok(mut leases) => match leases.remove(&operation_id) {
             Some(prepared) => prepared,
             None => {
-                if let Err(finish_error) =
-                    finish_pending_operation(&operation_id, pending_generation)
-                {
-                    return Err(finish_error);
-                }
+                finish_pending_operation(&operation_id, pending_generation)?;
                 return Err("Codex Worker lease在启动前消失".into());
             }
         },
     };
     if prepared.cancellation_requested {
-        if let Err(finish_error) = finish_pending_operation(&operation_id, pending_generation) {
-            return Err(finish_error);
-        }
+        finish_pending_operation(&operation_id, pending_generation)?;
         return Err("Codex Worker 已取消".into());
     }
     let operation_for_task = operation_id.clone();
@@ -1121,17 +1287,17 @@ pub async fn codex_worker_exec(
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _operation_guard = crate::lock_dev_operation();
             crate::assert_session_generation(generation_for_task, "codex_worker_exec")?;
-            run_exec(
+            run_exec(CodexExecRequest {
                 program,
                 prompt,
                 model,
-                Some(worktree),
-                "workspace-write",
-                Some(operation_for_task.clone()),
-                Some(generation_for_task),
-                Some(pending_generation),
-                Some(prepared_identity),
-            )
+                cwd: Some(worktree),
+                sandbox_mode: "workspace-write",
+                operation_id: Some(operation_for_task.clone()),
+                session_generation: Some(generation_for_task),
+                pending_operation_generation: Some(pending_generation),
+                prepared_cwd_identity: Some(prepared_identity),
+            })
         })
         .await
         .map_err(|e| format!("Codex Worker 后台任务失败：{e}"))??;
@@ -1211,10 +1377,12 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::{
-        begin_pending_operation, build_exec_args, codex_worker_cancel, finish_pending_operation,
-        parse_json_events, reserve_codex_operation, take_cancelled_operation, valid_operation_id,
+        begin_pending_operation, build_exec_args, cleanup_unregistered_codex_child,
+        codex_worker_cancel, create_codex_output, finish_pending_operation, parse_json_events,
+        reserve_codex_operation, take_cancelled_operation, valid_operation_id,
         validate_operation_binding, ChildHandle, CODEX_TEMP_COUNTER,
     };
+    use std::process::{Command, Stdio};
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::Duration;
@@ -1374,5 +1542,52 @@ mod tests {
             .expect("cancel thread should not panic");
         assert!(take_cancelled_operation(&operation).expect("pending registry should be healthy"));
         let _ = finish_pending_operation(&operation, pending_generation);
+    }
+
+    #[test]
+    fn unregistered_child_cleanup_reaps_readers_and_artifact() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "exit", "0"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("cleanup fixture child should spawn");
+        let stdout_thread = child.stdout.take().map(crate::spawn_output_reader);
+        let stderr_thread = child.stderr.take().map(crate::spawn_output_reader);
+        for _ in 0..100 {
+            if child
+                .try_wait()
+                .expect("fixture child status should be readable")
+                .is_some()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output_path = create_codex_output().expect("private output artifact should be created");
+        let output_parent = output_path
+            .parent()
+            .expect("output should have a private parent")
+            .to_path_buf();
+        let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
+        let result =
+            cleanup_unregistered_codex_child(&handle, stdout_thread, stderr_thread, &output_path);
+        if let Err(error) = result {
+            panic!("cleanup failed: {}", error.message);
+        }
+        assert!(handle
+            .lock()
+            .expect("child handle should remain healthy")
+            .is_none());
+        assert!(!output_parent.exists());
     }
 }

@@ -3771,3 +3771,25 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.176 unverified：Codex termination fencing 与 cleanup recovery
+
+- `terminate_child_checked` 现在先确认 child 已退出，再请求 Unix process-group/Windows taskkill/direct kill，并以 bounded `try_wait`确认终止；kill、wait、status读取或超时失败均保留 unknown-effects，不再静默丢弃。
+- `cleanup_unregistered_codex_child` 在终止未确认时保留 child handle；`CodexSpawnReservation` 将其重新登记到 active registry供后续 cancel/recovery，不再 detach继续运行的 child。
+- `cleanup_codex_run`、timeout、try_wait error、stdin/output failure路径统一传播 cleanup failure；成功终止后才 unregister和删除私有 output artifact。
+- `CodexExecRequest` value object收敛`run_exec` binding，移除本轮新增的 too-many-arguments clippy告警；新增真实跨平台 child/reader/output-artifact cleanup回归。
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`仍失败，但剩余报告只涉及既有`src-tauri/src/fs_guard.rs`、`src-tauri/src/lib.rs`和`src-tauri/src/dev_command_policy.rs`；本轮`codex.rs`相关告警已清零。本 checkpoint 不标记 verified。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`89 passed / 0 failed`；Codex targeted：`11 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
