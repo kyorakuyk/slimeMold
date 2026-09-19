@@ -4214,3 +4214,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 保留 `workflowStore` facade、Zustand state shape、公开 action 名称、ProjectFile 序列化、事件 buffer 和现有组件调用合同；`openProject`、`newProject`、`createProject`、`closeProject` 与 persist merge 改为通过 adapter 接入，未改变执行/IPC语义。
 - 新增 adapter 直接测试，并保留 store project-control regression。GREEN：focused `2 files / 10 tests`；完整 Node `129 test files / 1145 tests`；`npm run build`通过，最大 chunk约 `1,170.87 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是第一条纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一刀继续处理 workflowStore 中更完整的 ProjectControl/Worker lifecycle facade，再进入 `App.tsx` 生命周期拆分；真实 Tauri E2E 与历史 unverified 收口后置。
+
+### 7.222 unverified：extract App project lifecycle controller
+
+- 第二条 bounded slice 将 `App.tsx` 中项目身份切换、plugin/DevSession epoch、Worker recovery/evidence/audit scheduling 和 cleanup refresh 的 lifecycle effect 抽到 `src/projectControl/projectLifecycleController.ts`；Worker业务函数通过依赖注入，controller不复制 Worker authority。
+- `App.tsx` 保留 root UI、公开 handler、store facade 与 `ProjectOperation` guard，只保留 controller wiring；旧 subscribe/epoch/cancellation/teardown 顺序保持不变。新增 controller direct tests，覆盖 initial observe/dispose 与 project transition boundary。
+- GREEN：focused `3 files / 12 tests`；完整 Node `130 test files / 1147 tests`；`npm run build`通过，最大 chunk约 `1,171.27 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是行为保持的结构切片，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一步继续收口 WorkerRecovery/receipt handler 或 executor adapter，再进行真实 Tauri E2E；历史 unverified 仍后置。

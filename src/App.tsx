@@ -17,8 +17,8 @@ import WindowTitleBar from './components/WindowTitleBar';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
-import { scanPluginsDir, scanProgramCustomNodes, scanProjectCustomNodes, terminatePluginRuntime, unloadProjectCustomNodes } from './plugins/pluginManager';
-import { createProjectPluginLifecycleScheduler } from './plugins/projectPluginLifecycle';
+import { scanPluginsDir, scanProgramCustomNodes } from './plugins/pluginManager';
+import { createProjectLifecycleController, type ProjectOperation } from './projectControl/projectLifecycleController';
 import { isTauri } from './platform/env';
 import { getLastSession, saveProjectFile } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
@@ -27,7 +27,7 @@ import { buildProjectFile } from './store/workflowSerialize';
 import { shouldRenderWelcomeModal, useViewStore } from './store/viewStore';
 import { loadGlobalAgents } from './agents/globalAgents';
 import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
-import { ensureGuiDevSession, getDevGuiError, teardownGuiDevSession } from './dev/gui';
+import { ensureGuiDevSession, getDevGuiError } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
@@ -214,11 +214,6 @@ export default function App() {
   const panelH = useViewStore((s) => s.panelH);
   const setPanelH = useViewStore((s) => s.setPanelH);
 
-  type ProjectOperation = {
-    projectId: string | null;
-    projectPath: string | null;
-    controller: AbortController;
-  };
   const projectOperationRef = useRef<ProjectOperation | null>(null);
   const getProjectOperation = (projectId: string | null, projectPath: string | null): ProjectOperation => {
     const existing = projectOperationRef.current;
@@ -1192,113 +1187,25 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   useEffect(() => {
-    // Phase 1（H4 GUI）：项目切换时先清 Rust 登记态再卸载旧 DevSession，
-    // 打开时先同步宿主再初始化（audit P1：dev_init_session 成功后才注册 dev 节点）
-    let lastRecoveryKey = '';
-    let lastEvidencePath: string | null = null;
-    const scheduleRecovery = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
-      if (!state.projectId) {
-        lastRecoveryKey = '';
-        return;
-      }
-      const runIds = state.workerRunRecoveries.map((item) => item.runId);
-      const key = `${state.projectId}:${state.projectPath}:${runIds.join(',')}`;
-      if (key === lastRecoveryKey) return;
-      lastRecoveryKey = key;
-      const operation = getProjectOperation(state.projectId, state.projectPath);
-      void recoverInterruptedWorkerEffects(state.projectPath, runIds, operation.controller.signal).catch((cause) => {
-        if (!operation.controller.signal.aborted) {
-          useWorkflowStore.getState().addLog('warn', `Worker recovery 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
-        }
-      });
-    };
-    const scheduleEvidence = (state: ReturnType<typeof useWorkflowStore.getState>): void => {
-      if (!state.projectId || !state.projectPath) {
-        lastEvidencePath = null;
-        return;
-      }
-      if (state.projectPath === lastEvidencePath) return;
-      lastEvidencePath = state.projectPath;
-      const operation = getProjectOperation(state.projectId, state.projectPath);
-      void loadProjectWorkerEvidence(state.projectPath, operation.controller.signal).catch((cause) => {
-        if (!operation.controller.signal.aborted) {
-          useWorkflowStore.getState().addLog('warn', `Worker Evidence 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
-        }
-      });
-    };
-    let sessionTransition: Promise<void> = Promise.resolve();
-    const reloadProjectCustomNodes = (state: {
-      projectId: string | null;
-      projectPath: string | null;
-    }, signal?: AbortSignal): void => {
-      terminatePluginRuntime();
-      unloadProjectCustomNodes();
-      if (state.projectId) {
-        void scanProjectCustomNodes({
-          projectId: state.projectId,
-          projectPath: state.projectPath,
-          signal,
-        }).catch(() => {});
-      }
-    };
-    let projectLifecycle: ReturnType<typeof createProjectPluginLifecycleScheduler>;
-    projectLifecycle = createProjectPluginLifecycleScheduler(({ previous, next, epoch }) => {
-      const operation = getProjectOperation(next.projectId, next.projectPath);
-      reloadProjectCustomNodes(next, operation.controller.signal);
-      sessionTransition = sessionTransition
-        .catch(() => {})
-        .then(async () => {
-          if (operation.controller.signal.aborted) return;
-          if (previous?.projectId) await teardownGuiDevSession();
-          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next) || !next.projectId) return;
-          const session = await ensureGuiDevSession(next.projectPath, operation.controller.signal);
-          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
-          if (!session) return;
-          await restoreWorkerWorktrees(session, useWorkflowStore.getState().workerRuns, operation.controller.signal);
-          if (operation.controller.signal.aborted) return;
-          await loadProjectWorkerEvidence(next.projectPath, operation.controller.signal);
-          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
-          await auditLoadedWorkerRunFacts(
-            next.projectPath,
-            session ? session.listAcceptances() : undefined,
-            operation.controller.signal,
-          );
-          if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
-          const restoredRuns = useWorkflowStore.getState().workerRuns;
-          for (const run of restoredRuns) {
-            if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
-            await refreshWorkerCleanupProposals(session, run.runId, operation.controller.signal);
-          }
-        })
-        .catch((cause) => {
-          if (!operation.controller.signal.aborted) {
-            useWorkflowStore.getState().addLog('warn', `项目生命周期切换失败：${cause instanceof Error ? cause.message : String(cause)}`);
-          }
-        });
+    const projectLifecycle = createProjectLifecycleController({
+      getState: () => useWorkflowStore.getState(),
+      subscribe: (listener) => useWorkflowStore.subscribe(listener),
+      setShowWelcome,
+      getProjectOperation,
+      clearProjectOperation: () => {
+        projectOperationRef.current?.controller.abort();
+        projectOperationRef.current = null;
+      },
+      restoreWorkerWorktrees,
+      loadProjectWorkerEvidence,
+      auditLoadedWorkerRunFacts,
+      refreshWorkerCleanupProposals,
+      recoverInterruptedWorkerEffects,
     });
-    const initialState = useWorkflowStore.getState();
-    getProjectOperation(initialState.projectId, initialState.projectPath);
-    projectLifecycle.observe({
-      projectId: initialState.projectId,
-      projectPath: initialState.projectPath,
-    });
-    scheduleRecovery(initialState);
-    scheduleEvidence(initialState);
-    const unsubscribe = useWorkflowStore.subscribe((s) => {
-      // 有项目则进入主界面；无项目（含关闭项目）则回到欢迎页
-      setShowWelcome(!s.projectId);
-      getProjectOperation(s.projectId, s.projectPath);
-      projectLifecycle.observe({ projectId: s.projectId, projectPath: s.projectPath });
-      scheduleRecovery(s);
-      scheduleEvidence(s);
-    });
-    return () => {
-      projectOperationRef.current?.controller.abort();
-      projectOperationRef.current = null;
-      projectLifecycle.dispose();
-      unsubscribe();
-    };
+    projectLifecycle.start();
+    return () => projectLifecycle.dispose();
   }, []);
+
 
   // 全局快捷键（与菜单标注一致）
   useEffect(() => {
