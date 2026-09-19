@@ -4274,3 +4274,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - cleanup destructive action、runQueuedWorker、Tauri cleanup receipt执行仍留在 App；controller保留非桌面环境、未保存项目和缺失 durable Run 的 fail-closed guards。新增 direct guards测试。
 - GREEN：focused `3 files / 6 tests`；完整 Node `133 test files / 1154 tests`；`npm run build`通过，最大 chunk约 `1,172.46 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续处理 cleanup action边界或进入 executor adapter；真实 Tauri E2E与历史 unverified继续后置。
+
+### 7.231 verified：Worker recovery action controller review closure
+
+- exact HEAD `5f894dc` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 journal/Acceptance/RecoveryCommand顺序、ProjectOperation与项目身份 guard、runtime reinstall、state projection、cleanup proposal suppression、save/retry callback均保持一致，cleanup/runQueued/direct receipt路径未改变。
+- 同一代码快照质量门：Node `133 test files / 1154 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-action-controller-verified`。该 tag只证明 recovery action结构切片，不代表 cleanup action、真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
