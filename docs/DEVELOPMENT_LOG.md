@@ -4147,3 +4147,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs` 从约 `1316` 行降至 `511` 行；未改变 Tauri command 名称、参数、注册顺序、session/generation、cwd、环境清理、launcher、timeout 或 mutation hook 语义。
 - 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
 - 仅完成结构拆分；GUI/E2E、Unix/macOS native matrix、既有 worktree lifecycle residual不在本 slice扩大范围，exact HEAD reviewer尚未完成。
+
+### 7.213 verified：execution dev_exec structural review closure
+
+- exact HEAD `1c09425d6d9384785bdebf661dc73d99b1bf544c` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `execution/dev_exec.rs` 是 H4 execution authority 的生产唯一 owner；`policy/command.rs` 未复制或改写；root 仅保留 bootstrap、registration、legacy `run_git`/session facade 和 cfg(test) seam re-export。
+- reviewer 确认 37 个 Tauri command 的名称、参数、注册顺序和 `dev_exec` IPC contract不变；无 lock、mutation order、session/cwd fence、环境清理、launcher 或 timeout 回归。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/execution-dev-exec-split-verified`。GUI/E2E、Unix/macOS native matrix以及既有 worktree lifecycle residual仍未验证；下一刀继续处理剩余 root facade，不扩大 hardening范围。
