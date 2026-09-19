@@ -4241,3 +4241,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `96e81c7` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`；确认 warning propagation、abort suppression、ProjectOperation、centralized lifecycle/event-buffer ownership 和 scheduler guards均保持行为一致。
 - 同一代码快照质量门：Node `130 test files / 1149 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
 - 已创建本地 verified tag：`checkpoint/frontend-lifecycle-warning-observability-verified`。该 tag只证明本条前端 lifecycle foundation slice及其自动化质量门，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
+
+### 7.226 unverified：extract Worker recovery facts from App
+
+- 第三条前端基础切片将 App 顶层的纯 Worker recovery facts（成功 CleanupReceipt reconciliation、unknown/needs-user cleanup Run detection）抽到 `src/projectControl/workerRecoveryFacts.ts`；Tauri I/O、store mutation 和 UI handler仍留在 App，避免跨 authority 混切。
+- App 删除重复实现并改为导入 recovery facts；新增 direct tests，验证无可信 receipt时不改变 Worker state、unknown/needs-user effect只产生对应 Run recovery集合。
+- GREEN：focused `4 files / 16 tests`；完整 Node `131 test files / 1151 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是新的纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续抽 WorkerRecovery/receipt controller 的 I/O wiring，再进行真实 Tauri E2E；历史 unverified继续后置。

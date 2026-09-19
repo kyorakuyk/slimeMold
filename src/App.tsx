@@ -51,7 +51,7 @@ import { reconcileWorkerRunsFromEvents, rehydrateWorkerRunsFromEvents } from './
 import type { WorkerRunQueueState } from './domain/workerQueue';
 import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
 import type { AcceptanceRecord } from './dev/session';
-import type { DomainProjection, SideEffectRecord } from './domain/contracts';
+import type { DomainProjection } from './domain/contracts';
 import { createAttemptId, createTaskExecutionId } from './domain/execution';
 import { EventStreamRepository } from './domain/eventStore';
 import {
@@ -60,63 +60,9 @@ import {
   mergeWorkerEvidence,
   mergeWorkerSideEffects,
 } from './projectControl/workerEvidence';
+import { reconcileSuccessfulCleanupReceipts, cleanupUnknownRunIds } from './projectControl/workerRecoveryFacts';
 
 registerBuiltins();
-
-function reconcileSuccessfulCleanupReceipts(
-  runs: readonly WorkerRunQueueState[],
-  effects: readonly SideEffectRecord[],
-): { runs: WorkerRunQueueState[]; events: ReturnType<typeof markWorkerTaskCleaned>['events'] } {
-  const nextRuns = [...runs];
-  const events: ReturnType<typeof markWorkerTaskCleaned>['events'] = [];
-  for (const run of runs) {
-    let nextRun = run;
-    for (const [taskId, task] of Object.entries(run.tasks)) {
-      if (task.cleanupStatus === 'cleaned' || !task.worktreePath || task.attempt < 1) continue;
-      const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(run.runId, taskId);
-      const attemptId = task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt);
-      const receipt = effects.find((entry) => (
-        entry.kind === 'worktree-cleanup'
-        && entry.idempotencyKey === `cleanup:${attemptId}`
-        && entry.status === 'receipt'
-        && entry.recovery === 'skip'
-        && entry.receipt?.outcome === 'succeeded'
-      ));
-      const stateSignature = receipt?.receipt?.outputHash;
-      if (!receipt || !stateSignature) continue;
-      try {
-        const reconciled = markWorkerTaskCleaned({
-          state: nextRun,
-          taskId,
-          receiptId: receipt.receipt?.receiptId ?? '',
-          taskExecutionId,
-          attemptId,
-          stateSignature,
-          receipt,
-          decisionId: `cleanup-reconcile:${receipt.receipt?.receiptId ?? attemptId}`,
-          now: receipt.receipt?.observedAt ?? new Date().toISOString(),
-        });
-        nextRun = reconciled.state;
-        events.push(...reconciled.events);
-      } catch {
-        // A receipt that does not match the current task is not trusted for migration.
-      }
-    }
-    const index = nextRuns.findIndex((item) => item.runId === run.runId);
-    if (index >= 0) nextRuns[index] = nextRun;
-  }
-  return { runs: nextRuns, events };
-}
-
-function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<string> {
-  return new Set(
-    effects
-      .filter((entry) => entry.kind === 'worktree-cleanup'
-        && (entry.status === 'unknown' || entry.recovery === 'needs-user')
-        && !!entry.runId)
-      .map((entry) => entry.runId as string),
-  );
-}
 
 /** 拆分视图：左右并排显示两个不同的工作流图，右侧边栏显示焦点节点信息 */
 function SplitCanvas({
