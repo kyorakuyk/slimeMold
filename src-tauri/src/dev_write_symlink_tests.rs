@@ -607,3 +607,42 @@ fn cleanup_capability_requires_exact_single_use_identity() {
         &"a".repeat(40),
     ));
 }
+
+#[test]
+fn cleanup_probe_error_consumes_capability() {
+    let _test_guard = lock_dev_state_tests();
+    let token = "probe-token";
+    {
+        let mut state = DEV_STATE.lock().unwrap();
+        state.cleanup_bindings.clear();
+        state.cleanup_bindings.push(CleanupBinding {
+            token: token.into(),
+            generation: 1,
+            path: "D:/repo-workers/worker-a".into(),
+            branch: "worker/worker-a".into(),
+            branch_revision: "a".repeat(40),
+            base_identity: StableDirectoryIdentity {
+                canonical_path: "D:/repo".into(),
+                volume_or_device: 1,
+                file_or_inode: 2,
+            },
+            target_identity: None,
+            consumed: false,
+        });
+    }
+
+    let result: Result<(), String> =
+        worktree_authority::cleanup_probe_or_invalidate(token, Err("probe failed".into()));
+    assert_eq!(result, Err("probe failed".into()));
+    assert!(
+        DEV_STATE
+            .lock()
+            .unwrap()
+            .cleanup_bindings
+            .iter()
+            .find(|binding| binding.token == token)
+            .is_some_and(|binding| binding.consumed),
+        "fallible cleanup probe must consume the capability"
+    );
+    DEV_STATE.lock().unwrap().cleanup_bindings.clear();
+}

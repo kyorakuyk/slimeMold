@@ -69,6 +69,16 @@ pub(crate) fn invalidate_cleanup_binding(token: &str) {
     }
 }
 
+pub(crate) fn cleanup_probe_or_invalidate<T>(
+    token: &str,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    result.map_err(|error| {
+        invalidate_cleanup_binding(token);
+        error
+    })
+}
+
 pub(crate) fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
     if raw_path.is_empty() {
         return false;
@@ -1253,12 +1263,16 @@ pub(crate) fn dev_cleanup_worktree(
         }
         capability.target_identity.clone()
     };
-    if !cleanup_target_identity_is_current(
-        &base_path,
-        &canon,
-        &branch,
-        expected_target_identity.as_ref(),
-    )? {
+    let target_identity_is_current = cleanup_probe_or_invalidate(
+        &approval_token,
+        cleanup_target_identity_is_current(
+            &base_path,
+            &canon,
+            &branch,
+            expected_target_identity.as_ref(),
+        ),
+    )?;
+    if !target_identity_is_current {
         invalidate_cleanup_binding(&approval_token);
         return Err(
             "dev_cleanup_worktree: cleanup target identity 已漂移或 orphan 已重新出现".into(),
@@ -1277,14 +1291,19 @@ pub(crate) fn dev_cleanup_worktree(
             return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
         }
     }
-    if stable_directory_identity(&base_path)? != base_identity
-        || !cleanup_target_identity_is_current(
+    let base_identity_is_current =
+        cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
+            == base_identity;
+    let target_identity_is_current = cleanup_probe_or_invalidate(
+        &approval_token,
+        cleanup_target_identity_is_current(
             &base_path,
             &canon,
             &branch,
             expected_target_identity.as_ref(),
-        )?
-    {
+        ),
+    )?;
+    if !base_identity_is_current || !target_identity_is_current {
         invalidate_cleanup_binding(&approval_token);
         return Err("dev_cleanup_worktree: branch CAS 前 identity 已漂移".into());
     }
@@ -1309,14 +1328,19 @@ pub(crate) fn dev_cleanup_worktree(
             result.stderr
         ));
     }
-    if stable_directory_identity(&base_path)? != base_identity
-        || !cleanup_target_identity_is_current(
+    let base_identity_is_current =
+        cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
+            == base_identity;
+    let target_identity_is_current = cleanup_probe_or_invalidate(
+        &approval_token,
+        cleanup_target_identity_is_current(
             &base_path,
             &canon,
             &branch,
             expected_target_identity.as_ref(),
-        )?
-    {
+        ),
+    )?;
+    if !base_identity_is_current || !target_identity_is_current {
         invalidate_cleanup_binding(&approval_token);
         return Err(
             "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理".into(),
@@ -1345,14 +1369,19 @@ pub(crate) fn dev_cleanup_worktree(
         );
     }
     if listed_after_cas {
-        if stable_directory_identity(&base_path)? != base_identity
-            || !cleanup_target_identity_is_current(
+        let base_identity_is_current =
+            cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
+                == base_identity;
+        let target_identity_is_current = cleanup_probe_or_invalidate(
+            &approval_token,
+            cleanup_target_identity_is_current(
                 &base_path,
                 &canon,
                 &branch,
                 expected_target_identity.as_ref(),
-            )?
-        {
+            ),
+        )?;
+        if !base_identity_is_current || !target_identity_is_current {
             invalidate_cleanup_binding(&approval_token);
             return Err("dev_cleanup_worktree: worktree remove 前 identity 已漂移".into());
         }
@@ -1377,11 +1406,13 @@ pub(crate) fn dev_cleanup_worktree(
             ));
         }
     }
+    let base_identity_after_cleanup =
+        cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?;
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base.as_str())
         || state.base_identity.as_ref() != Some(&base_identity)
         || state.generation != generation
-        || stable_directory_identity(&base_path)? != base_identity
+        || base_identity_after_cleanup != base_identity
     {
         drop(state);
         invalidate_cleanup_binding(&approval_token);
