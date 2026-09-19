@@ -3909,6 +3909,7 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `codex.rs`仅通过显式 cleanup seam使用这些能力；本刀不改变 registry、spawn、权限或 session 语义，删除原 facade中的重复实现。
 - 现有 Codex lifecycle与真实 child/reader/artifact测试保持通过；本 checkpoint 不标记 verified，下一刀继续抽 registry/lease authority。
 
+
 验证结果：
 
 - Rust：`95 passed / 0 failed`；Codex targeted：`17 passed / 0 failed`；
@@ -3921,3 +3922,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.183 unverified：抽出 Codex registry/lease authority
+
+- 新增 `src-tauri/src/codex_registry.rs`，承接 `ActiveChild`、prepared lease、pending operation、session generation、spawn reservation及registry lock order。
+- `codex.rs`保留Tauri command、session/cwd/lease编排和recovery orchestration；不再定义 active/pending/prepared registry状态机。
+- 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
+- `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。

@@ -1,5 +1,7 @@
 #[path = "codex_cleanup.rs"]
 mod codex_cleanup;
+#[path = "codex_registry.rs"]
+mod codex_registry;
 
 use crate::dev_login_sanitized_env;
 use codex_cleanup::{
@@ -7,6 +9,12 @@ use codex_cleanup::{
     join_cleanup_reader, output_readers_terminal, read_codex_output, remove_codex_output,
     spawn_stdin_writer, ChildHandle, CodexCleanupContext, CodexCleanupHandle,
     CODEX_CLEANUP_WAIT_TIMEOUT,
+};
+use codex_registry::{
+    active_codex_children, begin_pending_operation, clear_prepared_codex_leases,
+    finish_pending_operation, pending_codex_operations, prepared_codex_leases,
+    reserve_codex_operation, take_cancelled_operation, valid_operation_id,
+    validate_operation_binding, PreparedLease, CODEX_OPERATION_GENERATION,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -24,13 +32,6 @@ const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CODEX_PREPARED_LEASE_TTL: Duration = Duration::from_secs(5 * 60);
 const CODEX_PREPARED_LEASE_CAP: usize = 128;
 
-struct ActiveChild {
-    session_generation: u64,
-    pending_generation: u64,
-    handle: ChildHandle,
-    cleanup: CodexCleanupHandle,
-}
-
 #[derive(Clone)]
 struct UnscopedRecovery {
     handle: ChildHandle,
@@ -43,15 +44,10 @@ enum UnscopedRecoverySlot {
     Retrying,
 }
 
-static ACTIVE_CODEX_CHILDREN: OnceLock<Mutex<HashMap<String, ActiveChild>>> = OnceLock::new();
 static UNSCOPED_CODEX_RECOVERIES: OnceLock<Mutex<HashMap<usize, UnscopedRecoverySlot>>> =
     OnceLock::new();
 static UNSCOPED_RECOVERY_COUNTER: AtomicU64 = AtomicU64::new(0);
 const UNSCOPED_RECOVERY_CAP: usize = 64;
-
-fn active_codex_children() -> &'static Mutex<HashMap<String, ActiveChild>> {
-    ACTIVE_CODEX_CHILDREN.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 fn unscoped_codex_recoveries() -> &'static Mutex<HashMap<usize, UnscopedRecoverySlot>> {
     UNSCOPED_CODEX_RECOVERIES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -136,29 +132,6 @@ fn retry_unscoped_codex_recoveries() -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
-}
-
-#[derive(Clone)]
-struct PreparedLease {
-    session_generation: u64,
-    cwd: PathBuf,
-    identity: crate::StableDirectoryIdentity,
-    created_at: Instant,
-    cancellation_requested: bool,
-}
-
-static PREPARED_CODEX_LEASES: OnceLock<Mutex<HashMap<String, PreparedLease>>> = OnceLock::new();
-
-fn prepared_codex_leases() -> &'static Mutex<HashMap<String, PreparedLease>> {
-    PREPARED_CODEX_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn clear_prepared_codex_leases() -> Result<(), String> {
-    prepared_codex_leases()
-        .lock()
-        .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
-        .clear();
-    Ok(())
 }
 
 pub(crate) fn clear_codex_session_state() -> Result<(), String> {
@@ -247,195 +220,6 @@ pub fn codex_worker_prepare(cwd: String, generation: u64) -> Result<String, Stri
     );
     Ok(token)
 }
-#[derive(Clone, Copy)]
-struct PendingOperation {
-    generation: u64,
-    session_generation: u64,
-    cancellation_requested: bool,
-}
-
-static PENDING_CODEX_OPERATIONS: OnceLock<Mutex<HashMap<String, PendingOperation>>> =
-    OnceLock::new();
-static CODEX_OPERATION_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-fn pending_codex_operations() -> &'static Mutex<HashMap<String, PendingOperation>> {
-    PENDING_CODEX_OPERATIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn begin_pending_operation(operation_id: &str, session_generation: u64) -> Result<u64, String> {
-    let mut pending = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏".to_string())?;
-    if pending.contains_key(operation_id) {
-        return Err("Codex operation id 已在使用".into());
-    }
-    let generation = CODEX_OPERATION_GENERATION.fetch_add(1, Ordering::Relaxed);
-    pending.insert(
-        operation_id.to_string(),
-        PendingOperation {
-            generation,
-            session_generation,
-            cancellation_requested: false,
-        },
-    );
-    Ok(generation)
-}
-
-fn finish_pending_operation(operation_id: &str, generation: u64) -> Result<bool, String> {
-    let active = active_codex_children()
-        .lock()
-        .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
-    let mut pending = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
-    let entry = pending
-        .get(operation_id)
-        .ok_or_else(|| "Codex pending lease已丢失；side effects unknown".to_string())?;
-    if entry.generation != generation {
-        return Err("Codex pending lease generation不匹配；side effects unknown".into());
-    }
-    if active
-        .get(operation_id)
-        .is_some_and(|active| active.pending_generation == generation)
-    {
-        return Err(
-            "Codex active recovery仍保留；pending lease不可finalize；side effects unknown".into(),
-        );
-    }
-    let cancelled = entry.cancellation_requested;
-    pending.remove(operation_id);
-    Ok(cancelled)
-}
-
-fn take_cancelled_operation(operation_id: &str) -> Result<bool, String> {
-    let pending = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
-    Ok(pending
-        .get(operation_id)
-        .is_some_and(|entry| entry.cancellation_requested))
-}
-
-fn validate_operation_binding(
-    operation_id: Option<&str>,
-    session_generation: Option<u64>,
-    pending_generation: Option<u64>,
-) -> Result<(), String> {
-    match (operation_id, session_generation, pending_generation) {
-        (None, None, None) => Ok(()),
-        (Some(operation_id), Some(generation), Some(_)) => {
-            if !valid_operation_id(operation_id) {
-                return Err("Codex operation id 非法".into());
-            }
-            if generation == 0 {
-                return Err("Codex Worker session generation 无效".into());
-            }
-            Ok(())
-        }
-        (Some(_), None, _) => Err("Codex operation id 缺少session generation".into()),
-        (Some(_), Some(_), None) => Err("Codex operation id 缺少pending generation".into()),
-        (None, Some(_), _) => Err("Codex session generation 缺少operation id".into()),
-        (None, None, Some(_)) => Err("Codex pending generation 缺少operation id".into()),
-    }
-}
-
-struct CodexSpawnReservation {
-    active: std::sync::MutexGuard<'static, HashMap<String, ActiveChild>>,
-    pending: std::sync::MutexGuard<'static, HashMap<String, PendingOperation>>,
-    operation_id: String,
-    session_generation: u64,
-    pending_generation: u64,
-}
-
-impl CodexSpawnReservation {
-    fn register_child(
-        &mut self,
-        handle: ChildHandle,
-        cleanup: CodexCleanupHandle,
-    ) -> Result<(), String> {
-        let entry = self.pending.get(&self.operation_id).ok_or_else(|| {
-            "Codex pending lease在child注册前丢失；side effects unknown".to_string()
-        })?;
-        if entry.session_generation != self.session_generation
-            || entry.generation != self.pending_generation
-        {
-            return Err(
-                "Codex pending lease在child注册前发生generation漂移；side effects unknown".into(),
-            );
-        }
-        if entry.cancellation_requested {
-            return Err("Codex Worker 在child注册前已取消".into());
-        }
-        if self.active.contains_key(&self.operation_id) {
-            return Err("Codex operation token在child注册前已被占用".into());
-        }
-        self.active.insert(
-            self.operation_id.clone(),
-            ActiveChild {
-                session_generation: self.session_generation,
-                pending_generation: self.pending_generation,
-                handle,
-                cleanup,
-            },
-        );
-        Ok(())
-    }
-
-    fn retain_child_for_recovery(&mut self, handle: ChildHandle, cleanup: CodexCleanupHandle) {
-        self.active.insert(
-            self.operation_id.clone(),
-            ActiveChild {
-                session_generation: self.session_generation,
-                pending_generation: self.pending_generation,
-                handle,
-                cleanup,
-            },
-        );
-    }
-}
-
-fn reserve_codex_operation(
-    operation_id: &str,
-    session_generation: u64,
-    pending_generation: u64,
-) -> Result<CodexSpawnReservation, String> {
-    // Lock-order invariant: every path that holds both registries acquires active first, then pending.
-    // Cancellation uses the same order so it cannot consume pending state around spawn registration.
-    let active = active_codex_children()
-        .lock()
-        .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
-    let pending = pending_codex_operations()
-        .lock()
-        .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
-    let entry = pending
-        .get(operation_id)
-        .ok_or_else(|| "Codex pending lease已丢失；side effects unknown".to_string())?;
-    if entry.session_generation != session_generation {
-        return Err("Codex pending lease session generation不匹配；side effects unknown".into());
-    }
-    if entry.generation != pending_generation {
-        return Err("Codex pending lease generation不匹配；side effects unknown".into());
-    }
-    if entry.cancellation_requested || active.contains_key(operation_id) {
-        return Err("Codex Worker 已取消或operation token已在使用".into());
-    }
-    Ok(CodexSpawnReservation {
-        active,
-        pending,
-        operation_id: operation_id.to_string(),
-        session_generation,
-        pending_generation,
-    })
-}
-
-fn valid_operation_id(operation_id: &str) -> bool {
-    !operation_id.is_empty()
-        && operation_id.len() <= 128
-        && operation_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-}
-
 fn request_child_tree_kill(child: &mut std::process::Child) -> Vec<String> {
     let mut errors = Vec::new();
     #[cfg(unix)]
