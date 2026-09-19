@@ -4024,3 +4024,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 验证：AES/base64 targeted `2 passed / 0 failed`；credential environment targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `3633` 行，新 `credentials.rs` `439` 行。
 - 全量 Rust 首次受到既有 `event_store` disposable lock fixture 残留影响，清理精确 Temp fixture 后重跑通过；未修改 `event_store` 生产代码。build 仍有既有大 chunk warning（最大约 `1,159.81 kB`）。
 - 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.197 verified closure：credentials/storage boundary
+
+- exact reviewed HEAD：`263b232ebb71448c75a63b5433c0e6e94d62cc54`；独立 reviewer 返回 `passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `credentials.rs` 是 semantics-preserving extraction；12 个 Tauri command 名称与注册顺序保持不变，未发现新增安全或逻辑问题。
+- verified tag：`checkpoint/lib-credentials-storage-verified`。Reviewer 建议将 crypto round-trip 测试进一步靠近 credentials 模块，并补 Linux/macOS keyring/AppData CI；两项均为非阻塞后续事项。
