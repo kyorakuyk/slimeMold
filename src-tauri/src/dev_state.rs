@@ -16,6 +16,22 @@ pub(crate) fn next_session_generation(current: u64) -> u64 {
     current.wrapping_add(1).max(1)
 }
 
+pub(crate) fn base_repo_is_initialized() -> bool {
+    DEV_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .base_repo
+        .is_some()
+}
+
+pub(crate) fn snapshot_base_repo() -> Option<String> {
+    DEV_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .base_repo
+        .clone()
+}
+
 #[cfg(test)]
 static DEV_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
 

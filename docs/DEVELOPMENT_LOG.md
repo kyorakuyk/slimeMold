@@ -4009,3 +4009,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 未移动 dev_init/dev_clear transition、cwd binding、Codex lease、Antigravity lifecycle 或任何 Git/file mutation；SessionStamp不是 capability，也不替代 `DEV_OPERATION_LOCK`。
 - 验证：stale generation targeted `1 passed / 0 failed`；session lock targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4068` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.195 unverified：收窄 base-repo state accessors
+
+- `dev_state.rs`新增 `snapshot_base_repo` 与 `base_repo_is_initialized` 两个窄 accessor，返回 owned `Option<String>`/bool，不暴露 `MutexGuard` 或通用 state getter。
+- `dev_lexical_abs_of`、`dev_abs_of` 和 `dev_cwd_binding` 的低风险 raw `base_repo` 读取改走 accessor；cwd ownership、identity rebind、legacy fallback 与 lifecycle transition保持在 `lib.rs`。
+- 验证：cwd prefix targeted `1 passed / 0 failed`；stale generation targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4063` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。

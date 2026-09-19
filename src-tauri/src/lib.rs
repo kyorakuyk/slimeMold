@@ -40,9 +40,10 @@ use cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_c
 use dev_process::DevExecResult;
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_state::{
-    assert_session_stamp_current, lock_dev_operation, next_session_generation,
-    snapshot_session_stamp, snapshot_session_stamp_for, CleanupBinding, PendingWorktree,
-    RegisteredWorktree, SessionStamp, DEV_STATE,
+    assert_session_stamp_current, base_repo_is_initialized, lock_dev_operation,
+    next_session_generation, snapshot_base_repo, snapshot_session_stamp,
+    snapshot_session_stamp_for, CleanupBinding, PendingWorktree, RegisteredWorktree, SessionStamp,
+    DEV_STATE,
 };
 #[cfg(test)]
 use dev_state::{lock_dev_state_tests, DevState};
@@ -687,12 +688,9 @@ fn dev_lexical_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    let state = DEV_STATE.lock().unwrap();
-    let base = state
-        .base_repo
-        .as_ref()
-        .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
-    Ok(std::path::Path::new(base).join(path))
+    let base =
+        snapshot_base_repo().ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
+    Ok(std::path::Path::new(&base).join(path))
 }
 
 /// 解析为绝对路径：相对路径基于 base_repo（GUI 下 worktree path 常相对 projectPath）。
@@ -701,12 +699,9 @@ fn dev_abs_of(raw: &str) -> Result<std::path::PathBuf, String> {
     let joined = if p.is_absolute() {
         p.to_path_buf()
     } else {
-        let state = DEV_STATE.lock().unwrap();
-        let base = state
-            .base_repo
-            .as_ref()
+        let base = snapshot_base_repo()
             .ok_or_else(|| format!("路径是相对的，但未初始化主仓库根：{raw}"))?;
-        std::path::Path::new(base).join(p)
+        std::path::Path::new(&base).join(p)
     };
     match joined.canonicalize() {
         Ok(path) => Ok(path),
@@ -741,7 +736,7 @@ pub(crate) fn dev_cwd_binding(cwd: &str) -> Result<(DevCwdKind, StableDirectoryI
     {
         return Err(format!("dev_exec: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
     }
-    let has_base = DEV_STATE.lock().unwrap().base_repo.is_some();
+    let has_base = base_repo_is_initialized();
     if has_base {
         assert_base_identity_current("dev_cwd_kind")?;
     }
