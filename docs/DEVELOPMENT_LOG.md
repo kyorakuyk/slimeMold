@@ -3966,3 +3966,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs`生产 `dev_exec` 通过 fs_guard import继续调用；未移动 `has_multiple_hardlinks`、`DEV_STATE`、cwd identity 或文件写入 gate。
 - 验证：fs_guard `11 passed / 0 failed`；dev_write `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4352` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.189 unverified：抽出 cleanup lineage predicates
+
+- 新增 `src-tauri/src/cleanup_lineage_policy.rs`，承接 `cleanup_binding_matches` 与 `orphan_target_is_deleted_candidate` 两个纯 predicate。
+- `CleanupBinding`、DEV_STATE、token生成/消费、orphan registration、cleanup approval/CAS/read-back仍由 `lib.rs` host authority 持有；新模块不拥有状态或副作用。
+- 验证：orphan predicate targeted `1 passed / 0 failed`；cleanup binding targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4329` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。

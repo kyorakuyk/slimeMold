@@ -26,12 +26,14 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 mod antigravity;
+mod cleanup_lineage_policy;
 mod codex;
 mod dev_command_policy;
 mod dev_process;
 mod event_store;
 mod fs_guard;
 
+use cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_candidate};
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 #[cfg(test)]
@@ -283,22 +285,6 @@ struct CleanupBinding {
     base_identity: StableDirectoryIdentity,
     target_identity: Option<StableDirectoryIdentity>,
     consumed: bool,
-}
-
-fn cleanup_binding_matches(
-    binding: &CleanupBinding,
-    token: &str,
-    generation: u64,
-    path: &str,
-    branch: &str,
-    branch_revision: &str,
-) -> bool {
-    !binding.consumed
-        && binding.token == token
-        && binding.generation == generation
-        && binding.branch == branch
-        && binding.branch_revision == branch_revision
-        && path_compare_key(&binding.path) == path_compare_key(path)
 }
 
 struct PendingWorktree {
@@ -2710,15 +2696,6 @@ fn dev_restore_worktree(path: String, branch: String, generation: u64) -> Result
         .pending_worktrees
         .retain(|pending| path_compare_key(&pending.path) != path_compare_key(&canonical_path));
     Ok(())
-}
-
-fn orphan_target_is_deleted_candidate(
-    listed_match: bool,
-    path_exists: bool,
-    branch_exists: bool,
-    target_is_scoped: bool,
-) -> bool {
-    !listed_match && !path_exists && branch_exists && target_is_scoped
 }
 
 #[tauri::command]
