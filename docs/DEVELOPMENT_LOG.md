@@ -3751,3 +3751,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.175 unverified：Codex spawn reservation interleaving 与 stale generation fence
+
+- `CodexSpawnReservation` 统一持有 active→pending registry guard，并保存 `PendingOperation.generation`、session generation 和 operation id；child 注册必须在同一 reservation 内重新核对三者与 cancellation 标记。
+- `run_exec` 将 pending operation generation 传入 reservation；stale pending generation、session generation mismatch、取消中的 operation 都在 spawn 前 fail-closed。
+- 新增 `cleanup_unregistered_codex_child`：防御性 child 注册失败会 kill/wait child、释放 handle、join stdout/stderr reader、删除私有 output artifact；cleanup失败显式返回 `side effects unknown`。
+- 新增确定性 reservation/cancel interleaving 回归：cancel 线程在 active→pending reservation持锁期间不能越过 child 注册；释放 reservation 后才完成取消并保留 pending finalization。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir 原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合；本 checkpoint 不标记 verified。
+
+验证结果：
+
+- Rust：`88 passed / 0 failed`；Codex targeted：`10 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。

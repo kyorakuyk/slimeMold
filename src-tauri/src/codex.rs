@@ -156,10 +156,11 @@ fn take_cancelled_operation(operation_id: &str) -> Result<bool, String> {
 fn validate_operation_binding(
     operation_id: Option<&str>,
     session_generation: Option<u64>,
+    pending_generation: Option<u64>,
 ) -> Result<(), String> {
-    match (operation_id, session_generation) {
-        (None, None) => Ok(()),
-        (Some(operation_id), Some(generation)) => {
+    match (operation_id, session_generation, pending_generation) {
+        (None, None, None) => Ok(()),
+        (Some(operation_id), Some(generation), Some(_)) => {
             if !valid_operation_id(operation_id) {
                 return Err("Codex operation id 非法".into());
             }
@@ -168,21 +169,55 @@ fn validate_operation_binding(
             }
             Ok(())
         }
-        (Some(_), None) => Err("Codex operation id 缺少session generation".into()),
-        (None, Some(_)) => Err("Codex session generation 缺少operation id".into()),
+        (Some(_), None, _) => Err("Codex operation id 缺少session generation".into()),
+        (Some(_), Some(_), None) => Err("Codex operation id 缺少pending generation".into()),
+        (None, Some(_), _) => Err("Codex session generation 缺少operation id".into()),
+        (None, None, Some(_)) => Err("Codex pending generation 缺少operation id".into()),
+    }
+}
+
+struct CodexSpawnReservation {
+    active: std::sync::MutexGuard<'static, HashMap<String, ActiveChild>>,
+    pending: std::sync::MutexGuard<'static, HashMap<String, PendingOperation>>,
+    operation_id: String,
+    session_generation: u64,
+    pending_generation: u64,
+}
+
+impl CodexSpawnReservation {
+    fn register_child(&mut self, handle: ChildHandle) -> Result<(), String> {
+        let entry = self.pending.get(&self.operation_id).ok_or_else(|| {
+            "Codex pending lease在child注册前丢失；side effects unknown".to_string()
+        })?;
+        if entry.session_generation != self.session_generation
+            || entry.generation != self.pending_generation
+        {
+            return Err(
+                "Codex pending lease在child注册前发生generation漂移；side effects unknown".into(),
+            );
+        }
+        if entry.cancellation_requested {
+            return Err("Codex Worker 在child注册前已取消".into());
+        }
+        if self.active.contains_key(&self.operation_id) {
+            return Err("Codex operation token在child注册前已被占用".into());
+        }
+        self.active.insert(
+            self.operation_id.clone(),
+            ActiveChild {
+                session_generation: self.session_generation,
+                handle,
+            },
+        );
+        Ok(())
     }
 }
 
 fn reserve_codex_operation(
     operation_id: &str,
     session_generation: u64,
-) -> Result<
-    (
-        std::sync::MutexGuard<'static, HashMap<String, ActiveChild>>,
-        std::sync::MutexGuard<'static, HashMap<String, PendingOperation>>,
-    ),
-    String,
-> {
+    pending_generation: u64,
+) -> Result<CodexSpawnReservation, String> {
     let active = active_codex_children()
         .lock()
         .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
@@ -195,10 +230,19 @@ fn reserve_codex_operation(
     if entry.session_generation != session_generation {
         return Err("Codex pending lease session generation不匹配；side effects unknown".into());
     }
+    if entry.generation != pending_generation {
+        return Err("Codex pending lease generation不匹配；side effects unknown".into());
+    }
     if entry.cancellation_requested || active.contains_key(operation_id) {
         return Err("Codex Worker 已取消或operation token已在使用".into());
     }
-    Ok((active, pending))
+    Ok(CodexSpawnReservation {
+        active,
+        pending,
+        operation_id: operation_id.to_string(),
+        session_generation,
+        pending_generation,
+    })
 }
 
 fn valid_operation_id(operation_id: &str) -> bool {
@@ -609,6 +653,39 @@ fn join_child_output(
     crate::receive_output("Codex", thread, receiver)
 }
 
+fn cleanup_unregistered_codex_child(
+    handle: &ChildHandle,
+    stdout_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
+    stderr_thread: Option<(crate::OutputThread, crate::OutputReceiver)>,
+    output_path: &std::path::Path,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    match handle.lock() {
+        Ok(mut guard) => {
+            if let Some(child) = guard.as_mut() {
+                kill_child_tree(child);
+                let _ = child.wait();
+            }
+            let _ = guard.take();
+        }
+        Err(_) => errors.push("Codex child handle 已损坏".to_string()),
+    }
+    if let Err(error) = join_child_output(stdout_thread) {
+        errors.push(error);
+    }
+    if let Err(error) = join_child_output(stderr_thread) {
+        errors.push(error);
+    }
+    if let Err(error) = remove_codex_output(output_path) {
+        errors.push(error);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 fn spawn_stdin_writer(
     mut stdin: std::process::ChildStdin,
     prompt: String,
@@ -647,12 +724,25 @@ fn run_exec(
     sandbox_mode: &str,
     operation_id: Option<String>,
     session_generation: Option<u64>,
+    pending_operation_generation: Option<u64>,
     prepared_cwd_identity: Option<crate::StableDirectoryIdentity>,
 ) -> Result<CodexExecResult, String> {
-    validate_operation_binding(operation_id.as_deref(), session_generation)?;
-    let operation_generation = match (operation_id.as_deref(), session_generation) {
-        (Some(_), Some(generation)) => Some(generation),
-        (None, None) => None,
+    validate_operation_binding(
+        operation_id.as_deref(),
+        session_generation,
+        pending_operation_generation,
+    )?;
+    let operation_binding = match (
+        operation_id.as_deref(),
+        session_generation,
+        pending_operation_generation,
+    ) {
+        (Some(operation_id), Some(session_generation), Some(pending_generation)) => Some((
+            operation_id.to_string(),
+            session_generation,
+            pending_generation,
+        )),
+        (None, None, None) => None,
         _ => return Err("Codex operation binding invalid".into()),
     };
     let spawn_cwd = cwd.clone().unwrap_or_else(env::temp_dir);
@@ -665,19 +755,12 @@ fn run_exec(
             })
             .transpose()?,
     };
-    let mut active_reservation: Option<
-        std::sync::MutexGuard<'static, HashMap<String, ActiveChild>>,
-    > = None;
-    let mut pending_reservation: Option<
-        std::sync::MutexGuard<'static, HashMap<String, PendingOperation>>,
-    > = None;
-    if let (Some(operation_id), Some(session_generation)) =
-        (operation_id.as_deref(), operation_generation)
-    {
-        let (active, pending) = reserve_codex_operation(operation_id, session_generation)?;
-        active_reservation = Some(active);
-        pending_reservation = Some(pending);
-    }
+    let mut spawn_reservation = operation_binding
+        .as_ref()
+        .map(|(operation_id, session_generation, pending_generation)| {
+            reserve_codex_operation(operation_id, *session_generation, *pending_generation)
+        })
+        .transpose()?;
 
     let output_path = create_codex_output()?;
 
@@ -749,22 +832,23 @@ fn run_exec(
         .take()
         .map(|stream| crate::spawn_output_reader(stream));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
-    if let (Some(operation_id), Some(session_generation)) =
-        (operation_id.as_deref(), operation_generation)
-    {
-        let active = active_reservation
-            .as_mut()
-            .ok_or_else(|| "Codex active reservation丢失；side effects unknown".to_string())?;
-        active.insert(
-            operation_id.to_string(),
-            ActiveChild {
-                session_generation,
-                handle: handle.clone(),
-            },
-        );
+    if let Some(reservation) = spawn_reservation.as_mut() {
+        if let Err(error) = reservation.register_child(handle.clone()) {
+            let cleanup_result = cleanup_unregistered_codex_child(
+                &handle,
+                stdout_thread,
+                stderr_thread,
+                &output_path,
+            );
+            return Err(match cleanup_result {
+                Ok(()) => format!("Codex child registration failed; child/output cleaned: {error}"),
+                Err(cleanup_error) => format!(
+                    "Codex child registration failed; cleanup failed: {cleanup_error}; side effects unknown: {error}"
+                ),
+            });
+        }
     }
-    drop(pending_reservation);
-    drop(active_reservation);
+    drop(spawn_reservation);
 
     let stdin_result = handle
         .lock()
@@ -935,7 +1019,17 @@ pub async fn codex_exec(prompt: String, model: Option<String>) -> Result<CodexEx
     }
     let program = codex_program()?;
     tauri::async_runtime::spawn_blocking(move || {
-        run_exec(program, prompt, model, None, "read-only", None, None, None)
+        run_exec(
+            program,
+            prompt,
+            model,
+            None,
+            "read-only",
+            None,
+            None,
+            None,
+            None,
+        )
     })
     .await
     .map_err(|e| format!("Codex 后台任务失败：{e}"))?
@@ -1035,6 +1129,7 @@ pub async fn codex_worker_exec(
                 "workspace-write",
                 Some(operation_for_task.clone()),
                 Some(generation_for_task),
+                Some(pending_generation),
                 Some(prepared_identity),
             )
         })
@@ -1118,8 +1213,11 @@ mod tests {
     use super::{
         begin_pending_operation, build_exec_args, codex_worker_cancel, finish_pending_operation,
         parse_json_events, reserve_codex_operation, take_cancelled_operation, valid_operation_id,
-        validate_operation_binding, CODEX_TEMP_COUNTER,
+        validate_operation_binding, ChildHandle, CODEX_TEMP_COUNTER,
     };
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn worker_exec_uses_workspace_write_without_full_access() {
@@ -1200,11 +1298,12 @@ mod tests {
 
     #[test]
     fn operation_id_requires_nonzero_session_generation() {
-        assert!(validate_operation_binding(None, None).is_ok());
-        assert!(validate_operation_binding(Some("worker-1"), Some(7)).is_ok());
-        assert!(validate_operation_binding(Some("worker-1"), None).is_err());
-        assert!(validate_operation_binding(Some("worker-1"), Some(0)).is_err());
-        assert!(validate_operation_binding(None, Some(7)).is_err());
+        assert!(validate_operation_binding(None, None, None).is_ok());
+        assert!(validate_operation_binding(Some("worker-1"), Some(7), Some(3)).is_ok());
+        assert!(validate_operation_binding(Some("worker-1"), None, Some(3)).is_err());
+        assert!(validate_operation_binding(Some("worker-1"), Some(0), Some(3)).is_err());
+        assert!(validate_operation_binding(Some("worker-1"), Some(7), None).is_err());
+        assert!(validate_operation_binding(None, Some(7), None).is_err());
     }
 
     #[test]
@@ -1217,7 +1316,7 @@ mod tests {
         let generation =
             begin_pending_operation(&operation, 23).expect("pending operation should register");
         codex_worker_cancel(operation.clone(), 23).expect("pending cancellation should succeed");
-        assert!(reserve_codex_operation(&operation, 23).is_err());
+        assert!(reserve_codex_operation(&operation, 23, generation).is_err());
         let _ = finish_pending_operation(&operation, generation);
     }
 
@@ -1230,10 +1329,50 @@ mod tests {
         );
         let generation =
             begin_pending_operation(&operation, 17).expect("pending operation should register");
-        assert!(reserve_codex_operation(&operation, 18).is_err());
-        let reservations =
-            reserve_codex_operation(&operation, 17).expect("matching generation should reserve");
+        assert!(reserve_codex_operation(&operation, 18, generation).is_err());
+        assert!(reserve_codex_operation(&operation, 17, generation.wrapping_add(1)).is_err());
+        let reservations = reserve_codex_operation(&operation, 17, generation)
+            .expect("matching generation should reserve");
         drop(reservations);
         let _ = finish_pending_operation(&operation, generation);
+    }
+
+    #[test]
+    fn reservation_serializes_cancel_before_child_registration() {
+        let operation = format!(
+            "interleaving-{}-{}",
+            std::process::id(),
+            CODEX_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let pending_generation =
+            begin_pending_operation(&operation, 31).expect("pending operation should register");
+        let mut reservation = reserve_codex_operation(&operation, 31, pending_generation)
+            .expect("matching reservation should acquire both registry locks");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let cancel_operation = operation.clone();
+        let cancel_thread = thread::spawn(move || {
+            started_tx.send(()).expect("cancel thread should start");
+            codex_worker_cancel(cancel_operation, 31).expect("cancel should complete");
+            finished_tx.send(()).expect("cancel thread should finish");
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("cancel thread should reach the reservation window");
+        assert!(finished_rx.try_recv().is_err());
+
+        let child: ChildHandle = Arc::new(Mutex::new(None));
+        reservation
+            .register_child(child)
+            .expect("cancel cannot bypass the held reservation before registration");
+        drop(reservation);
+        finished_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("cancel should complete after reservation release");
+        cancel_thread
+            .join()
+            .expect("cancel thread should not panic");
+        assert!(take_cancelled_operation(&operation).expect("pending registry should be healthy"));
+        let _ = finish_pending_operation(&operation, pending_generation);
     }
 }
