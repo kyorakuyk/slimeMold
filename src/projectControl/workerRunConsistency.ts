@@ -11,7 +11,7 @@ import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
-import { hasWorkerSuccessProvenance } from '../domain/workerSuccess';
+import { hasWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
 import { workerCleanupEffectKey } from './workerCleanup';
 import { isArtifactDeliveryReceiptShape } from './workerDelivery';
 
@@ -200,6 +200,18 @@ export function auditWorkerRunConsistency(input: {
     return { ok: false, projection, issues };
   }
 
+  const evidenceById = new Map<string, EvidenceRecord>();
+  for (const record of input.evidence ?? []) {
+    if (evidenceById.has(record.id)) {
+      issues.push(issue(
+        'evidence-lineage-drift',
+        `Evidence id 重复，拒绝静默覆盖：${record.id}`,
+        { runId: record.runId, taskId: record.taskId },
+      ));
+      continue;
+    }
+    evidenceById.set(record.id, record);
+  }
   const runsById = new Map(input.runs.map((run) => [run.runId, run]));
   const graphIds = new Set<string>();
   const duplicateGraphIds = new Set<string>();
@@ -237,6 +249,28 @@ export function auditWorkerRunConsistency(input: {
         `Worker Run 关联的 TaskGraph 未获批准：${run.taskGraphId}`,
         { runId: run.runId },
       ));
+    }
+    if (run.status === 'succeeded') {
+      if (!workerRunSuccessIsValid(Object.values(run.tasks))) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `succeeded Worker Run 缺少非空且完整的 success provenance：${run.runId}`,
+          { runId: run.runId },
+        ));
+      }
+      if (taskGraph) {
+        const graphTaskIds = taskGraph.tasks.map((task) => task.id);
+        const runTaskIds = Object.keys(run.tasks);
+        const complete = runTaskIds.length === graphTaskIds.length
+          && graphTaskIds.every((taskId) => Object.prototype.hasOwnProperty.call(run.tasks, taskId));
+        if (!complete) {
+          issues.push(issue(
+            'task-status-drift',
+            `succeeded Worker Run 未覆盖批准 TaskGraph 的全部任务：${run.runId}`,
+            { runId: run.runId },
+          ));
+        }
+      }
     }
     const replayedRun = projection.runs[run.runId];
     if (!replayedRun) {
@@ -393,7 +427,6 @@ export function auditWorkerRunConsistency(input: {
       }
 
       if (input.evidence) {
-        const evidenceById = new Map(input.evidence.map((record) => [record.id, record]));
         for (const evidenceId of task.evidenceIds) {
           const record = evidenceById.get(evidenceId);
           const expectedOrchestrationId = run.orchestrationId ?? run.runId;
@@ -535,10 +568,17 @@ export function auditWorkerRunConsistency(input: {
       const inputHashMatches = isCleanup && effect.status === 'unknown' && effect.recovery === 'needs-user'
         ? !!task.baseRevision && effect.inputHash.startsWith(`${task.baseRevision}:`)
         : expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
+      const receiptSuccessProvenanceMatches = effect.status !== 'receipt'
+        || effect.receipt?.outcome !== 'succeeded'
+        || hasWorkerSuccessProvenance({
+          evidenceIds: effect.receipt.evidenceIds,
+          acceptanceId: effect.receipt.acceptanceId,
+        });
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
         && expectedTarget !== undefined
         && effect.target === expectedTarget
         && inputHashMatches
+        && receiptSuccessProvenanceMatches
         && (effect.status !== 'receipt'
           || (effect.receipt?.outcome !== undefined && effect.receipt.receiptId === `${effect.idempotencyKey}:receipt`));
       if (!lifecycleMatches) {

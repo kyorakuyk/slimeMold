@@ -177,7 +177,10 @@ function payloadAttempt(payload: EventPayload): number | undefined {
 
 function payloadEvidenceIds(payload: EventPayload): string[] | undefined {
   if (!Array.isArray(payload.evidenceIds)) return undefined;
-  return payload.evidenceIds.filter((id): id is string => typeof id === 'string');
+  if (payload.evidenceIds.some((id) => typeof id !== 'string')) {
+    throw new Error('Evidence ids 必须全部是字符串');
+  }
+  return [...payload.evidenceIds] as string[];
 }
 
 function taskIdFor(event: DomainEvent, payload: EventPayload): string | undefined {
@@ -308,6 +311,9 @@ function applyLegacyTaskProjection(
   }
   if (eventType === 'TaskCleaned') {
     const previous = projection.tasks[taskId];
+    if (!previous || previous.status !== 'succeeded' || !hasWorkerSuccessProvenance(previous)) {
+      throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Task：${taskId}`);
+    }
     const receiptId = payloadText(payload, 'receiptId');
     projection.tasks[taskId] = {
       ...base,
@@ -361,6 +367,16 @@ function applyTaskLineageProjection(
     acceptanceId: payloadText(payload, 'acceptanceId'),
   })) {
     throw new Error(`TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${lineage.taskExecutionId}`);
+  }
+  if (
+    strictAttemptLifecycle
+    && eventType === 'TaskCleaned'
+    && (!previous
+      || !previousAttempt
+      || previousAttempt.status !== 'succeeded'
+      || !hasWorkerSuccessProvenance(previousAttempt))
+  ) {
+    throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Attempt：${lineage.attemptId ?? lineage.taskExecutionId}`);
   }
   if (eventType === 'TaskAttemptMarkedUnknown') {
     if (!previousAttempt || previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running') {
@@ -625,7 +641,7 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
         const legacyTasks = Object.values(projection.tasks)
           .filter((task) => task.runId === event.aggregateId);
         const terminalTasks = taskExecutions.length > 0 ? taskExecutions : legacyTasks;
-        if (terminalTasks.length > 0 && !workerRunSuccessIsValid(terminalTasks)) {
+        if (terminalTasks.length === 0 || !workerRunSuccessIsValid(terminalTasks)) {
           throw new Error(`RunSucceeded 缺少完整 Worker success provenance：${event.aggregateId}`);
         }
         projection.runs[event.aggregateId] = { status: 'succeeded' };

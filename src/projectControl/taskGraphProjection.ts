@@ -7,6 +7,7 @@ import type {
   TaskExecutionProjection,
   TaskProjectionStatus,
 } from '../domain/contracts';
+import { hasWorkerSuccessProvenance } from '../domain/workerSuccess';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createIssue } from './issue';
 import type {
@@ -259,7 +260,13 @@ export function taskStatusToIssueStatus(status: ProjectTaskStatus): ProjectIssue
   }
 }
 
-function executionStatusToIssueStatus(status: TaskProjectionStatus): ProjectIssueStatus {
+function executionStatusToIssueStatus(
+  status: TaskProjectionStatus,
+  taskExecution?: TaskExecutionProjection,
+): ProjectIssueStatus {
+  if (status === 'succeeded' && taskExecution && !hasWorkerSuccessProvenance(taskExecution)) {
+    return 'blocked';
+  }
   switch (status) {
     case 'queued':
       return 'queued';
@@ -315,6 +322,9 @@ function issueConsistency(
       return 'execution-lineage-drift';
     }
   }
+  if (taskExecution?.status === 'succeeded' && !hasWorkerSuccessProvenance(taskExecution)) {
+    return 'execution-lineage-drift';
+  }
   if (issue.status !== projectedStatus) return 'issue-status-drift';
   return 'consistent';
 }
@@ -350,7 +360,7 @@ export function buildTaskGraphProjection(
     const issue = issueById.get(issueId);
     const taskExecution = selectedExecution(input.execution, task, input.runId);
     const projectedStatus = taskExecution
-      ? executionStatusToIssueStatus(taskExecution.status)
+      ? executionStatusToIssueStatus(taskExecution.status, taskExecution)
       : taskStatusToIssueStatus(task.status);
     const consistency = issueConsistency(
       task,

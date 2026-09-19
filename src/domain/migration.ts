@@ -463,24 +463,28 @@ function addWorkerRun(
   if (run.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(run.tasks))) {
     throw new Error(`legacy Worker Run succeeded 缺少完整 success provenance：${run.runId}`);
   }
-  add({
-    ...commonImportedFields(projectId, migrationId, 'workerRun', run.runId, now, run.updatedAt),
-    eventId: `${migrationId}:worker-run:${run.runId}`,
-    aggregateType: 'Run',
-    aggregateId: run.runId,
-    eventType: runEventType(run.status),
-    payload: {
-      runId: run.runId,
-      orchestrationId: run.orchestrationId ?? null,
-      taskGraphId: run.taskGraphId,
-      taskGraphVersion: run.taskGraphVersion,
-      taskIds: Object.keys(run.tasks),
-      status: run.status,
-    },
-  });
+  const addRunEvent = (): void => {
+    add({
+      ...commonImportedFields(projectId, migrationId, 'workerRun', run.runId, now, run.updatedAt),
+      eventId: `${migrationId}:worker-run:${run.runId}`,
+      aggregateType: 'Run',
+      aggregateId: run.runId,
+      eventType: runEventType(run.status),
+      payload: {
+        runId: run.runId,
+        orchestrationId: run.orchestrationId ?? null,
+        taskGraphId: run.taskGraphId,
+        taskGraphVersion: run.taskGraphVersion,
+        taskIds: Object.keys(run.tasks),
+        status: run.status,
+      },
+    });
+  };
+  if (run.status !== 'succeeded') addRunEvent();
   for (const [taskId, task] of Object.entries(run.tasks)) {
     addWorkerTask(add, projectId, migrationId, now, run, taskId, task);
   }
+  if (run.status === 'succeeded') addRunEvent();
 }
 
 function addImportedAttempt(

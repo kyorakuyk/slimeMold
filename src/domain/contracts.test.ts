@@ -68,6 +68,35 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('rejects malformed Evidence members instead of filtering them during replay', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'mixed-evidence',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-mixed-evidence',
+        evidenceIds: ['evidence-valid', 42],
+        acceptanceId: 'acceptance-valid',
+      },
+    })])).toThrow(/Evidence/);
+  });
+
+  it('rejects RunSucceeded without a complete non-empty task set', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'empty-run-success',
+      aggregateType: 'Run',
+      aggregateId: 'run-empty-success',
+      eventType: 'RunSucceeded',
+      payload: { runId: 'run-empty-success' },
+    })])).toThrow(/RunSucceeded|provenance|task/i);
+  });
+
+  it('rejects TaskCleaned without a preceding succeeded task', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'orphan-cleaned',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-orphan-cleaned', receiptId: 'cleanup-receipt-1' },
+    })])).toThrow(/TaskCleaned|succeeded|Attempt/i);
+  });
   it('replays an unknown interrupted attempt before a retry attempt starts', () => {
     const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
     const attempt1 = createAttemptId(taskExecutionId, 1);
@@ -197,8 +226,7 @@ describe('Phase 0a domain contracts', () => {
       acceptanceId: 'acc-failed-1',
     });
   });
-
-  it('replays TaskCleaned without losing the cleanup receipt binding', () => {
+  it('rejects TaskCleaned without a preceding succeeded task', () => {
     const cleaned = event({
       eventId: 'evt-task-cleaned',
       aggregateId: 'task-cleaned',
@@ -206,12 +234,7 @@ describe('Phase 0a domain contracts', () => {
       payload: { runId: 'run-cleaned', receiptId: 'cleanup-receipt-1' },
     });
 
-    expect(replayDomainEvents([cleaned]).tasks['task-cleaned']).toEqual({
-      status: 'succeeded',
-      runId: 'run-cleaned',
-      cleanupStatus: 'cleaned',
-      cleanupReceiptId: 'cleanup-receipt-1',
-    });
+    expect(() => replayDomainEvents([cleaned])).toThrow(/TaskCleaned|succeeded|provenance/i);
   });
 
   it('keeps separate task executions and attempts when one task runs twice', () => {

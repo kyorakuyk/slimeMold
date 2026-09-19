@@ -7,7 +7,7 @@ import {
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
 import { createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
-import { normalizeWorkerSuccessProvenance } from './workerSuccess';
+import { normalizeWorkerSuccessProvenance, workerRunSuccessIsValid } from './workerSuccess';
 import {
   createAttemptId,
   createTaskExecutionId,
@@ -965,6 +965,9 @@ export class WorkerTaskQueue {
     }
     if (taskIds.size !== stateIds.size || [...taskIds].some((id) => !stateIds.has(id))) {
       throw new Error('Worker 队列任务集合与任务图不一致，拒绝恢复');
+    }
+    if (this.state.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(this.state.tasks))) {
+      throw new Error('succeeded Worker Run 必须包含完整 success provenance 的 terminal tasks');
     }
   }
 }

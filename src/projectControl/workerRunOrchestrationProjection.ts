@@ -5,8 +5,17 @@ import { workerRunSuccessIsValid, hasWorkerSuccessProvenance } from '../domain/w
 function orchestrationStatusFor(
   run: WorkerRunQueueState,
   current: OrchestrationStatus,
+  expectedTaskIds: readonly string[] = [],
 ): OrchestrationStatus {
-  if (run.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(run.tasks))) return current;
+  if (run.status === 'succeeded') {
+    const runTaskIds = Object.keys(run.tasks);
+    const coversExpectedTasks = expectedTaskIds.length === 0
+      || (runTaskIds.length === expectedTaskIds.length
+        && expectedTaskIds.every((taskId) => Object.prototype.hasOwnProperty.call(run.tasks, taskId)));
+    if (!workerRunSuccessIsValid(Object.values(run.tasks)) || !coversExpectedTasks) {
+      return current === 'done' ? 'failed' : current;
+    }
+  }
   switch (run.status) {
     case 'queued':
       return current === 'awaiting-confirm' ? current : 'ready';
@@ -73,6 +82,7 @@ export function projectWorkerRunOntoOrchestration(
           runId: undefined,
           error: undefined,
         })));
+  const expectedTaskIds = [...new Set(stages.flatMap((stage) => stage.taskIds ?? []))];
   const stageLogs = templateLogs.map((log) => {
     const stage = stages.find((item) => item.id === log.stageId);
     return stageLogFor(log, stage?.taskIds, run);
@@ -84,7 +94,7 @@ export function projectWorkerRunOntoOrchestration(
   };
   return {
     ...orchestration,
-    status: orchestrationStatusFor(run, orchestration.status),
+    status: orchestrationStatusFor(run, orchestration.status, expectedTaskIds),
     updatedAt: run.updatedAt,
     runIds: [...new Set([...orchestration.runIds, run.runId])],
     stageLogs,

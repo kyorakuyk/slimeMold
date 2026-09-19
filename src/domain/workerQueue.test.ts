@@ -114,6 +114,19 @@ describe('WorkerTaskQueue', () => {
     expect(() => restoreWorkerRunQueue({ taskGraph, state: keyDriftState })).toThrow(/key.*taskId|taskId.*key/);
   });
 
+  it('rejects a persisted succeeded run whose tasks are not terminal successes', () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-status-drift',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const invalid = queue.snapshot();
+    invalid.status = 'succeeded';
+
+    expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: invalid }))
+      .toThrow(/succeeded|terminal|provenance/i);
+  });
   it('assigns stable task execution and attempt ids across retries', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',

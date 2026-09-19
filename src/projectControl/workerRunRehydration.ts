@@ -210,6 +210,7 @@ export function rehydrateWorkerRunsFromEvents(input: {
     }
 
     let state: WorkerRunQueueState;
+    const runIssueStart = issues.length;
     try {
       state = createWorkerRunQueue({
         projectId: input.projectId,
@@ -240,6 +241,9 @@ export function rehydrateWorkerRunsFromEvents(input: {
       if (event.eventType.startsWith('Task')) {
         state = applyTaskEvent(state, event, issues);
       }
+    }
+    if (issues.length > runIssueStart) {
+      continue;
     }
     runs.push(state);
   }

@@ -134,15 +134,21 @@ describe('rehydrateWorkerRunsFromEvents', () => {
         events.push(...transitionEvents);
       },
     });
-    const invalidEvents = events.map((event) => event.eventType === 'TaskSucceeded'
-      ? {
-          ...event,
-          payload: {
-            ...(event.payload as Record<string, unknown>),
-            acceptanceId: undefined,
-          },
-        }
-      : event);
+    const succeededEvent = events.find((event) => event.eventType === 'TaskSucceeded');
+    if (!succeededEvent) throw new Error('missing TaskSucceeded fixture');
+    const invalidEvents: DomainEvent[] = [
+      ...events,
+      {
+        ...succeededEvent,
+        eventId: 'late-invalid-task-succeeded',
+        sequence: events.length + 1,
+        aggregateVersion: succeededEvent.aggregateVersion + 1,
+        payload: {
+          ...(succeededEvent.payload as Record<string, unknown>),
+          acceptanceId: undefined,
+        },
+      },
+    ];
 
     const result = rehydrateWorkerRunsFromEvents({
       projectId: 'project-rehydrate-1',
@@ -152,7 +158,7 @@ describe('rehydrateWorkerRunsFromEvents', () => {
     });
 
     expect(result.issues.some((issue) => /Acceptance|provenance/.test(issue.message))).toBe(true);
-    expect(result.runs[0].status).not.toBe('succeeded');
+    expect(result.runs).toEqual([]);
   });
 
   it('reconciles a stale ProjectFile snapshot with a durable retry fence', () => {

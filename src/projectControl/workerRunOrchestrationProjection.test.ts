@@ -101,6 +101,34 @@ describe('Worker Run → Orchestration projection', () => {
   });
 
 
+  it('downgrades an already-done orchestration when a newer succeeded run lacks provenance', () => {
+    const valid = run('succeeded', 'succeeded');
+    const invalid = {
+      ...valid,
+      runId: 'run-newer-invalid',
+      updatedAt: '2026-09-01T00:02:00.000Z',
+      tasks: {
+        'task-1': { ...valid.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const current = { ...orchestration(), status: 'done' as const };
+    const projected = projectWorkerRunOntoOrchestration(current, invalid);
+
+    expect(projected.status).not.toBe('done');
+  });
+  it('does not complete an orchestration when a succeeded run omits a staged task', () => {
+    const current = orchestration();
+    current.draft = {
+      ...current.draft!,
+      stages: current.draft!.stages.map((stage) => ({
+        ...stage,
+        taskIds: [...(stage.taskIds ?? []), 'task-2'],
+      })),
+    };
+    const projected = projectWorkerRunOntoOrchestration(current, run('succeeded', 'succeeded'));
+
+    expect(projected.status).not.toBe('done');
+  });
   it('projects a failed Worker task as a failed orchestration with the real error', () => {
     const projected = projectWorkerRunOntoOrchestration(
       orchestration(),

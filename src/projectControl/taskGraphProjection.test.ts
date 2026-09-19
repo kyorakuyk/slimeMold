@@ -196,6 +196,38 @@ describe('buildTaskGraphProjection', () => {
     ]);
   });
 
+  it('does not project raw succeeded Worker tasks without provenance as done', () => {
+    const run: WorkerRunQueueState = {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-invalid-success',
+      orchestrationId: 'orchestration-1',
+      taskGraphId: 'task-graph-1',
+      taskGraphVersion: 3,
+      status: 'running',
+      createdAt: '2026-09-12T01:03:00.000Z',
+      updatedAt: '2026-09-12T01:03:00.000Z',
+      tasks: {
+        'task-build': {
+          taskId: 'task-build',
+          taskExecutionId: 'task-execution:run-invalid-success:task-build',
+          status: 'succeeded',
+          attempt: 1,
+          currentAttemptId: 'task-execution:run-invalid-success:task-build:attempt-1',
+          evidenceIds: ['evidence-build'],
+          updatedAt: '2026-09-12T01:03:00.000Z',
+        },
+      },
+    };
+
+    const projection = buildTaskGraphProjectionFromWorkerRun({ graph, issues, run });
+    const node = projection.nodes.find((candidate) => candidate.taskId === 'task-build');
+    expect(node).toEqual(expect.objectContaining({
+      executionStatus: 'succeeded',
+      projectedStatus: 'blocked',
+      consistency: 'execution-lineage-drift',
+    }));
+  });
   it('adapts the durable WorkerRun registry into the same task projection', () => {
     const run: WorkerRunQueueState = {
       version: 1,

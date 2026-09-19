@@ -4170,3 +4170,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 缺失 provenance 的 `TaskSucceeded` event 不再进入恢复 projection；缺失 provenance 的 `RunSucceeded` 不再升级 run/orchestration terminal success；legacy migration 直接拒绝生成 synthetic success facts；receipt verifier 在 Evidence verifier 前拒绝缺失 Acceptance。
 - 新增/更新跨路径 regression，focused `113/113`；完整 Node `128 test files / 1118 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,161.31 kB`，保留既有 warning。
 - 本 slice 未处理旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance 规则、Worker runtime project fencing、stale ProjectFile save，以及 native/GUI residual；新 exact HEAD reviewer 尚未完成。
+
+### 7.216 unverified：close second-round Worker success invariant bypasses
+
+- `8ee0ae0` 的 exact HEAD reviewer 仍 fail-closed，确认 success invariant 还有十条旁路：混合类型 Evidence 被过滤、空 `RunSucceeded`、孤立 `TaskCleaned`、persisted Run/task status mismatch、空/不完整 TaskGraph coverage、重复 Evidence 被 Map 覆盖、成功 worker receipt 缺 provenance、migration success event 顺序、已 done orchestration 被 invalid run 保留，以及 raw TaskGraph projection 和 invalid rehydration state。
+- 在 checkpoint `64793e5` 后逐条写入 RED：focused 首轮 `9` 个失败均对应 reviewer finding；修复 `contracts.ts` 原始 Evidence 校验和 terminal replay guard，queue restore status gate，migration task-facts-before-RunSucceeded 顺序，rehydration run quarantine，orchestration/taskGraph projection coverage/provenance guard，consistency duplicate Evidence/receipt audit。
+- GREEN：focused `126/126`；完整 Node `128 test files / 1128 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,162.91 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前代码尚未重新提交或 exact review；本节只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
