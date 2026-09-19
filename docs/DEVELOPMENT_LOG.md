@@ -3938,3 +3938,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
 - `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` 或 `codex_process.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.185 unverified：迁移 lib.rs 内联测试模块
+
+- 将 `src-tauri/src/lib.rs` 第 4442 行之后的 `dev_exec_tests` 与 `dev_write_symlink_tests` 内联测试原文迁移到 `src-tauri/src/dev_exec_tests.rs` 和 `src-tauri/src/dev_write_symlink_tests.rs`，生产实现未改动。
+- `lib.rs`仅保留两个 `#[cfg(test)] mod ...;` 声明；测试继续通过 `super::*` 访问同一宿主私有 API，保持测试语义和权限边界不变。
+- 验证：Rust `95 passed / 0 failed`；`cargo fmt`、`cargo check`、`git diff --check`通过；迁移后 `lib.rs` 实测 `4447` 行，两个外置测试文件分别为 `1376` 和 `609` 行。
+- 本轮未运行前端门（仅移动 Rust 内联测试，不涉及 TypeScript/前端产物）；本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
