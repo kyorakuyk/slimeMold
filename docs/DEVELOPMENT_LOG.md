@@ -4094,3 +4094,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 扩展真实 Git fixture，覆盖第一条 legacy 缺失 revision和后续冲突记录两种顺序；focused orphan Rust `2 passed / 0 failed`。
 - 新 snapshot 验证：Rust `97 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
 - 本 snapshot 仍为 unverified，待新 exact HEAD reviewer；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。
+
+### 7.206 verified：orphan lineage all-record review closure
+
+- exact HEAD `ff1261d14809467ab1466503d44ae02b1717410a` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 shared matcher 使用 canonical path comparison 扫描全部同路径 orphan records；registration、approval、cleanup 仅接受唯一且 generation/branch/revision/removed 全匹配的记录，ambiguous、legacy 和冲突记录均拒绝；session generation、operation lock、live registration 与 Node branch-revision payload 未回归。
+- reviewer 质量门：Rust `97 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/native-orphan-lineage-all-records-verified`。直接 `dev_approve_cleanup`/`dev_cleanup_worktree` seam tests、exact duplicate idempotence/path-alias tests作为非阻塞后续增强；GUI/E2E、Unix/macOS native matrix及其他 worktree blockers仍未验证/未解决。
