@@ -109,6 +109,33 @@ const trustedGraph: ProjectTaskGraph = {
 };
 
 describe('worker run consistency audit', () => {
+  it('rejects a succeeded task without Acceptance provenance even when replay agrees', () => {
+    const invalidRun: WorkerRunQueueState = {
+      ...run,
+      tasks: {
+        'task-1': { ...run.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const invalidEvents = events.map((item) => item.eventType === 'TaskSucceeded'
+      ? {
+          ...item,
+          payload: { ...(item.payload as Record<string, unknown>), acceptanceId: undefined },
+        }
+      : item);
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [invalidRun],
+      events: invalidEvents,
+      evidence: [evidence1],
+      acceptances: [],
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.issues.some((issue) => (
+      issue.code === 'acceptance-lineage-drift' || issue.code === 'invalid-event-stream'
+    ))).toBe(true);
+  });
+
   it('accepts a ProjectFile worker registry that matches replayed facts', () => {
     expect(auditWorkerRunConsistency({ projectId: 'project-1', runs: [run], events, evidence: [evidence1], acceptances: [acceptance1] })).toMatchObject({
       ok: true,

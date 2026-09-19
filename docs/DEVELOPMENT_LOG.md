@@ -4163,3 +4163,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - RED：新增 `rejects successful task completion without Acceptance id` 初次运行失败（当前实现未抛错）；GREEN：`workerQueue.test.ts` `32/32`，相关 Worker/coordinator/runtime/side-effect/cleanup 测试 `82/82`。
 - 完整验证：Node `128 test files / 1113 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,159.92 kB`，保留既有 dynamic/static import 和 chunk warning。
 - 本 slice 只闭合 Acceptance terminal invariant；旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt Evidence/Acceptance provenance、全局 runtime project fencing 和 stale ProjectFile save 仍未处理，exact HEAD reviewer 尚未完成。
+
+### 7.215 unverified：close Acceptance provenance bypasses across recovery and projections
+
+- 针对上一轮 reviewer fail-closed 指出的绕过补齐同一 `workerSuccess` invariant：运行时 queue、持久化 queue restore、event rehydration、domain replay、legacy snapshot migration、WorkerRun→Orchestration projection、consistency audit 和 side-effect receipt 均要求成功 terminal 同时拥有非空 Evidence 与 Acceptance。
+- 缺失 provenance 的 `TaskSucceeded` event 不再进入恢复 projection；缺失 provenance 的 `RunSucceeded` 不再升级 run/orchestration terminal success；legacy migration 直接拒绝生成 synthetic success facts；receipt verifier 在 Evidence verifier 前拒绝缺失 Acceptance。
+- 新增/更新跨路径 regression，focused `113/113`；完整 Node `128 test files / 1118 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,161.31 kB`，保留既有 warning。
+- 本 slice 未处理旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance 规则、Worker runtime project fencing、stale ProjectFile save，以及 native/GUI residual；新 exact HEAD reviewer 尚未完成。

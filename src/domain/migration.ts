@@ -15,6 +15,7 @@ import type {
   ProjectTaskGraph,
 } from '../projectControl/types';
 import type { WorkerRunQueueState } from './workerQueue';
+import { normalizeWorkerSuccessProvenance, workerRunSuccessIsValid } from './workerSuccess';
 
 export interface SyntheticBaselineMigrationInput {
   projectId: string;
@@ -459,6 +460,9 @@ function addWorkerRun(
   now: string,
   run: WorkerRunQueueState,
 ): void {
+  if (run.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(run.tasks))) {
+    throw new Error(`legacy Worker Run succeeded 缺少完整 success provenance：${run.runId}`);
+  }
   add({
     ...commonImportedFields(projectId, migrationId, 'workerRun', run.runId, now, run.updatedAt),
     eventId: `${migrationId}:worker-run:${run.runId}`,
@@ -515,6 +519,7 @@ function addWorkerTask(
   taskId: string,
   task: WorkerRunQueueState['tasks'][string],
 ): void {
+  if (task.status === 'succeeded') normalizeWorkerSuccessProvenance(task.evidenceIds, task.acceptanceId);
   const { taskExecutionId, attemptId } = workerTaskLineage(run, taskId);
   const common = commonImportedFields(projectId, migrationId, 'workerTask', `${run.runId}:${taskId}`, now, task.updatedAt);
   if (!Number.isSafeInteger(task.attempt) || task.attempt < 0) {

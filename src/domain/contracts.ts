@@ -5,6 +5,10 @@ import {
   type AttemptId,
   type TaskExecutionId,
 } from './execution';
+import {
+  hasWorkerSuccessProvenance,
+  workerRunSuccessIsValid,
+} from './workerSuccess';
 
 export type ExecutionObjective = 'cost-first' | 'quality-first' | 'speed-first' | 'balanced';
 export type SandboxMode = 'workspace-write' | 'danger-full-access';
@@ -284,6 +288,12 @@ function applyLegacyTaskProjection(
   payload: EventPayload,
 ): void {
   const base = { status, ...(runId ? { runId } : {}) };
+  if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
+    evidenceIds: payloadEvidenceIds(payload),
+    acceptanceId: payloadText(payload, 'acceptanceId'),
+  })) {
+    throw new Error(`TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${taskId}`);
+  }
   if (eventType === 'TaskSucceeded' || eventType === 'TaskFailed' || eventType === 'TaskFeedbackRequested') {
     const evidenceIds = payloadEvidenceIds(payload);
     const acceptanceId = payloadText(payload, 'acceptanceId');
@@ -346,6 +356,12 @@ function applyTaskLineageProjection(
   const isCompletion = eventType === 'TaskSucceeded'
     || eventType === 'TaskFailed'
     || eventType === 'TaskCleaned';
+  if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
+    evidenceIds: payloadEvidenceIds(payload),
+    acceptanceId: payloadText(payload, 'acceptanceId'),
+  })) {
+    throw new Error(`TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${lineage.taskExecutionId}`);
+  }
   if (eventType === 'TaskAttemptMarkedUnknown') {
     if (!previousAttempt || previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running') {
       throw new Error(`只能把当前 running Attempt 标记 unknown：${lineage.attemptId ?? '<missing>'}`);
@@ -603,9 +619,18 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
       case 'RunCancelled':
         projection.runs[event.aggregateId] = { status: 'cancelled' };
         break;
-      case 'RunSucceeded':
+      case 'RunSucceeded': {
+        const taskExecutions = Object.values(projection.taskExecutions)
+          .filter((task) => task.runId === event.aggregateId);
+        const legacyTasks = Object.values(projection.tasks)
+          .filter((task) => task.runId === event.aggregateId);
+        const terminalTasks = taskExecutions.length > 0 ? taskExecutions : legacyTasks;
+        if (terminalTasks.length > 0 && !workerRunSuccessIsValid(terminalTasks)) {
+          throw new Error(`RunSucceeded 缺少完整 Worker success provenance：${event.aggregateId}`);
+        }
         projection.runs[event.aggregateId] = { status: 'succeeded' };
         break;
+      }
       case 'TaskQueued':
         applyTaskEvent(projection, event, 'queued');
         break;

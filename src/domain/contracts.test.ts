@@ -51,7 +51,12 @@ describe('Phase 0a domain contracts', () => {
       aggregateType: 'Task',
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { taskId: 'task-1', runId: 'run-1' },
+      payload: {
+        taskId: 'task-1',
+        runId: 'run-1',
+        evidenceIds: ['evidence-1'],
+        acceptanceId: 'acceptance-1',
+      },
     });
     const stream = appendDomainEvent(appendDomainEvent(appendDomainEvent([], created), started), succeeded);
 
@@ -308,6 +313,7 @@ describe('Phase 0a domain contracts', () => {
           attemptId: secondAttemptId,
           attempt: 1,
           evidenceIds: ['evidence-b'],
+          acceptanceId: 'acceptance-b',
         },
       }),
     ]);
@@ -445,7 +451,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-conflict', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-conflict',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-conflict'],
+        acceptanceId: 'acceptance-conflict',
+      },
     });
     const failed = event({
       eventId: 'conflict-failed',
@@ -477,7 +491,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-jump', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-jump',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-jump'],
+        acceptanceId: 'acceptance-jump',
+      },
     });
     const queued = event({
       eventId: 'jump-queued',
@@ -509,7 +531,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateType: 'TaskExecution',
       aggregateId: taskExecutionId,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-reopen-queued', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-reopen-queued',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-reopen'],
+        acceptanceId: 'acceptance-reopen',
+      },
     });
     const queued = event({
       eventId: 'reopen-queued',
@@ -596,7 +626,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 3,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-late-completion', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-late-completion',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-late'],
+        acceptanceId: 'acceptance-late',
+      },
     });
 
     expect(() => replayDomainEvents([started, queued, late])).toThrow(/Attempt|attempt|running/);
@@ -631,7 +669,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-terminal-reopen', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-terminal-reopen',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-terminal'],
+        acceptanceId: 'acceptance-terminal',
+      },
     });
     const reopened = event({
       eventId: 'terminal-reopened',

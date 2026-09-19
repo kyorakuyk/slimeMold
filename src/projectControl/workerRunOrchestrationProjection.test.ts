@@ -60,6 +60,7 @@ function run(
         status: taskStatus,
         attempt: status === 'queued' ? 0 : 1,
         evidenceIds: taskStatus === 'succeeded' ? ['ev-1'] : [],
+        acceptanceId: taskStatus === 'succeeded' ? 'acceptance-1' : undefined,
         error,
         updatedAt: '2026-09-01T00:01:00.000Z',
       },
@@ -84,6 +85,21 @@ describe('Worker Run → Orchestration projection', () => {
     expect(projected.stageLogs.every((log) => log.status === 'success')).toBe(true);
     expect(projected.stageLogs.every((log) => log.runId === 'run-1')).toBe(true);
   });
+
+  it('does not project an invalid succeeded run as done', () => {
+    const valid = run('succeeded', 'succeeded');
+    const invalid = {
+      ...valid,
+      tasks: {
+        'task-1': { ...valid.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const projected = projectWorkerRunOntoOrchestration(orchestration(), invalid);
+
+    expect(projected.status).not.toBe('done');
+    expect(projected.stageLogs.every((log) => log.status !== 'success')).toBe(true);
+  });
+
 
   it('projects a failed Worker task as a failed orchestration with the real error', () => {
     const projected = projectWorkerRunOntoOrchestration(

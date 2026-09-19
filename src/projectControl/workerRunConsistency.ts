@@ -11,6 +11,7 @@ import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
+import { hasWorkerSuccessProvenance } from '../domain/workerSuccess';
 import { workerCleanupEffectKey } from './workerCleanup';
 import { isArtifactDeliveryReceiptShape } from './workerDelivery';
 
@@ -413,6 +414,13 @@ export function auditWorkerRunConsistency(input: {
             ));
           }
         }
+      }
+      if (task.status === 'succeeded' && !hasWorkerSuccessProvenance(task)) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `succeeded Worker Task 缺少有效 Evidence/Acceptance provenance：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
       }
       if (input.acceptances && task.acceptanceId) {
         const acceptance = input.acceptances.find((record) => record.acceptanceId === task.acceptanceId);

@@ -25,6 +25,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { restoreWorkerRunQueue } from '../domain/workerQueue';
+import { normalizeWorkerSuccessProvenance } from '../domain/workerSuccess';
 import { assertTaskExecutionLineage, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 
@@ -382,21 +383,6 @@ function assertExistingEffectMatchesLease(
   });
 }
 
-/**
- * Persist the Worker execution lifecycle in the project side-effect journal.
- * The journal is outside the worktree and is the source used during restart recovery.
- */
-function normalizedEvidenceIds(ids: string[] | undefined, key: string): string[] {
-  if (!ids || ids.length === 0) {
-    throw new Error(`成功 Worker receipt 缺少非空 Evidence provenance：${key}`);
-  }
-  const normalized = ids.map((id) => requiredText(id, 'Evidence id'));
-  if (new Set(normalized).size !== normalized.length) {
-    throw new Error(`成功 Worker receipt 的 Evidence provenance 重复：${key}`);
-  }
-  return normalized;
-}
-
 async function assertWorkerExecutionReceipt(
   record: SideEffectRecord,
   lease: WorkerTaskLease,
@@ -420,7 +406,8 @@ async function assertWorkerExecutionReceipt(
     throw new Error(`已有 Worker receipt 未通过 canonical 校验：${record.idempotencyKey}`);
   }
   if (record.receipt.outcome === 'succeeded') {
-    const evidenceIds = normalizedEvidenceIds(record.receipt.evidenceIds, key);
+    const success = normalizeWorkerSuccessProvenance(record.receipt.evidenceIds, record.receipt.acceptanceId);
+    const evidenceIds = success.evidenceIds;
     if (!verifyEvidence) throw new Error(`成功 Worker receipt 缺少 host Evidence verifier：${key}`);
     await verifyEvidence({ record, evidenceIds });
   }
@@ -499,9 +486,13 @@ export function createWorkerSideEffectRecorder(
       if (result.status === 'waiting-feedback') {
         throw new Error(`waiting-feedback 不能写入 terminal side-effect receipt：${record.idempotencyKey}`);
       }
-      const evidenceIds = result.status === 'succeeded'
-        ? normalizedEvidenceIds(result.evidenceIds, record.idempotencyKey)
-        : result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
+      let evidenceIds: string[] | undefined;
+      if (result.status === 'succeeded') {
+        const success = normalizeWorkerSuccessProvenance(result.evidenceIds, result.acceptanceId);
+        evidenceIds = success.evidenceIds;
+      } else {
+        evidenceIds = result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
+      }
       if (result.status === 'succeeded') {
         if (!verifyEvidence) throw new Error(`Worker succeeded receipt 缺少 host Evidence verifier：${record.idempotencyKey}`);
         await verifyEvidence({ record: current, evidenceIds: evidenceIds! });

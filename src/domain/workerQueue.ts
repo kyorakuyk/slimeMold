@@ -7,6 +7,7 @@ import {
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
 import { createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
+import { normalizeWorkerSuccessProvenance } from './workerSuccess';
 import {
   createAttemptId,
   createTaskExecutionId,
@@ -309,16 +310,9 @@ function normalizeQueueTask(
   if (task.worktreeStatus === 'cleaned' && task.cleanupStatus !== 'cleaned') {
     throw new Error(`Worker Task cleaned 状态缺少 cleanup receipt：${task.taskId}`);
   }
-  let normalizedAcceptanceId: string | undefined;
+  let normalizedSuccess: ReturnType<typeof normalizeWorkerSuccessProvenance> | undefined;
   if (task.status === 'succeeded') {
-    if (!Array.isArray(task.evidenceIds) || task.evidenceIds.length === 0) {
-      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${task.taskId}`);
-    }
-    const evidenceIds = task.evidenceIds.map((id) => requiredText(id, 'Evidence id'));
-    if (new Set(evidenceIds).size !== evidenceIds.length) {
-      throw new Error(`succeeded Worker Task 的 Evidence ids 重复：${task.taskId}`);
-    }
-    normalizedAcceptanceId = requiredText(task.acceptanceId ?? '', 'Acceptance id');
+    normalizedSuccess = normalizeWorkerSuccessProvenance(task.evidenceIds, task.acceptanceId);
   }
   if (task.pendingAttempt !== undefined) {
     if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt !== task.attempt + 1 || task.status !== 'queued') {
@@ -339,7 +333,10 @@ function normalizeQueueTask(
   return cloneQueueTask({
     ...task,
     ...(task.acceptanceStageId === undefined ? {} : { acceptanceStageId }),
-    ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
+    ...(normalizedSuccess ? {
+      evidenceIds: normalizedSuccess.evidenceIds,
+      acceptanceId: normalizedSuccess.acceptanceId,
+    } : {}),
     taskExecutionId: expected,
     currentAttemptId,
   });
@@ -693,11 +690,7 @@ export class WorkerTaskQueue {
     expectedAttemptId: AttemptId,
   ): void {
     const current = this.requireRunning(taskId, expectedAttemptId);
-    const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
-    if (uniqueEvidenceIds.length === 0) {
-      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${taskId}`);
-    }
-    const normalizedAcceptanceId = requiredText(acceptanceId ?? '', 'Acceptance id');
+    const normalizedSuccess = normalizeWorkerSuccessProvenance(evidenceIds, acceptanceId);
     this.state = {
       ...this.state,
       updatedAt: now,
@@ -706,8 +699,8 @@ export class WorkerTaskQueue {
         [taskId]: {
           ...current,
           status: 'succeeded',
-          evidenceIds: uniqueEvidenceIds,
-          acceptanceId: normalizedAcceptanceId,
+          evidenceIds: normalizedSuccess.evidenceIds,
+          acceptanceId: normalizedSuccess.acceptanceId,
           error: undefined,
           updatedAt: now,
         },
@@ -721,8 +714,8 @@ export class WorkerTaskQueue {
       taskExecutionId,
       attemptId,
       attempt: current.attempt,
-      evidenceIds: uniqueEvidenceIds,
-      acceptanceId: normalizedAcceptanceId,
+      evidenceIds: normalizedSuccess.evidenceIds,
+      acceptanceId: normalizedSuccess.acceptanceId,
       worktreeId: current.worktreeId,
     }, now);
     this.reconcileBlocked(now);

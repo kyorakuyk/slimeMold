@@ -5,6 +5,7 @@ import {
 } from '../domain/workerQueue';
 import type { DomainEvent } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { hasWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
 import type { ProjectTaskGraph } from './types';
 
 type EventPayload = Record<string, unknown>;
@@ -90,6 +91,11 @@ function applyTaskEvent(
   }
   const status = taskStatusFor(event.eventType);
   if (!status && event.eventType !== 'TaskCleaned' && event.eventType !== 'TaskAttemptMarkedUnknown') return state;
+  if (event.eventType === 'TaskSucceeded'
+    && !hasWorkerSuccessProvenance({ evidenceIds: stringList(p.evidenceIds), acceptanceId: text(p.acceptanceId) })) {
+    issues.push({ runId: state.runId, taskId, message: `TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${taskId}` });
+    return state;
+  }
 
   const taskExecutionId = text(p.taskExecutionId) ?? current.taskExecutionId ?? createTaskExecutionId(state.runId, taskId);
   const nextAttempt = event.eventType === 'TaskQueued' ? positiveInteger(p.nextAttempt) : undefined;
@@ -224,6 +230,10 @@ export function rehydrateWorkerRunsFromEvents(input: {
       if (eventRunId !== runId) continue;
       const nextRunStatus = runStatusFor(event.eventType);
       if (nextRunStatus) {
+        if (nextRunStatus === 'succeeded' && !workerRunSuccessIsValid(Object.values(state.tasks))) {
+          issues.push({ runId, message: `RunSucceeded 缺少完整 Worker success provenance：${runId}` });
+          continue;
+        }
         state = { ...state, status: nextRunStatus, updatedAt: event.occurredAt };
         continue;
       }

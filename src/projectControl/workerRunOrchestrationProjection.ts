@@ -1,11 +1,13 @@
 import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
+import { workerRunSuccessIsValid, hasWorkerSuccessProvenance } from '../domain/workerSuccess';
 
 function orchestrationStatusFor(
-  runStatus: WorkerRunQueueState['status'],
+  run: WorkerRunQueueState,
   current: OrchestrationStatus,
 ): OrchestrationStatus {
-  switch (runStatus) {
+  if (run.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(run.tasks))) return current;
+  switch (run.status) {
     case 'queued':
       return current === 'awaiting-confirm' ? current : 'ready';
     case 'running':
@@ -28,7 +30,9 @@ function stageTaskStatus(tasks: WorkerQueueTask[]): StageLog['status'] | null {
   if (tasks.some((task) => task.status === 'running')) return 'running';
   if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'failed';
   if (tasks.some((task) => task.status === 'cancelled')) return 'cancelled';
-  if (tasks.every((task) => task.status === 'succeeded')) return 'success';
+  if (tasks.every((task) => task.status === 'succeeded')) {
+    return tasks.every(hasWorkerSuccessProvenance) ? 'success' : 'pending';
+  }
   return 'pending';
 }
 
@@ -80,7 +84,7 @@ export function projectWorkerRunOntoOrchestration(
   };
   return {
     ...orchestration,
-    status: orchestrationStatusFor(run.status, orchestration.status),
+    status: orchestrationStatusFor(run, orchestration.status),
     updatedAt: run.updatedAt,
     runIds: [...new Set([...orchestration.runIds, run.runId])],
     stageLogs,

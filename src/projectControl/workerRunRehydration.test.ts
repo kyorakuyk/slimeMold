@@ -3,6 +3,7 @@ import {
   createWorkerRunQueue,
   runWorkerQueue,
 } from '../domain/workerQueue';
+import type { DomainEvent } from '../domain/contracts';
 import type { ProjectTaskGraph } from './types';
 import {
   rehydrateWorkerRunsFromEvents,
@@ -101,6 +102,57 @@ describe('rehydrateWorkerRunsFromEvents', () => {
     });
     expect(restored).toMatchObject({ restored: true, issues: [] });
     expect(restored.runs).toHaveLength(1);
+  });
+
+  it('quarantines a TaskSucceeded event that lacks Acceptance provenance', async () => {
+    const runId = 'run-rehydrate-invalid-success';
+    const queue = createWorkerRunQueue({
+      projectId: 'project-rehydrate-1',
+      runId,
+      orchestrationId: 'orch-rehydrate-1',
+      taskGraph: graph,
+      now: '2026-09-15T00:00:00.000Z',
+    });
+    const events: DomainEvent[] = queue.drainEvents();
+    await runWorkerQueue(queue, {
+      allocator: {
+        allocate: async () => ({
+          worktreeId: 'worker-wt-invalid',
+          path: 'D:/Temp/project-workers/worker-wt-invalid',
+          branch: 'worker/worker-wt-invalid',
+          baseRevision: '3be065ee082a5c4c10c1c3f0c11226154485b1f5',
+        }),
+      },
+      executor: {
+        execute: async () => ({
+          status: 'succeeded' as const,
+          evidenceIds: ['evidence-invalid'],
+          acceptanceId: 'acceptance-invalid',
+        }),
+      },
+      onTransition: ({ events: transitionEvents }) => {
+        events.push(...transitionEvents);
+      },
+    });
+    const invalidEvents = events.map((event) => event.eventType === 'TaskSucceeded'
+      ? {
+          ...event,
+          payload: {
+            ...(event.payload as Record<string, unknown>),
+            acceptanceId: undefined,
+          },
+        }
+      : event);
+
+    const result = rehydrateWorkerRunsFromEvents({
+      projectId: 'project-rehydrate-1',
+      events: invalidEvents,
+      taskGraphs: [graph],
+      existingRuns: [],
+    });
+
+    expect(result.issues.some((issue) => /Acceptance|provenance/.test(issue.message))).toBe(true);
+    expect(result.runs[0].status).not.toBe('succeeded');
   });
 
   it('reconciles a stale ProjectFile snapshot with a durable retry fence', () => {

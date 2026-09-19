@@ -47,6 +47,7 @@ const lease: WorkerTaskLease = {
 const succeeded: WorkerExecutionResult = {
   status: 'succeeded',
   evidenceIds: ['evidence-1'],
+  acceptanceId: 'acceptance-1',
 };
 
 describe('worker side-effect recorder', () => {
@@ -252,7 +253,10 @@ describe('worker side-effect recorder', () => {
     const recorder = createWorkerSideEffectRecorder(repository);
     const started = await recorder.start(lease);
 
-    await expect(recorder.complete(started, { status: 'succeeded' })).rejects.toThrow(/Evidence/);
+    await expect(recorder.complete(started, {
+      status: 'succeeded',
+      acceptanceId: 'acceptance-1',
+    })).rejects.toThrow(/Evidence/);
   });
 
   it('rejects a succeeded receipt when no host Evidence verifier is configured', async () => {
@@ -264,7 +268,20 @@ describe('worker side-effect recorder', () => {
     await expect(recorder.complete(started, {
       status: 'succeeded',
       evidenceIds: ['evidence-1'],
+      acceptanceId: 'acceptance-1',
     })).rejects.toThrow(/Evidence verifier/);
+  });
+
+  it('rejects a succeeded receipt without Acceptance provenance', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, {
+      status: 'succeeded',
+      evidenceIds: ['evidence-1'],
+    })).rejects.toThrow(/Acceptance|acceptance/);
   });
 
   it('verifies persisted host Evidence against the Worker assignment before success', async () => {
