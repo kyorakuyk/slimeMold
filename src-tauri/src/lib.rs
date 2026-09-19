@@ -24,21 +24,17 @@ use std::time::Instant;
 use tauri::{AppHandle, Manager};
 
 mod antigravity;
-mod cleanup_lineage_policy;
+mod authority;
 mod codex;
-mod credentials;
-mod dev_command_policy;
-mod dev_process;
-mod dev_state;
-mod event_store;
-mod file_authority;
-mod fs_guard;
+mod execution;
 mod fs_identity;
-mod git_worktree_policy;
-mod session_authority;
-mod worktree_authority;
-mod worktree_policy;
+mod policy;
+mod storage;
 
+pub(crate) use authority::{
+    file as file_authority, session as session_authority, state as dev_state,
+    worktree as worktree_authority,
+};
 #[cfg(test)]
 pub(crate) use cleanup_lineage_policy::{
     cleanup_binding_matches, orphan_target_is_deleted_candidate,
@@ -50,6 +46,7 @@ use dev_state::{lock_dev_operation, next_session_generation, DEV_STATE};
 use dev_state::{lock_dev_state_tests, DevState};
 #[cfg(test)]
 pub(crate) use dev_state::{CleanupBinding, PendingWorktree, RegisteredWorktree};
+pub(crate) use execution::process as dev_process;
 #[cfg(test)]
 pub(crate) use file_authority::{
     dev_create_dir, dev_write_file, stable_file_identity, write_dev_file_bound,
@@ -64,6 +61,11 @@ use fs_guard::{
 #[cfg(test)]
 pub(crate) use fs_guard::{dev_strip_verbatim, protected_relative_path};
 pub(crate) use fs_identity::{stable_directory_identity, StableDirectoryIdentity};
+pub(crate) use policy::{
+    cleanup_lineage as cleanup_lineage_policy, command as dev_command_policy, fs_guard,
+    git_worktree as git_worktree_policy, worktree as worktree_policy,
+};
+pub(crate) use storage::{credentials, event_store};
 
 #[cfg(test)]
 pub(crate) use session_authority::dev_cwd_kind;

@@ -11,10 +11,6 @@ use rand::RngCore;
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-use super::{
-    apply_dev_env, dev_main_repo_git_allowed, dev_sanitized_env, resolve_dev_program,
-    run_with_timeout,
-};
 use crate::cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_candidate};
 use crate::dev_state::{
     lock_dev_operation, CleanupBinding, PendingWorktree, RegisteredWorktree, DEV_STATE,
@@ -25,6 +21,10 @@ use crate::git_worktree_policy::validate_git_worktree_porcelain;
 use crate::worktree_policy::{
     is_full_object_id, worker_branch_from_ref_arg, worker_branch_from_tip_arg,
     worker_branch_is_valid, worker_name_is_valid,
+};
+use crate::{
+    apply_dev_env, dev_main_repo_git_allowed, dev_sanitized_env, resolve_dev_program,
+    run_with_timeout,
 };
 use crate::{assert_session_generation, dev_abs_of};
 

@@ -4062,3 +4062,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - file commands 的 Tauri name、参数、返回值和 handler 顺序保持不变；SessionStamp/generation、DEV_OPERATION_LOCK、worktree registration和protected-path policy ownership未改变。
 - 验证：file targeted `6 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `1357` 行，新 `file_authority.rs` `695` 行。
 - 当前验证发生在 Windows；Unix/macOS openat/no-follow 原生矩阵、Windows reparse/junction adversarial matrix仍未验证。build保留既有大 chunk warning（最大约 `1,159.81 kB`）；本 checkpoint 不标记 verified。
+
+### 7.202 unverified：src-tauri namespace consolidation
+
+- 将平铺模块按领域收进四个 namespace：`authority/`、`policy/`、`storage/`、`execution/`；root `lib.rs`通过 crate-private aliases 保持现有调用路径和 Tauri command contract。
+- 当前目录职责：authority承载 state/session/file/worktree；policy承载 command/fs/worktree/Git/cleanup policy；storage承载 credentials/event store；execution承载 dev_process。Codex/Antigravity和测试模块本轮保持原位置，避免混入生命周期修复。
+- 本轮只改变文件路径、`mod.rs`聚合和显式 import/re-export；未改变 state carrier、lock order、命令参数、权限规则、进程行为或外部 IPC 名称。
+- 验证：Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；既有 build 动态/静态 import 与大 chunk warning 保持不变。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。

@@ -1,4 +1,4 @@
-use super::StableDirectoryIdentity;
+use crate::StableDirectoryIdentity;
 use std::sync::{Mutex, MutexGuard};
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree。
