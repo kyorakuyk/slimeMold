@@ -181,7 +181,7 @@ describe('WorkerTaskQueue', () => {
       now: '2026-09-01T00:01:00.000Z',
     });
     const lease = await queue.claimTask('a', allocatorFor([]));
-    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', undefined, lease!.attemptId);
+    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', 'acceptance-1', lease!.attemptId);
     const state = queue.snapshot();
     state.tasks.a = { ...state.tasks.a, evidenceIds: [] };
 
@@ -189,6 +189,40 @@ describe('WorkerTaskQueue', () => {
       taskGraph,
       state,
     })).toThrow(/Evidence/);
+  });
+
+  it('rejects successful task completion without Acceptance id', async () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-acceptance-required',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    expect(() => queue.markSucceeded(
+      'a',
+      ['evidence-1'],
+      '2026-09-01T00:02:00.000Z',
+      undefined,
+      lease!.attemptId,
+    )).toThrow(/Acceptance|acceptance/);
+  });
+
+  it('rejects restoring a succeeded task without Acceptance id', async () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-acceptance-restore',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', 'acceptance-1', lease!.attemptId);
+    const state = queue.snapshot();
+    state.tasks.a = { ...state.tasks.a, acceptanceId: undefined };
+
+    expect(() => restoreWorkerRunQueue({ taskGraph, state })).toThrow(/Acceptance|acceptance/);
   });
 
   it('rejects invalid persisted worktree lifecycle provenance', () => {
@@ -213,6 +247,7 @@ describe('WorkerTaskQueue', () => {
       status: 'succeeded',
       attempt: 1,
       evidenceIds: ['evidence-1'],
+      acceptanceId: 'acceptance-1',
       worktreeStatus: 'cleaned',
       cleanupStatus: 'cleaned',
     };
@@ -310,7 +345,7 @@ describe('WorkerTaskQueue', () => {
         leases.push(lease);
         return lease.task.id === 'a'
           ? { status: 'failed', error: '编译失败' }
-          : { status: 'succeeded', evidenceIds: [`evidence-${lease.task.id}`] };
+          : { status: 'succeeded', evidenceIds: [`evidence-${lease.task.id}`], acceptanceId: `acceptance-${lease.task.id}` };
       },
     };
 
@@ -411,7 +446,7 @@ describe('WorkerTaskQueue', () => {
     });
     const lease = await queue.claimTask('a', allocatorFor(firstAllocations));
     expect(lease).not.toBeNull();
-    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z', undefined, lease!.attemptId);
+    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z', 'acceptance-a', lease!.attemptId);
 
     const restored = restoreWorkerRunQueue({
       taskGraph: graph([task('a'), task('b', ['a'])]),
@@ -420,7 +455,7 @@ describe('WorkerTaskQueue', () => {
     const resumedAllocations: string[] = [];
     const state = await runWorkerQueue(restored, {
       allocator: allocatorFor(resumedAllocations),
-      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-b'] }) },
+      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-b'], acceptanceId: 'acceptance-b' }) },
     });
 
     expect(firstAllocations).toEqual(['a']);
@@ -475,7 +510,7 @@ describe('WorkerTaskQueue', () => {
       executor: {
         execute: async () => {
           executorStarted = true;
-          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+          return { status: 'succeeded', evidenceIds: ['evidence-a'], acceptanceId: 'acceptance-a' };
         },
       },
       onTransition: ({ state, events }) => {
@@ -544,7 +579,7 @@ describe('WorkerTaskQueue', () => {
       executor: {
         execute: async () => {
           order.push('executor');
-          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+          return { status: 'succeeded', evidenceIds: ['evidence-a'], acceptanceId: 'acceptance-a' };
         },
       },
       onTransition: ({ state }) => {
@@ -611,7 +646,7 @@ describe('WorkerTaskQueue', () => {
     });
     const state = await runWorkerQueue(queue, {
       allocator: allocatorFor([]),
-      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['evidence-1'] }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' }) },
       signal: controller.signal,
       sideEffects: {
         start: async (lease) => startSideEffect(createSideEffect({
@@ -674,7 +709,7 @@ describe('WorkerTaskQueue', () => {
           executorCalls += 1;
           expect(signal).toBe(controller.signal);
           controller.abort();
-          return { status: 'succeeded', evidenceIds: ['should-not-persist'] };
+          return { status: 'succeeded', evidenceIds: ['should-not-persist'], acceptanceId: 'acceptance-a' };
         },
       },
       signal: controller.signal,
@@ -700,7 +735,7 @@ describe('WorkerTaskQueue', () => {
     await expect(runWorkerQueue(queue, {
       concurrency: 1,
       allocator: { allocate: async () => ({ worktreeId: 'wt', path: 'C:/wt', branch: 'worker/wt', baseRevision: 'base' }) },
-      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'] }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'], acceptanceId: 'acceptance-a' }) },
       onTransition: async () => { throw new Error('persistence unavailable'); },
     })).rejects.toThrow('persistence unavailable');
     expect(queue.drainEvents().map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted']);
@@ -832,7 +867,7 @@ describe('WorkerTaskQueue', () => {
 
     const state = await runWorkerQueue(queue, {
       allocator: sharedAllocator,
-      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence'] }) },
+      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence'], acceptanceId: 'acceptance-a' }) },
       concurrency: 1,
     });
 

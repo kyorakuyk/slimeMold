@@ -4155,3 +4155,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 确认 37 个 Tauri command 的名称、参数、注册顺序和 `dev_exec` IPC contract不变；无 lock、mutation order、session/cwd fence、环境清理、launcher 或 timeout 回归。
 - reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
 - 已创建本地 verified tag：`checkpoint/execution-dev-exec-split-verified`。GUI/E2E、Unix/macOS native matrix以及既有 worktree lifecycle residual仍未验证；下一刀继续处理剩余 root facade，不扩大 hardening范围。
+
+### 7.214 unverified：Worker successful terminal requires Acceptance
+
+- 确认当前 exact HEAD 的逻辑 blocker：`WorkerTaskQueue.markSucceeded` 只要求非空 Evidence，允许 `acceptanceId` 缺失；`normalizeQueueTask` 对恢复的 `succeeded` task 也未要求 Acceptance，因此可把无验收的 Worker 结果投影为 succeeded/RunSucceeded/Orchestration done。
+- 新增运行时与恢复回归：成功 terminal 缺 Acceptance 必须拒绝；持久化 `succeeded` 状态缺 Acceptance 必须拒绝。同步修正 queue、coordinator、runtime 测试 fixtures，使所有合法成功结果显式携带 Acceptance；失败/feedback 结果契约未改变。
+- RED：新增 `rejects successful task completion without Acceptance id` 初次运行失败（当前实现未抛错）；GREEN：`workerQueue.test.ts` `32/32`，相关 Worker/coordinator/runtime/side-effect/cleanup 测试 `82/82`。
+- 完整验证：Node `128 test files / 1113 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,159.92 kB`，保留既有 dynamic/static import 和 chunk warning。
+- 本 slice 只闭合 Acceptance terminal invariant；旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt Evidence/Acceptance provenance、全局 runtime project fencing 和 stale ProjectFile save 仍未处理，exact HEAD reviewer 尚未完成。

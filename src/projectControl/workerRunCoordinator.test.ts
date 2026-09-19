@@ -71,7 +71,11 @@ function dependencies(): { allocator: WorkerWorktreeAllocator; executor: WorkerE
       })),
     },
     executor: {
-      execute: vi.fn(async (): Promise<WorkerExecutionResult> => ({ status: 'succeeded', evidenceIds: ['evidence-1'] })),
+      execute: vi.fn(async (): Promise<WorkerExecutionResult> => ({
+        status: 'succeeded',
+        evidenceIds: ['evidence-1'],
+        acceptanceId: 'acceptance-1',
+      })),
     },
   };
 }
@@ -146,7 +150,7 @@ describe('createProjectWorkerRunCoordinator', () => {
     let release!: () => void;
     const deps = dependencies();
     deps.executor.execute = vi.fn(() => new Promise<WorkerExecutionResult>((resolve) => {
-      release = () => resolve({ status: 'succeeded', evidenceIds: ['evidence-1'] });
+      release = () => resolve({ status: 'succeeded', evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' });
     }));
     const coordinator = createProjectWorkerRunCoordinator({
       projectId: 'project-1',

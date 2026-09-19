@@ -220,7 +220,7 @@ describe('rehydrateWorkerRunRegistry', () => {
             baseRevision: 'base-1',
           }),
         },
-        executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-1'] }) },
+        executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' }) },
       },
       ({ state: nextState, events }) => {
         updates.push({ status: nextState.status, eventTypes: events.map((event) => event.eventType) });

@@ -309,6 +309,7 @@ function normalizeQueueTask(
   if (task.worktreeStatus === 'cleaned' && task.cleanupStatus !== 'cleaned') {
     throw new Error(`Worker Task cleaned 状态缺少 cleanup receipt：${task.taskId}`);
   }
+  let normalizedAcceptanceId: string | undefined;
   if (task.status === 'succeeded') {
     if (!Array.isArray(task.evidenceIds) || task.evidenceIds.length === 0) {
       throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${task.taskId}`);
@@ -317,6 +318,7 @@ function normalizeQueueTask(
     if (new Set(evidenceIds).size !== evidenceIds.length) {
       throw new Error(`succeeded Worker Task 的 Evidence ids 重复：${task.taskId}`);
     }
+    normalizedAcceptanceId = requiredText(task.acceptanceId ?? '', 'Acceptance id');
   }
   if (task.pendingAttempt !== undefined) {
     if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt !== task.attempt + 1 || task.status !== 'queued') {
@@ -337,6 +339,7 @@ function normalizeQueueTask(
   return cloneQueueTask({
     ...task,
     ...(task.acceptanceStageId === undefined ? {} : { acceptanceStageId }),
+    ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
     taskExecutionId: expected,
     currentAttemptId,
   });
@@ -694,6 +697,7 @@ export class WorkerTaskQueue {
     if (uniqueEvidenceIds.length === 0) {
       throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${taskId}`);
     }
+    const normalizedAcceptanceId = requiredText(acceptanceId ?? '', 'Acceptance id');
     this.state = {
       ...this.state,
       updatedAt: now,
@@ -703,7 +707,7 @@ export class WorkerTaskQueue {
           ...current,
           status: 'succeeded',
           evidenceIds: uniqueEvidenceIds,
-          ...(acceptanceId ? { acceptanceId: requiredText(acceptanceId, 'acceptance id') } : {}),
+          acceptanceId: normalizedAcceptanceId,
           error: undefined,
           updatedAt: now,
         },
@@ -718,7 +722,7 @@ export class WorkerTaskQueue {
       attemptId,
       attempt: current.attempt,
       evidenceIds: uniqueEvidenceIds,
-      ...(acceptanceId ? { acceptanceId } : {}),
+      acceptanceId: normalizedAcceptanceId,
       worktreeId: current.worktreeId,
     }, now);
     this.reconcileBlocked(now);
