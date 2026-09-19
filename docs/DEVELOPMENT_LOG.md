@@ -4261,3 +4261,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - controller通过显式 state/save/event/report callbacks接入，`recoverWorkerRun`、cleanup UI action、runQueuedWorker及其直接 side-effect路径保持在 App；非 Tauri/Abort路径保持 no-op。App删除原两段重复 I/O实现。
 - GREEN：focused `3 files / 6 tests`；完整 Node `132 test files / 1152 tests`；`npm run build`通过，最大 chunk约 `1,172.01 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续收口剩余 Worker recovery用户动作或进入 executor adapter；真实 Tauri E2E与历史 unverified继续后置。
+
+### 7.229 verified：Worker recovery I/O controller review closure
+
+- exact HEAD `4edcf83` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 Tauri dynamic imports、Acceptance verifier、journal/evidence merge、receipt reconciliation、unknown recovery projection、save/abort/project guards均保持一致，`runQueuedWorker`、`recoverWorkerRun`、cleanup handler未被改变。
+- 同一代码快照质量门：Node `132 test files / 1152 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-recovery-io-controller-verified`。该 tag只证明 recovery I/O结构切片，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
