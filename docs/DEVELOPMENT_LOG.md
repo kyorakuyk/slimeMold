@@ -4267,3 +4267,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `4edcf83` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 Tauri dynamic imports、Acceptance verifier、journal/evidence merge、receipt reconciliation、unknown recovery projection、save/abort/project guards均保持一致，`runQueuedWorker`、`recoverWorkerRun`、cleanup handler未被改变。
 - 同一代码快照质量门：Node `132 test files / 1152 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
 - 已创建本地 verified tag：`checkpoint/frontend-worker-recovery-io-controller-verified`。该 tag只证明 recovery I/O结构切片，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
+
+### 7.230 unverified：extract Worker recovery action controller from App
+
+- 第五条前端基础切片将 App 中用户触发的 `recoverWorkerRun` action抽到 `src/projectControl/workerActionController.ts`；controller负责 durable journal recovery、RecoveryCommand、runtime reinstall、ProjectFile save和 retry callback。
+- cleanup destructive action、runQueuedWorker、Tauri cleanup receipt执行仍留在 App；controller保留非桌面环境、未保存项目和缺失 durable Run 的 fail-closed guards。新增 direct guards测试。
+- GREEN：focused `3 files / 6 tests`；完整 Node `133 test files / 1154 tests`；`npm run build`通过，最大 chunk约 `1,172.46 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续处理 cleanup action边界或进入 executor adapter；真实 Tauri E2E与历史 unverified继续后置。

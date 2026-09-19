@@ -31,7 +31,6 @@ import { ensureGuiDevSession, getDevGuiError } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
-import { recoverWorkerRunCommand } from './projectControl/workerRecoveryCommand';
 import {
   getRestoredWorkerRunForCleanup,
   installWorkerRunRuntime,
@@ -60,6 +59,7 @@ import {
   mergeWorkerSideEffects,
 } from './projectControl/workerEvidence';
 import { createWorkerRecoveryIoController } from './projectControl/workerRecoveryIoController';
+import { createWorkerActionController } from './projectControl/workerActionController';
 
 registerBuiltins();
 
@@ -640,83 +640,24 @@ export default function App() {
     await refreshWorkerCleanupProposals(session, runId, operation.controller.signal);
   };
 
-  const recoverWorkerRun = async (
-    runId: string,
-    decision: 'retry' | 'skip',
-    reason: string,
-  ): Promise<void> => {
-    if (!isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
-    const current = useWorkflowStore.getState();
-    const projectId = current.projectId;
-    const projectPath = current.projectPath;
-    const run = current.workerRuns.find((item) => item.runId === runId);
-    const taskGraph = run
-      ? current.projectControl.taskGraphs?.find((item) => item.id === run.taskGraphId)
-      : undefined;
-    if (!projectId || !projectPath) throw new Error('项目必须先保存，才能恢复 Worker Run');
-    if (!run || !taskGraph) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
-    const operation = getProjectOperation(projectId, projectPath);
-    assertProjectOperation(operation);
-
-    const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
-      import('./domain/tauriEventStore'),
-      import('./dev/tauri-run'),
-      import('./domain/sideEffects'),
-      import('./projectControl/workerSideEffects'),
-    ]);
-    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
-    if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
-    const persistence = createTauriEvidenceStore(
-      `${projectPath}/.slimemold/evidence`,
-      `${projectPath}-workers`,
-      'host',
-    );
-    const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
-      load: async () => session.listAcceptances(),
-    });
-    const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
-      new sideEffectsModule.SideEffectJournalRepository(
-        createTauriEventStoreAdapter(projectPath),
-        projectPath,
-      ),
-      persistence,
-      undefined,
-      acceptanceVerifier,
-    );
-    assertProjectOperation(operation);
-    const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
-    assertProjectOperation(operation);
-    current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
-    const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const result = recoverWorkerRunCommand({
-      projectId,
-      state: run,
-      taskGraph,
-      journal,
-      decision,
-      reason,
-      decisionId,
-      now: new Date().toISOString(),
-    });
-    assertProjectOperation(operation);
-    recordProjectEvents(projectId, result.events);
-    const nextRuns = current.workerRuns.map((item) => item.runId === runId ? result.state : item);
-    current.setWorkerRuns(nextRuns);
-    current.setOrchestrations(
-      projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
-    );
-    current.setWorkerCleanupProposals(current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId));
-    const runtime = installWorkerRunRuntime({
-      projectId,
-      taskGraphs: current.projectControl.taskGraphs ?? [],
-      runs: current.workerRuns.map((item) => item.runId === runId ? result.state : item),
-    });
-    current.setWorkerRunRecoveries(runtime.recoveries);
-    assertProjectOperation(operation);
-    await current.saveProject({ projectId, projectPath, signal: operation.controller.signal });
-    assertProjectOperation(operation);
-    if (decision === 'retry') await runQueuedWorker(runId);
-  };
+  const workerActionController = createWorkerActionController({
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        ...state,
+        taskGraphs: state.projectControl.taskGraphs ?? [],
+      };
+    },
+    getProjectOperation,
+    assertProjectOperation,
+    recordProjectEvents,
+    saveProject: async (projectId, projectPath, signal) => {
+      await useWorkflowStore.getState().saveProject({ projectId, projectPath, signal });
+    },
+    runQueuedWorker,
+    isTauri,
+  });
+  const recoverWorkerRun = workerActionController.recoverWorkerRun;
 
   const cleanupWorkerRun = async (
     runId: string,
