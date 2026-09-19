@@ -4132,3 +4132,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `vault_crypto_roundtrip_tests` 随敏感实现迁移到 `storage::endpoint_store::tests`；`fs_atomic_replace_tests`仍暂留 `lib.rs`，下一结构 slice再按文件持久化边界迁移。
 - 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
 - 本轮未改变 cleanup hardening、权限、generation、identity 或外部命令行为；等待结构 slice exact HEAD reviewer。
+
+### 7.211 verified：storage endpoint/vault structural review closure
+
+- exact HEAD `02d8a1887e9567025d3d7fcc38991f74c2ba92fe` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `credentials.rs` 只拥有 generic keyring credential set/get/delete/list；`endpoint_store.rs` 拥有 endpoint/vault AppData、master key、AES-GCM、base64 与 crypto tests；private storage keyring service、command visibility、IPC order、存储格式和行为均未改变。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/storage-endpoint-vault-split-verified`。GUI/E2E、Unix/macOS native matrix仍未验证；下一结构 slice转向 execution/dev_exec。
