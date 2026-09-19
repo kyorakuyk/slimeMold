@@ -3980,3 +3980,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs`保留 `worker_target_is_valid`、worktree path/canonicalization、pending/registered lease、session、identity 和 CAS authority；新模块仅提供纯输入解析与校验。
 - 验证：worker name targeted `1 passed / 0 failed`；worktree lifecycle targeted `1 passed / 0 failed`；scoped branch probe targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4301` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.191 unverified：抽出 Git worktree porcelain parser
+
+- 新增 `src-tauri/src/git_worktree_policy.rs`，承接 `validate_git_worktree_porcelain`；保留 output cap、必需 `worktree/HEAD` 字段、40/64位 object ID、detached/bare/locked/prunable 和 unknown-field fail-closed 语义。
+- `lib.rs`保留 `git_worktree_list` 及所有 Git probe、registration、restore、orphan、cleanup、CAS 和 DEV_STATE authority；parser仅依赖 `DEV_OUTPUT_CAP` 与 worktree policy object-id validator。
+- 验证：worktree add targeted `1 passed / 0 failed`；unregister targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4259` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
