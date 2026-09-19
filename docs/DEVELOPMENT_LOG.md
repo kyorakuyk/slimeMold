@@ -4207,3 +4207,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在 checkpoint `6d5fd65` 后修复：replay对未知 `worktreeStatus` fail-closed；audit在提供 TaskGraph时对每个 run执行统一 restore validation；reconcile支持 TaskGraph-backed final restore并在 issues存在时禁止保存；App对 zero-run worker projection和 audit failure统一清除 done/success外观。
 - GREEN：本轮 focused `8 files / 148 tests`；完整 Node `128 test files / 1140 tests`；`npm run build`通过，最大 chunk约 `1,170.75 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.221 unverified：extract ProjectControl/Worker lifecycle adapter from workflowStore
+
+- 按用户确定的基础建设优先级，暂停继续扩展当前 Worker blocker；从 `workflowStore.ts` 抽出无 React 的 `projectControlLifecycle.ts`，集中负责 ProjectControl snapshot normalization、Worker runtime install/clear 和 runtime-only recovery/evidence/receipt/proposal projection 的初始状态。
+- 保留 `workflowStore` facade、Zustand state shape、公开 action 名称、ProjectFile 序列化、事件 buffer 和现有组件调用合同；`openProject`、`newProject`、`createProject`、`closeProject` 与 persist merge 改为通过 adapter 接入，未改变执行/IPC语义。
+- 新增 adapter 直接测试，并保留 store project-control regression。GREEN：focused `2 files / 10 tests`；完整 Node `129 test files / 1145 tests`；`npm run build`通过，最大 chunk约 `1,170.87 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是第一条纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一刀继续处理 workflowStore 中更完整的 ProjectControl/Worker lifecycle facade，再进入 `App.tsx` 生命周期拆分；真实 Tauri E2E 与历史 unverified 收口后置。

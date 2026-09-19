@@ -73,7 +73,7 @@ import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
-import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
+import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { WorkerRunRecovery } from '../projectControl/workerRunRuntime';
@@ -81,14 +81,14 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
 import { EventStreamRepository } from '../domain/eventStore';
-import {
-  clearProjectEventBuffer,
-  flushPendingProjectEvents,
-  getPendingProjectEvents,
-} from '../projectControl/eventBuffer';
-import { clearWorkerRunRuntime, installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import { clearProjectEventBuffer, flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
 import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
 import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunRehydration';
+import {
+  installProjectControlRuntime,
+  normalizeProjectControlSnapshot,
+  resetProjectControlLifecycle,
+} from './projectControlLifecycle';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
@@ -1103,14 +1103,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
         const previousProjectId = get().projectId;
         if (previousProjectId) clearProjectEventBuffer(previousProjectId);
-        clearWorkerRunRuntime();
+        resetProjectControlLifecycle();
         suppressDirty = true;
         set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
         suppressDirty = false;
       },
 
       createProject: async ({ name, templateId, location }) => {
-        clearWorkerRunRuntime();
+        resetProjectControlLifecycle();
         const tpl = templateId
           ? STARTER_TEMPLATES.find((t) => t.id === templateId)
           : undefined;
@@ -1206,12 +1206,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         suppressDirty = true;
         set(state);
         finalizeLoaded();
-        const runtime = installWorkerRunRuntime({
+        set(installProjectControlRuntime({
           projectId: file.id,
           taskGraphs: state.projectControl.taskGraphs ?? [],
           runs: state.workerRuns,
-        });
-        set({ workerRunRecoveries: runtime.recoveries, workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
+        }));
         clearProjectEventBuffer(file.id);
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
@@ -1595,8 +1594,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       closeProject: () => {
         const currentProjectId = get().projectId;
-        if (currentProjectId) clearProjectEventBuffer(currentProjectId);
-        clearWorkerRunRuntime();
+        resetProjectControlLifecycle(currentProjectId);
         suppressDirty = true;
         set({
           projectName: null,
@@ -1719,7 +1717,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ workerCleanupProposals: proposals });
       },
       setProjectControl: (snapshot: ProjectControlSnapshot) => {
-        set({ projectControl: parseProjectControlSnapshot(snapshot) });
+        set({ projectControl: normalizeProjectControlSnapshot(snapshot) });
       },
       /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
       upsertPipeline: (def: PipelineDef) => {
@@ -2116,7 +2114,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           ...current,
           ...p,
           workflows: restoredWorkflows,
-          projectControl: parseProjectControlSnapshot(p.projectControl),
+          projectControl: normalizeProjectControlSnapshot(p.projectControl),
         } as WorkflowState;
       },
     },
