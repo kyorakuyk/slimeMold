@@ -4117,3 +4117,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `cleanup_identity_guard_preserves_base_mismatch_short_circuit` regression，确认 target probe 未被调用、phase-specific error 保持、capability 被消费。
 - 新 snapshot 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
 - 本 slice 仍只处理 cleanup capability invalidation/guard 语义；durable partial-CAS recovery、post-remove strict absence、pending probe unknown、restore ordering 和 Windows TOCTOU仍未解决，等待新的 exact HEAD reviewer。
+
+### 7.209 verified：cleanup capability invalidation review closure
+
+- exact HEAD `b855766624275aba92ffea64d12c5f6b405fd9b4` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `cleanup_probe_or_invalidate` 在 capability 后的 fallible probe 中消费 token，`cleanup_identity_guard` 保持 base mismatch 短路、phase-specific error precedence 和三处 cleanup mutation order；无 DEV_STATE 锁内失效死锁或成功路径回归。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/native-cleanup-identity-short-circuit-verified`。本轮 hardening 到此冻结；partial-CAS durable recovery、post-remove strict absence、pending probe unknown、restore ordering、Windows TOCTOU、GUI/E2E 与 Unix/macOS native matrix仍是明确 residual，不在本轮继续扩大。
