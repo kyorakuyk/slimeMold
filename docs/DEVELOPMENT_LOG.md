@@ -4016,3 +4016,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `dev_lexical_abs_of`、`dev_abs_of` 和 `dev_cwd_binding` 的低风险 raw `base_repo` 读取改走 accessor；cwd ownership、identity rebind、legacy fallback 与 lifecycle transition保持在 `lib.rs`。
 - 验证：cwd prefix targeted `1 passed / 0 failed`；stale generation targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4063` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.196 unverified：抽出 credentials/storage authority boundary
+
+- 新增 `src-tauri/src/credentials.rs`，完整承接 OS keyring credential index、AppData `endpoints.json`、endpoint/vault commands、AES-GCM master-key persistence、API-key encrypt/decrypt 与 crate-local base64 helpers。
+- `lib.rs` 仅保留模块声明、Tauri command registration、共享 bootstrap；未移动 Git/worktree、DEV_STATE、file authority、process lifecycle 或 credential values。Tauri commands 的参数、返回值和注册顺序保持不变。
+- 验证：AES/base64 targeted `2 passed / 0 failed`；credential environment targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `3633` 行，新 `credentials.rs` `439` 行。
+- 全量 Rust 首次受到既有 `event_store` disposable lock fixture 残留影响，清理精确 Temp fixture 后重跑通过；未修改 `event_store` 生产代码。build 仍有既有大 chunk warning（最大约 `1,159.81 kB`）。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
