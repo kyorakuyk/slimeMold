@@ -3815,3 +3815,25 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.178 unverified：Codex post-exit ownership 与 recoverable reader cleanup
+
+- 修复 post-exit termination 后重复消费 child handle 的路径；正常成功、非零退出、取消和异常 finalization 现在通过同一 `cleanup_codex_run` 顺序收敛，避免先 take child 再 artifact/unregister 的分叉。
+- `CodexCleanupContext` 增加 per-reader joining 状态；reader bounded wait 超时或 channel 断开时保留 `(JoinHandle, Receiver)`，不伪标记 done，后续 recovery 可再次 join。
+- cancellation 在 active→pending 锁序下先校验并标记 matching pending generation；pending 缺失或 generation 不匹配直接 fail-closed，不再终止 child 后静默成功。
+- `unregister_child` 在 active/pending registry与 expected handle一致、且 handle可锁定后才移除并消费 child；registry poison、mismatch和非cancellation missing均传播 `side effects unknown`。
+- 新增 exited-child single-consumption 与 reader-timeout retry 回归测试。本 checkpoint 不标记 verified；仍需 exact HEAD reviewer。
+- Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`91 passed / 0 failed`；Codex targeted：`13 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；最终仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。

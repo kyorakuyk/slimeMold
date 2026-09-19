@@ -28,6 +28,8 @@ struct CodexCleanupContext {
     stderr: Option<CodexOutputReader>,
     stdout_done: bool,
     stderr_done: bool,
+    stdout_joining: bool,
+    stderr_joining: bool,
 }
 
 struct ActiveChild {
@@ -479,7 +481,11 @@ fn unregister_child(operation_id: &str, expected: &ChildHandle) -> Result<(), St
         .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?;
     match active.get(operation_id) {
         Some(current) if Arc::ptr_eq(&current.handle, expected) => {
+            let mut handle = expected
+                .lock()
+                .map_err(|_| "Codex child handle 已损坏；side effects unknown".to_string())?;
             active.remove(operation_id);
+            let _ = handle.take();
             Ok(())
         }
         Some(_) => Err("Codex active child handle mismatch；side effects unknown".into()),
@@ -491,6 +497,10 @@ fn unregister_child(operation_id: &str, expected: &ChildHandle) -> Result<(), St
                 .get(operation_id)
                 .is_some_and(|entry| entry.cancellation_requested)
             {
+                let mut handle = expected
+                    .lock()
+                    .map_err(|_| "Codex child handle 已损坏；side effects unknown".to_string())?;
+                let _ = handle.take();
                 Ok(())
             } else {
                 Err("Codex active child registration已丢失；side effects unknown".into())
@@ -508,10 +518,7 @@ fn cleanup_codex_run(
     let terminated = match handle.lock() {
         Ok(mut guard) => match guard.as_mut() {
             Some(child) => match terminate_child_checked(child) {
-                Ok(()) => {
-                    let _ = guard.take();
-                    true
-                }
+                Ok(()) => true,
                 Err(error) => {
                     errors.push(error);
                     false
@@ -524,19 +531,24 @@ fn cleanup_codex_run(
             false
         }
     };
-    if terminated {
-        if let Some(operation_id) = operation_id {
-            if let Err(error) = unregister_child(operation_id, handle) {
-                errors.push(error);
-            }
-        }
-        if let Err(error) = cleanup_output_artifact(cleanup) {
-            errors.push(error);
-        }
-    } else {
+    if !terminated {
         errors.push("Codex child termination未确认；active handle retained".to_string());
     }
+    if let Err(error) = cleanup_output_readers(cleanup) {
+        errors.push(error);
+    }
+    if let Err(error) = cleanup_output_artifact(cleanup) {
+        errors.push(error);
+    }
     if errors.is_empty() {
+        if let Some(operation_id) = operation_id {
+            unregister_child(operation_id, handle)?;
+        } else {
+            let mut guard = handle
+                .lock()
+                .map_err(|_| "Codex child handle 已损坏；side effects unknown".to_string())?;
+            let _ = guard.take();
+        }
         Ok(())
     } else {
         Err(errors.join("; "))
@@ -561,9 +573,6 @@ fn cleanup_failed_codex_run(
         errors.push(error);
     }
     if let Err(error) = await_stdin_write(stdin_result) {
-        errors.push(error);
-    }
-    if let Err(error) = cleanup_output_readers(cleanup) {
         errors.push(error);
     }
     if errors.is_empty() {
@@ -829,42 +838,90 @@ fn build_exec_args(sandbox_mode: &str) -> Vec<String> {
     args
 }
 
-fn join_child_output(
-    output: Option<(crate::OutputThread, crate::OutputReceiver)>,
-) -> Result<Vec<u8>, String> {
-    let (thread, receiver) = output.ok_or_else(|| "Codex output reader 未启动".to_string())?;
-    crate::receive_output("Codex", thread, receiver)
+fn join_child_output_recoverable(
+    output: Option<CodexOutputReader>,
+) -> Result<Vec<u8>, (String, Option<CodexOutputReader>)> {
+    let Some((thread, receiver)) = output else {
+        return Err(("Codex output reader 未启动".to_string(), None));
+    };
+    match receiver.recv_timeout(Duration::from_secs(1)) {
+        Ok(result) => match thread.join() {
+            Ok(()) => result.map_err(|error| (error, None)),
+            Err(_) => Err(("Codex output reader thread panic".to_string(), None)),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => Err((
+            "读取Codex子进程 output 超时；reader retained".to_string(),
+            Some((thread, receiver)),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err((
+            "Codex output reader channel disconnected；reader retained".to_string(),
+            Some((thread, receiver)),
+        )),
+    }
 }
 
 fn join_cleanup_reader(cleanup: &CodexCleanupHandle, stdout: bool) -> Result<Vec<u8>, String> {
-    let reader = {
+    let deadline = Instant::now() + CODEX_CLEANUP_WAIT_TIMEOUT;
+    loop {
+        let reader = {
+            let mut state = cleanup
+                .lock()
+                .map_err(|_| "Codex cleanup state 已损坏".to_string())?;
+            let (done, joining, slot) = if stdout {
+                (state.stdout_done, state.stdout_joining, &mut state.stdout)
+            } else {
+                (state.stderr_done, state.stderr_joining, &mut state.stderr)
+            };
+            if done {
+                return Ok(Vec::new());
+            }
+            if joining {
+                None
+            } else {
+                let reader = slot.take();
+                if stdout {
+                    state.stdout_joining = true;
+                } else {
+                    state.stderr_joining = true;
+                }
+                Some(reader)
+            }
+        };
+        let Some(reader) = reader else {
+            if Instant::now() >= deadline {
+                return Err("Codex output reader cleanup remained concurrently busy".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        let result = join_child_output_recoverable(reader);
         let mut state = cleanup
             .lock()
             .map_err(|_| "Codex cleanup state 已损坏".to_string())?;
-        let done = if stdout {
-            state.stdout_done
-        } else {
-            state.stderr_done
-        };
-        if done {
-            return Ok(Vec::new());
-        }
         if stdout {
-            state.stdout.take()
+            state.stdout_joining = false;
         } else {
-            state.stderr.take()
+            state.stderr_joining = false;
         }
-    };
-    let result = join_child_output(reader);
-    let mut state = cleanup
-        .lock()
-        .map_err(|_| "Codex cleanup state 已损坏".to_string())?;
-    if stdout {
-        state.stdout_done = true;
-    } else {
-        state.stderr_done = true;
+        match result {
+            Ok(buffer) => {
+                if stdout {
+                    state.stdout_done = true;
+                } else {
+                    state.stderr_done = true;
+                }
+                return Ok(buffer);
+            }
+            Err((error, retained)) => {
+                if stdout {
+                    state.stdout = retained;
+                } else {
+                    state.stderr = retained;
+                }
+                return Err(error);
+            }
+        }
     }
-    result
 }
 
 fn cleanup_output_readers(cleanup: &CodexCleanupHandle) -> Result<(), String> {
@@ -1079,6 +1136,8 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         stderr: stderr_thread,
         stdout_done: false,
         stderr_done: false,
+        stdout_joining: false,
+        stderr_joining: false,
     }));
     let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     if let Some(reservation) = spawn_reservation.as_mut() {
@@ -1153,11 +1212,7 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
     let post_exit_termination = match handle.lock() {
         Ok(mut guard) => {
             if let Some(child) = guard.as_mut() {
-                let result = terminate_child_checked(child);
-                if result.is_ok() {
-                    let _ = guard.take();
-                }
-                result
+                terminate_child_checked(child)
             } else {
                 Ok(())
             }
@@ -1231,25 +1286,9 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
             ));
         }
     };
-    let output_cleanup = cleanup_output_artifact(&cleanup);
-    let _child = handle
-        .lock()
-        .map_err(|_| "Codex child handle 已损坏".to_string())?
-        .take()
-        .ok_or_else(|| "Codex child 已被取消".to_string())?;
-    let mut finalization_errors = Vec::new();
-    if let Err(error) = output_cleanup {
-        finalization_errors.push(error);
-    }
-    if let Some(operation_id) = operation_id.as_deref() {
-        if let Err(error) = unregister_child(operation_id, &handle) {
-            finalization_errors.push(error);
-        }
-    }
-    if !finalization_errors.is_empty() {
+    if let Err(error) = cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup) {
         return Err(format!(
-            "Codex finalization cleanup failed; side effects unknown: {}",
-            finalization_errors.join("; ")
+            "Codex finalization cleanup failed; side effects unknown: {error}"
         ));
     }
 
@@ -1434,6 +1473,21 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
         if entry.session_generation != generation {
             return Ok(());
         }
+        {
+            let mut pending = pending_codex_operations()
+                .lock()
+                .map_err(|_| "Codex pending registry 已损坏；side effects unknown".to_string())?;
+            let pending_entry = pending.get_mut(&operation_id).ok_or_else(|| {
+                "Codex active child对应的pending lease已丢失；side effects unknown".to_string()
+            })?;
+            if pending_entry.session_generation != generation {
+                return Err(
+                    "Codex active child与pending lease session generation不匹配；side effects unknown"
+                        .into(),
+                );
+            }
+            pending_entry.cancellation_requested = true;
+        }
         let handle = entry.handle.clone();
         let cleanup = entry.cleanup.clone();
         let mut guard = handle
@@ -1446,18 +1500,7 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
                 )
             })?;
         }
-        let _ = guard.take();
         drop(guard);
-        {
-            let mut pending = pending_codex_operations()
-                .lock()
-                .map_err(|_| "Codex pending registry 已损坏".to_string())?;
-            if let Some(entry) = pending.get_mut(&operation_id) {
-                if entry.session_generation == generation {
-                    entry.cancellation_requested = true;
-                }
-            }
-        }
         let mut cleanup_errors = Vec::new();
         if let Err(error) = cleanup_output_readers(&cleanup) {
             cleanup_errors.push(error);
@@ -1499,10 +1542,11 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::{
-        begin_pending_operation, build_exec_args, cleanup_unregistered_codex_child,
-        codex_worker_cancel, create_codex_output, finish_pending_operation, parse_json_events,
-        reserve_codex_operation, take_cancelled_operation, valid_operation_id,
-        validate_operation_binding, ChildHandle, CodexCleanupContext, CODEX_TEMP_COUNTER,
+        begin_pending_operation, build_exec_args, cleanup_codex_run,
+        cleanup_unregistered_codex_child, codex_worker_cancel, create_codex_output,
+        finish_pending_operation, join_cleanup_reader, parse_json_events, reserve_codex_operation,
+        take_cancelled_operation, valid_operation_id, validate_operation_binding, ChildHandle,
+        CodexCleanupContext, CodexOutputReader, CODEX_TEMP_COUNTER,
     };
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
@@ -1659,6 +1703,8 @@ mod tests {
             stderr: None,
             stdout_done: true,
             stderr_done: true,
+            stdout_joining: false,
+            stderr_joining: false,
         }));
         reservation
             .register_child(child, cleanup)
@@ -1672,6 +1718,102 @@ mod tests {
             .expect("cancel thread should not panic");
         assert!(take_cancelled_operation(&operation).expect("pending registry should be healthy"));
         let _ = finish_pending_operation(&operation, pending_generation);
+    }
+
+    #[test]
+    fn exited_child_cleanup_consumes_handle_once_and_removes_artifact() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "exit", "0"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("exited-child fixture should spawn");
+        for _ in 0..100 {
+            if child
+                .try_wait()
+                .expect("exited-child status should be readable")
+                .is_some()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
+        let output_path = create_codex_output().expect("private output artifact should be created");
+        let output_parent = output_path
+            .parent()
+            .expect("output should have a private parent")
+            .to_path_buf();
+        let cleanup = Arc::new(Mutex::new(CodexCleanupContext {
+            output_path,
+            stdout: None,
+            stderr: None,
+            stdout_done: true,
+            stderr_done: true,
+            stdout_joining: false,
+            stderr_joining: false,
+        }));
+        let result = cleanup_codex_run(&handle, None, &cleanup);
+        assert!(result.is_ok(), "cleanup should succeed: {result:?}");
+        assert!(handle
+            .lock()
+            .expect("child handle should remain healthy")
+            .is_none());
+        assert!(!output_parent.exists());
+    }
+
+    #[test]
+    fn reader_timeout_retains_reader_for_a_later_cleanup_attempt() {
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let (sender, receiver) = mpsc::channel::<Result<Vec<u8>, String>>();
+        let reader_release = Arc::clone(&release);
+        let thread = thread::spawn(move || {
+            reader_release.wait();
+            sender
+                .send(Ok(b"recovered".to_vec()))
+                .expect("reader result should send");
+        });
+        let reader: CodexOutputReader = (thread, receiver);
+        let cleanup = Arc::new(Mutex::new(CodexCleanupContext {
+            output_path: PathBuf::new(),
+            stdout: Some(reader),
+            stderr: None,
+            stdout_done: false,
+            stderr_done: true,
+            stdout_joining: false,
+            stderr_joining: false,
+        }));
+        let first = join_cleanup_reader(&cleanup, true);
+        assert!(
+            first.is_err(),
+            "blocked reader should hit the bounded cleanup wait"
+        );
+        {
+            let state = cleanup.lock().expect("cleanup state should remain healthy");
+            assert!(
+                state.stdout.is_some(),
+                "timed-out reader must remain recoverable"
+            );
+            assert!(!state.stdout_done);
+            assert!(!state.stdout_joining);
+        }
+        release.wait();
+        assert_eq!(
+            join_cleanup_reader(&cleanup, true).expect("retry should join reader"),
+            b"recovered"
+        );
+        let state = cleanup.lock().expect("cleanup state should remain healthy");
+        assert!(state.stdout.is_none());
+        assert!(state.stdout_done);
     }
 
     #[test]
@@ -1714,6 +1856,8 @@ mod tests {
             stderr: stderr_thread,
             stdout_done: false,
             stderr_done: false,
+            stdout_joining: false,
+            stderr_joining: false,
         }));
         let handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
         let result = cleanup_unregistered_codex_child(&handle, &cleanup);

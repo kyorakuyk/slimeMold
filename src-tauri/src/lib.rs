@@ -32,7 +32,7 @@ mod dev_process;
 mod event_store;
 mod fs_guard;
 
-pub(crate) use dev_process::{receive_output, spawn_output_reader, OutputReceiver, OutputThread};
+pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
