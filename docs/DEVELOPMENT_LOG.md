@@ -4221,3 +4221,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `App.tsx` 保留 root UI、公开 handler、store facade 与 `ProjectOperation` guard，只保留 controller wiring；旧 subscribe/epoch/cancellation/teardown 顺序保持不变。新增 controller direct tests，覆盖 initial observe/dispose 与 project transition boundary。
 - GREEN：focused `3 files / 12 tests`；完整 Node `130 test files / 1147 tests`；`npm run build`通过，最大 chunk约 `1,171.27 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是行为保持的结构切片，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一步继续收口 WorkerRecovery/receipt handler 或 executor adapter，再进行真实 Tauri E2E；历史 unverified 仍后置。
+
+### 7.223 unverified：close duplicate ProjectControl event-buffer cleanup owner
+
+- 旧 `2c566bb` reviewer因 exact HEAD 已漂移不能审批，但其代码 finding在当前链路仍成立：`workflowStore.newProject/openProject` 直接清理 event buffer，adapter同时拥有部分 lifecycle cleanup，导致事实所有权重复。
+- 修复为：`resetProjectControlLifecycle(previousProjectId)` 统一处理新项目切换；新增 `activateProjectControlRuntime` 统一处理 open-project 的 pending event buffer 清理与 Worker runtime install；store 删除 direct `clearProjectEventBuffer` lifecycle callers，并增加 activation cleanup regression。
+- GREEN：focused `3 files / 13 tests`；完整 Node `130 test files / 1148 tests`；`npm run build`通过，最大 chunk约 `1,171.30 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是对前两条结构切片的 ownership repair，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。

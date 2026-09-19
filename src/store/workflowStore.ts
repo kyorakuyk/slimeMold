@@ -81,11 +81,11 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
 import { EventStreamRepository } from '../domain/eventStore';
-import { clearProjectEventBuffer, flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
+import { flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
 import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
 import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunRehydration';
 import {
-  installProjectControlRuntime,
+  activateProjectControlRuntime,
   normalizeProjectControlSnapshot,
   resetProjectControlLifecycle,
 } from './projectControlLifecycle';
@@ -1102,8 +1102,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       newProject: (name) => {
         // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
         const previousProjectId = get().projectId;
-        if (previousProjectId) clearProjectEventBuffer(previousProjectId);
-        resetProjectControlLifecycle();
+        resetProjectControlLifecycle(previousProjectId);
         suppressDirty = true;
         set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
         suppressDirty = false;
@@ -1206,12 +1205,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         suppressDirty = true;
         set(state);
         finalizeLoaded();
-        set(installProjectControlRuntime({
+        set(activateProjectControlRuntime({
           projectId: file.id,
           taskGraphs: state.projectControl.taskGraphs ?? [],
           runs: state.workerRuns,
         }));
-        clearProjectEventBuffer(file.id);
         // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
         // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
         return true;

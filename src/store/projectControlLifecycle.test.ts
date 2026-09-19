@@ -7,6 +7,7 @@ import {
 } from '../projectControl/eventBuffer';
 import { getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 import {
+  activateProjectControlRuntime,
   emptyProjectControlRuntimeState,
   installProjectControlRuntime,
   normalizeProjectControlSnapshot,
@@ -55,6 +56,30 @@ describe('project control lifecycle adapter', () => {
     expect(getActiveWorkerRunRuntime()?.projectId).toBe('project-1');
   });
 
+  it('owns project activation cleanup before installing Worker runtime', () => {
+    recordProjectEvents('project-1', [{
+      eventId: 'pending-project-event',
+      streamId: 'project-1',
+      sequence: 1,
+      aggregateType: 'Project',
+      aggregateId: 'project-1',
+      aggregateVersion: 1,
+      eventType: 'ProjectCreated',
+      schemaVersion: 1,
+      payload: {},
+      actor: 'user',
+      occurredAt: '2026-09-01T00:00:00.000Z',
+    }]);
+
+    const runtime = activateProjectControlRuntime({
+      projectId: 'project-1',
+      taskGraphs: [],
+      runs: [],
+    });
+
+    expect(runtime).toEqual(emptyProjectControlRuntimeState());
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
   it('clears pending events and active Worker runtime together', () => {
     recordProjectEvents('project-1', [{
       eventId: 'project-created',

@@ -51,3 +51,12 @@ export function installProjectControlRuntime(input: {
     workerRunRecoveries: runtime.recoveries,
   };
 }
+
+export function activateProjectControlRuntime(input: {
+  projectId: string;
+  taskGraphs: readonly ProjectTaskGraph[];
+  runs: WorkerRunQueueState[];
+}): ProjectControlRuntimeState {
+  clearProjectEventBuffer(input.projectId);
+  return installProjectControlRuntime(input);
+}
