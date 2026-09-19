@@ -414,7 +414,12 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
 
   // Tauri 下：worktree 创建/清理同步 Rust 登记态（dev_register_worktree / dev_unregister_worktree），
   // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
-  const syncRust = async (fn: 'register' | 'restore' | 'register-orphan' | 'unregister', path: string, branch?: string): Promise<void> => {
+  const syncRust = async (
+    fn: 'register' | 'restore' | 'register-orphan' | 'unregister',
+    path: string,
+    branch?: string,
+    branchRevision?: string,
+  ): Promise<void> => {
     if (env !== 'tauri') return;
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke(fn === 'register'
@@ -427,6 +432,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       path,
       generation: hostGeneration,
       ...(branch ? { branch } : {}),
+      ...(branchRevision ? { branchRevision } : {}),
     });
   };
   // Host registration is a separate side effect from Git cleanup. Keep its
@@ -468,7 +474,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     if (info.status === 'registration-pending') return true;
     if (info.status === 'orphaned') {
       try {
-        await syncRust('register-orphan', info.path, info.branch);
+        await syncRust('register-orphan', info.path, info.branch, info.branchRevision);
         return true;
       } catch {
         return false;

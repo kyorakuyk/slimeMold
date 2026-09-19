@@ -4077,3 +4077,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 确认四个 namespace 聚合、crate-private aliases、两处 nested import 调整没有引入重复实现、模块环、路径敏感断裂或行为变化；Tauri `generate_handler!` 保持 37 个 command，Rust 95 个测试仍可发现。
 - reviewer 质量门：`cargo test --locked` 为 `95 passed / 0 failed`；`cargo check --locked`、`cargo fmt -- --check`、`git diff --check`通过；工作树与审查的 exact HEAD 一致。
 - 已创建本地 verified tag：`checkpoint/native-src-directory-consolidation-verified`。审查仅覆盖 Windows；Unix/macOS native matrix、GUI/E2E 与既有 worktree lifecycle blocker 仍未验证/未解决。
+
+### 7.204 unverified：orphan branch lineage repair
+
+- `dev_register_orphan_worktree` 现在要求调用方提供合法 `branchRevision`，native 重新读取当前 branch tip，只有与 durable revision 完全一致时才写入 `PendingWorktree.branch_revision`；stale same-name branch tip 直接 fail-closed，不进入 `DEV_STATE`。
+- `dev_approve_cleanup` 与 `dev_cleanup_worktree` 对 orphan lineage 不再只接受 caller revision；必须匹配 native orphan 中保存的 revision，缺失或漂移均拒绝。旧的无 revision orphan 记录不能获得 cleanup capability。
+- Node Tauri orphan restore 将 `WorktreeInfo.branchRevision` 传入 `dev_register_orphan_worktree`；新增 IPC payload 回归，保持 live restore 与 orphan restore 分支分离。
+- 新增真实 Git fixture：`orphan_registration_preserves_native_branch_revision`、`orphan_registration_rejects_branch_revision_drift`；focused Rust `2 passed / 0 failed`，完整 Rust `96 passed / 0 failed`。
+- 验证：`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`，既有动态/静态 import 与大 chunk warning 保持不变。
+- 本 slice 只闭合 orphan branch-revision provenance；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。本轮未 push、未 merge、未保留凭据；等待 exact HEAD reviewer。

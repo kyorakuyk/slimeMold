@@ -853,12 +853,13 @@ pub(crate) fn dev_restore_worktree(
 pub(crate) fn dev_register_orphan_worktree(
     path: String,
     branch: String,
+    branch_revision: String,
     generation: u64,
 ) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_register_orphan_worktree")?;
-    if !worker_branch_is_valid(&branch) {
-        return Err("dev_register_orphan_worktree: branch 无效".into());
+    if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
+        return Err("dev_register_orphan_worktree: branch 或 revision 无效".into());
     }
     let (base, base_identity) = {
         let state = DEV_STATE.lock().unwrap();
@@ -900,8 +901,18 @@ pub(crate) fn dev_register_orphan_worktree(
     }
     let branch_listed_elsewhere = git_branch_is_listed(&base_path, &branch)?;
     let branch_exists = git_branch_exists(&base_path, &branch)?;
+    let current_branch_revision = if branch_exists {
+        Some(git_branch_revision(&base_path, &branch)?)
+    } else {
+        None
+    };
     let target_is_scoped = main_repo_worktree_target_is_valid(&base_path, &c, &branch);
     let target_exists = target_metadata.is_some();
+    if current_branch_revision.as_deref() != Some(branch_revision.as_str()) {
+        return Err(
+            "dev_register_orphan_worktree: branch revision 已变化或无法证明 lineage".into(),
+        );
+    }
     if !orphan_target_is_deleted_candidate(
         listed_match || branch_listed_elsewhere,
         target_exists,
@@ -935,7 +946,7 @@ pub(crate) fn dev_register_orphan_worktree(
             path: c,
             branch,
             identity: None,
-            branch_revision: None,
+            branch_revision: current_branch_revision,
             removed: true,
         });
     }
@@ -995,6 +1006,15 @@ pub(crate) fn dev_approve_cleanup(
             .iter()
             .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
             .map(|item| item.identity.clone());
+        let orphan_branch_revision = state
+            .orphan_worktrees
+            .iter()
+            .find(|item| {
+                item.generation == generation
+                    && item.branch == branch
+                    && path_compare_key(&item.path) == path_compare_key(&c)
+            })
+            .and_then(|item| item.branch_revision.as_deref());
         let orphan = state.orphan_worktrees.iter().any(|item| {
             item.generation == generation
                 && item.branch == branch
@@ -1010,6 +1030,12 @@ pub(crate) fn dev_approve_cleanup(
                 );
             }
         } else if orphan {
+            if orphan_branch_revision != Some(branch_revision.as_str()) {
+                return Err(
+                    "dev_approve_cleanup: orphan branch revision 缺失或与 native lineage 不匹配"
+                        .into(),
+                );
+            }
             if target_identity.is_some() || git_branch_is_listed(&base_path, &branch)? {
                 return Err(
                     "dev_approve_cleanup: orphan target 已重新出现或仍被 Git checkout".into(),
@@ -1178,6 +1204,15 @@ pub(crate) fn dev_cleanup_worktree(
             .iter()
             .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
             .map(|item| item.identity.clone());
+        let orphan_branch_revision = state
+            .orphan_worktrees
+            .iter()
+            .find(|item| {
+                item.generation == generation
+                    && item.branch == branch
+                    && path_compare_key(&item.path) == path_compare_key(&c)
+            })
+            .and_then(|item| item.branch_revision.as_deref());
         let orphan = state.orphan_worktrees.iter().any(|item| {
             item.generation == generation
                 && item.branch == branch
@@ -1185,7 +1220,7 @@ pub(crate) fn dev_cleanup_worktree(
         });
         match (&capability.target_identity, registered_identity, orphan) {
             (Some(expected), Some(current), false) if expected == &current => {}
-            (None, None, true) => {}
+            (None, None, true) if orphan_branch_revision == Some(branch_revision.as_str()) => {}
             _ => {
                 drop(state);
                 invalidate_cleanup_binding(&approval_token);

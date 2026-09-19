@@ -575,6 +575,174 @@ fn successful_worktree_add_creates_a_scoped_pending_rollback_lease() {
 }
 
 #[test]
+fn orphan_registration_preserves_native_branch_revision() {
+    let _test_guard = lock_dev_state_tests();
+    let test_root = std::env::temp_dir().join("slimemold-test-runs");
+    let root = test_root.join(format!(
+        "sm-orphan-lineage-{}_{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    let base = root.join("repo");
+    let workers = std::path::PathBuf::from(format!("{}-workers", base.to_string_lossy()));
+    let target = workers.join("attempt-1");
+    let base_str = base.to_string_lossy().to_string();
+    let target_str = target.to_string_lossy().to_string();
+    let branch = "worker/attempt-1".to_string();
+    let _cleanup = TempDirs(vec![root.clone()]);
+    fs::create_dir_all(&base).unwrap();
+    fs::create_dir_all(&workers).unwrap();
+    fs::write(base.join("README.md"), "fixture").unwrap();
+    let git = |args: &[&str], cwd: &std::path::Path| {
+        let output = Command::new(resolve_dev_program("git"))
+            .args(args)
+            .current_dir(cwd)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"], &base);
+    git(&["config", "user.email", "test@example.invalid"], &base);
+    git(&["config", "user.name", "SlimeMold Test"], &base);
+    git(&["add", "README.md"], &base);
+    git(&["commit", "-qm", "fixture"], &base);
+    git(
+        &["worktree", "add", "-q", &target_str, "-b", &branch, "HEAD"],
+        &base,
+    );
+    let revision_ref = format!("refs/heads/{branch}^{{commit}}");
+    let revision_output = Command::new(resolve_dev_program("git"))
+        .args(["rev-parse", "--verify", "--end-of-options", &revision_ref])
+        .current_dir(&base)
+        .env_clear()
+        .envs(dev_sanitized_env())
+        .output()
+        .unwrap();
+    assert!(revision_output.status.success());
+    let branch_revision = String::from_utf8_lossy(&revision_output.stdout)
+        .trim()
+        .to_string();
+    git(&["worktree", "remove", "--force", &target_str], &base);
+    assert!(
+        !target.exists(),
+        "fixture target must be absent for orphan registration"
+    );
+
+    let generation = dev_init_session(base_str.clone()).unwrap();
+    let result = worktree_authority::dev_register_orphan_worktree(
+        target_str.clone(),
+        branch.clone(),
+        branch_revision.clone(),
+        generation,
+    );
+    assert!(
+        result.is_ok(),
+        "orphan registration should succeed: {result:?}"
+    );
+    let stored_revision = DEV_STATE
+        .lock()
+        .unwrap()
+        .orphan_worktrees
+        .iter()
+        .find(|item| item.branch == branch)
+        .and_then(|item| item.branch_revision.clone());
+    dev_clear_session(generation).unwrap();
+
+    assert_eq!(
+        stored_revision.as_deref(),
+        Some(branch_revision.as_str()),
+        "native orphan lineage must retain the creation-time branch tip"
+    );
+}
+
+#[test]
+fn orphan_registration_rejects_branch_revision_drift() {
+    let _test_guard = lock_dev_state_tests();
+    let test_root = std::env::temp_dir().join("slimemold-test-runs");
+    let root = test_root.join(format!(
+        "sm-orphan-drift-{}_{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    let base = root.join("repo");
+    let workers = std::path::PathBuf::from(format!("{}-workers", base.to_string_lossy()));
+    let target = workers.join("attempt-1");
+    let base_str = base.to_string_lossy().to_string();
+    let target_str = target.to_string_lossy().to_string();
+    let branch = "worker/attempt-1".to_string();
+    let _cleanup = TempDirs(vec![root.clone()]);
+    fs::create_dir_all(&base).unwrap();
+    fs::create_dir_all(&workers).unwrap();
+    fs::write(base.join("README.md"), "fixture").unwrap();
+    let git = |args: &[&str], cwd: &std::path::Path| {
+        let output = Command::new(resolve_dev_program("git"))
+            .args(args)
+            .current_dir(cwd)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"], &base);
+    git(&["config", "user.email", "test@example.invalid"], &base);
+    git(&["config", "user.name", "SlimeMold Test"], &base);
+    git(&["add", "README.md"], &base);
+    git(&["commit", "-qm", "fixture"], &base);
+    git(
+        &["worktree", "add", "-q", &target_str, "-b", &branch, "HEAD"],
+        &base,
+    );
+    let revision_ref = format!("refs/heads/{branch}^{{commit}}");
+    let revision_output = Command::new(resolve_dev_program("git"))
+        .args(["rev-parse", "--verify", "--end-of-options", &revision_ref])
+        .current_dir(&base)
+        .env_clear()
+        .envs(dev_sanitized_env())
+        .output()
+        .unwrap();
+    assert!(revision_output.status.success());
+    let original_revision = String::from_utf8_lossy(&revision_output.stdout)
+        .trim()
+        .to_string();
+    git(&["worktree", "remove", "--force", &target_str], &base);
+    git(&["commit", "--allow-empty", "-qm", "advance"], &base);
+    git(&["branch", "-f", &branch, "HEAD"], &base);
+
+    let generation = dev_init_session(base_str.clone()).unwrap();
+    let result = worktree_authority::dev_register_orphan_worktree(
+        target_str,
+        branch.clone(),
+        original_revision,
+        generation,
+    );
+    let orphan_count = DEV_STATE
+        .lock()
+        .unwrap()
+        .orphan_worktrees
+        .iter()
+        .filter(|item| item.branch == branch)
+        .count();
+    dev_clear_session(generation).unwrap();
+
+    assert!(
+        result.is_err(),
+        "stale orphan branch revision must not bind a recreated branch"
+    );
+    assert_eq!(orphan_count, 0, "rejected orphan must not enter DEV_STATE");
+}
+
+#[test]
 fn worktree_add_rejects_a_symlinked_worker_root_before_spawning_git() {
     let _test_guard = lock_dev_state_tests();
     let test_root = std::env::temp_dir().join("slimemold-test-runs");

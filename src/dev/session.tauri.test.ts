@@ -304,6 +304,12 @@ describe('DevSession Tauri orphan cleanup', () => {
     };
 
     await expect(session.manager.restore(info)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('dev_register_orphan_worktree', {
+      path: info.path,
+      branch: info.branch,
+      branchRevision: TIP_OID,
+      generation: 1,
+    });
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
     await expect(session.manager.cleanup(info.id, { confirm: true, branchRevision: info.branchRevision })).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());
