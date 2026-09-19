@@ -3713,3 +3713,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN对齐；
 - `git diff --check`：通过；
 - 本轮未push、未merge、未修改凭据或外部系统。
+
+### 7.173 unverified：Codex operation binding 强制 session generation
+
+- `src-tauri/src/codex.rs` 新增唯一 `validate_operation_binding` seam：带 `operation_id` 的执行必须同时带 non-zero `session_generation`；只带其中一个或 generation 为零均 fail-closed。
+- 新增 `reserve_codex_operation`，统一 active→pending 锁序，并在 spawn reservation 时比较 `PendingOperation.session_generation`；取消标记、operation 重用和 generation mismatch 都不能进入 child spawn。
+- 新增 3 个 Rust 回归：operation binding 完整性、已取消 pending reservation 拒绝、跨 session generation reservation 拒绝；保留原有 stale-generation 与 cancellation 测试。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir 原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合；本 checkpoint 不标记 verified。
+
+验证结果：
+
+- Rust：`87 passed / 0 failed`；Codex targeted：`9 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
