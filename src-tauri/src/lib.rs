@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
@@ -30,6 +29,7 @@ mod cleanup_lineage_policy;
 mod codex;
 mod dev_command_policy;
 mod dev_process;
+mod dev_state;
 mod event_store;
 mod fs_guard;
 mod git_worktree_policy;
@@ -38,6 +38,12 @@ mod worktree_policy;
 use cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_candidate};
 use dev_process::DevExecResult;
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
+use dev_state::{
+    lock_dev_operation, next_session_generation, CleanupBinding, PendingWorktree,
+    RegisteredWorktree, DEV_STATE,
+};
+#[cfg(test)]
+use dev_state::{lock_dev_state_tests, DevState};
 #[cfg(test)]
 pub(crate) use fs_guard::protected_relative_path;
 use fs_guard::{
@@ -51,21 +57,6 @@ use worktree_policy::{
     is_full_object_id, worker_branch_from_ref_arg, worker_branch_from_tip_arg,
     worker_branch_is_valid, worker_name_is_valid,
 };
-
-/// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
-static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
-/// Serialize session changes and host operations so a project switch cannot race a checked command.
-static DEV_OPERATION_LOCK: Mutex<()> = Mutex::new(());
-
-pub(crate) fn lock_dev_operation() -> std::sync::MutexGuard<'static, ()> {
-    DEV_OPERATION_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn next_session_generation(current: u64) -> u64 {
-    current.wrapping_add(1).max(1)
-}
 
 pub(crate) fn dev_base_repo() -> Result<PathBuf, String> {
     assert_base_identity_current("dev_base_repo")
@@ -124,27 +115,6 @@ pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Resul
         ));
     }
     assert_base_identity_current(operation).map(|_| ())
-}
-
-#[cfg(test)]
-static DEV_STATE_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-#[cfg(test)]
-fn lock_dev_state_tests() -> std::sync::MutexGuard<'static, ()> {
-    DEV_STATE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-struct DevState {
-    generation: u64,
-    base_repo: Option<String>,
-    base_identity: Option<StableDirectoryIdentity>,
-    worktrees: Vec<String>,
-    registrations: Vec<RegisteredWorktree>,
-    cleanup_bindings: Vec<CleanupBinding>,
-    pending_worktrees: Vec<PendingWorktree>,
-    orphan_worktrees: Vec<PendingWorktree>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,14 +203,6 @@ fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryId
     Err("当前平台不支持稳定 worktree directory identity".to_string())
 }
 
-#[derive(Clone)]
-struct RegisteredWorktree {
-    generation: u64,
-    path: String,
-    branch: String,
-    identity: StableDirectoryIdentity,
-}
-
 fn registered_worktree_identity_matches(
     registered: &RegisteredWorktree,
     generation: u64,
@@ -279,42 +241,6 @@ fn invalidate_cleanup_binding(token: &str) {
         .find(|binding| binding.token == token)
     {
         binding.consumed = true;
-    }
-}
-
-#[derive(Clone)]
-struct CleanupBinding {
-    token: String,
-    generation: u64,
-    path: String,
-    branch: String,
-    branch_revision: String,
-    base_identity: StableDirectoryIdentity,
-    target_identity: Option<StableDirectoryIdentity>,
-    consumed: bool,
-}
-
-struct PendingWorktree {
-    generation: u64,
-    path: String,
-    branch: String,
-    identity: Option<StableDirectoryIdentity>,
-    branch_revision: Option<String>,
-    removed: bool,
-}
-
-impl DevState {
-    const fn new() -> Self {
-        DevState {
-            generation: 0,
-            base_repo: None,
-            base_identity: None,
-            worktrees: Vec::new(),
-            registrations: Vec::new(),
-            cleanup_bindings: Vec::new(),
-            pending_worktrees: Vec::new(),
-            orphan_worktrees: Vec::new(),
-        }
     }
 }
 
