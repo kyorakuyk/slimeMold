@@ -3732,3 +3732,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
 - `git diff --check`：通过；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.174 verified：Codex operation binding reviewer closure
+
+- fail-closed reviewer审查精确HEAD `5f93dd49769a9d480e69a83f94afe4bac545dcdf`及其相对`3c6914f1e05cd0e01f6f46789b95312df163cdf`的完整diff，返回`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- verified tag：`checkpoint/native-codex-session-generation-binding-verified`，经read-back确认指向reviewed HEAD；tag创建后未修改代码。
+- reviewer确认：partial/zero operation binding被拒绝；active→pending reservation在spawn期间保持；pending session generation被核对；cancel与session reset路径保持fail-closed。
+- reviewer非阻塞建议：补充spawn前确定性interleaving测试；将`PendingOperation.generation`继续纳入reservation stale-operation fence；对防御性post-spawn注册失败显式清理child/output。这些不影响本slice verified，但属于下一步加固。
+
+验证结果：
+
+- Rust：`87 passed / 0 failed`；Codex targeted：`9 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
