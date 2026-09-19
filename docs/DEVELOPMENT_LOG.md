@@ -3902,3 +3902,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.182 unverified：抽出 Codex cleanup/reader/artifact seam
+
+- 新增 `src-tauri/src/codex_cleanup.rs`，承接 `CodexCleanupContext`、reader join/retry、terminal reader error、output artifact创建/读取/删除、stdin writer和cleanup constants。
+- `codex.rs`仅通过显式 cleanup seam使用这些能力；本刀不改变 registry、spawn、权限或 session 语义，删除原 facade中的重复实现。
+- 现有 Codex lifecycle与真实 child/reader/artifact测试保持通过；本 checkpoint 不标记 verified，下一刀继续抽 registry/lease authority。
+
+验证结果：
+
+- Rust：`95 passed / 0 failed`；Codex targeted：`17 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
