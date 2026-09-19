@@ -4287,3 +4287,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - App仅保留 controller wiring与公开 handler facade；`workerCleanup.ts` proposal authority、`workerCleanupExecution.ts` host receipt authority、`workerCleanupCommand.ts` lifecycle event authority未复制。新增 controller direct guard测试，覆盖非 Tauri、未保存项目、缺失/非 ready proposal。
 - GREEN：focused cleanup/controller `4 files / 25 tests`；完整 Node `134 test files / 1157 tests`；`npm run build`通过，最大 chunk约 `1,172.69 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
 - 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor adapter和历史 unverified收口继续后置。
+
+### 7.233 verified：Worker cleanup action controller review closure
+
+- exact HEAD `5b8efe4` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 cleanup action为单一 owner，TaskGraph restore/proposal lineage、branch CAS、approval、receipt、unknown recovery、TaskCleaned projection、save/read-back与proposal refresh均保持一致，App仅保留 facade wiring。
+- 同一代码快照质量门：Node `134 test files / 1157 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。真实 Tauri GUI/native/executor/history仍不在本切片证据范围内。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-cleanup-action-controller-verified`。该 tag只证明 cleanup action结构切片，不代表真实 E2E、Worker residual、native hardening或历史 unverified已关闭。
