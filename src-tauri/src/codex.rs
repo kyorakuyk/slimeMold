@@ -28,6 +28,8 @@ struct CodexCleanupContext {
     stderr: Option<CodexOutputReader>,
     stdout_done: bool,
     stderr_done: bool,
+    stdout_error: Option<String>,
+    stderr_error: Option<String>,
     stdout_joining: bool,
     stderr_joining: bool,
 }
@@ -39,51 +41,103 @@ struct ActiveChild {
     cleanup: CodexCleanupHandle,
 }
 
+#[derive(Clone)]
 struct UnscopedRecovery {
     handle: ChildHandle,
     cleanup: CodexCleanupHandle,
 }
 
+enum UnscopedRecoverySlot {
+    Reserved,
+    Retained(UnscopedRecovery),
+    Retrying,
+}
+
 static ACTIVE_CODEX_CHILDREN: OnceLock<Mutex<HashMap<String, ActiveChild>>> = OnceLock::new();
-static UNSCOPED_CODEX_RECOVERIES: OnceLock<Mutex<HashMap<usize, UnscopedRecovery>>> =
+static UNSCOPED_CODEX_RECOVERIES: OnceLock<Mutex<HashMap<usize, UnscopedRecoverySlot>>> =
     OnceLock::new();
+static UNSCOPED_RECOVERY_COUNTER: AtomicU64 = AtomicU64::new(0);
 const UNSCOPED_RECOVERY_CAP: usize = 64;
 
 fn active_codex_children() -> &'static Mutex<HashMap<String, ActiveChild>> {
     ACTIVE_CODEX_CHILDREN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn unscoped_codex_recoveries() -> &'static Mutex<HashMap<usize, UnscopedRecovery>> {
+fn unscoped_codex_recoveries() -> &'static Mutex<HashMap<usize, UnscopedRecoverySlot>> {
     UNSCOPED_CODEX_RECOVERIES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn retain_unscoped_recovery(
-    handle: &ChildHandle,
-    cleanup: &CodexCleanupHandle,
-) -> Result<(), String> {
-    let key = Arc::as_ptr(handle) as usize;
+fn reserve_unscoped_recovery_slot() -> Result<usize, String> {
     let mut recoveries = unscoped_codex_recoveries()
         .lock()
         .map_err(|_| "Codex unscoped recovery registry 已损坏；side effects unknown".to_string())?;
-    if !recoveries.contains_key(&key) && recoveries.len() >= UNSCOPED_RECOVERY_CAP {
+    if recoveries.len() >= UNSCOPED_RECOVERY_CAP {
         return Err("Codex unscoped recovery registry已达到上限；side effects unknown".into());
     }
-    recoveries.entry(key).or_insert_with(|| UnscopedRecovery {
-        handle: handle.clone(),
-        cleanup: cleanup.clone(),
-    });
+    let key = loop {
+        let key = UNSCOPED_RECOVERY_COUNTER.fetch_add(1, Ordering::Relaxed) as usize;
+        if !recoveries.contains_key(&key) {
+            break key;
+        }
+    };
+    recoveries.insert(key, UnscopedRecoverySlot::Reserved);
+    Ok(key)
+}
+
+fn retain_unscoped_recovery(
+    slot: usize,
+    handle: &ChildHandle,
+    cleanup: &CodexCleanupHandle,
+) -> Result<(), String> {
+    let mut recoveries = unscoped_codex_recoveries()
+        .lock()
+        .map_err(|_| "Codex unscoped recovery registry 已损坏；side effects unknown".to_string())?;
+    let entry = recoveries
+        .get_mut(&slot)
+        .ok_or_else(|| "Codex unscoped recovery slot已丢失；side effects unknown".to_string())?;
+    if !matches!(entry, UnscopedRecoverySlot::Retained(_)) {
+        *entry = UnscopedRecoverySlot::Retained(UnscopedRecovery {
+            handle: handle.clone(),
+            cleanup: cleanup.clone(),
+        });
+    }
     Ok(())
 }
+
+fn release_unscoped_recovery_slot(slot: usize) -> Result<(), String> {
+    let mut recoveries = unscoped_codex_recoveries()
+        .lock()
+        .map_err(|_| "Codex unscoped recovery registry 已损坏；side effects unknown".to_string())?;
+    recoveries
+        .remove(&slot)
+        .ok_or_else(|| "Codex unscoped recovery slot已丢失；side effects unknown".to_string())?;
+    Ok(())
+}
+
 fn retry_unscoped_codex_recoveries() -> Result<(), String> {
-    let recoveries = {
+    let candidates = {
         let mut registry = unscoped_codex_recoveries().lock().map_err(|_| {
             "Codex unscoped recovery registry 已损坏；side effects unknown".to_string()
         })?;
-        std::mem::take(&mut *registry)
+        let keys = registry
+            .iter()
+            .filter_map(|(key, slot)| {
+                matches!(slot, UnscopedRecoverySlot::Retained(_)).then_some(*key)
+            })
+            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        for key in keys {
+            if let Some(UnscopedRecoverySlot::Retained(owner)) = registry.remove(&key) {
+                registry.insert(key, UnscopedRecoverySlot::Retrying);
+                candidates.push((key, owner));
+            }
+        }
+        candidates
     };
     let mut errors = Vec::new();
-    for recovery in recoveries.into_values() {
-        if let Err(error) = cleanup_codex_run(&recovery.handle, None, &recovery.cleanup) {
+    for (slot, recovery) in candidates {
+        if let Err(error) = cleanup_codex_run(&recovery.handle, None, &recovery.cleanup, Some(slot))
+        {
             errors.push(error);
         }
     }
@@ -109,12 +163,55 @@ fn prepared_codex_leases() -> &'static Mutex<HashMap<String, PreparedLease>> {
     PREPARED_CODEX_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn clear_prepared_codex_leases() -> Result<(), String> {
+fn clear_prepared_codex_leases() -> Result<(), String> {
     prepared_codex_leases()
         .lock()
         .map_err(|_| "Codex prepared lease registry 已损坏".to_string())?
         .clear();
     Ok(())
+}
+
+pub(crate) fn clear_codex_session_state() -> Result<(), String> {
+    retry_unscoped_codex_recoveries()?;
+    let operations = active_codex_children()
+        .lock()
+        .map_err(|_| "Codex operation registry 已损坏；side effects unknown".to_string())?
+        .iter()
+        .map(|(operation_id, entry)| (operation_id.clone(), entry.session_generation))
+        .collect::<Vec<_>>();
+    let mut errors = Vec::new();
+    for (operation_id, generation) in operations {
+        if let Err(error) = codex_worker_cancel(operation_id, generation) {
+            errors.push(error);
+        }
+    }
+    if let Ok(active) = active_codex_children().lock() {
+        if !active.is_empty() {
+            errors.push(
+                "Codex active recovery在session teardown后仍存在；side effects unknown".into(),
+            );
+        }
+    } else {
+        errors.push("Codex operation registry 已损坏；side effects unknown".into());
+    }
+    match pending_codex_operations().lock() {
+        Ok(mut pending) => {
+            let unresolved = pending.values().any(|entry| !entry.cancellation_requested);
+            if unresolved {
+                errors.push(
+                    "Codex pending operation在session teardown时未取消；side effects unknown"
+                        .into(),
+                );
+            } else {
+                pending.retain(|_, entry| !entry.cancellation_requested);
+            }
+        }
+        Err(_) => errors.push("Codex pending registry 已损坏；side effects unknown".into()),
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    clear_prepared_codex_leases()
 }
 
 fn same_cwd_path(left: &std::path::Path, right: &std::path::Path) -> bool {
@@ -585,6 +682,7 @@ fn cleanup_codex_run(
     handle: &ChildHandle,
     operation_id: Option<&str>,
     cleanup: &CodexCleanupHandle,
+    recovery_slot: Option<usize>,
 ) -> Result<(), String> {
     let mut errors = Vec::new();
     let terminated = match handle.lock() {
@@ -612,7 +710,18 @@ fn cleanup_codex_run(
                     errors.push(error);
                 }
             }
-            Err(error) => errors.push(error),
+            Err(error) => {
+                errors.push(error);
+                match output_readers_terminal(cleanup) {
+                    Ok(true) => {
+                        if let Err(error) = cleanup_output_artifact(cleanup) {
+                            errors.push(error);
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => errors.push(error),
+                }
+            }
         }
     }
     if errors.is_empty() {
@@ -622,13 +731,20 @@ fn cleanup_codex_run(
             let mut guard = handle
                 .lock()
                 .map_err(|_| "Codex child handle 已损坏；side effects unknown".to_string())?;
+            if let Some(slot) = recovery_slot {
+                release_unscoped_recovery_slot(slot)?;
+            }
             let _ = guard.take();
         }
         Ok(())
     } else {
         if operation_id.is_none() {
-            if let Err(error) = retain_unscoped_recovery(handle, cleanup) {
-                errors.push(error);
+            if let Some(slot) = recovery_slot {
+                if let Err(error) = retain_unscoped_recovery(slot, handle, cleanup) {
+                    errors.push(error);
+                }
+            } else {
+                errors.push("Codex unscoped recovery slot缺失；side effects unknown".into());
             }
         }
         Err(errors.join("; "))
@@ -646,10 +762,11 @@ fn cleanup_failed_codex_run(
     handle: &ChildHandle,
     operation_id: Option<&str>,
     cleanup: &CodexCleanupHandle,
+    recovery_slot: Option<usize>,
     stdin_result: Option<&Receiver<Result<(), String>>>,
 ) -> Result<(), String> {
     let mut errors = Vec::new();
-    if let Err(error) = cleanup_codex_run(handle, operation_id, cleanup) {
+    if let Err(error) = cleanup_codex_run(handle, operation_id, cleanup, recovery_slot) {
         errors.push(error);
     }
     if let Err(error) = await_stdin_write(stdin_result) {
@@ -947,13 +1064,18 @@ fn join_cleanup_reader(cleanup: &CodexCleanupHandle, stdout: bool) -> Result<Vec
             let mut state = cleanup
                 .lock()
                 .map_err(|_| "Codex cleanup state 已损坏".to_string())?;
+            let terminal_error = if stdout {
+                state.stdout_error.clone()
+            } else {
+                state.stderr_error.clone()
+            };
             let (done, joining, slot) = if stdout {
                 (state.stdout_done, state.stdout_joining, &mut state.stdout)
             } else {
                 (state.stderr_done, state.stderr_joining, &mut state.stderr)
             };
             if done {
-                return Ok(Vec::new());
+                return terminal_error.map_or_else(|| Ok(Vec::new()), Err);
             }
             if joining {
                 None
@@ -995,8 +1117,16 @@ fn join_cleanup_reader(cleanup: &CodexCleanupHandle, stdout: bool) -> Result<Vec
             Err((error, retained)) => {
                 if stdout {
                     state.stdout = retained;
+                    state.stdout_done = state.stdout.is_none();
+                    if state.stdout_done {
+                        state.stdout_error = Some(error.clone());
+                    }
                 } else {
                     state.stderr = retained;
+                    state.stderr_done = state.stderr.is_none();
+                    if state.stderr_done {
+                        state.stderr_error = Some(error.clone());
+                    }
                 }
                 return Err(error);
             }
@@ -1019,6 +1149,12 @@ fn cleanup_output_readers(cleanup: &CodexCleanupHandle) -> Result<(), String> {
     }
 }
 
+fn output_readers_terminal(cleanup: &CodexCleanupHandle) -> Result<bool, String> {
+    let state = cleanup
+        .lock()
+        .map_err(|_| "Codex cleanup state 已损坏".to_string())?;
+    Ok(state.stdout_done && state.stderr_done && state.stdout.is_none() && state.stderr.is_none())
+}
 fn cleanup_output_artifact(cleanup: &CodexCleanupHandle) -> Result<(), String> {
     let output_path = cleanup
         .lock()
@@ -1027,6 +1163,7 @@ fn cleanup_output_artifact(cleanup: &CodexCleanupHandle) -> Result<(), String> {
         .clone();
     remove_codex_output(&output_path)
 }
+
 struct UnregisteredChildCleanupError {
     message: String,
 }
@@ -1064,7 +1201,18 @@ fn cleanup_unregistered_codex_child(
                     errors.push(error);
                 }
             }
-            Err(error) => errors.push(error),
+            Err(error) => {
+                errors.push(error);
+                match output_readers_terminal(cleanup) {
+                    Ok(true) => {
+                        if let Err(error) = cleanup_output_artifact(cleanup) {
+                            errors.push(error);
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => errors.push(error),
+                }
+            }
         }
     }
     if errors.is_empty() {
@@ -1205,9 +1353,29 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         }
     }
 
+    let unscoped_recovery_slot = if operation_binding.is_none() {
+        match reserve_unscoped_recovery_slot() {
+            Ok(slot) => Some(slot),
+            Err(error) => {
+                if let Err(cleanup_error) = remove_codex_output(&output_path) {
+                    return Err(format!(
+                        "{error}; output cleanup failed: {cleanup_error}; side effects unknown"
+                    ));
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
+            if let Some(slot) = unscoped_recovery_slot {
+                if let Err(slot_error) = release_unscoped_recovery_slot(slot) {
+                    return Err(format!("无法启动 Codex CLI：{error}; {slot_error}"));
+                }
+            }
             if let Err(cleanup_error) = remove_codex_output(&output_path) {
                 eprintln!("[codex] {cleanup_error}; side effects unknown");
             }
@@ -1222,6 +1390,8 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         stderr: stderr_thread,
         stdout_done: false,
         stderr_done: false,
+        stdout_error: None,
+        stderr_error: None,
         stdout_joining: false,
         stderr_joining: false,
     }));
@@ -1253,8 +1423,13 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
                 .take()
                 .map(|stdin| spawn_stdin_writer(stdin, prompt)),
             None => {
-                let cleanup_result =
-                    cleanup_failed_codex_run(&handle, operation_id.as_deref(), &cleanup, None);
+                let cleanup_result = cleanup_failed_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &cleanup,
+                    unscoped_recovery_slot,
+                    None,
+                );
                 return Err(append_cleanup_failure(
                     "Codex child在stdin初始化前丢失；side effects unknown".into(),
                     cleanup_result,
@@ -1262,8 +1437,13 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
             }
         },
         Err(_) => {
-            let cleanup_result =
-                cleanup_failed_codex_run(&handle, operation_id.as_deref(), &cleanup, None);
+            let cleanup_result = cleanup_failed_codex_run(
+                &handle,
+                operation_id.as_deref(),
+                &cleanup,
+                unscoped_recovery_slot,
+                None,
+            );
             return Err(append_cleanup_failure(
                 "Codex child handle在stdin初始化时损坏；side effects unknown".into(),
                 cleanup_result,
@@ -1287,6 +1467,7 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
                     &handle,
                     operation_id.as_deref(),
                     &cleanup,
+                    unscoped_recovery_slot,
                     stdin_result.as_ref(),
                 );
                 return Err(append_cleanup_failure(
@@ -1300,6 +1481,7 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
                     &handle,
                     operation_id.as_deref(),
                     &cleanup,
+                    unscoped_recovery_slot,
                     stdin_result.as_ref(),
                 );
                 return Err(append_cleanup_failure(
@@ -1324,6 +1506,7 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
             &handle,
             operation_id.as_deref(),
             &cleanup,
+            unscoped_recovery_slot,
             stdin_result.as_ref(),
         );
         return Err(append_cleanup_failure(
@@ -1336,7 +1519,12 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
     if let Err(error) = await_stdin_write(stdin_result.as_ref()) {
         return Err(append_cleanup_failure(
             error,
-            cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup),
+            cleanup_codex_run(
+                &handle,
+                operation_id.as_deref(),
+                &cleanup,
+                unscoped_recovery_slot,
+            ),
         ));
     }
 
@@ -1355,7 +1543,12 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         Err(error) => {
             return Err(append_cleanup_failure(
                 format!("Codex output capture failed; side effects unknown: {error}"),
-                cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup),
+                cleanup_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &cleanup,
+                    unscoped_recovery_slot,
+                ),
             ));
         }
     };
@@ -1364,14 +1557,24 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         Err(error) => {
             return Err(append_cleanup_failure(
                 format!("Codex output capture failed; side effects unknown: {error}"),
-                cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup),
+                cleanup_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &cleanup,
+                    unscoped_recovery_slot,
+                ),
             ));
         }
     };
     if let Some(reason) = cancellation_reason {
         return Err(append_cleanup_failure(
             reason,
-            cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup),
+            cleanup_codex_run(
+                &handle,
+                operation_id.as_deref(),
+                &cleanup,
+                unscoped_recovery_slot,
+            ),
         ));
     }
     let stdout = String::from_utf8_lossy(&out_buf).to_string();
@@ -1382,11 +1585,21 @@ fn run_exec(request: CodexExecRequest) -> Result<CodexExecResult, String> {
         Err(error) => {
             return Err(append_cleanup_failure(
                 format!("Codex output capture failed; side effects unknown: {error}"),
-                cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup),
+                cleanup_codex_run(
+                    &handle,
+                    operation_id.as_deref(),
+                    &cleanup,
+                    unscoped_recovery_slot,
+                ),
             ));
         }
     };
-    if let Err(error) = cleanup_codex_run(&handle, operation_id.as_deref(), &cleanup) {
+    if let Err(error) = cleanup_codex_run(
+        &handle,
+        operation_id.as_deref(),
+        &cleanup,
+        unscoped_recovery_slot,
+    ) {
         return Err(format!(
             "Codex finalization cleanup failed; side effects unknown: {error}"
         ));
@@ -1502,6 +1715,7 @@ pub async fn codex_worker_exec(
         Ok(mut leases) => match leases.remove(&operation_id) {
             Some(prepared) => prepared,
             None => {
+                drop(leases);
                 finish_pending_operation(&operation_id, pending_generation)?;
                 return Err("Codex Worker lease在启动前消失".into());
             }
@@ -1609,14 +1823,14 @@ pub fn codex_worker_cancel(operation_id: String, generation: u64) -> Result<(), 
         }
         drop(guard);
         let mut cleanup_errors = Vec::new();
-        let readers_cleaned = match cleanup_output_readers(&cleanup) {
+        let readers_terminal = match cleanup_output_readers(&cleanup) {
             Ok(()) => true,
             Err(error) => {
                 cleanup_errors.push(error);
-                false
+                output_readers_terminal(&cleanup).unwrap_or(false)
             }
         };
-        if readers_cleaned {
+        if readers_terminal {
             if let Err(error) = cleanup_output_artifact(&cleanup) {
                 cleanup_errors.push(error);
             }
@@ -1658,9 +1872,9 @@ mod tests {
         active_codex_children, begin_pending_operation, build_exec_args, cleanup_codex_run,
         cleanup_unregistered_codex_child, codex_worker_cancel, create_codex_output,
         finish_pending_operation, join_cleanup_reader, parse_json_events, pending_codex_operations,
-        reserve_codex_operation, take_cancelled_operation, unscoped_codex_recoveries,
-        valid_operation_id, validate_operation_binding, ChildHandle, CodexCleanupContext,
-        CodexOutputReader, CODEX_TEMP_COUNTER,
+        reserve_codex_operation, reserve_unscoped_recovery_slot, take_cancelled_operation,
+        unscoped_codex_recoveries, valid_operation_id, validate_operation_binding, ChildHandle,
+        CodexCleanupContext, CodexOutputReader, CODEX_TEMP_COUNTER,
     };
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
@@ -1763,6 +1977,8 @@ mod tests {
             stderr: None,
             stdout_done: true,
             stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));
@@ -1798,16 +2014,20 @@ mod tests {
             stderr: None,
             stdout_done: true,
             stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));
-        assert!(cleanup_codex_run(&handle, None, &cleanup).is_err());
-        let key = Arc::as_ptr(&handle) as usize;
-        assert!(unscoped_codex_recoveries()
-            .lock()
-            .expect("unscoped registry should remain healthy")
-            .remove(&key)
-            .is_some());
+        let slot = reserve_unscoped_recovery_slot().expect("recovery slot should reserve");
+        assert!(cleanup_codex_run(&handle, None, &cleanup, Some(slot)).is_err());
+        assert!(matches!(
+            unscoped_codex_recoveries()
+                .lock()
+                .expect("unscoped registry should remain healthy")
+                .remove(&slot),
+            Some(super::UnscopedRecoverySlot::Retained(_))
+        ));
     }
     #[test]
     fn operation_id_requires_nonzero_session_generation() {
@@ -1881,6 +2101,8 @@ mod tests {
             stderr: None,
             stdout_done: true,
             stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));
@@ -1937,10 +2159,13 @@ mod tests {
             stderr: None,
             stdout_done: true,
             stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));
-        let result = cleanup_codex_run(&handle, None, &cleanup);
+        let slot = reserve_unscoped_recovery_slot().expect("recovery slot should reserve");
+        let result = cleanup_codex_run(&handle, None, &cleanup, Some(slot));
         assert!(result.is_ok(), "cleanup should succeed: {result:?}");
         assert!(handle
             .lock()
@@ -1967,6 +2192,8 @@ mod tests {
             stderr: None,
             stdout_done: false,
             stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));
@@ -1994,6 +2221,41 @@ mod tests {
         assert!(state.stdout_done);
     }
 
+    #[test]
+    fn reader_error_is_terminal_but_remains_observable_for_recovery() {
+        let (sender, receiver) = mpsc::channel::<Result<Vec<u8>, String>>();
+        let thread = thread::spawn(move || {
+            sender
+                .send(Err("synthetic reader failure".into()))
+                .expect("reader error should send");
+        });
+        let cleanup = Arc::new(Mutex::new(CodexCleanupContext {
+            output_path: PathBuf::new(),
+            stdout: Some((thread, receiver)),
+            stderr: None,
+            stdout_done: false,
+            stderr_done: true,
+            stdout_error: None,
+            stderr_error: None,
+            stdout_joining: false,
+            stderr_joining: false,
+        }));
+        let first = join_cleanup_reader(&cleanup, true).expect_err("reader error should surface");
+        assert_eq!(first, "synthetic reader failure");
+        let state = cleanup.lock().expect("cleanup state should remain healthy");
+        assert!(state.stdout.is_none());
+        assert!(state.stdout_done);
+        assert_eq!(
+            state.stdout_error.as_deref(),
+            Some("synthetic reader failure")
+        );
+        drop(state);
+        assert_eq!(
+            join_cleanup_reader(&cleanup, true)
+                .expect_err("terminal reader error should remain visible"),
+            "synthetic reader failure"
+        );
+    }
     #[test]
     fn unregistered_child_cleanup_reaps_readers_and_artifact() {
         let mut command = if cfg!(windows) {
@@ -2034,6 +2296,8 @@ mod tests {
             stderr: stderr_thread,
             stdout_done: false,
             stderr_done: false,
+            stdout_error: None,
+            stderr_error: None,
             stdout_joining: false,
             stderr_joining: false,
         }));

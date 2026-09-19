@@ -2301,7 +2301,7 @@ fn dev_init_session(base_repo: String) -> Result<u64, String> {
         return Err("dev_init_session: baseRepo 必须是 Git repository top-level".to_string());
     }
     let base_identity = stable_directory_identity(&canon)?;
-    codex::clear_prepared_codex_leases()?;
+    codex::clear_codex_session_state()?;
     let mut st = DEV_STATE.lock().unwrap();
     st.generation = next_session_generation(st.generation);
     st.base_repo = Some(canon.to_string_lossy().to_string());
@@ -2319,7 +2319,7 @@ fn dev_init_session(base_repo: String) -> Result<u64, String> {
 fn dev_clear_session(generation: u64) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_clear_session")?;
-    codex::clear_prepared_codex_leases()?;
+    codex::clear_codex_session_state()?;
     let mut st = DEV_STATE.lock().unwrap();
     st.generation = next_session_generation(st.generation);
     st.base_repo = None;

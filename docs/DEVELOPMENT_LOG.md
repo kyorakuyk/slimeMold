@@ -3859,3 +3859,25 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `git diff --check`：通过；
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
 - 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.180 unverified：Codex recovery slot、reader terminal state 与 session quiescence
+
+- unscoped `codex_exec` 在 spawn 前预留有上限的 recovery slot；Reserved/Retrying状态计入 cap，slot满时在创建 child前拒绝，cleanup失败写回同一 slot，成功才释放，避免 cap overflow后丢失 child ownership。
+- unscoped recovery retry不再用 `mem::take`移走所有条目；Retained会转为Retrying并继续占用槽位，新的普通 Codex调用不会绕过恢复上限。
+- reader返回IO错误或thread panic时记录 terminal error并标记 joined/done；后续cleanup重复报告原始错误，不再伪报 reader未启动。timeout仍保留reader句柄；只有reader terminal或完全成功时才进入artifact cleanup。
+- 修复 prepared lease mutex持有期间调用 pending finalization的死锁；`leases.remove`缺失分支先释放prepared锁，再处理pending。
+- session init/clear改用 Codex quiescence gate：先处理 unscoped recovery，checked-cancel active child，验证 active/pending已收敛后才清 prepared leases；未取消 pending或cleanup失败会阻止旧session切换，避免旧generation泄漏到新项目。
+- 新增 reader terminal error回归测试；本 checkpoint 不标记 verified，仍需 exact HEAD reviewer。本轮仍未闭合 Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery。
+
+验证结果：
+
+- Rust：`94 passed / 0 failed`；Codex targeted：`16 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
