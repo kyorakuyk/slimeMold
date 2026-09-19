@@ -34,10 +34,12 @@ mod fs_guard;
 
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
+#[cfg(test)]
+pub(crate) use fs_guard::protected_relative_path;
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
     dev_exec_validate_paths, dev_strip_verbatim, is_git_diff_revision, path_compare_key,
-    path_is_same_or_child,
+    path_is_same_or_child, protected_path_error, protected_path_is_execution_only_script,
 };
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
@@ -3308,40 +3310,6 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
     Ok(())
 }
 
-fn protected_relative_path(rel: &str) -> bool {
-    let rel = rel
-        .replace('\\', "/")
-        .trim_matches('/')
-        .to_ascii_lowercase();
-    rel == "package.json"
-        || rel == "package-lock.json"
-        || rel == "vitest.config.ts"
-        || rel == "scripts"
-        || rel.starts_with("scripts/")
-        || rel == "tests"
-        || rel.starts_with("tests/")
-        || rel == "src/store/workflowstore.ts"
-        || rel == "src/engine/executor.ts"
-        || rel == "src/plugins/sandbox"
-        || rel.starts_with("src/plugins/sandbox/")
-        || rel == "src-tauri/capabilities"
-        || rel.starts_with("src-tauri/capabilities/")
-        || rel == "src/orchestrator"
-        || rel.starts_with("src/orchestrator/")
-}
-
-fn protected_path_error(abs: &std::path::Path, root: &std::path::Path) -> Option<String> {
-    let abs_key = path_compare_key(&abs.to_string_lossy());
-    let root_key = path_compare_key(&root.to_string_lossy());
-    let rel = if abs_key == root_key {
-        String::new()
-    } else {
-        abs_key.strip_prefix(&(root_key + "/"))?.to_string()
-    };
-    protected_relative_path(&rel)
-        .then(|| format!("dev_file: 路径受 host protected policy 保护：{rel}"))
-}
-
 fn git_diff_pathspec_allowed(cwd: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
     let cwd_key = path_compare_key(&dev_strip_verbatim(cwd).to_string_lossy());
     let path_key = path_compare_key(&dev_strip_verbatim(path).to_string_lossy());
@@ -3409,14 +3377,6 @@ fn has_multiple_hardlinks(path: &std::path::Path) -> Result<bool, String> {
         let _ = path;
         Ok(false)
     }
-}
-
-fn protected_path_is_execution_only_script(abs: &std::path::Path, root: &std::path::Path) -> bool {
-    let abs_key = path_compare_key(&abs.to_string_lossy());
-    let root_key = path_compare_key(&root.to_string_lossy());
-    abs_key
-        .strip_prefix(&(root_key + "/"))
-        .is_some_and(|rel| rel.starts_with("scripts/"))
 }
 
 fn dev_path_allowed_with_options(

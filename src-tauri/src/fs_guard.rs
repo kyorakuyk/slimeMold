@@ -32,6 +32,48 @@ pub(crate) fn path_compare_key(raw: &str) -> String {
     normalized
 }
 
+pub(crate) fn protected_relative_path(rel: &str) -> bool {
+    let rel = rel
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase();
+    rel == "package.json"
+        || rel == "package-lock.json"
+        || rel == "vitest.config.ts"
+        || rel == "scripts"
+        || rel.starts_with("scripts/")
+        || rel == "tests"
+        || rel.starts_with("tests/")
+        || rel == "src/store/workflowstore.ts"
+        || rel == "src/engine/executor.ts"
+        || rel == "src/plugins/sandbox"
+        || rel.starts_with("src/plugins/sandbox/")
+        || rel == "src-tauri/capabilities"
+        || rel.starts_with("src-tauri/capabilities/")
+        || rel == "src/orchestrator"
+        || rel.starts_with("src/orchestrator/")
+}
+
+pub(crate) fn protected_path_error(abs: &Path, root: &Path) -> Option<String> {
+    let abs_key = path_compare_key(&abs.to_string_lossy());
+    let root_key = path_compare_key(&root.to_string_lossy());
+    let rel = if abs_key == root_key {
+        String::new()
+    } else {
+        abs_key.strip_prefix(&(root_key + "/"))?.to_string()
+    };
+    protected_relative_path(&rel)
+        .then(|| format!("dev_file: 路径受 host protected policy 保护：{rel}"))
+}
+
+pub(crate) fn protected_path_is_execution_only_script(abs: &Path, root: &Path) -> bool {
+    let abs_key = path_compare_key(&abs.to_string_lossy());
+    let root_key = path_compare_key(&root.to_string_lossy());
+    abs_key
+        .strip_prefix(&(root_key + "/"))
+        .is_some_and(|rel| rel.starts_with("scripts/"))
+}
+
 pub(crate) fn path_is_same_or_child(path: &Path, root: &Path) -> bool {
     let path = path_compare_key(&path.to_string_lossy());
     let root = path_compare_key(&root.to_string_lossy());

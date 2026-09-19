@@ -3952,3 +3952,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs`通过 crate 内可见 import 保持原调用名；`fs_guard`内部改为直接使用本模块 helper，未移动 `DEV_STATE`、identity rebinding 或文件生命周期逻辑。
 - 验证：`fs_guard` `11 passed / 0 failed`；`dev_exec_tests` `26 passed / 0 failed`；`dev_write_symlink_tests` `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4432` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.187 unverified：抽出 fs_guard 的 protected path policy
+
+- 将纯函数 `protected_relative_path`、`protected_path_error` 和 `protected_path_is_execution_only_script` 从 `src-tauri/src/lib.rs` 迁移到 `src-tauri/src/fs_guard.rs`。
+- 保留 `dev_path_allowed_with_options` 的 `DEV_STATE`、identity rebind、allow-execution-only 分支和文件权限编排；root 仅保留测试条件下的 `protected_relative_path` re-export。
+- 验证：fs_guard `11 passed / 0 failed`；dev_exec `26 passed / 0 failed`；dev_write `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4392` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
