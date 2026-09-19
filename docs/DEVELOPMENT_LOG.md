@@ -3930,3 +3930,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
 - `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.184 unverified：抽出 Codex process execution seam
+
+- 新增 `src-tauri/src/codex_process.rs`，承接 `CodexExecRequest`、`CodexExecResult`、Codex usage/event解析、exec参数构造和 `run_exec` process lifecycle。
+- `codex.rs`保留Tauri command、session/cwd/lease编排及现有cleanup/recovery orchestration；process执行通过既有registry reservation与cleanup seam，不改变行为语义。
+- 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
+- `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` 或 `codex_process.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
