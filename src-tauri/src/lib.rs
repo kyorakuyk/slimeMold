@@ -40,8 +40,9 @@ use cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_c
 use dev_process::DevExecResult;
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
 use dev_state::{
-    lock_dev_operation, next_session_generation, CleanupBinding, PendingWorktree,
-    RegisteredWorktree, DEV_STATE,
+    assert_session_stamp_current, lock_dev_operation, next_session_generation,
+    snapshot_session_stamp, snapshot_session_stamp_for, CleanupBinding, PendingWorktree,
+    RegisteredWorktree, SessionStamp, DEV_STATE,
 };
 #[cfg(test)]
 use dev_state::{lock_dev_state_tests, DevState};
@@ -64,59 +65,25 @@ pub(crate) fn dev_base_repo() -> Result<PathBuf, String> {
     assert_base_identity_current("dev_base_repo")
 }
 
-fn assert_base_identity_current(operation: &str) -> Result<PathBuf, String> {
-    let (base, expected_identity) = {
-        let state = DEV_STATE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            state
-                .base_repo
-                .clone()
-                .ok_or_else(|| format!("{operation}: 尚未初始化主仓库根"))?,
-            state
-                .base_identity
-                .clone()
-                .ok_or_else(|| format!("{operation}: 主仓库缺少 stable directory identity"))?,
-        )
-    };
-    let base_path = PathBuf::from(&base);
+fn validate_session_base(stamp: &SessionStamp, operation: &str) -> Result<PathBuf, String> {
+    let base_path = PathBuf::from(stamp.base_repo());
     let current_identity = stable_directory_identity(&base_path)
         .map_err(|error| format!("{operation}: 无法重新绑定主仓库 identity：{error}"))?;
-    if current_identity != expected_identity {
+    if current_identity != *stamp.base_identity() {
         return Err(format!("{operation}: 主仓库 directory identity 已变化"));
     }
-    let state = DEV_STATE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if state.base_repo.as_deref() != Some(base.as_str())
-        || state.base_identity.as_ref() != Some(&expected_identity)
-    {
-        return Err(format!(
-            "{operation}: 主仓库 session 在 identity 校验期间发生变化"
-        ));
-    }
+    assert_session_stamp_current(stamp, operation)?;
     Ok(base_path)
 }
 
+fn assert_base_identity_current(operation: &str) -> Result<PathBuf, String> {
+    let stamp = snapshot_session_stamp(operation)?;
+    validate_session_base(&stamp, operation)
+}
+
 pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Result<(), String> {
-    if expected == 0 {
-        return Err(format!("{operation}: 缺少有效 session generation"));
-    }
-    let (has_base, has_identity, current_generation) = {
-        let state = DEV_STATE.lock().unwrap();
-        (
-            state.base_repo.is_some(),
-            state.base_identity.is_some(),
-            state.generation,
-        )
-    };
-    if !has_base || !has_identity || current_generation != expected {
-        return Err(format!(
-            "{operation}: session generation 已失效（expected={expected}, current={current_generation}）"
-        ));
-    }
-    assert_base_identity_current(operation).map(|_| ())
+    let stamp = snapshot_session_stamp_for(expected, operation)?;
+    validate_session_base(&stamp, operation).map(|_| ())
 }
 
 fn registered_worktree_identity_matches(

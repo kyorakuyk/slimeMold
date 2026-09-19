@@ -80,3 +80,83 @@ pub(crate) struct PendingWorktree {
     pub(crate) branch_revision: Option<String>,
     pub(crate) removed: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionStamp {
+    generation: u64,
+    base_repo: String,
+    base_identity: StableDirectoryIdentity,
+}
+
+impl SessionStamp {
+    pub(crate) fn base_repo(&self) -> &str {
+        &self.base_repo
+    }
+
+    pub(crate) fn base_identity(&self) -> &StableDirectoryIdentity {
+        &self.base_identity
+    }
+}
+
+pub(crate) fn snapshot_session_stamp(operation: &str) -> Result<SessionStamp, String> {
+    let state = DEV_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let base_repo = state
+        .base_repo
+        .clone()
+        .ok_or_else(|| format!("{operation}: 尚未初始化主仓库根"))?;
+    let base_identity = state
+        .base_identity
+        .clone()
+        .ok_or_else(|| format!("{operation}: 主仓库缺少 stable directory identity"))?;
+    if state.generation == 0 {
+        return Err(format!("{operation}: 缺少有效 session generation"));
+    }
+    Ok(SessionStamp {
+        generation: state.generation,
+        base_repo,
+        base_identity,
+    })
+}
+
+pub(crate) fn snapshot_session_stamp_for(
+    expected_generation: u64,
+    operation: &str,
+) -> Result<SessionStamp, String> {
+    if expected_generation == 0 {
+        return Err(format!("{operation}: 缺少有效 session generation"));
+    }
+    let state = DEV_STATE.lock().unwrap();
+    let has_base = state.base_repo.is_some();
+    let has_identity = state.base_identity.is_some();
+    let current_generation = state.generation;
+    if !has_base || !has_identity || current_generation != expected_generation {
+        return Err(format!(
+            "{operation}: session generation 已失效（expected={expected_generation}, current={current_generation}）"
+        ));
+    }
+    Ok(SessionStamp {
+        generation: current_generation,
+        base_repo: state.base_repo.clone().expect("checked above"),
+        base_identity: state.base_identity.clone().expect("checked above"),
+    })
+}
+
+pub(crate) fn assert_session_stamp_current(
+    stamp: &SessionStamp,
+    operation: &str,
+) -> Result<(), String> {
+    let state = DEV_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if state.generation != stamp.generation
+        || state.base_repo.as_deref() != Some(stamp.base_repo.as_str())
+        || state.base_identity.as_ref() != Some(&stamp.base_identity)
+    {
+        return Err(format!(
+            "{operation}: 主仓库 session 在 identity 校验期间发生变化"
+        ));
+    }
+    Ok(())
+}
