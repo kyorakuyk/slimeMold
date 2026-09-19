@@ -14,6 +14,9 @@ import type {
   EvidencePersistence,
   EvidenceRecord,
 } from '../dev/evidence';
+import type {
+  AcceptanceRecord,
+} from '../dev/session';
 import {
   loadWorkerEvidence,
 } from './workerEvidence';
@@ -60,6 +63,15 @@ export interface WorkerEvidenceVerificationInput {
 
 export type WorkerEvidenceVerifier = (
   input: WorkerEvidenceVerificationInput,
+) => Promise<void> | void;
+
+export interface WorkerAcceptanceVerificationInput {
+  record: SideEffectRecord;
+  acceptanceId: string;
+}
+
+export type WorkerAcceptanceVerifier = (
+  input: WorkerAcceptanceVerificationInput,
 ) => Promise<void> | void;
 
 export interface WorkerEvidenceSource {
@@ -126,7 +138,6 @@ export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): Work
   };
 }
 
-/** Build the host verifier from the same durable Evidence persistence used by the GUI. */
 export function createPersistedWorkerEvidenceVerifier(
   persistence: Pick<EvidencePersistence, 'load'>,
 ): WorkerEvidenceVerifier {
@@ -135,15 +146,62 @@ export function createPersistedWorkerEvidenceVerifier(
   });
 }
 
+export interface WorkerAcceptanceSource {
+  loadPersisted(): Promise<readonly AcceptanceRecord[]>;
+}
+
+export function createWorkerAcceptanceVerifier(source: WorkerAcceptanceSource): WorkerAcceptanceVerifier {
+  return async ({ record, acceptanceId }) => {
+    assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    let hash: unknown;
+    try {
+      hash = JSON.parse(record.inputHash);
+    } catch {
+      throw new Error(`Worker Acceptance verifier 无法解析 inputHash：${record.idempotencyKey}`);
+    }
+    if (!Array.isArray(hash) || hash.length !== 7 || typeof hash[5] !== 'string') {
+      throw new Error(`Worker Acceptance verifier 缺少 assignment provenance：${record.idempotencyKey}`);
+    }
+    const matches = (await source.loadPersisted()).filter((acceptance) => acceptance.acceptanceId === acceptanceId);
+    if (matches.length !== 1) {
+      throw new Error(`Worker Acceptance 不存在或不唯一：${acceptanceId}`);
+    }
+    const acceptance = matches[0];
+    if (
+      !acceptance.passed
+      || acceptance.failedChecks.length !== 0
+      || acceptance.runId !== record.runId
+      || acceptance.taskId !== record.taskId
+      || acceptance.taskExecutionId !== record.taskExecutionId
+      || acceptance.attemptId !== record.attemptId
+      || comparableWorkerPath(acceptance.worktreePath) !== comparableWorkerPath(hash[5])
+    ) {
+      throw new Error(`Worker Acceptance provenance 不匹配：${acceptanceId}`);
+    }
+  };
+}
+
+/** Build the host verifier from the same durable Acceptance persistence used by the GUI. */
+export function createPersistedWorkerAcceptanceVerifier(
+  persistence: { load(): Promise<AcceptanceRecord[]> },
+): WorkerAcceptanceVerifier {
+  return createWorkerAcceptanceVerifier({
+    loadPersisted: () => persistence.load(),
+  });
+}
+
+
 export function createPersistedWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   persistence: Pick<EvidencePersistence, 'load'>,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
+  verifyAcceptance?: WorkerAcceptanceVerifier,
 ): WorkerSideEffectRecorderWithRecovery {
   return createWorkerSideEffectRecorder(
     repository,
     now,
     createPersistedWorkerEvidenceVerifier(persistence),
+    verifyAcceptance,
   );
 }
 
@@ -387,6 +445,7 @@ async function assertWorkerExecutionReceipt(
   record: SideEffectRecord,
   lease: WorkerTaskLease,
   verifyEvidence: WorkerEvidenceVerifier | undefined,
+  verifyAcceptance: WorkerAcceptanceVerifier | undefined,
 ): Promise<void> {
   const key = effectKeyFor(lease);
   if (
@@ -409,7 +468,9 @@ async function assertWorkerExecutionReceipt(
     const success = normalizeWorkerSuccessProvenance(record.receipt.evidenceIds, record.receipt.acceptanceId);
     const evidenceIds = success.evidenceIds;
     if (!verifyEvidence) throw new Error(`成功 Worker receipt 缺少 host Evidence verifier：${key}`);
+    if (!verifyAcceptance) throw new Error(`成功 Worker receipt 缺少 host Acceptance verifier：${key}`);
     await verifyEvidence({ record, evidenceIds });
+    await verifyAcceptance({ record, acceptanceId: success.acceptanceId });
   }
 }
 
@@ -417,6 +478,7 @@ export function createWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
   verifyEvidence?: WorkerEvidenceVerifier,
+  verifyAcceptance?: WorkerAcceptanceVerifier,
 ): WorkerSideEffectRecorderWithRecovery {
   const claim = async (lease: WorkerTaskLease): Promise<WorkerSideEffectClaim> => {
     const idempotencyKey = effectKeyFor(lease);
@@ -442,7 +504,7 @@ export function createWorkerSideEffectRecorder(
     });
     const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
     if (!claimed.claimed && claimed.record.status === 'receipt') {
-      await assertWorkerExecutionReceipt(claimed.record, lease, verifyEvidence);
+      await assertWorkerExecutionReceipt(claimed.record, lease, verifyEvidence, verifyAcceptance);
     }
     return { record: claimed.record, claimed: claimed.claimed };
   };
@@ -487,22 +549,26 @@ export function createWorkerSideEffectRecorder(
         throw new Error(`waiting-feedback 不能写入 terminal side-effect receipt：${record.idempotencyKey}`);
       }
       let evidenceIds: string[] | undefined;
+      let acceptanceId: string | undefined;
       if (result.status === 'succeeded') {
         const success = normalizeWorkerSuccessProvenance(result.evidenceIds, result.acceptanceId);
         evidenceIds = success.evidenceIds;
+        acceptanceId = success.acceptanceId;
       } else {
         evidenceIds = result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
       }
       if (result.status === 'succeeded') {
         if (!verifyEvidence) throw new Error(`Worker succeeded receipt 缺少 host Evidence verifier：${record.idempotencyKey}`);
+        if (!verifyAcceptance) throw new Error(`Worker succeeded receipt 缺少 host Acceptance verifier：${record.idempotencyKey}`);
         await verifyEvidence({ record: current, evidenceIds: evidenceIds! });
+        await verifyAcceptance({ record: current, acceptanceId: acceptanceId! });
       }
       const receipt = {
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
         outcome: result.status,
         ...(evidenceIds ? { evidenceIds: [...evidenceIds] } : {}),
-        ...(result.acceptanceId ? { acceptanceId: result.acceptanceId } : {}),
+        ...(acceptanceId ? { acceptanceId } : {}),
         ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
       const completed = completeSideEffect(current, receipt);

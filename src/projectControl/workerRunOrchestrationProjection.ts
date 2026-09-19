@@ -50,7 +50,17 @@ function stageLogFor(
   taskIds: readonly string[] | undefined,
   run: WorkerRunQueueState,
 ): StageLog {
-  const tasks = (taskIds ?? [])
+  const expectedTaskIds = taskIds ?? [];
+  const missingTaskIds = expectedTaskIds.filter((taskId) => !run.tasks[taskId]);
+  if (missingTaskIds.length > 0) {
+    return {
+      ...log,
+      status: 'pending',
+      runId: run.runId,
+      error: `Worker Run 缺少 Stage Task：${missingTaskIds.join(', ')}`,
+    };
+  }
+  const tasks = expectedTaskIds
     .map((taskId) => run.tasks[taskId])
     .filter((task): task is WorkerQueueTask => !!task);
   const status = stageTaskStatus(tasks);

@@ -11,7 +11,7 @@ import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
-import { hasWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
+import { hasWorkerSuccessProvenance, normalizeWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
 import { workerCleanupEffectKey } from './workerCleanup';
 import { isArtifactDeliveryReceiptShape } from './workerDelivery';
 
@@ -568,12 +568,42 @@ export function auditWorkerRunConsistency(input: {
       const inputHashMatches = isCleanup && effect.status === 'unknown' && effect.recovery === 'needs-user'
         ? !!task.baseRevision && effect.inputHash.startsWith(`${task.baseRevision}:`)
         : expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
-      const receiptSuccessProvenanceMatches = effect.status !== 'receipt'
-        || effect.receipt?.outcome !== 'succeeded'
-        || hasWorkerSuccessProvenance({
-          evidenceIds: effect.receipt.evidenceIds,
-          acceptanceId: effect.receipt.acceptanceId,
-        });
+      let receiptSuccessProvenanceMatches = true;
+      if (!isCleanup && effect.status === 'receipt' && effect.receipt?.outcome === 'succeeded') {
+        try {
+          const success = normalizeWorkerSuccessProvenance(effect.receipt.evidenceIds, effect.receipt.acceptanceId);
+          const expectedStageId = resolveWorkerAcceptanceStageId(effectTaskId, task.acceptanceStageId);
+          const evidenceMatches = input.evidence !== undefined && success.evidenceIds.every((evidenceId) => {
+            const record = evidenceById.get(evidenceId);
+            return !!record
+              && record.capturedBy === 'host'
+              && record.status === 'passed'
+              && record.runId === run.runId
+              && record.taskId === effectTaskId
+              && record.stageId === expectedStageId
+              && (!task.worktreePath
+                || (record.worktreePath !== undefined
+                  && pathComparisonKey(record.worktreePath) === pathComparisonKey(task.worktreePath)))
+              && (!task.baseRevision || record.baseRevision === task.baseRevision)
+              && recordMatchesTaskLineage(record, expectedLineage, true);
+          });
+          const acceptanceMatches = input.acceptances !== undefined
+            && input.acceptances.filter((record) => record.acceptanceId === success.acceptanceId).length === 1
+            && (() => {
+              const acceptance = input.acceptances!.find((record) => record.acceptanceId === success.acceptanceId)!;
+              return acceptance.passed
+                && acceptance.failedChecks.length === 0
+                && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
+                && acceptance.stageId === expectedStageId
+                && (!task.worktreePath
+                  || pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(task.worktreePath))
+                && recordMatchesTaskLineage(acceptance, expectedLineage, true);
+            })();
+          receiptSuccessProvenanceMatches = evidenceMatches && acceptanceMatches;
+        } catch {
+          receiptSuccessProvenanceMatches = false;
+        }
+      }
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
         && expectedTarget !== undefined
         && effect.target === expectedTarget

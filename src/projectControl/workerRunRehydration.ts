@@ -3,7 +3,10 @@ import {
   type WorkerQueueTask,
   type WorkerRunQueueState,
 } from '../domain/workerQueue';
-import type { DomainEvent } from '../domain/contracts';
+import {
+  replayDomainEvents,
+  type DomainEvent,
+} from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { hasWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
 import type { ProjectTaskGraph } from './types';
@@ -206,6 +209,27 @@ export function rehydrateWorkerRunsFromEvents(input: {
     ));
     if (!taskGraph) {
       issues.push({ runId, message: `Run ${runId} 缺少批准且版本匹配的 TaskGraph，拒绝自动恢复` });
+      continue;
+    }
+
+    const aggregateVersions = new Map<string, number>();
+    const runEvents = input.events
+      .filter((event) => {
+        if (event.streamId !== input.projectId) return false;
+        const eventPayload = payload(event);
+        const eventRunId = text(eventPayload.runId) ?? (event.aggregateType === 'Run' ? event.aggregateId : undefined);
+        return eventRunId === runId;
+      })
+      .map((event, index) => {
+        const aggregateKey = `${event.aggregateType}\u0000${event.aggregateId}`;
+        const aggregateVersion = (aggregateVersions.get(aggregateKey) ?? 0) + 1;
+        aggregateVersions.set(aggregateKey, aggregateVersion);
+        return { ...event, sequence: index + 1, aggregateVersion };
+      });
+    try {
+      replayDomainEvents(runEvents);
+    } catch (cause) {
+      issues.push({ runId, message: `Run ${runId} 事件生命周期校验失败：${cause instanceof Error ? cause.message : String(cause)}` });
       continue;
     }
 

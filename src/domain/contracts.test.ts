@@ -237,6 +237,28 @@ describe('Phase 0a domain contracts', () => {
     expect(() => replayDomainEvents([cleaned])).toThrow(/TaskCleaned|succeeded|provenance/i);
   });
 
+  it('rejects TaskCleaned without a cleanup receipt even after a valid success', () => {
+    const succeeded = event({
+      eventId: 'cleanup-success',
+      aggregateId: 'task-cleanup-receipt',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-cleanup-receipt',
+        evidenceIds: ['evidence-cleanup'],
+        acceptanceId: 'acceptance-cleanup',
+      },
+    });
+    const cleaned = event({
+      eventId: 'cleanup-without-receipt',
+      sequence: 2,
+      aggregateId: 'task-cleanup-receipt',
+      aggregateVersion: 2,
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-cleanup-receipt' },
+    });
+
+    expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/receipt|TaskCleaned/i);
+  });
   it('keeps separate task executions and attempts when one task runs twice', () => {
     const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
     const secondExecutionId = createTaskExecutionId('run-b', 'task-1');

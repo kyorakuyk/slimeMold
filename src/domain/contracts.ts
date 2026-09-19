@@ -315,6 +315,7 @@ function applyLegacyTaskProjection(
       throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Task：${taskId}`);
     }
     const receiptId = payloadText(payload, 'receiptId');
+    if (!receiptId) throw new Error(`TaskCleaned 缺少 cleanup receipt：${taskId}`);
     projection.tasks[taskId] = {
       ...base,
       ...(previous?.evidenceIds ? { evidenceIds: previous.evidenceIds } : {}),

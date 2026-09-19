@@ -125,9 +125,11 @@ describe('Worker Run → Orchestration projection', () => {
         taskIds: [...(stage.taskIds ?? []), 'task-2'],
       })),
     };
+    current.stageLogs = current.stageLogs.map((log) => ({ ...log, status: 'success' as const }));
     const projected = projectWorkerRunOntoOrchestration(current, run('succeeded', 'succeeded'));
 
     expect(projected.status).not.toBe('done');
+    expect(projected.stageLogs.every((log) => log.status !== 'success')).toBe(true);
   });
   it('projects a failed Worker task as a failed orchestration with the real error', () => {
     const projected = projectWorkerRunOntoOrchestration(

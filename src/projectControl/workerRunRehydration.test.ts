@@ -161,6 +161,51 @@ describe('rehydrateWorkerRunsFromEvents', () => {
     expect(result.runs).toEqual([]);
   });
 
+  it('quarantines a TaskCleaned event without a preceding successful task', () => {
+    const runId = 'run-rehydrate-orphan-cleanup';
+    const queue = createWorkerRunQueue({
+      projectId: 'project-rehydrate-1',
+      runId,
+      orchestrationId: 'orch-rehydrate-1',
+      taskGraph: graph,
+      now: '2026-09-15T00:00:00.000Z',
+    });
+    const initial = queue.drainEvents();
+    const taskExecutionId = 'task-execution:run-rehydrate-orphan-cleanup:task-marker';
+    const invalidEvents: DomainEvent[] = [
+      ...initial,
+      {
+        eventId: 'orphan-cleanup',
+        streamId: 'project-rehydrate-1',
+        sequence: initial.length + 1,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskCleaned',
+        schemaVersion: 1,
+        payload: {
+          runId,
+          taskId: 'task-marker',
+          taskExecutionId,
+          attempt: 1,
+          attemptId: `${taskExecutionId}:attempt-1`,
+          receiptId: 'cleanup-receipt-orphan',
+        },
+        actor: 'runtime',
+        occurredAt: '2026-09-15T00:00:01.000Z',
+      },
+    ];
+
+    const result = rehydrateWorkerRunsFromEvents({
+      projectId: 'project-rehydrate-1',
+      events: invalidEvents,
+      taskGraphs: [graph],
+      existingRuns: [],
+    });
+
+    expect(result.issues.some((issue) => /TaskCleaned|cleanup|succeeded/i.test(issue.message))).toBe(true);
+    expect(result.runs).toEqual([]);
+  });
   it('reconciles a stale ProjectFile snapshot with a durable retry fence', () => {
     const run = createWorkerRunQueue({
       projectId: 'project-rehydrate-1',

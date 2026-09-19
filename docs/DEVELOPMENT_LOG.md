@@ -4177,3 +4177,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在 checkpoint `64793e5` 后逐条写入 RED：focused 首轮 `9` 个失败均对应 reviewer finding；修复 `contracts.ts` 原始 Evidence 校验和 terminal replay guard，queue restore status gate，migration task-facts-before-RunSucceeded 顺序，rehydration run quarantine，orchestration/taskGraph projection coverage/provenance guard，consistency duplicate Evidence/receipt audit。
 - GREEN：focused `126/126`；完整 Node `128 test files / 1128 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,162.91 kB`，保留既有 dynamic/static import 与 chunk warning。
 - 当前代码尚未重新提交或 exact review；本节只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.217 unverified：close recovery and durable receipt provenance bypasses
+
+- `48d1665` 的 exact reviewer 继续 fail-closed，新增确认两条高风险旁路：rehydration 的 direct state assembly 可接受孤立 `TaskCleaned` 并报告 restored，side-effect receipt 只检查 Evidence/Acceptance id 非空而不验证 durable record 与当前 Run/Task/Execution/Attempt binding；同时指出 stage log 会过滤缺失 Task。
+- 在 checkpoint `a194a94` 后补 RED→GREEN：rehydration 每个 Run 先通过 domain reducer 做局部事件生命周期预验证并 quarantine 非法状态；`TaskCleaned` 统一要求前置有效 success provenance 和 cleanup receipt；side-effect recorder 新增 Acceptance verifier，持久化 verifier 校验唯一 passed record、lineage 和 worktree；consistency audit 对成功 worker receipt 交叉核对 Evidence/Acceptance durable records；orchestration stage log 对缺失 Task 显式 pending。
+- GREEN：focused `131/131`；完整 Node `128 test files / 1133 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,165.40 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
