@@ -32,6 +32,7 @@ mod dev_process;
 mod dev_state;
 mod event_store;
 mod fs_guard;
+mod fs_identity;
 mod git_worktree_policy;
 mod worktree_policy;
 
@@ -52,6 +53,7 @@ use fs_guard::{
     path_compare_key, path_is_same_or_child, protected_path_error,
     protected_path_is_execution_only_script,
 };
+pub(crate) use fs_identity::{stable_directory_identity, StableDirectoryIdentity};
 use git_worktree_policy::validate_git_worktree_porcelain;
 use worktree_policy::{
     is_full_object_id, worker_branch_from_ref_arg, worker_branch_from_tip_arg,
@@ -115,92 +117,6 @@ pub(crate) fn assert_session_generation(expected: u64, operation: &str) -> Resul
         ));
     }
     assert_base_identity_current(operation).map(|_| ())
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StableDirectoryIdentity {
-    canonical_path: String,
-    volume_or_device: u64,
-    file_or_inode: u64,
-}
-
-fn stable_directory_identity(path: &std::path::Path) -> Result<StableDirectoryIdentity, String> {
-    let canonical = path.canonicalize().map_err(|error| {
-        format!(
-            "无法绑定 worktree directory identity（{}）：{error}",
-            path.display()
-        )
-    })?;
-    let metadata = fs::metadata(&canonical).map_err(|error| {
-        format!(
-            "无法读取 worktree directory identity（{}）：{error}",
-            canonical.display()
-        )
-    })?;
-    if !metadata.is_dir() {
-        return Err(format!(
-            "worktree identity target 不是目录：{}",
-            canonical.display()
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let volume_or_device = metadata.dev();
-        let file_or_inode = metadata.ino();
-        if volume_or_device == 0 || file_or_inode == 0 {
-            return Err(format!(
-                "worktree identity platform identifiers 不可用：{}",
-                canonical.display()
-            ));
-        }
-        return Ok(StableDirectoryIdentity {
-            canonical_path: canonical.to_string_lossy().to_string(),
-            volume_or_device,
-            file_or_inode,
-        });
-    }
-    #[cfg(windows)]
-    {
-        use std::mem::MaybeUninit;
-        use std::os::windows::fs::OpenOptionsExt;
-        use std::os::windows::io::AsRawHandle;
-        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&canonical)
-            .map_err(|error| {
-                format!(
-                    "无法打开 worktree directory identity（{}）：{error}",
-                    canonical.display()
-                )
-            })?;
-        let mut info = MaybeUninit::<WinByHandleFileInformation>::uninit();
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
-            return Err(format!(
-                "无法读取 worktree directory identity：{}",
-                canonical.display()
-            ));
-        }
-        let info = unsafe { info.assume_init() };
-        let volume_or_device = info.volume_serial as u64;
-        let file_or_inode =
-            (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low);
-        if volume_or_device == 0 || file_or_inode == 0 {
-            return Err(format!(
-                "worktree identity platform identifiers 不可用：{}",
-                canonical.display()
-            ));
-        }
-        return Ok(StableDirectoryIdentity {
-            canonical_path: canonical.to_string_lossy().to_string(),
-            volume_or_device,
-            file_or_inode,
-        });
-    }
-    #[cfg(not(any(unix, windows)))]
-    Err("当前平台不支持稳定 worktree directory identity".to_string())
 }
 
 fn registered_worktree_identity_matches(

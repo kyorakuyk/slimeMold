@@ -3994,3 +3994,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `lib.rs`继续持有所有 session transition、identity rebind、Git/worktree lifecycle、cleanup capability、file/process authority；本刀只改变 carrier 归属和 crate-private visibility，不改变状态转换或 lock order。
 - 验证：stale generation targeted `1 passed / 0 failed`；session operation lock targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4185` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.193 unverified：抽出 stable directory identity primitive
+
+- 新增 `src-tauri/src/fs_identity.rs`，承接 `StableDirectoryIdentity` 与 `stable_directory_identity` 的平台探测实现；`lib.rs`通过 crate-private re-export 保持 Codex、registry、测试和 host caller 的现有类型路径。
+- 保留 Unix device/inode、Windows volume/file-index、canonical directory 检查和 zero-identifier fail-closed 语义；未移动 StableFileIdentity、bound I/O、DEV_STATE 或 stateful cwd/file gates。
+- 验证：stable identity targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4101` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
