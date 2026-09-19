@@ -38,8 +38,9 @@ use dev_process::{DevExecResult, DEV_OUTPUT_CAP};
 pub(crate) use fs_guard::protected_relative_path;
 use fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
-    dev_exec_validate_paths, dev_strip_verbatim, is_git_diff_revision, path_compare_key,
-    path_is_same_or_child, protected_path_error, protected_path_is_execution_only_script,
+    dev_exec_validate_paths, dev_strip_verbatim, git_diff_pathspec_allowed, is_git_diff_revision,
+    path_compare_key, path_is_same_or_child, protected_path_error,
+    protected_path_is_execution_only_script,
 };
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
@@ -3307,47 +3308,6 @@ fn dev_unregister_worktree(path: String, generation: u64) -> Result<(), String> 
     st.registrations.retain(|registered| {
         !registered_worktree_identity_matches(registered, generation, &c, &branch)
     });
-    Ok(())
-}
-
-fn git_diff_pathspec_allowed(cwd: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
-    let cwd_key = path_compare_key(&dev_strip_verbatim(cwd).to_string_lossy());
-    let path_key = path_compare_key(&dev_strip_verbatim(path).to_string_lossy());
-    let rel = (if path_key == cwd_key {
-        String::new()
-    } else {
-        path_key
-            .strip_prefix(&(cwd_key.clone() + "/"))
-            .ok_or_else(|| format!("dev_exec: Git pathspec 不属于 worktree：{}", path.display()))?
-            .to_string()
-    })
-    .to_ascii_lowercase();
-    let protected_roots = [
-        "package.json",
-        "package-lock.json",
-        "vitest.config.ts",
-        "scripts",
-        "tests",
-        "src/store/workflowstore.ts",
-        "src/engine/executor.ts",
-        "src/plugins/sandbox",
-        "src-tauri/capabilities",
-        "src/orchestrator",
-        ".git",
-        ".slimemold",
-    ];
-    if rel.is_empty()
-        || protected_roots.iter().any(|root| {
-            rel == *root
-                || rel.starts_with(&format!("{root}/"))
-                || root.starts_with(&(rel.clone() + "/"))
-        })
-    {
-        return Err(format!(
-            "dev_exec: Git pathspec 命中 protected root 或其 ancestor：{}",
-            path.display()
-        ));
-    }
     Ok(())
 }
 

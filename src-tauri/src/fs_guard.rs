@@ -74,6 +74,47 @@ pub(crate) fn protected_path_is_execution_only_script(abs: &Path, root: &Path) -
         .is_some_and(|rel| rel.starts_with("scripts/"))
 }
 
+pub(crate) fn git_diff_pathspec_allowed(cwd: &Path, path: &Path) -> Result<(), String> {
+    let cwd_key = path_compare_key(&dev_strip_verbatim(cwd).to_string_lossy());
+    let path_key = path_compare_key(&dev_strip_verbatim(path).to_string_lossy());
+    let rel = (if path_key == cwd_key {
+        String::new()
+    } else {
+        path_key
+            .strip_prefix(&(cwd_key.clone() + "/"))
+            .ok_or_else(|| format!("dev_exec: Git pathspec 不属于 worktree：{}", path.display()))?
+            .to_string()
+    })
+    .to_ascii_lowercase();
+    let protected_roots = [
+        "package.json",
+        "package-lock.json",
+        "vitest.config.ts",
+        "scripts",
+        "tests",
+        "src/store/workflowstore.ts",
+        "src/engine/executor.ts",
+        "src/plugins/sandbox",
+        "src-tauri/capabilities",
+        "src/orchestrator",
+        ".git",
+        ".slimemold",
+    ];
+    if rel.is_empty()
+        || protected_roots.iter().any(|root| {
+            rel == *root
+                || rel.starts_with(&format!("{root}/"))
+                || root.starts_with(&(rel.clone() + "/"))
+        })
+    {
+        return Err(format!(
+            "dev_exec: Git pathspec 命中 protected root 或其 ancestor：{}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn path_is_same_or_child(path: &Path, root: &Path) -> bool {
     let path = path_compare_key(&path.to_string_lossy());
     let root = path_compare_key(&root.to_string_lossy());
