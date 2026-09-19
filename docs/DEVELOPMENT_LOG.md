@@ -4080,9 +4080,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 ### 7.204 unverified：orphan branch lineage repair
 
-- `dev_register_orphan_worktree` 现在要求调用方提供合法 `branchRevision`，native 重新读取当前 branch tip，只有与 durable revision 完全一致时才写入 `PendingWorktree.branch_revision`；stale same-name branch tip 直接 fail-closed，不进入 `DEV_STATE`。
+- `dev_register_orphan_worktree` 现在要求调用方提供合法 `branchRevision`，native 重新读取当前 branch tip，只有与 durable revision 完全一致时才写入 `PendingWorktree.branch_revision`；stale same-name branch tip 直接 fail-closed，不进入 `DEV_STATE`。同一路径的重复 orphan registration 只有 generation、branch、revision 和 removed 状态完全一致时才幂等成功，否则拒绝 duplicate lineage conflict。
 - `dev_approve_cleanup` 与 `dev_cleanup_worktree` 对 orphan lineage 不再只接受 caller revision；必须匹配 native orphan 中保存的 revision，缺失或漂移均拒绝。旧的无 revision orphan 记录不能获得 cleanup capability。
 - Node Tauri orphan restore 将 `WorktreeInfo.branchRevision` 传入 `dev_register_orphan_worktree`；新增 IPC payload 回归，保持 live restore 与 orphan restore 分支分离。
-- 新增真实 Git fixture：`orphan_registration_preserves_native_branch_revision`、`orphan_registration_rejects_branch_revision_drift`；focused Rust `2 passed / 0 failed`，完整 Rust `96 passed / 0 failed`。
+- 新增真实 Git fixture：`orphan_registration_preserves_native_branch_revision`、`orphan_registration_rejects_branch_revision_drift`；focused Rust `2 passed / 0 failed`，完整 Rust `97 passed / 0 failed`。
 - 验证：`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`，既有动态/静态 import 与大 chunk warning 保持不变。
 - 本 slice 只闭合 orphan branch-revision provenance；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。本轮未 push、未 merge、未保留凭据；等待 exact HEAD reviewer。

@@ -652,12 +652,30 @@ fn orphan_registration_preserves_native_branch_revision() {
         .iter()
         .find(|item| item.branch == branch)
         .and_then(|item| item.branch_revision.clone());
+    DEV_STATE
+        .lock()
+        .unwrap()
+        .orphan_worktrees
+        .iter_mut()
+        .find(|item| item.branch == branch)
+        .expect("registered orphan fixture")
+        .branch_revision = None;
+    let duplicate_result = worktree_authority::dev_register_orphan_worktree(
+        target_str,
+        branch.clone(),
+        branch_revision.clone(),
+        generation,
+    );
     dev_clear_session(generation).unwrap();
 
     assert_eq!(
         stored_revision.as_deref(),
         Some(branch_revision.as_str()),
         "native orphan lineage must retain the creation-time branch tip"
+    );
+    assert!(
+        duplicate_result.is_err(),
+        "duplicate orphan registration must reject missing native lineage"
     );
 }
 

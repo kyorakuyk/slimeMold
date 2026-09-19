@@ -936,20 +936,28 @@ pub(crate) fn dev_register_orphan_worktree(
     {
         return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
     }
-    if !state
+    if let Some(existing) = state
         .orphan_worktrees
         .iter()
-        .any(|item| path_compare_key(&item.path) == path_compare_key(&c))
+        .find(|item| path_compare_key(&item.path) == path_compare_key(&c))
     {
-        state.orphan_worktrees.push(PendingWorktree {
-            generation,
-            path: c,
-            branch,
-            identity: None,
-            branch_revision: current_branch_revision,
-            removed: true,
-        });
+        if existing.generation != generation
+            || existing.branch != branch
+            || existing.branch_revision.as_deref() != Some(branch_revision.as_str())
+            || !existing.removed
+        {
+            return Err("dev_register_orphan_worktree: duplicate orphan lineage conflict".into());
+        }
+        return Ok(());
     }
+    state.orphan_worktrees.push(PendingWorktree {
+        generation,
+        path: c,
+        branch,
+        identity: None,
+        branch_revision: current_branch_revision,
+        removed: true,
+    });
     Ok(())
 }
 
