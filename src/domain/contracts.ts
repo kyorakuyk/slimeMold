@@ -613,6 +613,10 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
     }
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
     const payload = payloadRecord(event.payload);
+    if (payload.worktreeStatus !== undefined
+      && !['created', 'cleaned', 'orphaned', 'registration-pending'].includes(payload.worktreeStatus as string)) {
+      throw new Error(`worktreeStatus 无效：${event.eventId}`);
+    }
     if (payload.cleanupStatus === 'cleaned' && event.eventType !== 'TaskCleaned') {
       throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${event.eventId}`);
     }

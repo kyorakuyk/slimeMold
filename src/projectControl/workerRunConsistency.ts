@@ -4,7 +4,7 @@ import {
   type DomainProjection,
   type SideEffectRecord,
 } from '../domain/contracts';
-import { resolveWorkerAcceptanceStageId, type WorkerRunQueueState } from '../domain/workerQueue';
+import { resolveWorkerAcceptanceStageId, restoreWorkerRunQueue, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
@@ -249,6 +249,25 @@ export function auditWorkerRunConsistency(input: {
         `Worker Run 关联的 TaskGraph 未获批准：${run.taskGraphId}`,
         { runId: run.runId },
       ));
+    }
+    if (input.taskGraphs !== undefined) {
+      if (!taskGraph) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `Worker Run 缺少用于 restore validation 的 TaskGraph：${run.taskGraphId}`,
+          { runId: run.runId },
+        ));
+      } else {
+        try {
+          restoreWorkerRunQueue({ taskGraph, state: run });
+        } catch (cause) {
+          issues.push(issue(
+            'control-state-drift',
+            `Worker Run restore validation 失败：${cause instanceof Error ? cause.message : String(cause)}`,
+            { runId: run.runId },
+          ));
+        }
+      }
     }
     if (run.status === 'succeeded') {
       if (!workerRunSuccessIsValid(Object.values(run.tasks))) {

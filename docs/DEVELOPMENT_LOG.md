@@ -4200,3 +4200,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在 checkpoint `8c9f24a` 后修复：replay全局拒绝无 run/task lineage 的 TaskCleaned与非TaskCleaned cleanupStatus，并要求legacy cleanup匹配原run；WorkerQueue维持跨 drain eventHistory/sequence/aggregateVersion，restore validator拒绝未知状态和不完整 assignment；rehydration先验证原始 project event stream、run-local只压缩sequence且最终restore queue；App audit zero-run及exception统一调用 suppression projection；idempotent existing-event append也先验证既有stream lifecycle。
 - GREEN：focused `146/146`；完整 Node `128 test files / 1138 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build最大 chunk约 `1,169.58 kB`，保留既有 dynamic/static import 与 chunk warning。
 - 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.220 unverified：route audit and reconciliation through restore validation
+
+- `439b38f` 的 exact reviewer继续 fail-closed，确认 consistency audit未调用 `restoreWorkerRunQueue`，App仍可投影 malformed non-empty snapshots；未知 `worktreeStatus` 在 replay/rehydration中被静默丢弃；reconcile结果可在后续 audit前写入 ProjectFile；zero Worker runs但已有 orchestration/stage success时 suppression仍有空洞。
+- 在 checkpoint `6d5fd65` 后修复：replay对未知 `worktreeStatus` fail-closed；audit在提供 TaskGraph时对每个 run执行统一 restore validation；reconcile支持 TaskGraph-backed final restore并在 issues存在时禁止保存；App对 zero-run worker projection和 audit failure统一清除 done/success外观。
+- GREEN：本轮 focused `8 files / 148 tests`；完整 Node `128 test files / 1140 tests`；`npm run build`通过，最大 chunk约 `1,170.75 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。

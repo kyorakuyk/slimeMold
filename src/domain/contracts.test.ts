@@ -291,6 +291,22 @@ describe('Phase 0a domain contracts', () => {
 
     expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/runId|lineage|一致/i);
   });
+  it('rejects unknown worktreeStatus in lifecycle payloads', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'unknown-worktree-status',
+      aggregateType: 'TaskExecution',
+      aggregateId: 'task-execution:run-worktree:task-1',
+      eventType: 'TaskStarted',
+      payload: {
+        runId: 'run-worktree',
+        taskId: 'task-1',
+        taskExecutionId: 'task-execution:run-worktree:task-1',
+        attempt: 1,
+        attemptId: 'task-execution:run-worktree:task-1:attempt-1',
+        worktreeStatus: 'mystery',
+      },
+    })])).toThrow(/worktreeStatus/i);
+  });
   it('keeps separate task executions and attempts when one task runs twice', () => {
     const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
     const secondExecutionId = createTaskExecutionId('run-b', 'task-1');

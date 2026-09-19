@@ -388,6 +388,7 @@ export default function App() {
         projectId,
         events: parsed.events,
         runs: current.workerRuns,
+        taskGraphs: current.projectControl.taskGraphs ?? [],
       });
       if (reconciledSnapshots.issues.length > 0) {
         current.addLog(
@@ -395,7 +396,7 @@ export default function App() {
           `Worker retry snapshot reconciliation 发现问题：${reconciledSnapshots.issues.map((item) => item.message).join('；')}`,
         );
       }
-      if (reconciledSnapshots.changedRunIds.length > 0) {
+      if (reconciledSnapshots.changedRunIds.length > 0 && reconciledSnapshots.issues.length === 0) {
         current.setWorkerRuns(reconciledSnapshots.runs);
         current.setOrchestrations(
           projectWorkerRunsOntoOrchestrations(current.orchestrations, reconciledSnapshots.runs),
@@ -487,14 +488,19 @@ export default function App() {
       });
       current.setWorkerRunRecoveries(runtime.recoveries);
       const controlOk = controlReport === null || controlReport.ok;
+      const hasWorkerProjection = current.workerRuns.length > 0
+        || current.orchestrations.some((orchestration) => (
+          orchestration.runIds.length > 0
+          || Object.keys(orchestration.stageLogsByRun ?? {}).length > 0
+        ));
       if (report.ok && controlOk && current.workerRuns.length > 0) {
         current.setOrchestrations(
           projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
         );
-      } else if (!report.ok || !controlOk) {
+      } else if (!report.ok || !controlOk || (hasWorkerProjection && current.workerRuns.length === 0)) {
         const reason = report.issues[0]?.message
           ?? controlReport?.issues[0]?.message
-          ?? 'Worker facts audit failed';
+          ?? (current.workerRuns.length === 0 ? 'Worker Run registry empty during audit' : 'Worker facts audit failed');
         current.setOrchestrations(
           suppressInvalidWorkerRunProjection(current.orchestrations, `Worker facts invalid：${reason}`),
         );

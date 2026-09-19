@@ -27,6 +27,7 @@ const run: WorkerRunQueueState = {
       evidenceIds: ['evidence-1'],
       acceptanceId: 'acceptance-1',
       cleanupStatus: 'cleaned',
+      worktreeStatus: 'cleaned',
       cleanupReceiptId: 'cleanup-receipt-1',
       updatedAt: '2026-09-01T00:01:00.000Z',
     },
@@ -344,6 +345,35 @@ describe('worker run consistency audit', () => {
     });
   });
 
+  it('rejects malformed persisted worktree state through restore-backed audit', () => {
+    const malformed = {
+      ...run,
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+          worktreeStatus: 'created' as const,
+          worktreeId: undefined,
+          worktreePath: undefined,
+          branch: undefined,
+          baseRevision: undefined,
+        },
+      },
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [malformed],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      taskGraphs: [trustedGraph],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'control-state-drift' }),
+    ]));
+  });
   it('reports persisted run and task status drift instead of choosing a side silently', () => {
     const drifted = {
       ...run,

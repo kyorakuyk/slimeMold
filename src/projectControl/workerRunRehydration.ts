@@ -311,6 +311,7 @@ export function reconcileWorkerRunsFromEvents(input: {
   projectId: string;
   events: readonly DomainEvent[];
   runs: readonly WorkerRunQueueState[];
+  taskGraphs?: readonly ProjectTaskGraph[];
 }): WorkerRunSnapshotReconciliationResult {
   const issues: WorkerRunRehydrationIssue[] = [];
   const changedRunIds: string[] = [];
@@ -343,6 +344,20 @@ export function reconcileWorkerRunsFromEvents(input: {
       ]),
     );
     state = { ...state, tasks: repairedTasks };
+    if (input.taskGraphs !== undefined) {
+      const taskGraph = input.taskGraphs.find((candidate) => (
+        candidate.id === state.taskGraphId && candidate.graphVersion === state.taskGraphVersion
+      ));
+      if (!taskGraph) {
+        issues.push({ runId: run.runId, message: `Worker Run reconciliation 缺少 matching TaskGraph：${state.taskGraphId}` });
+      } else {
+        try {
+          state = restoreWorkerRunQueue({ taskGraph, state }).snapshot();
+        } catch (cause) {
+          issues.push({ runId: run.runId, message: `Worker Run reconciliation restore validation 失败：${cause instanceof Error ? cause.message : String(cause)}` });
+        }
+      }
+    }
     if (JSON.stringify(state) !== JSON.stringify(run)) changedRunIds.push(run.runId);
     return state;
   });
