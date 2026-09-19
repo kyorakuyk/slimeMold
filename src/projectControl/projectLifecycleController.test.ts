@@ -37,6 +37,7 @@ describe('project lifecycle controller', () => {
       setShowWelcome: showWelcome,
       getProjectOperation: vi.fn((projectId, projectPath) => operation(projectId, projectPath)),
       clearProjectOperation,
+      reportWarning: vi.fn(),
       restoreWorkerWorktrees: vi.fn(async () => {}),
       loadProjectWorkerEvidence: vi.fn(async () => {}),
       auditLoadedWorkerRunFacts: vi.fn(async () => {}),
@@ -55,6 +56,39 @@ describe('project lifecycle controller', () => {
     expect(listener).toBeNull();
   });
 
+  it('preserves warning logs for recovery and evidence scheduling failures', async () => {
+    const reportWarning = vi.fn();
+    const session = { listAcceptances: () => [] };
+    const controller = createProjectLifecycleController({
+      getState: () => state({
+        projectId: 'project-1',
+        projectPath: 'C:/project-1',
+        workerRunRecoveries: [{ runId: 'run-1' } as never],
+      }),
+      subscribe: (listener) => () => listener,
+      setShowWelcome: vi.fn(),
+      getProjectOperation: vi.fn((projectId, projectPath) => operation(projectId, projectPath)),
+      clearProjectOperation: vi.fn(),
+      reportWarning,
+      restoreWorkerWorktrees: vi.fn(async () => {}),
+      loadProjectWorkerEvidence: vi.fn(async () => { throw new Error('evidence failed'); }),
+      auditLoadedWorkerRunFacts: vi.fn(async () => {}),
+      refreshWorkerCleanupProposals: vi.fn(async () => {}),
+      recoverInterruptedWorkerEffects: vi.fn(async () => { throw new Error('recovery failed'); }),
+      ensureGuiDevSession: vi.fn(async () => session) as never,
+      teardownGuiDevSession: vi.fn(async () => {}),
+      scanProjectCustomNodes: vi.fn(async () => 0),
+      terminatePluginRuntime: vi.fn(),
+      unloadProjectCustomNodes: vi.fn(),
+    });
+
+    controller.start();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(reportWarning).toHaveBeenCalledWith('Worker recovery 调度失败：recovery failed');
+    expect(reportWarning).toHaveBeenCalledWith('Worker Evidence 调度失败：evidence failed');
+    controller.dispose();
+  });
   it('runs the project transition lifecycle through injected Worker boundaries', async () => {
     const projectState = state({ projectId: 'project-1', projectPath: 'C:/project-1' });
     const session = { listAcceptances: () => [] };
@@ -71,6 +105,7 @@ describe('project lifecycle controller', () => {
       setShowWelcome: vi.fn(),
       getProjectOperation: vi.fn((projectId, projectPath) => operation(projectId, projectPath)),
       clearProjectOperation: vi.fn(),
+      reportWarning: vi.fn(),
       restoreWorkerWorktrees,
       loadProjectWorkerEvidence,
       auditLoadedWorkerRunFacts,

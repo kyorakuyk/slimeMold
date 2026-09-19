@@ -35,6 +35,7 @@ export interface ProjectLifecycleControllerDeps {
   setShowWelcome: (show: boolean) => void;
   getProjectOperation: (projectId: string | null, projectPath: string | null) => ProjectOperation;
   clearProjectOperation: () => void;
+  reportWarning: (message: string) => void;
   restoreWorkerWorktrees: (
     session: GuiProjectSession,
     runs: readonly WorkerRunQueueState[],
@@ -97,8 +98,10 @@ export function createProjectLifecycleController(
       state.projectPath,
       runIds,
       operation.controller.signal,
-    ).catch(() => {
-      // The recovery function owns durable recovery/error projection.
+    ).catch((cause) => {
+      if (!operation.controller.signal.aborted) {
+        deps.reportWarning(`Worker recovery 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
+      }
     });
   };
 
@@ -110,8 +113,10 @@ export function createProjectLifecycleController(
     if (state.projectPath === lastEvidencePath) return;
     lastEvidencePath = state.projectPath;
     const operation = deps.getProjectOperation(state.projectId, state.projectPath);
-    void deps.loadProjectWorkerEvidence(state.projectPath, operation.controller.signal).catch(() => {
-      // The evidence loader owns durable recovery/error projection.
+    void deps.loadProjectWorkerEvidence(state.projectPath, operation.controller.signal).catch((cause) => {
+      if (!operation.controller.signal.aborted) {
+        deps.reportWarning(`Worker Evidence 调度失败：${cause instanceof Error ? cause.message : String(cause)}`);
+      }
     });
   };
 
@@ -158,8 +163,10 @@ export function createProjectLifecycleController(
           await deps.refreshWorkerCleanupProposals(session, run.runId, operation.controller.signal);
         }
       })
-      .catch(() => {
-        // The individual lifecycle operation owns its visible error projection.
+      .catch((cause) => {
+        if (!operation.controller.signal.aborted) {
+          deps.reportWarning(`项目生命周期切换失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
       });
   });
 

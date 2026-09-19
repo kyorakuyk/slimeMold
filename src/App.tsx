@@ -1196,6 +1196,7 @@ export default function App() {
         projectOperationRef.current?.controller.abort();
         projectOperationRef.current = null;
       },
+      reportWarning: (message) => useWorkflowStore.getState().addLog('warn', message),
       restoreWorkerWorktrees,
       loadProjectWorkerEvidence,
       auditLoadedWorkerRunFacts,

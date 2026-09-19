@@ -4228,3 +4228,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 修复为：`resetProjectControlLifecycle(previousProjectId)` 统一处理新项目切换；新增 `activateProjectControlRuntime` 统一处理 open-project 的 pending event buffer 清理与 Worker runtime install；store 删除 direct `clearProjectEventBuffer` lifecycle callers，并增加 activation cleanup regression。
 - GREEN：focused `3 files / 13 tests`；完整 Node `130 test files / 1148 tests`；`npm run build`通过，最大 chunk约 `1,171.30 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是对前两条结构切片的 ownership repair，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。
+
+### 7.224 unverified：restore App lifecycle warning observability
+
+- `9b001e8` exact reviewer确认 controller extraction 把原 App 中的三类 warning log 静默吞掉：Worker recovery scheduling、Evidence scheduling、项目生命周期 transition failure。该问题属于结构切片引入的行为回归，不扩大 Worker authority。
+- 新增 `reportWarning` 注入边界，恢复原有中文 warning 文案和 abort 条件；新增 rejection regression，确保 recovery/evidence 调度失败仍可观察，项目切换失败仍由 controller报告。
+- GREEN：focused `1 file / 3 tests`；完整 Node `130 test files / 1149 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是对 App lifecycle 结构切片的行为修复，尚未进行新的 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。
