@@ -10,7 +10,7 @@ use super::{
     cleanup_unregistered_codex_child, release_unscoped_recovery_slot,
     reserve_unscoped_recovery_slot, terminate_child_checked,
 };
-use crate::dev_login_sanitized_env;
+use crate::execution::dev_exec::dev_login_sanitized_env;
 use serde::Serialize;
 use serde_json::Value;
 use std::env;

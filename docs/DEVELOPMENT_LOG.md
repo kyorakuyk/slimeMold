@@ -4139,3 +4139,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 确认 `credentials.rs` 只拥有 generic keyring credential set/get/delete/list；`endpoint_store.rs` 拥有 endpoint/vault AppData、master key、AES-GCM、base64 与 crypto tests；private storage keyring service、command visibility、IPC order、存储格式和行为均未改变。
 - reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
 - 已创建本地 verified tag：`checkpoint/storage-endpoint-vault-split-verified`。GUI/E2E、Unix/macOS native matrix仍未验证；下一结构 slice转向 execution/dev_exec。
+
+### 7.212 unverified：execution dev_exec structural split
+
+- 将原 `lib.rs` H4 execution block 迁移到 `src-tauri/src/execution/dev_exec.rs`：`dev_exec` command、cwd/session fence、command admission、environment sanitization、program resolution、timeout bridge、Windows `.cmd/.bat`/ComSpec launcher 与 trusted Windows program checks均由 execution namespace 持有。
+- `policy/command.rs` 的 command grammar 与 hardened Git diff helpers未复制；`dev_exec` 继续调用既有 policy authority。`authority/worktree.rs`、`codex.rs`、`codex_process.rs`改为直接依赖 `execution::dev_exec`，root 只保留 Tauri registration、legacy `run_git`/session facade 和 cfg(test) seam re-export。
+- `lib.rs` 从约 `1316` 行降至 `511` 行；未改变 Tauri command 名称、参数、注册顺序、session/generation、cwd、环境清理、launcher、timeout 或 mutation hook 语义。
+- 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 仅完成结构拆分；GUI/E2E、Unix/macOS native matrix、既有 worktree lifecycle residual不在本 slice扩大范围，exact HEAD reviewer尚未完成。

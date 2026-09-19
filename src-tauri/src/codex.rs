@@ -5,7 +5,7 @@ mod codex_process;
 #[path = "codex_registry.rs"]
 mod codex_registry;
 
-use crate::dev_login_sanitized_env;
+use crate::execution::dev_exec::dev_login_sanitized_env;
 use codex_cleanup::{
     await_stdin_write, cleanup_output_artifact, cleanup_output_readers, output_readers_terminal,
     ChildHandle, CodexCleanupHandle, CODEX_CLEANUP_WAIT_TIMEOUT,
@@ -548,7 +548,8 @@ pub fn codex_login_status() -> Result<CodexAuthStatus, String> {
     let mut command = Command::new(program);
     command.args(["login", "status"]);
     apply_login_sanitized_env(&mut command);
-    let result = crate::run_with_timeout(&mut command, Duration::from_secs(10))?;
+    let result =
+        crate::execution::dev_exec::run_with_timeout(&mut command, Duration::from_secs(10))?;
     let detail = if result.stdout.trim().is_empty() {
         result.stderr.trim().to_string()
     } else if result.stderr.trim().is_empty() {
