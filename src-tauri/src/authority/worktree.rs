@@ -849,6 +849,28 @@ pub(crate) fn dev_restore_worktree(
     Ok(())
 }
 
+fn orphan_records_for_path<'a>(
+    records: &'a [PendingWorktree],
+    path: &str,
+) -> Vec<&'a PendingWorktree> {
+    records
+        .iter()
+        .filter(|item| path_compare_key(&item.path) == path_compare_key(path))
+        .collect()
+}
+
+fn exact_orphan_record_matches(
+    record: &PendingWorktree,
+    generation: u64,
+    branch: &str,
+    branch_revision: &str,
+) -> bool {
+    record.generation == generation
+        && record.branch == branch
+        && record.branch_revision.as_deref() == Some(branch_revision)
+        && record.removed
+}
+
 #[tauri::command]
 pub(crate) fn dev_register_orphan_worktree(
     path: String,
@@ -936,15 +958,10 @@ pub(crate) fn dev_register_orphan_worktree(
     {
         return Err("dev_register_orphan_worktree: session 在校验期间发生变化".into());
     }
-    if let Some(existing) = state
-        .orphan_worktrees
-        .iter()
-        .find(|item| path_compare_key(&item.path) == path_compare_key(&c))
-    {
-        if existing.generation != generation
-            || existing.branch != branch
-            || existing.branch_revision.as_deref() != Some(branch_revision.as_str())
-            || !existing.removed
+    let existing = orphan_records_for_path(&state.orphan_worktrees, &c);
+    if !existing.is_empty() {
+        if existing.len() != 1
+            || !exact_orphan_record_matches(existing[0], generation, &branch, &branch_revision)
         {
             return Err("dev_register_orphan_worktree: duplicate orphan lineage conflict".into());
         }
@@ -1014,20 +1031,15 @@ pub(crate) fn dev_approve_cleanup(
             .iter()
             .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
             .map(|item| item.identity.clone());
-        let orphan_branch_revision = state
-            .orphan_worktrees
-            .iter()
-            .find(|item| {
-                item.generation == generation
-                    && item.branch == branch
-                    && path_compare_key(&item.path) == path_compare_key(&c)
-            })
-            .and_then(|item| item.branch_revision.as_deref());
-        let orphan = state.orphan_worktrees.iter().any(|item| {
-            item.generation == generation
-                && item.branch == branch
-                && path_compare_key(&item.path) == path_compare_key(&c)
-        });
+        let orphan_records = orphan_records_for_path(&state.orphan_worktrees, &c);
+        let orphan = !orphan_records.is_empty();
+        let orphan_lineage_matches = orphan_records.len() == 1
+            && exact_orphan_record_matches(
+                orphan_records[0],
+                generation,
+                &branch,
+                &branch_revision,
+            );
         if registered_identity.is_some() && orphan {
             return Err("dev_approve_cleanup: target 同时存在 registered/orphan lineage".into());
         }
@@ -1038,9 +1050,9 @@ pub(crate) fn dev_approve_cleanup(
                 );
             }
         } else if orphan {
-            if orphan_branch_revision != Some(branch_revision.as_str()) {
+            if !orphan_lineage_matches {
                 return Err(
-                    "dev_approve_cleanup: orphan branch revision 缺失或与 native lineage 不匹配"
+                    "dev_approve_cleanup: orphan branch lineage 缺失、重复或与 native lineage 不匹配"
                         .into(),
                 );
             }
@@ -1212,23 +1224,18 @@ pub(crate) fn dev_cleanup_worktree(
             .iter()
             .find(|item| registered_worktree_identity_matches(item, generation, &c, &branch))
             .map(|item| item.identity.clone());
-        let orphan_branch_revision = state
-            .orphan_worktrees
-            .iter()
-            .find(|item| {
-                item.generation == generation
-                    && item.branch == branch
-                    && path_compare_key(&item.path) == path_compare_key(&c)
-            })
-            .and_then(|item| item.branch_revision.as_deref());
-        let orphan = state.orphan_worktrees.iter().any(|item| {
-            item.generation == generation
-                && item.branch == branch
-                && path_compare_key(&item.path) == path_compare_key(&c)
-        });
+        let orphan_records = orphan_records_for_path(&state.orphan_worktrees, &c);
+        let orphan = !orphan_records.is_empty();
+        let orphan_lineage_matches = orphan_records.len() == 1
+            && exact_orphan_record_matches(
+                orphan_records[0],
+                generation,
+                &branch,
+                &branch_revision,
+            );
         match (&capability.target_identity, registered_identity, orphan) {
             (Some(expected), Some(current), false) if expected == &current => {}
-            (None, None, true) if orphan_branch_revision == Some(branch_revision.as_str()) => {}
+            (None, None, true) if orphan_lineage_matches => {}
             _ => {
                 drop(state);
                 invalidate_cleanup_binding(&approval_token);

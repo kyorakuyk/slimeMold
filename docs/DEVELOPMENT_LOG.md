@@ -4086,3 +4086,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增真实 Git fixture：`orphan_registration_preserves_native_branch_revision`、`orphan_registration_rejects_branch_revision_drift`；focused Rust `2 passed / 0 failed`，完整 Rust `97 passed / 0 failed`。
 - 验证：`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`，既有动态/静态 import 与大 chunk warning 保持不变。
 - 本 slice 只闭合 orphan branch-revision provenance；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。本轮未 push、未 merge、未保留凭据；等待 exact HEAD reviewer。
+
+### 7.205 unverified：orphan lineage all-record conflict repair
+
+- exact HEAD `97dedb45e252a7303264adea04b9fa3525e1548d` reviewer fail-closed 发现 `find` 只检查同路径第一条 orphan record，后续 generation/branch/revision/removed 冲突可能被忽略；该 verdict 已按 `passed=false` 处理。
+- 新增统一 `orphan_records_for_path` 与 exact lineage matcher：registration、approval、cleanup 都扫描同路径全部 orphan records；必须恰好一条且 generation、branch、native revision、removed 全部一致，才允许幂等/继续，否则拒绝 ambiguous duplicate lineage。
+- 扩展真实 Git fixture，覆盖第一条 legacy 缺失 revision和后续冲突记录两种顺序；focused orphan Rust `2 passed / 0 failed`。
+- 新 snapshot 验证：Rust `97 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本 snapshot 仍为 unverified，待新 exact HEAD reviewer；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。

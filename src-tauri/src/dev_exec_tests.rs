@@ -660,7 +660,30 @@ fn orphan_registration_preserves_native_branch_revision() {
         .find(|item| item.branch == branch)
         .expect("registered orphan fixture")
         .branch_revision = None;
-    let duplicate_result = worktree_authority::dev_register_orphan_worktree(
+    let legacy_duplicate_result = worktree_authority::dev_register_orphan_worktree(
+        target_str.clone(),
+        branch.clone(),
+        branch_revision.clone(),
+        generation,
+    );
+    {
+        let mut state = DEV_STATE.lock().unwrap();
+        state
+            .orphan_worktrees
+            .iter_mut()
+            .find(|item| item.branch == branch)
+            .expect("registered orphan fixture")
+            .branch_revision = Some(branch_revision.clone());
+        state.orphan_worktrees.push(PendingWorktree {
+            generation,
+            path: target_str.clone(),
+            branch: branch.clone(),
+            identity: None,
+            branch_revision: Some("b".repeat(40)),
+            removed: true,
+        });
+    }
+    let conflicting_duplicate_result = worktree_authority::dev_register_orphan_worktree(
         target_str,
         branch.clone(),
         branch_revision.clone(),
@@ -674,8 +697,12 @@ fn orphan_registration_preserves_native_branch_revision() {
         "native orphan lineage must retain the creation-time branch tip"
     );
     assert!(
-        duplicate_result.is_err(),
+        legacy_duplicate_result.is_err(),
         "duplicate orphan registration must reject missing native lineage"
+    );
+    assert!(
+        conflicting_duplicate_result.is_err(),
+        "duplicate orphan registration must reject later conflicting lineage"
     );
 }
 
