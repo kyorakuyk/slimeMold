@@ -486,20 +486,18 @@ export default function App() {
         consistency: report,
       });
       current.setWorkerRunRecoveries(runtime.recoveries);
-      if (current.workerRuns.length > 0) {
-        const controlOk = controlReport === null || controlReport.ok;
-        if (report.ok && controlOk) {
-          current.setOrchestrations(
-            projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
-          );
-        } else {
-          const reason = report.issues[0]?.message
-            ?? controlReport?.issues[0]?.message
-            ?? 'Worker facts audit failed';
-          current.setOrchestrations(
-            suppressInvalidWorkerRunProjection(current.orchestrations, `Worker facts invalid：${reason}`),
-          );
-        }
+      const controlOk = controlReport === null || controlReport.ok;
+      if (report.ok && controlOk && current.workerRuns.length > 0) {
+        current.setOrchestrations(
+          projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
+        );
+      } else if (!report.ok || !controlOk) {
+        const reason = report.issues[0]?.message
+          ?? controlReport?.issues[0]?.message
+          ?? 'Worker facts audit failed';
+        current.setOrchestrations(
+          suppressInvalidWorkerRunProjection(current.orchestrations, `Worker facts invalid：${reason}`),
+        );
       }
       if (!report.ok) {
         current.setWorkerCleanupProposals([]);
@@ -526,6 +524,9 @@ export default function App() {
         message,
       })));
       failedState.setWorkerCleanupProposals([]);
+      failedState.setOrchestrations(
+        suppressInvalidWorkerRunProjection(failedState.orchestrations, `Worker facts invalid：${message}`),
+      );
       failedState.addLog('warn', message);
     }
   };

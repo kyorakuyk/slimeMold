@@ -4185,9 +4185,18 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - GREEN：focused `131/131`；完整 Node `128 test files / 1133 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,165.40 kB`，保留既有 dynamic/static import 与 chunk warning。
 - 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
 
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
 ### 7.218 unverified：close event-write, scope-binding, production-wiring, and audit-projection bypasses
 
 - `7c1f307` 的 exact reviewer继续 fail-closed，确认四类旁路：EventStreamRepository/eventBuffer写入前只做 sequence/aggregate检查，孤立 `TaskCleaned` 可落盘；非 `TaskCleaned` payload 可伪装 `cleanupStatus: cleaned`；Evidence/Acceptance verifier 未绑定 orchestration/stage；App 三处 production `createPersistedWorkerSideEffectRecorder` 未传 Acceptance verifier；rehydration缺少最终 queue restore validation；consistency失败后 App 仍可能把 raw succeeded state投影为 done。
 - 在 checkpoint `ce8bf72` 后修复：最终 durable append/appendBatch（以及 eventBuffer flush）统一 replay lifecycle validator，保留 in-memory queue 的 structural append；cleanupStatus仅允许由 TaskCleaned写入；SideEffectRecord持久化 orchestration/stage binding，Evidence/Acceptance verifier校验scope，App启动/恢复/retry三条真实路径均接入 durable Acceptance verifier；rehydration最终复用 restoreWorkerRunQueue；audit失败时 suppression projection 清除 done/success stage外观。
-- 新增跨边界 regression，focused `145/145`；完整 Node `128 test files / 1137 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk约 `1,168.20 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 新增跨边界 regression，focused `145/145`；完整 Node `128 test files / 1137 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build最大 chunk约 `1,168.20 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.219 unverified：close legacy cleanup lineage, restore-state, and original-event-position bypasses
+
+- `ba6b003` 的 exact reviewer继续 fail-closed，确认 legacy aggregateType=Task 无 lineage 时仍可伪装 cleanupStatus，TaskCleaned 可跨 runId复用 taskId；restore queue 接受未知 Run/Task status与缺 assignment 的 created/orphaned/registration-pending worktree；rehydration 重写 aggregateVersion，且 audit zero-run/exception路径仍可能保留 done/success projection。
+- 在 checkpoint `8c9f24a` 后修复：replay全局拒绝无 run/task lineage 的 TaskCleaned与非TaskCleaned cleanupStatus，并要求legacy cleanup匹配原run；WorkerQueue维持跨 drain eventHistory/sequence/aggregateVersion，restore validator拒绝未知状态和不完整 assignment；rehydration先验证原始 project event stream、run-local只压缩sequence且最终restore queue；App audit zero-run及exception统一调用 suppression projection；idempotent existing-event append也先验证既有stream lifecycle。
+- GREEN：focused `146/146`；完整 Node `128 test files / 1138 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build最大 chunk约 `1,169.58 kB`，保留既有 dynamic/static import 与 chunk warning。
 - 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。

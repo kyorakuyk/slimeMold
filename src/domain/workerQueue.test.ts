@@ -172,6 +172,7 @@ describe('WorkerTaskQueue', () => {
             worktreePath: undefined,
             branch: undefined,
             baseRevision: undefined,
+            worktreeStatus: undefined,
           },
         },
       },
@@ -250,10 +251,29 @@ describe('WorkerTaskQueue', () => {
     invalidStatus.tasks.a = { ...invalidStatus.tasks.a, worktreeStatus: 'unknown' as never };
     expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidStatus })).toThrow(/worktreeStatus/);
 
+    const invalidRunStatus = queue.snapshot();
+    invalidRunStatus.status = 'bogus' as never;
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidRunStatus })).toThrow(/Run status|状态/);
+
+    const invalidTaskStatus = queue.snapshot();
+    invalidTaskStatus.tasks.a = { ...invalidTaskStatus.tasks.a, status: 'bogus' as never };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidTaskStatus })).toThrow(/Task status|状态/);
+
+    const createdWithoutAssignment = queue.snapshot();
+    createdWithoutAssignment.tasks.a = { ...createdWithoutAssignment.tasks.a, worktreeStatus: 'created' };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: createdWithoutAssignment })).toThrow(/worktree|assignment|path|branch/i);
+
     const orphanWithoutRevision = queue.snapshot();
     orphanWithoutRevision.tasks.a = { ...orphanWithoutRevision.tasks.a, worktreeStatus: 'orphaned' };
     expect(() => restoreWorkerRunQueue({ taskGraph, state: orphanWithoutRevision })).toThrow(/branchRevision/);
 
+    const orphanWithoutAssignment = queue.snapshot();
+    orphanWithoutAssignment.tasks.a = {
+      ...orphanWithoutAssignment.tasks.a,
+      worktreeStatus: 'orphaned',
+      branchRevision: 'branch-revision-1',
+    };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: orphanWithoutAssignment })).toThrow(/worktree|assignment|path|branch/i);
     const cleanedWithoutReceipt = queue.snapshot();
     cleanedWithoutReceipt.tasks.a = {
       ...cleanedWithoutReceipt.tasks.a,
@@ -438,6 +458,7 @@ describe('WorkerTaskQueue', () => {
             worktreePath: undefined,
             branch: undefined,
             baseRevision: undefined,
+            worktreeStatus: undefined,
           },
         },
       },

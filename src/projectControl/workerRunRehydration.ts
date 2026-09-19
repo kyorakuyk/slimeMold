@@ -193,8 +193,17 @@ export function rehydrateWorkerRunsFromEvents(input: {
   const existingIds = new Set((input.existingRuns ?? []).map((run) => run.runId));
   const issues: WorkerRunRehydrationIssue[] = [];
   const runs: WorkerRunQueueState[] = [];
-  const runCreatedEvents = input.events.filter((event) => (
-    event.streamId === input.projectId && event.eventType === 'RunCreated'
+  const projectEvents = input.events.filter((event) => event.streamId === input.projectId);
+  try {
+    replayDomainEvents(projectEvents);
+  } catch (cause) {
+    return {
+      runs,
+      issues: [{ message: `Worker project 事件流生命周期校验失败：${cause instanceof Error ? cause.message : String(cause)}` }],
+    };
+  }
+  const runCreatedEvents = projectEvents.filter((event) => (
+    event.eventType === 'RunCreated'
   ));
 
   for (const created of runCreatedEvents) {
@@ -213,20 +222,13 @@ export function rehydrateWorkerRunsFromEvents(input: {
       continue;
     }
 
-    const aggregateVersions = new Map<string, number>();
-    const runEvents = input.events
+    const runEvents = projectEvents
       .filter((event) => {
-        if (event.streamId !== input.projectId) return false;
         const eventPayload = payload(event);
         const eventRunId = text(eventPayload.runId) ?? (event.aggregateType === 'Run' ? event.aggregateId : undefined);
         return eventRunId === runId;
       })
-      .map((event, index) => {
-        const aggregateKey = `${event.aggregateType}\u0000${event.aggregateId}`;
-        const aggregateVersion = (aggregateVersions.get(aggregateKey) ?? 0) + 1;
-        aggregateVersions.set(aggregateKey, aggregateVersion);
-        return { ...event, sequence: index + 1, aggregateVersion };
-      });
+      .map((event, index) => ({ ...event, sequence: index + 1 }));
     try {
       replayDomainEvents(runEvents);
     } catch (cause) {

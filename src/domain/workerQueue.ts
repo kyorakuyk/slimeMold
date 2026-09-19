@@ -275,6 +275,9 @@ function normalizeQueueTask(
   if (!acceptanceStageId) {
     throw new Error(`Worker Task acceptanceStageId 无效：${task.taskId}`);
   }
+  if (!['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled'].includes(task.status)) {
+    throw new Error(`Worker Task status 无效：${task.taskId}`);
+  }
   if (task.taskExecutionId && task.taskExecutionId !== expected) {
     throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
   }
@@ -298,6 +301,18 @@ function normalizeQueueTask(
   if ((task.worktreeStatus === 'orphaned' || task.worktreeStatus === 'registration-pending')
     && !task.branchRevision?.trim()) {
     throw new Error(`Worker Task ${task.worktreeStatus} 缺少 branchRevision：${task.taskId}`);
+  }
+  const hasWorktreeAssignment = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision]
+    .every((value) => typeof value === 'string' && value.trim().length > 0);
+  const hasAnyWorktreeAssignment = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision]
+    .some((value) => value !== undefined);
+  if (task.worktreeStatus !== undefined
+    && ['created', 'orphaned', 'registration-pending'].includes(task.worktreeStatus)
+    && !hasWorktreeAssignment) {
+    throw new Error(`Worker Task ${task.worktreeStatus} 缺少完整 worktree assignment：${task.taskId}`);
+  }
+  if (task.worktreeStatus === undefined && hasAnyWorktreeAssignment && !hasWorktreeAssignment) {
+    throw new Error(`Worker Task worktree assignment 不完整：${task.taskId}`);
   }
   if (task.cleanupStatus !== undefined) {
     if (task.cleanupStatus !== 'cleaned') {
@@ -379,6 +394,9 @@ export class WorkerTaskQueue {
   private readonly requireContextPack: boolean;
   private state: WorkerRunQueueState;
   private events: DomainEvent[] = [];
+  private eventHistory: DomainEvent[] = [];
+  private nextSequence = 1;
+  private readonly aggregateVersions = new Map<string, number>();
   private runStartedEmitted = false;
   private readonly claiming = new Set<string>();
 
@@ -893,7 +911,7 @@ export class WorkerTaskQueue {
   private emitRun(eventType: string, payload: unknown, occurredAt: string): void {
     if (eventType === 'RunStarted') this.runStartedEmitted = true;
     this.emit({
-      eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
+      eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.nextSequence}`,
       streamId: this.state.projectId,
       aggregateType: 'Run',
       aggregateId: this.state.runId,
@@ -919,7 +937,7 @@ export class WorkerTaskQueue {
       ? payloadRecord.attemptId
       : 'none';
     this.emit({
-      eventId: `${taskExecutionId}:${eventType}:${attemptId}:${this.events.length + 1}`,
+      eventId: `${taskExecutionId}:${eventType}:${attemptId}:${this.nextSequence}`,
       streamId: this.state.projectId,
       aggregateType: 'TaskExecution',
       aggregateId: taskExecutionId,
@@ -942,15 +960,17 @@ export class WorkerTaskQueue {
   }
 
   private emit(event: Omit<DomainEvent, 'sequence' | 'aggregateVersion'>): void {
-    const previous = [...this.events]
-      .reverse()
-      .find((item) => item.aggregateType === event.aggregateType && item.aggregateId === event.aggregateId);
+    const aggregateKey = `${event.aggregateType}\u0000${event.aggregateId}`;
+    const aggregateVersion = (this.aggregateVersions.get(aggregateKey) ?? 0) + 1;
     const next: DomainEvent = {
       ...event,
-      sequence: this.events.length + 1,
-      aggregateVersion: (previous?.aggregateVersion ?? 0) + 1,
+      sequence: this.nextSequence,
+      aggregateVersion,
     };
-    this.events = appendDomainEvent(this.events, next);
+    this.nextSequence += 1;
+    this.aggregateVersions.set(aggregateKey, aggregateVersion);
+    this.eventHistory = appendDomainEvent(this.eventHistory, next);
+    this.events.push(next);
   }
 
   private validateState(): void {
@@ -965,6 +985,9 @@ export class WorkerTaskQueue {
     }
     if (taskIds.size !== stateIds.size || [...taskIds].some((id) => !stateIds.has(id))) {
       throw new Error('Worker 队列任务集合与任务图不一致，拒绝恢复');
+    }
+    if (!['queued', 'running', 'partial', 'blocked', 'failed', 'cancelled', 'succeeded'].includes(this.state.status)) {
+      throw new Error(`Worker Run status 无效：${String(this.state.status)}`);
     }
     if (this.state.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(this.state.tasks))) {
       throw new Error('succeeded Worker Run 必须包含完整 success provenance 的 terminal tasks');

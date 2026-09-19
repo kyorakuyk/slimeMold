@@ -269,6 +269,28 @@ describe('Phase 0a domain contracts', () => {
       },
     })])).toThrow(/cleanupStatus|TaskCleaned/i);
   });
+  it('rejects legacy TaskCleaned reused across different runs', () => {
+    const succeeded = event({
+      eventId: 'legacy-success-run-a',
+      aggregateId: 'task-cross-run',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-a',
+        evidenceIds: ['evidence-cross-run'],
+        acceptanceId: 'acceptance-cross-run',
+      },
+    });
+    const cleaned = event({
+      eventId: 'legacy-cleaned-run-b',
+      sequence: 2,
+      aggregateId: 'task-cross-run',
+      aggregateVersion: 2,
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-b', receiptId: 'cleanup-cross-run' },
+    });
+
+    expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/runId|lineage|一致/i);
+  });
   it('keeps separate task executions and attempts when one task runs twice', () => {
     const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
     const secondExecutionId = createTaskExecutionId('run-b', 'task-1');

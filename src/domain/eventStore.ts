@@ -642,6 +642,7 @@ export class EventStreamRepository {
         if (!equivalentEvents(existing, event)) {
           throw new EventStoreError('event-conflict', `eventId 内容不同：${event.eventId}`);
         }
+        assertReplayableEvents(parsed.events);
         return {
           appended: false,
           event: existing,

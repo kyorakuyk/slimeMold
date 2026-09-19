@@ -311,6 +311,9 @@ function applyLegacyTaskProjection(
   }
   if (eventType === 'TaskCleaned') {
     const previous = projection.tasks[taskId];
+    if (!runId || previous?.runId !== runId) {
+      throw new Error(`TaskCleaned 的 runId 与先前 Task success 不一致：${taskId}`);
+    }
     if (!previous || previous.status !== 'succeeded' || !hasWorkerSuccessProvenance(previous)) {
       throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Task：${taskId}`);
     }
@@ -610,6 +613,14 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
     }
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
     const payload = payloadRecord(event.payload);
+    if (payload.cleanupStatus === 'cleaned' && event.eventType !== 'TaskCleaned') {
+      throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${event.eventId}`);
+    }
+    if (event.eventType === 'TaskCleaned') {
+      const runId = payloadIdentityText(payload, 'runId');
+      const taskId = taskIdFor(event, payload);
+      if (!runId || !taskId) throw new Error(`TaskCleaned 缺少 run/task lineage：${event.eventId}`);
+    }
     const payloadRunId = payloadIdentityText(payload, 'runId');
     if (event.aggregateType === 'Run' && payloadRunId && payloadRunId !== event.aggregateId) {
       throw new Error(`Run aggregateId 与 runId 不一致：${event.eventId}`);
