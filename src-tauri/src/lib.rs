@@ -65,7 +65,7 @@ pub(crate) use policy::{
     cleanup_lineage as cleanup_lineage_policy, command as dev_command_policy, fs_guard,
     git_worktree as git_worktree_policy, worktree as worktree_policy,
 };
-pub(crate) use storage::{credentials, event_store};
+pub(crate) use storage::{credentials, endpoint_store, event_store};
 
 #[cfg(test)]
 pub(crate) use session_authority::dev_cwd_kind;
@@ -1158,14 +1158,14 @@ pub fn run() {
             credentials::get_credential,
             credentials::delete_credential,
             credentials::list_credentials,
-            credentials::save_endpoint,
-            credentials::load_endpoint,
-            credentials::delete_endpoint,
-            credentials::list_endpoints_raw,
-            credentials::save_vault,
-            credentials::list_vaults,
-            credentials::load_vault_key,
-            credentials::delete_vault,
+            endpoint_store::save_endpoint,
+            endpoint_store::load_endpoint,
+            endpoint_store::delete_endpoint,
+            endpoint_store::list_endpoints_raw,
+            endpoint_store::save_vault,
+            endpoint_store::list_vaults,
+            endpoint_store::load_vault_key,
+            endpoint_store::delete_vault,
             codex::codex_login_status,
             codex::codex_login,
             codex::codex_logout,
@@ -1304,49 +1304,6 @@ mod fs_atomic_replace_tests {
         assert_eq!(fs::read_to_string(&tmp).unwrap(), "new");
         drop(handle);
         let _ = fs::remove_dir_all(&dir);
-    }
-}
-
-/* ---------------- 诊断：apiKey AES-GCM 加密往返（排除算法 bug / master key 漂移） ---------------- */
-#[cfg(test)]
-mod vault_crypto_roundtrip_tests {
-    use crate::credentials::{base64_decode, base64_encode};
-
-    #[test]
-    fn base64_roundtrip() {
-        let raw = b"sk-test-1234567890abcdef"; // 24 字节 → 32 字符
-        let b64 = base64_encode(raw);
-        assert_eq!(base64_decode(&b64).unwrap(), raw, "base64 往返应一致");
-        assert_eq!(b64.len(), 32);
-        // 另一组含奇数字节的输入
-        let raw2 = b"hello world";
-        let b64_2 = base64_encode(raw2);
-        assert_eq!(base64_decode(&b64_2).unwrap(), raw2);
-    }
-
-    #[test]
-    fn aes_gcm_roundtrip_same_key() {
-        // 用固定 key 走加解密，确认算法配对（不依赖 master key 存储）
-        let plain = "sk-test-deepseek-abcdefghijklmnopqrstuvwxyz";
-        let key = aes_gcm::Aes256Gcm::new_from_slice(&[7u8; 32]).unwrap();
-        use aes_gcm::aead::Aead;
-        use aes_gcm::{KeyInit, Nonce};
-        let mut nonce_bytes = [0u8; 12];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        let ct = key.encrypt(nonce, plain.as_bytes()).unwrap();
-        let mut buf = nonce_bytes.to_vec();
-        buf.extend_from_slice(&ct);
-        let b64 = base64_encode(&buf);
-        // 解密
-        let bytes = base64_decode(&b64).unwrap();
-        let (nonce_raw, ct_bytes) = bytes.split_at(12);
-        let pt = key.decrypt(Nonce::from_slice(nonce_raw), ct_bytes).unwrap();
-        assert_eq!(
-            String::from_utf8(pt).unwrap(),
-            plain,
-            "AES-GCM 往返应还原明文"
-        );
     }
 }
 

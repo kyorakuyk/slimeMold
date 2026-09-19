@@ -4124,3 +4124,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 确认 `cleanup_probe_or_invalidate` 在 capability 后的 fallible probe 中消费 token，`cleanup_identity_guard` 保持 base mismatch 短路、phase-specific error precedence 和三处 cleanup mutation order；无 DEV_STATE 锁内失效死锁或成功路径回归。
 - reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
 - 已创建本地 verified tag：`checkpoint/native-cleanup-identity-short-circuit-verified`。本轮 hardening 到此冻结；partial-CAS durable recovery、post-remove strict absence、pending probe unknown、restore ordering、Windows TOCTOU、GUI/E2E 与 Unix/macOS native matrix仍是明确 residual，不在本轮继续扩大。
+
+### 7.210 unverified：storage endpoint/vault structural split
+
+- 将 `storage/credentials.rs` 按事实所有权拆开：`credentials.rs` 只保留 OS keyring 的 generic set/get/delete/list；新增 `storage/endpoint_store.rs` 承接 endpoints.json、Vault、master key、AES-GCM、base64 和相关敏感路径。
+- Tauri endpoint/vault command 名称、参数、返回值和 `generate_handler!` 注册顺序保持不变；root `lib.rs` 只改 module-qualified registration，未改变 IPC contract 或存储格式。
+- `vault_crypto_roundtrip_tests` 随敏感实现迁移到 `storage::endpoint_store::tests`；`fs_atomic_replace_tests`仍暂留 `lib.rs`，下一结构 slice再按文件持久化边界迁移。
+- 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本轮未改变 cleanup hardening、权限、generation、identity 或外部命令行为；等待结构 slice exact HEAD reviewer。
