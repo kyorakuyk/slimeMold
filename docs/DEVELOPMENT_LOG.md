@@ -4235,3 +4235,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `reportWarning` 注入边界，恢复原有中文 warning 文案和 abort 条件；新增 rejection regression，确保 recovery/evidence 调度失败仍可观察，项目切换失败仍由 controller报告。
 - GREEN：focused `1 file / 3 tests`；完整 Node `130 test files / 1149 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
 - 这是对 App lifecycle 结构切片的行为修复，尚未进行新的 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。
+
+### 7.225 verified：App lifecycle foundation slice review closure
+
+- exact HEAD `96e81c7` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`；确认 warning propagation、abort suppression、ProjectOperation、centralized lifecycle/event-buffer ownership 和 scheduler guards均保持行为一致。
+- 同一代码快照质量门：Node `130 test files / 1149 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-lifecycle-warning-observability-verified`。该 tag只证明本条前端 lifecycle foundation slice及其自动化质量门，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
