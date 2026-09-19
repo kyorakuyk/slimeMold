@@ -79,6 +79,29 @@ pub(crate) fn cleanup_probe_or_invalidate<T>(
     })
 }
 
+pub(crate) fn cleanup_identity_guard<F>(
+    token: &str,
+    base_result: Result<StableDirectoryIdentity, String>,
+    expected_base: &StableDirectoryIdentity,
+    phase_error: &str,
+    target_probe: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<bool, String>,
+{
+    let current_base = cleanup_probe_or_invalidate(token, base_result)?;
+    if current_base != *expected_base {
+        invalidate_cleanup_binding(token);
+        return Err(phase_error.to_string());
+    }
+    let target_is_current = cleanup_probe_or_invalidate(token, target_probe())?;
+    if !target_is_current {
+        invalidate_cleanup_binding(token);
+        return Err(phase_error.to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
     if raw_path.is_empty() {
         return false;
@@ -1291,22 +1314,20 @@ pub(crate) fn dev_cleanup_worktree(
             return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
         }
     }
-    let base_identity_is_current =
-        cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
-            == base_identity;
-    let target_identity_is_current = cleanup_probe_or_invalidate(
+    cleanup_identity_guard(
         &approval_token,
-        cleanup_target_identity_is_current(
-            &base_path,
-            &canon,
-            &branch,
-            expected_target_identity.as_ref(),
-        ),
+        stable_directory_identity(&base_path),
+        &base_identity,
+        "dev_cleanup_worktree: branch CAS 前 identity 已漂移",
+        || {
+            cleanup_target_identity_is_current(
+                &base_path,
+                &canon,
+                &branch,
+                expected_target_identity.as_ref(),
+            )
+        },
     )?;
-    if !base_identity_is_current || !target_identity_is_current {
-        invalidate_cleanup_binding(&approval_token);
-        return Err("dev_cleanup_worktree: branch CAS 前 identity 已漂移".into());
-    }
     let mut delete = Command::new(resolve_dev_program("git"));
     delete
         .current_dir(&base_path)
@@ -1328,24 +1349,20 @@ pub(crate) fn dev_cleanup_worktree(
             result.stderr
         ));
     }
-    let base_identity_is_current =
-        cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
-            == base_identity;
-    let target_identity_is_current = cleanup_probe_or_invalidate(
+    cleanup_identity_guard(
         &approval_token,
-        cleanup_target_identity_is_current(
-            &base_path,
-            &canon,
-            &branch,
-            expected_target_identity.as_ref(),
-        ),
+        stable_directory_identity(&base_path),
+        &base_identity,
+        "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理",
+        || {
+            cleanup_target_identity_is_current(
+                &base_path,
+                &canon,
+                &branch,
+                expected_target_identity.as_ref(),
+            )
+        },
     )?;
-    if !base_identity_is_current || !target_identity_is_current {
-        invalidate_cleanup_binding(&approval_token);
-        return Err(
-            "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理".into(),
-        );
-    }
     let listed_after_cas = match git_worktree_is_listed(&base_path, &canon) {
         Ok(listed) => listed,
         Err(error) => {
@@ -1369,22 +1386,20 @@ pub(crate) fn dev_cleanup_worktree(
         );
     }
     if listed_after_cas {
-        let base_identity_is_current =
-            cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?
-                == base_identity;
-        let target_identity_is_current = cleanup_probe_or_invalidate(
+        cleanup_identity_guard(
             &approval_token,
-            cleanup_target_identity_is_current(
-                &base_path,
-                &canon,
-                &branch,
-                expected_target_identity.as_ref(),
-            ),
+            stable_directory_identity(&base_path),
+            &base_identity,
+            "dev_cleanup_worktree: worktree remove 前 identity 已漂移",
+            || {
+                cleanup_target_identity_is_current(
+                    &base_path,
+                    &canon,
+                    &branch,
+                    expected_target_identity.as_ref(),
+                )
+            },
         )?;
-        if !base_identity_is_current || !target_identity_is_current {
-            invalidate_cleanup_binding(&approval_token);
-            return Err("dev_cleanup_worktree: worktree remove 前 identity 已漂移".into());
-        }
         let mut remove = Command::new(resolve_dev_program("git"));
         remove
             .current_dir(&base_path)

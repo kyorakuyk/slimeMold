@@ -4109,3 +4109,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `cleanup_probe_error_consumes_capability` regression；Rust 全量 `98 passed / 0 failed`。
 - 验证：`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
 - 本 slice 只闭合 capability invalidation，不宣称 durable recovery：branch CAS 后 remove/read-back partial outcome、unknown recovery owner、post-remove strict absence、pending probe unknown、restore ordering 和 Windows TOCTOU 仍未解决；等待 exact HEAD reviewer。
+
+### 7.208 unverified：cleanup identity short-circuit repair
+
+- exact HEAD `031b1dffb80f064d3b01986d92f7454e6a453934` reviewer fail-closed 发现 refactor 后 base identity mismatch 仍继续执行 target probe，改变了原有短路与 phase-specific error precedence；该 verdict 已按 `passed=false` 处理。
+- 新增 `cleanup_identity_guard`：先验证 base identity，只有匹配时才执行 target probe；三处 cleanup guard 恢复原有短路顺序和错误语义，同时保留 probe error 的 token invalidation。
+- 新增 `cleanup_identity_guard_preserves_base_mismatch_short_circuit` regression，确认 target probe 未被调用、phase-specific error 保持、capability 被消费。
+- 新 snapshot 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本 slice 仍只处理 cleanup capability invalidation/guard 语义；durable partial-CAS recovery、post-remove strict absence、pending probe unknown、restore ordering 和 Windows TOCTOU仍未解决，等待新的 exact HEAD reviewer。
