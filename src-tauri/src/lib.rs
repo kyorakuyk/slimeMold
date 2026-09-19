@@ -32,6 +32,7 @@ mod dev_command_policy;
 mod dev_process;
 mod event_store;
 mod fs_guard;
+mod worktree_policy;
 
 use cleanup_lineage_policy::{cleanup_binding_matches, orphan_target_is_deleted_candidate};
 pub(crate) use dev_process::{spawn_output_reader, OutputReceiver, OutputThread};
@@ -43,6 +44,10 @@ use fs_guard::{
     dev_exec_validate_paths, dev_strip_verbatim, git_diff_pathspec_allowed, is_git_diff_revision,
     path_compare_key, path_is_same_or_child, protected_path_error,
     protected_path_is_execution_only_script,
+};
+use worktree_policy::{
+    is_full_object_id, worker_branch_from_ref_arg, worker_branch_from_tip_arg,
+    worker_branch_is_valid, worker_name_is_valid,
 };
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree（GUI 下由前端在 DevSession 初始化/创建时同步）。
@@ -1099,39 +1104,6 @@ fn dev_main_repo_git_allowed(args: &[String]) -> bool {
             && args[2] == "--verify"
             && args[3].starts_with("refs/heads/worker/w-")
             && safe_git_revision_arg(&args[3]))
-}
-
-fn worker_name_is_valid(name: &str) -> bool {
-    name.len() <= 200
-        && !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-        && !name.starts_with('.')
-        && !name.ends_with('.')
-        && !name.contains("..")
-        && !name.to_ascii_lowercase().ends_with(".lock")
-}
-
-fn worker_branch_is_valid(branch: &str) -> bool {
-    let Some(suffix) = branch.strip_prefix("worker/") else {
-        return false;
-    };
-    worker_name_is_valid(suffix)
-}
-
-fn is_full_object_id(value: &str) -> bool {
-    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn worker_branch_from_tip_arg(arg: &str) -> Option<&str> {
-    let branch_ref = arg.strip_suffix("^{commit}")?.strip_prefix("refs/heads/")?;
-    worker_branch_is_valid(branch_ref).then_some(branch_ref)
-}
-
-fn worker_branch_from_ref_arg(arg: &str) -> Option<&str> {
-    let branch = arg.strip_prefix("refs/heads/")?;
-    worker_branch_is_valid(branch).then_some(branch)
 }
 
 fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {

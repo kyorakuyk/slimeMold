@@ -3973,3 +3973,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `CleanupBinding`、DEV_STATE、token生成/消费、orphan registration、cleanup approval/CAS/read-back仍由 `lib.rs` host authority 持有；新模块不拥有状态或副作用。
 - 验证：orphan predicate targeted `1 passed / 0 failed`；cleanup binding targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4329` 行。
 - 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.190 unverified：抽出 worktree ref/name lexical policy
+
+- 新增 `src-tauri/src/worktree_policy.rs`，承接 `worker_name_is_valid`、`worker_branch_is_valid`、`is_full_object_id`、`worker_branch_from_tip_arg` 和 `worker_branch_from_ref_arg`。
+- `lib.rs`保留 `worker_target_is_valid`、worktree path/canonicalization、pending/registered lease、session、identity 和 CAS authority；新模块仅提供纯输入解析与校验。
+- 验证：worker name targeted `1 passed / 0 failed`；worktree lifecycle targeted `1 passed / 0 failed`；scoped branch probe targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4301` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
