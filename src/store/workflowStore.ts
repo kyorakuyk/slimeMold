@@ -96,6 +96,7 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { installProjectConfigAutosave } from './projectConfigAutosave';
 import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
 import { createProjectSaveQueue } from './projectSaveQueue';
 // 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策 / 子图展开）已抽到 workflowGraph.ts（G5 门面化）
@@ -2139,21 +2140,9 @@ useWorkflowStore.subscribe((state, prev) => {
 // ---------- 智能体/配置类字段变更自动落盘 ----------
 // 用户加/改/删 agent、角色、路由表、默认 agent 时，若有磁盘项目（projectPath），
 // 防抖自动 saveProject，避免「改了 agent 忘保存 → 重启自动恢复时 agents.json 没有 → agent 消失」。
-// 只监听配置型字段，不监听 nodes/edges/运行态，避免频繁全量保存。
-let configSaveTimer: ReturnType<typeof setTimeout> | null = null;
-const CONFIG_AUTO_SAVE_KEYS = ['agents', 'roles', 'defaultAgentId', 'agentRouteTable'] as const;
-useWorkflowStore.subscribe((state, prev) => {
-  if (suppressDirty) return;
-  const changed = CONFIG_AUTO_SAVE_KEYS.some((k) => (state as any)[k] !== (prev as any)[k]);
-  if (!changed) return;
-  // 无磁盘项目无从落盘（靠 localStorage + 用户「另存为」），不自动保存
-  if (!state.projectPath) return;
-  if (configSaveTimer) clearTimeout(configSaveTimer);
-  configSaveTimer = setTimeout(() => {
-    configSaveTimer = null;
-    // 取最新 state，避免闭包拿到过期引用；失败静默，不阻塞 UI
-    void useWorkflowStore.getState().saveProject().catch(() => {});
-  }, 1000);
+// 监听器、debounce 和 timer cleanup 已抽到 projectConfigAutosave.ts。
+installProjectConfigAutosave(useWorkflowStore, {
+  isSuppressed: () => suppressDirty,
 });
 
 // 确保启动/恢复后始终有一个激活的工作流承载当前画布（避免游离态丢节点）
