@@ -48,7 +48,6 @@ import type { DomainProjection } from './domain/contracts';
 import { EventStreamRepository } from './domain/eventStore';
 import {
   mergeWorkerEvidence,
-  loadWorkerSideEffects,
   mergeWorkerSideEffects,
 } from './projectControl/workerEvidence';
 import { createWorkerRecoveryIoController } from './projectControl/workerRecoveryIoController';
@@ -57,6 +56,7 @@ import { createWorkerCleanupActionController } from './projectControl/workerClea
 import { createWorkerCleanupProposalController } from './projectControl/workerCleanupProposalController';
 import { assertWorkerRunConsistency } from './projectControl/workerRunConsistencyAction';
 import { createWorkerRunTransitionPersistence } from './projectControl/workerRunTransitionPersistence';
+import { createWorkerRunHostInfrastructure } from './projectControl/workerRunHostInfrastructure';
 
 registerBuiltins();
 
@@ -446,35 +446,11 @@ export default function App() {
     assertProjectOperation(operation);
     const current = useWorkflowStore.getState();
     if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');
-    const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
-      import('./domain/tauriEventStore'),
-      import('./dev/tauri-run'),
-      import('./domain/sideEffects'),
-      import('./projectControl/workerSideEffects'),
-    ]);
-    const sideEffectRepository = new sideEffectsModule.SideEffectJournalRepository(
-      createTauriEventStoreAdapter(projectPath),
+    const infrastructure = await createWorkerRunHostInfrastructure({
       projectPath,
-    );
-    const evidencePersistence = createTauriEvidenceStore(
-      `${projectPath}/.slimemold/evidence`,
-      `${projectPath}-workers`,
-      'host',
-    );
-    const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
-      load: async () => session.listAcceptances(),
+      listAcceptances: () => session.listAcceptances(),
+      assertOperation: () => assertProjectOperation(operation),
     });
-    const sideEffects = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
-      sideEffectRepository,
-      evidencePersistence,
-      undefined,
-      acceptanceVerifier,
-    );
-    assertProjectOperation(operation);
-    const eventRepository = new EventStreamRepository(
-      createTauriEventStoreAdapter(projectPath),
-      projectPath,
-    );
 
     const antigravityAgent = [...current.globalAgents, ...current.agents].find(
       (agent) => agent.protocol === 'antigravity' && agent.enabled !== false,
@@ -493,14 +469,14 @@ export default function App() {
         }
         : undefined,
       concurrency: current.maxConcurrency,
-      sideEffects,
+      sideEffects: infrastructure.sideEffects,
       signal: operation.controller.signal,
       assertConsistency: async () => {
         await assertWorkerRunConsistency({
           projectId,
           getState: () => useWorkflowStore.getState(),
           assertOperation: () => assertProjectOperation(operation),
-          readEventStream: () => eventRepository.readStream(),
+          readEventStream: () => infrastructure.eventRepository.readStream(),
           listAcceptances: () => session.listAcceptances(),
           auditWorkerRunConsistency,
           auditProjectControlConsistency,
@@ -515,10 +491,10 @@ export default function App() {
         assertOperation: () => assertProjectOperation(operation),
         recordProjectEvents,
         flushPendingProjectEvents,
-        eventRepository,
+        eventRepository: infrastructure.eventRepository,
         saveProjectFile,
         buildProjectFile,
-        loadSideEffects: () => loadWorkerSideEffects(sideEffectRepository),
+        loadSideEffects: infrastructure.loadSideEffects,
         collectorEvidence: () => session.collector.records,
         mergeWorkerEvidence,
         mergeWorkerSideEffects,
