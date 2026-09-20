@@ -32,11 +32,22 @@ pub(crate) fn path_compare_key(raw: &str) -> String {
     normalized
 }
 
+#[cfg(windows)]
+fn windows_protected_metadata_component(component: &str) -> bool {
+    let owner = component.split(':').next().unwrap_or(component);
+    let owner = owner.trim_end_matches(|character| character == '.' || character == ' ');
+    matches!(owner, ".git" | ".slimemold")
+}
+
 pub(crate) fn protected_relative_path(rel: &str) -> bool {
     let rel = rel
         .replace('\\', "/")
         .trim_matches('/')
         .to_ascii_lowercase();
+    #[cfg(windows)]
+    if rel.split('/').any(windows_protected_metadata_component) {
+        return true;
+    }
     rel == "package.json"
         || rel == "package-lock.json"
         || rel == "vitest.config.ts"

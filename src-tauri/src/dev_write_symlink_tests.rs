@@ -179,6 +179,31 @@ fn host_protected_path_policy_covers_default_sensitive_roots() {
     assert!(!protected_relative_path("src/components/TopBar.tsx"));
 }
 
+#[cfg(windows)]
+#[test]
+fn direct_file_authority_rejects_windows_metadata_aliases() {
+    with_registered_worktree(|wt| {
+        for alias in [".git.", ".slimemold ", ".git:stream", ".slimemold.:stream"] {
+            let target = wt.join(alias);
+            let write_result = dev_write_file(
+                target.to_string_lossy().to_string(),
+                "blocked".into(),
+                current_generation(),
+            );
+            assert!(
+                write_result.is_err(),
+                "write must reject Windows metadata alias: {alias}"
+            );
+            let create_result =
+                dev_create_dir(target.to_string_lossy().to_string(), current_generation());
+            assert!(
+                create_result.is_err(),
+                "mkdir must reject Windows metadata alias: {alias}"
+            );
+        }
+    });
+}
+
 #[cfg(any(unix, windows))]
 #[test]
 fn hardlink_escape_write_rejected() {

@@ -4378,3 +4378,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Read-only triage确认 `src-tauri/src/policy/fs_guard.rs` 的 direct file authority protected list遗漏 `.git`/`.slimemold`，而 `git_diff_pathspec_allowed` 与 Node policy已有独立保护，存在 native direct read/write policy旁路。
 - 先写 RED：`host_protected_path_policy_covers_default_sensitive_roots` 对 `.git`、`.git/config`、`.slimemold`、`.slimemold/events/events.jsonl` 失败；修复只在 `protected_relative_path` 增加 exact/descendant component-boundary，不改 find grammar、legacy `run_git`或 execution launcher。
 - 验证：targeted native `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `99/99`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前只能标记 `unverified`，等待 exact native reviewer。
+
+### 7.247 unverified：repair Windows metadata aliases at native file authority
+
+- `ad0f516` exact reviewer fail-closed：literal `.git`/`.slimemold`已保护，但 Windows trailing-dot/space 与 ADS alias（如 `.git.`、`.slimemold `、`.git:stream`）仍可绕过 direct `dev_write_file`/`dev_create_dir`。
+- 先写 public mutation RED：新增 Windows-only `direct_file_authority_rejects_windows_metadata_aliases`，确认上述 alias 在 write 与 mkdir均被拒绝；修复在 native `protected_relative_path` 增加 Windows component canonicalization：去除 trailing dot/space，并按 `:` 前 owner识别 ADS，保留 `.gitignore`/`.slimemoldish`兄弟名不误伤。
+- 验证：alias targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
