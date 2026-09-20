@@ -37,7 +37,6 @@ import { wouldCreateCycle } from '../engine/topoSort';
 import { saveGlobalAgents } from '../agents/globalAgents';
 // 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价
 import {
-  sanitizeNodes,
   fromDisk,
   toDisk,
   serializeCurrent,
@@ -106,12 +105,9 @@ import {
   classifyConnection,
   expandSubgraphInstance,
   markDirtyDownstream,
-  remapPasted,
-  snapshotPush,
-  snapshotUndo,
-  snapshotRedo,
   type GraphSnapshot,
 } from './workflowGraph';
+import { createWorkflowGraphCommands } from './workflowGraphCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
@@ -469,7 +465,13 @@ function assertProjectSaveGuard(state: WorkflowState, guard?: ProjectSaveGuard):
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等）已抽到 workflowSerialize.projectSnapshot */
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const graphCommands = createWorkflowGraphCommands({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        addLog: (level, message) => get().addLog(level, message),
+      });
+      return {
       workflowName: '未命名工作流',
       nodes: [],
       edges: [],
@@ -1046,58 +1048,9 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       setExamplesOpen: (open: boolean) => set({ examplesOpen: open }),
 
-      /* ---- 撤销 / 重做（图结构历史栈） ---- */
-      pushHistory: () => {
-        const { nodes, edges, past, maxHistory } = get();
-        // 历史栈纯逻辑已抽到 workflowGraph.snapshotPush
-        const { past: nextPast, future: nextFuture } = snapshotPush(past, nodes, edges, maxHistory, sanitizeNodes);
-        set({ past: nextPast, future: nextFuture });
-      },
-      undo: () => {
-        const { past, future, nodes, edges } = get();
-        // 撤销纯逻辑已抽到 workflowGraph.snapshotUndo
-        const result = snapshotUndo(past, future, nodes, edges, sanitizeNodes);
-        if (!result) return;
-        set({ nodes: result.nodes, edges: result.edges, past: result.past, future: result.future });
-      },
-      redo: () => {
-        const { past, future, nodes, edges } = get();
-        // 重做纯逻辑已抽到 workflowGraph.snapshotRedo
-        const result = snapshotRedo(past, future, nodes, edges, sanitizeNodes);
-        if (!result) return;
-        set({ nodes: result.nodes, edges: result.edges, past: result.past, future: result.future });
-      },
-      clearHistory: () => set({ past: [], future: [] }),
-
-      /* ---- 复制 / 粘贴 / 克隆 / 全选 ---- */
-      copySelection: () => {
-        const { nodes, edges } = get();
-        const selIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
-        if (selIds.size === 0) return;
-        // 运行态字段清洗纯映射已抽到 workflowGraph.sanitizeForClipboard
-        const selNodes = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n, data: { ...n.data, status: 'idle' as NodeStatus, error: undefined, durationMs: undefined, cached: undefined } }));
-        const selEdges = edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
-        set({ clipboard: { nodes: selNodes, edges: [...selEdges] } });
-        get().addLog('info', `已复制 ${selIds.size} 个节点到剪贴板`);
-      },
-      pasteClipboard: () => {
-        const clip = get().clipboard;
-        if (!clip || clip.nodes.length === 0) return;
-        get().pushHistory();
-        // id 映射 + 位置偏移纯计算已抽到 workflowGraph.remapPasted
-        const { nodes: newNodes, edges: newEdges, firstId } = remapPasted(clip, 40);
-        // 取消其它节点的选中，仅选中粘贴进来的节点
-        const deselected = get().nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
-        set({
-          nodes: [...deselected, ...newNodes],
-          edges: [...get().edges, ...newEdges],
-          selectedNodeId: firstId,
-        });
-      },
-      duplicateSelection: () => {
-        get().copySelection();
-        get().pasteClipboard();
-      },
+      /* ---- 撤销 / 重做 / 复制 / 粘贴 / 克隆（graph command owner） ---- */
+      ...graphCommands,
+      /** 全选仍由 facade 保留，避免把 React Flow selection policy混入 command owner。 */
       selectAll: () => set({ nodes: get().nodes.map((n) => ({ ...n, selected: true })) }),
 
       /* ---- 项目层方法实现 ---- */
@@ -1976,7 +1929,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           ),
         });
       },
-    }),
+    };
+    },
     {
       name: 'slime-mold-workflow',
       partialize: (s) => ({

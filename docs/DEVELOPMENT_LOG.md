@@ -4607,3 +4607,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `08b8512c681a97400b83566dd8e433fac77d9c62` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 project/global scope separation、route/default cleanup、builtin-role refusal、source identity、facade set/dirty/autosave/log合同和模块可读性保持正确。
 - reviewer独立复核 focused `18/18`、full `150 files / 1200 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scan；非阻塞建议记录为后续 coverage backlog：projectPath/fake-timer dirty/autosave、global persistence/master cleanup、nested route identity和builder JSDoc。
 - 创建 verified tag：`checkpoint/frontend-project-catalog-mutation-verified`；`checkpoint/frontend-project-catalog-mutation-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.285 unverified：extract graph history/clipboard command facade
+
+- 新增 `src/store/workflowGraphCommands.ts`，收口 `pushHistory/undo/redo/clearHistory/copySelection/pasteClipboard/duplicateSelection` 的 store-bound 编排；通过 `GraphCommandState`、`GraphCommandDeps` 注入 get/set/addLog，不反向依赖 workflowStore/useViewStore。
+- `workflowGraph.ts` 继续作为纯 graph kernel；`selectAll`、React Flow selection policy、group/subgraph/split-view行为保留在 facade或原 owner；现有 public Zustand action names不变。
+- 新增 graph command direct tests，覆盖 history round-trip、clipboard internal-edge filtering/log和paste remap/offset/selection；不在本 slice混入跨 workflow history、stale clipboard或selection双表示等既有行为问题。
+- 验证：focused `6 files / 50 tests`；完整 Node `151 test files / 1203 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend graph reviewer。
