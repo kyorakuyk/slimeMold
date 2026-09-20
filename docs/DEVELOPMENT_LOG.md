@@ -4313,3 +4313,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `executor.ts` 保留 `ExecContext` facade、节点状态/事件/干预、资产/变量/边 scope、重试和执行时序；adapter默认复用已有 `decideAgentCall`、`runLlmWithFallback`、`matchExperience`，未新增路由或执行策略。新增 direct test覆盖路由事件、经验注入和 sandbox/storage工具透传。
 - GREEN：focused `8 files / 83 tests`；完整 Node `136 test files / 1160 tests`；`npm run build`通过，最大 chunk约 `1,173.70 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
 - 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor剩余 context切片和历史 unverified收口继续后置。
+
+### 7.237 unverified：repair executor LLM capability fencing
+
+- `9dc7441` exact reviewer fail-closed：发现 adapter通过静态 `getTools` closure把 raw sandbox传入 `runLlmWithFallback`，绕过 `applyCapability` 对 io 节点的 sandbox deny与 sandbox_write 的 commit fencing；同时与旧 closure 的调用时读取语义不一致。
+- 修复：`executeNode` 先声明 mutable `ExecContext`，LLM adapter在调用时从最终 `ctx.vars/ctx.storage/ctx.sandbox`读取；`applyCapability` 后的裁剪结果因此成为唯一工具边界。新增真实 executor integration RED→GREEN，io 节点在 `sandbox:true` 下观察到 `toolSandbox === undefined`。
+- GREEN：capability/executor focused `6 files / 40 tests`；完整 Node `137 test files / 1161 tests`；`npm run build`通过，最大 chunk约 `1,173.73 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。旧 reviewer verdict不适用于修复后的 HEAD，新的 exact review待进行；真实 Tauri E2E及其他 residual仍未关闭。

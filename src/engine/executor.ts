@@ -791,6 +791,7 @@ async function executeNode(
       ? nodeState.variables
       : (nodeState.workflows[targetWfId]?.variables ?? {})),
   };
+  let ctx: ExecContext;
   const llm = createNodeLlmAdapter({
     node: {
       id,
@@ -822,13 +823,13 @@ async function executeNode(
         llmChannel: state.llmChannel,
       };
     },
-    getTools: () => ({ vars: nodeVars, storage: nodeStorage, sandbox }),
+    getTools: () => ({ vars: ctx.vars, storage: ctx.storage, sandbox: ctx.sandbox }),
     logInfo: (message) => R.addLog('info', message),
     logWarn: (message) => R.addLog('warn', message),
     logError: (message) => R.addLog('error', message),
     recordCost: trackCost,
   });
-  const ctx: ExecContext = {
+  ctx = {
     signal,
     // 当前节点 id（owner ?? id，子图虚拟节点回写用）：供沙箱插件 RPC 按节点归属路由
     nodeId: owner ?? id,
