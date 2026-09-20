@@ -170,6 +170,12 @@ fn host_protected_path_policy_covers_default_sensitive_roots() {
     assert!(protected_relative_path(
         "src-tauri/capabilities/default.json"
     ));
+    assert!(protected_relative_path(".git"));
+    assert!(protected_relative_path(".git/config"));
+    assert!(protected_relative_path(".slimemold"));
+    assert!(protected_relative_path(".slimemold/events/events.jsonl"));
+    assert!(!protected_relative_path(".gitignore"));
+    assert!(!protected_relative_path(".slimemoldish/file"));
     assert!(!protected_relative_path("src/components/TopBar.tsx"));
 }
 

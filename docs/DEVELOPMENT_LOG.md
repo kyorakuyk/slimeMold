@@ -4372,3 +4372,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 档案记录当前仍开放的 native concrete risks：worktree fresh-session identity、partial-CAS、post-remove read-back、pending probe recovery、Windows TOCTOU、protected metadata、find parity、launcher parity、legacy `run_git`；并记录 Worker admission/provenance/runtime fencing与完整 WorkerQueue Tauri E2E仍未收口。
 - 真实 Tauri E2E边界同时写入档案：disposable success/failure fixture 的 GUI、ProjectFile、event/checkpoint、close/reopen history 和 dirty-marker repair证据已 read-back；离线模拟未覆盖真实 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree mutation，因此不标记完整 E2E verified。
 - 本轮为 docs-only；实际检查：`git diff --check`通过。未因档案变更重跑 Node/build/i18n/tsc，历史质量门数字保持原文不变。
+
+### 7.246 unverified：protect native `.git` and `.slimemold` file roots
+
+- Read-only triage确认 `src-tauri/src/policy/fs_guard.rs` 的 direct file authority protected list遗漏 `.git`/`.slimemold`，而 `git_diff_pathspec_allowed` 与 Node policy已有独立保护，存在 native direct read/write policy旁路。
+- 先写 RED：`host_protected_path_policy_covers_default_sensitive_roots` 对 `.git`、`.git/config`、`.slimemold`、`.slimemold/events/events.jsonl` 失败；修复只在 `protected_relative_path` 增加 exact/descendant component-boundary，不改 find grammar、legacy `run_git`或 execution launcher。
+- 验证：targeted native `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `99/99`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前只能标记 `unverified`，等待 exact native reviewer。

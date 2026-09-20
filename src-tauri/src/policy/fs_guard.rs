@@ -52,6 +52,10 @@ pub(crate) fn protected_relative_path(rel: &str) -> bool {
         || rel.starts_with("src-tauri/capabilities/")
         || rel == "src/orchestrator"
         || rel.starts_with("src/orchestrator/")
+        || rel == ".git"
+        || rel.starts_with(".git/")
+        || rel == ".slimemold"
+        || rel.starts_with(".slimemold/")
 }
 
 pub(crate) fn protected_path_error(abs: &Path, root: &Path) -> Option<String> {
