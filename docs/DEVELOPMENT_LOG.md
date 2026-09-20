@@ -4677,3 +4677,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - adapter只负责同步 reset/activate与 runtime-only projection：reset保留有 project id 才清理对应 event buffer、随后清理 active runtime；activate先清理目标项目 buffer，再安装 runtime，返回 recoveries并重新生成空 evidence/side-effects/cleanup-proposals数组。未接入 saveProject、App.tsx、ProjectLifecycleController或 workflowStore 全量 StatePort。
 - 扩展 `projectControlLifecycle.test.ts` direct DI tests，覆盖 injected call order、project-id scope、installer forwarding和 runtime projection；既有 facade/Worker lifecycle tests保持不变。
 - 验证：focused `3 files / 15 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,178.88 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl lifecycle adapter reviewer。
+
+### 7.296 verified：exact review closes ProjectControl lifecycle adapter port
+
+- 独立 reviewer 对 exact HEAD `2ecc1f7482b80c53e8a2a9f4f0008fa2b7c74787` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 reset、activation、install、runtime projection、错误传播、兼容 wrapper和 ownership boundaries保持。
+- reviewer独立复核 focused `3 files / 15 tests`、full `155 files / 1219 tests`、build、i18n `1026/1026`、TypeScript、diff check、static scan和 behavioral probes。
+- 创建 verified tag：`checkpoint/frontend-project-control-adapter-verified`；`checkpoint/frontend-project-control-adapter-unverified` 保留为历史回退锚点。createProject 旧 project-id buffer residual仍未修复，partial-CAS仍未编码。
