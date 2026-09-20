@@ -4601,3 +4601,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `workflowStore.ts` 的 project `upsertAgent/removeAgent/setDefaultAgent/upsertRole/removeRole` 改为调用 catalog owner；global-agent AppData 的 `setGlobalAgents/upsertGlobalAgent/removeGlobalAgent` 保持原有 facade persistence/viewStore 行为，未混入 project catalog。
 - 新增 direct catalog regressions与 store facade regressions，覆盖 ID/order、default/route cleanup、builtin log、custom role removal和 source immutability。
 - 验证：focused `2 files / 18 tests`；完整 Node `150 test files / 1200 tests`；build通过（最大 chunk `1,177.40 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend catalog reviewer。
+
+### 7.284 verified：exact review closes project catalog mutation slice
+
+- 独立 reviewer 对 exact HEAD `08b8512c681a97400b83566dd8e433fac77d9c62` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 project/global scope separation、route/default cleanup、builtin-role refusal、source identity、facade set/dirty/autosave/log合同和模块可读性保持正确。
+- reviewer独立复核 focused `18/18`、full `150 files / 1200 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scan；非阻塞建议记录为后续 coverage backlog：projectPath/fake-timer dirty/autosave、global persistence/master cleanup、nested route identity和builder JSDoc。
+- 创建 verified tag：`checkpoint/frontend-project-catalog-mutation-verified`；`checkpoint/frontend-project-catalog-mutation-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
