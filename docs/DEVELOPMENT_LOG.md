@@ -4522,3 +4522,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 对 `7e189dba90d5e5c154037ba63652d5aeb64423c0` 发现 logic blocker：`buildCreateProjectState` 将 top-level `roles` 与 workflow `roles` 共享数组/元素引用，偏离父实现的独立 projection。
 - 先以 RED regression 固化 array/object identity，再让 builder分别 map builtin roles；保留其它 createProject state、facade和副作用合同不变。
 - 验证：focused `3 files / 31 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair HEAD仍标记 `unverified`，等待新的 exact reviewer。
+
+### 7.271 verified：exact review closes createProject role projection repair
+
+- 独立 reviewer 对 exact HEAD `3ac48f581d45f4f8eebd282fb68df6fb2b334dbc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 role arrays/objects已独立，且 createProject graph、node dirty projection、metadata、defaults、state fields和facade integration保持正确。
+- reviewer独立复核 focused/full tests、build、i18n、tsc、diff check、runtime identity checks 和 static scans；建议保留的 workflow node dirty assertion已与 role identity assertions同时存在。
+- 创建 verified tag：`checkpoint/frontend-create-project-role-alias-repair-verified`；原 `checkpoint/frontend-create-project-role-alias-repair-unverified` 保留为历史回退锚点。createProject builder现已 verified，partial-CAS仍未编码。
