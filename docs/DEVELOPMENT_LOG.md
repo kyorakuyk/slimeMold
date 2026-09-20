@@ -4701,3 +4701,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 facade RED regression：seed旧 project pending event与 active Worker runtime，调用无保存路径的 `createProject`，验证旧 event buffer与 runtime必须清空；原实现因无参数调用 `resetProjectControlLifecycle()` 而失败。
 - 修复 `workflowStore.createProject`：先捕获 `previousProjectId`，再通过已接线 `projectControlAdapter.resetProjectControlLifecycle(previousProjectId)`；未改变模板/path/save-failure/session persistence合同，未移动 ProjectFile/event flush或 host lifecycle。
 - 验证：focused `3 files / 16 tests`；完整 Node `155 test files / 1220 tests`；build通过（最大 chunk `1,178.90 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact createProject reset reviewer。
+
+### 7.300 verified：exact review closes createProject previous-project reset repair
+
+- 独立 reviewer 对 exact HEAD `3e598defcfc2aba4be38486c27e47cf7bb4dbf0d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认旧 project event buffer/runtime scope、new project state、createProject path/template/save-failure/session/API合同和未移动的 event flush/host lifecycle保持。
+- reviewer独立复核 focused `16/16`、single-worker full `155 files / 1220 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；parallel full Vitest出现的两个无关 timeout flake经隔离重跑通过。
+- 创建 verified tag：`checkpoint/frontend-create-project-reset-repair-verified`；`checkpoint/frontend-create-project-reset-repair-unverified` 保留为历史回退锚点。后续可补 unrelated project event buffer 保留断言，partial-CAS仍未编码。
