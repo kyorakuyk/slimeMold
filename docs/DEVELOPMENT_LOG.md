@@ -4498,3 +4498,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `f6f85a2539e34253dc1f9a6a21704a4df0c8ea99` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 dirty subscriber、DIRTY_KEYS比较、no-snapshot/stable mismatch行为、suppression覆盖和 open/finalize顺序无改变，未发现 Zustand cycle 或 duplicate owner。
 - reviewer独立复核 focused `6 files / 17 tests`、全量 `143 files / 1175 tests`、build、i18n `1026/1026`、tsc、diff check；非阻塞建议记录为后续回归：no-snapshot/stable-mismatch、unrelated DIRTY_KEYS、dispose idempotence、throwing state update，以及 scoped suppression helper。
 - 创建 verified tag：`checkpoint/frontend-project-dirty-runtime-verified`；原 `checkpoint/frontend-project-dirty-runtime-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
+
+### 7.267 unverified：share ProjectFile and pending-event persistence owner
+
+- 新增 `src/store/projectFilePersistence.ts`，收口“ProjectFile save返回 root → 按 project id检查 pending events → 使用返回 root flush”的共享顺序；普通 Save 与 Save As 均接入，原有 guard checkpoints、SaveAs错误日志、stable snapshot、queue合同保留。
+- 新增 direct regressions：返回 root绑定 flush、无 pending跳过、save/flush异常原样传播；并修正 Save As adapter 的 optional target path 类型，使 `tsc -b` project-reference检查不退化。
+- 验证：focused `5 files / 16 tests`；完整 Node `144 test files / 1178 tests`；build通过（最大 chunk `1,175.86 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。

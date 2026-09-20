@@ -1,3 +1,4 @@
+import { persistProjectFile } from './projectFilePersistence';
 import type { ProjectFile } from '../types';
 
 export interface ProjectSaveAsState {
@@ -10,7 +11,7 @@ export interface ProjectSaveAsControllerDeps<State extends ProjectSaveAsState> {
   getState: () => State;
   showSaveDirDialog: (name: string) => Promise<string | null>;
   buildProjectFile: (state: State) => ProjectFile;
-  saveProjectFile: (file: ProjectFile, targetPath: string) => Promise<string>;
+  saveProjectFile: (file: ProjectFile, targetPath?: string) => Promise<string>;
   getPendingProjectEventCount: (projectId: string) => number;
   flushPendingProjectEvents: (projectId: string, projectRoot: string) => Promise<void>;
   onSaved: (projectRoot: string, activeWfId: string) => void;
@@ -35,10 +36,11 @@ export function createProjectSaveAsController<State extends ProjectSaveAsState>(
       if (!picked) return null;
       const file = deps.buildProjectFile(state);
       try {
-        const root = await deps.saveProjectFile(file, picked);
-        if (deps.getPendingProjectEventCount(file.id) > 0) {
-          await deps.flushPendingProjectEvents(file.id, root);
-        }
+        const root = await persistProjectFile(file, picked, {
+          saveProjectFile: deps.saveProjectFile,
+          getPendingProjectEventCount: deps.getPendingProjectEventCount,
+          flushPendingProjectEvents: deps.flushPendingProjectEvents,
+        });
         deps.onSaved(root, state.activeWfId);
         return root;
       } catch (error) {

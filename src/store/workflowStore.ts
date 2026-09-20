@@ -96,6 +96,7 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { persistProjectFile } from './projectFilePersistence';
 import { createProjectDirtyController, type ProjectDirtyController } from './projectDirtyController';
 import { installProjectConfigAutosave } from './projectConfigAutosave';
 import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
@@ -1262,17 +1263,26 @@ export const useWorkflowStore = create<WorkflowState>()(
           const { saveProjectFile } = await import('../io/projectIO');
           assertProjectSaveGuard(get(), guard);
           // P0：已存盘则直接覆盖原路径，不再弹另存为
-          const path = await saveProjectFile(file, s.projectPath ?? undefined);
-          assertProjectSaveGuard(get(), guard);
-          if (isTauri && getPendingProjectEvents(file.id).length > 0) {
-            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-            assertProjectSaveGuard(get(), guard);
-            await flushPendingProjectEvents(
-              file.id,
-              new EventStreamRepository(createTauriEventStoreAdapter(path), path),
-            );
-            assertProjectSaveGuard(get(), guard);
-          }
+          const path = await persistProjectFile(file, s.projectPath ?? undefined, {
+            saveProjectFile: async (nextFile, targetPath) => {
+              const root = await saveProjectFile(nextFile, targetPath);
+              assertProjectSaveGuard(get(), guard);
+              return root;
+            },
+            getPendingProjectEventCount: (projectId) => {
+              assertProjectSaveGuard(get(), guard);
+              return isTauri ? getPendingProjectEvents(projectId).length : 0;
+            },
+            flushPendingProjectEvents: async (projectId, projectRoot) => {
+              const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+              assertProjectSaveGuard(get(), guard);
+              await flushPendingProjectEvents(
+                projectId,
+                new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),
+              );
+              assertProjectSaveGuard(get(), guard);
+            },
+          });
           assertProjectSaveGuard(get(), guard);
           set({
             projectId: file.id,
