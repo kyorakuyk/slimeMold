@@ -1645,7 +1645,8 @@ export const useWorkflowStore = create<WorkflowState>()(
               new EventStreamRepository(createTauriEventStoreAdapter(root), root),
             );
           }
-          set({ projectPath: root, projectDirty: false, lastSavedSnapshot: JSON.stringify(file) });
+          set({ projectPath: root, projectDirty: false });
+          set({ lastSavedSnapshot: projectSnapshot(get()) });
           saveLastSession({ path: root, activeId: s.activeWfId || undefined });
           return root;
         } catch (e) {
