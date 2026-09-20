@@ -331,6 +331,23 @@ fn worktree_read_commands_allow_find_glob_but_reject_grep_literal_glob() {
         "-name",
         "*.tsx"
     ])));
+    assert!(!dev_worktree_cmd_allowed(&sv(&[
+        "find",
+        "src/components",
+        "-name"
+    ])));
+    assert!(!dev_worktree_cmd_allowed(&sv(&[
+        "find",
+        "src/components",
+        "-maxdepth"
+    ])));
+    assert!(!dev_worktree_cmd_allowed(&sv(&[
+        "find",
+        "src/components",
+        "-name",
+        "*.tsx",
+        "-o"
+    ])));
 }
 
 #[test]

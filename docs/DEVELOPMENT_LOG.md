@@ -4390,3 +4390,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `7c30dec` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 mutation probes拒绝 `.git`/`.slimemold` exact、descendant及 Windows trailing-dot/space/ADS aliases，保留 `.gitignore`/`.slimemoldish`；无 grammar或 legacy `run_git`旁路变更。
 - 同一快照质量门：Windows targeted `1/1`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Linux/macOS sysroot/pkg-config/C toolchain缺失，作为 environment-blocked residual记录，不升级为跨平台 verified。
 - 已创建本地 verified tag：`checkpoint/native-protected-metadata-alias-repair-verified`。该 tag只证明 direct file protected metadata slice，不代表完整 native hardening、Worker、GUI/E2E或历史 unverified已关闭。
+
+### 7.249 unverified：unify native runtime `find` grammar with structured policy
+
+- Read-only triage与 RED确认 `src-tauri/src/execution/dev_exec.rs` 的 direct `find` gate只检查 lexical option/root，`find src/components -name` 会被接受，而 Node/structured Rust parser应 fail-closed。
+- 修复将 runtime `find`分支委托给已有 `dev_command_policy::command_intent_kind(args) == Some("find")`，删除重复 `find_option_is_safe` grammar；新增 missing operand、missing maxdepth和trailing operator回归，保留合法 `-P/-name/glob`路径。
+- 验证：find targeted `1/1`、shared policy vectors `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。

@@ -330,35 +330,6 @@ fn grep_args_are_safe(args: &[String]) -> bool {
     })
 }
 
-fn find_option_is_safe(arg: &str) -> bool {
-    matches!(
-        arg,
-        "-P" | "-name"
-            | "-iname"
-            | "-path"
-            | "-ipath"
-            | "-type"
-            | "-maxdepth"
-            | "-mindepth"
-            | "-mount"
-            | "-xdev"
-            | "-prune"
-            | "-print"
-            | "-print0"
-            | "-ls"
-            | "-printf"
-            | "-regex"
-            | "-iregex"
-            | "-not"
-            | "!"
-            | "-o"
-            | "-or"
-            | "-a"
-            | "-and"
-            | "-quit"
-    )
-}
-
 /// 与前端 assertSafeGitRevision 对齐的 base revision 词法校验。
 /// 这里只允许作为 git diff 的 revision 操作数，不允许路径逃逸或 shell 语义。
 fn safe_git_revision_arg(arg: &str) -> bool {
@@ -382,24 +353,7 @@ pub(crate) fn dev_worktree_cmd_allowed(args: &[String]) -> bool {
         "ls" | "cat" | "head" | "tail" => rest
             .iter()
             .all(|argument| !argument.starts_with('-') && dev_arg_path_lexically_safe(argument)),
-        "find" => {
-            !rest
-                .iter()
-                .any(|a| a.starts_with('-') && !find_option_is_safe(a))
-                && rest
-                    .iter()
-                    .filter(|a| !a.starts_with('-'))
-                    .all(|a| *a == "." || dev_arg_path_lexically_safe(a))
-                && match rest
-                    .iter()
-                    .skip_while(|argument| matches!(argument.as_str(), "-P" | "-L" | "-H"))
-                    .next()
-                    .map(|value| value.as_str())
-                {
-                    None | Some(".") => true,
-                    Some(root) => dev_arg_path_lexically_safe(root),
-                }
-        }
+        "find" => dev_command_policy::command_intent_kind(args) == Some("find"),
         // grep 只读；未知选项一律拒绝，避免 --file/--exclude-from 等外部文件输入。
         "grep" => grep_args_are_safe(rest),
         // git 只读 + 精确参数（与前端 shell 白名单 matchesRule 语义一致；明确排除所有写入型）
