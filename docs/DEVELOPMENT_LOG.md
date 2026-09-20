@@ -4444,3 +4444,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 将 `HISTORICAL_UNVERIFIED_TRIAGE.md` 基线更新到 current HEAD `0f13dd1` 与 entries `7.196–7.256`；移除已通过 exact review 的 protected metadata alias、find parity、legacy `run_git`、cleanup post-remove read-back作为“仍开放风险”，保留其跨平台/环境证据边界。
 - 当前 concrete native residual收敛为 fresh-session restore identity、partial-CAS、pending probe unknown、Windows pathname TOCTOU、launcher parity与Unix/macOS matrix；Worker terminal/admission/provenance/runtime fencing、完整 WorkerQueue Tauri E2E和workflowStore/WorkflowEditor结构债务仍未收口。
 - 本轮为 docs-only；实际检查：`git diff --check`通过，未重跑代码质量门。partial-CAS设计仍等待角色/字段/authority确认。
+
+### 7.258 decision：confirm Terraform-level partial-CAS baseline, defer implementation
+
+- 用户确认 partial-CAS采用本地 Terraform 级工具范围：项目目录内 durable cleanup state、四 phase matrix（`cas-pending` → `cas-succeeded` → `remove-pending` → `finalized`）、显式 native inspect/finalize、禁止重复 branch CAS、重启 native rebind与 identity/Git read-back。
+- 用户明确调整执行顺序：先完成前端巨石拆分，再实现 partial-CAS；本轮不修改 native production code。前端剩余结构债务仍是下一阶段主线。
+- 本轮为 docs-only；实际检查待提交前运行 `git diff --check`。

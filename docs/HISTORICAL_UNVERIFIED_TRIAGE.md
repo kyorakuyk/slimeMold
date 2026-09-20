@@ -113,6 +113,6 @@ The next repair must not be chosen implicitly:
 
 - **Recommended boundary:** keep the current branch-CAS order, persist a host-owned phase containing project/session generation, path, target identity, branch, approved revision and phase, then expose a separate explicit inspect/finalize recovery path that never repeats branch CAS and revalidates identity/listing before removing or reconciling the remaining worktree.
 - **Rejected without architectural review:** simply reorder worktree removal before branch CAS. That changes the mutation race and branch-lineage contract and needs a separate authority/security review.
-- **Current status:** `concrete-risk`, implementation intentionally paused pending role/field/authority confirmation. GUI/Worker full E2E does not close this native gap.
+- **Current status:** `concrete-risk`, the Terraform-level local-tool baseline is confirmed but implementation is intentionally deferred until the frontend monolith split is complete. The selected baseline is project-local durable state, four phases, explicit inspect/finalize, no repeated CAS, and restart rebind/read-back. GUI/Worker full E2E does not close this native gap.
 
 Any future code or evidence change invalidates an exact reviewer verdict outside its snapshot. A claim may be upgraded only by a new RED/GREEN regression, full quality gate, exact-head independent review, and—where applicable—real Tauri/native read-back.
