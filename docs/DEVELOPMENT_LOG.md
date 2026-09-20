@@ -4540,3 +4540,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `be689df0011b08eb0db4fd1886d683d405e6d904` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 source-port coloring、collapsed-group proxy rewrites、style merge、immutability和 WorkflowEditor memo ownership保持正确。
 - reviewer独立复核 focused/full tests `145 files / 1182 tests`、build、i18n `1026/1026`、TypeScript 和 diff checks；非阻塞建议记录为后续 coverage扩展：全部 port-color mappings、null/undefined source handles、task/control edge-data preservation。
 - 创建 verified tag：`checkpoint/frontend-styled-edge-projection-verified`；原 `checkpoint/frontend-styled-edge-projection-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.274 unverified：extract registerWorkflow state builder
+
+- 在 `src/store/workflowState.ts` 增加 `buildRegisteredWorkflowState`，收口 WorkflowFile normalization、project/standalone identity、fallback agents/roles/variables/assets/groups以及 activate canvas projection；`workflowStore.registerWorkflow` 保留 ID生成、Zustand set和返回合同。
+- 新增 direct regressions：activate=false仅注册、activate=true复用 normalized state生成 dirty canvas activation；未改变 ProjectSessionPanel/Builder caller合同。
+- 验证：focused `4 files / 46 tests`；完整 Node `145 test files / 1184 tests`；build通过（最大 chunk `1,176.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。

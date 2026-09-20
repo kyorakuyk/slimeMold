@@ -9,6 +9,7 @@ import type { AgentRouteTable, FlowEdge, FlowNode, ProjectFile, WorkflowFile } f
 import {
   buildCreateProjectState,
   buildNewProjectState,
+  buildRegisteredWorkflowState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
@@ -302,6 +303,41 @@ describe('buildNewProjectState 新建项目状态构建', () => {
     expect(wf.agents[0]?.protocol).toBe('ollama');
     expect(st.agents[0]?.protocol).toBe('ollama');
     expect(st.roles.length).toBeGreaterThan(0);
+  });
+});
+
+describe('buildRegisteredWorkflowState 工作流注册状态构建', () => {
+  it('activate=false 只注册 normalized workflow，不生成画布 activation', () => {
+    const result = buildRegisteredWorkflowState({
+      workflow: mkWf('注册工作流'),
+      id: 'wf-registered',
+      savedAt: '2026-09-20T00:00:00.000Z',
+      projectId: 'project-1',
+      workflows: {},
+      activeWfId: '',
+      activate: false,
+    });
+
+    expect(result.workflows['wf-registered']?.name).toBe('注册工作流');
+    expect(result.activation).toBeUndefined();
+  });
+
+  it('activate=true reuses normalized workflow for dirty canvas activation', () => {
+    const result = buildRegisteredWorkflowState({
+      workflow: mkWf('注册工作流'),
+      id: 'wf-registered',
+      savedAt: '2026-09-20T00:00:00.000Z',
+      projectId: 'project-1',
+      workflows: {},
+      activeWfId: '',
+      activate: true,
+      name: '覆盖名称',
+    });
+
+    expect(result.activation?.activeWfId).toBe('wf-registered');
+    expect(result.activation?.workflowName).toBe('覆盖名称');
+    expect(result.activation?.nodes[0]?.data.dirty).toBe(true);
+    expect(result.activation?.edges).toEqual([]);
   });
 });
 

@@ -15,6 +15,7 @@ import type {
   FlowEdge,
   FlowNode,
   ProjectFile,
+  WorkflowFile,
   WorkflowFileInMemory,
 } from '../types';
 import { flowEdgesFrom, flowNodesFrom, fromDisk, serializeCurrent } from './workflowSerialize';
@@ -245,7 +246,83 @@ export function buildSwitchWorkflowState(
   };
 }
 
-/** createProject 的纯输入。模板为空时生成空白工作流。 */
+/** registerWorkflow 的纯输入。 */
+export interface RegisteredWorkflowStateInput {
+  workflow: WorkflowFile;
+  id: string;
+  savedAt: string;
+  projectId: string | null;
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  activate: boolean;
+  name?: string;
+}
+
+export interface RegisteredWorkflowActivation {
+  activeWfId: string;
+  workflowName: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: import('../types').AgentConfig[];
+  defaultAgentId: string | null;
+  roles: import('../types').RoleTemplate[];
+  variables: Record<string, unknown>;
+  groups: import('../types').NodeGroup[];
+  selectedNodeId: null;
+  logs: never[];
+}
+
+export interface RegisteredWorkflowState {
+  id: string;
+  workflows: Record<string, WorkflowFileInMemory>;
+  activation?: RegisteredWorkflowActivation;
+}
+
+/**
+ * 构建 registerWorkflow 的 normalized registry 与可选 canvas activation state。
+ * 不触碰 store；ID生成和 set 由 facade负责。
+ */
+export function buildRegisteredWorkflowState(input: RegisteredWorkflowStateInput): RegisteredWorkflowState {
+  const current = input.workflows[input.activeWfId];
+  const merged: WorkflowFileInMemory = {
+    ...fromDisk(input.workflow),
+    name: input.name ?? input.workflow.name ?? '生成的工作流',
+    savedAt: input.savedAt,
+    belongsToProject: input.workflow.belongsToProject ?? (input.projectId ? input.projectId : undefined),
+    standalonePath:
+      input.workflow.standalonePath ?? (input.projectId ? undefined : current?.standalonePath),
+    agents: input.workflow.agents?.length
+      ? input.workflow.agents
+      : (current?.agents ?? [createAgent('ollama')]),
+    roles: input.workflow.roles?.length
+      ? input.workflow.roles
+      : (current?.roles ?? builtinRoles.map((role) => ({ ...role }))),
+    variables: input.workflow.variables ?? {},
+    assets: input.workflow.assets ?? [],
+    groups: input.workflow.groups ?? [],
+  };
+  const workflows = { ...input.workflows, [input.id]: merged };
+  if (!input.activate) return { id: input.id, workflows };
+  return {
+    id: input.id,
+    workflows,
+    activation: {
+      activeWfId: input.id,
+      workflowName: merged.name,
+      nodes: merged.nodes.map((node) => ({ ...node, data: { ...node.data, dirty: true } })),
+      edges: merged.edges,
+      agents: merged.agents,
+      defaultAgentId: merged.defaultAgentId ?? null,
+      roles: merged.roles!,
+      variables: merged.variables!,
+      groups: merged.groups!,
+      selectedNodeId: null,
+      logs: [],
+    },
+  };
+}
+
+
 export interface CreateProjectStateInput {
   name: string;
   projectId: string;

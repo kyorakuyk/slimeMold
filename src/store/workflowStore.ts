@@ -119,6 +119,7 @@ import {
   buildCreateProjectState,
   buildNewProjectState,
   buildOpenProjectState,
+  buildRegisteredWorkflowState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
   upsertById,
@@ -1360,42 +1361,25 @@ export const useWorkflowStore = create<WorkflowState>()(
        */
       registerWorkflow: (wf, opts) => {
         const s = get();
-        const workflows = { ...s.workflows };
         const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const inProject = !!s.projectId;
-        // 入参 wf 为磁盘态拍平 WorkflowFile（builder/导入来源），统一收口为内存态
-        const merged: WorkflowFileInMemory = {
-          ...fromDisk(wf),
-          name: opts?.name ?? wf.name ?? '生成的工作流',
+        const result = buildRegisteredWorkflowState({
+          workflow: wf,
+          id,
           savedAt: new Date().toISOString(),
-          belongsToProject: wf.belongsToProject ?? (inProject ? s.projectId! : undefined),
-          standalonePath: wf.standalonePath ?? (inProject ? undefined : s.workflows[s.activeWfId]?.standalonePath),
-          agents: wf.agents && wf.agents.length ? wf.agents : (s.workflows[s.activeWfId]?.agents ?? [createAgent('ollama')]),
-          roles: wf.roles && wf.roles.length ? wf.roles : (s.workflows[s.activeWfId]?.roles ?? builtinRoles.map((r) => ({ ...r }))),
-          variables: wf.variables ?? {},
-          assets: wf.assets ?? [],
-          groups: wf.groups ?? [],
-        };
-        workflows[id] = merged;
-        if (opts?.activate === false) {
+          projectId: s.projectId,
+          workflows: s.workflows,
+          activeWfId: s.activeWfId,
+          activate: opts?.activate !== false,
+          name: opts?.name,
+        });
+        if (!result.activation) {
           // 仅注册、不切换当前画布（避免打断正在跑的承建方工作流）
-          set({ workflows });
+          set({ workflows: result.workflows });
           return id;
         }
         set({
-          workflows,
-          activeWfId: id,
-          workflowName: merged.name,
-          // 方案 P：merged 已是运行态 FlowNode
-          nodes: merged.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
-          edges: merged.edges,
-          agents: merged.agents,
-          defaultAgentId: merged.defaultAgentId ?? null,
-          roles: merged.roles!,
-          variables: merged.variables!,
-          groups: merged.groups!,
-          selectedNodeId: null,
-          logs: [],
+          workflows: result.workflows,
+          ...result.activation,
         });
         return id;
       },
