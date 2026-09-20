@@ -90,7 +90,6 @@ import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunR
 import {
   createProjectControlStoreAdapter,
   normalizeProjectControlSnapshot,
-  resetProjectControlLifecycle,
 } from './projectControlLifecycle';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
@@ -1101,7 +1100,8 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       createProject: async ({ name, templateId, location }) => {
-        resetProjectControlLifecycle();
+        const previousProjectId = get().projectId;
+        projectControlAdapter.resetProjectControlLifecycle(previousProjectId);
         const tpl = templateId
           ? STARTER_TEMPLATES.find((t) => t.id === templateId)
           : undefined;

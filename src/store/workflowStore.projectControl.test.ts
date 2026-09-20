@@ -11,7 +11,7 @@ vi.mock('../io/projectIO', async () => {
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import { createProjectSession } from '../projectControl/state';
 import { clearProjectEventBuffer, getPendingProjectEvents, recordProjectEvents } from '../projectControl/eventBuffer';
-import { clearWorkerRunRuntime, getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import { clearWorkerRunRuntime, getActiveWorkerRunRuntime, installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { useWorkflowStore } from './workflowStore';
 
@@ -97,6 +97,28 @@ describe('workflowStore project control lifecycle', () => {
     useWorkflowStore.getState().closeProject();
 
     expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
+
+  it('clears the previous project event buffer and Worker runtime when creating a project', async () => {
+    recordProjectEvents('project-1', [{
+      eventId: 'create-project-boundary',
+      streamId: 'project-1',
+      sequence: 1,
+      aggregateType: 'Project',
+      aggregateId: 'project-1',
+      aggregateVersion: 1,
+      eventType: 'ProjectCreated',
+      schemaVersion: 1,
+      payload: {},
+      actor: 'user',
+      occurredAt: '2026-09-01T00:00:00.000Z',
+    }]);
+    installWorkerRunRuntime({ projectId: 'project-1', taskGraphs: [], runs: [] });
+
+    await useWorkflowStore.getState().createProject({ name: '新项目' });
+
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
+    expect(getActiveWorkerRunRuntime()).toBeNull();
   });
 
   it('stores a worker run registry entry for project persistence', () => {
