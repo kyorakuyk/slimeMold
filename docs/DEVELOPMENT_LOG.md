@@ -4855,3 +4855,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 ADR-SM-084 并更新 `docs/README.md` 导航；明确不把 event-stream sequence CAS、ProjectFile save queue、UI recoveryActions、transient WorkerRuntime 或 native cleanup partial-CAS 宣称为 recovery decision CAS。
 - 本轮仅修改架构文档，没有写入 fingerprint/schema、没有接入 controller、没有改变 Worker/ProjectFile/Event/SideEffect 行为；durable CAS 仍未实现、未完成跨进程/restart read-back。
 - 验证：docs link/read-back、`git diff --check`通过；未重跑 Node/build/i18n/tsc，因为本轮没有生产代码改动。
+
+### 7.320 unverified：implement pure Worker recovery facts fingerprint Gate A
+
+- 新增 `src/projectControl/workerRecoveryFactsFingerprint.ts`，定义 versioned `worker-recovery-facts-v1` DTO，规范化 current WorkerRun/TaskGraph/task attempt/worktree provenance 与 current recoverable started/unknown effects；排除 transient runtime、wall-clock metadata、UI capability和 durable writes。
+- canonicalizer 对 object key、task/effect ordering、evidence references、Windows path representation和 optional fields做纯内存规范化；fingerprint 输出 `worker-recovery-facts-v1:sha256:<hex>`，仅使用 Web Crypto SHA-256，不接 ProjectFile、eventBuffer、side-effect journal、controller或native host。
+- 新增 direct contract tests：多 task/effect insertion order稳定、attempt/effect identity变化改变 fingerprint、时间 metadata不改变结果、unbound/legacy effect fail-closed。
+- 本轮不改变任何 WorkerRun/ProjectFile/DomainEvent/SideEffect schema，不接 durable CAS；Gate A 通过不等于 recovery decision CAS 闭合。
+- 验证：focused `1 file / 3 tests`；完整 Node `170 test files / 1273 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact Gate A reviewer。
