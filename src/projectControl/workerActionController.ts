@@ -10,6 +10,7 @@ import { recoverWorkerRunCommand } from './workerRecoveryCommand';
 import { installWorkerRunRuntime } from './workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { mergeWorkerSideEffects } from './workerEvidence';
+import { createWorkerHostRepositoryBundleFromModules, loadWorkerHostRepositoryModules } from './workerHostRepositoryBundle';
 
 type ProjectSave = (
   projectId: string,
@@ -71,31 +72,17 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     const operation = deps.getProjectOperation(projectId, projectPath);
     deps.assertProjectOperation(operation);
 
-    const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
-      import('../domain/tauriEventStore'),
-      import('../dev/tauri-run'),
-      import('../domain/sideEffects'),
-      import('./workerSideEffects'),
-    ]);
+    const modulesPromise = loadWorkerHostRepositoryModules();
     const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
     if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
-    const persistence = createTauriEvidenceStore(
-      `${projectPath}/.slimemold/evidence`,
-      `${projectPath}-workers`,
-      'host',
-    );
-    const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
-      load: async () => session.listAcceptances(),
-    });
-    const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
-      new sideEffectsModule.SideEffectJournalRepository(
-        createTauriEventStoreAdapter(projectPath),
+    const bundle = createWorkerHostRepositoryBundleFromModules(
+      {
         projectPath,
-      ),
-      persistence,
-      undefined,
-      acceptanceVerifier,
+        listAcceptances: () => session.listAcceptances(),
+      },
+      await modulesPromise,
     );
+    const recorder = bundle.sideEffects;
     deps.assertProjectOperation(operation);
     const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
     deps.assertProjectOperation(operation);

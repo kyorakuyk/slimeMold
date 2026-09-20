@@ -7,12 +7,13 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { WorkerCleanupProposal } from './workerCleanup';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
+import { mergeWorkerEvidence, mergeWorkerSideEffects } from './workerEvidence';
 import {
-  loadWorkerEvidence,
-  loadWorkerSideEffects,
-  mergeWorkerEvidence,
-  mergeWorkerSideEffects,
-} from './workerEvidence';
+  createWorkerEvidenceRepositoryBundleFromModules,
+  createWorkerHostRepositoryBundleFromModules,
+  loadWorkerEvidenceRepositoryModules,
+  loadWorkerHostRepositoryModules,
+} from './workerHostRepositoryBundle';
 import { cleanupUnknownRunIds, reconcileSuccessfulCleanupReceipts } from './workerRecoveryFacts';
 
 type ProjectSave = (
@@ -70,31 +71,17 @@ export function createWorkerRecoveryIoController(
   ): Promise<void> => {
     if (!isDesktop || !projectPath || runIds.length === 0 || signal?.aborted) return;
     try {
-      const [{ createTauriEventStoreAdapter }, { createTauriEvidenceStore }, sideEffectsModule, workerSideEffectsModule] = await Promise.all([
-        import('../domain/tauriEventStore'),
-        import('../dev/tauri-run'),
-        import('../domain/sideEffects'),
-        import('./workerSideEffects'),
-      ]);
+      const modulesPromise = loadWorkerHostRepositoryModules();
       const session = await ensureGuiDevSession(projectPath, signal);
       if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
-      const persistence = createTauriEvidenceStore(
-        `${projectPath}/.slimemold/evidence`,
-        `${projectPath}-workers`,
-        'host',
-      );
-      const acceptanceVerifier = workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier({
-        load: async () => session.listAcceptances(),
-      });
-      const recorder = workerSideEffectsModule.createPersistedWorkerSideEffectRecorder(
-        new sideEffectsModule.SideEffectJournalRepository(
-          createTauriEventStoreAdapter(projectPath),
+      const bundle = createWorkerHostRepositoryBundleFromModules(
+        {
           projectPath,
-        ),
-        persistence,
-        undefined,
-        acceptanceVerifier,
+          listAcceptances: () => session.listAcceptances(),
+        },
+        await modulesPromise,
       );
+      const recorder = bundle.sideEffects;
       for (const runId of runIds) {
         if (signal?.aborted) return;
         await recorder.recoverInterruptedRun(runId, { signal });
@@ -113,24 +100,15 @@ export function createWorkerRecoveryIoController(
   ): Promise<void> => {
     if (!isDesktop || !projectPath || signal?.aborted) return;
     try {
-      const [{ createTauriEvidenceStore }, { createTauriEventStoreAdapter }, sideEffectsModule] = await Promise.all([
-        import('../dev/tauri-run'),
-        import('../domain/tauriEventStore'),
-        import('../domain/sideEffects'),
-      ]);
-      const persistence = createTauriEvidenceStore(
-        `${projectPath}/.slimemold/evidence`,
-        `${projectPath}-workers`,
-        'host',
-      );
-      const sideEffectRepository = new sideEffectsModule.SideEffectJournalRepository(
-        createTauriEventStoreAdapter(projectPath),
-        projectPath,
+      const modulesPromise = loadWorkerEvidenceRepositoryModules();
+      const repositories = createWorkerEvidenceRepositoryBundleFromModules(
+        { projectPath },
+        await modulesPromise,
       );
       if (signal?.aborted) return;
-      const records = await loadWorkerEvidence(persistence);
+      const records = await repositories.loadEvidence();
       if (signal?.aborted) return;
-      const effects = await loadWorkerSideEffects(sideEffectRepository);
+      const effects = await repositories.loadSideEffects();
       if (signal?.aborted) return;
       const current = deps.getState();
       if (current.projectPath !== projectPath) return;

@@ -1,15 +1,16 @@
 import type { AcceptanceRecord } from '../dev/session';
-import { EventStreamRepository } from '../domain/eventStore';
+import type { EventStreamRepository } from '../domain/eventStore';
 import type { SideEffectRecord } from '../domain/contracts';
-import { loadWorkerSideEffects } from './workerEvidence';
+import {
+  createWorkerHostRepositoryBundle,
+  type WorkerHostRepositoryLoader,
+  type WorkerHostRepositoryModules,
+  type WorkerHostSideEffects,
+} from './workerHostRepositoryBundle';
 
-export type WorkerRunHostInfrastructureModules = {
-  createTauriEventStoreAdapter: typeof import('../domain/tauriEventStore')['createTauriEventStoreAdapter'];
-  createTauriEvidenceStore: typeof import('../dev/tauri-run')['createTauriEvidenceStore'];
-  SideEffectJournalRepository: typeof import('../domain/sideEffects')['SideEffectJournalRepository'];
-  createPersistedWorkerAcceptanceVerifier: typeof import('./workerSideEffects')['createPersistedWorkerAcceptanceVerifier'];
-  createPersistedWorkerSideEffectRecorder: typeof import('./workerSideEffects')['createPersistedWorkerSideEffectRecorder'];
-};
+export type WorkerRunHostInfrastructureModules = WorkerHostRepositoryModules;
+export type WorkerRunHostInfrastructureLoader = WorkerHostRepositoryLoader;
+export type WorkerRunHostSideEffects = WorkerHostSideEffects;
 
 export interface WorkerRunHostInfrastructureInput {
   projectPath: string;
@@ -17,74 +18,28 @@ export interface WorkerRunHostInfrastructureInput {
   assertOperation: () => void;
 }
 
-export type WorkerRunHostSideEffects = ReturnType<
-  WorkerRunHostInfrastructureModules['createPersistedWorkerSideEffectRecorder']
->;
-
 export interface WorkerRunHostInfrastructure {
   eventRepository: EventStreamRepository;
   sideEffects: WorkerRunHostSideEffects;
   loadSideEffects: () => Promise<SideEffectRecord[]>;
 }
 
-export type WorkerRunHostInfrastructureLoader = () => Promise<WorkerRunHostInfrastructureModules>;
-
-const loadDefaultModules: WorkerRunHostInfrastructureLoader = async () => {
-  const [
-    { createTauriEventStoreAdapter: createAdapter },
-    { createTauriEvidenceStore },
-    sideEffectsModule,
-    workerSideEffectsModule,
-  ] = await Promise.all([
-    import('../domain/tauriEventStore'),
-    import('../dev/tauri-run'),
-    import('../domain/sideEffects'),
-    import('./workerSideEffects'),
-  ]);
-  return {
-    createTauriEventStoreAdapter: createAdapter,
-    createTauriEvidenceStore,
-    SideEffectJournalRepository: sideEffectsModule.SideEffectJournalRepository,
-    createPersistedWorkerAcceptanceVerifier: workerSideEffectsModule.createPersistedWorkerAcceptanceVerifier,
-    createPersistedWorkerSideEffectRecorder: workerSideEffectsModule.createPersistedWorkerSideEffectRecorder,
-  };
-};
-
 /**
- * Build the host-owned Worker repositories and receipt recorder for one project.
- * Session admission and runtime/coordinator selection stay at the composition root.
+ * Active queued-run adapter: add the EventStream repository and preserve its
+ * operation fence after the shared host bundle is constructed.
  */
 export async function createWorkerRunHostInfrastructure(
   input: WorkerRunHostInfrastructureInput,
-  loadModules: WorkerRunHostInfrastructureLoader = loadDefaultModules,
+  loadModules?: WorkerRunHostInfrastructureLoader,
 ): Promise<WorkerRunHostInfrastructure> {
-  const modules = await loadModules();
-  const sideEffectRepository = new modules.SideEffectJournalRepository(
-    modules.createTauriEventStoreAdapter(input.projectPath),
-    input.projectPath,
-  );
-  const evidencePersistence = modules.createTauriEvidenceStore(
-    `${input.projectPath}/.slimemold/evidence`,
-    `${input.projectPath}-workers`,
-    'host',
-  );
-  const acceptanceVerifier = modules.createPersistedWorkerAcceptanceVerifier({
-    load: async () => input.listAcceptances(),
-  });
-  const sideEffects = modules.createPersistedWorkerSideEffectRecorder(
-    sideEffectRepository,
-    evidencePersistence,
-    undefined,
-    acceptanceVerifier,
-  );
+  const bundle = await createWorkerHostRepositoryBundle({
+    projectPath: input.projectPath,
+    listAcceptances: input.listAcceptances,
+  }, loadModules);
   input.assertOperation();
-  const eventRepository = new EventStreamRepository(
-    modules.createTauriEventStoreAdapter(input.projectPath),
-    input.projectPath,
-  );
   return {
-    eventRepository,
-    sideEffects,
-    loadSideEffects: () => loadWorkerSideEffects(sideEffectRepository),
+    eventRepository: bundle.createEventRepository(),
+    sideEffects: bundle.sideEffects,
+    loadSideEffects: bundle.loadSideEffects,
   };
 }
