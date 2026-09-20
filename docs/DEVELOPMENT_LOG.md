@@ -4564,3 +4564,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 对 `37ef92827afe487fe2157664086c3b6fe190172d` fail-closed：指出 capture workflow ID/date 与新 workflow ID/savedAt 的 `Date.now()`/`Date`采样顺序被重排，builder间接依赖时间；该 verdict 不创建 verified tag。
 - 以 repair checkpoint `ce8d5beb1548fc98aa8c018dae576ed78592b146` 为起点：`workflowStore` 重新按父实现顺序负责 capture ID/date 与新 ID/date；`serializeCurrent` 接受注入 savedAt；`buildNewWorkflowInProjectState` 不再取时钟；补 fake-clock、captured timestamp、asset preservation 和 source non-mutation regressions。
 - 验证：focused `2 files / 31 tests`；完整 Node `146 test files / 1189 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend reviewer。
+
+### 7.278 verified：exact review closes newWorkflow registry/timestamp slice
+
+- 独立 reviewer 对 exact HEAD `8fefba355bc6c2479c44cd33de6a927c18525fcb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 workflow identity、unbound capture、assets、activation、standalone/project path、dirty behavior、async facade和输入 aliasing保持父实现合同。
+- reviewer特别复核 capture 顺序为 `Date.now()` capture ID → capture `savedAt` → 新 workflow ID → 新 workflow `savedAt`；确认 builder不再取时钟。独立复核 focused `31/31`、full `146 files / 1189 tests`、build、i18n、TypeScript和diff check通过。
+- 创建 verified tag：`checkpoint/frontend-new-workflow-registry-verified`；`37ef928` 的失败 verdict和 `checkpoint/frontend-new-workflow-registry-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
