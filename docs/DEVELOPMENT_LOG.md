@@ -4408,3 +4408,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Read-only triage确认 legacy `run_git`仍是独立 raw Git read-only surface；其 `diff`路径未显式关闭 pager、external diff和textconv，可能受 repository-local Git config影响。
 - 先写 RED：新增 `legacy_git_diff_uses_hardened_invocation`，要求 `diff HEAD`转换为 `--no-pager diff --no-ext-diff --no-textconv HEAD`；`run_git`实际使用共享 builder，其他 read-only probes保持 allowlist与 cwd/top-level guard。
 - 验证：legacy targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `101/101`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.252 verified：legacy `run_git` invocation review closure
+
+- exact HEAD `44ae249` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；legacy builder受既有 read-only allowlist约束，`run_git`实际使用 hardened argv，diff/name-only/stat语法保持有效，并显式关闭 pager/external diff/textconv；cwd/top-level/error/launcher/Worker路径无变更。
+- 同一快照质量门：legacy targeted `2/2`；Rust fmt/check、全量 lib `101/101`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Reviewer建议后续补 name-only/stat direct assertions与 hostile-config integration test，作为非阻塞 follow-up。
+- 已创建本地 verified tag：`checkpoint/native-legacy-run-git-policy-verified`。该 closure只覆盖 legacy read-only Git invocation，不代表完整 native hardening、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
