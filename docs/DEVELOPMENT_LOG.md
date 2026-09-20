@@ -4510,3 +4510,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `fa7b47ad41fbb82105ca0a056b982283673937b5` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`；确认 save → returned root → pending count → flush顺序、异常传播、Save/Save As接入、guard/non-Tauri行为和 dynamic adapter wiring均保持正确，无 duplicate legacy sequence、race或安全问题。
 - reviewer独立复核 focused `5 files / 16 tests`、全量 `144 files / 1178 tests`、build、i18n `1026/1026`、TypeScript、diff check 和 static scans；无工作树修改。
 - 创建 verified tag：`checkpoint/frontend-project-file-persistence-verified`；原 `checkpoint/frontend-project-file-persistence-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
+
+### 7.269 unverified：extract createProject pure state builder
+
+- 在既有 `src/store/workflowState.ts` 增加 `buildCreateProjectState`，收口模板 graph → WorkflowFileInMemory、canvas dirty nodes、项目 metadata、默认 agents/roles、project variables/assets、empty Worker registry 与 ProjectControl snapshot；`workflowStore.createProject` 保留 Tauri path resolution、suppression、save/session、失败恢复和日志。
+- 新增 workflowState direct regression：template/project metadata、两份 node dirty projection、edges和初始 worker state一致；原 store facade/API合同不变。
+- 验证：focused `5 files / 36 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.15 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。

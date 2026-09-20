@@ -116,6 +116,7 @@ import {
 import { saveCheckpointToDisk } from './workflowPersistence';
 // 状态转换纯逻辑（upsertById / 路由表清理 / 项目装载 / 工作流切换 / 新建项目）已抽到 workflowState.ts（G5 门面化）
 import {
+  buildCreateProjectState,
   buildNewProjectState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
@@ -1136,50 +1137,25 @@ export const useWorkflowStore = create<WorkflowState>()(
             saveRoot = null;
           }
         }
-        const baseAgents = [createAgent('ollama')];
-        const wf: WorkflowFileInMemory = {
-          version: 1,
-          name: tpl?.name ?? '未命名工作流',
-          savedAt: now,
-          // 方案 P：模板节点已是运行态 FlowNode，直接持有（createProject 走内存态）
-          nodes: tplNodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
-          edges: tplEdges,
-          agents: baseAgents,
-          roles: builtinRoles.map((r) => ({ ...r })),
-          variables: {},
-          belongsToProject: projId,
-        };
+        const state = buildCreateProjectState({
+          name,
+          projectId: projId,
+          workflowId: id,
+          createdAt: now,
+          projectPath: saveRoot,
+          template: {
+            name: tpl?.name ?? '未命名工作流',
+            nodes: tplNodes,
+            edges: tplEdges,
+          },
+        });
         projectDirtyController.setSuppressed(true);
         set({
-          projectName: name,
-          projectId: projId,
-          projectCreatedAt: now,
-          projectPath: saveRoot ?? null,
-          // 若已指定落盘位置，先按"已保存"对待，待 saveProject 成功后再定 dirty
-          projectDirty: !!saveRoot,
-          lastSavedSnapshot: null,
-          workflows: { [id]: wf },
-          activeWfId: id,
-          workflowName: wf.name,
-          // 模板节点载入即标记脏，保证运行时会真正执行而非命中空缓存
-          nodes: tplNodes.map((n) => ({
-            ...n,
-            data: { ...n.data, dirty: true },
-          })),
-          edges: tplEdges,
-          agents: baseAgents,
-          roles: builtinRoles.map((r) => ({ ...r })),
-          variables: wf.variables!,
-          projectVariables: {},
-          projectAssets: [],
-          workerRuns: [],
+          ...state,
           workerRunRecoveries: [],
           workerRunEvidence: [],
           workerRunSideEffects: [],
           workerCleanupProposals: [],
-          projectControl: createEmptyProjectControlSnapshot(),
-          selectedNodeId: null,
-          logs: [],
         });
         projectDirtyController.setSuppressed(false);
         if (saveRoot) {

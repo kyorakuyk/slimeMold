@@ -245,7 +245,96 @@ export function buildSwitchWorkflowState(
   };
 }
 
-/** newProject 的纯状态构建结果。 */
+/** createProject 的纯输入。模板为空时生成空白工作流。 */
+export interface CreateProjectStateInput {
+  name: string;
+  projectId: string;
+  workflowId: string;
+  createdAt: string;
+  projectPath: string | null;
+  template?: {
+    name: string;
+    nodes: FlowNode[];
+    edges: FlowEdge[];
+  };
+}
+
+/** createProject 写入 store 的项目/工作流状态子集。 */
+export interface CreateProjectState {
+  projectName: string;
+  projectId: string;
+  projectCreatedAt: string;
+  projectPath: string | null;
+  projectDirty: boolean;
+  lastSavedSnapshot: null;
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  workflowName: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: import('../types').AgentConfig[];
+  roles: import('../types').RoleTemplate[];
+  variables: Record<string, unknown>;
+  projectVariables: Record<string, unknown>;
+  projectAssets: import('../types').AssetMeta[];
+  workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
+  projectControl: ProjectControlSnapshot;
+  selectedNodeId: null;
+  logs: never[];
+}
+
+/**
+ * 构建「引导式新建项目」的纯状态。
+ * 路径选择、store mutation、保存和失败恢复由 workflowStore action 负责。
+ */
+export function buildCreateProjectState(input: CreateProjectStateInput): CreateProjectState {
+  const template = input.template ?? { name: '未命名工作流', nodes: [], edges: [] };
+  const baseAgents = [createAgent('ollama')];
+  const workflowNodes = template.nodes.map((node) => ({
+    ...node,
+    data: { ...node.data, dirty: true },
+  }));
+  const canvasNodes = template.nodes.map((node) => ({
+    ...node,
+    data: { ...node.data, dirty: true },
+  }));
+  const workflow: WorkflowFileInMemory = {
+    version: 1,
+    name: template.name,
+    savedAt: input.createdAt,
+    nodes: workflowNodes,
+    edges: template.edges,
+    agents: baseAgents,
+    roles: builtinRoles.map((role) => ({ ...role })),
+    variables: {},
+    belongsToProject: input.projectId,
+  };
+
+  return {
+    projectName: input.name,
+    projectId: input.projectId,
+    projectCreatedAt: input.createdAt,
+    projectPath: input.projectPath,
+    projectDirty: !!input.projectPath,
+    lastSavedSnapshot: null,
+    workflows: { [input.workflowId]: workflow },
+    activeWfId: input.workflowId,
+    workflowName: workflow.name,
+    nodes: canvasNodes,
+    edges: template.edges,
+    agents: baseAgents,
+    roles: workflow.roles!,
+    variables: workflow.variables!,
+    projectVariables: {},
+    projectAssets: [],
+    workerRuns: [],
+    projectControl: createEmptyProjectControlSnapshot(),
+    selectedNodeId: null,
+    logs: [],
+  };
+}
+
+
 export interface NewProjectState {
   projectName: string;
   projectId: string;

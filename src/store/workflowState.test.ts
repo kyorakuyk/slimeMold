@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentRouteTable, FlowEdge, FlowNode, ProjectFile, WorkflowFile } from '../types';
 import {
+  buildCreateProjectState,
   buildNewProjectState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
@@ -301,5 +302,32 @@ describe('buildNewProjectState 新建项目状态构建', () => {
     expect(wf.agents[0]?.protocol).toBe('ollama');
     expect(st.agents[0]?.protocol).toBe('ollama');
     expect(st.roles.length).toBeGreaterThan(0);
+  });
+});
+
+describe('buildCreateProjectState 创建项目状态构建', () => {
+  it('keeps template graph and project metadata consistent', () => {
+    const node = mkFlowNode('node-1', 'input.text');
+    const edges: FlowEdge[] = [];
+    const st = buildCreateProjectState({
+      name: 'Starter Project',
+      projectId: 'project-1',
+      workflowId: 'workflow-1',
+      createdAt: '2026-09-20T00:00:00.000Z',
+      projectPath: 'C:/projects/starter',
+      template: { name: 'Starter', nodes: [node], edges },
+    });
+
+    expect(st.projectName).toBe('Starter Project');
+    expect(st.projectId).toBe('project-1');
+    expect(st.projectPath).toBe('C:/projects/starter');
+    expect(st.projectDirty).toBe(true);
+    expect(st.activeWfId).toBe('workflow-1');
+    expect(st.workflowName).toBe('Starter');
+    expect(st.nodes[0]?.id).toBe('node-1');
+    expect(st.nodes[0]?.data.dirty).toBe(true);
+    expect(st.workflows['workflow-1']?.nodes[0]?.data.dirty).toBe(true);
+    expect(st.edges).toEqual(edges);
+    expect(st.workerRuns).toEqual([]);
   });
 });
