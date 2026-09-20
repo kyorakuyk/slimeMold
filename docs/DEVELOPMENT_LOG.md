@@ -4516,3 +4516,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在既有 `src/store/workflowState.ts` 增加 `buildCreateProjectState`，收口模板 graph → WorkflowFileInMemory、canvas dirty nodes、项目 metadata、默认 agents/roles、project variables/assets、empty Worker registry 与 ProjectControl snapshot；`workflowStore.createProject` 保留 Tauri path resolution、suppression、save/session、失败恢复和日志。
 - 新增 workflowState direct regression：template/project metadata、两份 node dirty projection、edges和初始 worker state一致；原 store facade/API合同不变。
 - 验证：focused `5 files / 36 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.15 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.270 unverified：repair createProject role projection aliasing
+
+- exact reviewer 对 `7e189dba90d5e5c154037ba63652d5aeb64423c0` 发现 logic blocker：`buildCreateProjectState` 将 top-level `roles` 与 workflow `roles` 共享数组/元素引用，偏离父实现的独立 projection。
+- 先以 RED regression 固化 array/object identity，再让 builder分别 map builtin roles；保留其它 createProject state、facade和副作用合同不变。
+- 验证：focused `3 files / 31 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair HEAD仍标记 `unverified`，等待新的 exact reviewer。

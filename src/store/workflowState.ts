@@ -298,6 +298,7 @@ export function buildCreateProjectState(input: CreateProjectStateInput): CreateP
     ...node,
     data: { ...node.data, dirty: true },
   }));
+  const workflowRoles = builtinRoles.map((role) => ({ ...role }));
   const workflow: WorkflowFileInMemory = {
     version: 1,
     name: template.name,
@@ -305,7 +306,7 @@ export function buildCreateProjectState(input: CreateProjectStateInput): CreateP
     nodes: workflowNodes,
     edges: template.edges,
     agents: baseAgents,
-    roles: builtinRoles.map((role) => ({ ...role })),
+    roles: workflowRoles,
     variables: {},
     belongsToProject: input.projectId,
   };
@@ -323,7 +324,7 @@ export function buildCreateProjectState(input: CreateProjectStateInput): CreateP
     nodes: canvasNodes,
     edges: template.edges,
     agents: baseAgents,
-    roles: workflow.roles!,
+    roles: builtinRoles.map((role) => ({ ...role })),
     variables: workflow.variables!,
     projectVariables: {},
     projectAssets: [],

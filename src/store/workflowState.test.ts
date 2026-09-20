@@ -326,7 +326,8 @@ describe('buildCreateProjectState 创建项目状态构建', () => {
     expect(st.workflowName).toBe('Starter');
     expect(st.nodes[0]?.id).toBe('node-1');
     expect(st.nodes[0]?.data.dirty).toBe(true);
-    expect(st.workflows['workflow-1']?.nodes[0]?.data.dirty).toBe(true);
+    expect(st.roles).not.toBe(st.workflows['workflow-1']?.roles);
+    expect(st.roles[0]).not.toBe(st.workflows['workflow-1']?.roles?.[0]);
     expect(st.edges).toEqual(edges);
     expect(st.workerRuns).toEqual([]);
   });
