@@ -4847,3 +4847,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增回归：queued session 选择 antigravity 后进入 recovery，retry callback 仍收到 antigravity；既有 normal queued start 和 skip contract保持。
 - 独立 reviewer 对 exact HEAD `7a2a6b0896ec86512371ed14d0cf46f9120f328a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 transient selection→callback→retry forwarding、codex fallback、Antigravity coordinator selection和无 durable schema漂移。
 - 验证：focused `2 files / 15 tests`；完整 Node `169 test files / 1270 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-runtime-propagation-verified`；对应 `checkpoint/frontend-worker-recovery-runtime-propagation-unverified` 保留为历史回退锚点。
+
+### 7.319 design gate：freeze Worker recovery durable decision CAS contract before implementation
+
+- 只读 audit 确认当前没有 canonical recovery facts fingerprint、durable decision owner或跨 ProjectFile/event stream/side-effect journal 的 commit protocol；`workerRecoveryDecisionPrecondition` 和 `workerRecoverySingleFlight` 仍分别只是内存 drift guard 与 process-local lease。
+- 新增 `docs/architecture/WORKER_RECOVERY_DECISION_CAS_DESIGN.md`，冻结 proposed v1 的 FactsFingerprint/DecisionIdentity 两层边界、canonical normalization/hash vectors、durable owner、commit/read-back、same-decision idempotence、conflict、legacy/unbound migration 和 Gate A–D 实施顺序。
+- 新增 ADR-SM-084 并更新 `docs/README.md` 导航；明确不把 event-stream sequence CAS、ProjectFile save queue、UI recoveryActions、transient WorkerRuntime 或 native cleanup partial-CAS 宣称为 recovery decision CAS。
+- 本轮仅修改架构文档，没有写入 fingerprint/schema、没有接入 controller、没有改变 Worker/ProjectFile/Event/SideEffect 行为；durable CAS 仍未实现、未完成跨进程/restart read-back。
+- 验证：docs link/read-back、`git diff --check`通过；未重跑 Node/build/i18n/tsc，因为本轮没有生产代码改动。

@@ -917,6 +917,17 @@ authority: decision-log
 
 ---
 
+### ADR-SM-084：Worker recovery durable decision CAS 先冻结 contract，再进入实现
+
+- **状态：** `设计基线`
+- **决定：** Worker recovery 的 durable stale-state admission 必须作为独立协议设计，不把当前 process-local single-flight、ProjectOperation、event-stream lastSequence CAS 或 ProjectFile save queue 误称为跨进程 durable CAS。实现前先冻结 versioned `FactsFingerprint`、Decision identity、canonical serialization/hash、durable owner、commit/read-back、same-decision idempotence、conflict和 legacy migration；设计门记录于 [`WORKER_RECOVERY_DECISION_CAS_DESIGN.md`](WORKER_RECOVERY_DECISION_CAS_DESIGN.md)。
+- **放弃的方案：** 在 `workerActionController` 中直接对当前内存 WorkerRun/TaskGraph 做 hash，再调用现有 `saveProject`，并把“event append 成功”当成 ProjectFile、event projection 和 side-effect journal 已经原子提交；或从旧 recovery event/当前 state 猜测 backfill 历史 fingerprint。
+- **取舍：** durable CAS 会增加 commit marker/generation、跨文件 crash recovery、schema/migration 和真实 cross-process/restart 验证成本；换取 stale recovery decision 不会在 ProjectFile-first 写入后才发现 event conflict，也能明确区分 idempotent replay、conflict、needs-repair 和 unknown。
+- **后果：** Gate A 只允许纯 canonical facts DTO/serializer/fingerprint helper；Gate B 才能建立 durable decision persistence；Gate C 才能接回 controller；Gate D 才能以 disposable fixture 证明 restart/cross-process。`WorkerRuntime`、UI allowedDecisions、native cleanup partial-CAS 和 WorkerQueue attempt 算法保持独立边界。
+- **来源：** [S3 §4、§12]；[S4]；[S8]；[S14]；`docs/architecture/WORKER_RECOVERY_DECISION_CAS_DESIGN.md`。
+
+---
+
 ## 6. 当前仍未决定或不能过度宣称的事项
 
 以下问题已经被记录为待确认或后续协议工作，不能从本文件中的“决定”条目推断为最终实现：

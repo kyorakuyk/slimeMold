@@ -15,14 +15,15 @@ updated: 2026-09-20
 2. [全局产品与系统审视](strategy/SLIMEMOLD_GLOBAL_PRODUCT_SYSTEM_REVIEW.md) —— 产品定位、系统风险和战略取舍。
 3. [项目控制面架构](architecture/PROJECT_CONTROL_PLANE_ARCHITECTURE.md) —— 当前项目实体、事实源、状态、权限和恢复契约。
 4. [产品与架构取舍记录](architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md) —— 跨阶段的决定、替代方案、代价、来源和未决事项。
-5. [代码结构审查](architecture/CODEBASE_ARCHITECTURE_REVIEW.md) —— 当前代码与目标架构的差距、阻塞项和迁移顺序。
-6. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
-7. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
-8. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
-9. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
-10. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
-11. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
-12. [历史 unverified triage](HISTORICAL_UNVERIFIED_TRIAGE.md) —— 按当前 HEAD 证据分类历史快照、残余风险和验收边界。
+5. [Worker recovery CAS design gate](architecture/WORKER_RECOVERY_DECISION_CAS_DESIGN.md) —— durable recovery decision 的 fingerprint、commit/read-back 和 migration contract；未实现前不得过度宣称 CAS 闭合。
+6. [代码结构审查](architecture/CODEBASE_ARCHITECTURE_REVIEW.md) —— 当前代码与目标架构的差距、阻塞项和迁移顺序。
+7. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
+8. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
+9. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
+10. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
+11. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
+12. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
+13. [历史 unverified triage](HISTORICAL_UNVERIFIED_TRIAGE.md) —— 按当前 HEAD 证据分类历史快照、残余风险和验收边界。
 
 ## 权威层级
 
