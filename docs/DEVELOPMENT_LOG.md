@@ -4577,3 +4577,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `workflowStore.ts` 改为直接依赖 owner module；`executor.ts`、`nodes/builtin/dispatch.ts` 直接从 registry owner 读取 workspace resolution；现有 Zustand action、ProjectFile、ProjectControl、persistence和global-agent contracts未改变。
 - 将原 mixed state tests 按 catalog/registry/lifecycle 物理归属拆为 direct test files，并保留 barrel re-export contract；本轮没有引入 graph command、global-agent AppData 或生命周期副作用抽取。
 - 验证：focused `4 files / 29 tests`；完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend structure reviewer。
+
+### 7.280 unverified：repair duplicated lifecycle type owner
+
+- exact reviewer 对 `f3cc2bf6c732b836ab7a5b216b8cab5b4ccf61a0` fail-closed：发现 `CreateProjectStateInput` 同时存在于 `workflowRegistryState.ts` 和 `workflowLifecycleState.ts`，违反事实 ownership；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `f1615375b5444c1b70ac96297be90c355c32d658` 为起点，从 registry module 删除重复 lifecycle input type，保留 lifecycle module 为唯一 owner；未改变 runtime implementation或兼容 barrel合同。
+- 验证：focused `4 files / 29 tests`；完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact structure reviewer。

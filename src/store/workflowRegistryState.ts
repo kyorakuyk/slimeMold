@@ -164,20 +164,6 @@ export function buildRegisteredWorkflowState(input: RegisteredWorkflowStateInput
   };
 }
 
-
-export interface CreateProjectStateInput {
-  name: string;
-  projectId: string;
-  workflowId: string;
-  createdAt: string;
-  projectPath: string | null;
-  template?: {
-    name: string;
-    nodes: FlowNode[];
-    edges: FlowEdge[];
-  };
-}
-
 /** newWorkflowInProject 的纯输入。 */
 export interface NewWorkflowInProjectStateInput {
   workflows: Record<string, WorkflowFileInMemory>;
