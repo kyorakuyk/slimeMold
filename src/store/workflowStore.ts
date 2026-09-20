@@ -96,6 +96,7 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { createProjectSaveQueue } from './projectSaveQueue';
 // 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策 / 子图展开）已抽到 workflowGraph.ts（G5 门面化）
 import {
   classifyConnection,
@@ -1218,79 +1219,68 @@ export const useWorkflowStore = create<WorkflowState>()(
       saveProject: async (guard) => {
         const initial = get();
         const saveKey = `${initial.projectId ?? 'unsaved'}:${initial.projectPath ?? 'memory'}`;
-        const previous = projectSaveTails.get(saveKey) ?? Promise.resolve();
-        let release!: () => void;
-        const current = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        const queued = previous.catch(() => {}).then(() => current);
-        projectSaveTails.set(saveKey, queued);
-        await previous.catch(() => {});
-        try {
+        return projectSaveQueue.enqueue(saveKey, async () => {
           let s = get();
-        assertProjectSaveGuard(s, guard);
-        // Never let a startup/recovery save erase a WorkerRun projection that is already
-        // durable in the event stream while the in-memory registry is still empty.
-        if (isTauri && s.projectId && s.projectPath && s.workerRuns.length === 0) {
-          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-          const repository = new EventStreamRepository(
-            createTauriEventStoreAdapter(s.projectPath),
-            s.projectPath,
-          );
-          const parsed = await repository.readStream();
-          assertProjectSaveGuard(get(), guard);
-          if (parsed.status === 'needs-repair') {
-            throw new Error(
-              `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+          assertProjectSaveGuard(s, guard);
+          // Never let a startup/recovery save erase a WorkerRun projection that is already
+          // durable in the event stream while the in-memory registry is still empty.
+          if (isTauri && s.projectId && s.projectPath && s.workerRuns.length === 0) {
+            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+            const repository = new EventStreamRepository(
+              createTauriEventStoreAdapter(s.projectPath),
+              s.projectPath,
             );
-          }
-          const restored = restoreMissingWorkerRunsFromEvents({
-            projectId: s.projectId,
-            events: parsed.events,
-            taskGraphs: s.projectControl.taskGraphs ?? [],
-            existingRuns: s.workerRuns,
-          });
-          if (restored.issues.length > 0) {
-            throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
-          }
-          if (restored.restored) {
-            set({
-              workerRuns: restored.runs,
-              orchestrations: projectWorkerRunsOntoOrchestrations(s.orchestrations, restored.runs),
+            const parsed = await repository.readStream();
+            assertProjectSaveGuard(get(), guard);
+            if (parsed.status === 'needs-repair') {
+              throw new Error(
+                `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+              );
+            }
+            const restored = restoreMissingWorkerRunsFromEvents({
+              projectId: s.projectId,
+              events: parsed.events,
+              taskGraphs: s.projectControl.taskGraphs ?? [],
+              existingRuns: s.workerRuns,
             });
-            s = get();
+            if (restored.issues.length > 0) {
+              throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
+            }
+            if (restored.restored) {
+              set({
+                workerRuns: restored.runs,
+                orchestrations: projectWorkerRunsOntoOrchestrations(s.orchestrations, restored.runs),
+              });
+              s = get();
+            }
           }
-        }
-        assertProjectSaveGuard(s, guard);
-        const file = buildProjectFile(s);
-        const { saveProjectFile } = await import('../io/projectIO');
-        assertProjectSaveGuard(get(), guard);
-        // P0：已存盘则直接覆盖原路径，不再弹另存为
-        const path = await saveProjectFile(file, s.projectPath ?? undefined);
-        assertProjectSaveGuard(get(), guard);
-        if (isTauri && getPendingProjectEvents(file.id).length > 0) {
-          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          assertProjectSaveGuard(s, guard);
+          const file = buildProjectFile(s);
+          const { saveProjectFile } = await import('../io/projectIO');
           assertProjectSaveGuard(get(), guard);
-          await flushPendingProjectEvents(
-            file.id,
-            new EventStreamRepository(createTauriEventStoreAdapter(path), path),
-          );
+          // P0：已存盘则直接覆盖原路径，不再弹另存为
+          const path = await saveProjectFile(file, s.projectPath ?? undefined);
           assertProjectSaveGuard(get(), guard);
-        }
-        assertProjectSaveGuard(get(), guard);
-        set({
-          projectId: file.id,
-          projectCreatedAt: file.createdAt,
-          projectPath: path,
-          // P1：落盘后清除项目级脏标记，并记录稳定快照基准
-          projectDirty: false,
-        });
-        set({ lastSavedSnapshot: projectSnapshot(get()) });
+          if (isTauri && getPendingProjectEvents(file.id).length > 0) {
+            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+            assertProjectSaveGuard(get(), guard);
+            await flushPendingProjectEvents(
+              file.id,
+              new EventStreamRepository(createTauriEventStoreAdapter(path), path),
+            );
+            assertProjectSaveGuard(get(), guard);
+          }
+          assertProjectSaveGuard(get(), guard);
+          set({
+            projectId: file.id,
+            projectCreatedAt: file.createdAt,
+            projectPath: path,
+            // P1：落盘后清除项目级脏标记，并记录稳定快照基准
+            projectDirty: false,
+          });
+          set({ lastSavedSnapshot: projectSnapshot(get()) });
           return path;
-        } finally {
-          release();
-          if (projectSaveTails.get(saveKey) === queued) projectSaveTails.delete(saveKey);
-        }
+        });
       },
 
       isProjectDirty: () => {
@@ -2123,7 +2113,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 // ---------- P1：项目级脏检测（内存态 vs 磁盘态） ----------
 // 加载/切换期间临时抑制自动脏检测，避免误标
 let suppressDirty = false;
-const projectSaveTails = new Map<string, Promise<void>>();
+const projectSaveQueue = createProjectSaveQueue();
 
 /** 载入/打开项目后调用：以当前内存态作为"与磁盘一致"的基准，清除脏标记 */
 function finalizeLoaded() {

@@ -4450,3 +4450,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 用户确认 partial-CAS采用本地 Terraform 级工具范围：项目目录内 durable cleanup state、四 phase matrix（`cas-pending` → `cas-succeeded` → `remove-pending` → `finalized`）、显式 native inspect/finalize、禁止重复 branch CAS、重启 native rebind与 identity/Git read-back。
 - 用户明确调整执行顺序：先完成前端巨石拆分，再实现 partial-CAS；本轮不修改 native production code。前端剩余结构债务仍是下一阶段主线。
 - 本轮为 docs-only；实际检查待提交前运行 `git diff --check`。
+
+### 7.259 unverified：extract workflowStore project save queue owner
+
+- 新增 `src/store/projectSaveQueue.ts`，收口原 workflowStore 内联 `projectSaveTails`：同项目 key 串行、不同项目 key并行、失败后队列继续；Save/Save As公开 store action合同和持久化顺序不变。
+- 新增 direct regression：queue success/failure ordering；workflowStore现有 save、Save As、serialize suite继续通过。
+- 验证：focused `4 files / 28 tests`；完整 Node `140 test files / 1167 tests`；build通过（最大 chunk `1,174.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前只能标记 `unverified`，等待 exact frontend reviewer。
