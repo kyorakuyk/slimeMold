@@ -4,6 +4,8 @@ import type { AssetMeta, FlowEdge, FlowNode, WorkflowFile, WorkflowFileInMemory 
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
+  buildRemoveWorkflowState,
+  buildRenameWorkflowState,
   buildSwitchWorkflowState,
   resolveActiveWorkflowWorkspaceDir,
 } from './workflowRegistryState';
@@ -154,5 +156,50 @@ describe('buildNewWorkflowInProjectState', () => {
     expect(result.workflows['wf-captured']?.assets).toBe(assets);
     expect(workflows['wf-captured']).toBe(captured);
     expect(workflows['wf-captured']?.savedAt).toBe('old');
+  });
+});
+
+describe('workflow registry mutation transforms', () => {
+  const workflows = {
+    wf1: {
+      version: 1, name: 'WF1', nodes: [mkFlowNode('a', 'input.text')], edges: [], agents: [], roles: [],
+    },
+    wf2: {
+      version: 1, name: 'WF2', nodes: [mkFlowNode('b', 'output.text')], edges: [], agents: [], roles: [],
+      workspaceDir: 'C:/workspace/wf2',
+    },
+  } as unknown as Record<string, WorkflowFileInMemory>;
+
+  it('renames the active registry entry and returns null without an active entry', () => {
+    const renamed = buildRenameWorkflowState({ workflows, activeWfId: 'wf1', name: '新名称' });
+    expect(renamed?.name).toBe('新名称');
+    expect(workflows.wf1?.name).toBe('WF1');
+    expect(buildRenameWorkflowState({ workflows, activeWfId: '', name: '游离名称' })).toBeNull();
+  });
+
+  it('removes an inactive workflow without activating another one', () => {
+    const result = buildRemoveWorkflowState({ workflows, activeWfId: 'wf1', id: 'wf2' });
+    expect(Object.keys(result.workflows)).toEqual(['wf1']);
+    expect(result.activation).toBeUndefined();
+    expect(result.cleanupWorkflowId).toBeUndefined();
+  });
+
+  it('activates the first remaining workflow when removing the active one', () => {
+    const result = buildRemoveWorkflowState({ workflows, activeWfId: 'wf1', id: 'wf1' });
+    expect(result.activation?.activeWfId).toBe('wf2');
+    expect(result.activation?.workflowName).toBe('WF2');
+    expect(result.activation?.nodes[0]?.data.dirty).toBe(true);
+    expect(result.cleanupWorkflowId).toBe('wf1');
+  });
+
+  it('enters the empty registry state when removing the final workflow', () => {
+    const result = buildRemoveWorkflowState({
+      workflows: { wf1: workflows.wf1! }, activeWfId: 'wf1', id: 'wf1',
+    });
+    expect(result.workflows).toEqual({});
+    expect(result.activation?.activeWfId).toBe('');
+    expect(result.activation?.workflowName).toBe('');
+    expect(result.activation?.nodes).toEqual([]);
+    expect(result.cleanupWorkflowId).toBe('wf1');
   });
 });

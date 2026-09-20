@@ -4625,3 +4625,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `38c0094ee5c755eb1c45940a17c024c621f8d7fb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 test-only follow-up未改变 production graph command owner，Zustand spread command与inline `selectAll`边界正确。
 - reviewer独立复核 focused `21/21`、full `152 files / 1204 tests`、build、i18n `1026/1026`、TypeScript和diff check；既有 Vite dynamic/static import与大 chunk warnings保持非阻塞。
 - 创建 verified tag：`checkpoint/frontend-graph-command-facade-verified`；`checkpoint/frontend-graph-command-facade-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.288 unverified：extract workflow registry rename/remove mutations
+
+- 在 `src/store/workflowRegistryState.ts` 增加 `buildRenameWorkflowState` 与 `buildRemoveWorkflowState`，收口 active workflow rename、inactive/active/final removal、fallback activation、empty registry patch和 workspace cleanup intent；不触碰 Tauri cleanup副作用。
+- `workflowStore.ts` 保留 public action、两次 rename set 顺序、remove cleanup 的 fire-and-forget/swallowed-error合同；仅将 registry/activation计算委托给 pure owner。close/open/create/new/switch等 ProjectControl/host orchestration不在本 slice。
+- 新增 direct registry mutation tests与 facade tests，覆盖 active rename、inactive/active/final removal、first remaining activation和 public store contract。
+- 验证：focused `4 files / 26 tests`；完整 Node `153 test files / 1212 tests`；build通过（最大 chunk `1,177.78 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend registry reviewer。

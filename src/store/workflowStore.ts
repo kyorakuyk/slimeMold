@@ -119,6 +119,8 @@ import {
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
+  buildRemoveWorkflowState,
+  buildRenameWorkflowState,
   buildSwitchWorkflowState,
 } from './workflowRegistryState';
 import {
@@ -1423,65 +1425,37 @@ export const useWorkflowStore = create<WorkflowState>()(
       renameWorkflow: (name) => {
         const s = get();
         set({ workflowName: name });
-        if (s.activeWfId) {
-          const wf = s.workflows[s.activeWfId];
-          if (wf) {
-            set({ workflows: { ...s.workflows, [s.activeWfId]: { ...wf, name } } });
-          }
+        const renamed = buildRenameWorkflowState({
+          workflows: s.workflows,
+          activeWfId: s.activeWfId,
+          name,
+        });
+        if (renamed) {
+          set({ workflows: { ...s.workflows, [s.activeWfId]: renamed } });
         }
       },
 
       removeWorkflow: (id) => {
         const s = get();
-        const next = { ...s.workflows };
-        const target = s.workflows[id];
-        // 未指定工作区（workspaceDir=null）时，产物落在 AppData 内部目录，
-        // 删除工作流时一并清理，避免残留文件。用户指定工作区的不动。
-        if (target && !target.workspaceDir) {
+        const result = buildRemoveWorkflowState({
+          workflows: s.workflows,
+          activeWfId: s.activeWfId,
+          id,
+        });
+        // 未指定工作区时保留原有 AppData 清理策略；用户工作区不动。
+        if (result.cleanupWorkflowId) {
           import('@tauri-apps/api/path')
             .then(async (p) => {
-              const base = `${await p.appDataDir()}/slime-mold/${id}`;
+              const base = `${await p.appDataDir()}/slime-mold/${result.cleanupWorkflowId}`;
               const fs = await import('@tauri-apps/plugin-fs');
               await fs.remove(base, { recursive: true });
             })
             .catch(() => {});
         }
-        delete next[id];
-        // 删到零工作流：进入「无激活工作流」状态，画布显示欢迎背景
-        if (Object.keys(next).length === 0) {
-          set({
-            workflows: next,
-            activeWfId: '',
-            workflowName: '',
-            nodes: [],
-            edges: [],
-            agents: [createAgent('ollama')],
-            roles: builtinRoles.map((r) => ({ ...r })),
-            variables: {},
-            selectedNodeId: null,
-            logs: [],
-          });
-          return;
-        }
-        if (id === s.activeWfId) {
-          const newId = Object.keys(next)[0];
-          const wf = next[newId];
-          set({
-            workflows: next,
-            activeWfId: newId,
-            workflowName: wf.name,
-            // 方案 P：wf.nodes 已是运行态 FlowNode
-            nodes: wf.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
-            edges: wf.edges,
-            agents: wf.agents?.length ? wf.agents : [createAgent('ollama')],
-            defaultAgentId: wf.defaultAgentId ?? null,
-            roles: [...builtinRoles.map((r) => ({ ...r })), ...(wf.roles ?? []).filter((r) => !r.builtin)],
-            variables: wf.variables ?? {},
-            selectedNodeId: null,
-            logs: [],
-          });
+        if (result.activation) {
+          set({ workflows: result.workflows, ...result.activation });
         } else {
-          set({ workflows: next });
+          set({ workflows: result.workflows });
         }
       },
 

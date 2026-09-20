@@ -88,7 +88,98 @@ export function buildSwitchWorkflowState(
   };
 }
 
-/** registerWorkflow 的纯输入。 */
+export interface RenameWorkflowStateInput {
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  name: string;
+}
+
+export function buildRenameWorkflowState(
+  input: RenameWorkflowStateInput,
+): WorkflowFileInMemory | null {
+  const workflow = input.workflows[input.activeWfId];
+  return workflow ? { ...workflow, name: input.name } : null;
+}
+
+export interface RemoveWorkflowStateInput {
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  id: string;
+}
+
+export interface WorkflowRemovalActivation {
+  activeWfId: string;
+  workflowName: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: import('../types').AgentConfig[];
+  defaultAgentId: string | null;
+  roles: import('../types').RoleTemplate[];
+  variables: Record<string, unknown>;
+  selectedNodeId: null;
+  logs: never[];
+}
+
+export interface RemoveWorkflowState {
+  workflows: Record<string, WorkflowFileInMemory>;
+  activation?: WorkflowRemovalActivation;
+  cleanupWorkflowId?: string;
+}
+
+export function buildRemoveWorkflowState(
+  input: RemoveWorkflowStateInput,
+): RemoveWorkflowState {
+  const next = { ...input.workflows };
+  const target = input.workflows[input.id];
+  const cleanupWorkflowId = target && !target.workspaceDir ? input.id : undefined;
+  delete next[input.id];
+
+  if (Object.keys(next).length === 0) {
+    return {
+      workflows: next,
+      cleanupWorkflowId,
+      activation: {
+        activeWfId: '',
+        workflowName: '',
+        nodes: [],
+        edges: [],
+        agents: [createAgent('ollama')],
+        defaultAgentId: null,
+        roles: builtinRoles.map((role) => ({ ...role })),
+        variables: {},
+        selectedNodeId: null,
+        logs: [],
+      },
+    };
+  }
+
+  if (input.id !== input.activeWfId) {
+    return { workflows: next, cleanupWorkflowId };
+  }
+
+  const newId = Object.keys(next)[0];
+  const workflow = next[newId];
+  return {
+    workflows: next,
+    cleanupWorkflowId,
+    activation: {
+      activeWfId: newId,
+      workflowName: workflow.name,
+      nodes: workflow.nodes.map((node) => ({ ...node, data: { ...node.data, dirty: true } })),
+      edges: workflow.edges,
+      agents: workflow.agents?.length ? workflow.agents : [createAgent('ollama')],
+      defaultAgentId: workflow.defaultAgentId ?? null,
+      roles: [
+        ...builtinRoles.map((role) => ({ ...role })),
+        ...(workflow.roles ?? []).filter((role) => !role.builtin),
+      ],
+      variables: workflow.variables ?? {},
+      selectedNodeId: null,
+      logs: [],
+    },
+  };
+}
+
 export interface RegisteredWorkflowStateInput {
   workflow: WorkflowFile;
   id: string;
