@@ -96,6 +96,7 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
 import { createProjectSaveQueue } from './projectSaveQueue';
 // 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策 / 子图展开）已抽到 workflowGraph.ts（G5 门面化）
 import {
@@ -1616,34 +1617,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         clearLastSession();
       },
 
-      saveProjectAs: async () => {
-        const s = get();
-        if (!isTauri) {
-          get().addLog('warn', '「将项目另存为」需要桌面端（Tauri）环境');
-          return null;
-        }
-        const picked = await showSaveDirDialog(s.projectName ?? '未命名项目');
-        if (!picked) return null;
-        const file = buildProjectFile(s);
-        const { saveProjectFile } = await import('../io/projectIO');
-        try {
-          const root = await saveProjectFile(file, picked);
-          if (getPendingProjectEvents(file.id).length > 0) {
-            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-            await flushPendingProjectEvents(
-              file.id,
-              new EventStreamRepository(createTauriEventStoreAdapter(root), root),
-            );
-          }
-          set({ projectPath: root, projectDirty: false });
-          set({ lastSavedSnapshot: projectSnapshot(get()) });
-          saveLastSession({ path: root, activeId: s.activeWfId || undefined });
-          return root;
-        } catch (e) {
-          get().addLog('warn', `项目另存为失败：${e instanceof Error ? e.message : String(e)}`);
-          return null;
-        }
-      },
+      saveProjectAs: () => projectSaveAsController.saveProjectAs(),
 
       updateWorkflowGraph: (id, nodes, edges) => {
         const s = get();
@@ -2114,6 +2088,30 @@ export const useWorkflowStore = create<WorkflowState>()(
 // 加载/切换期间临时抑制自动脏检测，避免误标
 let suppressDirty = false;
 const projectSaveQueue = createProjectSaveQueue();
+const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsController<WorkflowState>({
+  isTauri,
+  getState: (): WorkflowState => useWorkflowStore.getState(),
+  showSaveDirDialog,
+  buildProjectFile,
+  saveProjectFile: async (file, targetPath) => {
+    const { saveProjectFile } = await import('../io/projectIO');
+    return saveProjectFile(file, targetPath);
+  },
+  getPendingProjectEventCount: (projectId) => getPendingProjectEvents(projectId).length,
+  flushPendingProjectEvents: async (projectId, projectRoot) => {
+    const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+    await flushPendingProjectEvents(
+      projectId,
+      new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),
+    );
+  },
+  onSaved: (projectRoot, activeWfId) => {
+    useWorkflowStore.setState({ projectPath: projectRoot, projectDirty: false });
+    useWorkflowStore.setState({ lastSavedSnapshot: projectSnapshot(useWorkflowStore.getState()) });
+    saveLastSession({ path: projectRoot, activeId: activeWfId || undefined });
+  },
+  addLog: (level, message) => useWorkflowStore.getState().addLog(level, message),
+});
 
 /** 载入/打开项目后调用：以当前内存态作为"与磁盘一致"的基准，清除脏标记 */
 function finalizeLoaded() {

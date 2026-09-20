@@ -4462,3 +4462,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `694414e79a79058df253e146691d87b9996c1e78` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认同 key 串行、跨 key 并行、失败后续队列释放、identity-checked tail cleanup，以及 workflowStore Save 返回值、guard 和 finalization行为未改变。
 - reviewer独立复核 focused `9/9`、全量 `140 files / 1167 tests`、build、i18n `1026/1026`、TypeScript 和 diff check；非阻塞建议记录为后续回归：第三个同 key pending task 的 tail cleanup race、Save guard abort/project-switch rejection。
 - 创建 verified tag：`checkpoint/frontend-workflow-save-queue-verified`；原 `checkpoint/frontend-workflow-save-queue-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore bounded split。
+
+### 7.261 unverified：extract workflow Save As controller
+
+- 新增 `src/store/projectSaveAsController.ts`，收口 Save As 的 Tauri gate、目录选择、ProjectFile 写入、pending event flush、失败 warning 和保存完成 callback；`workflowStore.ts` 保留 facade、stable `projectSnapshot`、dirty state 与 `saveLastSession`。
+- 新增 controller direct regressions：browser gate、取消选择、成功 flush/回调、持久化失败；既有 Save As dirty-marker regression继续通过。显式用 `WorkflowState` 类型打断 module-level controller 与 Zustand store 的推断回环，避免全仓 selector退化为 `any`。
+- 验证：focused `4 files / 11 tests`；完整 Node `141 test files / 1171 tests`；build通过（最大 chunk `1,175.00 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
