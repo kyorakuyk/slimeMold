@@ -2,7 +2,7 @@
 
 > Status: evidence dossier, not a security approval.
 >
-> Scope: historical entries `7.196–7.240` in `docs/DEVELOPMENT_LOG.md`, reconciled against exact current HEAD `4c5f0ccefad9981eb82734af1958d16e3c2f5e9c`, current source, checkpoint tags, and the independent read-only triage results.
+> Scope: historical entries `7.196–7.256` in `docs/DEVELOPMENT_LOG.md`, reconciled against exact current HEAD `0f13dd12eecfac53ffa4b76ac6d6027b792e5f3b`, current source, checkpoint tags, and the independent read-only triage results.
 >
 > The classifications below describe the state of the historical debt. A verified tag is evidence for its exact bounded snapshot only; it is not approval of the current tree, the full native host, or the complete Worker lifecycle.
 
@@ -22,9 +22,9 @@
 | Worktree admission/lifecycle/file `7.199–7.201` | evidence-missing | Later authority regrouping changed the reviewed snapshot. | No exact closure for the original extraction; Unix/macOS adversarial matrix is absent. |
 | Native namespace `7.202–7.203` | superseded | `3d14acd` had a bounded passed review and verified tag. | Later native changes and non-Windows/GUI scope remain outside it. |
 | Orphan lineage `7.204–7.206` | superseded successor, concrete historical risk | `ff1261d` passed the all-record duplicate-lineage review. | The older `4a85825`/`97dedb4` snapshots were not safe; this does not close restore/CAS/TOCTOU residuals. |
-| Cleanup identity `7.207–7.209` | environment-blocked successor | `b855766` passed the identity short-circuit review. | Unix/macOS, GUI/E2E, durable cleanup recovery and post-remove proof are missing. |
+| Cleanup identity `7.207–7.209` | environment-blocked successor | `b855766` passed the identity short-circuit review. | Unix/macOS and full native GUI/E2E evidence remain absent; durable partial-CAS/pending-probe risks remain. |
 | Storage endpoint/vault `7.210–7.211` | environment-blocked | Exact Windows snapshot passed. | Unix/macOS native and GUI/E2E evidence is missing. |
-| Execution/dev_exec `7.212–7.213` | environment-blocked | Exact Windows snapshot passed. | Unix/macOS native, GUI/E2E and legacy worktree residuals remain open. |
+| Execution/dev_exec `7.212–7.213` | environment-blocked | Exact Windows snapshot passed. | Unix/macOS native, GUI/E2E and launcher/TOCTOU residuals remain open. |
 | Worker terminal provenance `7.214` | concrete-risk | Current queue still accepts caller-supplied success provenance in generic paths; host receipt is not mandatory at every admission. | Legacy executor admission and enqueue ProjectControl binding remain open. |
 | Worker invariant closure `7.215–7.219` | evidence-missing | Current source contains many guards and later frontend wiring, but no exact verified Worker-terminal tag covers the chain. | Cross-attempt, runtime/persistence fencing and current-head production wiring require a new bounded review. |
 | Restore/audit/reconciliation `7.220` | concrete-risk | Current source still permits caller-supplied save guard and has reconciliation/save ordering concerns. | Stale ProjectFile overwrite and runtime generation fencing remain open. |
@@ -33,6 +33,12 @@
 | Executor LLM adapter `7.236` | evidence-missing as standalone extraction | The later `c6e3636` review passed the capability repair, not a separately recorded original-extraction closure. | Keep the standalone structural claim bounded; capability bypass itself is repaired. |
 | Executor capability repair `7.237–7.238` | superseded by verified tag | `c6e3636` exact review passed. | No approval for Worker/native/runtime residuals. |
 | Executor context adapter `7.239–7.240` | superseded by verified tag | `f398274` exact review passed. | workflowStore/WorkflowEditor and full GUI/native scope remain open. |
+| Tauri E2E/dirty baseline `7.241–7.244` | partial evidence / superseded repair | Real GUI success/failure/save/reopen evidence exists; Save/Save As repair passed exact review at `f06a457`. | Offline fixture did not exercise durable WorkerQueue Evidence/Acceptance/Receipt/Cleanup/Git mutation. |
+| Historical triage `7.245` | evidence artifact | `HISTORICAL_UNVERIFIED_TRIAGE.md` records current classifications. | It is not a security approval or current full-tree reviewer verdict. |
+| Protected metadata aliases `7.246–7.248` | bounded verified, cross-platform blocked | `7c30dec` exact review passed real `.git`/`.slimemold` alias mutation probes. | Linux/macOS matrix is unavailable; broader native path/TOCTOU risks remain. |
+| Native find parity `7.249–7.250` | bounded verified, cross-platform blocked | `7eb98ac` exact review passed runtime/parser parity vectors. | Unix/macOS and broader spawn/path identity evidence remain absent. |
+| Legacy `run_git` `7.251–7.252` | bounded verified, cross-platform blocked | `44ae249` exact review passed hardened diff argv wiring. | Hostile-config integration and Unix/macOS evidence remain follow-up scope. |
+| Cleanup post-remove `7.253–7.255` | bounded verified, partial-CAS still open | `d994a49` exact review passed real listing-present/absent/prune fixture. | Durable partial-CAS and pending-probe recovery remain concrete risks. |
 
 ## Concrete native risks still open
 
@@ -40,15 +46,12 @@ These are not merely missing reviewer labels; current source and the historical 
 
 1. **Fresh-session worktree restore identity** — native session initialization clears process-local registrations, while restore requires a trusted registration; persisted path/branch facts cannot safely rebind a replacement worktree.
 2. **Partial-CAS cleanup recovery** — branch CAS/delete can succeed before worktree removal fails, while the caller retains the old branch revision; retry/recovery can lose the lineage needed for a safe read-back.
-3. **Post-remove strict read-back** — successful `git worktree remove` is not followed by strict target absence and Git worktree-list absence checks before state is cleared.
-4. **Pending probe unknown** — malformed or failed worktree probes become an in-memory `unknownEffects` status without a durable native recovery record that survives restart.
-5. **Windows pathname TOCTOU** — cwd/file canonicalization and later process spawn still use pathname-based checks/use; no handle-bound/no-follow proof closes the race.
-6. **Protected metadata roots** — direct native `find`/read and file-authority paths do not consistently enforce `.git` and `.slimemold` exact/descendant/ancestor protection.
-7. **Generic find parity** — Node/Rust parsers exist, but the native runtime branch uses a separate permissive lexical gate; malformed predicate arity can diverge across hosts.
-8. **Launcher authority/parity** — Rust, Node, and Antigravity have separate ComSpec/PATHEXT and shim resolution behavior, with environment-controlled inputs and no single current-head trusted contract.
-9. **Legacy `run_git`** — the read-only IPC path remains a separate Git diff surface rather than using the shared hardened Git invocation and policy.
+3. **Pending probe unknown** — malformed or failed worktree probes become an in-memory `unknownEffects` status without a durable native recovery record that survives restart.
+4. **Windows pathname TOCTOU** — cwd/file canonicalization and later process spawn still use pathname-based checks/use; no handle-bound/no-follow proof closes the race.
+5. **Launcher authority/parity** — Rust, Node, and Antigravity have separate ComSpec/PATHEXT and shim resolution behavior, with environment-controlled inputs and no single current-head trusted contract.
+6. **Unix/macOS native matrix** — the bounded Windows slices now have exact reviews, but the required Unix/macOS sysroot, cfg, no-follow, identity and spawn evidence is unavailable.
 
-These risks remain `concrete-risk` until independently repaired and reviewed. A Windows-only passed structural tag does not change that classification.
+Bounded closures already verified after the original dossier include protected metadata aliases (`7.248`), runtime find parity (`7.250`), legacy `run_git` invocation (`7.252`) and cleanup post-remove read-back (`7.255`). They do not close the residuals above.
 
 ## Worker and persistence residuals still open
 
@@ -98,11 +101,9 @@ The following bounded structural slices have passed exact reviews and should not
 1. Worker terminal admission and durable receipt requirement.
 2. Worker enqueue ProjectControl/session/TaskGraph admission.
 3. Cross-attempt Evidence/Acceptance and runtime/persistence fencing.
-4. Worktree partial-CAS durable recovery and strict post-remove read-back.
-5. Generic protected metadata paths and find grammar parity.
-6. Windows launcher authority and legacy `run_git` policy.
-7. Unix/macOS native compilation and behavioral matrix.
-8. A real WorkerQueue Tauri fixture capable of producing durable Evidence/Acceptance/Receipt/Cleanup facts.
+4. Worktree partial-CAS durable recovery and pending-probe recovery.
+5. Windows launcher authority and Unix/macOS native matrix.
+6. A real WorkerQueue Tauri fixture capable of producing durable Evidence/Acceptance/Receipt/Cleanup facts.
 
 ## Partial-CAS design gate
 

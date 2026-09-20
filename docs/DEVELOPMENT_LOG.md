@@ -4438,3 +4438,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 只读研究确认 concrete-risk：`dev_cleanup_worktree` 在 branch CAS成功后 remove/probe失败时没有 durable native phase；Node/Worker 侧只有 generic `unknown/needs-user` 与旧 branchRevision，restart/orphan restore要求 branch仍存在，无法可靠收敛。
 - 证据路径：`src-tauri/src/authority/worktree.rs` CAS/remove顺序、`authority/state.rs`无partial phase、`src/dev/worktree.ts` orphan/restore分支、`src/dev/tauri-run.ts` generic unknown映射；现有 cleanup side-effect owner能抑制 proposal但不能记录“branch已删除”的native事实。
 - 当前分类：`concrete-risk`。推荐下一次架构切片保持 CAS顺序，引入 host-owned durable `branch-cas-succeeded/worktree-remove-pending` phase与不重复CAS的 inspect/finalize path；重排 CAS/remove需另行评审。未获角色/字段/authority确认前不编码；本轮为 evidence-only，未重跑代码质量门。
+
+### 7.257 evidence：reconcile triage dossier with verified native closures
+
+- 将 `HISTORICAL_UNVERIFIED_TRIAGE.md` 基线更新到 current HEAD `0f13dd1` 与 entries `7.196–7.256`；移除已通过 exact review 的 protected metadata alias、find parity、legacy `run_git`、cleanup post-remove read-back作为“仍开放风险”，保留其跨平台/环境证据边界。
+- 当前 concrete native residual收敛为 fresh-session restore identity、partial-CAS、pending probe unknown、Windows pathname TOCTOU、launcher parity与Unix/macOS matrix；Worker terminal/admission/provenance/runtime fencing、完整 WorkerQueue Tauri E2E和workflowStore/WorkflowEditor结构债务仍未收口。
+- 本轮为 docs-only；实际检查：`git diff --check`通过，未重跑代码质量门。partial-CAS设计仍等待角色/字段/authority确认。
