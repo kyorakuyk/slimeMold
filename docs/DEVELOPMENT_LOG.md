@@ -4420,3 +4420,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Read-only triage确认 cleanup 成功后只重查 base identity，随后直接清理 registrations/orphan state；target目录或 Git worktree listing 未做严格 absence read-back。
 - 先写 RED：真实临时 Git repo测试要求 target存在时 read-back false，target删除且 Git listing无 target时 true；新增 `cleanup_target_absence_is_confirmed`，并在 `dev_cleanup_worktree` 消费 capability前同时检查 filesystem `symlink_metadata` absence 与 `git worktree list` absence，失败保持 unknown并拒绝清理完成。
 - 验证：cleanup read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.254 unverified：strengthen cleanup read-back regression with real worktree listing
+
+- `33d262c` reviewer fail-closed指出初始 regression只创建普通目录并直接调用 helper，未证明“目录已消失但 Git administrative worktree entry仍在”时返回 false，也未覆盖真实 worktree fixture。
+- 修复测试 fixture：临时 Git repo提交初始 commit，执行 `git worktree add --detach`，删除 target目录但保留 Git listing断言 read-back false，再执行 `git worktree prune`断言 true；production cleanup顺序不变，仍在 registry/orphan projection前执行 strict read-back。
+- 验证：真实 worktree read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待新 exact native reviewer。

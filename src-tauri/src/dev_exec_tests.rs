@@ -389,16 +389,40 @@ fn cleanup_readback_requires_absent_target_and_unlisted_worktree() {
         std::env::temp_dir().join(format!("slimemold-cleanup-readback-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
-    let init = std::process::Command::new("git")
-        .current_dir(&root)
-        .args(["init", "-q"])
-        .status()
-        .unwrap();
-    assert!(init.success());
+    let run_git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fixture git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run_git(&["init", "-q"]);
+    fs::write(root.join("README.md"), "fixture").unwrap();
+    run_git(&["add", "README.md"]);
+    run_git(&[
+        "-c",
+        "user.name=SlimeMold Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
     let target = root.join("worker");
-    fs::create_dir_all(&target).unwrap();
+    let target_str = target.to_string_lossy().to_string();
+    run_git(&["worktree", "add", "-q", "--detach", &target_str, "HEAD"]);
     assert!(!cleanup_target_absence_is_confirmed(&root, &target).unwrap());
     fs::remove_dir_all(&target).unwrap();
+    assert!(
+        !cleanup_target_absence_is_confirmed(&root, &target).unwrap(),
+        "missing directory is not enough while Git still lists the worktree"
+    );
+    run_git(&["worktree", "prune"]);
     assert!(cleanup_target_absence_is_confirmed(&root, &target).unwrap());
     let _ = fs::remove_dir_all(&root);
 }
