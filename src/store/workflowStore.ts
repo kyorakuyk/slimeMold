@@ -1282,10 +1282,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectId: file.id,
           projectCreatedAt: file.createdAt,
           projectPath: path,
-          // P1：落盘后清除项目级脏标记，并记录本次快照
+          // P1：落盘后清除项目级脏标记，并记录稳定快照基准
           projectDirty: false,
-          lastSavedSnapshot: JSON.stringify(file),
         });
+        set({ lastSavedSnapshot: projectSnapshot(get()) });
           return path;
         } finally {
           release();

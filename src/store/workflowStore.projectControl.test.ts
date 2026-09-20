@@ -1,4 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { projectSnapshot } from './workflowSerialize';
+
+vi.mock('../io/projectIO', async () => {
+  const actual = await vi.importActual<typeof import('../io/projectIO')>('../io/projectIO');
+  return {
+    ...actual,
+    saveProjectFile: vi.fn(async (_file: unknown, existingRoot?: string) => existingRoot ?? 'C:/projects/project-1'),
+  };
+});
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import { createProjectSession } from '../projectControl/state';
 import { clearProjectEventBuffer, getPendingProjectEvents, recordProjectEvents } from '../projectControl/eventBuffer';
@@ -31,6 +40,23 @@ beforeEach(() => {
 });
 
 describe('workflowStore project control lifecycle', () => {
+  it('clears dirty state against the stable snapshot after saving', async () => {
+    useWorkflowStore.setState({
+      projectPath: 'C:/projects/project-1',
+      projectDirty: true,
+      lastSavedSnapshot: null,
+      projectName: '旧项目',
+      projectId: 'project-1',
+    } as never);
+
+    await useWorkflowStore.getState().saveProject();
+
+    const state = useWorkflowStore.getState();
+    expect(state.projectDirty).toBe(false);
+    expect(state.isProjectDirty()).toBe(false);
+    expect(state.lastSavedSnapshot).toBe(projectSnapshot(state));
+  });
+
   it('normalizes project control snapshots at the store boundary', () => {
     useWorkflowStore.getState().setProjectControl({
       version: 1,

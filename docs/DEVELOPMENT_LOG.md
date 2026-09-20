@@ -4339,3 +4339,16 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `f398274` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认资产合并/id覆盖、动态 partial/owner映射、branches/onGate、sandbox lanes、edge双写、过期 intervention cancel、checkpoint-before-request、owner identity、capability fencing与 executor lifecycle均保持一致，无重复 callback、stale import、循环、TDZ或 loop regression。
 - 同一代码快照质量门：Node `138 test files / 1163 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
 - 已创建本地 verified tag：`checkpoint/frontend-executor-context-adapter-verified`。该 tag只证明 context结构切片，不代表 workflowStore/WorkflowEditor剩余结构债务、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.241 unverified：real Tauri E2E acceptance evidence
+
+- 在真实 `npm run tauri dev` GUI中使用 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z`，通过 File→Open Project 加载成功场景；GUI显示 `Tauri E2E Disposable`、`Offline Worker smoke`，运行后两个节点成功（约 `7ms/194ms`），最近输出包含 evidence marker。
+- GUI File→Save Project后，fixture `project.json`真实落盘 `run_1789866123349`、`status=success`、2节点输出；关闭项目再从最近项目重新打开，运行历史面板真实显示 success、2节点、0.2s，详情输出恢复。
+- 第二个 clean disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z-failure-clean` 关闭离线模拟且无 agent；GUI真实显示 `runHistory.status.error`、红色 Worker 节点与 `2/2`拓扑完成。保存后 ProjectFile包含 error run、节点级 success/error、明确错误文本；checkpoint JSON包含同一 error run，事件流保留 baseline。
+- 真实验收发现 concrete-risk：成功和失败场景保存后 GUI项目名旁的 `*` 未清除，尽管 ProjectFile已写入；该问题进入 7.242 修复。离线模拟场景未覆盖真实 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree副作用，不能将本轮称为完整 Worker E2E verified；两个 fixture按约定保留，不自动 cleanup。
+
+### 7.242 unverified：repair dirty marker after ProjectFile save
+
+- 根因：`saveProject`以 raw `JSON.stringify(file)`写入 `lastSavedSnapshot`，dirty checker比较 stable `projectSnapshot`，导致保存后永远偏离并保留 `*`。
+- 修复：保存成功后先清除 `projectDirty`，再以当前 state 的 stable `projectSnapshot(get())`建立基准；新增 store regression覆盖 `projectDirty=false`、`isProjectDirty()=false`与快照一致。
+- GREEN：dirty/store focused `3 files / 48 tests`；完整 Node `138 test files / 1164 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。新的 exact HEAD review与修复后 Tauri GUI recheck待进行。
