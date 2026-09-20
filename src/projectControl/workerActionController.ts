@@ -10,6 +10,7 @@ import { recoverWorkerRunCommand } from './workerRecoveryCommand';
 import { installWorkerRunRuntime } from './workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { mergeWorkerSideEffects } from './workerEvidence';
+import { assertWorkerRecoveryDecisionPrecondition } from './workerRecoveryDecisionPrecondition';
 import { createWorkerHostRepositoryBundleFromModules, loadWorkerHostRepositoryModules } from './workerHostRepositoryBundle';
 
 type ProjectSave = (
@@ -87,6 +88,15 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
     deps.assertProjectOperation(operation);
     current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
+    const decisionState = deps.getState();
+    assertWorkerRecoveryDecisionPrecondition({
+      projectId,
+      projectPath,
+      runId,
+      capturedRun: run,
+      capturedTaskGraph: taskGraph,
+      current: decisionState,
+    });
     const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const result = recoverWorkerRunCommand({
       projectId,
@@ -100,18 +110,18 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     });
     deps.assertProjectOperation(operation);
     deps.recordProjectEvents(projectId, result.events);
-    const nextRuns = current.workerRuns.map((item) => item.runId === runId ? result.state : item);
-    current.setWorkerRuns(nextRuns);
-    current.setOrchestrations(
-      projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
+    const nextRuns = decisionState.workerRuns.map((item) => item.runId === runId ? result.state : item);
+    decisionState.setWorkerRuns(nextRuns);
+    decisionState.setOrchestrations(
+      projectWorkerRunsOntoOrchestrations(decisionState.orchestrations, nextRuns),
     );
-    current.setWorkerCleanupProposals(current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId));
+    decisionState.setWorkerCleanupProposals(decisionState.workerCleanupProposals.filter((proposal) => proposal.runId !== runId));
     const runtime = installWorkerRunRuntime({
       projectId,
-      taskGraphs: current.taskGraphs,
-      runs: current.workerRuns.map((item) => item.runId === runId ? result.state : item),
+      taskGraphs: decisionState.taskGraphs,
+      runs: decisionState.workerRuns.map((item) => item.runId === runId ? result.state : item),
     });
-    current.setWorkerRunRecoveries(runtime.recoveries);
+    decisionState.setWorkerRunRecoveries(runtime.recoveries);
     deps.assertProjectOperation(operation);
     await deps.saveProject(projectId, projectPath, operation.controller.signal);
     deps.assertProjectOperation(operation);
