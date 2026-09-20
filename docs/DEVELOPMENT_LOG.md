@@ -4492,3 +4492,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `src/store/projectDirtyController.ts`，收口项目 dirty subscriber、stable snapshot比较、suppression flag、`finalizeLoaded` baseline重建与dispose；`workflowStore.ts` 的 checkpoint、new/open/close/switch action改为调用 controller，不再持有裸 `suppressDirty` 或旧 subscriber实现。
 - `projectConfigAutosave`继续通过 dirty controller读取 suppression状态；`DIRTY_KEYS`、`projectSnapshot`和 store API合同未改变。显式 `ProjectDirtyController` 类型注解避免 module-level controller 与 Zustand initializer 形成推断回环。
 - 验证：focused `6 files / 17 tests`；完整 Node `143 test files / 1175 tests`；build通过（最大 chunk `1,175.52 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.266 verified：exact review closes project dirty runtime slice
+
+- 独立 reviewer 对 exact HEAD `f6f85a2539e34253dc1f9a6a21704a4df0c8ea99` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 dirty subscriber、DIRTY_KEYS比较、no-snapshot/stable mismatch行为、suppression覆盖和 open/finalize顺序无改变，未发现 Zustand cycle 或 duplicate owner。
+- reviewer独立复核 focused `6 files / 17 tests`、全量 `143 files / 1175 tests`、build、i18n `1026/1026`、tsc、diff check；非阻塞建议记录为后续回归：no-snapshot/stable-mismatch、unrelated DIRTY_KEYS、dispose idempotence、throwing state update，以及 scoped suppression helper。
+- 创建 verified tag：`checkpoint/frontend-project-dirty-runtime-verified`；原 `checkpoint/frontend-project-dirty-runtime-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
