@@ -4813,9 +4813,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `34284be6a9c936d5ec1b10d9dec61f3fb73c2b7b` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 full/evidence-only bundle、三 caller construction order、paths、live Acceptance bridge、adapter separation、fencing和 recovery contracts保持。
 - 验证：recovery-focused `9 files / 55 tests`；完整 Node `166 test files / 1255 tests`；build通过（最大 chunk `1,183.25 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-shared-worker-recovery-repository-verified`；对应 `checkpoint/frontend-shared-worker-recovery-repository-unverified` 保留为历史回退锚点。
 
-### 7.315 unverified：harden interactive Worker recovery decision precondition
+### 7.315 verified：harden interactive Worker recovery decision precondition
 
 - 新增 `src/projectControl/workerRecoveryDecisionPrecondition.ts`，在 interactive `recoverWorkerRun` 完成 journal recovery 后、调用 `recoverWorkerRunCommand` 前重新读取 live state，拒绝 projectId/projectPath drift、目标 WorkerRun 丢失或 same-project WorkerRun/TaskGraph 内容变化。
 - 通过稳定 JSON 对 captured run/TaskGraph 与 fresh state 做 fail-closed 比较；决策应用、event schema、RecoveryCommand、runtime、save、retry/skip事实 owner不变。后续 projection/runtime/save统一使用 precondition通过时的 fresh state，而不是异步前捕获的旧数组。
 - 新增 direct RED→GREEN tests，覆盖 unchanged healthy、same-project run mutation、TaskGraph revision/content drift和 project identity drift；duplicate panel decision/single-flight mutex、decision CAS和 UI allowedDecisions仍是后续独立 slice。
-- 验证：focused `6 files / 26 tests`；完整 Node `167 test files / 1259 tests`；build通过（最大 chunk `1,184.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact recovery decision precondition reviewer。
+- 独立 reviewer 对 exact HEAD `4a5fe8d33cb6525c0134b96b027a3624b68e78b0` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 precondition、captured command inputs、fresh-state projection ordering、canonical recovery/event ownership和 forbidden-import boundaries保持。controller-level drift/command-blocking回归建议非阻塞，列入后续增强。
+- 验证：focused `6 files / 26 tests`；完整 Node `167 test files / 1259 tests`；build通过（最大 chunk `1,184.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-decision-precondition-verified`；对应 `checkpoint/frontend-worker-recovery-decision-precondition-unverified` 保留为历史回退锚点。
