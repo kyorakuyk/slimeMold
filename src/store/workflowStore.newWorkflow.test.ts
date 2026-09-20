@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowNode } from '../types';
 import { useWorkflowStore } from './workflowStore';
 
@@ -52,6 +52,21 @@ describe('workflowStore.newWorkflowInProject', () => {
     expect(active?.belongsToProject).toBe('project-1');
     expect(active?.assets).toEqual([]);
     expect(state.nodes).toEqual([]);
+  });
+
+  it('preserves the parent capture-before-new-workflow clock ordering', async () => {
+    const now = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000);
+    try {
+      await invokeNewWorkflow();
+    } finally {
+      now.mockRestore();
+    }
+
+    const state = useWorkflowStore.getState();
+    expect(state.workflows['wf-1000']?.name).toBe('未归属');
+    expect(state.activeWfId).toBe('wf-2001');
   });
 
   it('preserves the explicit standalone workspace identity', async () => {

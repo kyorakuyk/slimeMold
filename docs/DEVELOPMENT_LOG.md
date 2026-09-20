@@ -4558,3 +4558,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在 `src/store/workflowState.ts` 增加 `buildNewWorkflowInProjectState`，收口游离画布 capture、空白 workflow registry entry、project/standalone identity 和 activation projection；`workflowStore.newWorkflowInProject` 保留默认目录异步解析、时间/ID生成和 Zustand facade。
 - 新增 direct 与 facade regressions：unbound canvas capture、project activation、standalone workspace identity、`assets: []` 初始化；对照父实现保留 dirty 行为与 captured workflow metadata。
 - 验证：focused `2 files / 29 tests`；完整 Node `146 test files / 1187 tests`；build通过（最大 chunk `1,177.02 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.277 unverified：repair newWorkflow capture timestamp parity
+
+- exact reviewer 对 `37ef92827afe487fe2157664086c3b6fe190172d` fail-closed：指出 capture workflow ID/date 与新 workflow ID/savedAt 的 `Date.now()`/`Date`采样顺序被重排，builder间接依赖时间；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `ce8d5beb1548fc98aa8c018dae576ed78592b146` 为起点：`workflowStore` 重新按父实现顺序负责 capture ID/date 与新 ID/date；`serializeCurrent` 接受注入 savedAt；`buildNewWorkflowInProjectState` 不再取时钟；补 fake-clock、captured timestamp、asset preservation 和 source non-mutation regressions。
+- 验证：focused `2 files / 31 tests`；完整 Node `146 test files / 1189 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend reviewer。

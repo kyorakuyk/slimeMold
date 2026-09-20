@@ -5,7 +5,7 @@
  * buildOpenProjectState（项目装载状态构建）、buildSwitchWorkflowState（工作流切换状态构建）。
  */
 import { describe, it, expect } from 'vitest';
-import type { AgentRouteTable, FlowEdge, FlowNode, ProjectFile, WorkflowFile } from '../types';
+import type { AgentRouteTable, AssetMeta, FlowEdge, FlowNode, ProjectFile, WorkflowFile, WorkflowFileInMemory } from '../types';
 import {
   buildCreateProjectState,
   buildNewProjectState,
@@ -383,18 +383,42 @@ describe('buildNewWorkflowInProjectState', () => {
     };
     const project = buildNewWorkflowInProjectState({
       workflows: {}, activeWfId: '', current, projectId: 'p1', workflowId: 'wf1',
-      capturedWorkflowId: 'wf-captured', savedAt: '2026-01-01',
+      capturedWorkflowId: 'wf-captured', capturedSavedAt: '2026-01-01T00:00:00.500Z', savedAt: '2026-01-01',
     });
     expect(project.workflows['wf-captured']?.nodes[0]?.id).toBe('node-1');
+    expect(project.workflows['wf-captured']?.savedAt).toBe('2026-01-01T00:00:00.500Z');
     expect(project.workflows.wf1?.belongsToProject).toBe('p1');
     expect(project.workflows.wf1?.assets).toEqual([]);
     expect(project.activation?.workflowName).toBe('工作流 2');
 
     const standalone = buildNewWorkflowInProjectState({
       workflows: {}, activeWfId: '', current: { ...current, nodes: [], edges: [] }, projectId: null,
-      standalonePath: 'C:/workspace', workflowId: 'wf2', capturedWorkflowId: 'wf-captured-2', savedAt: '2026-01-01',
+      standalonePath: 'C:/workspace', workflowId: 'wf2', capturedWorkflowId: 'wf-captured-2', capturedSavedAt: '2026-01-01T00:00:01.000Z', savedAt: '2026-01-01',
     });
     expect(standalone.workflows.wf2?.workspaceDir).toBe('C:/workspace');
     expect(standalone.workflows.wf2?.standalonePath).toBe('C:/workspace');
+  });
+
+  it('preserves captured assets without mutating the source registry', () => {
+    const assets: AssetMeta[] = [{
+      id: 'asset-1', name: 'note.txt', path: null, kind: 'text', content: 'x',
+      createdAt: '2026-01-01', inWorkspace: false,
+    }];
+    const captured = {
+      version: 1, name: '旧游离工作流', savedAt: 'old', nodes: [], edges: [], agents: [], roles: [], assets,
+    } as unknown as WorkflowFileInMemory;
+    const workflows = { 'wf-captured': captured };
+
+    const result = buildNewWorkflowInProjectState({
+      workflows, activeWfId: '', current: {
+        workflowName: '未归属', nodes: [mkFlowNode('node-1', 'input.text')], edges: [],
+        agents: [], roles: [], variables: {}, groups: [],
+      }, projectId: null, standalonePath: 'C:/workspace', workflowId: 'wf-new',
+      capturedWorkflowId: 'wf-captured', capturedSavedAt: '2026-01-01T00:00:00.500Z', savedAt: '2026-01-01',
+    });
+
+    expect(result.workflows['wf-captured']?.assets).toBe(assets);
+    expect(workflows['wf-captured']).toBe(captured);
+    expect(workflows['wf-captured']?.savedAt).toBe('old');
   });
 });

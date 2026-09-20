@@ -1307,8 +1307,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!inProject) {
           standalonePath = workspaceDir ?? (await defaultStandaloneDir());
         }
-        const now = Date.now();
-        const id = `wf-${now + 1}`;
+        const shouldCapture = !s.activeWfId && (s.nodes.length || s.edges.length);
+        const capturedWorkflowId = shouldCapture ? `wf-${Date.now()}` : s.activeWfId;
+        const capturedSavedAt = shouldCapture ? new Date().toISOString() : '';
+        const id = `wf-${Date.now() + 1}`;
+        const savedAt = new Date().toISOString();
         const result = buildNewWorkflowInProjectState({
           workflows: s.workflows,
           activeWfId: s.activeWfId,
@@ -1325,8 +1328,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           projectId: s.projectId,
           standalonePath,
           workflowId: id,
-          capturedWorkflowId: s.activeWfId || `wf-${now}`,
-          savedAt: new Date().toISOString(),
+          capturedWorkflowId,
+          capturedSavedAt,
+          savedAt,
         });
         set({ workflows: result.workflows, ...result.activation });
       },

@@ -354,6 +354,7 @@ export interface NewWorkflowInProjectStateInput {
   standalonePath?: string;
   workflowId: string;
   capturedWorkflowId: string;
+  capturedSavedAt: string;
   savedAt: string;
 }
 
@@ -371,6 +372,8 @@ export function buildNewWorkflowInProjectState(
         standalonePath: previous?.standalonePath,
       },
       previous?.assets,
+      false,
+      input.capturedSavedAt,
     );
   }
   const workflow: WorkflowFileInMemory = {

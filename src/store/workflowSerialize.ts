@@ -139,11 +139,13 @@ export function serializeCurrent(
   keepAssets?: AssetMeta[],
   /** 稳定模式：savedAt 用固定占位，避免时间戳使快照逐次刷新（脏检测用） */
   stable = false,
+  /** 可选的外部时间戳；用于保持调用方的时间采样顺序，缺省时沿用当前时间语义 */
+  savedAt?: string,
 ): WorkflowFileInMemory {
   return {
     version: 1,
     name: s.workflowName || '未命名工作流',
-    savedAt: stable ? '' : new Date().toISOString(),
+    savedAt: savedAt ?? (stable ? '' : new Date().toISOString()),
     // 方案 P：内存态直接持有运行态 FlowNode，无需再拍平/还原
     nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
     edges: s.edges,
