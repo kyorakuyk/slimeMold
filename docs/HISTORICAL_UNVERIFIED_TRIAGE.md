@@ -104,6 +104,14 @@ The following bounded structural slices have passed exact reviews and should not
 7. Unix/macOS native compilation and behavioral matrix.
 8. A real WorkerQueue Tauri fixture capable of producing durable Evidence/Acceptance/Receipt/Cleanup facts.
 
-## Evidence rule
+## Partial-CAS design gate
 
-This dossier is a current classification of historical records, not a blanket approval. Any future code or evidence change invalidates an exact reviewer verdict outside its snapshot. A claim may be upgraded only by a new RED/GREEN regression, full quality gate, exact-head independent review, and—where applicable—real Tauri/native read-back.
+Current read-only evidence confirms a concrete native gap: `dev_cleanup_worktree` can delete the branch ref, then fail during worktree removal or immediate post-CAS probing. The existing JS `unknown/needs-user` owner records uncertainty, but no durable native phase records `branch-cas-succeeded/worktree-remove-pending`; restart/orphan restore still expects the deleted branch revision and cannot converge.
+
+The next repair must not be chosen implicitly:
+
+- **Recommended boundary:** keep the current branch-CAS order, persist a host-owned phase containing project/session generation, path, target identity, branch, approved revision and phase, then expose a separate explicit inspect/finalize recovery path that never repeats branch CAS and revalidates identity/listing before removing or reconciling the remaining worktree.
+- **Rejected without architectural review:** simply reorder worktree removal before branch CAS. That changes the mutation race and branch-lineage contract and needs a separate authority/security review.
+- **Current status:** `concrete-risk`, implementation intentionally paused pending role/field/authority confirmation. GUI/Worker full E2E does not close this native gap.
+
+Any future code or evidence change invalidates an exact reviewer verdict outside its snapshot. A claim may be upgraded only by a new RED/GREEN regression, full quality gate, exact-head independent review, and—where applicable—real Tauri/native read-back.

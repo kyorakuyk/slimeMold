@@ -4432,3 +4432,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `d994a49` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 Git fixture覆盖 target存在 false、target目录删除但 Git listing残留 false、prune后 absence true；production cleanup在 registry/orphan projection前执行 strict read-back。
 - 同一快照质量门：targeted `1/1`；Rust fmt/check、全量 lib `102/102`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。后续可将 fixture setup迁移到 `TempDirs`/sanitized Git resolver，但不影响本 bounded closure。
 - 已创建本地 verified tag：`checkpoint/native-cleanup-post-remove-readback-verified`。该 closure只覆盖 cleanup absence read-back，不代表 partial-CAS、pending probe、Windows TOCTOU、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
+
+### 7.256 evidence：partial-CAS recovery design gate
+
+- 只读研究确认 concrete-risk：`dev_cleanup_worktree` 在 branch CAS成功后 remove/probe失败时没有 durable native phase；Node/Worker 侧只有 generic `unknown/needs-user` 与旧 branchRevision，restart/orphan restore要求 branch仍存在，无法可靠收敛。
+- 证据路径：`src-tauri/src/authority/worktree.rs` CAS/remove顺序、`authority/state.rs`无partial phase、`src/dev/worktree.ts` orphan/restore分支、`src/dev/tauri-run.ts` generic unknown映射；现有 cleanup side-effect owner能抑制 proposal但不能记录“branch已删除”的native事实。
+- 当前分类：`concrete-risk`。推荐下一次架构切片保持 CAS顺序，引入 host-owned durable `branch-cas-succeeded/worktree-remove-pending` phase与不重复CAS的 inspect/finalize path；重排 CAS/remove需另行评审。未获角色/字段/authority确认前不编码；本轮为 evidence-only，未重跑代码质量门。
