@@ -4528,3 +4528,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `3ac48f581d45f4f8eebd282fb68df6fb2b334dbc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 role arrays/objects已独立，且 createProject graph、node dirty projection、metadata、defaults、state fields和facade integration保持正确。
 - reviewer独立复核 focused/full tests、build、i18n、tsc、diff check、runtime identity checks 和 static scans；建议保留的 workflow node dirty assertion已与 role identity assertions同时存在。
 - 创建 verified tag：`checkpoint/frontend-create-project-role-alias-repair-verified`；原 `checkpoint/frontend-create-project-role-alias-repair-unverified` 保留为历史回退锚点。createProject builder现已 verified，partial-CAS仍未编码。
+
+### 7.272 unverified：extract WorkflowEditor styled-edge projection
+
+- 新增 `src/canvas/workflowEdgeProjection.ts`，收口纯 styled-edge transformation：source-port color、collapsed-group source/target proxy handle重定向、missing-port fallback和style合并；无 React/store副作用。
+- `WorkflowEditor.tsx` 保留 `portSig`、`outsByNode` memo、group mapping构建和React Flow消费，仅委托纯 projection；新增 direct regression覆盖普通边、proxy边、fallback和输入不可变。
+- 验证：focused `5 files / 69 tests`；完整 Node `145 test files / 1182 tests`；build通过（最大 chunk `1,176.18 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
