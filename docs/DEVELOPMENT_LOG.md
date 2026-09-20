@@ -4733,3 +4733,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `73712d6eb2af9cdc62563dc0760924a6a3a345d8` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 async sequencing、state construction、path/session/save-failure合同、injected wiring、public API和 persistence authority boundaries保持。
 - reviewer独立复核 focused `17/17`、full `157 files / 1225 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；template/build ordering与Tauri default-root coverage suggestion非阻塞。
 - 创建 verified tag：`checkpoint/frontend-project-creation-actions-verified`；`checkpoint/frontend-project-creation-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.305 unverified：extract App ProjectOperation guard
+
+- 将 App 内 inline `projectOperationRef`、`getProjectOperation`、`assertProjectOperation` 与 clear逻辑抽到 `src/projectControl/projectOperation.ts`；保留 `ProjectOperation` shape、AbortError name/message、projectId/projectPath drift fence和 abort-on-replacement语义。
+- App仍是 composition root：用 stable guard ref注入 live Zustand state，继续把 get/assert/clear ports传给现有 `ProjectLifecycleController`、Worker action/cleanup与 queued execution；未移动 lifecycle controller、GUI/plugin、Worker recovery/audit、Evidence/Receipt、cleanup或 terminal finalization authority。
+- 新增 `projectOperation.test.ts` direct tests，覆盖 same identity reuse、id/path replacement abort、cancel/drift fail-closed、clear/idempotence；保留现有 lifecycle/Worker/component caller regressions。
+- 验证：focused `7 files / 25 tests`；完整 Node `158 test files / 1229 tests`；build通过（最大 chunk `1,179.80 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact App ProjectOperation reviewer。

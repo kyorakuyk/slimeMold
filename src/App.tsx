@@ -18,7 +18,8 @@ import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
 import { registerBuiltins } from './nodes/builtin';
 import { scanPluginsDir, scanProgramCustomNodes } from './plugins/pluginManager';
-import { createProjectLifecycleController, type ProjectOperation } from './projectControl/projectLifecycleController';
+import { createProjectLifecycleController } from './projectControl/projectLifecycleController';
+import { createProjectOperationGuard } from './projectControl/projectOperation';
 import { isTauri } from './platform/env';
 import { getLastSession, saveProjectFile } from './io/projectIO';
 import { exportWorkflow } from './io/workflowIO';
@@ -156,20 +157,16 @@ export default function App() {
   const panelH = useViewStore((s) => s.panelH);
   const setPanelH = useViewStore((s) => s.setPanelH);
 
-  const projectOperationRef = useRef<ProjectOperation | null>(null);
-  const getProjectOperation = (projectId: string | null, projectPath: string | null): ProjectOperation => {
-    const existing = projectOperationRef.current;
-    if (
-      existing
-      && existing.projectId === projectId
-      && existing.projectPath === projectPath
-      && !existing.controller.signal.aborted
-    ) return existing;
-    existing?.controller.abort();
-    const next = { projectId, projectPath, controller: new AbortController() };
-    projectOperationRef.current = next;
-    return next;
-  };
+  const projectOperationGuard = useRef<ReturnType<typeof createProjectOperationGuard> | null>(null);
+  const operationGuard = projectOperationGuard.current ?? (projectOperationGuard.current = createProjectOperationGuard(
+    () => {
+      const state = useWorkflowStore.getState();
+      return { projectId: state.projectId, projectPath: state.projectPath };
+    },
+  ));
+  const getProjectOperation = operationGuard.get;
+  const assertProjectOperation = operationGuard.assert;
+  const clearProjectOperation = operationGuard.clear;
   const workerRecoveryIo = createWorkerRecoveryIoController({
     getState: () => useWorkflowStore.getState(),
     recordProjectEvents,
@@ -182,19 +179,6 @@ export default function App() {
     recoverInterruptedWorkerEffects,
     loadProjectWorkerEvidence,
   } = workerRecoveryIo;
-
-  const assertProjectOperation = (operation: ProjectOperation): void => {
-    if (operation.controller.signal.aborted) {
-      const error = new Error('项目 operation 已取消');
-      error.name = 'AbortError';
-      throw error;
-    }
-    const current = useWorkflowStore.getState();
-    if (current.projectId !== operation.projectId || current.projectPath !== operation.projectPath) {
-      operation.controller.abort();
-      throw new Error('项目在异步 operation 期间发生切换');
-    }
-  };
 
   // 面板尺寸（可拖拽调节）
   const [leftW, setLeftW] = useState(248);
@@ -763,10 +747,7 @@ export default function App() {
       subscribe: (listener) => useWorkflowStore.subscribe(listener),
       setShowWelcome,
       getProjectOperation,
-      clearProjectOperation: () => {
-        projectOperationRef.current?.controller.abort();
-        projectOperationRef.current = null;
-      },
+      clearProjectOperation,
       reportWarning: (message) => useWorkflowStore.getState().addLog('warn', message),
       restoreWorkerWorktrees,
       loadProjectWorkerEvidence,
