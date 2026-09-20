@@ -4359,3 +4359,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 对 `fc24b1c` fail-closed：发现 `saveProjectAs` 仍用 raw `JSON.stringify(file)`写 `lastSavedSnapshot`，普通 Save 修复不能覆盖另存为入口。
 - 修复：Save As 与普通 Save统一使用保存后的 `projectSnapshot(get())` stable baseline；新增隔离 Tauri mock regression覆盖 Save As 的 `projectDirty=false`、`isProjectDirty()=false`与快照一致。
 - GREEN：Save/Save As focused `4 files / 49 tests`；完整 Node `139 test files / 1165 tests`；`npm run build`通过，最大 chunk约 `1,174.40 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。新的 exact HEAD review待进行。
+
+### 7.244 verified：Save and Save As dirty baseline review closure
+
+- exact HEAD `f06a457` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认普通 Save与 Save As均使用 stable `projectSnapshot(get())`，project identity/path/event flush/guard/saveLastSession语义未变，无 raw snapshot旁路。
+- 同一代码快照质量门：focused `4 files / 49 tests`；完整 Node `139 test files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check全部通过。
+- 已创建本地 verified tag：`checkpoint/tauri-save-as-dirty-marker-repair-verified`。该 tag只证明 dirty baseline repair，不代表完整 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree E2E、native hardening或历史 unverified已关闭。
