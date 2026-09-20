@@ -4293,3 +4293,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `5b8efe4` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 cleanup action为单一 owner，TaskGraph restore/proposal lineage、branch CAS、approval、receipt、unknown recovery、TaskCleaned projection、save/read-back与proposal refresh均保持一致，App仅保留 facade wiring。
 - 同一代码快照质量门：Node `134 test files / 1157 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。真实 Tauri GUI/native/executor/history仍不在本切片证据范围内。
 - 已创建本地 verified tag：`checkpoint/frontend-worker-cleanup-action-controller-verified`。该 tag只证明 cleanup action结构切片，不代表真实 E2E、Worker residual、native hardening或历史 unverified已关闭。
+
+### 7.234 unverified：extract executor NodeSandboxAdapter
+
+- 第七条前端基础切片将 `executor.ts` 中节点 sandbox handle创建抽到 `src/engine/nodeSandboxAdapter.ts`；adapter唯一负责 sandbox root选择、run resource登记、browser fallback、lane allowlist、relative path校验和 Tauri fs guard调用。
+- `executor.ts` 保留运行 facade、`executeNode`调度、ExecContext、LLM routing、状态/事件/成本/重试语义；旧 sandbox实现已删除，无第二套 owner。新增 direct adapter tests覆盖 disabled、browser in-memory、relative path和 lane拒绝。
+- GREEN：focused `6 files / 54 tests`；完整 Node `135 test files / 1159 tests`；`npm run build`通过，最大 chunk约 `1,172.89 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor context/adapter后续切片和历史 unverified收口继续后置。

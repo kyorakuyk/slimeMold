@@ -4,7 +4,6 @@ import type {
   ExecContext,
   FlowEdge,
   FlowNode,
-  SandboxHandle,
 } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowState';
@@ -34,11 +33,7 @@ import { attachEventLog, getEventPersistenceMode } from './eventLog';
 import { finalizeRun } from './runFinalizer';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
 import { matchExperience } from '../agents/experienceStore';
-import {
-  cleanupRun,
-  createRunResources,
-  getRunResources,
-} from './runResources';
+import { createRunResources, cleanupRun, getRunResources } from './runResources';
 import {
   beginRun,
   cacheKey,
@@ -50,12 +45,7 @@ import {
   setCached,
   strike,
 } from './nodeCache';
-import {
-  assertAllowedSandboxLane,
-  encodeSandboxIdentifier,
-  assertSandboxRelativePath,
-} from './sandboxPath';
-import { createSandboxFsGuard } from './sandboxFs';
+import { createNodeSandbox } from './nodeSandboxAdapter';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -782,92 +772,16 @@ async function executeNode(
       break; // 继续执行路径
   }
 
-  // 每个节点一份独立隔离目录（workspaceDir/.sandbox/<nodeId>），并行 Worker 互不踩踏。
-  // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
-  let sandbox: SandboxHandle | undefined;
-  if (sandboxEnabled) {
-    const inBrowser = !isTauri;
-
-    // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
-    const rootDir = async (): Promise<string | null> => {
-      if (inBrowser) return null;
-      // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree（按 wfId）
-      const resources = getRunResources(targetWfId, targetRunId);
-      const wt = resources?.worktree;
-      if (wt) return wt.path;
-      if (nodeWorkspaceDir) return nodeWorkspaceDir;
-      try {
-        const { appDataDir } = await import('@tauri-apps/api/path');
-        return `${await appDataDir()}/slime-mold/${targetWfId}`;
-      } catch {
-        return null;
-      }
-    };
-    // 解析 + 登记：任何节点触达的真实根目录都登记到当前 run 的资源对象，
-    // 供 runWorkflow 结束按 runId 清理其下 `.sandbox/` 残留。
-    const rootDirAndTrack = async (): Promise<string | null> => {
-      const base = await rootDir();
-      if (base) {
-        const resources = getRunResources(targetWfId, targetRunId);
-        resources?.sandboxRoots.add(base);
-      }
-      return base;
-    };
-
-    const allowedSandboxNodeIds = new Set(
-      incoming.filter((e) => e.target === id).map((e) => e.source),
-    );
-    const sandboxRoot = (nid: string): string =>
-      `.sandbox/${encodeSandboxIdentifier(nid, '沙箱节点 id')}`;
-
-    sandbox = {
-      nodeId: id,
-      baseDir: null, // 真实路径惰性确定，构造期未知
-      inBrowser,
-      async writeFile(filename, content) {
-        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
-        const base = await rootDirAndTrack();
-        if (!base) return `[sandbox:${id}] ${safeFilename}`; // 浏览器/无根：内存态
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).writeFile(sandboxRoot(id), safeFilename, content);
-      },
-      async readFrom(otherNodeId, filename) {
-        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
-        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
-        const base = await rootDirAndTrack();
-        if (!base) return null;
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).readFile(sandboxRoot(safeNodeId), safeFilename);
-      },
-      async list(otherNodeId) {
-        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).list(sandboxRoot(safeNodeId));
-      },
-      async commitAll() {
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).commit(sandboxRoot(id));
-      },
-      async commitLanes(laneIds) {
-        const safeLaneIds = laneIds.map((laneId) =>
-          assertAllowedSandboxLane(laneId, allowedSandboxNodeIds),
-        );
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        const committed: string[] = [];
-        const guard = createSandboxFsGuard(fs, base);
-        for (const lane of safeLaneIds) {
-          committed.push(...(await guard.commit(sandboxRoot(lane))));
-        }
-        return committed;
-      },
-    };
-  }
+  const sandbox = createNodeSandbox({
+    enabled: Boolean(sandboxEnabled),
+    isTauri,
+    nodeId: id,
+    wfId: targetWfId,
+    runId: targetRunId,
+    nodeWorkspaceDir,
+    incomingNodeIds: incoming.filter((e) => e.target === id).map((e) => e.source),
+    getRunResources,
+  });
 
   let branchesTaken: string[] | undefined;
   const ctx: ExecContext = {
