@@ -4468,3 +4468,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `src/store/projectSaveAsController.ts`，收口 Save As 的 Tauri gate、目录选择、ProjectFile 写入、pending event flush、失败 warning 和保存完成 callback；`workflowStore.ts` 保留 facade、stable `projectSnapshot`、dirty state 与 `saveLastSession`。
 - 新增 controller direct regressions：browser gate、取消选择、成功 flush/回调、持久化失败；既有 Save As dirty-marker regression继续通过。显式用 `WorkflowState` 类型打断 module-level controller 与 Zustand store 的推断回环，避免全仓 selector退化为 `any`。
 - 验证：focused `4 files / 11 tests`；完整 Node `141 test files / 1171 tests`；build通过（最大 chunk `1,175.00 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.262 verified：exact review closes workflow Save As controller slice
+
+- 独立 reviewer 对 exact HEAD `8110dcb0f6c9bab36d4aaf2be81f9e8a1083147a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 source comparison、Save As facade wiring、browser/cancel/success/error边界及动态 I/O wiring无新增逻辑或安全问题。
+- reviewer独立复核 focused `4 files / 11 tests`、全量 `141 files / 1171 tests`、build、i18n `1026/1026`、tsc、diff check 和 security scan；非阻塞建议记录为后续回归：pending-event flush rejection、Save/Save As共享 guard或queue。
+- 创建 verified tag：`checkpoint/frontend-workflow-save-as-controller-verified`；原 `checkpoint/frontend-workflow-save-as-controller-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
