@@ -4426,3 +4426,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `33d262c` reviewer fail-closed指出初始 regression只创建普通目录并直接调用 helper，未证明“目录已消失但 Git administrative worktree entry仍在”时返回 false，也未覆盖真实 worktree fixture。
 - 修复测试 fixture：临时 Git repo提交初始 commit，执行 `git worktree add --detach`，删除 target目录但保留 Git listing断言 read-back false，再执行 `git worktree prune`断言 true；production cleanup顺序不变，仍在 registry/orphan projection前执行 strict read-back。
 - 验证：真实 worktree read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待新 exact native reviewer。
+
+### 7.255 verified：cleanup post-remove read-back review closure
+
+- exact HEAD `d994a49` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 Git fixture覆盖 target存在 false、target目录删除但 Git listing残留 false、prune后 absence true；production cleanup在 registry/orphan projection前执行 strict read-back。
+- 同一快照质量门：targeted `1/1`；Rust fmt/check、全量 lib `102/102`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。后续可将 fixture setup迁移到 `TempDirs`/sanitized Git resolver，但不影响本 bounded closure。
+- 已创建本地 verified tag：`checkpoint/native-cleanup-post-remove-readback-verified`。该 closure只覆盖 cleanup absence read-back，不代表 partial-CAS、pending probe、Windows TOCTOU、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
