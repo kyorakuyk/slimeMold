@@ -4707,3 +4707,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `3e598defcfc2aba4be38486c27e47cf7bb4dbf0d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认旧 project event buffer/runtime scope、new project state、createProject path/template/save-failure/session/API合同和未移动的 event flush/host lifecycle保持。
 - reviewer独立复核 focused `16/16`、single-worker full `155 files / 1220 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；parallel full Vitest出现的两个无关 timeout flake经隔离重跑通过。
 - 创建 verified tag：`checkpoint/frontend-create-project-reset-repair-verified`；`checkpoint/frontend-create-project-reset-repair-unverified` 保留为历史回退锚点。后续可补 unrelated project event buffer 保留断言，partial-CAS仍未编码。
+
+### 7.301 unverified：extract project bootstrap actions
+
+- 将同步 `newProject`、`openProject` 的 store-bound 编排抽到 `src/store/projectBootstrapActions.ts`；纯 state builders仍由 `workflowLifecycleState.ts`拥有，ProjectControl reset/activation使用已注入 adapter，dirty suppression/finalizeLoaded由 facade capability提供。
+- `createProject` 的异步 path/default-directory/save/failure/session合同继续留在 `workflowStore.ts`，未与 bootstrap action 混抽；open invalid file保持 no-op/false，valid open保持 set → finalizeLoaded → runtime activation顺序。
+- 新增 `projectBootstrapActions.test.ts` direct tests，覆盖 new reset/suppression、invalid open no-op、valid open activation/finalization；保留现有 workflowStore ProjectControl/open/new regressions。
+- 验证：focused `5 files / 21 tests`；完整 Node `156 test files / 1222 tests`；build通过（最大 chunk `1,179.13 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact project bootstrap reviewer。

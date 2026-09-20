@@ -110,6 +110,7 @@ import {
   markDirtyDownstream,
   type GraphSnapshot,
 } from './workflowGraph';
+import { createProjectBootstrapActions } from './projectBootstrapActions';
 import { createProjectLifecycleActions } from './projectLifecycleActions';
 import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
@@ -118,8 +119,6 @@ import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
 import {
   buildCreateProjectState,
-  buildNewProjectState,
-  buildOpenProjectState,
   buildCloseProjectState,
 } from './workflowLifecycleState';
 import {
@@ -489,6 +488,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         clearPendingProjectEvents: clearProjectEventBuffer,
         clearWorkerRunRuntime,
         installWorkerRunRuntime: (input) => installWorkerRunRuntime(input),
+      });
+      const projectBootstrapActions = createProjectBootstrapActions({
+        getProjectId: () => get().projectId,
+        getDefaultAgentId: () => get().defaultAgentId,
+        setState: (patch) => set(patch as Partial<WorkflowState>),
+        setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        finalizeLoaded: () => projectDirtyController.finalizeLoaded(),
+        projectControlAdapter,
       });
       const projectLifecycleActions = createProjectLifecycleActions({
         getProjectId: () => get().projectId,
@@ -1090,14 +1097,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // （注意：此方法在 (set,get)=> 闭包内，通过 get() 访问最新状态）
       // 通过下方 newProject/openProject/switchWorkflow/saveProject 间接调用。
 
-      newProject: (name) => {
-        // 状态构建纯逻辑已抽到 workflowLifecycleState.buildNewProjectState（G5 门面化收口）
-        const previousProjectId = get().projectId;
-        projectControlAdapter.resetProjectControlLifecycle(previousProjectId);
-        projectDirtyController.setSuppressed(true);
-        set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
-        projectDirtyController.setSuppressed(false);
-      },
+      ...projectBootstrapActions,
 
       createProject: async ({ name, templateId, location }) => {
         const previousProjectId = get().projectId;
@@ -1159,27 +1159,6 @@ export const useWorkflowStore = create<WorkflowState>()(
         } else {
           clearLastSession();
         }
-      },
-
-      openProject: (file, path) => {
-        // 状态构建纯逻辑已抽到 workflowLifecycleState.buildOpenProjectState（G5 门面化）
-        let state;
-        try {
-          state = buildOpenProjectState(file, path ?? file.name, get().defaultAgentId);
-        } catch {
-          return false; // 无可用工作流，保持现状
-        }
-        projectDirtyController.setSuppressed(true);
-        set(state);
-        projectDirtyController.finalizeLoaded();
-        set(projectControlAdapter.activateProjectControlRuntime({
-          projectId: file.id,
-          taskGraphs: state.projectControl.taskGraphs ?? [],
-          runs: state.workerRuns,
-        }));
-        // 工作区信任：Tauri 下项目根目录 fs:scope 动态注入已统一收口在 openProjectByPath
-        // （先授权后读盘），此处不再重复 fire-and-forget，避免与扫描 custom_nodes 竞态。
-        return true;
       },
 
       saveProject: async (guard) => {
