@@ -4396,3 +4396,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Read-only triage与 RED确认 `src-tauri/src/execution/dev_exec.rs` 的 direct `find` gate只检查 lexical option/root，`find src/components -name` 会被接受，而 Node/structured Rust parser应 fail-closed。
 - 修复将 runtime `find`分支委托给已有 `dev_command_policy::command_intent_kind(args) == Some("find")`，删除重复 `find_option_is_safe` grammar；新增 missing operand、missing maxdepth和trailing operator回归，保留合法 `-P/-name/glob`路径。
 - 验证：find targeted `1/1`、shared policy vectors `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.250 verified：native find policy parity review closure
+
+- exact HEAD `7eb98ac` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；runtime `find`统一走结构化 `command_intent_kind`，合法 `-P/-name/glob`保持可用，missing operand/trailing operator/external-file/mutation/protected-root/path cases fail-closed，无 legacy `run_git`旁路变更。
+- 同一快照质量门：find/shared-vector targeted `2/2`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。该 closure只覆盖 native find admission，Unix/macOS、spawn/path identity、GUI/E2E、Worker和历史 debt仍独立开放。
+- 已创建本地 verified tag：`checkpoint/native-find-policy-parity-verified`。
