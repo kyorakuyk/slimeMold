@@ -2,7 +2,7 @@
 title: SlimeMold 文档地图
 type: documentation-index
 status: active
-updated: 2026-09-02
+updated: 2026-09-20
 ---
 
 # SlimeMold 文档地图
@@ -22,6 +22,7 @@ updated: 2026-09-02
 9. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
 10. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
 11. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
+12. [历史 unverified triage](HISTORICAL_UNVERIFIED_TRIAGE.md) —— 按当前 HEAD 证据分类历史快照、残余风险和验收边界。
 
 ## 权威层级
 

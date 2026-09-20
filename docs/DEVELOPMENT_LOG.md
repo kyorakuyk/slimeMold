@@ -4365,3 +4365,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `f06a457` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认普通 Save与 Save As均使用 stable `projectSnapshot(get())`，project identity/path/event flush/guard/saveLastSession语义未变，无 raw snapshot旁路。
 - 同一代码快照质量门：focused `4 files / 49 tests`；完整 Node `139 test files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check全部通过。
 - 已创建本地 verified tag：`checkpoint/tauri-save-as-dirty-marker-repair-verified`。该 tag只证明 dirty baseline repair，不代表完整 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree E2E、native hardening或历史 unverified已关闭。
+
+### 7.245 evidence：historical unverified triage dossier
+
+- 基于当前 exact HEAD `4c5f0ccefad9981eb82734af1958d16e3c2f5e9c`、`DEVELOPMENT_LOG.md` 7.196–7.240、checkpoint tags、当前 source 与三路只读 triage，新增 `docs/HISTORICAL_UNVERIFIED_TRIAGE.md`。档案将历史项分为 `superseded`、`evidence-missing`、`concrete-risk`、`environment-blocked`，明确历史 tag不等于当前全树 approval。
+- 档案记录当前仍开放的 native concrete risks：worktree fresh-session identity、partial-CAS、post-remove read-back、pending probe recovery、Windows TOCTOU、protected metadata、find parity、launcher parity、legacy `run_git`；并记录 Worker admission/provenance/runtime fencing与完整 WorkerQueue Tauri E2E仍未收口。
+- 真实 Tauri E2E边界同时写入档案：disposable success/failure fixture 的 GUI、ProjectFile、event/checkpoint、close/reopen history 和 dirty-marker repair证据已 read-back；离线模拟未覆盖真实 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree mutation，因此不标记完整 E2E verified。
+- 本轮为 docs-only；实际检查：`git diff --check`通过。未因档案变更重跑 Node/build/i18n/tsc，历史质量门数字保持原文不变。
