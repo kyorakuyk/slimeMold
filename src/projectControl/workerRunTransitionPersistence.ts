@@ -2,6 +2,7 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { Orchestration } from '../types';
+import { projectWorkerRunTransition } from './workerRunTransitionProjection';
 
 export type WorkerTransitionProjectState = Parameters<
   typeof import('../store/workflowSerialize')['buildProjectFile']
@@ -62,10 +63,6 @@ export interface WorkerRunTransitionPersistenceDeps {
     current: readonly SideEffectRecord[],
     incoming: readonly SideEffectRecord[],
   ) => SideEffectRecord[];
-  projectWorkerRunsOntoOrchestrations: (
-    orchestrations: readonly Orchestration[],
-    runs: readonly WorkerRunQueueState[],
-  ) => Orchestration[];
 }
 
 const terminalTaskEvents = new Set(['TaskSucceeded', 'TaskFailed', 'TaskBlocked']);
@@ -116,13 +113,13 @@ export function createWorkerRunTransitionPersistence(
     const latest = deps.getState();
     deps.assertOperation();
     deps.recordProjectEvents(deps.projectId, events);
-    const nextRuns = latest.workerRuns.map((run) => (
-      run.runId === state.runId ? state : run
-    ));
-    latest.setWorkerRuns(nextRuns);
-    latest.setOrchestrations(
-      deps.projectWorkerRunsOntoOrchestrations(latest.orchestrations, nextRuns),
-    );
+    const { nextWorkerRuns, nextOrchestrations } = projectWorkerRunTransition({
+      currentWorkerRuns: latest.workerRuns,
+      currentOrchestrations: latest.orchestrations,
+      transition: state,
+    });
+    latest.setWorkerRuns(nextWorkerRuns);
+    latest.setOrchestrations(nextOrchestrations);
     latest.setWorkerRunEvidence(
       deps.mergeWorkerEvidence(latest.workerRunEvidence, deps.collectorEvidence()),
     );

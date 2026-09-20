@@ -522,7 +522,6 @@ export default function App() {
         collectorEvidence: () => session.collector.records,
         mergeWorkerEvidence,
         mergeWorkerSideEffects,
-        projectWorkerRunsOntoOrchestrations,
       }),
     });
     assertProjectOperation(operation);

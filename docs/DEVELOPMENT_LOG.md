@@ -4769,3 +4769,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 保留两条原始路径：普通 transition 读取最新 live state后写入 WorkerRun/Orchestration/Evidence/SideEffect projection并执行 guarded `saveProject`；receipt 后取消只接受 safe finalization event allowlist，使用 EventBuffer flush与 before-save raw ProjectFile save，不触碰 live store mutation或普通 guarded save。
 - 新增 direct tests，覆盖正常 transition、receipt-after-cancellation、unsafe cancelled events走 operation guard、side-effect读取失败不静默保存；未移动 WorkerQueue、coordinator、runtime、event replay、Evidence/Receipt事实、cleanup或终态事实 owner。
 - 验证：focused `8 files / 63 tests`；完整 Node `161 test files / 1238 tests`；build通过（最大 chunk `1,181.01 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact queued Worker transition persistence reviewer。
+
+### 7.310 unverified：extract queued Worker transition projection helper
+
+- 将 transition persistence 中的 `nextWorkerRuns` 替换和 canonical `projectWorkerRunsOntoOrchestrations` 组合抽到 `src/projectControl/workerRunTransitionProjection.ts`；该模块仅接收 current WorkerRun、current Orchestration和 transition，返回新数组，不执行 Zustand setter、operation guard、EventBuffer、Tauri、session、Evidence/SideEffect I/O或保存。
+- 保留精确 map 语义：只替换同 `runId`，缺失 run 不追加，未匹配 run 保留原引用；Orchestration 仍委托既有 canonical projection owner。persistence controller 仅调用 helper，setter 顺序和所有异步边界保持。
+- 新增 direct tests，覆盖 matching replacement、missing run no-append、caller-owned array不变性与真实 Orchestration projection；现有 persistence/coordinator/orchestration regressions保持。
+- 验证：focused `4 files / 20 tests`；完整 Node `162 test files / 1241 tests`；build通过（最大 chunk `1,181.17 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact queued Worker transition projection reviewer。

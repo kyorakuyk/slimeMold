@@ -57,7 +57,6 @@ function makeDeps(overrides: Partial<WorkerRunTransitionPersistenceDeps> = {}) {
     collectorEvidence: () => [evidence('evidence-1')],
     mergeWorkerEvidence: vi.fn((current, incoming) => [...current, ...incoming]),
     mergeWorkerSideEffects: vi.fn((current, incoming) => [...current, ...incoming]),
-    projectWorkerRunsOntoOrchestrations: vi.fn((orchestrations) => [...orchestrations]),
     ...overrides,
   };
   return { deps, latest, before };
