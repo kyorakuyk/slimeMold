@@ -126,7 +126,11 @@ import {
   buildSwitchWorkflowState,
 } from './workflowRegistryState';
 import {
-  cleanupRouteTableForAgent,
+  buildRemoveAgentState,
+  buildRemoveRoleState,
+  buildSetDefaultAgentState,
+  buildUpsertAgentState,
+  buildUpsertRoleState,
   upsertById,
 } from './projectCatalogState';
 
@@ -846,22 +850,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       upsertAgent: (agent) => {
-        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
-        set({ agents: upsertById(get().agents, agent) });
+        // project catalog state is transformed in projectCatalogState; facade owns set/dirty observation.
+        set(buildUpsertAgentState(get().agents, agent));
       },
 
       removeAgent: (id) =>
-        set((s) => {
-          // 路由表清理纯逻辑已抽到 projectCatalogState.cleanupRouteTableForAgent（G5 门面化）
-          const { table, changed } = cleanupRouteTableForAgent(s.agentRouteTable, id);
-          return {
-            agents: s.agents.filter((a) => a.id !== id),
-            defaultAgentId: s.defaultAgentId === id ? null : s.defaultAgentId,
-            ...(changed ? { agentRouteTable: table } : {}),
-          };
-        }),
+        set((s) => buildRemoveAgentState(s, id)),
 
-      setDefaultAgent: (id) => set({ defaultAgentId: id }),
+      setDefaultAgent: (id) => set(buildSetDefaultAgentState(id)),
 
       setGlobalAgents: (agents) => set({ globalAgents: agents }),
 
@@ -882,17 +878,16 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       upsertRole: (role) => {
-        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
-        set({ roles: upsertById(get().roles, role) });
+        set(buildUpsertRoleState(get().roles, role));
       },
 
       removeRole: (id) => {
-        const role = get().roles.find((r) => r.id === id);
-        if (role?.builtin) {
-          get().addLog('error', '内置角色不可删除');
+        const result = buildRemoveRoleState(get().roles, id);
+        if (result.rejected) {
+          get().addLog('error', result.message ?? '内置角色不可删除');
           return;
         }
-        set({ roles: get().roles.filter((r) => r.id !== id) });
+        set({ roles: result.roles });
       },
 
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),

@@ -1,7 +1,15 @@
 /** projectCatalogState direct tests. */
 import { describe, it, expect } from 'vitest';
-import type { AgentRouteTable } from '../types';
-import { cleanupRouteTableForAgent, upsertById } from './projectCatalogState';
+import type { AgentConfig, AgentRouteTable, RoleTemplate } from '../types';
+import {
+  buildRemoveAgentState,
+  buildRemoveRoleState,
+  buildSetDefaultAgentState,
+  buildUpsertAgentState,
+  buildUpsertRoleState,
+  cleanupRouteTableForAgent,
+  upsertById,
+} from './projectCatalogState';
 
 describe('upsertById 通用 upsert', () => {
   it('追加新项', () => {
@@ -57,5 +65,66 @@ describe('cleanupRouteTableForAgent 路由表清理', () => {
     expect(changed).toBe(false);
     expect(t.ui?.agentId).toBe('other');
     expect(Object.keys(t)).toEqual(['ui']);
+  });
+});
+
+describe('project catalog mutation transforms', () => {
+  const agent = { id: 'agent-a', name: 'A' } as unknown as AgentConfig;
+  const replacement = { id: 'agent-a', name: 'A2' } as unknown as AgentConfig;
+  const role = { id: 'role-a', name: 'Role A', builtin: false } as unknown as RoleTemplate;
+
+  it('preserves upsert identity and order for agents and roles', () => {
+    const agents = [agent];
+    const roles = [role];
+    expect(buildUpsertAgentState(agents, replacement).agents).toEqual([replacement]);
+    expect(buildUpsertRoleState(roles, role).roles).toEqual([role]);
+    expect(buildUpsertRoleState(roles, role).roles).not.toBe(roles);
+    expect(buildUpsertAgentState([], agent).agents).toEqual([agent]);
+  });
+
+  it('removes an agent and clears default and route references', () => {
+    const routeTable: AgentRouteTable = {
+      ui: { agentId: 'agent-a', fallback: ['agent-b'] },
+      docs: { agentId: 'agent-b', fallback: ['agent-a'] },
+    };
+    const result = buildRemoveAgentState({
+      agents: [agent], defaultAgentId: 'agent-a', agentRouteTable: routeTable,
+    }, 'agent-a');
+    expect(result.agents).toEqual([]);
+    expect(result.defaultAgentId).toBeNull();
+    expect(result.agentRouteTable).toEqual({
+      ui: { agentId: '', fallback: ['agent-b'] },
+      docs: { agentId: 'agent-b', fallback: [] },
+    });
+    expect(routeTable.ui?.agentId).toBe('agent-a');
+  });
+
+  it('preserves route-table write omission when no route reference changes', () => {
+    const routeTable: AgentRouteTable = { ui: { agentId: 'other' } };
+    const result = buildRemoveAgentState({
+      agents: [agent], defaultAgentId: 'other', agentRouteTable: routeTable,
+    }, 'agent-a');
+    expect(result.defaultAgentId).toBe('other');
+    expect(result.agentRouteTable).toBeUndefined();
+  });
+
+  it('returns an explicit default-agent patch', () => {
+    expect(buildSetDefaultAgentState('agent-a')).toEqual({ defaultAgentId: 'agent-a' });
+  });
+
+  it('rejects builtin role deletion with the original log message', () => {
+    const builtin = { id: 'builtin', name: 'Builtin', builtin: true } as unknown as RoleTemplate;
+    const result = buildRemoveRoleState([builtin], 'builtin');
+    expect(result.rejected).toBe(true);
+    expect(result.message).toBe('内置角色不可删除');
+    expect(result.roles[0]).toBe(builtin);
+  });
+
+  it('removes custom roles without changing the source list', () => {
+    const roles = [role];
+    const result = buildRemoveRoleState(roles, 'role-a');
+    expect(result.rejected).toBe(false);
+    expect(result.roles).toEqual([]);
+    expect(roles).toEqual([role]);
   });
 });
