@@ -4747,12 +4747,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer独立复核 focused `25/25`、full `158 files / 1229 tests`、build、i18n `1026/1026`、TypeScript、diff check、security scan、exact HEAD和 clean tree；ProjectOperation type后续集中化建议非阻塞。
 - 创建 verified tag：`checkpoint/frontend-app-project-operation-verified`；`checkpoint/frontend-app-project-operation-unverified` 保留为历史回退锚点。App其余 Worker/GUI/recovery/cleanup authority仍未拆分，partial-CAS仍未编码。
 
-### 7.307 unverified：extract App cleanup proposal controller
+### 7.307 verified：extract App cleanup proposal controller
 
 - 将 App 内 `refreshWorkerCleanupProposals` 抽到 `src/projectControl/workerCleanupProposalController.ts`；保留 canonical `getRestoredWorkerRunForCleanup`、`buildWorkerCleanupProposalSafely`、Acceptance/side-effect/worktree/branch-revision校验事实，只移动 application orchestration。
 - controller通过窄 state port读写 workerRuns、recoveries、sideEffects、proposal projection和warning；App用 stable ref构造并继续把同一 callback传给 ProjectLifecycleController、Worker cleanup action和 queued worker。未移动 restoreWorktrees、audit、cleanup execution、receipt、TaskCleaned或 Worker runtime authority。
 - 新增 direct tests，覆盖 missing/recovery suppression、TaskGraph restore failure warning、abort before host work和 projection boundary；现有 cleanup/lifecycle/Worker/UI regressions保持。
-- 验证：focused `5 files / 20 tests`；完整 Node `159 test files / 1232 tests`；build通过（最大 chunk `1,179.96 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact App cleanup proposal reviewer。
+- 独立 reviewer 对 pinned exact HEAD `2cd2659ce32644322ebcfff243f9b326496b6e58`（相对 `e8f60f9`）返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 canonical restore、Acceptance、side-effect、host signature/tracking、branch revision、abort、stale-project和 per-run projection保持，且 controller 无 React/Zustand/App imports，stable callback wiring保持。建议增加 valid restored task 的 host-read abort、stale projectId suppression和 other-run preservation regression，非阻塞，列入后续增强。
+- 验证：target gate focused `5 files / 20 tests`；完整 Node `159 test files / 1232 tests`；build通过（最大 chunk `1,179.96 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。reviewer新鲜全量复核另见一个与本切片无关的既有 Windows-path assertion failure，不改变 exact target verdict。创建 verified tag：`checkpoint/frontend-app-cleanup-proposal-verified`；原 `checkpoint/frontend-app-project-operation-unverified` 保留为历史回退锚点。
 
 ### 7.308 verified：extract queued Worker consistency admission seam
 
