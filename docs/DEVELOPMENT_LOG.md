@@ -4753,3 +4753,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - controller通过窄 state port读写 workerRuns、recoveries、sideEffects、proposal projection和warning；App用 stable ref构造并继续把同一 callback传给 ProjectLifecycleController、Worker cleanup action和 queued worker。未移动 restoreWorktrees、audit、cleanup execution、receipt、TaskCleaned或 Worker runtime authority。
 - 新增 direct tests，覆盖 missing/recovery suppression、TaskGraph restore failure warning、abort before host work和 projection boundary；现有 cleanup/lifecycle/Worker/UI regressions保持。
 - 验证：focused `5 files / 20 tests`；完整 Node `159 test files / 1232 tests`；build通过（最大 chunk `1,179.96 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact App cleanup proposal reviewer。
+
+### 7.308 unverified：extract queued Worker consistency admission seam
+
+- 将 `runQueuedWorker` 内 pre-execution `assertConsistency` callback 抽到 `src/projectControl/workerRunConsistencyAction.ts`；注入 EventStream read、ProjectOperation assertion、current state、Acceptance list以及 canonical Worker/ProjectControl audit functions。
+- 保留精确 admission合同：assert → read event stream → assert；needs-repair使用原错误；读取 live state后再次 assert；Worker facts或 ProjectControl facts不一致时使用原错误；不移动 audit实现、EventStream、runtime、persistence、transition或terminal finalization authority。
+- 新增 direct tests，覆盖 assert/read/audit输入、needs-repair、Worker audit failure和 ProjectControl audit failure；App 仍是 composition root。
+- 验证：focused `6 files / 23 tests`；完整 Node `160 test files / 1234 tests`；build通过（最大 chunk `1,180.29 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact queued Worker consistency reviewer。

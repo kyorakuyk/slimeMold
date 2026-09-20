@@ -55,6 +55,7 @@ import { createWorkerRecoveryIoController } from './projectControl/workerRecover
 import { createWorkerActionController } from './projectControl/workerActionController';
 import { createWorkerCleanupActionController } from './projectControl/workerCleanupActionController';
 import { createWorkerCleanupProposalController } from './projectControl/workerCleanupProposalController';
+import { assertWorkerRunConsistency } from './projectControl/workerRunConsistencyAction';
 
 registerBuiltins();
 
@@ -494,36 +495,15 @@ export default function App() {
       sideEffects,
       signal: operation.controller.signal,
       assertConsistency: async () => {
-        assertProjectOperation(operation);
-        const parsed = await eventRepository.readStream();
-        assertProjectOperation(operation);
-        if (parsed.status === 'needs-repair') {
-          throw new Error(
-            `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
-          );
-        }
-        const current = useWorkflowStore.getState();
-        assertProjectOperation(operation);
-        const report = auditWorkerRunConsistency({
+        await assertWorkerRunConsistency({
           projectId,
-          runs: current.workerRuns,
-          events: parsed.events,
-          evidence: current.workerRunEvidence,
-          acceptances: session.listAcceptances(),
-          sideEffects: current.workerRunSideEffects,
-          taskGraphs: current.projectControl.taskGraphs ?? [],
+          getState: () => useWorkflowStore.getState(),
+          assertOperation: () => assertProjectOperation(operation),
+          readEventStream: () => eventRepository.readStream(),
+          listAcceptances: () => session.listAcceptances(),
+          auditWorkerRunConsistency,
+          auditProjectControlConsistency,
         });
-        if (!report.ok) {
-          throw new Error(`Worker 事实源不一致：${report.issues.map((item) => item.message).join('；')}`);
-        }
-        const controlReport = auditProjectControlConsistency({
-          projectId,
-          snapshot: current.projectControl,
-          events: parsed.events,
-        });
-        if (!controlReport.ok) {
-          throw new Error(`ProjectControl 事实源不一致：${controlReport.issues.map((item) => item.message).join('；')}`);
-        }
       },
       persistTransition: async ({ state, events }) => {
         const terminalTaskEvents = new Set(['TaskSucceeded', 'TaskFailed', 'TaskBlocked']);
