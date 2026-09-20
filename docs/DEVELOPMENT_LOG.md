@@ -4614,3 +4614,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `workflowGraph.ts` 继续作为纯 graph kernel；`selectAll`、React Flow selection policy、group/subgraph/split-view行为保留在 facade或原 owner；现有 public Zustand action names不变。
 - 新增 graph command direct tests，覆盖 history round-trip、clipboard internal-edge filtering/log和paste remap/offset/selection；不在本 slice混入跨 workflow history、stale clipboard或selection双表示等既有行为问题。
 - 验证：focused `6 files / 50 tests`；完整 Node `151 test files / 1203 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend graph reviewer。
+
+### 7.286 unverified：add graph command Zustand assembly regression
+
+- 根据 graph reviewer 非阻塞建议新增 `src/store/workflowStore.graphCommands.test.ts`，验证 command owner spread真实进入 Zustand facade，并确认 inline `selectAll`边界仍由 facade提供；不改变 production graph command implementation。
+- 验证：focused `3 files / 21 tests`；完整 Node `152 test files / 1204 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 assembly repair 标记 `unverified`，等待新的 exact frontend graph reviewer。
