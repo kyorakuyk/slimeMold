@@ -57,6 +57,7 @@ import { createWorkerCleanupProposalController } from './projectControl/workerCl
 import { assertWorkerRunConsistency } from './projectControl/workerRunConsistencyAction';
 import { createWorkerRunTransitionPersistence } from './projectControl/workerRunTransitionPersistence';
 import { createWorkerRunHostInfrastructure } from './projectControl/workerRunHostInfrastructure';
+import { admitWorkerRunSession } from './projectControl/workerRunSessionAdmission';
 
 registerBuiltins();
 
@@ -436,16 +437,17 @@ export default function App() {
     assertProjectOperation(operation);
 
     // queued 状态和 RunCreated/TaskQueued 事实先落盘；进程若在 Codex 启动前退出，重开仍能恢复该 Run。
-    await beforeSave.saveProject({ projectId, projectPath, signal: operation.controller.signal });
-    assertProjectOperation(operation);
-    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
-    if (!session) {
-      const reason = getDevGuiError();
-      throw new Error(`开发宿主不可用，Worker 未启动${reason ? `：${reason}` : ''}`);
-    }
-    assertProjectOperation(operation);
+    const session = await admitWorkerRunSession({
+      projectId,
+      projectPath,
+      signal: operation.controller.signal,
+      saveProject: beforeSave.saveProject,
+      assertOperation: () => assertProjectOperation(operation),
+      ensureGuiDevSession,
+      getDevGuiError,
+      getCurrentProjectId: () => useWorkflowStore.getState().projectId,
+    });
     const current = useWorkflowStore.getState();
-    if (current.projectId !== projectId) throw new Error('项目在 Worker 启动前发生切换');
     const infrastructure = await createWorkerRunHostInfrastructure({
       projectPath,
       listAcceptances: () => session.listAcceptances(),
