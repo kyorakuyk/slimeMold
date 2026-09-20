@@ -29,6 +29,7 @@ import {
 import { recordProjectEvents } from '../projectControl/eventBuffer';
 import { enqueueWorkerRunCommand } from '../projectControl/workerRun';
 import { installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import { projectWorkerRecoveryActions } from '../projectControl/workerRecoveryCapabilityProjection';
 import type { WorkerRunRecoveryDecision } from '../projectControl/workerSideEffects';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
@@ -102,6 +103,7 @@ export default function ProjectSessionPanel({
   const workerRuns = useWorkflowStore((state) => state.workerRuns);
   const projectControl = useWorkflowStore((state) => state.projectControl);
   const workerRunRecoveries = useWorkflowStore((state) => state.workerRunRecoveries ?? []);
+  const workerRunSideEffects = useWorkflowStore((state) => state.workerRunSideEffects ?? []);
   const globalMasterAgentId = useViewStore((state) => state.globalMasterAgentId);
 
   const session = findSession(projectControl, sessionId);
@@ -125,6 +127,14 @@ export default function ProjectSessionPanel({
       || Object.values(currentWorkerRun.tasks).some((task) => ['failed', 'running', 'blocked', 'waiting-feedback'].includes(task.status)))
     ? workerRunRecoveries.find((item) => item.runId === currentWorkerRun.runId) ?? null
     : null;
+  const currentWorkerRecoveryActions = currentWorkerRun && currentWorkerRunRecovery
+    ? projectWorkerRecoveryActions({
+      run: currentWorkerRun,
+      recovery: currentWorkerRunRecovery,
+      taskGraph: currentTaskGraph,
+      sideEffects: workerRunSideEffects,
+    })
+    : [];
   const workerRunCopy = currentWorkerRunRecovery
     ? {
         title: t('session.workerRun.recovery'),
@@ -221,7 +231,7 @@ export default function ProjectSessionPanel({
   };
 
   const handleWorkerRecovery = (decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>) => {
-    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy) return;
+    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy || !currentWorkerRecoveryActions.includes(decision)) return;
     const runId = currentWorkerRun.runId;
     const reason = `用户在项目驾驶舱选择 ${decision}`;
     setRecoveryBusy(true);
@@ -765,29 +775,33 @@ export default function ProjectSessionPanel({
                   <strong>{t('session.workerRun.recoveryChoices')}</strong>
                   <ul>
                     <li>{t('session.workerRun.recovery.inspect')}</li>
-                    <li>{t('session.workerRun.recovery.retry')}</li>
-                    <li>{t('session.workerRun.recovery.skip')}</li>
+                    {currentWorkerRecoveryActions.includes('retry') && <li>{t('session.workerRun.recovery.retry')}</li>}
+                    {currentWorkerRecoveryActions.includes('skip') && <li>{t('session.workerRun.recovery.skip')}</li>}
                   </ul>
-                  {onRecoverWorkerRun && (
+                  {onRecoverWorkerRun && currentWorkerRecoveryActions.length > 0 && (
                     <div className="sm-beginner-session-recovery-actions">
-                      <button
-                        type="button"
-                        data-testid="beginner-session-worker-retry"
-                        className="sm-beginner-small-button"
-                        disabled={recoveryBusy}
-                        onClick={() => handleWorkerRecovery('retry')}
-                      >
-                        {t('session.workerRun.recovery.retryAction')}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="beginner-session-worker-skip"
-                        className="sm-beginner-small-button"
-                        disabled={recoveryBusy}
-                        onClick={() => handleWorkerRecovery('skip')}
-                      >
-                        {t('session.workerRun.recovery.skipAction')}
-                      </button>
+                      {currentWorkerRecoveryActions.includes('retry') && (
+                        <button
+                          type="button"
+                          data-testid="beginner-session-worker-retry"
+                          className="sm-beginner-small-button"
+                          disabled={recoveryBusy}
+                          onClick={() => handleWorkerRecovery('retry')}
+                        >
+                          {t('session.workerRun.recovery.retryAction')}
+                        </button>
+                      )}
+                      {currentWorkerRecoveryActions.includes('skip') && (
+                        <button
+                          type="button"
+                          data-testid="beginner-session-worker-skip"
+                          className="sm-beginner-small-button"
+                          disabled={recoveryBusy}
+                          onClick={() => handleWorkerRecovery('skip')}
+                        >
+                          {t('session.workerRun.recovery.skipAction')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

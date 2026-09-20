@@ -142,7 +142,7 @@ export default function OrchestratorPanel({
 
   const selected = orchestrations.find((o) => o.id === selectedId) ?? null;
   const selectedWorkerRuns = selected
-    ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals)
+    ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals, projectControl.taskGraphs ?? [])
     : [];
   const taskGraphDAG = useMemo(() => {
     if (!selected) return { projection: null, error: null };
@@ -341,7 +341,8 @@ export default function OrchestratorPanel({
   };
 
   const onRecover = (runId: string, decision: 'retry' | 'skip') => {
-    if (!onRecoverWorkerRun || recoveryBusy) return;
+    const selectedRun = selectedWorkerRuns.find((run) => run.runId === runId);
+    if (!onRecoverWorkerRun || recoveryBusy || !selectedRun?.recoveryActions.includes(decision)) return;
     setRecoveryBusy(true);
     const reason = `用户在专业编排中选择 ${decision}`;
     void (async () => {
@@ -767,26 +768,30 @@ export default function OrchestratorPanel({
                           <p className="break-all text-[10.5px] text-warn">
                             {t('orchestrator.worker.recovery')}: {run.recovery.message}
                           </p>
-                          {onRecoverWorkerRun && (
+                          {onRecoverWorkerRun && run.recoveryActions.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                data-testid={`orchestrator-worker-retry-${run.runId}`}
-                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                                disabled={recoveryBusy}
-                                onClick={() => onRecover(run.runId, 'retry')}
-                              >
-                                {t('orchestrator.worker.recovery.retryAction')}
-                              </button>
-                              <button
-                                type="button"
-                                data-testid={`orchestrator-worker-skip-${run.runId}`}
-                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
-                                disabled={recoveryBusy}
-                                onClick={() => onRecover(run.runId, 'skip')}
-                              >
-                                {t('orchestrator.worker.recovery.skipAction')}
-                              </button>
+                              {run.recoveryActions.includes('retry') && (
+                                <button
+                                  type="button"
+                                  data-testid={`orchestrator-worker-retry-${run.runId}`}
+                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
+                                  disabled={recoveryBusy}
+                                  onClick={() => onRecover(run.runId, 'retry')}
+                                >
+                                  {t('orchestrator.worker.recovery.retryAction')}
+                                </button>
+                              )}
+                              {run.recoveryActions.includes('skip') && (
+                                <button
+                                  type="button"
+                                  data-testid={`orchestrator-worker-skip-${run.runId}`}
+                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
+                                  disabled={recoveryBusy}
+                                  onClick={() => onRecover(run.runId, 'skip')}
+                                >
+                                  {t('orchestrator.worker.recovery.skipAction')}
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

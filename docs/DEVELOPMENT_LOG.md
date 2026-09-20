@@ -4829,3 +4829,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 direct guard tests和 action-level concurrency regression，覆盖 same-key reject、different-key concurrency、release-after-failure和 stable re-entry。
 - 独立 reviewer 对 exact HEAD `e798a6a9e7d4681806f4ec56275eaf0c0376c52e` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 key scope、token-safe release、controller admission/finally release、stable App guard lifetime和 existing recovery order保持。跨 controller/process duplicate decisions、durable CAS和 UI allowedDecisions作为明确 residual。
 - 验证：focused `2 files / 6 tests`；完整 Node `168 test files / 1263 tests`；build通过（最大 chunk `1,184.68 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-single-flight-verified`；对应 `checkpoint/frontend-worker-recovery-single-flight-unverified` 保留为历史回退锚点。
+
+### 7.317 unverified：project canonical Worker recovery decisions into UI
+
+- 新增 `src/projectControl/workerRecoveryCapabilityProjection.ts`，基于 canonical `buildWorkerRunRecoveryPlan` 将 runtime recovery 投影为可点击的 `retry/skip`；只接受 `failed-tasks`、`unfinished-worker-lease`、`cleanup-unknown`，缺少或版本漂移的 TaskGraph、非 actionable recovery reason、lineage/plan 校验失败均 fail-closed 返回空集合。
+- 不把 `allowedDecisions` 写入 WorkerRunQueueState、ProjectFile、DomainEvent 或 side-effect journal；RecoveryCommand/action controller 仍是最终 authority，`inspect` 继续仅作展示，不新增 inspect action。
+- `workerRunView` 为 Professional view 增加 runtime-only `recoveryActions`；OrchestratorPanel 和 ProjectSessionPanel 只渲染 canonical projection允许的按钮，保留 existing callback signatures、single-flight、precondition和后端 revalidation。
+- 新增 pure projector、professional view和Beginner UI回归：普通 failed-task显示 retry/skip；缺失 TaskGraph 不渲染 recovery actions；malformed side-effect、stale graph和 audit/event recovery reasons均不生成可点击决策。
+- 验证：focused `3 files / 20 tests`；完整 Node `169 test files / 1269 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact UI recovery capability reviewer。

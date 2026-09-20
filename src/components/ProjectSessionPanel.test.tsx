@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
+import type { ProjectControlSnapshot, ProjectSession, ProjectTaskGraph } from '../projectControl/types';
 import type { MasterTurnResult } from '../projectControl/master';
 import { clearProjectEventBuffer, getPendingProjectEvents } from '../projectControl/eventBuffer';
 import { clearWorkerRunRuntime, getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
@@ -686,6 +686,33 @@ describe('ProjectSessionPanel', () => {
       reason: 'unfinished-worker-lease',
       message: '检测到未闭合 Worker lease',
     }];
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'task-graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [{
+        version: 1,
+        id: 'task-1',
+        architectureId: 'architecture-1',
+        title: 'Task 1',
+        description: 'Task 1',
+        moduleId: 'module-1',
+        scope: [],
+        dependsOn: [],
+        acceptanceCriteria: [],
+        category: 'logic',
+        status: 'approved',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
     mocks.store.projectControl = {
       version: 1,
       activeSessionId: 'session-1',
@@ -694,7 +721,7 @@ describe('ProjectSessionPanel', () => {
       briefs: [],
       architectures: [],
       issues: [],
-      taskGraphs: [],
+      taskGraphs: [taskGraph],
     } as ProjectControlSnapshot;
 
     await act(async () => {
@@ -721,5 +748,71 @@ describe('ProjectSessionPanel', () => {
       await Promise.resolve();
     });
     expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String));
+  });
+
+  it('hides recovery actions when the current TaskGraph is unavailable', async () => {
+    const onRecoverWorkerRun = vi.fn();
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-1'],
+    }];
+    mocks.store.workerRuns = [{
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'missing-graph',
+      taskGraphVersion: 1,
+      status: 'partial',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'failed',
+          attempt: 1,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-1',
+      projectId: 'project-1',
+      reason: 'failed-tasks',
+      message: '存在失败任务',
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-1', taskGraphId: 'missing-graph' }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="beginner-session-worker-recovery"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="beginner-session-worker-retry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="beginner-session-worker-skip"]')).toBeNull();
+    expect(onRecoverWorkerRun).not.toHaveBeenCalled();
   });
 });

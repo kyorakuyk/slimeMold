@@ -4,6 +4,7 @@ import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from './workerCleanup';
+import type { ProjectTaskGraph } from './types';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { workerRunViewsFor } from './workerRunView';
 
@@ -116,6 +117,45 @@ describe('workerRunViewsFor', () => {
     ]);
     expect(views[0].tasks[0].cleanup).toEqual(cleanupProposals[0]);
     expect(source.tasks['task-1'].status).toBe('failed');
+  });
+
+  it('projects canonical recovery actions when the matching TaskGraph is available', () => {
+    const taskGraph = {
+      version: 1,
+      id: 'graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [{
+        version: 1,
+        id: 'task-1',
+        architectureId: 'architecture-1',
+        title: 'Task 1',
+        description: 'Task 1',
+        moduleId: 'module-1',
+        scope: [],
+        dependsOn: [],
+        acceptanceCriteria: [],
+        category: 'logic',
+        status: 'approved',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
+      approval: 'approved',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    } as ProjectTaskGraph;
+    const views = workerRunViewsFor(
+      [run()],
+      [recovery],
+      'orch-1',
+      [],
+      [],
+      [],
+      [taskGraph],
+    );
+
+    expect(views[0].recoveryActions).toEqual(['retry', 'skip']);
   });
 
   it('does not show prior-attempt evidence or side effects for an explicit current attempt', () => {
