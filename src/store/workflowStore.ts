@@ -96,6 +96,7 @@ import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { createProjectDirtyController, type ProjectDirtyController } from './projectDirtyController';
 import { installProjectConfigAutosave } from './projectConfigAutosave';
 import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
 import { createProjectSaveQueue } from './projectSaveQueue';
@@ -290,7 +291,7 @@ interface WorkflowState {
   removeVariable: (key: string) => void;
   pushRunHistory: (rec: RunRecord) => void;
   clearRunHistory: () => void;
-  /** 写入某 wfId 的运行检查点（覆盖式；suppressDirty——运行收尾不构成「未保存的项目改动」） */
+  /** 写入某 wfId 的运行检查点（覆盖式；dirty suppression——运行收尾不构成「未保存的项目改动」） */
   setCheckpoint: (cp: RunCheckpoint) => void;
   /** 写入检查点并独立落盘到 .slimemold/runs/checkpoints.json（运行收尾调用，返回 Promise 便于等待落盘完成） */
   persistCheckpoint: (cp: RunCheckpoint) => Promise<void>;
@@ -947,7 +948,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       // 阶段 C 可恢复执行：检查点
       setCheckpoint: (cp) => {
-        suppressDirty = true; // 运行收尾写检查点不构成「未保存的项目改动」
+        projectDirtyController.setSuppressed(true); // 运行收尾写检查点不构成「未保存的项目改动」
         const s = get();
         set({
           checkpoints: { ...s.checkpoints, [cp.wfId]: cp },
@@ -957,21 +958,21 @@ export const useWorkflowStore = create<WorkflowState>()(
             [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
           },
         });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
       },
       // F3/F10：运行收尾「即落盘」——内存更新 + 独立写 .slimemold/runs/checkpoints.json，
       // 不依赖用户手动保存，也不标脏（检查点是运行态快照，非项目内容变更）。
       // 返回 Promise 供 executor 收尾 await，避免「runWorkflow 已返回但磁盘尚未写完」的竞态。
       persistCheckpoint: async (cp) => {
         const s = get();
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         const nextCheckpoints = { ...s.checkpoints, [cp.wfId]: cp };
         const nextHistory = {
           ...s.checkpointHistory,
           [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
         };
         set({ checkpoints: nextCheckpoints, checkpointHistory: nextHistory });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
         // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
         await saveCheckpointToDisk(s.projectPath, nextCheckpoints, nextHistory);
       },
@@ -979,10 +980,10 @@ export const useWorkflowStore = create<WorkflowState>()(
       // 但会落盘，使崩溃/强制关闭后仍能从最近进度恢复。
       persistCheckpointSnapshot: async (cp) => {
         const s = get();
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         const next = { ...s.checkpoints, [cp.wfId]: cp };
         set({ checkpoints: next });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
         // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
         await saveCheckpointToDisk(s.projectPath, next, s.checkpointHistory);
       },
@@ -1106,9 +1107,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
         const previousProjectId = get().projectId;
         resetProjectControlLifecycle(previousProjectId);
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
       },
 
       createProject: async ({ name, templateId, location }) => {
@@ -1147,7 +1148,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           variables: {},
           belongsToProject: projId,
         };
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         set({
           projectName: name,
           projectId: projId,
@@ -1179,7 +1180,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
         if (saveRoot) {
           try {
             const root = await get().saveProject();
@@ -1205,9 +1206,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         } catch {
           return false; // 无可用工作流，保持现状
         }
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         set(state);
-        finalizeLoaded();
+        projectDirtyController.finalizeLoaded();
         set(activateProjectControlRuntime({
           projectId: file.id,
           taskGraphs: state.projectControl.taskGraphs ?? [],
@@ -1288,7 +1289,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       isProjectDirty: () => {
         const s = get();
         if (!s.lastSavedSnapshot) return s.projectDirty; // 从未保存过：以标记为准
-        // 与 finalizeLoaded/subscribe 统一用稳定快照比对（排除时间戳/自增 id 噪声）
+        // 与 projectDirtyController/稳定快照基线统一比较（排除时间戳/自增 id 噪声）
         return s.lastSavedSnapshot !== projectSnapshot(s);
       },
 
@@ -1299,9 +1300,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         const state = buildSwitchWorkflowState(s, id);
         if (!state) return;
         // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         set(state);
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
       },
 
       /**
@@ -1585,7 +1586,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       closeProject: () => {
         const currentProjectId = get().projectId;
         resetProjectControlLifecycle(currentProjectId);
-        suppressDirty = true;
+        projectDirtyController.setSuppressed(true);
         set({
           projectName: null,
           projectId: null,
@@ -1614,7 +1615,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           selectedNodeId: null,
           logs: [],
         });
-        suppressDirty = false;
+        projectDirtyController.setSuppressed(false);
         clearLastSession();
       },
 
@@ -2087,7 +2088,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
 // ---------- P1：项目级脏检测（内存态 vs 磁盘态） ----------
 // 加载/切换期间临时抑制自动脏检测，避免误标
-let suppressDirty = false;
+
 const projectSaveQueue = createProjectSaveQueue();
 const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsController<WorkflowState>({
   isTauri,
@@ -2115,26 +2116,11 @@ const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsCont
 });
 
 /** 载入/打开项目后调用：以当前内存态作为"与磁盘一致"的基准，清除脏标记 */
-function finalizeLoaded() {
-  suppressDirty = false;
-  useWorkflowStore.setState({
-    projectDirty: false,
-    lastSavedSnapshot: projectSnapshot(useWorkflowStore.getState()),
-  });
-}
 
-// 仅当"落盘相关字段"变化时才比对快照，避免日志/运行态频繁触发 stringify
-// DIRTY_KEYS 已抽到 workflowSerialize（共享常量）
-useWorkflowStore.subscribe((state, prev) => {
-  if (suppressDirty) return;
-  if (DIRTY_KEYS.every((k) => (state as any)[k] === (prev as any)[k])) return;
-  if (!state.lastSavedSnapshot) {
-    if (!state.projectDirty) useWorkflowStore.setState({ projectDirty: true });
-    return;
-  }
-  if (state.lastSavedSnapshot !== projectSnapshot(state)) {
-    if (!state.projectDirty) useWorkflowStore.setState({ projectDirty: true });
-  }
+
+const projectDirtyController: ProjectDirtyController = createProjectDirtyController<WorkflowState>(useWorkflowStore, {
+  dirtyKeys: DIRTY_KEYS as readonly (keyof WorkflowState)[],
+  snapshot: projectSnapshot,
 });
 
 // ---------- 智能体/配置类字段变更自动落盘 ----------
@@ -2142,7 +2128,7 @@ useWorkflowStore.subscribe((state, prev) => {
 // 防抖自动 saveProject，避免「改了 agent 忘保存 → 重启自动恢复时 agents.json 没有 → agent 消失」。
 // 监听器、debounce 和 timer cleanup 已抽到 projectConfigAutosave.ts。
 installProjectConfigAutosave(useWorkflowStore, {
-  isSuppressed: () => suppressDirty,
+  isSuppressed: () => projectDirtyController.isSuppressed(),
 });
 
 // 确保启动/恢复后始终有一个激活的工作流承载当前画布（避免游离态丢节点）
