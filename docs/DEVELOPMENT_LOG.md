@@ -4821,10 +4821,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `4a5fe8d33cb6525c0134b96b027a3624b68e78b0` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 precondition、captured command inputs、fresh-state projection ordering、canonical recovery/event ownership和 forbidden-import boundaries保持。controller-level drift/command-blocking回归建议非阻塞，列入后续增强。
 - 验证：focused `6 files / 26 tests`；完整 Node `167 test files / 1259 tests`；build通过（最大 chunk `1,184.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-decision-precondition-verified`；对应 `checkpoint/frontend-worker-recovery-decision-precondition-unverified` 保留为历史回退锚点。
 
-### 7.316 unverified：add stable interactive Worker recovery single-flight
+### 7.316 verified：add stable interactive Worker recovery single-flight
 
 - 新增 `src/projectControl/workerRecoverySingleFlight.ts`，以 projectId、projectPath、runId 为 key 的 process-local lease guard；第二个同 key interactive recovery 在 host/session/journal work 前 fail-fast，different run/project 可并发。
 - `workerActionController` 通过 `finally` release lease，保留首个调用的原 error/AbortError/save/retry语义；App 使用 stable `useRef` 注入 guard，避免 controller 每次 render 重建导致 mutex丢失。old lease 使用 token identity release，不能清除 newer lease。
 - 不改变 WorkerRunRecovery/RecoveryCommand/event schema、durable CAS、UI allowedDecisions、passive startup recovery或 retry runtime selection；这些 residual 保留后续独立切片。
 - 新增 direct guard tests和 action-level concurrency regression，覆盖 same-key reject、different-key concurrency、release-after-failure和 stable re-entry。
-- 验证：focused `2 files / 6 tests`；完整 Node `168 test files / 1263 tests`；build通过（最大 chunk `1,184.68 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact Worker recovery single-flight reviewer。
+- 独立 reviewer 对 exact HEAD `e798a6a9e7d4681806f4ec56275eaf0c0376c52e` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 key scope、token-safe release、controller admission/finally release、stable App guard lifetime和 existing recovery order保持。跨 controller/process duplicate decisions、durable CAS和 UI allowedDecisions作为明确 residual。
+- 验证：focused `2 files / 6 tests`；完整 Node `168 test files / 1263 tests`；build通过（最大 chunk `1,184.68 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-single-flight-verified`；对应 `checkpoint/frontend-worker-recovery-single-flight-unverified` 保留为历史回退锚点。
