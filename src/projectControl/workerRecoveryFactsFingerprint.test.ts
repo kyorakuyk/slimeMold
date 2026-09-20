@@ -65,8 +65,8 @@ function effect(overrides: Partial<SideEffectRecord> = {}): SideEffectRecord {
     inputHash: '["run-1","task-1",1,1,"base","C:/worktree","worker/task-1"]',
     runId: 'run-1',
     taskId: 'task-1',
-    taskExecutionId: 'exec-run-1-task-1',
-    attemptId: 'attempt-exec-run-1-task-1-1',
+    taskExecutionId: 'task-execution:run-1:task-1',
+    attemptId: 'task-execution:run-1:task-1:attempt-1',
     status: 'unknown',
     recovery: 'needs-user',
     ...overrides,
@@ -85,8 +85,12 @@ function input(overrides: {
         taskId: 'task-1',
         status: 'failed',
         attempt: 1,
-        taskExecutionId: 'exec-run-1-task-1',
-        currentAttemptId: 'attempt-exec-run-1-task-1-1',
+        taskExecutionId: 'task-execution:run-1:task-1',
+        currentAttemptId: 'task-execution:run-1:task-1:attempt-1',
+        worktreeId: 'worktree-1',
+        worktreePath: 'C:/worktree',
+        branch: 'worker/task-1',
+        baseRevision: 'base',
         evidenceIds: ['evidence-1'],
         updatedAt: '2026-09-20T00:01:00.000Z',
       },
@@ -100,17 +104,22 @@ describe('worker recovery facts fingerprint v1', () => {
   it('is stable across object, task, and effect insertion order', async () => {
     const effectTwo = effect({
       idempotencyKey: 'effect-2',
+      target: 'worktree-2',
       taskId: 'task-2',
-      taskExecutionId: 'exec-run-1-task-2',
-      attemptId: 'attempt-exec-run-1-task-2-1',
+      taskExecutionId: 'task-execution:run-1:task-2',
+      attemptId: 'task-execution:run-1:task-2:attempt-1',
       inputHash: '["run-1","task-2",1,1,"base","C:/worktree-2","worker/task-2"]',
     });
     const taskTwo = {
       taskId: 'task-2',
       status: 'running' as const,
       attempt: 1,
-      taskExecutionId: 'exec-run-1-task-2',
-      currentAttemptId: 'attempt-exec-run-1-task-2-1',
+      taskExecutionId: 'task-execution:run-1:task-2',
+      currentAttemptId: 'task-execution:run-1:task-2:attempt-1',
+      worktreeId: 'worktree-2',
+      worktreePath: 'C:/worktree-2',
+      branch: 'worker/task-2',
+      baseRevision: 'base',
       evidenceIds: ['evidence-2'],
       updatedAt: '2026-09-20T00:01:00.000Z',
     };
@@ -150,21 +159,58 @@ describe('worker recovery facts fingerprint v1', () => {
         'task-1': {
           ...input().run.tasks['task-1'],
           attempt: 2,
-          currentAttemptId: 'attempt-exec-run-1-task-1-2',
+          currentAttemptId: 'task-execution:run-1:task-1:attempt-2',
         },
       }),
+      sideEffects: [effect({
+        attemptId: 'task-execution:run-1:task-1:attempt-2',
+        inputHash: '["run-1","task-1",1,2,"base","C:/worktree","worker/task-1"]',
+      })],
     });
     const changedEffect = await fingerprintWorkerRecoveryFactsV1({
       ...input(),
-      sideEffects: [effect({ inputHash: 'changed-input' })],
+      sideEffects: [effect({ unknownReason: 'changed-reason' })],
     });
     expect(changedAttempt).not.toBe(baseline);
     expect(changedEffect).not.toBe(baseline);
   });
 
-  it('rejects unbound or legacy recoverable effects', () => {
+  it('rejects cross-task lineage, legacy ids, and malformed assignment provenance', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
-      sideEffects: [effect({ attemptId: undefined })],
+      sideEffects: [effect({ taskId: 'ghost-task' })],
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({ taskExecutionId: 'legacy-execution' })],
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({ inputHash: 'not-json' })],
+    }))).toThrow();
+  });
+
+  it('rejects invalid states, unsafe numbers, and duplicate references', () => {
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          attempt: Number.MAX_SAFE_INTEGER + 1,
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          status: 'not-a-status' as never,
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          evidenceIds: ['evidence-1', 'evidence-1'],
+        },
+      }),
     }))).toThrow();
   });
 });

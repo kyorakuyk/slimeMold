@@ -4862,4 +4862,4 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - canonicalizer 对 object key、task/effect ordering、evidence references、Windows path representation和 optional fields做纯内存规范化；fingerprint 输出 `worker-recovery-facts-v1:sha256:<hex>`，仅使用 Web Crypto SHA-256，不接 ProjectFile、eventBuffer、side-effect journal、controller或native host。
 - 新增 direct contract tests：多 task/effect insertion order稳定、attempt/effect identity变化改变 fingerprint、时间 metadata不改变结果、unbound/legacy effect fail-closed。
 - 本轮不改变任何 WorkerRun/ProjectFile/DomainEvent/SideEffect schema，不接 durable CAS；Gate A 通过不等于 recovery decision CAS 闭合。
-- 验证：focused `1 file / 3 tests`；完整 Node `170 test files / 1273 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact Gate A reviewer。
+- 验证：focused `1 file / 4 tests`；完整 Node `170 test files / 1274 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact Gate A reviewer。
