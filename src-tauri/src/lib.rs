@@ -138,6 +138,24 @@ fn run_git_readonly_args(args: &[String]) -> bool {
     }
 }
 
+fn legacy_git_invocation_args(args: &[String]) -> Option<Vec<String>> {
+    if !run_git_readonly_args(args) {
+        return None;
+    }
+    let mut hardened = vec!["--no-pager".to_string()];
+    if args.first().map(String::as_str) == Some("diff") {
+        hardened.extend([
+            "diff".to_string(),
+            "--no-ext-diff".to_string(),
+            "--no-textconv".to_string(),
+        ]);
+        hardened.extend(args.iter().skip(1).cloned());
+    } else {
+        hardened.extend(args.iter().cloned());
+    }
+    Some(hardened)
+}
+
 #[tauri::command]
 fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> {
     // 1) cwd 必填且为已存在目录，禁止越界
@@ -160,9 +178,9 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
         return Err(format!("run_git: cwd 禁止包含 '..' 路径逃逸：{cwd}"));
     }
 
-    if !run_git_readonly_args(&args) {
-        return Err("run_git: legacy 命令只允许只读 Git probe；worktree 生命周期必须走 H4 WorktreeManager/dev_exec".to_string());
-    }
+    let invocation_args = legacy_git_invocation_args(&args).ok_or_else(|| {
+        "run_git: legacy 命令只允许只读 Git probe；worktree 生命周期必须走 H4 WorktreeManager/dev_exec".to_string()
+    })?;
     let mut probe = Command::new(execution::dev_exec::resolve_dev_program("git"));
     probe
         .arg("-C")
@@ -187,8 +205,8 @@ fn run_git(args: Vec<String>, cwd: Option<String>) -> Result<GitResult, String> 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     execution::dev_exec::apply_dev_env(&mut cmd);
-    for a in &args {
-        cmd.arg(a);
+    for argument in invocation_args {
+        cmd.arg(argument);
     }
     let output =
         execution::dev_exec::run_with_timeout(&mut cmd, std::time::Duration::from_secs(30))?;

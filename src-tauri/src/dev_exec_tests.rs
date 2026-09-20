@@ -370,6 +370,20 @@ fn legacy_run_git_is_read_only_and_revision_scoped() {
 }
 
 #[test]
+fn legacy_git_diff_uses_hardened_invocation() {
+    assert_eq!(
+        legacy_git_invocation_args(&sv(&["diff", "HEAD"])),
+        Some(sv(&[
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD"
+        ]))
+    );
+}
+
+#[test]
 fn main_repo_worktree_lifecycle_is_scoped_to_worker_root() {
     let repo = std::path::Path::new("C:/Repo/SlimeMold");
     assert!(main_repo_worktree_args_are_valid(

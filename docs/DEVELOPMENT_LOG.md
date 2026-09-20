@@ -4402,3 +4402,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `7eb98ac` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；runtime `find`统一走结构化 `command_intent_kind`，合法 `-P/-name/glob`保持可用，missing operand/trailing operator/external-file/mutation/protected-root/path cases fail-closed，无 legacy `run_git`旁路变更。
 - 同一快照质量门：find/shared-vector targeted `2/2`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。该 closure只覆盖 native find admission，Unix/macOS、spawn/path identity、GUI/E2E、Worker和历史 debt仍独立开放。
 - 已创建本地 verified tag：`checkpoint/native-find-policy-parity-verified`。
+
+### 7.251 unverified：harden legacy `run_git` diff invocation
+
+- Read-only triage确认 legacy `run_git`仍是独立 raw Git read-only surface；其 `diff`路径未显式关闭 pager、external diff和textconv，可能受 repository-local Git config影响。
+- 先写 RED：新增 `legacy_git_diff_uses_hardened_invocation`，要求 `diff HEAD`转换为 `--no-pager diff --no-ext-diff --no-textconv HEAD`；`run_git`实际使用共享 builder，其他 read-only probes保持 allowlist与 cwd/top-level guard。
+- 验证：legacy targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `101/101`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
