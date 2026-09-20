@@ -846,13 +846,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       upsertAgent: (agent) => {
-        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
         set({ agents: upsertById(get().agents, agent) });
       },
 
       removeAgent: (id) =>
         set((s) => {
-          // 路由表清理纯逻辑已抽到 workflowState.cleanupRouteTableForAgent（G5 门面化）
+          // 路由表清理纯逻辑已抽到 projectCatalogState.cleanupRouteTableForAgent（G5 门面化）
           const { table, changed } = cleanupRouteTableForAgent(s.agentRouteTable, id);
           return {
             agents: s.agents.filter((a) => a.id !== id),
@@ -866,7 +866,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       setGlobalAgents: (agents) => set({ globalAgents: agents }),
 
       upsertGlobalAgent: (agent) => {
-        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
         const next = upsertById(get().globalAgents, agent);
         set({ globalAgents: next });
         void saveGlobalAgents(next);
@@ -882,7 +882,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       upsertRole: (role) => {
-        // 通用 upsert 纯逻辑已抽到 workflowState.upsertById（G5 门面化）
+        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
         set({ roles: upsertById(get().roles, role) });
       },
 
@@ -1112,7 +1112,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // 通过下方 newProject/openProject/switchWorkflow/saveProject 间接调用。
 
       newProject: (name) => {
-        // 状态构建纯逻辑已抽到 workflowState.buildNewProjectState（G5 门面化收口）
+        // 状态构建纯逻辑已抽到 workflowLifecycleState.buildNewProjectState（G5 门面化收口）
         const previousProjectId = get().projectId;
         resetProjectControlLifecycle(previousProjectId);
         projectDirtyController.setSuppressed(true);
@@ -1182,7 +1182,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       openProject: (file, path) => {
-        // 状态构建纯逻辑已抽到 workflowState.buildOpenProjectState（G5 门面化）
+        // 状态构建纯逻辑已抽到 workflowLifecycleState.buildOpenProjectState（G5 门面化）
         let state;
         try {
           state = buildOpenProjectState(file, path ?? file.name, get().defaultAgentId);
@@ -1288,7 +1288,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       switchWorkflow: (id) => {
         const s = get();
         if (id === s.activeWfId) return;
-        // 状态构建纯逻辑已抽到 workflowState.buildSwitchWorkflowState（G5 门面化）
+        // 状态构建纯逻辑已抽到 workflowRegistryState.buildSwitchWorkflowState（G5 门面化）
         const state = buildSwitchWorkflowState(s, id);
         if (!state) return;
         // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测

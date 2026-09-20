@@ -4583,3 +4583,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 对 `f3cc2bf6c732b836ab7a5b216b8cab5b4ccf61a0` fail-closed：发现 `CreateProjectStateInput` 同时存在于 `workflowRegistryState.ts` 和 `workflowLifecycleState.ts`，违反事实 ownership；该 verdict 不创建 verified tag。
 - 以 repair checkpoint `f1615375b5444c1b70ac96297be90c355c32d658` 为起点，从 registry module 删除重复 lifecycle input type，保留 lifecycle module 为唯一 owner；未改变 runtime implementation或兼容 barrel合同。
 - 验证：focused `4 files / 29 tests`；完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact structure reviewer。
+
+### 7.281 unverified：align state owner comments
+
+- 根据 reviewer 非阻塞建议，更新 `workflowStore.ts` 中 catalog、lifecycle、registry builder 的注释，使文案分别指向 `projectCatalogState`、`workflowLifecycleState` 和 `workflowRegistryState`；不改变生产逻辑、导出或调用合同。
+- 验证：完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact structure reviewer。
