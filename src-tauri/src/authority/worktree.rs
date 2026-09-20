@@ -574,6 +574,21 @@ fn git_worktree_is_listed(
     }))
 }
 
+pub(crate) fn cleanup_target_absence_is_confirmed(
+    repo: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<bool, String> {
+    let absent = match fs::symlink_metadata(target) {
+        Ok(_) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => return Err(format!("cleanup target absence probe failed: {error}")),
+    };
+    if !absent {
+        return Ok(false);
+    }
+    Ok(!git_worktree_is_listed(repo, target)?)
+}
+
 fn git_worktree_matches(
     repo: &std::path::Path,
     target: &std::path::Path,
@@ -1420,6 +1435,17 @@ pub(crate) fn dev_cleanup_worktree(
                 result.stderr
             ));
         }
+    }
+    let cleanup_readback = cleanup_probe_or_invalidate(
+        &approval_token,
+        cleanup_target_absence_is_confirmed(&base_path, &canon),
+    )?;
+    if !cleanup_readback {
+        invalidate_cleanup_binding(&approval_token);
+        return Err(
+            "dev_cleanup_worktree: cleanup 后 target 或 Git worktree listing 仍存在，结果必须按 unknown 处理"
+                .into(),
+        );
     }
     let base_identity_after_cleanup =
         cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?;

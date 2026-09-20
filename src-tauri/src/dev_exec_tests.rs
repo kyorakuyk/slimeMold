@@ -384,6 +384,26 @@ fn legacy_git_diff_uses_hardened_invocation() {
 }
 
 #[test]
+fn cleanup_readback_requires_absent_target_and_unlisted_worktree() {
+    let root =
+        std::env::temp_dir().join(format!("slimemold-cleanup-readback-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let init = std::process::Command::new("git")
+        .current_dir(&root)
+        .args(["init", "-q"])
+        .status()
+        .unwrap();
+    assert!(init.success());
+    let target = root.join("worker");
+    fs::create_dir_all(&target).unwrap();
+    assert!(!cleanup_target_absence_is_confirmed(&root, &target).unwrap());
+    fs::remove_dir_all(&target).unwrap();
+    assert!(cleanup_target_absence_is_confirmed(&root, &target).unwrap());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn main_repo_worktree_lifecycle_is_scoped_to_worker_root() {
     let repo = std::path::Path::new("C:/Repo/SlimeMold");
     assert!(main_repo_worktree_args_are_valid(

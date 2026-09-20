@@ -4414,3 +4414,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `44ae249` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；legacy builder受既有 read-only allowlist约束，`run_git`实际使用 hardened argv，diff/name-only/stat语法保持有效，并显式关闭 pager/external diff/textconv；cwd/top-level/error/launcher/Worker路径无变更。
 - 同一快照质量门：legacy targeted `2/2`；Rust fmt/check、全量 lib `101/101`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Reviewer建议后续补 name-only/stat direct assertions与 hostile-config integration test，作为非阻塞 follow-up。
 - 已创建本地 verified tag：`checkpoint/native-legacy-run-git-policy-verified`。该 closure只覆盖 legacy read-only Git invocation，不代表完整 native hardening、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
+
+### 7.253 unverified：strict cleanup post-remove read-back
+
+- Read-only triage确认 cleanup 成功后只重查 base identity，随后直接清理 registrations/orphan state；target目录或 Git worktree listing 未做严格 absence read-back。
+- 先写 RED：真实临时 Git repo测试要求 target存在时 read-back false，target删除且 Git listing无 target时 true；新增 `cleanup_target_absence_is_confirmed`，并在 `dev_cleanup_worktree` 消费 capability前同时检查 filesystem `symlink_metadata` absence 与 `git worktree list` absence，失败保持 unknown并拒绝清理完成。
+- 验证：cleanup read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
