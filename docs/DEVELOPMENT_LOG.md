@@ -4638,3 +4638,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 对 `98e108e60cbadddd63e2a4f5ce6f805dc106de7d` fail-closed：发现 final removal错误清除 defaultAgentId、empty active-id rename guard缺失、空字符串 cleanup intent被 facade truthy gate吞掉；该 verdict 不创建 verified tag。
 - 以 repair checkpoint `2591a2e860d0ad3822303655975dd752bd8c6871` 为起点：恢复 parent truthy active-id guard；final activation不再输出 defaultAgentId；cleanup intent改为 `string | null` 并由 facade使用 `!== null`，保留空字符串 workflow id cleanup；新增 parity regressions。
 - 验证：focused `2 files / 18 tests`；完整 Node `153 test files / 1213 tests`；build通过（最大 chunk `1,177.80 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend registry reviewer。
+
+### 7.290 verified：exact review closes workflow registry mutation parity
+
+- 独立 reviewer 对 exact HEAD `bfd5ff07d8251378b22621568b6a0b2a5ea5e6b3` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 three parity blockers均已修复且没有新 regression。
+- reviewer独立复核 focused `18/18`、full `153 files / 1213 tests`、build、i18n `1026/1026`、TypeScript、diff check和security scan。
+- 创建 verified tag：`checkpoint/frontend-workflow-registry-mutation-verified`；`checkpoint/frontend-workflow-registry-mutation-unverified` 和 parity repair unverified tag保留为历史回退锚点。partial-CAS仍未编码。
