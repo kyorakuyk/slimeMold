@@ -4384,3 +4384,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `ad0f516` exact reviewer fail-closed：literal `.git`/`.slimemold`已保护，但 Windows trailing-dot/space 与 ADS alias（如 `.git.`、`.slimemold `、`.git:stream`）仍可绕过 direct `dev_write_file`/`dev_create_dir`。
 - 先写 public mutation RED：新增 Windows-only `direct_file_authority_rejects_windows_metadata_aliases`，确认上述 alias 在 write 与 mkdir均被拒绝；修复在 native `protected_relative_path` 增加 Windows component canonicalization：去除 trailing dot/space，并按 `:` 前 owner识别 ADS，保留 `.gitignore`/`.slimemoldish`兄弟名不误伤。
 - 验证：alias targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.248 verified：native protected metadata alias review closure
+
+- exact HEAD `7c30dec` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 mutation probes拒绝 `.git`/`.slimemold` exact、descendant及 Windows trailing-dot/space/ADS aliases，保留 `.gitignore`/`.slimemoldish`；无 grammar或 legacy `run_git`旁路变更。
+- 同一快照质量门：Windows targeted `1/1`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Linux/macOS sysroot/pkg-config/C toolchain缺失，作为 environment-blocked residual记录，不升级为跨平台 verified。
+- 已创建本地 verified tag：`checkpoint/native-protected-metadata-alias-repair-verified`。该 tag只证明 direct file protected metadata slice，不代表完整 native hardening、Worker、GUI/E2E或历史 unverified已关闭。
