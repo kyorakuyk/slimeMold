@@ -4714,3 +4714,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `createProject` 的异步 path/default-directory/save/failure/session合同继续留在 `workflowStore.ts`，未与 bootstrap action 混抽；open invalid file保持 no-op/false，valid open保持 set → finalizeLoaded → runtime activation顺序。
 - 新增 `projectBootstrapActions.test.ts` direct tests，覆盖 new reset/suppression、invalid open no-op、valid open activation/finalization；保留现有 workflowStore ProjectControl/open/new regressions。
 - 验证：focused `5 files / 21 tests`；完整 Node `156 test files / 1222 tests`；build通过（最大 chunk `1,179.13 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact project bootstrap reviewer。
+
+### 7.302 verified：exact review closes project bootstrap actions
+
+- 独立 reviewer 对 exact HEAD `42602046cfa5ce715ba22fba045d145f53fcf7a9` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 new/open sequencing、state construction、runtime projection、dependency injection、public APIs和 ownership boundaries保持，createProject仍保持 inline。
+- reviewer独立复核 focused `21/21`、full `156 files / 1222 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；direct bootstrap coverage suggestion非阻塞。
+- 创建 verified tag：`checkpoint/frontend-project-bootstrap-actions-verified`；`checkpoint/frontend-project-bootstrap-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
