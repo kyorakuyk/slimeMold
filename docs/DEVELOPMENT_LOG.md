@@ -4333,3 +4333,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `executor.ts` 保留 LLM/storage/vars/sandbox、capability裁剪、节点执行/重试/结果处理与运行时序；旧 callback实现已删除，无第二套 owner。新增 direct context tests及完整 executor lifecycle regression。
 - GREEN：focused `7 files / 42 tests`；完整 Node `138 test files / 1163 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
 - 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。executor结构拆分、真实 Tauri E2E与历史 unverified收口继续后置。
+
+### 7.240 verified：executor NodeContextAdapter review closure
+
+- exact HEAD `f398274` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认资产合并/id覆盖、动态 partial/owner映射、branches/onGate、sandbox lanes、edge双写、过期 intervention cancel、checkpoint-before-request、owner identity、capability fencing与 executor lifecycle均保持一致，无重复 callback、stale import、循环、TDZ或 loop regression。
+- 同一代码快照质量门：Node `138 test files / 1163 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-executor-context-adapter-verified`。该 tag只证明 context结构切片，不代表 workflowStore/WorkflowEditor剩余结构债务、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
