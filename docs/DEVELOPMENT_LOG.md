@@ -4720,3 +4720,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `42602046cfa5ce715ba22fba045d145f53fcf7a9` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 new/open sequencing、state construction、runtime projection、dependency injection、public APIs和 ownership boundaries保持，createProject仍保持 inline。
 - reviewer独立复核 focused `21/21`、full `156 files / 1222 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；direct bootstrap coverage suggestion非阻塞。
 - 创建 verified tag：`checkpoint/frontend-project-bootstrap-actions-verified`；`checkpoint/frontend-project-bootstrap-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.303 unverified：extract project creation actions
+
+- 将异步 `createProject` 编排抽到 `src/store/projectCreationActions.ts`；注入 template lookup、identity、save-root resolution、dirty/state、saveProject、last-session和warning capabilities，复用 `buildCreateProjectState` 与 runtime empty projection。
+- 保留 createProject 合同：旧 project reset先行；identity/template/path顺序不变；无 root清理 session；save成功使用返回 root写 last session；save失败保留内存项目、`projectPath=null`、`projectDirty=true`并保留原 warning 文案。未移动 saveProject、ProjectFile persistence、event flush或 host lifecycle。
+- 新增 `projectCreationActions.test.ts` direct tests，覆盖内存创建、保存成功和保存失败 fallback；facade ProjectControl/createProject regressions保留。
+- 验证：focused `5 files / 17 tests`；完整 Node `157 test files / 1225 tests`；build通过（最大 chunk `1,179.60 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact project creation reviewer。

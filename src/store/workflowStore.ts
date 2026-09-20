@@ -110,6 +110,7 @@ import {
   markDirtyDownstream,
   type GraphSnapshot,
 } from './workflowGraph';
+import { createProjectCreationActions } from './projectCreationActions';
 import { createProjectBootstrapActions } from './projectBootstrapActions';
 import { createProjectLifecycleActions } from './projectLifecycleActions';
 import { createWorkflowRegistryActions } from './workflowRegistryActions';
@@ -118,7 +119,6 @@ import { createWorkflowGraphCommands } from './workflowGraphCommands';
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
 import {
-  buildCreateProjectState,
   buildCloseProjectState,
 } from './workflowLifecycleState';
 import {
@@ -496,6 +496,40 @@ export const useWorkflowStore = create<WorkflowState>()(
         setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
         finalizeLoaded: () => projectDirtyController.finalizeLoaded(),
         projectControlAdapter,
+      });
+      const projectCreationActions = createProjectCreationActions({
+        getProjectId: () => get().projectId,
+        resetProjectControlLifecycle: projectControlAdapter.resetProjectControlLifecycle,
+        getTemplate: (templateId) => {
+          const template = templateId ? STARTER_TEMPLATES.find((item) => item.id === templateId) : undefined;
+          if (!template) return undefined;
+          const graph = template.build();
+          return { name: template.name, nodes: graph.nodes, edges: graph.edges };
+        },
+        createProjectIdentity: () => ({
+          workflowId: `wf-${Date.now()}`,
+          projectId: `proj-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+        }),
+        resolveSaveRoot: async (name, location) => {
+          let saveRoot: string | null = location ?? null;
+          if (!saveRoot && isTauri) {
+            try {
+              const base = (await defaultStandaloneDir()).replace(/\/未归类$/, '');
+              const safe = (name.trim() || '未命名项目').replace(/[\\/:*?"<>|]/g, '_');
+              saveRoot = `${base}/${safe}`;
+            } catch {
+              saveRoot = null;
+            }
+          }
+          return saveRoot;
+        },
+        setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        setState: (patch) => set(patch as Partial<WorkflowState>),
+        saveProject: () => get().saveProject(),
+        saveLastSession,
+        clearLastSession,
+        addLog: (level, message) => get().addLog(level, message),
       });
       const projectLifecycleActions = createProjectLifecycleActions({
         getProjectId: () => get().projectId,
@@ -1099,67 +1133,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       ...projectBootstrapActions,
 
-      createProject: async ({ name, templateId, location }) => {
-        const previousProjectId = get().projectId;
-        projectControlAdapter.resetProjectControlLifecycle(previousProjectId);
-        const tpl = templateId
-          ? STARTER_TEMPLATES.find((t) => t.id === templateId)
-          : undefined;
-        const graph = tpl?.build();
-        const tplNodes = graph?.nodes ?? [];
-        const tplEdges = graph?.edges ?? [];
-        const id = `wf-${Date.now()}`;
-        const projId = `proj-${Date.now()}`;
-        const now = new Date().toISOString();
-        // 落盘根目录：用户指定优先；未指定则在桌面端落到「文档/SlimeMold/<项目名>」，
-        // 保证“新建项目”即自动生成 .slimemold 目录骨架（浏览器无磁盘环境仍按内存草稿处理）
-        let saveRoot: string | null = location ?? null;
-        if (!saveRoot && isTauri) {
-          try {
-            const base = (await defaultStandaloneDir()).replace(/\/未归类$/, '');
-            const safe = (name.trim() || '未命名项目').replace(/[\\/:*?"<>|]/g, '_');
-            saveRoot = `${base}/${safe}`;
-          } catch {
-            saveRoot = null;
-          }
-        }
-        const state = buildCreateProjectState({
-          name,
-          projectId: projId,
-          workflowId: id,
-          createdAt: now,
-          projectPath: saveRoot,
-          template: {
-            name: tpl?.name ?? '未命名工作流',
-            nodes: tplNodes,
-            edges: tplEdges,
-          },
-        });
-        projectDirtyController.setSuppressed(true);
-        set({
-          ...state,
-          workerRunRecoveries: [],
-          workerRunEvidence: [],
-          workerRunSideEffects: [],
-          workerCleanupProposals: [],
-        });
-        projectDirtyController.setSuppressed(false);
-        if (saveRoot) {
-          try {
-            const root = await get().saveProject();
-            saveLastSession({ path: root, activeId: id });
-          } catch (e) {
-            // 落盘失败：保留在内存态（projectPath=null），用户可稍后保存
-            set({ projectPath: null, projectDirty: true });
-            get().addLog(
-              'warn',
-              `项目已创建但落盘失败：${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-        } else {
-          clearLastSession();
-        }
-      },
+      ...projectCreationActions,
 
       saveProject: async (guard) => {
         const initial = get();
