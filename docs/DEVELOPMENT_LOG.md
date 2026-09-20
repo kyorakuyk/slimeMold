@@ -4306,3 +4306,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `5d03e17` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 sandbox root优先级、run resource登记、编码路径、lane allowlist、relative path、动态 Tauri fs、browser fallback及全部 sandbox操作保持一致，`executeNode` 的 ExecContext/LLM/status/event/cost/retry路径未改变。
 - 同一代码快照质量门：Node `135 test files / 1159 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
 - 已创建本地 verified tag：`checkpoint/frontend-executor-sandbox-adapter-verified`。该 tag只证明 sandbox结构切片，不代表 executor context、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.236 unverified：extract executor NodeLlmAdapter
+
+- 第八条前端基础切片将 `executeNode` 内 LLM adapter抽到 `src/engine/nodeLlmAdapter.ts`；adapter负责 AgentRouter决策、route telemetry、项目经验注入、fallback调用和工具/成本/logger透传。
+- `executor.ts` 保留 `ExecContext` facade、节点状态/事件/干预、资产/变量/边 scope、重试和执行时序；adapter默认复用已有 `decideAgentCall`、`runLlmWithFallback`、`matchExperience`，未新增路由或执行策略。新增 direct test覆盖路由事件、经验注入和 sandbox/storage工具透传。
+- GREEN：focused `8 files / 83 tests`；完整 Node `136 test files / 1160 tests`；`npm run build`通过，最大 chunk约 `1,173.70 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor剩余 context切片和历史 unverified收口继续后置。

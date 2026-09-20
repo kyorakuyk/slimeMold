@@ -21,18 +21,15 @@ import { ExecutionCoordinator } from './executionCoordinator';
 import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { decideNodeExecution } from './nodeExecutionPolicy';
-import { runLlmWithFallback } from './runLlmCall';
 import { handleNodeSuccess, handleNodeFailure } from './nodeResultHandler';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
-import { decideAgentCall } from '../agents/agentDecision';
 import { buildRunningCheckpoint } from './checkpoint';
 import { attachEventLog, getEventPersistenceMode } from './eventLog';
 import { finalizeRun } from './runFinalizer';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
-import { matchExperience } from '../agents/experienceStore';
 import { createRunResources, cleanupRun, getRunResources } from './runResources';
 import {
   beginRun,
@@ -46,6 +43,7 @@ import {
   strike,
 } from './nodeCache';
 import { createNodeSandbox } from './nodeSandboxAdapter';
+import { createNodeLlmAdapter } from './nodeLlmAdapter';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -784,6 +782,52 @@ async function executeNode(
   });
 
   let branchesTaken: string[] | undefined;
+  const nodeStorage = scopedStorage(`${def.pluginId ?? 'core'}:${def.typeId}:${id}`);
+  const nodeState = useWorkflowStore.getState();
+  const nodeVars = {
+    ...(extraVars ?? {}),
+    ...nodeState.projectVariables,
+    ...(targetWfId === nodeState.activeWfId
+      ? nodeState.variables
+      : (nodeState.workflows[targetWfId]?.variables ?? {})),
+  };
+  const llm = createNodeLlmAdapter({
+    node: {
+      id,
+      label: node.data.label,
+      typeId: node.data.typeId,
+      params: node.data.params,
+    },
+    targetWfId,
+    targetRunId,
+    myRun: myRun ?? targetRunId,
+    nodeCtx,
+    runBus,
+    signal,
+    limiter,
+    maxRetries: MAX_RETRIES,
+    retryBaseMs: RETRY_BASE_MS,
+    sink,
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        activeWfId: state.activeWfId,
+        workflowName: state.workflowName,
+        workflows: state.workflows,
+        agents: state.agents,
+        globalAgents: state.globalAgents,
+        agentRouteTable: state.agentRouteTable,
+        defaultAgentId: state.defaultAgentId,
+        projectId: state.projectId,
+        llmChannel: state.llmChannel,
+      };
+    },
+    getTools: () => ({ vars: nodeVars, storage: nodeStorage, sandbox }),
+    logInfo: (message) => R.addLog('info', message),
+    logWarn: (message) => R.addLog('warn', message),
+    logError: (message) => R.addLog('error', message),
+    recordCost: trackCost,
+  });
   const ctx: ExecContext = {
     signal,
     // 当前节点 id（owner ?? id，子图虚拟节点回写用）：供沙箱插件 RPC 按节点归属路由
@@ -793,106 +837,7 @@ async function executeNode(
       error: (m) => R.addLog('error', `[${node.data.label}] ${m}`),
       warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
-      // B/F4：AgentRouter 运行时决策（已抽到 agents/agentDecision.ts）——
-      // 始终经 Router 统一决策：显式 agent 有效直接使用；缺失/失效按类别路由 → fallback 链 → 默认 → 首个可用。
-      const requestedAgentId = agentId;
-      const st0 = useWorkflowStore.getState();
-      const goal =
-        targetWfId === st0.activeWfId
-          ? st0.workflowName
-          : (st0.workflows[targetWfId]?.name ?? '');
-      const { decision, routed, mergedAgents, routeLog } = decideAgentCall({
-        requestedAgentId,
-        typeId: node.data.typeId,
-        params: node.data.params,
-        agents: st0.agents,
-        globalAgents: st0.globalAgents,
-        routeTable: st0.agentRouteTable,
-        defaultAgentId: st0.defaultAgentId,
-        goal,
-        projectId: st0.projectId ?? '',
-      });
-      // 经历路由（reason≠explicit）才 emit + 日志；显式绑定直接命中则保持安静
-      if (routed) {
-        emitNode(runBus, 'node.progress', nodeCtx, id, {
-          progressKind: 'agent-route',
-          requestedAgentId: requestedAgentId ?? '',
-          agentId: decision.agent.id,
-          reason: decision.reason,
-          chain: decision.chain,
-          tier: decision.tier,
-          category:
-            typeof node.data.params?.category === 'string' && node.data.params.category.trim()
-              ? node.data.params.category.trim()
-              : undefined,
-          topScores: decision.scores?.slice(0, 3).map((c) => ({
-            agentId: c.agent.id,
-            model: c.agent.model,
-            score: Number(c.score.toFixed(2)),
-            costPer1M: c.costPer1M,
-          })),
-        });
-        R.addLog('info', `「${node.data.label}」${routeLog}`);
-      }
-      const byId = (id0: string) => mergedAgents.find((a) => a.id === id0);
-      // E/F7 自我学习消费：同类型节点的历史经验注入本次调用——
-      // ① 事件与日志（可观测）；② 注入 system prompt（真正影响本次 LLM 决策）。
-      const expHits = matchExperience(useWorkflowStore.getState().projectId ?? '', node.data.typeId);
-      let effectiveMessages = messages;
-      if (expHits.length > 0) {
-        emitNode(runBus, 'node.progress', nodeCtx, id, {
-          progressKind: 'experience',
-          typeId: node.data.typeId,
-          count: expHits.length,
-          insights: expHits.map((e) => e.insights[0] ?? e.summary),
-        });
-        R.addLog(
-          'info',
-          `「${node.data.label}」命中 ${expHits.length} 条历史经验（${node.data.typeId}），已注入提示词`,
-        );
-        const expText = expHits.map((e) => `- ${e.insights[0] ?? e.summary}`).join('\n');
-        const expBlock = `\n\n【历史经验参考（本项目「${node.data.typeId}」节点往期运行沉淀）】\n${expText}\n请结合上述经验优化本次执行，但不要机械照搬。`;
-        // 有 system 消息则追加到末尾，否则前置一条 system
-        if (messages.length > 0 && messages[0]!.role === 'system') {
-          effectiveMessages = [
-            { ...messages[0], content: `${messages[0].content}\n${expBlock}` },
-            ...messages.slice(1),
-          ];
-        } else {
-          effectiveMessages = [{ role: 'system' as const, content: expBlock }, ...messages];
-        }
-      }
-
-      // F4：调用失败 fallback——按 decision.chain 逐级尝试候选 agent（runLlmCall.ts）
-      return runLlmWithFallback({
-        chainIds: decision.chain,
-        byId,
-        messages,
-        effectiveMessages,
-        onToken,
-        modelOverride,
-        toolNames,
-        signal,
-        limiter,
-        maxRetries: MAX_RETRIES,
-        retryBaseMs: RETRY_BASE_MS,
-        recordCost: (rec) => trackCost(rec),
-        node: { id, label: node.data.label, typeId: node.data.typeId },
-        sink,
-        vars: ctx.vars,
-        toolStorage: ctx.storage,
-        toolSandbox: ctx.sandbox,
-        llmChannel: useWorkflowStore.getState().llmChannel,
-        myRun: myRun ?? targetRunId,
-        targetRunId,
-        logger: {
-          info: (m) => R.addLog('info', m),
-          warn: (m) => R.addLog('warn', m),
-          error: (m) => R.addLog('error', m),
-        },
-      });
-    },
+    llm,
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,
     reportCost: (rec) => trackCost(rec),
@@ -913,15 +858,9 @@ async function executeNode(
       if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
     },
     // 存储按节点实例隔离（scope = 插件 + 类型 + 实例 id），避免同插件不同节点/同类型不同实例互相读写。
-    storage: scopedStorage(`${def.pluginId ?? 'core'}:${def.typeId}:${id}`),
+    storage: nodeStorage,
     // 变量：基础(extraVars) < 项目级 < 工作流级（后者覆盖前者同名项）
-    vars: {
-      ...(extraVars ?? {}),
-      ...useWorkflowStore.getState().projectVariables,
-      ...(targetWfId === useWorkflowStore.getState().activeWfId
-        ? useWorkflowStore.getState().variables
-        : (useWorkflowStore.getState().workflows[targetWfId]?.variables ?? {})),
-    },
+    vars: nodeVars,
     // 资产：项目级库与当前工作流库合并（工作流级同名 id 覆盖项目级）
     assets: (() => {
       const st = useWorkflowStore.getState();
