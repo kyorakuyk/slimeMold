@@ -4787,9 +4787,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `fc9446838383b4891edffc48aa35cb9774bfd206` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 dynamic imports、双 adapter、Evidence paths、live Acceptance loading、undefined clock、assert fence、private side-effect repository binding和 App ownership/sequencing保持。
 - 验证：focused `10 files / 73 tests`；完整 Node `163 test files / 1244 tests`；build通过（最大 chunk `1,181.87 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-host-infrastructure-verified`；对应 `checkpoint/frontend-queued-worker-host-infrastructure-unverified` 保留为历史回退锚点。
 
-### 7.312 unverified：extract queued Worker session admission seam
+### 7.312 verified：extract queued Worker session admission seam
 
 - 将 `runQueuedWorker` 的 saved queued ProjectFile initial save、GUI session admission、host-unavailable error和 current-project identity fence抽到 `src/projectControl/workerRunSessionAdmission.ts`；保留 `ensureGuiDevSession`、ProjectOperation和 Zustand事实 owner在原模块。
 - 保留精确顺序：saveProject(projectId/projectPath/signal) → assertOperation → ensureGuiDevSession(projectPath/signal) → null时读取 `getDevGuiError` 并抛出原中文文案 → assertOperation → 读取 current projectId并拒绝切换。初始 save/session/errors均不 catch、不回退；session admission后 App 再捕获 current store供 host infrastructure/coordinator使用。
 - 新增 direct tests，覆盖成功顺序、exact unavailable-host error、stale project rejection和 initial save failure；App 的 host infrastructure、runtime、coordinator、transition persistence、cleanup wiring保持。
-- 验证：focused `12 files / 80 tests`；完整 Node `164 test files / 1248 tests`；build通过（最大 chunk `1,182.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact queued Worker session admission reviewer。
+- 独立 reviewer 对 exact HEAD `9d958e2e0d44bd19ba5b4882ad8fd1f82d6ab65d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 admission choreography、fail-closed propagation、identity fencing、Worker wiring/signatures和 canonical ownership boundaries保持。
+- 验证：focused `12 files / 80 tests`；完整 Node `164 test files / 1248 tests`；build通过（最大 chunk `1,182.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-session-admission-verified`；对应 `checkpoint/frontend-queued-worker-session-admission-unverified` 保留为历史回退锚点。
