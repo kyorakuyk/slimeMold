@@ -4644,3 +4644,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `bfd5ff07d8251378b22621568b6a0b2a5ea5e6b3` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 three parity blockers均已修复且没有新 regression。
 - reviewer独立复核 focused `18/18`、full `153 files / 1213 tests`、build、i18n `1026/1026`、TypeScript、diff check和security scan。
 - 创建 verified tag：`checkpoint/frontend-workflow-registry-mutation-verified`；`checkpoint/frontend-workflow-registry-mutation-unverified` 和 parity repair unverified tag保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.291 unverified：extract workflow registry action facade
+
+- 将 `switchWorkflow`、`newWorkflowInProject`、`registerWorkflow` 的 store-bound 编排抽到 `src/store/workflowRegistryActions.ts`；保留 `workflowRegistryState.ts` 的纯 builder 作为事实 owner，`workflowStore.ts` 只负责 Zustand facade 与 capability wiring。
+- 注入 StatePort、dirty suppression、standalone path、clock/ISO time 与 registered-id factory；未移动 project identity、ProjectFile persistence、ProjectControl/runtime、host lifecycle 或 global-agent persistence。现有 public action signatures 与 capture-before-create 时间顺序保持不变。
+- 新增 `workflowRegistryActions.test.ts` direct tests，覆盖 switch suppression、standalone path/capture clock ordering、register `activate:false`；保留原 facade/new-workflow/ProjectControl regressions。
+- 验证：focused `6 files / 47 tests`；完整 Node `154 test files / 1216 tests`；build通过（最大 chunk `1,178.10 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend registry action reviewer。

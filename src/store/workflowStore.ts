@@ -107,6 +107,7 @@ import {
   markDirtyDownstream,
   type GraphSnapshot,
 } from './workflowGraph';
+import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
@@ -117,11 +118,8 @@ import {
   buildOpenProjectState,
 } from './workflowLifecycleState';
 import {
-  buildNewWorkflowInProjectState,
-  buildRegisteredWorkflowState,
   buildRemoveWorkflowState,
   buildRenameWorkflowState,
-  buildSwitchWorkflowState,
 } from './workflowRegistryState';
 import {
   buildRemoveAgentState,
@@ -472,6 +470,15 @@ export const useWorkflowStore = create<WorkflowState>()(
         getState: () => get(),
         setState: (patch) => set(patch),
         addLog: (level, message) => get().addLog(level, message),
+      });
+      const registryActions = createWorkflowRegistryActions({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        resolveStandalonePath: async (workspaceDir) => workspaceDir ?? (await defaultStandaloneDir()),
+        now: () => Date.now(),
+        nowIso: () => new Date().toISOString(),
+        createRegisteredWorkflowId: () => `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       });
       return {
       workflowName: '未命名工作流',
@@ -1235,88 +1242,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         return s.lastSavedSnapshot !== projectSnapshot(s);
       },
 
-      switchWorkflow: (id) => {
-        const s = get();
-        if (id === s.activeWfId) return;
-        // 状态构建纯逻辑已抽到 workflowRegistryState.buildSwitchWorkflowState（G5 门面化）
-        const state = buildSwitchWorkflowState(s, id);
-        if (!state) return;
-        // 切换工作流不新增"内存vs磁盘"差异，抑制本次变更的脏检测
-        projectDirtyController.setSuppressed(true);
-        set(state);
-        projectDirtyController.setSuppressed(false);
-      },
-
-      /**
-       * 新建工作流。两种归属：
-       * - 若当前处于项目内（projectId 非空）→ 工作流归属项目（belongsToProject）。
-       * - 否则为游离工作流（standalone）：workspaceDir 为存放位置，缺省落默认位置
-       *   （文档/SlimeMold/未归类/），并记录 standalonePath。
-       */
-      newWorkflowInProject: async (workspaceDir?: string | null) => {
-        const s = get();
-        const inProject = !!s.projectId;
-        // 游离工作流未指定位置时，落到默认位置（文档/SlimeMold/未归类/）
-        let standalonePath: string | undefined;
-        if (!inProject) {
-          standalonePath = workspaceDir ?? (await defaultStandaloneDir());
-        }
-        const shouldCapture = !s.activeWfId && (s.nodes.length || s.edges.length);
-        const capturedWorkflowId = shouldCapture ? `wf-${Date.now()}` : s.activeWfId;
-        const capturedSavedAt = shouldCapture ? new Date().toISOString() : '';
-        const id = `wf-${Date.now() + 1}`;
-        const savedAt = new Date().toISOString();
-        const result = buildNewWorkflowInProjectState({
-          workflows: s.workflows,
-          activeWfId: s.activeWfId,
-          current: {
-            workflowName: s.workflowName,
-            nodes: s.nodes,
-            edges: s.edges,
-            agents: s.agents,
-            roles: s.roles,
-            variables: s.variables,
-            groups: s.groups,
-            defaultAgentId: s.defaultAgentId,
-          },
-          projectId: s.projectId,
-          standalonePath,
-          workflowId: id,
-          capturedWorkflowId,
-          capturedSavedAt,
-          savedAt,
-        });
-        set({ workflows: result.workflows, ...result.activation });
-      },
-
-      /**
-       * 步骤 14.F：把现成 WorkflowFile 注册进项目。复用 newWorkflowInProject 的同款激活逻辑，
-       * 但内容来自 wf（非空白）。id 自动生成；若 wf 已带 belongsToProject 则保留，否则归属当前项目。
-       */
-      registerWorkflow: (wf, opts) => {
-        const s = get();
-        const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const result = buildRegisteredWorkflowState({
-          workflow: wf,
-          id,
-          savedAt: new Date().toISOString(),
-          projectId: s.projectId,
-          workflows: s.workflows,
-          activeWfId: s.activeWfId,
-          activate: opts?.activate !== false,
-          name: opts?.name,
-        });
-        if (!result.activation) {
-          // 仅注册、不切换当前画布（避免打断正在跑的承建方工作流）
-          set({ workflows: result.workflows });
-          return id;
-        }
-        set({
-          workflows: result.workflows,
-          ...result.activation,
-        });
-        return id;
-      },
+      /* ---- workflow registry actions (owner injected above) ---- */
+      ...registryActions,
 
       /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
       addAsset: (meta) => {
