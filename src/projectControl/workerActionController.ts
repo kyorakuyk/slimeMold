@@ -11,6 +11,10 @@ import { installWorkerRunRuntime } from './workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { mergeWorkerSideEffects } from './workerEvidence';
 import { assertWorkerRecoveryDecisionPrecondition } from './workerRecoveryDecisionPrecondition';
+import {
+  createWorkerRecoverySingleFlight,
+  type WorkerRecoverySingleFlight,
+} from './workerRecoverySingleFlight';
 import { createWorkerHostRepositoryBundleFromModules, loadWorkerHostRepositoryModules } from './workerHostRepositoryBundle';
 
 type ProjectSave = (
@@ -44,6 +48,7 @@ export interface WorkerActionControllerDeps {
   runQueuedWorker: (runId: string) => Promise<void>;
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
+  recoverySingleFlight?: WorkerRecoverySingleFlight;
 }
 
 export function createWorkerActionController(deps: WorkerActionControllerDeps): {
@@ -54,6 +59,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
   ) => Promise<void>;
 } {
   const ensureGuiDevSession = deps.ensureGuiDevSession ?? defaultEnsureGuiDevSession;
+  const recoverySingleFlight = deps.recoverySingleFlight ?? createWorkerRecoverySingleFlight();
 
   const recoverWorkerRun = async (
     runId: string,
@@ -70,7 +76,10 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       : undefined;
     if (!projectId || !projectPath) throw new Error('项目必须先保存，才能恢复 Worker Run');
     if (!run || !taskGraph) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
-    const operation = deps.getProjectOperation(projectId, projectPath);
+    const lease = recoverySingleFlight.acquire({ projectId, projectPath, runId });
+    if (!lease) throw new Error(`Worker Run 恢复正在处理中：${runId}`);
+    try {
+      const operation = deps.getProjectOperation(projectId, projectPath);
     deps.assertProjectOperation(operation);
 
     const modulesPromise = loadWorkerHostRepositoryModules();
@@ -126,6 +135,9 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     await deps.saveProject(projectId, projectPath, operation.controller.signal);
     deps.assertProjectOperation(operation);
     if (decision === 'retry') await deps.runQueuedWorker(runId);
+    } finally {
+      lease.release();
+    }
   };
 
   return { recoverWorkerRun };

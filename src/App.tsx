@@ -48,6 +48,7 @@ import {
 } from './projectControl/workerEvidence';
 import { createWorkerRecoveryIoController } from './projectControl/workerRecoveryIoController';
 import { createWorkerActionController } from './projectControl/workerActionController';
+import { createWorkerRecoverySingleFlight } from './projectControl/workerRecoverySingleFlight';
 import { createWorkerCleanupActionController } from './projectControl/workerCleanupActionController';
 import { createWorkerCleanupProposalController } from './projectControl/workerCleanupProposalController';
 import { assertWorkerRunConsistency } from './projectControl/workerRunConsistencyAction';
@@ -153,6 +154,11 @@ export default function App() {
   const togglePanel = useViewStore((s) => s.togglePanel);
   const panelH = useViewStore((s) => s.panelH);
   const setPanelH = useViewStore((s) => s.setPanelH);
+
+  const recoverySingleFlightRef = useRef<ReturnType<typeof createWorkerRecoverySingleFlight> | null>(null);
+  const recoverySingleFlight = recoverySingleFlightRef.current ?? (
+    recoverySingleFlightRef.current = createWorkerRecoverySingleFlight()
+  );
 
   const projectOperationGuard = useRef<ReturnType<typeof createProjectOperationGuard> | null>(null);
   const operationGuard = projectOperationGuard.current ?? (projectOperationGuard.current = createProjectOperationGuard(
@@ -383,6 +389,7 @@ export default function App() {
     },
     runQueuedWorker,
     isTauri,
+    recoverySingleFlight,
   });
   const recoverWorkerRun = workerActionController.recoverWorkerRun;
 
