@@ -4319,3 +4319,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `9dc7441` exact reviewer fail-closed：发现 adapter通过静态 `getTools` closure把 raw sandbox传入 `runLlmWithFallback`，绕过 `applyCapability` 对 io 节点的 sandbox deny与 sandbox_write 的 commit fencing；同时与旧 closure 的调用时读取语义不一致。
 - 修复：`executeNode` 先声明 mutable `ExecContext`，LLM adapter在调用时从最终 `ctx.vars/ctx.storage/ctx.sandbox`读取；`applyCapability` 后的裁剪结果因此成为唯一工具边界。新增真实 executor integration RED→GREEN，io 节点在 `sandbox:true` 下观察到 `toolSandbox === undefined`。
 - GREEN：capability/executor focused `6 files / 40 tests`；完整 Node `137 test files / 1161 tests`；`npm run build`通过，最大 chunk约 `1,173.73 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。旧 reviewer verdict不适用于修复后的 HEAD，新的 exact review待进行；真实 Tauri E2E及其他 residual仍未关闭。
+
+### 7.238 verified：executor LLM capability fencing review closure
+
+- exact HEAD `c6e3636` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 adapter在调用时读取 mutable `ctx.vars/ctx.storage/ctx.sandbox`，`applyCapability` 后 io sandbox deny、sandbox_write commit fencing与 coordinator权限均保留，无 TDZ、初始化顺序、重复 owner或 stale import问题。
+- 同一代码快照质量门：Node `137 test files / 1161 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-executor-llm-capability-repair-verified`。该 tag只证明 LLM capability fencing repair，不代表 executor剩余 context、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
