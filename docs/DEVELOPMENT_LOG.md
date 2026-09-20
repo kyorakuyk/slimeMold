@@ -4456,3 +4456,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `src/store/projectSaveQueue.ts`，收口原 workflowStore 内联 `projectSaveTails`：同项目 key 串行、不同项目 key并行、失败后队列继续；Save/Save As公开 store action合同和持久化顺序不变。
 - 新增 direct regression：queue success/failure ordering；workflowStore现有 save、Save As、serialize suite继续通过。
 - 验证：focused `4 files / 28 tests`；完整 Node `140 test files / 1167 tests`；build通过（最大 chunk `1,174.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前只能标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.260 verified：exact review closes workflowStore project save queue slice
+
+- 独立 reviewer 对 exact HEAD `694414e79a79058df253e146691d87b9996c1e78` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认同 key 串行、跨 key 并行、失败后续队列释放、identity-checked tail cleanup，以及 workflowStore Save 返回值、guard 和 finalization行为未改变。
+- reviewer独立复核 focused `9/9`、全量 `140 files / 1167 tests`、build、i18n `1026/1026`、TypeScript 和 diff check；非阻塞建议记录为后续回归：第三个同 key pending task 的 tail cleanup race、Save guard abort/project-switch rejection。
+- 创建 verified tag：`checkpoint/frontend-workflow-save-queue-verified`；原 `checkpoint/frontend-workflow-save-queue-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore bounded split。
