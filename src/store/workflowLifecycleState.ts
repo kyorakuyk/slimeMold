@@ -4,11 +4,94 @@
  * These functions return store patches only. Path selection, persistence, dirty suppression
  * and ProjectControl runtime activation remain owned by workflowStore and its controllers.
  */
-import type { FlowEdge, FlowNode, ProjectFile, WorkflowFileInMemory } from '../types';
+import type {
+  AgentConfig,
+  AssetMeta,
+  FlowEdge,
+  FlowNode,
+  NodeGroup,
+  ProjectFile,
+  RoleTemplate,
+  SubgraphDef,
+  WorkflowFileInMemory,
+} from '../types';
 import { flowEdgesFrom, flowNodesFrom, fromDisk } from './workflowSerialize';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
+import type { EvidenceRecord } from '../dev/evidence';
+import type { SideEffectRecord } from '../domain/contracts';
+import type { WorkerRunRecovery } from '../projectControl/workerRunRuntime';
+import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
+
+export interface CloseProjectStatePatch {
+  projectName: null;
+  projectId: null;
+  projectCreatedAt: null;
+  projectPath: null;
+  projectDirty: false;
+  lastSavedSnapshot: null;
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: '';
+  workflowName: '';
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  agents: AgentConfig[];
+  roles: RoleTemplate[];
+  variables: Record<string, unknown>;
+  projectVariables: Record<string, unknown>;
+  projectAssets: AssetMeta[];
+  subgraphs: Record<string, SubgraphDef>;
+  groups: NodeGroup[];
+  workerRuns: WorkerRunQueueState[];
+  workerRunRecoveries: WorkerRunRecovery[];
+  workerRunEvidence: EvidenceRecord[];
+  workerRunSideEffects: SideEffectRecord[];
+  workerCleanupProposals: WorkerCleanupProposal[];
+  projectControl: ProjectControlSnapshot;
+  selectedNodeId: null;
+  logs: never[];
+}
+
+export interface CloseProjectStateFactories {
+  createDefaultAgent: () => AgentConfig;
+  cloneBuiltinRoles: () => RoleTemplate[];
+  createEmptyProjectControl: () => ProjectControlSnapshot;
+}
+
+export function buildCloseProjectState(
+  factories: CloseProjectStateFactories,
+): CloseProjectStatePatch {
+  return {
+    projectName: null,
+    projectId: null,
+    projectCreatedAt: null,
+    projectPath: null,
+    projectDirty: false,
+    lastSavedSnapshot: null,
+    workflows: {},
+    activeWfId: '',
+    workflowName: '',
+    nodes: [],
+    edges: [],
+    agents: [factories.createDefaultAgent()],
+    roles: factories.cloneBuiltinRoles(),
+    variables: {},
+    projectVariables: {},
+    projectAssets: [],
+    subgraphs: {},
+    groups: [],
+    workerRuns: [],
+    workerRunRecoveries: [],
+    workerRunEvidence: [],
+    workerRunSideEffects: [],
+    workerCleanupProposals: [],
+    projectControl: factories.createEmptyProjectControl(),
+    selectedNodeId: null,
+    logs: [],
+  };
+}
 
 /** openProject 的纯状态构建结果（返回给 store 的 Partial 状态子集，不含运行态/日志）。 */
 export interface OpenProjectState {

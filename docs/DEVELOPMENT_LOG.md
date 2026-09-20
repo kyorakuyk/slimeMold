@@ -4657,3 +4657,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `d4a1c1edb32fe92a4ba75f5dcf9e360a60c38de4` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 facade wiring、switch suppression、standalone path、clock ordering、builder normalization/aliasing、activation和依赖 ownership保持。
 - reviewer独立复核 focused `20/20`、full `154 files / 1216 tests`、build、i18n `1026/1026`、TypeScript和diff check；仅保留既有 build warnings及非阻塞 coverage suggestion。
 - 创建 verified tag：`checkpoint/frontend-workflow-registry-actions-verified`；`checkpoint/frontend-workflow-registry-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.293 unverified：extract close project lifecycle action
+
+- 将 `closeProject` 的纯状态 patch抽到 `workflowLifecycleState.buildCloseProjectState`，将 reset/suppression/set/session 顺序抽到 `projectLifecycleActions.ts`；`workflowStore.ts` 只负责注入 `resetProjectControlLifecycle`、dirty controller、`clearLastSession` 和默认 agent/role/ProjectControl factories。
+- 严格保留 parent 合同：先以旧 `projectId` reset ProjectControl，再 suppression；只清理 close 原本清理的字段，不触碰 `defaultAgentId`、`workspaceDir`、`runHistory`、`artifacts`、`orchestrations` 等未归属字段；释放 suppression 后才 clear last session。未移动 ProjectLifecycleController、plugin/GUI session 或 Worker host orchestration。
+- 新增 `projectLifecycleActions.test.ts` direct tests，覆盖精确 close patch、untouched fields和 reset → suppression → set → release → session 顺序；现有 `workflowStore.projectControl.test.ts` 保留 facade/ProjectControl regressions。
+- 验证：focused `5 files / 18 tests`；完整 Node `155 test files / 1218 tests`；build通过（最大 chunk `1,178.55 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact close lifecycle reviewer。

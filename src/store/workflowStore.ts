@@ -107,6 +107,7 @@ import {
   markDirtyDownstream,
   type GraphSnapshot,
 } from './workflowGraph';
+import { createProjectLifecycleActions } from './projectLifecycleActions';
 import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
@@ -116,6 +117,7 @@ import {
   buildCreateProjectState,
   buildNewProjectState,
   buildOpenProjectState,
+  buildCloseProjectState,
 } from './workflowLifecycleState';
 import {
   buildRemoveWorkflowState,
@@ -479,6 +481,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         now: () => Date.now(),
         nowIso: () => new Date().toISOString(),
         createRegisteredWorkflowId: () => `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      });
+      const projectLifecycleActions = createProjectLifecycleActions({
+        getProjectId: () => get().projectId,
+        resetProjectControlLifecycle,
+        setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        setState: (patch) => set(patch),
+        clearLastSession,
+        buildCloseState: () => buildCloseProjectState({
+          createDefaultAgent: () => createAgent('ollama'),
+          cloneBuiltinRoles: () => builtinRoles.map((role) => ({ ...role })),
+          createEmptyProjectControl: createEmptyProjectControlSnapshot,
+        }),
       });
       return {
       workflowName: '未命名工作流',
@@ -1386,41 +1400,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
       },
 
-      closeProject: () => {
-        const currentProjectId = get().projectId;
-        resetProjectControlLifecycle(currentProjectId);
-        projectDirtyController.setSuppressed(true);
-        set({
-          projectName: null,
-          projectId: null,
-          projectCreatedAt: null,
-          projectPath: null,
-          projectDirty: false,
-          lastSavedSnapshot: null,
-          workflows: {},
-          activeWfId: '',
-          workflowName: '',
-          nodes: [],
-          edges: [],
-          agents: [createAgent('ollama')],
-          roles: builtinRoles.map((r) => ({ ...r })),
-          variables: {},
-          projectVariables: {},
-          projectAssets: [],
-          subgraphs: {},
-          groups: [],
-          workerRuns: [],
-          workerRunRecoveries: [],
-          workerRunEvidence: [],
-          workerRunSideEffects: [],
-          workerCleanupProposals: [],
-          projectControl: createEmptyProjectControlSnapshot(),
-          selectedNodeId: null,
-          logs: [],
-        });
-        projectDirtyController.setSuppressed(false);
-        clearLastSession();
-      },
+      ...projectLifecycleActions,
 
       saveProjectAs: () => projectSaveAsController.saveProjectAs(),
 
