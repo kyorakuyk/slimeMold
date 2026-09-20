@@ -4746,3 +4746,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `abb4f09787677d864f41ec402a0b759ced7c8e6a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 guard behavior、live Zustand lookup、React-instance stability、caller signatures和 operation timing保持。
 - reviewer独立复核 focused `25/25`、full `158 files / 1229 tests`、build、i18n `1026/1026`、TypeScript、diff check、security scan、exact HEAD和 clean tree；ProjectOperation type后续集中化建议非阻塞。
 - 创建 verified tag：`checkpoint/frontend-app-project-operation-verified`；`checkpoint/frontend-app-project-operation-unverified` 保留为历史回退锚点。App其余 Worker/GUI/recovery/cleanup authority仍未拆分，partial-CAS仍未编码。
+
+### 7.307 unverified：extract App cleanup proposal controller
+
+- 将 App 内 `refreshWorkerCleanupProposals` 抽到 `src/projectControl/workerCleanupProposalController.ts`；保留 canonical `getRestoredWorkerRunForCleanup`、`buildWorkerCleanupProposalSafely`、Acceptance/side-effect/worktree/branch-revision校验事实，只移动 application orchestration。
+- controller通过窄 state port读写 workerRuns、recoveries、sideEffects、proposal projection和warning；App用 stable ref构造并继续把同一 callback传给 ProjectLifecycleController、Worker cleanup action和 queued worker。未移动 restoreWorktrees、audit、cleanup execution、receipt、TaskCleaned或 Worker runtime authority。
+- 新增 direct tests，覆盖 missing/recovery suppression、TaskGraph restore failure warning、abort before host work和 projection boundary；现有 cleanup/lifecycle/Worker/UI regressions保持。
+- 验证：focused `5 files / 20 tests`；完整 Node `159 test files / 1232 tests`；build通过（最大 chunk `1,179.96 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact App cleanup proposal reviewer。

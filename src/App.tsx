@@ -33,13 +33,9 @@ import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
 import {
-  getRestoredWorkerRunForCleanup,
   installWorkerRunRuntime,
   type WorkerRunRecovery,
 } from './projectControl/workerRunRuntime';
-import {
-  buildWorkerCleanupProposalSafely,
-} from './projectControl/workerCleanup';
 import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency';
 import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
 import { auditProjectControlConsistency } from './projectControl/projectControlConsistency';
@@ -58,6 +54,7 @@ import {
 import { createWorkerRecoveryIoController } from './projectControl/workerRecoveryIoController';
 import { createWorkerActionController } from './projectControl/workerActionController';
 import { createWorkerCleanupActionController } from './projectControl/workerCleanupActionController';
+import { createWorkerCleanupProposalController } from './projectControl/workerCleanupProposalController';
 
 registerBuiltins();
 
@@ -211,56 +208,13 @@ export default function App() {
     useWorkflowStore.getState().setProjectControl(snapshot);
   };
 
-  const refreshWorkerCleanupProposals = async (
-    session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
-    runId: string,
-    signal?: AbortSignal,
-  ): Promise<void> => {
-    if (signal?.aborted) return;
-    const current = useWorkflowStore.getState();
-    const persistedRun = current.workerRuns.find((item) => item.runId === runId);
-    if (!persistedRun || current.workerRunRecoveries.some((item) => item.runId === runId)) {
-      current.setWorkerCleanupProposals(
-        current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
-      );
-      return;
-    }
-    const run = getRestoredWorkerRunForCleanup({
-      projectId: current.projectId ?? persistedRun.projectId,
-      taskGraphs: current.projectControl.taskGraphs ?? [],
-      run: persistedRun,
-    });
-    if (!run) {
-      current.addLog('warn', `Worker cleanup proposal 已抑制：Run ${runId} 未通过 TaskGraph restore`);
-      current.setWorkerCleanupProposals(
-        current.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
-      );
-      return;
-    }
-    const proposals = await Promise.all(
-      Object.values(run.tasks)
-        .filter((task) => task.worktreePath)
-        .map((task) => buildWorkerCleanupProposalSafely({
-          run,
-          task,
-          acceptance: task.acceptanceId ? session.getAcceptance(task.acceptanceId) : undefined,
-          sideEffects: current.workerRunSideEffects,
-          isWorktreeTracked: (path) => session.manager.isTracked(path),
-          computeWorktreeSignature: (path) => session.computeWorktreeSignature(path),
-          computeBranchRevision: async (branch) => {
-            const revision = await session.manager.getBranchRevision(branch);
-            return revision ?? undefined;
-          },
-        })),
-    );
-    if (signal?.aborted) return;
-    const latest = useWorkflowStore.getState();
-    if (latest.projectId !== run.projectId) return;
-    latest.setWorkerCleanupProposals([
-      ...latest.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
-      ...proposals,
-    ]);
-  };
+  const workerCleanupProposalControllerRef = useRef<ReturnType<typeof createWorkerCleanupProposalController> | null>(null);
+  const workerCleanupProposalController = workerCleanupProposalControllerRef.current ?? (
+    workerCleanupProposalControllerRef.current = createWorkerCleanupProposalController({
+      getState: () => useWorkflowStore.getState(),
+    })
+  );
+  const refreshWorkerCleanupProposals = workerCleanupProposalController.refresh;
 
   const restoreWorkerWorktrees = async (
     session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
