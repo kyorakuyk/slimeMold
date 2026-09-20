@@ -4763,12 +4763,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `3d23f88dd1c5f9f854ae286c1a964da879f0de14` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 assert/read/assert/live-state/assert 时序、exact errors、canonical audit inputs、App composition-root边界和 clean tree保持。顺序敏感断言建议非阻塞，作为后续增强记录。
 - 验证：focused `6 files / 23 tests`；完整 Node `160 test files / 1234 tests`；build通过（最大 chunk `1,180.29 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-consistency-verified`；对应 `checkpoint/frontend-queued-worker-consistency-unverified` 保留为历史回退锚点。
 
-### 7.309 unverified：extract queued Worker transition persistence seam
+### 7.309 verified：extract queued Worker transition persistence seam
 
 - 将 `runQueuedWorker` 的 `persistTransition` application choreography 抽到 `src/projectControl/workerRunTransitionPersistence.ts`；App 继续作为 composition root，注入当前 project identity、ProjectOperation fence、before-save snapshot、live Zustand state ports、EventBuffer、EventStream、ProjectFile serializer/raw saver、Evidence/side-effect merge与Orchestration projection。
 - 保留两条原始路径：普通 transition 读取最新 live state后写入 WorkerRun/Orchestration/Evidence/SideEffect projection并执行 guarded `saveProject`；receipt 后取消只接受 safe finalization event allowlist，使用 EventBuffer flush与 before-save raw ProjectFile save，不触碰 live store mutation或普通 guarded save。
 - 新增 direct tests，覆盖正常 transition、receipt-after-cancellation、unsafe cancelled events走 operation guard、side-effect读取失败不静默保存；未移动 WorkerQueue、coordinator、runtime、event replay、Evidence/Receipt事实、cleanup或终态事实 owner。
-- 验证：focused `8 files / 63 tests`；完整 Node `161 test files / 1238 tests`；build通过（最大 chunk `1,181.01 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact queued Worker transition persistence reviewer。
+- 独立 reviewer 对 exact HEAD `45caabc74e84f15482aa1079ef1dd26c73ba7dc2`（相对 `a3e6f9fe00e068be98fd8ccc1e91529f43dc7990`）返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 normal transition fences/fresh-state ordering、safe terminal cancellation allowlist/raw finalization、error propagation、App wiring和 type-only injected ownership boundaries保持。
+- 验证：focused `8 files / 63 tests`；完整 Node `161 test files / 1238 tests`；build通过（最大 chunk `1,181.01 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-transition-persistence-verified`；对应 `checkpoint/frontend-queued-worker-transition-persistence-unverified` 保留为历史回退锚点。
 
 ### 7.310 verified：extract queued Worker transition projection helper
 
