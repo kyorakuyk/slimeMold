@@ -5,6 +5,7 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { WorkerCleanupProposal } from './workerCleanup';
+import type { WorkerRuntime } from './workerRunCoordinator';
 import type { ProjectOperation } from './projectLifecycleController';
 import { recoverWorkerRunCommand } from './workerRecoveryCommand';
 import { installWorkerRunRuntime } from './workerRunRuntime';
@@ -45,7 +46,7 @@ export interface WorkerActionControllerDeps {
   assertProjectOperation: (operation: ProjectOperation) => void;
   recordProjectEvents: (projectId: string, events: Parameters<typeof recoverWorkerRunCommand>[0]['state'] extends never ? never : ReturnType<typeof recoverWorkerRunCommand>['events']) => void;
   saveProject: ProjectSave;
-  runQueuedWorker: (runId: string) => Promise<void>;
+  runQueuedWorker: (runId: string, workerRuntime?: WorkerRuntime) => Promise<void>;
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
   recoverySingleFlight?: WorkerRecoverySingleFlight;
@@ -56,6 +57,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     runId: string,
     decision: 'retry' | 'skip',
     reason: string,
+    workerRuntime?: WorkerRuntime,
   ) => Promise<void>;
 } {
   const ensureGuiDevSession = deps.ensureGuiDevSession ?? defaultEnsureGuiDevSession;
@@ -65,6 +67,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     runId: string,
     decision: 'retry' | 'skip',
     reason: string,
+    workerRuntime?: WorkerRuntime,
   ): Promise<void> => {
     if (!deps.isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
     const current = deps.getState();
@@ -134,7 +137,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     deps.assertProjectOperation(operation);
     await deps.saveProject(projectId, projectPath, operation.controller.signal);
     deps.assertProjectOperation(operation);
-    if (decision === 'retry') await deps.runQueuedWorker(runId);
+    if (decision === 'retry') await deps.runQueuedWorker(runId, workerRuntime);
     } finally {
       lease.release();
     }

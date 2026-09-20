@@ -60,12 +60,14 @@ export function workerWorktreePathFor(
   return `${root}-workers/${workerIdentitySegment(attemptId)}`;
 }
 
+export type WorkerRuntime = 'codex' | 'antigravity';
+
 export interface GuiProjectWorkerRunCoordinatorOptions
   extends Omit<ProjectWorkerRunCoordinatorOptions, 'allocator' | 'executor'> {
   projectPath: string;
   session: DevSession;
   model?: string;
-  workerRuntime?: 'codex' | 'antigravity';
+  workerRuntime?: WorkerRuntime;
   antigravity?: {
     mode?: AntigravityMode;
     profile?: string;

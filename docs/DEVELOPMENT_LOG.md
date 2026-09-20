@@ -4838,3 +4838,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 pure projector、professional view和Beginner UI回归：普通 failed-task显示 retry/skip；缺失 TaskGraph 不渲染 recovery actions；malformed side-effect、stale graph和 audit/event recovery reasons均不生成可点击决策。
 - 独立 reviewer 对 exact HEAD `8e55fc0cc6267c43b0378890d2ccfcaaf52bbd0e` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 canonical plan delegation、graph/recovery identity、fail-closed capability、Beginner/Professional projection parity和 action authority保持。OrchestratorPanel direct cleanup-unknown/missing-graph regression及更完整 reason matrix列为后续增强。
 - 验证：focused `3 files / 20 tests`；完整 Node `169 test files / 1269 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-capability-projection-verified`；对应 `checkpoint/frontend-worker-recovery-capability-projection-unverified` 保留为历史回退锚点。
+
+### 7.318 unverified：preserve transient Worker runtime through interactive retry
+
+- 将 `WorkerRuntime` 类型收口到 `src/projectControl/workerRunCoordinator.ts`，扩展 recovery callback 的可选 runtime 参数。
+- `ProjectSessionPanel` 在 mounted session 的 recovery retry 中透传当前 transient runtime；`workerActionController` 仅在 `retry` 时将 runtime 转发到 `runQueuedWorker`，`skip` 不启动 Worker；Professional/Orchestrator 无 runtime picker，继续使用 App 的 codex 默认。
+- 不持久化 runtime，不改 WorkerRunQueueState、ProjectFile、DomainEvent、side-effect journal、attempt/effect key 或 restart/reopen 合同；跨重启 runtime provenance 保留为后续独立 schema slice。
+- 新增回归：queued session 选择 antigravity 后进入 recovery，retry callback 仍收到 antigravity；既有 normal queued start 和 skip contract保持。
+- 验证：focused `2 files / 15 tests`；完整 Node `169 test files / 1270 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact runtime propagation reviewer。

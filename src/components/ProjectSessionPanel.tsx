@@ -37,6 +37,7 @@ import { projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from '../p
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 
 interface ProjectSessionPanelProps {
   sessionId: string;
@@ -45,7 +46,7 @@ interface ProjectSessionPanelProps {
   onOpenIssues?: () => void;
   onOpenMasterAgent?: () => void;
   onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
-  onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
 }
 
 function controlId(prefix: string): string {
@@ -238,7 +239,7 @@ export default function ProjectSessionPanel({
     setError(null);
     void (async () => {
       try {
-        await onRecoverWorkerRun(runId, decision, reason);
+        await onRecoverWorkerRun(runId, decision, reason, workerRuntime);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {

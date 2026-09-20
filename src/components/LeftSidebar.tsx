@@ -27,6 +27,7 @@ import AssetsPanel from './AssetsPanel';
 import GroupsPanel from './GroupsPanel';
 import TokenUsagePanel from './TokenUsagePanel';
 import OrchestratorPanel from './OrchestratorPanel';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 
 export type SidePanelKey =
   | 'nodes'
@@ -64,7 +65,7 @@ const PANEL_ITEMS: PanelItem[] = [
 // 下半部分：帮助中心（展开面板）/ 底部面板 / 快捷键查看 / 设置（从下到上）
 
 /** 按面板 key 渲染对应内嵌内容（embedded 模式，去掉各自弹层） */
-export type WorkerRecoveryHandler = (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+export type WorkerRecoveryHandler = (runId: string, decision: 'retry' | 'skip', reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
 export type WorkerCleanupHandler = (runId: string, taskId: string, action: 'approve' | 'cleanup') => Promise<void> | void;
 
 export function renderSidePanel(

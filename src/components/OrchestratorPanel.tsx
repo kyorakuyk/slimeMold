@@ -53,6 +53,7 @@ import TaskGraphDAGView from './TaskGraphDAGView';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 import { reviseTaskGraphCommand } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 
 /** 编排整体状态徽标配色 */
 const statusCls: Record<string, string> = {
@@ -102,7 +103,7 @@ export default function OrchestratorPanel({
   onCleanupWorkerRun,
 }: {
   embedded?: boolean;
-  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
   onCleanupWorkerRun?: (runId: string, taskId: string, action: 'approve' | 'cleanup') => Promise<void> | void;
 }) {
   const t = useT('panels');

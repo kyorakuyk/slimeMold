@@ -747,7 +747,138 @@ describe('ProjectSessionPanel', () => {
       (container.querySelector('[data-testid="beginner-session-worker-retry"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String));
+    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String), 'codex');
+  });
+
+  it('forwards the selected runtime when a mounted queued session enters recovery', async () => {
+    const onRunWorker = vi.fn();
+    const onRecoverWorkerRun = vi.fn();
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'task-graph-runtime',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [{
+        version: 1,
+        id: 'task-1',
+        architectureId: 'architecture-1',
+        title: 'Task 1',
+        description: 'Task 1',
+        moduleId: 'module-1',
+        scope: [],
+        dependsOn: [],
+        acceptanceCriteria: [],
+        category: 'logic',
+        status: 'approved',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const queuedRun = {
+      version: 1 as const,
+      projectId: 'project-1',
+      runId: 'run-runtime',
+      orchestrationId: 'orch-runtime',
+      taskGraphId: taskGraph.id,
+      taskGraphVersion: taskGraph.graphVersion,
+      status: 'queued' as const,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'queued' as const,
+          attempt: 0,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        },
+      },
+    };
+    mocks.store.orchestrations = [{
+      id: 'orch-runtime',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-runtime'],
+    }];
+    mocks.store.workerRuns = [queuedRun];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-runtime', taskGraphId: taskGraph.id }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [taskGraph],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+    const runtimeSelect = container.querySelector('.sm-beginner-worker-runtime select') as HTMLSelectElement;
+    expect(runtimeSelect).not.toBeNull();
+    await act(async () => {
+      runtimeSelect.value = 'antigravity';
+      runtimeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    mocks.store.workerRuns = [{
+      ...queuedRun,
+      status: 'partial',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          ...queuedRun.tasks['task-1'],
+          status: 'failed',
+          attempt: 1,
+          error: 'failed',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-runtime',
+      projectId: 'project-1',
+      reason: 'failed-tasks',
+      message: '存在失败任务',
+    }];
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+
+    const retry = container.querySelector('[data-testid="beginner-session-worker-retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    await act(async () => {
+      retry.click();
+      await Promise.resolve();
+    });
+    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-runtime', 'retry', expect.any(String), 'antigravity');
   });
 
   it('hides recovery actions when the current TaskGraph is unavailable', async () => {

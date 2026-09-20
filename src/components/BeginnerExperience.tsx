@@ -37,6 +37,7 @@ import {
   saveLastSession,
   type RecentProject,
 } from '../io/projectIO';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 import type { RunRecord } from '../types';
 import { useT } from '../i18n/useT';
 import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
@@ -49,7 +50,7 @@ interface BeginnerExperienceProps {
   onNewProject: () => void;
   onStartProjectSession: (goal: string) => void;
   onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
-  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
 }
 
 type BeginnerPage = 'home' | 'project' | 'session' | 'issues' | 'master-agent';

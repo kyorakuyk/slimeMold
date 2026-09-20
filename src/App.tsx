@@ -31,7 +31,7 @@ import { useWorkflowFileDrop } from './hooks/useWorkflowFileDrop';
 import { ensureGuiDevSession, getDevGuiError } from './dev/gui';
 import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents, flushPendingProjectEvents } from './projectControl/eventBuffer';
-import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
+import { createGuiProjectWorkerRunCoordinator, type WorkerRuntime } from './projectControl/workerRunCoordinator';
 import {
   installWorkerRunRuntime,
 } from './projectControl/workerRunRuntime';
@@ -293,7 +293,7 @@ export default function App() {
   });
   const auditLoadedWorkerRunFacts = workerRunRecoveryAuditController.auditLoadedWorkerRunFacts;
 
-  const runQueuedWorker = async (runId: string, workerRuntime: 'codex' | 'antigravity' = 'codex'): Promise<void> => {
+  const runQueuedWorker = async (runId: string, workerRuntime: WorkerRuntime = 'codex'): Promise<void> => {
     const beforeSave = useWorkflowStore.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
