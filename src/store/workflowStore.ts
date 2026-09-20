@@ -80,11 +80,15 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
 import { EventStreamRepository } from '../domain/eventStore';
-import { flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
+import { clearProjectEventBuffer, flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
+import {
+  clearWorkerRunRuntime,
+  installWorkerRunRuntime,
+} from '../projectControl/workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
 import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunRehydration';
 import {
-  activateProjectControlRuntime,
+  createProjectControlStoreAdapter,
   normalizeProjectControlSnapshot,
   resetProjectControlLifecycle,
 } from './projectControlLifecycle';
@@ -482,9 +486,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         nowIso: () => new Date().toISOString(),
         createRegisteredWorkflowId: () => `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       });
+      const projectControlAdapter = createProjectControlStoreAdapter({
+        clearPendingProjectEvents: clearProjectEventBuffer,
+        clearWorkerRunRuntime,
+        installWorkerRunRuntime: (input) => installWorkerRunRuntime(input),
+      });
       const projectLifecycleActions = createProjectLifecycleActions({
         getProjectId: () => get().projectId,
-        resetProjectControlLifecycle,
+        resetProjectControlLifecycle: projectControlAdapter.resetProjectControlLifecycle,
         setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
         setState: (patch) => set(patch),
         clearLastSession,
@@ -1085,7 +1094,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       newProject: (name) => {
         // 状态构建纯逻辑已抽到 workflowLifecycleState.buildNewProjectState（G5 门面化收口）
         const previousProjectId = get().projectId;
-        resetProjectControlLifecycle(previousProjectId);
+        projectControlAdapter.resetProjectControlLifecycle(previousProjectId);
         projectDirtyController.setSuppressed(true);
         set({ ...buildNewProjectState(name), workerRunRecoveries: [], workerRunEvidence: [], workerRunSideEffects: [], workerCleanupProposals: [] });
         projectDirtyController.setSuppressed(false);
@@ -1163,7 +1172,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         projectDirtyController.setSuppressed(true);
         set(state);
         projectDirtyController.finalizeLoaded();
-        set(activateProjectControlRuntime({
+        set(projectControlAdapter.activateProjectControlRuntime({
           projectId: file.id,
           taskGraphs: state.projectControl.taskGraphs ?? [],
           runs: state.workerRuns,

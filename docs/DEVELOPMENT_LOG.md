@@ -4683,3 +4683,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `2ecc1f7482b80c53e8a2a9f4f0008fa2b7c74787` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 reset、activation、install、runtime projection、错误传播、兼容 wrapper和 ownership boundaries保持。
 - reviewer独立复核 focused `3 files / 15 tests`、full `155 files / 1219 tests`、build、i18n `1026/1026`、TypeScript、diff check、static scan和 behavioral probes。
 - 创建 verified tag：`checkpoint/frontend-project-control-adapter-verified`；`checkpoint/frontend-project-control-adapter-unverified` 保留为历史回退锚点。createProject 旧 project-id buffer residual仍未修复，partial-CAS仍未编码。
+
+### 7.297 unverified：wire ProjectControl adapter into workflowStore
+
+- 由 `workflowStore` composition root 构造 `createProjectControlStoreAdapter`，将 `clearProjectEventBuffer`、`clearWorkerRunRuntime`、`installWorkerRunRuntime` 注入；`newProject`、`openProject` 和已验证的 `closeProject` action改用该实例，保留 public facade/API与既有时序。
+- `createProject` 仍暂留兼容 `resetProjectControlLifecycle()` wrapper，未在本结构 slice 中修复其旧 project-id event-buffer residual；未移动 saveProject、event flush、ProjectFile persistence、App host lifecycle或 Worker reconciliation。
+- 验证：focused `4 files / 18 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,179.00 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl adapter wiring reviewer。
