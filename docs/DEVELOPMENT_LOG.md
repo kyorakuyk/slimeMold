@@ -4689,3 +4689,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 由 `workflowStore` composition root 构造 `createProjectControlStoreAdapter`，将 `clearProjectEventBuffer`、`clearWorkerRunRuntime`、`installWorkerRunRuntime` 注入；`newProject`、`openProject` 和已验证的 `closeProject` action改用该实例，保留 public facade/API与既有时序。
 - `createProject` 仍暂留兼容 `resetProjectControlLifecycle()` wrapper，未在本结构 slice 中修复其旧 project-id event-buffer residual；未移动 saveProject、event flush、ProjectFile persistence、App host lifecycle或 Worker reconciliation。
 - 验证：focused `4 files / 18 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,179.00 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl adapter wiring reviewer。
+
+### 7.298 verified：exact review closes ProjectControl adapter wiring
+
+- 独立 reviewer 对 exact HEAD `b1ab5ec0f6afe8e6406f59f6ede6767e0d1e7b5a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 adapter composition、reset/activation、close ordering、dirty suppression/finalizeLoaded、runtime projection、event-buffer scope和 public API parity保持。
+- reviewer独立复核 full `155 files / 1219 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；facade direct regression suggestion非阻塞。
+- 创建 verified tag：`checkpoint/frontend-project-control-adapter-wiring-verified`；`checkpoint/frontend-project-control-adapter-wiring-unverified` 保留为历史回退锚点。createProject 旧 project-id buffer residual仍未修复，partial-CAS仍未编码。
