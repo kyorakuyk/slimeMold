@@ -20,6 +20,50 @@ export interface ProjectControlRuntimeState {
   workerCleanupProposals: WorkerCleanupProposal[];
 }
 
+export interface ProjectControlRuntimeInput {
+  projectId: string;
+  taskGraphs: readonly ProjectTaskGraph[];
+  runs: WorkerRunQueueState[];
+}
+
+export interface ProjectControlStoreAdapterDeps {
+  clearPendingProjectEvents: (projectId: string) => void;
+  clearWorkerRunRuntime: () => void;
+  installWorkerRunRuntime: (input: ProjectControlRuntimeInput) => {
+    recoveries: WorkerRunRecovery[];
+  };
+}
+
+export interface ProjectControlStoreAdapter {
+  resetProjectControlLifecycle: (projectId?: string | null) => void;
+  activateProjectControlRuntime: (input: ProjectControlRuntimeInput) => ProjectControlRuntimeState;
+}
+
+export function createProjectControlStoreAdapter(
+  deps: ProjectControlStoreAdapterDeps,
+): ProjectControlStoreAdapter {
+  return {
+    resetProjectControlLifecycle(projectId) {
+      if (projectId) deps.clearPendingProjectEvents(projectId);
+      deps.clearWorkerRunRuntime();
+    },
+    activateProjectControlRuntime(input) {
+      deps.clearPendingProjectEvents(input.projectId);
+      const runtime = deps.installWorkerRunRuntime(input);
+      return {
+        ...emptyProjectControlRuntimeState(),
+        workerRunRecoveries: runtime.recoveries,
+      };
+    },
+  };
+}
+
+const defaultProjectControlStoreAdapter = createProjectControlStoreAdapter({
+  clearPendingProjectEvents: clearProjectEventBuffer,
+  clearWorkerRunRuntime,
+  installWorkerRunRuntime: (input) => installWorkerRunRuntime(input),
+});
+
 export function emptyProjectControlRuntimeState(): ProjectControlRuntimeState {
   return {
     workerRunRecoveries: [],
@@ -36,15 +80,10 @@ export function normalizeProjectControlSnapshot(
 }
 
 export function resetProjectControlLifecycle(projectId?: string | null): void {
-  if (projectId) clearProjectEventBuffer(projectId);
-  clearWorkerRunRuntime();
+  defaultProjectControlStoreAdapter.resetProjectControlLifecycle(projectId);
 }
 
-export function installProjectControlRuntime(input: {
-  projectId: string;
-  taskGraphs: readonly ProjectTaskGraph[];
-  runs: WorkerRunQueueState[];
-}): ProjectControlRuntimeState {
+export function installProjectControlRuntime(input: ProjectControlRuntimeInput): ProjectControlRuntimeState {
   const runtime = installWorkerRunRuntime(input);
   return {
     ...emptyProjectControlRuntimeState(),
@@ -52,11 +91,6 @@ export function installProjectControlRuntime(input: {
   };
 }
 
-export function activateProjectControlRuntime(input: {
-  projectId: string;
-  taskGraphs: readonly ProjectTaskGraph[];
-  runs: WorkerRunQueueState[];
-}): ProjectControlRuntimeState {
-  clearProjectEventBuffer(input.projectId);
-  return installProjectControlRuntime(input);
+export function activateProjectControlRuntime(input: ProjectControlRuntimeInput): ProjectControlRuntimeState {
+  return defaultProjectControlStoreAdapter.activateProjectControlRuntime(input);
 }

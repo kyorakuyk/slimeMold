@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach, vi } from 'vitest';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import {
   clearProjectEventBuffer,
@@ -8,7 +8,9 @@ import {
 import { getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 import {
   activateProjectControlRuntime,
+  createProjectControlStoreAdapter,
   emptyProjectControlRuntimeState,
+  type ProjectControlRuntimeInput,
   installProjectControlRuntime,
   normalizeProjectControlSnapshot,
   resetProjectControlLifecycle,
@@ -19,6 +21,41 @@ beforeEach(() => {
 });
 
 describe('project control lifecycle adapter', () => {
+  it('keeps injected reset and activation sequencing store-agnostic', () => {
+    const calls: string[] = [];
+    const clearPendingProjectEvents = (projectId: string) => calls.push(`events:${projectId}`);
+    const clearWorkerRunRuntime = () => calls.push('runtime:clear');
+    const installWorkerRunRuntime = vi.fn((input: ProjectControlRuntimeInput) => {
+      calls.push(`runtime:install:${(input as { projectId: string }).projectId}`);
+      return { recoveries: ['recovery'] as never };
+    });
+    const adapter = createProjectControlStoreAdapter({
+      clearPendingProjectEvents,
+      clearWorkerRunRuntime,
+      installWorkerRunRuntime,
+    });
+
+    adapter.resetProjectControlLifecycle('project-1');
+    adapter.resetProjectControlLifecycle();
+    const input = { projectId: 'project-2', taskGraphs: [], runs: [] } as never;
+    const projection = adapter.activateProjectControlRuntime(input);
+
+    expect(calls).toEqual([
+      'events:project-1',
+      'runtime:clear',
+      'runtime:clear',
+      'events:project-2',
+      'runtime:install:project-2',
+    ]);
+    expect(installWorkerRunRuntime).toHaveBeenCalledWith(input);
+    expect(projection).toEqual({
+      workerRunRecoveries: ['recovery'],
+      workerRunEvidence: [],
+      workerRunSideEffects: [],
+      workerCleanupProposals: [],
+    });
+  });
+
   it('normalizes project control snapshots at the lifecycle boundary', () => {
     const normalized = normalizeProjectControlSnapshot({
       version: 1,

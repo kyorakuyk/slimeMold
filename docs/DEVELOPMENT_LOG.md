@@ -4670,3 +4670,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `8528934baacef1dac1d0d4f0fc00a2e71c878520` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 close signature、reset-before-suppression、exact patch、untouched fields、factory identity/aliasing、failure propagation和 single lifecycle ownership保持。
 - reviewer独立复核 focused `26/26`、full `155 files / 1218 tests`、build、i18n `1026/1026`、TypeScript和diff check。
 - 创建 verified tag：`checkpoint/frontend-close-project-action-verified`；`checkpoint/frontend-close-project-action-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.295 unverified：extract ProjectControl lifecycle adapter port
+
+- 在 `src/store/projectControlLifecycle.ts` 增加 `createProjectControlStoreAdapter`，将 reset/activation 的 event-buffer 与 Worker runtime capability 注入；现有 `resetProjectControlLifecycle`、`installProjectControlRuntime`、`activateProjectControlRuntime` 保留为兼容 wrapper，未移动 Worker runtime、event store、ProjectFile persistence或 host lifecycle事实。
+- adapter只负责同步 reset/activate与 runtime-only projection：reset保留有 project id 才清理对应 event buffer、随后清理 active runtime；activate先清理目标项目 buffer，再安装 runtime，返回 recoveries并重新生成空 evidence/side-effects/cleanup-proposals数组。未接入 saveProject、App.tsx、ProjectLifecycleController或 workflowStore 全量 StatePort。
+- 扩展 `projectControlLifecycle.test.ts` direct DI tests，覆盖 injected call order、project-id scope、installer forwarding和 runtime projection；既有 facade/Worker lifecycle tests保持不变。
+- 验证：focused `3 files / 15 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,178.88 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl lifecycle adapter reviewer。
