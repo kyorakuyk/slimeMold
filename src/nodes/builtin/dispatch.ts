@@ -1,6 +1,6 @@
 import { createNodeDef, type NodeDefinition, type ModuleItem, type TaskItem, type ChatMessage } from '../../types';
 import { useWorkflowStore } from '../../store/workflowStore';
-import { resolveActiveWorkflowWorkspaceDir } from '../../store/workflowState';
+import { resolveActiveWorkflowWorkspaceDir } from '../../store/workflowRegistryState';
 import { findRole, resolveRoleSystem } from '../../agents/agentManager';
 import { mergeAgentPool } from '../../agents/globalAgents';
 import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../../engine/pipeline';

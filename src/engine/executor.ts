@@ -5,7 +5,7 @@ import type {
   FlowNode,
 } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
-import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowState';
+import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowRegistryState';
 import { useRegistryStore } from '../store/registryStore';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';

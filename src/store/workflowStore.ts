@@ -114,17 +114,21 @@ import {
 } from './workflowGraph';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
-// 状态转换纯逻辑（upsertById / 路由表清理 / 项目装载 / 工作流切换 / 新建项目）已抽到 workflowState.ts（G5 门面化）
+// Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
 import {
   buildCreateProjectState,
   buildNewProjectState,
-  buildNewWorkflowInProjectState,
   buildOpenProjectState,
+} from './workflowLifecycleState';
+import {
+  buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
   buildSwitchWorkflowState,
+} from './workflowRegistryState';
+import {
   cleanupRouteTableForAgent,
   upsertById,
-} from './workflowState';
+} from './projectCatalogState';
 
 interface WorkflowState {
   workflowName: string;
