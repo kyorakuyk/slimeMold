@@ -56,6 +56,7 @@ import { createWorkerActionController } from './projectControl/workerActionContr
 import { createWorkerCleanupActionController } from './projectControl/workerCleanupActionController';
 import { createWorkerCleanupProposalController } from './projectControl/workerCleanupProposalController';
 import { assertWorkerRunConsistency } from './projectControl/workerRunConsistencyAction';
+import { createWorkerRunTransitionPersistence } from './projectControl/workerRunTransitionPersistence';
 
 registerBuiltins();
 
@@ -505,49 +506,24 @@ export default function App() {
           auditProjectControlConsistency,
         });
       },
-      persistTransition: async ({ state, events }) => {
-        const terminalTaskEvents = new Set(['TaskSucceeded', 'TaskFailed', 'TaskBlocked']);
-        const safeFinalizationEvents = new Set([
-          'RunCreated',
-          'TaskQueued',
-          'RunStarted',
-          'TaskStarted',
-          'TaskSucceeded',
-          'TaskFailed',
-          'TaskBlocked',
-          'RunSucceeded',
-          'RunFailed',
-          'RunCancelled',
-          'RunBlocked',
-        ]);
-        const terminalFinalization = events.some((event) => terminalTaskEvents.has(event.eventType))
-          && events.every((event) => safeFinalizationEvents.has(event.eventType));
-        if (operation.controller.signal.aborted && terminalFinalization) {
-          recordProjectEvents(projectId, events);
-          await flushPendingProjectEvents(projectId, eventRepository);
-          const oldRuns = beforeSave.workerRuns.map((run) => run.runId === state.runId ? state : run);
-          await saveProjectFile(
-            buildProjectFile({ ...beforeSave, workerRuns: oldRuns }),
-            projectPath,
-          );
-          return;
-        }
-        assertProjectOperation(operation);
-        const latest = useWorkflowStore.getState();
-        assertProjectOperation(operation);
-        recordProjectEvents(projectId, events);
-        const nextRuns = latest.workerRuns.map((run) => run.runId === state.runId ? state : run);
-        latest.setWorkerRuns(nextRuns);
-        latest.setOrchestrations(
-          projectWorkerRunsOntoOrchestrations(latest.orchestrations, nextRuns),
-        );
-        latest.setWorkerRunEvidence(mergeWorkerEvidence(latest.workerRunEvidence, session.collector.records));
-        const effectRecords = await loadWorkerSideEffects(sideEffectRepository);
-        assertProjectOperation(operation);
-        latest.setWorkerRunSideEffects(mergeWorkerSideEffects(latest.workerRunSideEffects, effectRecords));
-        await latest.saveProject({ projectId, projectPath, signal: operation.controller.signal });
-        assertProjectOperation(operation);
-      },
+      persistTransition: createWorkerRunTransitionPersistence({
+        projectId,
+        projectPath,
+        signal: operation.controller.signal,
+        beforeSave,
+        getState: () => useWorkflowStore.getState(),
+        assertOperation: () => assertProjectOperation(operation),
+        recordProjectEvents,
+        flushPendingProjectEvents,
+        eventRepository,
+        saveProjectFile,
+        buildProjectFile,
+        loadSideEffects: () => loadWorkerSideEffects(sideEffectRepository),
+        collectorEvidence: () => session.collector.records,
+        mergeWorkerEvidence,
+        mergeWorkerSideEffects,
+        projectWorkerRunsOntoOrchestrations,
+      }),
     });
     assertProjectOperation(operation);
     await coordinator.run(runId);
