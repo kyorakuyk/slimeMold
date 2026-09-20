@@ -34,7 +34,6 @@ import { recordProjectEvents, flushPendingProjectEvents } from './projectControl
 import { createGuiProjectWorkerRunCoordinator } from './projectControl/workerRunCoordinator';
 import {
   installWorkerRunRuntime,
-  type WorkerRunRecovery,
 } from './projectControl/workerRunRuntime';
 import { auditWorkerRunConsistency } from './projectControl/workerRunConsistency';
 import { ensureProjectControlEventBaseline } from './projectControl/eventSourceBootstrap';
@@ -42,9 +41,6 @@ import { auditProjectControlConsistency } from './projectControl/projectControlC
 import { projectWorkerRunsOntoOrchestrations, suppressInvalidWorkerRunProjection } from './projectControl/workerRunOrchestrationProjection';
 import { reconcileWorkerRunsFromEvents, rehydrateWorkerRunsFromEvents } from './projectControl/workerRunRehydration';
 import type { WorkerRunQueueState } from './domain/workerQueue';
-import type { WorkerRunConsistencyReport } from './projectControl/workerRunConsistency';
-import type { AcceptanceRecord } from './dev/session';
-import type { DomainProjection } from './domain/contracts';
 import { EventStreamRepository } from './domain/eventStore';
 import {
   mergeWorkerEvidence,
@@ -58,6 +54,7 @@ import { assertWorkerRunConsistency } from './projectControl/workerRunConsistenc
 import { createWorkerRunTransitionPersistence } from './projectControl/workerRunTransitionPersistence';
 import { createWorkerRunHostInfrastructure } from './projectControl/workerRunHostInfrastructure';
 import { admitWorkerRunSession } from './projectControl/workerRunSessionAdmission';
+import { createWorkerRunRecoveryAuditController } from './projectControl/workerRunRecoveryAuditController';
 
 registerBuiltins();
 
@@ -249,184 +246,46 @@ export default function App() {
     }
   };
 
-  const auditLoadedWorkerRunFacts = async (
-    projectPath: string | null,
-    acceptances?: readonly AcceptanceRecord[],
-    signal?: AbortSignal,
-  ): Promise<void> => {
-    if (!isTauri || !projectPath || signal?.aborted) return;
-    try {
+  const workerRunRecoveryAuditController = createWorkerRunRecoveryAuditController({
+    isTauri,
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        projectId: state.projectId,
+        projectPath: state.projectPath,
+        projectControl: state.projectControl,
+        workerRuns: state.workerRuns,
+        orchestrations: state.orchestrations,
+        workerRunEvidence: state.workerRunEvidence,
+        workerRunSideEffects: state.workerRunSideEffects,
+      };
+    },
+    setWorkerRuns: (runs) => useWorkflowStore.getState().setWorkerRuns(runs),
+    setOrchestrations: (orchestrations) => useWorkflowStore.getState().setOrchestrations(orchestrations),
+    setWorkerRunRecoveries: (recoveries) => useWorkflowStore.getState().setWorkerRunRecoveries(recoveries),
+    setWorkerCleanupProposals: (proposals) => useWorkflowStore.getState().setWorkerCleanupProposals(proposals),
+    addLog: (level, message) => useWorkflowStore.getState().addLog(level, message),
+    saveProject: async (projectId, projectPath, signal) => (
+      useWorkflowStore.getState().saveProject({ projectId, projectPath, signal })
+    ),
+    createEventRepository: async (projectPath) => {
       const { createTauriEventStoreAdapter } = await import('./domain/tauriEventStore');
-      const repository = new EventStreamRepository(
+      return new EventStreamRepository(
         createTauriEventStoreAdapter(projectPath),
         projectPath,
       );
-      const before = useWorkflowStore.getState();
-      if (!before.projectId || before.projectPath !== projectPath) return;
-      const bootstrapped = await ensureProjectControlEventBaseline({
-        repository,
-        projectId: before.projectId,
-        snapshot: before.projectControl,
-        workerRuns: before.workerRuns,
-        now: new Date().toISOString(),
-      });
-      if (signal?.aborted) return;
-      const parsed = bootstrapped.stream;
-      let current = useWorkflowStore.getState();
-      if (!current.projectId || current.projectPath !== projectPath) return;
-      const projectId = current.projectId;
-      const reconciledSnapshots = reconcileWorkerRunsFromEvents({
-        projectId,
-        events: parsed.events,
-        runs: current.workerRuns,
-        taskGraphs: current.projectControl.taskGraphs ?? [],
-      });
-      if (reconciledSnapshots.issues.length > 0) {
-        current.addLog(
-          'warn',
-          `Worker retry snapshot reconciliation 发现问题：${reconciledSnapshots.issues.map((item) => item.message).join('；')}`,
-        );
-      }
-      if (reconciledSnapshots.changedRunIds.length > 0 && reconciledSnapshots.issues.length === 0) {
-        current.setWorkerRuns(reconciledSnapshots.runs);
-        current.setOrchestrations(
-          projectWorkerRunsOntoOrchestrations(current.orchestrations, reconciledSnapshots.runs),
-        );
-        await current.saveProject({ projectId, projectPath, signal });
-        if (signal?.aborted) return;
-        current = useWorkflowStore.getState();
-      }
-      const rehydrated = current.workerRuns.length === 0
-        ? rehydrateWorkerRunsFromEvents({
-          projectId,
-          events: parsed.events,
-          taskGraphs: current.projectControl.taskGraphs ?? [],
-          existingRuns: current.workerRuns,
-        })
-        : { runs: [], issues: [] };
-      if (rehydrated.issues.length > 0) {
-        current.addLog(
-          'warn',
-          `Worker Run 投影恢复被阻止：${rehydrated.issues.map((item) => item.message).join('；')}`,
-        );
-      } else if (rehydrated.runs.length > 0) {
-        if (signal?.aborted) return;
-        current.setWorkerRuns(rehydrated.runs);
-        current.setOrchestrations(
-          projectWorkerRunsOntoOrchestrations(current.orchestrations, rehydrated.runs),
-        );
-        await current.saveProject({
-          projectId,
-          projectPath,
-          signal,
-        });
-        if (signal?.aborted) return;
-        current = useWorkflowStore.getState();
-      }
-      let report: WorkerRunConsistencyReport;
-      let controlReport: ReturnType<typeof auditProjectControlConsistency> | null = null;
-      if (parsed.status === 'needs-repair') {
-        const projection: DomainProjection = {
-          lastSequence: 0,
-          runs: {},
-          tasks: {},
-          taskExecutions: {},
-          attempts: {},
-        };
-        report = {
-          ok: false,
-          projection,
-          issues: [{
-            code: 'invalid-event-stream',
-            message: `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
-          }],
-        };
-      } else {
-        report = auditWorkerRunConsistency({
-          projectId,
-          runs: current.workerRuns,
-          events: parsed.events,
-          evidence: current.workerRunEvidence,
-          acceptances,
-          sideEffects: current.workerRunSideEffects,
-          taskGraphs: current.projectControl.taskGraphs ?? [],
-        });
-        controlReport = auditProjectControlConsistency({
-          projectId,
-          snapshot: current.projectControl,
-          events: parsed.events,
-        });
-        if (!controlReport.ok && current.workerRuns.length > 0) {
-          report = {
-            ...report,
-            ok: false,
-            issues: [
-              ...report.issues,
-              ...controlReport.issues.map((item) => ({
-                code: 'control-state-drift' as const,
-                message: `控制面事实审计未通过：${item.message}`,
-              })),
-            ],
-          };
-        }
-      }
-      if (signal?.aborted) return;
-      const runtime = installWorkerRunRuntime({
-        projectId,
-        taskGraphs: current.projectControl.taskGraphs ?? [],
-        runs: current.workerRuns,
-        consistency: report,
-      });
-      current.setWorkerRunRecoveries(runtime.recoveries);
-      const controlOk = controlReport === null || controlReport.ok;
-      const hasWorkerProjection = current.workerRuns.length > 0
-        || current.orchestrations.some((orchestration) => (
-          orchestration.runIds.length > 0
-          || Object.keys(orchestration.stageLogsByRun ?? {}).length > 0
-        ));
-      if (report.ok && controlOk && current.workerRuns.length > 0) {
-        current.setOrchestrations(
-          projectWorkerRunsOntoOrchestrations(current.orchestrations, current.workerRuns),
-        );
-      } else if (!report.ok || !controlOk || (hasWorkerProjection && current.workerRuns.length === 0)) {
-        const reason = report.issues[0]?.message
-          ?? controlReport?.issues[0]?.message
-          ?? (current.workerRuns.length === 0 ? 'Worker Run registry empty during audit' : 'Worker facts audit failed');
-        current.setOrchestrations(
-          suppressInvalidWorkerRunProjection(current.orchestrations, `Worker facts invalid：${reason}`),
-        );
-      }
-      if (!report.ok) {
-        current.setWorkerCleanupProposals([]);
-        current.addLog(
-          'warn',
-          `Worker 事实源审计未通过：${report.issues.map((item) => item.message).join('；')}`,
-        );
-      }
-      if (controlReport && !controlReport.ok) {
-        current.setWorkerCleanupProposals([]);
-        current.addLog(
-          'warn',
-          `ProjectControl 事实审计未通过：${controlReport.issues.map((item) => item.message).join('；')}`,
-        );
-      }
-    } catch (cause) {
-      if (signal?.aborted) return;
-      const failedState = useWorkflowStore.getState();
-      const message = `Worker 事件流无法审计：${cause instanceof Error ? cause.message : String(cause)}`;
-      failedState.setWorkerRunRecoveries(failedState.workerRuns.map((run): WorkerRunRecovery => ({
-        runId: run.runId,
-        projectId: run.projectId,
-        reason: 'event-stream-invalid',
-        message,
-      })));
-      failedState.setWorkerCleanupProposals([]);
-      failedState.setOrchestrations(
-        suppressInvalidWorkerRunProjection(failedState.orchestrations, `Worker facts invalid：${message}`),
-      );
-      failedState.addLog('warn', message);
-    }
-  };
+    },
+    ensureEventBaseline: ensureProjectControlEventBaseline,
+    reconcileWorkerRunsFromEvents,
+    rehydrateWorkerRunsFromEvents,
+    auditWorkerRunConsistency,
+    auditProjectControlConsistency,
+    installWorkerRunRuntime,
+    projectWorkerRunsOntoOrchestrations,
+    suppressInvalidWorkerRunProjection,
+    now: () => new Date().toISOString(),
+  });
+  const auditLoadedWorkerRunFacts = workerRunRecoveryAuditController.auditLoadedWorkerRunFacts;
 
   const runQueuedWorker = async (runId: string, workerRuntime: 'codex' | 'antigravity' = 'codex'): Promise<void> => {
     const beforeSave = useWorkflowStore.getState();
