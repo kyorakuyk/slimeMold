@@ -1,5 +1,4 @@
 import type {
-  AssetMeta,
   CostRecord,
   ExecContext,
   FlowEdge,
@@ -44,6 +43,7 @@ import {
 } from './nodeCache';
 import { createNodeSandbox } from './nodeSandboxAdapter';
 import { createNodeLlmAdapter } from './nodeLlmAdapter';
+import { createNodeContextAdapter } from './nodeContextAdapter';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -791,7 +791,6 @@ async function executeNode(
       ? nodeState.variables
       : (nodeState.workflows[targetWfId]?.variables ?? {})),
   };
-  let ctx: ExecContext;
   const llm = createNodeLlmAdapter({
     node: {
       id,
@@ -829,7 +828,35 @@ async function executeNode(
     logError: (message) => R.addLog('error', message),
     recordCost: trackCost,
   });
-  ctx = {
+  const contextAdapter = createNodeContextAdapter({
+    nodeId: id,
+    ownerId: owner,
+    nodeTypeId: node.data.typeId,
+    nodeLabel: node.data.label,
+    targetWfId,
+    targetRunId,
+    myRun: myRun ?? targetRunId,
+    incomingNodeIds: incoming.filter((e) => e.target === id).map((e) => e.source),
+    edges,
+    sandbox,
+    runtime: R,
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        activeWfId: state.activeWfId,
+        nodes: state.nodes,
+        workflows: state.workflows,
+        projectAssets: state.projectAssets,
+      };
+    },
+    setStatus,
+    onBranches: (handles) => { branchesTaken = handles; },
+    onGate,
+    getCurrentRunId: (wfId) => executionCoordinator.getCurrentRunId(wfId),
+    scheduleRunCheckpoint,
+    requestIntervention,
+  });
+  const ctx: ExecContext = {
     signal,
     // 当前节点 id（owner ?? id，子图虚拟节点回写用）：供沙箱插件 RPC 按节点归属路由
     nodeId: owner ?? id,
@@ -842,79 +869,10 @@ async function executeNode(
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,
     reportCost: (rec) => trackCost(rec),
-    setPartial: (key, value) => {
-      const target = owner ?? id;
-      const st = useWorkflowStore.getState();
-      const targetNodes = targetWfId === st.activeWfId
-        ? st.nodes
-        : (st.workflows[targetWfId]?.nodes ?? []);
-      const cur = targetNodes.find((n) => n.id === target)?.data.outputs ?? {};
-      setStatus(id, 'running', {
-        outputs: { ...cur, [key]: value },
-      });
-    },
-    setBranches: (handles) => {
-      branchesTaken = handles;
-      // 把分支结果回报给执行引擎（loopGate 迭代判断用）
-      if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
-    },
-    // 存储按节点实例隔离（scope = 插件 + 类型 + 实例 id），避免同插件不同节点/同类型不同实例互相读写。
+    ...contextAdapter,
     storage: nodeStorage,
-    // 变量：基础(extraVars) < 项目级 < 工作流级（后者覆盖前者同名项）
     vars: nodeVars,
-    // 资产：项目级库与当前工作流库合并（工作流级同名 id 覆盖项目级）
-    assets: (() => {
-      const st = useWorkflowStore.getState();
-      const wfAssets = targetWfId === st.activeWfId
-        ? st.workflows[st.activeWfId ?? '']?.assets ?? []
-        : st.workflows[targetWfId]?.assets ?? [];
-      const byId = new Map<string, AssetMeta>();
-      for (const a of st.projectAssets) byId.set(a.id, a);
-      for (const a of wfAssets) byId.set(a.id, a);
-      return [...byId.values()] as never;
-    })(),
-    addAsset: (meta) => R.addAsset(meta),
-    // 步骤 11 阶段 C：真沙箱句柄（仅 sandbox 运行模式注入，普通模式为 undefined）
     sandbox,
-    // 协调者节点的上游车道 id（供 commitLanes 汇总 Worker 沙箱）
-    sandboxLanes: sandbox
-      ? incoming.filter((e) => e.target === id).map((e) => e.source)
-      : undefined,
-    // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）。
-    // 双写：① 直接 mutate 执行器局部 edges 数组（保证本次调度的 scope 串行化立刻生效）；
-    //       ② 经 setEdges 同步全局 store（用于持久化与右侧 Inspector 展示）。
-    writeOutEdgeScope: (handle, scope) => {
-      for (const e of edges) {
-        if (e.source === id && (e.sourceHandle ?? null) === (handle ?? null)) {
-          e.data = { ...e.data, kind: e.data?.kind ?? 'task', scope };
-        }
-      }
-      R.setEdges((prev) =>
-        prev.map((e) =>
-          e.source === id && (e.sourceHandle ?? null) === (handle ?? null)
-            ? { ...e, data: { ...e.data, kind: e.data?.kind ?? 'task', scope } }
-            : e,
-        ),
-      );
-    },
-    // 阶段 D 实时接管：节点请求人工介入 → 挂起直至 UI 提交/取消。
-    // 挂起点绑定 wfId+runId+nodeId，运行结束/停止时由 cancelInterventionsForRun 统一放行。
-    intervene: async (req) => {
-      if (myRun !== executionCoordinator.getCurrentRunId(targetWfId)) {
-        // 代次已过期：不再挂起，直接以取消返回（旧协程不应阻塞）
-        return { kind: 'cancelled', error: '运行已停止，介入请求被取消' };
-      }
-      // 阶段 G2：人工接管挂起前落盘快照——用户处理期间应用崩溃也不丢已有进度
-      scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
-      return requestIntervention({
-        wfId: targetWfId,
-        runId: targetRunId,
-        nodeId: owner ?? id,
-        label: node.data.label,
-        typeId: node.data.typeId,
-        ...req,
-      });
-    },
   };
 
   // 步骤 11 阶段 D：按节点能力等级裁剪 ctx——越权字段替换为「拒绝型」实现（保持类型完整、运行时受控）

@@ -4325,3 +4325,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact HEAD `c6e3636` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 adapter在调用时读取 mutable `ctx.vars/ctx.storage/ctx.sandbox`，`applyCapability` 后 io sandbox deny、sandbox_write commit fencing与 coordinator权限均保留，无 TDZ、初始化顺序、重复 owner或 stale import问题。
 - 同一代码快照质量门：Node `137 test files / 1161 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
 - 已创建本地 verified tag：`checkpoint/frontend-executor-llm-capability-repair-verified`。该 tag只证明 LLM capability fencing repair，不代表 executor剩余 context、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.239 unverified：extract executor NodeContextAdapter
+
+- 第九条前端基础切片将 `executeNode` 中 assets合并、partial output、branch callback、edge scope双写和 intervention lifecycle抽到 `src/engine/nodeContextAdapter.ts`。
+- adapter通过显式 runtime/store/edge/generation依赖保留原行为：项目资产与工作流资产按 id 覆盖、setPartial动态读取节点输出、loopGate branches继续回写 gateTaken、edge scope同时更新局部 edges和 runtime store、过期 run拒绝 intervention并抑制 checkpoint。
+- `executor.ts` 保留 LLM/storage/vars/sandbox、capability裁剪、节点执行/重试/结果处理与运行时序；旧 callback实现已删除，无第二套 owner。新增 direct context tests及完整 executor lifecycle regression。
+- GREEN：focused `7 files / 42 tests`；完整 Node `138 test files / 1163 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。executor结构拆分、真实 Tauri E2E与历史 unverified收口继续后置。
