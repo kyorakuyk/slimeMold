@@ -4546,3 +4546,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在 `src/store/workflowState.ts` 增加 `buildRegisteredWorkflowState`，收口 WorkflowFile normalization、project/standalone identity、fallback agents/roles/variables/assets/groups以及 activate canvas projection；`workflowStore.registerWorkflow` 保留 ID生成、Zustand set和返回合同。
 - 新增 direct regressions：activate=false仅注册、activate=true复用 normalized state生成 dirty canvas activation；未改变 ProjectSessionPanel/Builder caller合同。
 - 验证：focused `4 files / 46 tests`；完整 Node `145 test files / 1184 tests`；build通过（最大 chunk `1,176.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.275 verified：exact review closes registerWorkflow state slice
+
+- 独立 reviewer 对 exact HEAD `8868b04d633c9ef816c301452e8e8a4b9ab80936` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 normalization、project/standalone identity、activation projection、public return/set合同无行为变化，未发现 duplicate owner、aliasing、mutation、runtime cycle或安全问题。
+- reviewer独立复核 focused/full `145 files / 1184 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scans；非阻塞建议记录为后续 parity coverage：non-empty fallback、cross-project/standalone combinations、defaultAgent/edge/log preservation、input non-mutation。
+- 创建 verified tag：`checkpoint/frontend-workflow-registry-state-verified`；原 `checkpoint/frontend-workflow-registry-state-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
