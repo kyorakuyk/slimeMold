@@ -4619,3 +4619,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - 根据 graph reviewer 非阻塞建议新增 `src/store/workflowStore.graphCommands.test.ts`，验证 command owner spread真实进入 Zustand facade，并确认 inline `selectAll`边界仍由 facade提供；不改变 production graph command implementation。
 - 验证：focused `3 files / 21 tests`；完整 Node `152 test files / 1204 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 assembly repair 标记 `unverified`，等待新的 exact frontend graph reviewer。
+
+### 7.287 verified：exact review closes graph command facade slice
+
+- 独立 reviewer 对 exact HEAD `38c0094ee5c755eb1c45940a17c024c621f8d7fb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 test-only follow-up未改变 production graph command owner，Zustand spread command与inline `selectAll`边界正确。
+- reviewer独立复核 focused `21/21`、full `152 files / 1204 tests`、build、i18n `1026/1026`、TypeScript和diff check；既有 Vite dynamic/static import与大 chunk warnings保持非阻塞。
+- 创建 verified tag：`checkpoint/frontend-graph-command-facade-verified`；`checkpoint/frontend-graph-command-facade-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
