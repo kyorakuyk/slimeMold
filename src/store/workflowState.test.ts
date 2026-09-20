@@ -10,6 +10,7 @@ import {
   buildCreateProjectState,
   buildNewProjectState,
   buildRegisteredWorkflowState,
+  buildNewWorkflowInProjectState,
   buildOpenProjectState,
   buildSwitchWorkflowState,
   cleanupRouteTableForAgent,
@@ -366,5 +367,34 @@ describe('buildCreateProjectState 创建项目状态构建', () => {
     expect(st.roles[0]).not.toBe(st.workflows['workflow-1']?.roles?.[0]);
     expect(st.edges).toEqual(edges);
     expect(st.workerRuns).toEqual([]);
+  });
+});
+
+describe('buildNewWorkflowInProjectState', () => {
+  it('builds project and standalone registry activation state', () => {
+    const current = {
+      workflowName: '未归属',
+      nodes: [mkFlowNode('node-1', 'input.text')],
+      edges: [],
+      agents: [],
+      roles: [],
+      variables: {},
+      groups: [],
+    };
+    const project = buildNewWorkflowInProjectState({
+      workflows: {}, activeWfId: '', current, projectId: 'p1', workflowId: 'wf1',
+      capturedWorkflowId: 'wf-captured', savedAt: '2026-01-01',
+    });
+    expect(project.workflows['wf-captured']?.nodes[0]?.id).toBe('node-1');
+    expect(project.workflows.wf1?.belongsToProject).toBe('p1');
+    expect(project.workflows.wf1?.assets).toEqual([]);
+    expect(project.activation?.workflowName).toBe('工作流 2');
+
+    const standalone = buildNewWorkflowInProjectState({
+      workflows: {}, activeWfId: '', current: { ...current, nodes: [], edges: [] }, projectId: null,
+      standalonePath: 'C:/workspace', workflowId: 'wf2', capturedWorkflowId: 'wf-captured-2', savedAt: '2026-01-01',
+    });
+    expect(standalone.workflows.wf2?.workspaceDir).toBe('C:/workspace');
+    expect(standalone.workflows.wf2?.standalonePath).toBe('C:/workspace');
   });
 });

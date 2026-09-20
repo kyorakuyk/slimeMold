@@ -4552,3 +4552,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 对 exact HEAD `8868b04d633c9ef816c301452e8e8a4b9ab80936` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 normalization、project/standalone identity、activation projection、public return/set合同无行为变化，未发现 duplicate owner、aliasing、mutation、runtime cycle或安全问题。
 - reviewer独立复核 focused/full `145 files / 1184 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scans；非阻塞建议记录为后续 parity coverage：non-empty fallback、cross-project/standalone combinations、defaultAgent/edge/log preservation、input non-mutation。
 - 创建 verified tag：`checkpoint/frontend-workflow-registry-state-verified`；原 `checkpoint/frontend-workflow-registry-state-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.276 unverified：extract newWorkflowInProject state builder
+
+- 在 `src/store/workflowState.ts` 增加 `buildNewWorkflowInProjectState`，收口游离画布 capture、空白 workflow registry entry、project/standalone identity 和 activation projection；`workflowStore.newWorkflowInProject` 保留默认目录异步解析、时间/ID生成和 Zustand facade。
+- 新增 direct 与 facade regressions：unbound canvas capture、project activation、standalone workspace identity、`assets: []` 初始化；对照父实现保留 dirty 行为与 captured workflow metadata。
+- 验证：focused `2 files / 29 tests`；完整 Node `146 test files / 1187 tests`；build通过（最大 chunk `1,177.02 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。

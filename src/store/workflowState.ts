@@ -336,7 +336,79 @@ export interface CreateProjectStateInput {
   };
 }
 
-/** createProject 写入 store 的项目/工作流状态子集。 */
+/** newWorkflowInProject 的纯输入。 */
+export interface NewWorkflowInProjectStateInput {
+  workflows: Record<string, WorkflowFileInMemory>;
+  activeWfId: string;
+  current: {
+    workflowName: string;
+    nodes: FlowNode[];
+    edges: FlowEdge[];
+    agents: import('../types').AgentConfig[];
+    roles: import('../types').RoleTemplate[];
+    variables: Record<string, unknown>;
+    groups?: import('../types').NodeGroup[];
+    defaultAgentId?: string | null;
+  };
+  projectId: string | null;
+  standalonePath?: string;
+  workflowId: string;
+  capturedWorkflowId: string;
+  savedAt: string;
+}
+
+export function buildNewWorkflowInProjectState(
+  input: NewWorkflowInProjectStateInput,
+): RegisteredWorkflowState {
+  const workflows = { ...input.workflows };
+  if (!input.activeWfId && (input.current.nodes.length || input.current.edges.length)) {
+    const capturedId = input.capturedWorkflowId;
+    const previous = workflows[capturedId];
+    workflows[capturedId] = serializeCurrent(
+      input.current,
+      {
+        belongsToProject: previous?.belongsToProject,
+        standalonePath: previous?.standalonePath,
+      },
+      previous?.assets,
+    );
+  }
+  const workflow: WorkflowFileInMemory = {
+    version: 1,
+    name: `工作流 ${Object.keys(workflows).length + 1}`,
+    savedAt: input.savedAt,
+    nodes: [],
+    edges: [],
+    agents: [createAgent('ollama')],
+    roles: builtinRoles.map((role) => ({ ...role })),
+    variables: {},
+    workspaceDir: input.standalonePath ?? null,
+    assets: [],
+    groups: [],
+    belongsToProject: input.projectId ? input.projectId : undefined,
+    standalonePath: input.projectId ? undefined : input.standalonePath,
+  };
+  workflows[input.workflowId] = workflow;
+  return {
+    id: input.workflowId,
+    workflows,
+    activation: {
+      activeWfId: input.workflowId,
+      workflowName: workflow.name,
+      nodes: [],
+      edges: [],
+      agents: workflow.agents,
+      defaultAgentId: workflow.defaultAgentId ?? null,
+      roles: workflow.roles!,
+      variables: workflow.variables!,
+      groups: [],
+      selectedNodeId: null,
+      logs: [],
+    },
+  };
+}
+
+/** createProject 写入项目/工作流状态子集。 */
 export interface CreateProjectState {
   projectName: string;
   projectId: string;

@@ -118,6 +118,7 @@ import { saveCheckpointToDisk } from './workflowPersistence';
 import {
   buildCreateProjectState,
   buildNewProjectState,
+  buildNewWorkflowInProjectState,
   buildOpenProjectState,
   buildRegisteredWorkflowState,
   buildSwitchWorkflowState,
@@ -1300,59 +1301,34 @@ export const useWorkflowStore = create<WorkflowState>()(
        */
       newWorkflowInProject: async (workspaceDir?: string | null) => {
         const s = get();
-        const workflows = { ...s.workflows };
         const inProject = !!s.projectId;
         // 游离工作流未指定位置时，落到默认位置（文档/SlimeMold/未归类/）
         let standalonePath: string | undefined;
         if (!inProject) {
           standalonePath = workspaceDir ?? (await defaultStandaloneDir());
         }
-        // 若当前为游离态（无对应工作流）且已有编辑内容，先把现有编辑态收纳为默认工作流
-        let baseActive = s.activeWfId;
-        if (!baseActive && (s.nodes.length || s.edges.length)) {
-          baseActive = `wf-${Date.now()}`;
-          const prev = s.workflows[baseActive];
-          workflows[baseActive] = serializeCurrent(
-            s,
-            {
-              belongsToProject: prev?.belongsToProject,
-              standalonePath: prev?.standalonePath,
-            },
-            prev?.assets,
-          );
-        }
-        const id = `wf-${Date.now() + 1}`;
-        const index = Object.keys(workflows).length + 1;
-        const wf: WorkflowFileInMemory = {
-          version: 1,
-          name: `工作流 ${index}`,
+        const now = Date.now();
+        const id = `wf-${now + 1}`;
+        const result = buildNewWorkflowInProjectState({
+          workflows: s.workflows,
+          activeWfId: s.activeWfId,
+          current: {
+            workflowName: s.workflowName,
+            nodes: s.nodes,
+            edges: s.edges,
+            agents: s.agents,
+            roles: s.roles,
+            variables: s.variables,
+            groups: s.groups,
+            defaultAgentId: s.defaultAgentId,
+          },
+          projectId: s.projectId,
+          standalonePath,
+          workflowId: id,
+          capturedWorkflowId: s.activeWfId || `wf-${now}`,
           savedAt: new Date().toISOString(),
-          nodes: [],
-          edges: [],
-          agents: [createAgent('ollama')],
-          roles: builtinRoles.map((r) => ({ ...r })),
-          variables: {},
-          workspaceDir: standalonePath ?? null,
-          assets: [],
-          groups: [],
-          belongsToProject: inProject ? s.projectId! : undefined,
-          standalonePath: inProject ? undefined : standalonePath,
-        };
-        workflows[id] = wf;
-        set({
-          workflows,
-          activeWfId: id,
-          workflowName: wf.name,
-          nodes: [],
-          edges: [],
-          agents: wf.agents,
-          defaultAgentId: wf.defaultAgentId ?? null,
-          roles: wf.roles!,
-          variables: wf.variables!,
-          groups: [],
-          selectedNodeId: null,
-          logs: [],
         });
+        set({ workflows: result.workflows, ...result.activation });
       },
 
       /**
