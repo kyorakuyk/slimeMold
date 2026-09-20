@@ -97,6 +97,7 @@ export interface RenameWorkflowStateInput {
 export function buildRenameWorkflowState(
   input: RenameWorkflowStateInput,
 ): WorkflowFileInMemory | null {
+  if (!input.activeWfId) return null;
   const workflow = input.workflows[input.activeWfId];
   return workflow ? { ...workflow, name: input.name } : null;
 }
@@ -113,7 +114,7 @@ export interface WorkflowRemovalActivation {
   nodes: FlowNode[];
   edges: FlowEdge[];
   agents: import('../types').AgentConfig[];
-  defaultAgentId: string | null;
+  defaultAgentId?: string | null;
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
   selectedNodeId: null;
@@ -123,7 +124,7 @@ export interface WorkflowRemovalActivation {
 export interface RemoveWorkflowState {
   workflows: Record<string, WorkflowFileInMemory>;
   activation?: WorkflowRemovalActivation;
-  cleanupWorkflowId?: string;
+  cleanupWorkflowId: string | null;
 }
 
 export function buildRemoveWorkflowState(
@@ -131,7 +132,7 @@ export function buildRemoveWorkflowState(
 ): RemoveWorkflowState {
   const next = { ...input.workflows };
   const target = input.workflows[input.id];
-  const cleanupWorkflowId = target && !target.workspaceDir ? input.id : undefined;
+  const cleanupWorkflowId = target && !target.workspaceDir ? input.id : null;
   delete next[input.id];
 
   if (Object.keys(next).length === 0) {
@@ -144,7 +145,6 @@ export function buildRemoveWorkflowState(
         nodes: [],
         edges: [],
         agents: [createAgent('ollama')],
-        defaultAgentId: null,
         roles: builtinRoles.map((role) => ({ ...role })),
         variables: {},
         selectedNodeId: null,

@@ -175,13 +175,16 @@ describe('workflow registry mutation transforms', () => {
     expect(renamed?.name).toBe('新名称');
     expect(workflows.wf1?.name).toBe('WF1');
     expect(buildRenameWorkflowState({ workflows, activeWfId: '', name: '游离名称' })).toBeNull();
+    expect(buildRenameWorkflowState({
+      workflows: { '': workflows.wf1! }, activeWfId: '', name: '空键不应重命名',
+    })).toBeNull();
   });
 
   it('removes an inactive workflow without activating another one', () => {
     const result = buildRemoveWorkflowState({ workflows, activeWfId: 'wf1', id: 'wf2' });
     expect(Object.keys(result.workflows)).toEqual(['wf1']);
     expect(result.activation).toBeUndefined();
-    expect(result.cleanupWorkflowId).toBeUndefined();
+    expect(result.cleanupWorkflowId).toBeNull();
   });
 
   it('activates the first remaining workflow when removing the active one', () => {
@@ -200,6 +203,14 @@ describe('workflow registry mutation transforms', () => {
     expect(result.activation?.activeWfId).toBe('');
     expect(result.activation?.workflowName).toBe('');
     expect(result.activation?.nodes).toEqual([]);
+    expect(result.activation).not.toHaveProperty('defaultAgentId');
     expect(result.cleanupWorkflowId).toBe('wf1');
+  });
+
+  it('retains cleanup intent for an empty-string workflow id', () => {
+    const result = buildRemoveWorkflowState({
+      workflows: { '': { ...workflows.wf1!, workspaceDir: null } }, activeWfId: '', id: '',
+    });
+    expect(result.cleanupWorkflowId).toBe('');
   });
 });

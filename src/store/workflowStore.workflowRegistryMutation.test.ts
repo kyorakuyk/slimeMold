@@ -54,7 +54,7 @@ describe('workflowStore workflow registry mutation facade', () => {
   });
 
   it('preserves the empty registry behavior when removing the last workflow', () => {
-    useWorkflowStore.setState({ workflows: { 'wf-1': workflow('WF1') } } as never);
+    useWorkflowStore.setState({ workflows: { 'wf-1': workflow('WF1') }, defaultAgentId: 'keep-me' } as never);
     useWorkflowStore.getState().removeWorkflow('wf-1');
 
     const state = useWorkflowStore.getState();
@@ -62,5 +62,6 @@ describe('workflowStore workflow registry mutation facade', () => {
     expect(state.activeWfId).toBe('');
     expect(state.workflowName).toBe('');
     expect(state.nodes).toEqual([]);
+    expect(state.defaultAgentId).toBe('keep-me');
   });
 });

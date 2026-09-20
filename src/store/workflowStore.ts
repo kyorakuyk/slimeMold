@@ -1443,7 +1443,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           id,
         });
         // 未指定工作区时保留原有 AppData 清理策略；用户工作区不动。
-        if (result.cleanupWorkflowId) {
+        if (result.cleanupWorkflowId !== null) {
           import('@tauri-apps/api/path')
             .then(async (p) => {
               const base = `${await p.appDataDir()}/slime-mold/${result.cleanupWorkflowId}`;

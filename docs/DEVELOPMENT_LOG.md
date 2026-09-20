@@ -4632,3 +4632,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `workflowStore.ts` 保留 public action、两次 rename set 顺序、remove cleanup 的 fire-and-forget/swallowed-error合同；仅将 registry/activation计算委托给 pure owner。close/open/create/new/switch等 ProjectControl/host orchestration不在本 slice。
 - 新增 direct registry mutation tests与 facade tests，覆盖 active rename、inactive/active/final removal、first remaining activation和 public store contract。
 - 验证：focused `4 files / 26 tests`；完整 Node `153 test files / 1212 tests`；build通过（最大 chunk `1,177.78 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend registry reviewer。
+
+### 7.289 unverified：repair workflow registry mutation parity
+
+- exact reviewer 对 `98e108e60cbadddd63e2a4f5ce6f805dc106de7d` fail-closed：发现 final removal错误清除 defaultAgentId、empty active-id rename guard缺失、空字符串 cleanup intent被 facade truthy gate吞掉；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `2591a2e860d0ad3822303655975dd752bd8c6871` 为起点：恢复 parent truthy active-id guard；final activation不再输出 defaultAgentId；cleanup intent改为 `string | null` 并由 facade使用 `!== null`，保留空字符串 workflow id cleanup；新增 parity regressions。
+- 验证：focused `2 files / 18 tests`；完整 Node `153 test files / 1213 tests`；build通过（最大 chunk `1,177.80 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend registry reviewer。
