@@ -4352,3 +4352,4 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 根因：`saveProject`以 raw `JSON.stringify(file)`写入 `lastSavedSnapshot`，dirty checker比较 stable `projectSnapshot`，导致保存后永远偏离并保留 `*`。
 - 修复：保存成功后先清除 `projectDirty`，再以当前 state 的 stable `projectSnapshot(get())`建立基准；新增 store regression覆盖 `projectDirty=false`、`isProjectDirty()=false`与快照一致。
 - GREEN：dirty/store focused `3 files / 48 tests`；完整 Node `138 test files / 1164 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。新的 exact HEAD review与修复后 Tauri GUI recheck待进行。
+- 修复后真实 Tauri recheck：同一 clean failure fixture运行后通过 File→Save Project，fresh GUI中项目名旁 `*` 消失；`project.json` read-back包含 error history，Tauri dev进程与端口已停止。修复代码仍等待 exact HEAD reviewer，两个 disposable fixture保留未自动 cleanup。
