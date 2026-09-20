@@ -4480,3 +4480,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `src/store/projectConfigAutosave.ts`，收口 agents、roles、defaultAgentId、agentRouteTable 四类配置变化监听、projectPath gate、1s debounce、最新 state save 和静默失败；提供 dispose 清理 subscriber/timer。
 - `workflowStore.ts` 保留 `suppressDirty` 生命周期 gate和 store facade，仅通过 `installProjectConfigAutosave` 接入；没有改变自动保存触发字段、延迟或失败策略。
 - 新增 direct regressions：配置变更合并为一次保存、无项目/抑制状态不调度；验证 focused `5 files / 15 tests`，完整 Node `142 test files / 1173 tests`，build通过（最大 chunk `1,175.12 kB`），i18n `1026/1026`，tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.264 verified：exact review closes project configuration autosave slice
+
+- 独立 reviewer 对 exact HEAD `2b542c7db56c9bb87b53734af4e52bdcda72f2fc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认四个 trigger key、suppression/projectPath gate、1000ms debounce、latest-state save、rejection swallowing 与 timer cleanup行为保持不变。
+- reviewer独立复核 focused `5 files / 15 tests`、全量 `142 files / 1173 tests`、build、i18n `1026/1026`、tsc、diff check 和 static scan；非阻塞建议记录为后续回归：逐一覆盖四个 trigger key、unrelated field、rejection swallowing、latest-state capture 和 disposer cancellation/idempotence。
+- 创建 verified tag：`checkpoint/frontend-project-config-autosave-verified`；原 `checkpoint/frontend-project-config-autosave-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore dirty/persistence bounded split。
