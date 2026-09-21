@@ -5015,3 +5015,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 结构结果：`src/store/workflowStore.ts` 由 `1253` 行降至 `1224` 行，新增 `src/store/projectSaveController.ts` 为 `90` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
 - 相关本地 checkpoint：`57f7939` / `checkpoint/workflow-persistence-boundary-split-start`、`ecae7bb` / `checkpoint/workflow-project-save-controller-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `9 test files / 28 tests`；完整 Node `178 test files / 1296 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.66 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.342 unverified：extract save preparation adapter boundary
+
+- 从 `src/store/workflowStore.ts` 抽出 `src/store/projectSavePreparation.ts`，由新 owner 负责保存前的 Tauri event-stream read、`needs-repair` fail-closed、缺失 WorkerRun projection rehydration，以及 linked orchestration projection 更新。
+- `workflowStore.ts` 只保留 `createProjectSavePreparation` 的 composition wiring；`workflowStore` 不再直接持有 `restoreMissingWorkerRunsFromEvents` 或 `projectWorkerRunsOntoOrchestrations` 的保存前控制流。新 adapter 不依赖 `useWorkflowStore` 或 `useViewStore`，读盘入口通过可注入 `readEventStream` 保持 direct tests 可运行。
+- 新增 direct tests，覆盖 browser skip、已有 WorkerRun projection skip、缺失 projection 恢复与编排投影、event stream needs-repair 阻断；同时复跑现有 Worker rehydration 与 facade save tests。
+- 结构结果：`src/store/workflowStore.ts` 由 `1224` 行降至 `1194` 行，新增 `src/store/projectSavePreparation.ts` 为 `83` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
+- 相关本地 checkpoint：`28c01e2` / `checkpoint/workflow-save-preparation-split-start`、`5c158c6` / `checkpoint/workflow-save-preparation-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 19 tests`；完整 Node `179 test files / 1300 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.87 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
