@@ -36,7 +36,7 @@ import {
 import { useRegistryStore, getNodeDef } from './registryStore';
 import { applyCheckpoint, mergeCheckpointHistory } from '../engine/checkpoint';
 import { useViewStore } from './viewStore';
-import { inferPorts, packSubgraph, resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
+import { resolvePorts } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
@@ -75,7 +75,6 @@ import { createProjectSaveQueue } from './projectSaveQueue';
 // 图编辑纯逻辑（markDirty BFS / 剪贴板清洗 / 粘贴 id 映射 / 历史栈 / onConnect 决策 / 子图展开）已抽到 workflowGraph.ts（G5 门面化）
 import {
   classifyConnection,
-  expandSubgraphInstance,
   markDirtyDownstream,
 } from './workflowGraph';
 import { createProjectCreationActions } from './projectCreationActions';
@@ -83,6 +82,7 @@ import { createProjectBootstrapActions } from './projectBootstrapActions';
 import { createProjectLifecycleActions } from './projectLifecycleActions';
 import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
+import { createWorkflowSubgraphCommands } from './workflowSubgraphCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
@@ -123,6 +123,12 @@ export const useWorkflowStore = create<WorkflowState>()(
       const graphCommands = createWorkflowGraphCommands({
         getState: () => get(),
         setState: (patch) => set(patch),
+        addLog: (level, message) => get().addLog(level, message),
+      });
+      const subgraphCommands = createWorkflowSubgraphCommands({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        pushHistory: () => get().pushHistory(),
         addLog: (level, message) => get().addLog(level, message),
       });
       const registryActions = createWorkflowRegistryActions({
@@ -1090,180 +1096,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      /* ---------- 子图 ---------- */
-
-      packSelectionAsSubgraph: (nodeIds, name) => {
-        const s = get();
-        get().pushHistory();
-        const idSet = new Set(nodeIds);
-        const selected = s.nodes.filter((n) => idSet.has(n.id));
-        if (selected.length === 0) {
-          s.addLog('error', '请先选中要打包的节点');
-          return null;
-        }
-        if (selected.some((n) => n.data.typeId === SUBGRAPH_REF_TYPE)) {
-          s.addLog('error', '暂不支持把已有的子图节点再次打包，请先展开它');
-          return null;
-        }
-
-        const defs = useRegistryStore.getState().defs;
-        const sg = packSubgraph(name || '未命名子图', selected, s.edges, defs);
-
-        // ref 节点落在选区的几何中心
-        const cx = selected.reduce((a, n) => a + n.position.x, 0) / selected.length;
-        const cy = selected.reduce((a, n) => a + n.position.y, 0) / selected.length;
-        const refId = crypto.randomUUID();
-        const refNode: FlowNode = {
-          id: refId,
-          type: 'base',
-          position: { x: cx, y: cy },
-          data: {
-            typeId: SUBGRAPH_REF_TYPE,
-            label: sg.name,
-            params: { subgraphId: sg.id },
-            status: 'idle',
-            dirty: true,
-          },
-        };
-
-        // 跨边界连线重定向到 ref 节点的对外端口；选区内部连线随节点一起移除
-        const inByInner = new Map(sg.inputs.map((p) => [`${p.innerNodeId}|${p.innerHandle}`, p.id]));
-        const outByInner = new Map(
-          sg.outputs.map((p) => [`${p.innerNodeId}|${p.innerHandle}`, p.id]),
-        );
-        const edges: FlowEdge[] = [];
-        for (const e of s.edges) {
-          const srcIn = idSet.has(e.source);
-          const dstIn = idSet.has(e.target);
-          if (srcIn && dstIn) continue; // 内部连线：已随子图带走
-          if (!srcIn && !dstIn) {
-            edges.push(e);
-            continue;
-          }
-          if (dstIn) {
-            const handle = inByInner.get(`${e.target}|${e.targetHandle ?? ''}`);
-            if (!handle) continue;
-            edges.push({ ...e, target: refId, targetHandle: handle });
-          } else {
-            const handle = outByInner.get(`${e.source}|${e.sourceHandle ?? ''}`);
-            if (!handle) continue;
-            edges.push({ ...e, source: refId, sourceHandle: handle });
-          }
-        }
-
-        set({
-          subgraphs: { ...s.subgraphs, [sg.id]: sg },
-          nodes: [...s.nodes.filter((n) => !idSet.has(n.id)), refNode],
-          edges,
-          // 被打包的节点若在某个组里，把组内成员一并清理
-          groups: s.groups
-            .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((id) => !idSet.has(id)) }))
-            .filter((g) => g.nodeIds.length > 0),
-          selectedNodeId: refId,
-        });
-        s.addLog(
-          'info',
-          `已打包 ${selected.length} 个节点为子图「${sg.name}」（${sg.inputs.length} 入 / ${sg.outputs.length} 出）`,
-        );
-        return sg.id;
-      },
-
-      unpackSubgraphNode: (refNodeId) => {
-        const s = get();
-        get().pushHistory();
-        const ref = s.nodes.find((n) => n.id === refNodeId);
-        if (!ref || ref.data.typeId !== SUBGRAPH_REF_TYPE) return;
-        const sg = s.subgraphs[String(ref.data.params?.subgraphId ?? '')];
-        if (!sg) {
-          s.addLog('error', '这个子图的定义已丢失，无法展开');
-          return;
-        }
-
-        // 内部节点 id 重映射 + 节点/边重建 + 外部连线重接（纯计算已抽到 workflowGraph.expandSubgraphInstance）
-        const { nodes: newNodes, edges: newEdges } = expandSubgraphInstance(
-          sg,
-          ref.position,
-          s.edges,
-          refNodeId,
-        );
-        set({
-          nodes: [...s.nodes.filter((n) => n.id !== refNodeId), ...newNodes],
-          edges: newEdges,
-          selectedNodeId: newNodes[0]?.id ?? null,
-        });
-        s.addLog('info', `已展开子图「${sg.name}」，还原为 ${newNodes.length} 个节点`);
-      },
-
-      addSubgraphRefNode: (subgraphId, position) => {
-        const s = get();
-        get().pushHistory();
-        const sg = s.subgraphs[subgraphId];
-        if (!sg) return;
-        const node: FlowNode = {
-          id: crypto.randomUUID(),
-          type: 'base',
-          position,
-          data: {
-            typeId: SUBGRAPH_REF_TYPE,
-            label: sg.name,
-            params: { subgraphId },
-            status: 'idle',
-            dirty: true,
-          },
-        };
-        set({ nodes: [...s.nodes, node], selectedNodeId: node.id });
-      },
-
-      saveSubgraphDef: (def) => {
-        const s = get();
-        const defs = useRegistryStore.getState().defs;
-        // 重新推断「未连接到子图内部的端口」，作为对外端口的补充项
-        const inferred = inferPorts(def.nodes, def.edges, defs);
-        // 关键：保留 def 中已显式定义的端口（含用户在子图里手动连代理端口得到的），
-        // 只补充新出现的、尚未在 def 中登记的未连接端口。
-        // 否则在子图里增删节点 / 手动连线后，整体覆盖会把端口清空成「无」。
-        const seenIn = new Set(def.inputs.map((p) => `${p.innerNodeId}|${p.innerHandle}`));
-        const seenOut = new Set(def.outputs.map((p) => `${p.innerNodeId}|${p.innerHandle}`));
-        const inputs = [
-          ...def.inputs,
-          ...inferred.inputs.filter((p) => !seenIn.has(`${p.innerNodeId}|${p.innerHandle}`)),
-        ];
-        const outputs = [
-          ...def.outputs,
-          ...inferred.outputs.filter((p) => !seenOut.has(`${p.innerNodeId}|${p.innerHandle}`)),
-        ];
-        const next: SubgraphDef = {
-          ...def,
-          inputs,
-          outputs,
-          updatedAt: new Date().toISOString(),
-        };
-        set({ subgraphs: { ...s.subgraphs, [def.id]: next } });
-      },
-
-      removeSubgraph: (id) => {
-        const s = get();
-        const rest = { ...s.subgraphs };
-        delete rest[id];
-        set({ subgraphs: rest });
-      },
-
-      renameSubgraph: (id, name) => {
-        const s = get();
-        const sg = s.subgraphs[id];
-        if (!sg) return;
-        set({
-          subgraphs: { ...s.subgraphs, [id]: { ...sg, name, updatedAt: new Date().toISOString() } },
-          // 画布上未被用户改过名的引用节点跟随更新
-          nodes: s.nodes.map((n) =>
-            n.data.typeId === SUBGRAPH_REF_TYPE &&
-            n.data.params?.subgraphId === id &&
-            n.data.label === sg.name
-              ? { ...n, data: { ...n.data, label: name } }
-              : n,
-          ),
-        });
-      },
+      ...subgraphCommands,
 
       /* ---------- 节点组 ---------- */
 
