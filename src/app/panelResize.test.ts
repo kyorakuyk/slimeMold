@@ -181,4 +181,47 @@ describe('panel resize adapter', () => {
     dispatchPointer('pointerup', 2, 340);
     expect(document.body.style.cursor).toBe('');
   });
+
+  it('does not overwrite a nested replacement created during cleanup', () => {
+    const sizes = { nested: 200 };
+    let nestedStart: () => void = () => undefined;
+    const captureTarget = {
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      setPointerCapture: () => undefined,
+      releasePointerCapture: () => nestedStart(),
+    } as unknown as EventTarget;
+    const first = installPanelResize({ axis: 'x', side: 'left', initial: 200, setLeftWidth: () => undefined, setRightWidth: () => undefined, setPanelHeight: () => undefined });
+    const outer = installPanelResize({ axis: 'x', side: 'right', initial: 300, setLeftWidth: () => undefined, setRightWidth: () => undefined, setPanelHeight: () => undefined });
+    const nested = installPanelResize({ axis: 'y', side: 'bottom', initial: sizes.nested, setLeftWidth: () => undefined, setRightWidth: () => undefined, setPanelHeight: (value) => { sizes.nested = value; } });
+    nestedStart = () => nested({ preventDefault: () => undefined, clientX: 0, clientY: 200, pointerId: 3 });
+
+    first({ preventDefault: () => undefined, clientX: 200, clientY: 0, pointerId: 1, currentTarget: captureTarget });
+    outer({ preventDefault: () => undefined, clientX: 300, clientY: 0, pointerId: 2 });
+    const move = new Event('pointermove') as PointerEvent;
+    Object.defineProperties(move, { clientX: { value: 0 }, clientY: { value: 230 }, pointerId: { value: 3 } });
+    window.dispatchEvent(move);
+    expect(sizes.nested).toBe(170);
+    expect(document.body.style.cursor).toBe('row-resize');
+    cancelActivePanelResize();
+  });
+
+  it('filters lost pointer capture by active pointer id', () => {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const listeners = new Map<string, EventListener>();
+    const target = {
+      addEventListener: (type: string, listener: EventListener) => { listeners.set(type, listener); },
+      removeEventListener: (type: string) => { listeners.delete(type); },
+      setPointerCapture: () => undefined,
+      releasePointerCapture: () => undefined,
+    } as unknown as EventTarget;
+    const handler = installPanelResize({ axis: 'x', side: 'left', initial: 200, setLeftWidth: () => undefined, setRightWidth: () => undefined, setPanelHeight: () => undefined });
+    handler({ preventDefault: () => undefined, clientX: 200, clientY: 0, pointerId: 2, currentTarget: target });
+    const lost = listeners.get('lostpointercapture');
+    lost?.({ pointerId: 1 } as unknown as Event);
+    expect(document.body.style.cursor).toBe('col-resize');
+    lost?.({ pointerId: 2 } as unknown as Event);
+    expect(document.body.style.cursor).toBe('');
+  });
 });

@@ -29,6 +29,7 @@ interface ActiveResizeSession {
   cleanup: () => void;
   cursor: string;
   userSelect: string;
+  cleaning: boolean;
 }
 
 const activeResizeByWindow = new WeakMap<Window, ActiveResizeSession>();
@@ -45,8 +46,10 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
     const previousSession = activeResizeByWindow.get(windowRef);
     const previousCursor = previousSession?.cursor ?? documentRef.body.style.cursor;
     const previousUserSelect = previousSession?.userSelect ?? documentRef.body.style.userSelect;
-    cancelActivePanelResize(windowRef);
     event.preventDefault();
+    cancelActivePanelResize(windowRef);
+    const replacementSession = activeResizeByWindow.get(windowRef);
+    if (replacementSession && !replacementSession.cleaning) return;
     const startPos = deps.axis === 'x' ? event.clientX : event.clientY;
     const sign = deps.side === 'bottom' ? -1 : 1;
     const pointerTarget = (event.currentTarget ?? null) as PointerCaptureTarget | null;
@@ -67,17 +70,19 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
 
     let session: ActiveResizeSession;
     let onEnd: (endEvent: PointerEvent) => void;
+    let onLostPointerCapture: (lostEvent: Event) => void;
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      session.cleaning = true;
       windowRef.removeEventListener('pointermove', onMove);
       windowRef.removeEventListener('pointerup', onEnd);
       windowRef.removeEventListener('pointercancel', onEnd);
       windowRef.removeEventListener('blur', cleanup);
       windowRef.removeEventListener('pagehide', cleanup);
       documentRef.removeEventListener('visibilitychange', cleanup);
-      pointerTarget?.removeEventListener('lostpointercapture', cleanup);
+      pointerTarget?.removeEventListener('lostpointercapture', onLostPointerCapture);
       if (pointerId !== undefined) {
         try {
           pointerTarget?.releasePointerCapture?.(pointerId);
@@ -95,7 +100,12 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
       if (!acceptsPointer(endEvent)) return;
       cleanup();
     };
-    session = { cleanup, cursor: previousCursor, userSelect: previousUserSelect };
+    onLostPointerCapture = (lostEvent) => {
+      const lostPointerId = (lostEvent as PointerEvent).pointerId;
+      if (pointerId !== undefined && lostPointerId !== pointerId) return;
+      cleanup();
+    };
+    session = { cleanup, cursor: previousCursor, userSelect: previousUserSelect, cleaning: false };
     activeResizeByWindow.set(windowRef, session);
 
     documentRef.body.style.cursor = deps.axis === 'x' ? 'col-resize' : 'row-resize';
@@ -106,7 +116,7 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
     windowRef.addEventListener('blur', cleanup);
     windowRef.addEventListener('pagehide', cleanup);
     documentRef.addEventListener('visibilitychange', cleanup);
-    pointerTarget?.addEventListener('lostpointercapture', cleanup);
+    pointerTarget?.addEventListener('lostpointercapture', onLostPointerCapture);
     if (pointerId !== undefined) {
       try {
         pointerTarget?.setPointerCapture?.(pointerId);
