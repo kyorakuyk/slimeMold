@@ -14,7 +14,6 @@ import {
   applyEdgeChanges,
   addEdge,
 } from '@xyflow/react';
-import type { Orchestration, PipelineDef } from '../types/orchestration';
 import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types';
 import { arePortsCompatible } from '../types/graph';
@@ -37,12 +36,12 @@ import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/en
 import { saveLastSession, clearLastSession } from '../io/projectIO';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
-import type { ProjectControlSnapshot } from '../projectControl/types';
-import type { WorkerRunQueueState } from '../domain/workerQueue';
-import type { WorkerRunRecovery } from '../projectControl/workerRunRuntime';
-import type { EvidenceRecord } from '../dev/evidence';
-import type { SideEffectRecord } from '../domain/contracts';
-import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
+
+
+
+
+
+
 import { EventStreamRepository } from '../domain/eventStore';
 import { clearProjectEventBuffer, flushPendingProjectEvents, getPendingProjectEvents } from '../projectControl/eventBuffer';
 import {
@@ -86,6 +85,7 @@ import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
 import { createWorkflowSubgraphCommands } from './workflowSubgraphCommands';
 import { createWorkflowGroupCommands } from './workflowGroupCommands';
+import { createWorkflowProjectionCommands } from './workflowProjectionCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
@@ -125,6 +125,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         getFocusedSubgraphId: () => useViewStore.getState().focusedSubgraphId,
         clearFocusedSubgraph: () => useViewStore.getState().setFocusedSubgraph(null),
         getNodeDefinitions: () => useRegistryStore.getState().defs,
+      });
+      const projectionCommands = createWorkflowProjectionCommands({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        normalizeProjectControlSnapshot,
       });
       const registryActions = createWorkflowRegistryActions({
         getState: () => get(),
@@ -753,62 +758,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      /* ---------- 步骤 14.A：跨工作流交付物（Artifact） ---------- */
-
-      setArtifact: (stage, kind, artifact) => {
-        const s = get();
-        const stageMap = s.artifacts[stage] ?? {};
-        set({
-          artifacts: {
-            ...s.artifacts,
-            [stage]: { ...stageMap, [kind]: artifact },
-          },
-        });
-      },
-
-      setAgentRouteTable: (table) => {
-        set({ agentRouteTable: table });
-      },
-
-      /* ---------- 步骤 14.A：Pipeline 编排定义（随项目持久化） ---------- */
-
-      /** 覆盖整个 pipeline 定义集合（Builder / Orchestrator 全量写入时调用） */
-      setPipelines: (defs: PipelineDef[]) => {
-        set({ pipelines: defs });
-      },
-      /** H3：覆盖项目级编排记录集合（Orchestrator 确认/进度更新时调用） */
-      setOrchestrations: (orchs: Orchestration[]) => {
-        set({ orchestrations: orchs });
-      },
-      /** Phase 1b：覆盖项目级 Worker Run registry（队列状态可持久化/恢复） */
-      setWorkerRuns: (runs: WorkerRunQueueState[]) => {
-        set({ workerRuns: runs });
-      },
-      setWorkerRunRecoveries: (recoveries: WorkerRunRecovery[]) => {
-        set({ workerRunRecoveries: recoveries });
-      },
-      setWorkerRunEvidence: (evidence: EvidenceRecord[]) => {
-        set({ workerRunEvidence: evidence });
-      },
-      setWorkerRunSideEffects: (effects: SideEffectRecord[]) => {
-        set({ workerRunSideEffects: effects });
-      },
-      setWorkerCleanupProposals: (proposals: WorkerCleanupProposal[]) => {
-        set({ workerCleanupProposals: proposals });
-      },
-      setProjectControl: (snapshot: ProjectControlSnapshot) => {
-        set({ projectControl: normalizeProjectControlSnapshot(snapshot) });
-      },
-      /** 声明或更新单条 pipeline（definePipeline 走此路径，确保存于项目态并触发脏标记/持久化） */
-      upsertPipeline: (def: PipelineDef) => {
-        const s = get();
-        const exists = s.pipelines.some((p) => p.id === def.id);
-        set({
-          pipelines: exists
-            ? s.pipelines.map((p) => (p.id === def.id ? def : p))
-            : [...s.pipelines, def],
-        });
-      },
+      ...projectionCommands,
 
       ...subgraphCommands,
 
