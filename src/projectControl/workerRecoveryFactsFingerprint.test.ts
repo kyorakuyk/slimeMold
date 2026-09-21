@@ -242,6 +242,32 @@ describe('worker recovery facts fingerprint v1', () => {
       run: run({
         'task-1': {
           ...input().run.tasks['task-1'],
+          status: 'queued',
+          pendingAttempt: 3,
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          status: 'failed',
+          cleanupStatus: 'cleaned',
+          worktreeStatus: 'cleaned',
+          cleanupReceiptId: 'receipt-1',
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      taskGraph: graph([task('task-1'), task('task-2')]),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      taskGraph: { ...graph([task('task-1')]), approvedAt: 'not-a-timestamp' },
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
           branch: 'worker/foo.lock',
         },
       }),
