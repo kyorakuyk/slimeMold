@@ -65,6 +65,7 @@ import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
 import { createWorkflowRunStateCommands } from './workflowRunStateCommands';
+import { createWorkflowProjectDataCommands } from './workflowProjectDataCommands';
 import {
   createProjectSaveController,
   type ProjectSaveController,
@@ -207,6 +208,15 @@ export const useWorkflowStore = create<WorkflowState>()(
         updateState: (updater) => set(updater),
         setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
         saveCheckpointToDisk,
+      });
+      const projectDataCommands = createWorkflowProjectDataCommands<WorkflowState>({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        addLog: (level, message) => get().addLog(level, message),
+        removeFile: async (path) => {
+          const fs = await import('@tauri-apps/plugin-fs');
+          await fs.remove(path);
+        },
       });
       return {
       workflowName: '未命名工作流',
@@ -719,109 +729,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       /* ---- workflow registry actions (owner injected above) ---- */
       ...registryActions,
 
-      /** 向当前激活工作流追加一条资产记录（写文件节点产出） */
-      addAsset: (meta) => {
-        const s = get();
-        if (!s.activeWfId) return;
-        const wf = s.workflows[s.activeWfId];
-        if (!wf) return;
-        const assets = [...(wf.assets ?? []), meta];
-        set({
-          workflows: {
-            ...s.workflows,
-            [s.activeWfId]: { ...wf, assets },
-          },
-        });
-      },
-
-      /** 删除一条资产（仅元数据；已落盘文件由用户自行管理） */
-      removeAsset: (assetId) => {
-        const s = get();
-        if (!s.activeWfId) return;
-        const wf = s.workflows[s.activeWfId];
-        if (!wf?.assets) return;
-        // 找到待删资产，记录落盘路径以便一并删除磁盘文件
-        const target = wf.assets.find((a) => a.id === assetId);
-        set({
-          workflows: {
-            ...s.workflows,
-            [s.activeWfId]: {
-              ...wf,
-              assets: wf.assets.filter((a) => a.id !== assetId),
-            },
-          },
-        });
-        // 删除磁盘上的实际文件（path 为 null 表示未真正落盘，仅删记录）
-        if (target?.path) {
-          (async () => {
-            try {
-              const fs = await import('@tauri-apps/plugin-fs');
-              await fs.remove(target.path as string);
-              s.addLog('info', `已删除资产文件：${target.path}`);
-            } catch (err) {
-              s.addLog('warn', `删除资产文件失败（记录已移除）：${err instanceof Error ? err.message : String(err)}`);
-            }
-          })();
-        }
-      },
-
-      addProjectAsset: (meta) => {
-        const s = get();
-        // 同 id 覆盖，避免重复
-        const exists = s.projectAssets.some((a) => a.id === meta.id);
-        set({
-          projectAssets: exists
-            ? s.projectAssets.map((a) => (a.id === meta.id ? meta : a))
-            : [...s.projectAssets, meta],
-        });
-      },
-
-      /**
-       * 删除一条项目级资产。返回依赖它的工作流名称列表（其节点 params 中引用了 assetId），
-       * 便于 UI 提示"这些工作流仍引用此资产"。
-       */
-      removeProjectAsset: (assetId) => {
-        const s = get();
-        const target = s.projectAssets.find((a) => a.id === assetId);
-        // 扫描所有工作流节点，找出引用该资产的（{{asset:ID}} 或显式 assetId 字段）
-        const refs: string[] = [];
-        const idToken = `{{asset:${assetId}}}`;
-        for (const id of Object.keys(s.workflows)) {
-          const wf = s.workflows[id];
-          const hit = (wf.nodes ?? []).some((n) =>
-            Object.values(n.data.params ?? {}).some((v) => {
-              const sv = typeof v === 'string' ? v : JSON.stringify(v);
-              return sv.includes(idToken) || (typeof v === 'object' && v !== null && (v as any).assetId === assetId);
-            }),
-          );
-          if (hit) refs.push(wf.name);
-        }
-        set({ projectAssets: s.projectAssets.filter((a) => a.id !== assetId) });
-        if (target?.path) {
-          (async () => {
-            try {
-              const fs = await import('@tauri-apps/plugin-fs');
-              await fs.remove(target.path as string);
-              s.addLog('info', `已删除项目资产文件：${target.path}`);
-            } catch (err) {
-              s.addLog('warn', `删除项目资产文件失败（记录已移除）：${err instanceof Error ? err.message : String(err)}`);
-            }
-          })();
-        }
-        return refs;
-      },
-
-      setProjectVariable: (key, value) => {
-        const s = get();
-        set({ projectVariables: { ...s.projectVariables, [key]: value } });
-      },
-
-      removeProjectVariable: (key) => {
-        const s = get();
-        const next = { ...s.projectVariables };
-        delete next[key];
-        set({ projectVariables: next });
-      },
+      ...projectDataCommands,
 
       renameWorkflow: (name) => {
         const s = get();
