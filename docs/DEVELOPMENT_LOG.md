@@ -5164,3 +5164,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 结论：语义 preservation review `passed=true`；compatibility/topology review `passed=true`；初始 owner review 因 value-form type imports `passed=false`，无 security concerns、无 credential additions。原 target `03978cc` 不升级为 verified；修复后新 code anchor 仍需重新 exact review。
 - 相关本地 checkpoint：`9794fa8` / `checkpoint/types-node-runtime-import-normalization-start`、`c729808` / `checkpoint/types-node-runtime-import-normalization-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `11 test files / 134 tests`；完整 `npm run test` 为 `187 test files / 1315 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.360 exact review closure：verified node import normalization
+
+- 修复后的 exact target `c729808d3c1521cb130bfeb05df1c81d5c9c85af`、parent `9794fa8858a8d436e3abd9aad6f39109a8ef78f8` 已由 3 个独立 read-only object reviewer 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`，无 credential additions，确认 12 个 import-only changes 只规范 type imports，runtime imports 与 owner/re-export topology 保持不变。
+- verified tag `checkpoint/types-node-runtime-import-normalization-verified` 已回读并指向 `c729808d3c1521cb130bfeb05df1c81d5c9c85af`。当前分支后续 docs closure commit 不继承为 verified code HEAD；reviewer 未运行测试，质量门仍以同一 code target 的真实验证记录为依据。
