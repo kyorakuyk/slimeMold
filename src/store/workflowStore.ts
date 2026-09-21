@@ -1135,6 +1135,7 @@ const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsCont
       new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),
     );
   },
+  prepareForSave: () => projectSavePreparation.prepareForSave(),
   onSaved: (projectRoot, activeWfId) => {
     useWorkflowStore.setState({ projectPath: projectRoot, projectDirty: false });
     useWorkflowStore.setState({ lastSavedSnapshot: projectSnapshot(useWorkflowStore.getState()) });

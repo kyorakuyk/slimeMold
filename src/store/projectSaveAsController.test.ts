@@ -11,6 +11,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     saveProjectFile: vi.fn(async () => 'C:/projects/save-as'),
     getPendingProjectEventCount: vi.fn(() => 0),
     flushPendingProjectEvents: vi.fn(async () => {}),
+    prepareForSave: vi.fn(async () => {}),
     onSaved: vi.fn(),
     addLog: vi.fn(),
     ...overrides,
@@ -54,12 +55,27 @@ describe('project save as controller', () => {
 
     await expect(controller.saveProjectAs()).resolves.toBe('C:/projects/save-as');
 
+    expect(deps.prepareForSave).toHaveBeenCalledOnce();
     expect(deps.saveProjectFile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'project-1' }),
       'C:/projects/save-as',
     );
     expect(deps.flushPendingProjectEvents).toHaveBeenCalledWith('project-1', 'C:/projects/save-as');
     expect(deps.onSaved).toHaveBeenCalledWith('C:/projects/save-as', 'wf-1');
+  });
+
+  it('blocks Save As when shared save preparation fails', async () => {
+    const deps = createDeps({
+      isTauri: true,
+      prepareForSave: vi.fn(async () => { throw new Error('event stream repair required'); }),
+    });
+    const controller = createProjectSaveAsController(deps);
+
+    await expect(controller.saveProjectAs()).resolves.toBeNull();
+
+    expect(deps.buildProjectFile).not.toHaveBeenCalled();
+    expect(deps.saveProjectFile).not.toHaveBeenCalled();
+    expect(deps.addLog).toHaveBeenCalledWith('warn', '项目另存为失败：event stream repair required');
   });
 
   it('logs a persistence failure and does not report a saved project', async () => {

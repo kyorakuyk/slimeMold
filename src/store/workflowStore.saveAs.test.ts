@@ -18,6 +18,10 @@ vi.mock('../io/projectIO', async () => {
   };
 });
 
+vi.mock('./projectSavePreparation', () => ({
+  createProjectSavePreparation: () => ({ prepareForSave: vi.fn(async () => {}) }),
+}));
+
 import { useWorkflowStore } from './workflowStore';
 import { projectSnapshot } from './workflowSerialize';
 
