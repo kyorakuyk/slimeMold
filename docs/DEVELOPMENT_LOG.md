@@ -4955,3 +4955,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - source owner 继续使用 shared rules、execution lineage、types和object guards；未改变 source facts DTO、TaskGraph/WorkerRun/SideEffect schema、normalization、canonical JSON、direct DTO validator、ProjectFile或durable CAS行为。
 - 本轮结构结果：source builder `409` 行，fingerprint facade `37` 行；依赖方向为 source → domain/types/rules，facade → source/validator/normalization/canonical JSON，未引入 host/store/runtime副作用。
 - 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.335 verified closure：Worker recovery facts source builder owner
+
+- exact reviewer 针对 `58c7d2eec1b002568f6167d62bdf07b60a1dbed0`、parent `ca3c61552f75d783d8d61f0ca5e75d4ef0bfd4bc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 source builder body除尾部空白外与 parent 语义一致，shared object guards、lineage/provenance、normalization、dependency checks、failed-task derivation、DTO output、exports和error behavior均兼容，且无循环、host/store/runtime依赖或 durable-CAS scope creep。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-source-builder-verified`，指向上述 exact code commit；该 tag闭合 source builder owner结构切片，连同此前 types/rules/normalization/canonical JSON/DTO validation slices使该 fingerprint facade不再是事实巨石；durable CAS仍未实现。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
