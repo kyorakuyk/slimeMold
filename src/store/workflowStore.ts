@@ -1,6 +1,12 @@
 import {
   type WorkflowState,
 } from './workflowStoreTypes';
+export type {
+  ProjectSaveGuard,
+  RunProgressShape,
+  RunState,
+  WorkflowState,
+} from './workflowStoreTypes';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
@@ -1094,13 +1100,15 @@ const projectSaveController: ProjectSaveController = createProjectSaveController
   setState: (patch) => useWorkflowStore.setState(patch),
   enqueue: (key, task) => projectSaveQueue.enqueue(key, task),
   buildProjectFile,
-  saveProjectFile: async (file, targetPath) => {
+  saveProjectFile: async (file, targetPath, beforeWrite) => {
     const { saveProjectFile } = await import('../io/projectIO');
+    beforeWrite?.();
     return saveProjectFile(file, targetPath);
   },
   getPendingProjectEventCount: (projectId) => isTauri ? getPendingProjectEvents(projectId).length : 0,
-  flushPendingProjectEvents: async (projectId, projectRoot) => {
+  flushPendingProjectEvents: async (projectId, projectRoot, beforeFlush) => {
     const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+    beforeFlush?.();
     await flushPendingProjectEvents(
       projectId,
       new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),

@@ -44,7 +44,11 @@ describe('project save controller', () => {
     await expect(controller.saveProject()).resolves.toBe('C:/project');
 
     expect(deps.buildProjectFile).toHaveBeenCalledTimes(1);
-    expect(deps.saveProjectFile).toHaveBeenCalledWith(expect.objectContaining({ id: 'project-1' }), 'C:/project');
+    expect(deps.saveProjectFile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'project-1' }),
+      'C:/project',
+      expect.any(Function),
+    );
     expect(deps.prepareForSave).toHaveBeenCalledTimes(1);
     expect(getState()).toMatchObject({
       projectId: 'project-1',
@@ -52,6 +56,30 @@ describe('project save controller', () => {
       projectDirty: false,
       lastSavedSnapshot: 'project-1:C:/project:2',
     });
+  });
+
+  it('rechecks the save guard after the adapter resolves before the write', async () => {
+    const { deps } = createDeps();
+    let wrote = false;
+    deps.saveProjectFile = vi.fn(async (
+      _file: unknown,
+      targetPath?: string,
+      assertBeforeWrite?: () => void,
+    ) => {
+      await Promise.resolve();
+      deps.setState({ projectPath: 'C:/other-project' });
+      assertBeforeWrite?.();
+      wrote = true;
+      return targetPath ?? 'C:/project';
+    }) as typeof deps.saveProjectFile;
+    const controller = createProjectSaveController<TestState>(deps);
+
+    await expect(controller.saveProject({
+      projectId: 'project-1',
+      projectPath: 'C:/project',
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(wrote).toBe(false);
   });
 
   it('fails closed when the project changes during preparation', async () => {

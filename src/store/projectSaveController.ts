@@ -15,9 +15,17 @@ export interface ProjectSaveControllerDeps<State extends ProjectSaveState> {
   setState: (patch: Partial<State>) => void;
   enqueue: <T>(key: string, task: () => Promise<T>) => Promise<T>;
   buildProjectFile: (state: State) => ProjectFile;
-  saveProjectFile: (file: ProjectFile, targetPath?: string) => Promise<string>;
+  saveProjectFile: (
+    file: ProjectFile,
+    targetPath?: string,
+    beforeWrite?: () => void,
+  ) => Promise<string>;
   getPendingProjectEventCount: (projectId: string) => number;
-  flushPendingProjectEvents: (projectId: string, projectRoot: string) => Promise<void>;
+  flushPendingProjectEvents: (
+    projectId: string,
+    projectRoot: string,
+    beforeFlush?: () => void,
+  ) => Promise<void>;
   snapshot: (state: State) => string;
   prepareForSave?: (guard?: ProjectSaveGuard) => Promise<void>;
 }
@@ -59,8 +67,9 @@ export function createProjectSaveController<State extends ProjectSaveState>(
         const file = deps.buildProjectFile(state);
         assertProjectSaveGuard(deps.getState(), guard);
         const projectRoot = await persistProjectFile(file, state.projectPath ?? undefined, {
-          saveProjectFile: async (nextFile, targetPath) => {
-            const root = await deps.saveProjectFile(nextFile, targetPath);
+          saveProjectFile: async (nextFile, targetPath, beforeWrite) => {
+            assertProjectSaveGuard(deps.getState(), guard);
+            const root = await deps.saveProjectFile(nextFile, targetPath, beforeWrite);
             assertProjectSaveGuard(deps.getState(), guard);
             return root;
           },
@@ -68,11 +77,14 @@ export function createProjectSaveController<State extends ProjectSaveState>(
             assertProjectSaveGuard(deps.getState(), guard);
             return deps.getPendingProjectEventCount(projectId);
           },
-          flushPendingProjectEvents: async (projectId, root) => {
+          flushPendingProjectEvents: async (projectId, root, beforeFlush) => {
             assertProjectSaveGuard(deps.getState(), guard);
-            await deps.flushPendingProjectEvents(projectId, root);
+            await deps.flushPendingProjectEvents(projectId, root, beforeFlush);
             assertProjectSaveGuard(deps.getState(), guard);
           },
+        }, {
+          beforeWrite: () => assertProjectSaveGuard(deps.getState(), guard),
+          beforeFlush: () => assertProjectSaveGuard(deps.getState(), guard),
         });
 
         assertProjectSaveGuard(deps.getState(), guard);
