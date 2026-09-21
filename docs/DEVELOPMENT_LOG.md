@@ -5156,3 +5156,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `src/types.ts` 从 `614` 行降至 `396` 行；新增 node owner `160` 行、direct contract test `28` 行。相关本地 checkpoint：`f43e860` / `checkpoint/types-node-runtime-contract-split-start`、`03978cc` / `checkpoint/types-node-runtime-contract-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `11 test files / 134 tests` 通过；完整 `npm run test` 最终 `187 test files / 1315 tests` 通过。首次全量运行仅 `topoSort.test.ts` 的子进程出现一次环境型 `spawnSync D:\Hermes\node\node.exe ETIMEDOUT`，独立重跑 `17/17` 后再次全量运行通过；不将首次超时误记为代码回归。
 - `npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.359 unverified：normalize node runtime type imports after exact review
+
+- 对 `03978cc` 的 3 个 exact-snapshot review 中，2 个通过；1 个 fail-closed 发现部分迁移后的 `NodeRole`、`ExecContext`、`NodeDefinition`、intervention contracts 仍使用 value-form imports。当前编译会擦除这些 type imports，但该写法在 import-preserving 转译器下不稳，作为真实 topology/compatibility 缺陷修复。
+- 在 `NodePalette`、engine tests、node context adapter test、builtin node、store tests 中统一把纯类型 imports 改为 `import type`；保留 `createNodeDef` 与 `NODE_ROLE_META` 的 runtime imports。最终 `types/node` 扫描确认 `TYPE_ONLY_VALUE_IMPORTS=0`，未改变运行时实现或公开 compatibility re-export。
+- reviewer 结论：语义 preservation review `passed=true`；compatibility/topology review `passed=true`；初始 owner review 因 value-form type imports `passed=false`，无 security concerns、无 credential additions。原 target `03978cc` 不升级为 verified；修复后新 code anchor 仍需重新 exact review。
+- 相关本地 checkpoint：`9794fa8` / `checkpoint/types-node-runtime-import-normalization-start`、`c729808` / `checkpoint/types-node-runtime-import-normalization-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `11 test files / 134 tests`；完整 `npm run test` 为 `187 test files / 1315 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
