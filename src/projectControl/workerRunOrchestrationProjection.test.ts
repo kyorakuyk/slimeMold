@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun, suppressInvalidWorkerRunProjection } from './workerRunOrchestrationProjection';
 

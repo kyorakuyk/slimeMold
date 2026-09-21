@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentConfig, RoleTemplate } from '../types';
+import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 import { buildCloseProjectState } from './workflowLifecycleState';
 import { createProjectLifecycleActions } from './projectLifecycleActions';

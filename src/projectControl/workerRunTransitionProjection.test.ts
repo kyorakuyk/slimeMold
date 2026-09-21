@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import {
   projectWorkerRunTransition,
 } from './workerRunTransitionProjection';

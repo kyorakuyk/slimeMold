@@ -2,9 +2,9 @@
 // 这些函数只依赖输入参数与类型，不触碰 store 单例 / IO / 运行态，可独立测试。
 // 与调度主流程（runWorkflow）解耦，使 executor.ts 从「上帝模块」进一步瘦身。
 
+import type { CostRecord } from '../types/agent';
 import type {
   CapabilityLevel,
-  CostRecord,
   ExecContext,
   FlowEdge,
   NodeDefinition,

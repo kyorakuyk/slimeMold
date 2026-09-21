@@ -8,9 +8,9 @@
  * 后续步骤可把更多 store 访问收口到该接口（或提供测试桩 / 无头实现），从而让 executor 不依赖具体 store。
  * 当前阶段：工厂实现仍委托 store，行为完全等价，仅建立接缝、零回归。
  */
+import type { CostRecord } from '../types/agent';
 import type {
   AssetMeta,
-  CostRecord,
   FlowEdge,
   LogEntry,
   NodeStatus,

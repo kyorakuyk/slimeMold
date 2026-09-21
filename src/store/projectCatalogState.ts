@@ -4,7 +4,8 @@
  * The helpers preserve caller-owned identity and do not perform persistence, logging or store writes.
  * Project/global agent and role facades may reuse them without importing workflowStore.
  */
-import type { AgentConfig, AgentRouteEntry, AgentRouteTable, RoleTemplate } from '../types';
+import type { AgentConfig, RoleTemplate } from '../types/agent';
+import type { AgentRouteEntry, AgentRouteTable } from '../types';
 
 /** 按 id 更新或追加：列表中存在同 id 项则替换，否则追加。纯函数。 */
 export function upsertById<T extends { id: string }>(list: T[], item: T): T[] {

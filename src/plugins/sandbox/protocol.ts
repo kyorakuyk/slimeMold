@@ -5,7 +5,8 @@
  * 所有消息为 JSON 可序列化对象；请求-响应以 `id` 关联。
  */
 
-import type { CapabilityLevel, CostRecord } from '../../types';
+import type { CostRecord } from '../../types/agent';
+import type { CapabilityLevel } from '../../types';
 
 /** 宿主 → worker */
 export type HostToWorker =

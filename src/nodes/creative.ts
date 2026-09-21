@@ -1,4 +1,5 @@
-import type { NodeDefinition, ChatMessage, ContentPart } from '../types';
+import type { NodeDefinition } from '../types';
+import type { ChatMessage, ContentPart } from '../types/agent';
 import { createNodeDef } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { findRole, resolveRoleSystem } from '../agents/agentManager';

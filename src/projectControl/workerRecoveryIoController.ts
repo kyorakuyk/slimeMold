@@ -1,7 +1,7 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
 import { isTauri as defaultIsTauri } from '../platform/env';
 import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { WorkerRunRecovery } from './workerRunRuntime';

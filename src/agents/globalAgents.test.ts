@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mergeAgentPool } from './globalAgents';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 const mk = (id: string, model: string): AgentConfig => ({
   id,

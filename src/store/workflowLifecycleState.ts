@@ -4,14 +4,13 @@
  * These functions return store patches only. Path selection, persistence, dirty suppression
  * and ProjectControl runtime activation remain owned by workflowStore and its controllers.
  */
+import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type {
-  AgentConfig,
   AssetMeta,
   FlowEdge,
   FlowNode,
   NodeGroup,
   ProjectFile,
-  RoleTemplate,
   SubgraphDef,
   WorkflowFileInMemory,
 } from '../types';

@@ -18,7 +18,7 @@ import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationPro
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { EventStreamRepository } from '../domain/eventStore';
 import { flushPendingProjectEvents } from './eventBuffer';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 
 // Keep the save input contract aligned with the existing ProjectFile serializer.
 type ProjectBuildState = Parameters<typeof buildProjectFile>[0];

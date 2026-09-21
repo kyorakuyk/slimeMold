@@ -11,12 +11,8 @@
  * 设计见 docs/H2_PLUGIN_ISOLATION_DESIGN.md §3-4。
  */
 
-import type {
-  CapabilityLevel,
-  CostRecord,
-  ExecContext,
-  NodeExecuteFn,
-} from '../../types';
+import type { CostRecord } from '../../types/agent';
+import type { CapabilityLevel, ExecContext, NodeExecuteFn } from '../../types';
 import { SANDBOX_RUNTIME_SRC } from './runtime';
 import type { CapabilityMethod, HostToWorker, WorkerToHost } from './protocol';
 import { allowedMethodsFor, isCapabilityAllowed } from './protocol';

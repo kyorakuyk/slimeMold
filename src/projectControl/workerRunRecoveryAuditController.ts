@@ -3,7 +3,7 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { EventStreamRepository } from '../domain/eventStore';
 import type { DomainProjection, SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { ProjectControlSnapshot } from './types';
 import type { WorkerCleanupProposal } from './workerCleanup';
 import type { WorkerRunRecovery } from './workerRunRuntime';

@@ -1,20 +1,20 @@
 import type { Connection, EdgeChange, NodeChange } from '@xyflow/react';
+import type { AgentConfig, CostRecord, RoleTemplate } from '../types/agent';
 import type {
-  AgentConfig,
-  AgentRouteTable,
   Artifact,
+  Orchestration,
+  PipelineDef,
+  ProjectArtifacts,
+} from '../types/orchestration';
+import type {
+  AgentRouteTable,
   AssetMeta,
-  CostRecord,
   FlowEdge,
   FlowNode,
   LogEntry,
   NodeGroup,
   NodeStatus,
-  Orchestration,
-  PipelineDef,
-  ProjectArtifacts,
   ProjectFile,
-  RoleTemplate,
   RunRecord,
   SubgraphDef,
   WorkflowFile,

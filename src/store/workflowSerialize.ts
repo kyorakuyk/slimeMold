@@ -9,16 +9,15 @@
  * 本文件不 import `useWorkflowStore` / `useRegistryStore`，也不触碰任何运行态，
  * 仅依赖 `../types` 与 `../engine/pipeline` 的类型，可在 node 测试环境下直接 import。
  */
+import type { AgentConfig, RoleTemplate } from '../types/agent';
+import type { Orchestration } from '../types/orchestration';
 import type {
-  AgentConfig,
   AssetMeta,
   FlowEdge,
   FlowNode,
   NodeGroup,
   NodeStatus,
-  Orchestration,
   ProjectFile,
-  RoleTemplate,
   SubgraphDef,
   RunRecord,
   WorkflowFile,

@@ -14,11 +14,10 @@ import {
   applyEdgeChanges,
   addEdge,
 } from '@xyflow/react';
+import type { Orchestration, PipelineDef } from '../types/orchestration';
 import type {
   FlowEdge,
   FlowNode,
-  Orchestration,
-  PipelineDef,
   WorkflowFile,
   WorkflowFileInMemory,
 } from '../types';

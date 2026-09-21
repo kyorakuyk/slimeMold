@@ -21,7 +21,7 @@ import {
   updateOrchestration,
 } from './confirm';
 import { useWorkflowStore } from '../store/workflowStore';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 const agent: AgentConfig = {
   id: 'agent-1',

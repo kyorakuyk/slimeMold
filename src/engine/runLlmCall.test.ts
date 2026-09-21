@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runLlmWithFallback, type RunLlmCallInput } from './runLlmCall';
-import type { AgentConfig, CostRecord } from '../types';
+import type { AgentConfig, CostRecord } from '../types/agent';
 
 // mock llmChannel：chat 返回可配置结果（vi.hoisted 供 mock factory 引用）
 const { chatMock } = vi.hoisted(() => ({ chatMock: vi.fn() }));

@@ -1,4 +1,5 @@
-import type { AgentConfig, ProjectFile, WorkflowFile } from '../types';
+import type { AgentConfig } from '../types/agent';
+import type { ProjectFile, WorkflowFile } from '../types';
 import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
 import type { RunCheckpoint } from '../engine/checkpoint';
 

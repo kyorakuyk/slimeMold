@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentConfig, LLMResponse } from '../types';
+import type { AgentConfig, LLMResponse } from '../types/agent';
 import type { ProjectSession } from './types';
 import {
   buildMasterMessages,
