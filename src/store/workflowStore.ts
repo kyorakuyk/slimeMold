@@ -1,5 +1,4 @@
 import {
-  type ProjectSaveGuard,
   type WorkflowState,
 } from './workflowStoreTypes';
 import { create } from 'zustand';
@@ -63,7 +62,11 @@ import { defaultParams } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
-import { persistProjectFile } from './projectFilePersistence';
+import {
+  assertProjectSaveGuard,
+  createProjectSaveController,
+  type ProjectSaveController,
+} from './projectSaveController';
 import { createProjectDirtyController, type ProjectDirtyController } from './projectDirtyController';
 import { installProjectConfigAutosave } from './projectConfigAutosave';
 import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
@@ -98,20 +101,6 @@ import {
   buildUpsertRoleState,
   upsertById,
 } from './projectCatalogState';
-
-function assertProjectSaveGuard(state: WorkflowState, guard?: ProjectSaveGuard): void {
-  if (!guard) return;
-  if (guard.signal?.aborted) {
-    const error = new Error('项目保存 operation 已取消');
-    error.name = 'AbortError';
-    throw error;
-  }
-  if (state.projectId !== guard.projectId || state.projectPath !== guard.projectPath) {
-    const error = new Error('项目已切换，拒绝提交旧保存 operation');
-    error.name = 'AbortError';
-    throw error;
-  }
-}
 
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等）已抽到 workflowSerialize.projectSnapshot */
 export const useWorkflowStore = create<WorkflowState>()(
@@ -796,81 +785,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       ...projectCreationActions,
 
-      saveProject: async (guard) => {
-        const initial = get();
-        const saveKey = `${initial.projectId ?? 'unsaved'}:${initial.projectPath ?? 'memory'}`;
-        return projectSaveQueue.enqueue(saveKey, async () => {
-          let s = get();
-          assertProjectSaveGuard(s, guard);
-          // Never let a startup/recovery save erase a WorkerRun projection that is already
-          // durable in the event stream while the in-memory registry is still empty.
-          if (isTauri && s.projectId && s.projectPath && s.workerRuns.length === 0) {
-            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-            const repository = new EventStreamRepository(
-              createTauriEventStoreAdapter(s.projectPath),
-              s.projectPath,
-            );
-            const parsed = await repository.readStream();
-            assertProjectSaveGuard(get(), guard);
-            if (parsed.status === 'needs-repair') {
-              throw new Error(
-                `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
-              );
-            }
-            const restored = restoreMissingWorkerRunsFromEvents({
-              projectId: s.projectId,
-              events: parsed.events,
-              taskGraphs: s.projectControl.taskGraphs ?? [],
-              existingRuns: s.workerRuns,
-            });
-            if (restored.issues.length > 0) {
-              throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
-            }
-            if (restored.restored) {
-              set({
-                workerRuns: restored.runs,
-                orchestrations: projectWorkerRunsOntoOrchestrations(s.orchestrations, restored.runs),
-              });
-              s = get();
-            }
-          }
-          assertProjectSaveGuard(s, guard);
-          const file = buildProjectFile(s);
-          const { saveProjectFile } = await import('../io/projectIO');
-          assertProjectSaveGuard(get(), guard);
-          // P0：已存盘则直接覆盖原路径，不再弹另存为
-          const path = await persistProjectFile(file, s.projectPath ?? undefined, {
-            saveProjectFile: async (nextFile, targetPath) => {
-              const root = await saveProjectFile(nextFile, targetPath);
-              assertProjectSaveGuard(get(), guard);
-              return root;
-            },
-            getPendingProjectEventCount: (projectId) => {
-              assertProjectSaveGuard(get(), guard);
-              return isTauri ? getPendingProjectEvents(projectId).length : 0;
-            },
-            flushPendingProjectEvents: async (projectId, projectRoot) => {
-              const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-              assertProjectSaveGuard(get(), guard);
-              await flushPendingProjectEvents(
-                projectId,
-                new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),
-              );
-              assertProjectSaveGuard(get(), guard);
-            },
-          });
-          assertProjectSaveGuard(get(), guard);
-          set({
-            projectId: file.id,
-            projectCreatedAt: file.createdAt,
-            projectPath: path,
-            // P1：落盘后清除项目级脏标记，并记录稳定快照基准
-            projectDirty: false,
-          });
-          set({ lastSavedSnapshot: projectSnapshot(get()) });
-          return path;
-        });
-      },
+      saveProject: (guard) => projectSaveController.saveProject(guard),
 
       isProjectDirty: () => {
         const s = get();
@@ -1168,6 +1083,62 @@ export const useWorkflowStore = create<WorkflowState>()(
 // 加载/切换期间临时抑制自动脏检测，避免误标
 
 const projectSaveQueue = createProjectSaveQueue();
+const projectSaveController: ProjectSaveController = createProjectSaveController<WorkflowState>({
+  getState: (): WorkflowState => useWorkflowStore.getState(),
+  setState: (patch) => useWorkflowStore.setState(patch),
+  enqueue: (key, task) => projectSaveQueue.enqueue(key, task),
+  buildProjectFile,
+  saveProjectFile: async (file, targetPath) => {
+    const { saveProjectFile } = await import('../io/projectIO');
+    return saveProjectFile(file, targetPath);
+  },
+  getPendingProjectEventCount: (projectId) => isTauri ? getPendingProjectEvents(projectId).length : 0,
+  flushPendingProjectEvents: async (projectId, projectRoot) => {
+    const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+    await flushPendingProjectEvents(
+      projectId,
+      new EventStreamRepository(createTauriEventStoreAdapter(projectRoot), projectRoot),
+    );
+  },
+  snapshot: projectSnapshot,
+  prepareForSave: async (guard) => {
+    let state = useWorkflowStore.getState();
+    assertProjectSaveGuard(state, guard);
+    // Never let a startup/recovery save erase a WorkerRun projection that is already
+    // durable in the event stream while the in-memory registry is still empty.
+    if (isTauri && state.projectId && state.projectPath && state.workerRuns.length === 0) {
+      const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+      const repository = new EventStreamRepository(
+        createTauriEventStoreAdapter(state.projectPath),
+        state.projectPath,
+      );
+      const parsed = await repository.readStream();
+      assertProjectSaveGuard(useWorkflowStore.getState(), guard);
+      if (parsed.status === 'needs-repair') {
+        throw new Error(
+          `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
+        );
+      }
+      const restored = restoreMissingWorkerRunsFromEvents({
+        projectId: state.projectId,
+        events: parsed.events,
+        taskGraphs: state.projectControl.taskGraphs ?? [],
+        existingRuns: state.workerRuns,
+      });
+      if (restored.issues.length > 0) {
+        throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
+      }
+      if (restored.restored) {
+        useWorkflowStore.setState({
+          workerRuns: restored.runs,
+          orchestrations: projectWorkerRunsOntoOrchestrations(state.orchestrations, restored.runs),
+        });
+        state = useWorkflowStore.getState();
+      }
+    }
+    assertProjectSaveGuard(state, guard);
+  },
+});
 const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsController<WorkflowState>({
   isTauri,
   getState: (): WorkflowState => useWorkflowStore.getState(),
