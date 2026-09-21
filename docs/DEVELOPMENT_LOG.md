@@ -5040,3 +5040,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `src/types.ts` 仍保留兼容 re-export，但本轮不再有新/现有内部调用方依赖它承载这两类已迁移事实；未改变运行时、ProjectFile、DomainEvent、WorkerQueue 或 Evidence/Acceptance/Receipt 结构。
 - 相关本地 checkpoint：`086c7d7` / `checkpoint/direct-type-owner-import-migration-start`、`54f7ca5` / `checkpoint/direct-type-owner-import-migration-unverified`；均为本地回退锚点，未 push。
 - 验证：owner-focused `18 test files / 182 tests`；supplementary sandbox/type-owner `5 test files / 87 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.345 unverified：inject registry definitions into workflow command owners
+
+- 为 `workflowSubgraphCommands` 与 `workflowGroupCommands` 增加显式 `getNodeDefinitions` port；子图打包/端口推断、group proxy recompute 不再直接读取 `useRegistryStore` singleton。
+- `recomputeProxyPorts` 改为接收明确的 node definition table；`defaultParams` 保留为单独的 registry adapter。`updateGroup` 的 patch 类型收窄为 `Partial<Omit<NodeGroup, 'id'>>`，与 `WorkflowState` facade contract 对齐，禁止通过 command owner 修改 group id。
+- 更新 workflow facade wiring、direct command tests 和 group proxy tests；本轮未改变图编辑、子图、分组或持久化运行语义。
+- 相关本地 checkpoint：`2dbd778` / `checkpoint/workflow-command-registry-port-split-start`、`b92b795` / `checkpoint/workflow-command-registry-port-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 29 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.28 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
