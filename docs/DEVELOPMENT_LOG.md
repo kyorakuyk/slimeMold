@@ -5095,3 +5095,19 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 command owner focused tests；`workflowStore.ts` 删除约 96 行 inline run/checkpoint implementation，未改变 Worker executor、恢复、ProjectFile 或运行历史行为。
 - 相关本地 checkpoint：`f6a870d` / `checkpoint/workflow-run-state-command-split-start`、`812019c` / `checkpoint/workflow-run-state-command-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `6 test files / 37 tests`；完整 Node `184 test files / 1308 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.63 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.352 unverified：extract project metadata contracts
+
+- 将 `AssetMeta` 与 `RecentProject` 从 `src/types.ts` 迁移到 `src/types/project.ts`；`io/projectIO.ts` 保留 `RecentProject` type-only re-export，避免旧 UI/import 路径破坏。
+- AssetsPanel、engine context/runtime、内置 media/tool nodes、workflow lifecycle/serialization/store contracts 与测试改为直接依赖 project owner；通用 barrel 只保留兼容 re-export，AssetMeta/RecentProject direct root imports 残留为 `0`。
+- 新增 project metadata contract test；未改变 ProjectFile/WorkflowFile 字段、资产 scope、最近项目持久化或运行时行为。
+- 相关本地 checkpoint：`b1dcb6a` / `checkpoint/types-project-asset-contract-split-start`、`37d9b3b` / `checkpoint/types-project-asset-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 50 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.63 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npx tsc --noEmit` 通过；`git diff --check` 通过。后续 project-data command slice 在包含本轮代码的最终工作树上完成全量质量门，见 7.353。
+
+### 7.353 unverified：extract workflow project data commands
+
+- 将 workflow/project asset 与 project variable actions 从 `workflowStore.ts` 抽到 `src/store/workflowProjectDataCommands.ts`：`addAsset`、`removeAsset`、`addProjectAsset`、`removeProjectAsset`、`setProjectVariable`、`removeProjectVariable`。
+- 新 owner 只依赖显式 state ports、日志 port 和 `removeFile` port；Tauri file deletion 保留在 facade composition 的动态 port 中，保留原有删除顺序、日志文案、依赖 workflow 名称返回值和失败可观察性。
+- 新增 direct command tests，覆盖状态变更、project asset dependency discovery 和注入的文件删除 port；`workflowStore.ts` 删除约 103 行 inline project-data implementation，未改变 ProjectFile schema 或资产/变量语义。
+- 相关本地 checkpoint：`8135885` / `checkpoint/workflow-project-data-commands-start`、`daa2112` / `checkpoint/workflow-project-data-commands-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 29 tests`；完整 Node `186 test files / 1312 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.61 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
