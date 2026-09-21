@@ -31,6 +31,7 @@ import { startProjectSessionCommand } from './projectControl/commands';
 import { recordProjectEvents } from './projectControl/eventBuffer';
 import { createWorkerRecoverySingleFlight } from './projectControl/workerRecoverySingleFlight';
 import { createAppWorkerRuntime } from './app/workerRuntime';
+import { restoreLastProjectSession } from './app/projectStartup';
 
 registerBuiltins();
 
@@ -249,36 +250,27 @@ export default function App() {
 
   // P3：桌面端启动自动恢复上次项目（含激活工作流），仅当当前尚无已加载项目时
   useEffect(() => {
-    if (!isTauri) return;
     let cancelled = false;
-    (async () => {
-      const sess = getLastSession();
-      if (!sess) return;
-      const st = useWorkflowStore.getState();
-      // 已有项目（如持久化恢复）则不抢占
-      if (st.projectId) return;
-      try {
-        // 工作区信任：在任何 fs 访问之前，先把项目根目录动态注入 fs:scope
+    void restoreLastProjectSession({
+      isTauri,
+      getLastSession,
+      getProjectId: () => useWorkflowStore.getState().projectId,
+      grantProjectAccess: async (path) => {
         const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('grant_project_access', { path: sess.path }).catch(() => {});
-        if (cancelled || useWorkflowStore.getState().projectId) return;
+        await invoke('grant_project_access', { path });
+      },
+      projectExists: async (path) => {
         const fs = await import('@tauri-apps/plugin-fs');
-        const ok = await fs.exists(sess.path);
-        if (!ok || cancelled || useWorkflowStore.getState().projectId) return;
+        return fs.exists(path);
+      },
+      openProjectByPath: async (path) => {
         const { openProjectByPath } = await import('./io/projectIO');
-        const file = await openProjectByPath(sess.path);
-        if (!file || cancelled || useWorkflowStore.getState().projectId) return;
-        // 优先恢复会话里记录的激活工作流
-        if (sess.activeId && file.workflows[sess.activeId]) {
-          file.activeId = sess.activeId;
-        }
-        useWorkflowStore.getState().openProject(file, sess.path);
-        // 项目恢复成功后：扫描程序级（全局）自定义节点；项目级（仅本项目）由下方 projectId 订阅统一触发
-        void scanProgramCustomNodes().catch(() => {});
-      } catch {
-        /* 恢复失败不阻塞启动 */
-      }
-    })();
+        return openProjectByPath(path);
+      },
+      openProject: (file, path) => useWorkflowStore.getState().openProject(file, path),
+      scanProgramCustomNodes,
+      isCancelled: () => cancelled,
+    });
     return () => {
       cancelled = true;
     };
