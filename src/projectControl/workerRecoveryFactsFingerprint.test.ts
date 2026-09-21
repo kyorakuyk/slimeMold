@@ -272,6 +272,25 @@ describe('worker recovery facts fingerprint v1', () => {
         },
       }),
     }))).toThrow();
-    expect(() => canonicalizeWorkerRecoveryFactsV1({ schema: 'worker-recovery-facts-v1' } as never)).toThrow();
+    const facts = buildWorkerRecoveryFactsV1(input());
+    const reorderedFacts = {
+      ...facts,
+      run: { ...facts.run, tasks: [...facts.run.tasks].reverse() },
+      taskGraph: { ...facts.taskGraph, tasks: [...facts.taskGraph.tasks].reverse() },
+      failedTaskIds: [...facts.failedTaskIds].reverse(),
+      recoverableEffects: [...facts.recoverableEffects].reverse(),
+    };
+    expect(canonicalizeWorkerRecoveryFactsV1(reorderedFacts)).toBe(canonicalizeWorkerRecoveryFactsV1(facts));
+    expect(() => canonicalizeWorkerRecoveryFactsV1({
+      ...facts,
+      run: { ...facts.run, status: 'forged' as never },
+    })).toThrow();
+    expect(() => canonicalizeWorkerRecoveryFactsV1({
+      ...facts,
+      run: {
+        ...facts.run,
+        tasks: [{ ...facts.run.tasks[0], branch: 'worker/.hidden', baseRevision: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01' }],
+      },
+    })).toThrow();
   });
 });

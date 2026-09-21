@@ -596,9 +596,23 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     taskIds.add(task.taskId);
     safeInteger(task.attempt, 'facts task attempt');
     if (!new Set(['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled']).has(task.status)) throw new Error('facts task status 无效');
+    if (task.taskDefinitionVersion !== undefined && task.taskDefinitionVersion !== 1) throw new Error('facts taskDefinitionVersion 无效');
+    if (task.taskExecutionId !== undefined) {
+      const taskExecutionId = assertTaskExecutionId(task.taskExecutionId);
+      if (taskExecutionId !== createTaskExecutionId(facts.run.runId, task.taskId)) throw new Error('facts taskExecutionId lineage 无效');
+    }
+    if (task.attempt > 0 && (task.taskExecutionId === undefined || task.currentAttemptId === undefined)) throw new Error('facts task current lineage 缺失');
+    if (task.currentAttemptId !== undefined) {
+      assertTaskExecutionLineage({ runId: facts.run.runId, taskId: task.taskId, taskExecutionId: task.taskExecutionId, attemptId: task.currentAttemptId, attempt: task.attempt });
+    }
+    const assignmentFields = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision];
+    const assignmentCount = assignmentFields.filter((value) => value !== undefined).length;
+    if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) throw new Error('facts task assignment 不完整');
+    if (task.worktreeStatus !== undefined && !new Set(['created', 'cleaned', 'orphaned', 'registration-pending']).has(task.worktreeStatus)) throw new Error('facts worktreeStatus 无效');
+    if (task.worktreePath !== undefined) comparableWorkerPath(task.worktreePath);
     if (task.branch !== undefined) canonicalRef(task.branch, 'facts task branch');
     if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'facts task baseRevision');
-    if (task.worktreePath !== undefined) comparableWorkerPath(task.worktreePath);
+    if (task.branchRevision !== undefined) canonicalRevision(task.branchRevision, 'facts task branchRevision');
     if (task.pendingAttempt !== undefined && (task.status !== 'queued' || task.pendingAttempt !== task.attempt + 1 || task.currentAttemptId !== undefined)) throw new Error('facts pendingAttempt fence 无效');
     if (task.cleanupStatus === 'cleaned' && (task.status !== 'succeeded' || task.worktreeStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) throw new Error('facts cleanup invariant 无效');
     if (task.worktreeStatus === 'cleaned' && (task.cleanupStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) throw new Error('facts cleaned worktree invariant 无效');
@@ -626,6 +640,9 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     sortedStrings(task.dependsOn);
     uniqueStringsPreserveOrder(task.acceptanceCriteria, 'facts acceptance criterion');
   }
+  const runTaskIds = new Set(taskIds);
+  if (facts.taskGraph.id !== facts.run.taskGraphId || facts.taskGraph.graphVersion !== facts.run.taskGraphVersion) throw new Error('facts run/graph identity 不一致');
+  if (graphIds.size === 0 || graphIds.size !== runTaskIds.size || [...graphIds].some((id) => !runTaskIds.has(id))) throw new Error('facts run/graph task set 不一致');
   if (!Array.isArray(facts.failedTaskIds) || !Array.isArray(facts.recoverableEffects)) throw new Error('facts recovery arrays 无效');
   sortedStrings(facts.failedTaskIds);
   const effectIds = new Set<string>();
@@ -635,16 +652,42 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     requiredText(effect.idempotencyKey, 'facts effect idempotencyKey');
     if (effectIds.has(effect.idempotencyKey)) throw new Error('facts effect idempotencyKey 重复');
     effectIds.add(effect.idempotencyKey);
-    requiredText(effect.kind, 'facts effect kind');
-    if (effect.kind !== 'worker-execution' && effect.kind !== 'worktree-cleanup') throw new Error('facts effect kind 无效');
+    const currentTask = facts.run.tasks.find((task) => task.taskId === effect.taskId);
+    const graphTask = facts.taskGraph.tasks.find((task) => task.id === effect.taskId);
+    if (!currentTask || !graphTask) throw new Error('facts effect task 不存在于 snapshot');
+    if (effect.runId !== facts.run.runId) throw new Error('facts effect runId 不匹配');
+    if (effect.taskId !== currentTask.taskId) throw new Error('facts effect taskId 不匹配');
+    const kind = requiredText(effect.kind, 'facts effect kind');
+    if (kind !== 'worker-execution' && kind !== 'worktree-cleanup') throw new Error('facts effect kind 无效');
     requiredText(effect.target, 'facts effect target');
     requiredText(effect.inputHash, 'facts effect inputHash');
     const effectRunId = requiredText(effect.runId, 'facts effect runId');
     const effectTaskId = requiredText(effect.taskId, 'facts effect taskId');
     const parsedExecutionId = assertTaskExecutionId(requiredText(effect.taskExecutionId, 'facts effect taskExecutionId'));
     if (parsedExecutionId !== createTaskExecutionId(effectRunId, effectTaskId)) throw new Error('facts effect lineage 无效');
-    parseAttemptId(requiredText(effect.attemptId, 'facts effect attemptId'));
+    const parsedAttempt = parseAttemptId(requiredText(effect.attemptId, 'facts effect attemptId'));
+    if (parsedExecutionId !== currentTask.taskExecutionId || parsedAttempt.taskExecutionId !== parsedExecutionId || parsedAttempt.attempt !== currentTask.attempt || effect.attemptId !== currentTask.currentAttemptId) throw new Error('facts effect current attempt lineage 无效');
     if (effect.status !== 'started' && effect.status !== 'unknown') throw new Error('facts effect status 无效');
+    if (kind === 'worktree-cleanup') {
+      if (!currentTask.worktreePath || !currentTask.baseRevision || !currentTask.cleanupStateSignature
+        || comparableWorkerPath(effect.target) !== comparableWorkerPath(currentTask.worktreePath)
+        || effect.inputHash !== `${currentTask.baseRevision}:${currentTask.cleanupStateSignature}`) throw new Error('facts cleanup effect provenance 无效');
+    } else {
+      if (!currentTask.worktreeId || !currentTask.worktreePath || !currentTask.branch || !currentTask.baseRevision || effect.target !== currentTask.worktreeId) throw new Error('facts worker effect assignment 无效');
+      let inputHash: unknown;
+      try { inputHash = JSON.parse(effect.inputHash); } catch { throw new Error('facts worker effect inputHash 无效'); }
+      if (!Array.isArray(inputHash) || inputHash.length !== 7
+        || inputHash[0] !== facts.run.runId
+        || inputHash[1] !== currentTask.taskId
+        || inputHash[2] !== graphTask.version
+        || inputHash[3] !== currentTask.attempt
+        || inputHash[4] !== currentTask.baseRevision
+        || typeof inputHash[5] !== 'string'
+        || comparableWorkerPath(inputHash[5]) !== comparableWorkerPath(currentTask.worktreePath)
+        || inputHash[6] !== currentTask.branch
+        || JSON.stringify(inputHash) !== effect.inputHash) throw new Error('facts worker effect inputHash provenance 无效');
+    }
+
     if (effect.recovery !== 'retry' && effect.recovery !== 'needs-user') throw new Error('facts effect recovery 无效');
     if (effect.status === 'unknown') requiredText(effect.unknownReason ?? '', 'facts effect unknownReason');
     if (effect.receipt !== undefined) {
@@ -663,6 +706,42 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
       }
     }
   }
+}
+
+function normalizeFactsDto(facts: WorkerRecoveryFactsV1): WorkerRecoveryFactsV1 {
+  return {
+    ...facts,
+    run: {
+      ...facts.run,
+      tasks: facts.run.tasks
+        .map((task) => ({ ...task, evidenceIds: sortedStrings(task.evidenceIds) }))
+        .sort((left, right) => compareUtf8(left.taskId, right.taskId)),
+    },
+    taskGraph: {
+      ...facts.taskGraph,
+      tasks: facts.taskGraph.tasks
+        .map((task) => ({
+          ...task,
+          scope: [...task.scope].sort(compareUtf8),
+          dependsOn: sortedStrings(task.dependsOn),
+          acceptanceCriteria: [...task.acceptanceCriteria],
+        }))
+        .sort((left, right) => compareUtf8(left.id, right.id)),
+    },
+    failedTaskIds: sortedStrings(facts.failedTaskIds),
+    recoverableEffects: facts.recoverableEffects
+      .map((effect) => ({
+        ...effect,
+        ...(effect.receipt === undefined ? {} : {
+          receipt: {
+            ...effect.receipt,
+            ...(effect.receipt.evidenceIds === undefined ? {} : { evidenceIds: sortedStrings(effect.receipt.evidenceIds) }),
+            ...(effect.receipt.files === undefined ? {} : { files: [...effect.receipt.files].sort((left, right) => compareUtf8(left.path, right.path)) }),
+          },
+        }),
+      }))
+      .sort((left, right) => compareUtf8(left.idempotencyKey, right.idempotencyKey)),
+  };
 }
 
 function canonicalize(value: unknown, inArray = false): string {
@@ -688,7 +767,9 @@ function canonicalize(value: unknown, inArray = false): string {
 
 export function canonicalizeWorkerRecoveryFactsV1(facts: WorkerRecoveryFactsV1): string {
   validateFactsDto(facts);
-  return canonicalize(facts);
+  const normalized = normalizeFactsDto(facts);
+  validateFactsDto(normalized);
+  return canonicalize(normalized);
 }
 
 export async function fingerprintWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): Promise<string> {
