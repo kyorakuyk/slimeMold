@@ -5006,3 +5006,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 结构结果：`src/types.ts` 由 `907` 行降至 `767` 行，新增 owner `src/types/orchestration.ts` 为 `164` 行；当前切片保持 `unverified`，未进行 exact reviewer closure。
 - 相关本地 checkpoint：`77ff937` / `checkpoint/types-orchestration-contract-split-start`、`ce9ec8f` / `checkpoint/types-orchestration-contract-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `5 test files / 60 tests`；完整 Node `177 test files / 1293 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.341 unverified：extract project save controller boundary
+
+- 从 `src/store/workflowStore.ts` 抽出 `src/store/projectSaveController.ts`，由新 owner 负责项目保存队列接入、ProjectFile 写入、pending domain event flush、SaveGuard 检查、`projectDirty` 清除和稳定 `lastSavedSnapshot` 基线更新；保持原有保存 key、错误文本、保存路径和 guard 时序。
+- `workflowStore.ts` 保留 facade composition 与 Worker event-stream rehydration 的 `prepareForSave` 注入；控制器不导入 `useWorkflowStore`、`useViewStore` 或 workflow facade，不复制 Worker recovery 事实。
+- 新增 direct owner tests，覆盖成功保存、abort fail-closed、项目在 preparation 期间切换时拒绝写入；现有 `workflowStore.projectControl.test.ts`、Save As、dirty/autosave、queue 和 persistence tests 继续作为 facade/邻接边界回归。
+- 结构结果：`src/store/workflowStore.ts` 由 `1253` 行降至 `1224` 行，新增 `src/store/projectSaveController.ts` 为 `90` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
+- 相关本地 checkpoint：`57f7939` / `checkpoint/workflow-persistence-boundary-split-start`、`ecae7bb` / `checkpoint/workflow-project-save-controller-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `9 test files / 28 tests`；完整 Node `178 test files / 1296 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.66 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
