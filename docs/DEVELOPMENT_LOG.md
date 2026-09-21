@@ -5147,3 +5147,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 可维护性盲区：`App.tsx`、`WorkflowEditor.tsx`、`AgentPanel.tsx`、`OrchestratorPanel.tsx` 缺少同名 direct tests；现有测试更多覆盖下层纯函数、store actions 和 ProjectSession/Beginner paths，不能据此宣称这些大型 UI 的 interaction/React Flow/Tauri behavior 已验证。
 - 优先级建议：① 先把 `types.ts` 剩余 contracts 分成 `node/execution`、`workflow/project`、`projectControl` 三个 owner，并保留兼容 re-export；② 再拆 `WorkflowState` 的 worker/project-control projection setters，保持 facade action signatures；③ 将 executor SCC 中的 `runContext`/LLM/finalizer 依赖改成窄 port；④ 最后拆 App startup coordinator 和补大型 UI 的 direct interaction harness。按事实 owner 拆，不以继续降低单文件行数作为完成标准。
 - 基线限制：本轮是结构健康度审查，不是 GUI/Tauri E2E、运行时 cycle proof 或安全审计；历史 `unverified`/verified code tags 的语义保持不变。代码未变化，基线质量门仍为完整 Node `186/1314`、build 通过、i18n `1026/1026`、tsc 通过、diff check 通过。
+
+### 7.358 unverified：extract node runtime type contracts
+
+- 将 `ExecContext`、`InterventionRequest`、`InterventionResult`、`SandboxHandle`、`NodeExecuteFn`、`NodeRole`、`NODE_ROLE_META`、`NodeDefinition`、`NodeDefInput` 与 `createNodeDef` 从 `src/types.ts` 迁移到 `src/types/node.ts`，为 engine/nodes/plugins 建立独立 node/runtime owner。
+- `src/types.ts` 保留完整 compatibility re-export；engine、nodes、plugins、agents、相关 store/io/component 调用方和测试改为直接依赖 `src/types/node.ts`。本轮 root node-contract residual scan 为 `0`。
+- 新增 `src/types/node.test.ts`，覆盖 node definition 默认值、role 推断元数据和 `ExecContext` contract 可用性；只移动类型事实和 import 边界，未改变节点执行、能力裁剪、sandbox、intervention、插件加载或 workflow graph 行为。
+- `src/types.ts` 从 `614` 行降至 `396` 行；新增 node owner `160` 行、direct contract test `28` 行。相关本地 checkpoint：`f43e860` / `checkpoint/types-node-runtime-contract-split-start`、`03978cc` / `checkpoint/types-node-runtime-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `11 test files / 134 tests` 通过；完整 `npm run test` 最终 `187 test files / 1315 tests` 通过。首次全量运行仅 `topoSort.test.ts` 的子进程出现一次环境型 `spawnSync D:\Hermes\node\node.exe ETIMEDOUT`，独立重跑 `17/17` 后再次全量运行通过；不将首次超时误记为代码回归。
+- `npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
