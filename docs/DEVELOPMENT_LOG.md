@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-18
+updated: 2026-09-22
 tags:
   - SlimeMold
   - Agent
@@ -5183,3 +5183,14 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact target `6d7be9a1182f9f2ee4fd64e6fd9bedf5086cfdaf`、parent `ef942aa414714f8e0fba2ca4676fb74937fda3d3` 已由 3 个独立 read-only object reviewer 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`，无 credential additions。
 - reviewer 确认 9 个 workflow/subgraph/group contracts 各只有一个 owner，root named/inline residual 为 `0`，无 reverse owner import、malformed import 或 duplicate declaration；WorkflowFile 与 ProjectFile schema 保持不变。reviewer 未运行测试，质量门来自同一 code target。
 - verified tag `checkpoint/types-workflow-file-contract-split-verified` 已回读并指向 `6d7be9a1182f9f2ee4fd64e6fd9bedf5086cfdaf`；当前分支后续 docs closure commit 不继承为 verified code HEAD。
+
+### 7.363 unverified：complete module topology closure slices
+
+- 连续完成剩余 type-owner 与 facade topology slices：新增 `src/types/projectFile.ts`、`src/types/dispatch.ts`、`src/types/conflict.ts`；`src/types.ts` 保留 compatibility re-export，`ProjectFile` schema 与 checkpoint/worker queue type boundary 未改变。
+- `workflowStore.ts` 的 Worker/ProjectControl projection setters 与 Agent/Role/global-agent catalog actions 分别迁移到 `workflowProjectionCommands.ts`、`workflowCatalogCommands.ts`；随后将 `WorkflowCatalogState`、`WorkflowProjectionState` 提升为独立 field owners，`WorkflowState` 通过 interface inheritance 保留完整 action/state surface。`workflowStore.ts` 当前为 `904` 行，`WorkflowState` contract 为 `333` 行。
+- executor 只为共享 run contract 的反向 type edge 新增 `engine/runTypes.ts`，`runContext.ts → executor.ts` 依赖消失；App 的 project startup restore、global shortcuts、panel resize 分别迁移到 `src/app/projectStartup.ts`、`globalShortcuts.ts`、`panelResize.ts`，React shell 只保留 composition ports。
+- 将 32 个 production caller 的 graph imports 直接归属 `src/types/graph.ts`；静态扫描确认 production `src/types.ts` importer 为 `0`，非 graph inline contracts 已保持在其真实 owners。
+- 将 `HarnessEvents` 提升到 `agents/harnessTypes.ts`，将 `AcceptanceRecord`、`AcceptancePersistence`、`CleanupApproval` 提升到 `dev/sessionContracts.ts`；`experienceSink` 与 `workerCleanup` 不再反向依赖 harness/session implementation。注释剥离后的 production graph 实测 `286` 个文件、`1274` 条 relative edges、`0` 个 multi-node SCC。
+- 相关 code targets 与本地 unverified anchors：`085317c` / `checkpoint/types-project-file-control-contracts-unverified`、`a08d89f` / `checkpoint/workflow-projection-command-split-unverified`、`493c9b7` / `checkpoint/executor-context-port-split-unverified`、`4b0d4d5` / `checkpoint/app-startup-bootstrap-split-unverified`、`63828f0` / `checkpoint/app-global-shortcuts-split-unverified`、`32e1272` / `checkpoint/app-panel-resize-split-unverified`、`a77d970` / `checkpoint/workflow-catalog-command-split-unverified`、`8ea96a6` / `checkpoint/types-graph-direct-owner-normalization-unverified`、`2eabc74` / `checkpoint/shared-runtime-contract-cycle-split-unverified`、`ae5b88f` / `checkpoint/workflow-state-projection-contract-split-unverified`；均为本地回退锚点，未 push。
+- 分阶段真实验证：project/control `191 test files / 1319 tests`；projection `192/1321`；run contract `193/1322`；startup `194/1324`；shortcuts `195/1326`；resize `196/1327`；catalog/graph `197/1329`；shared contracts `199/1331`；最终 state-owner target `201 test files / 1333 tests`。最终 target 的 `npm run build` 通过，最大 chunk `1,190.18 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+- 当前所有上述新 anchors 保持 `unverified`，exact reviewer closure 尚未追加；reviewer 不运行测试，不能用本段质量门替代 object-level review。未改变 Worker/recovery、ProjectFile、DomainEvent、Evidence/Acceptance/Receipt、Tauri 或 workflow persistence schema；未新增或保留 credential values。
