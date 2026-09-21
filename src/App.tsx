@@ -33,6 +33,7 @@ import { createWorkerRecoverySingleFlight } from './projectControl/workerRecover
 import { createAppWorkerRuntime } from './app/workerRuntime';
 import { restoreLastProjectSession } from './app/projectStartup';
 import { installGlobalShortcuts } from './app/globalShortcuts';
+import { installPanelResize } from './app/panelResize';
 
 registerBuiltins();
 
@@ -207,37 +208,20 @@ export default function App() {
 
   // setTheme 已在 store 内套用 data-theme（含 system 跟随），此处无需再手动设置
 
-  // 拖拽分隔条
+  // 拖拽分隔条由无 React 的 adapter 负责，App 只提供 state ports。
   const startResize = (
     axis: 'x' | 'y',
     side: 'left' | 'right' | 'bottom',
     initial: number,
-  ) => (e: React.PointerEvent) => {
-    e.preventDefault();
-    const startPos = axis === 'x' ? e.clientX : e.clientY;
-    const startSize = initial;
-
-    const onMove = (ev: PointerEvent) => {
-      const delta = (axis === 'x' ? ev.clientX : ev.clientY) - startPos;
-      // left/right 分隔条向右拖拽 = 宽度增大；bottom 分隔条向上拖拽 = 高度增大
-      const sign = side === 'bottom' ? -1 : 1;
-      let next = startSize + sign * delta;
-      next = Math.max(160, Math.min(480, next));
-      if (side === 'bottom') next = Math.max(120, Math.min(480, next));
-      if (side === 'left') setLeftW(next);
-      else if (side === 'right') setRightW(next);
-      else setPanelH(next);
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize';
-    document.body.style.userSelect = 'none';
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+  ) => (event: React.PointerEvent) => {
+    installPanelResize({
+      axis,
+      side,
+      initial,
+      setLeftWidth: setLeftW,
+      setRightWidth: setRightW,
+      setPanelHeight: setPanelH,
+    })(event);
   };
 
   useEffect(() => {
