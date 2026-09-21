@@ -30,24 +30,32 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
     const onMove = (moveEvent: PointerEvent) => {
       const currentPos = deps.axis === 'x' ? moveEvent.clientX : moveEvent.clientY;
       const delta = currentPos - startPos;
-      let next = deps.initial + sign * delta;
-      next = Math.max(160, Math.min(480, next));
-      if (deps.side === 'bottom') next = Math.max(120, Math.min(480, next));
+      const min = deps.side === 'bottom' ? 120 : 160;
+      const next = Math.max(min, Math.min(480, deps.initial + sign * delta));
       if (deps.side === 'left') deps.setLeftWidth(next);
       else if (deps.side === 'right') deps.setRightWidth(next);
       else deps.setPanelHeight(next);
     };
 
-    const onUp = () => {
+    const previousCursor = documentRef.body.style.cursor;
+    const previousUserSelect = documentRef.body.style.userSelect;
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       windowRef.removeEventListener('pointermove', onMove);
-      windowRef.removeEventListener('pointerup', onUp);
-      documentRef.body.style.cursor = '';
-      documentRef.body.style.userSelect = '';
+      windowRef.removeEventListener('pointerup', cleanup);
+      windowRef.removeEventListener('pointercancel', cleanup);
+      windowRef.removeEventListener('blur', cleanup);
+      documentRef.body.style.cursor = previousCursor;
+      documentRef.body.style.userSelect = previousUserSelect;
     };
 
     documentRef.body.style.cursor = deps.axis === 'x' ? 'col-resize' : 'row-resize';
     documentRef.body.style.userSelect = 'none';
     windowRef.addEventListener('pointermove', onMove);
-    windowRef.addEventListener('pointerup', onUp);
+    windowRef.addEventListener('pointerup', cleanup);
+    windowRef.addEventListener('pointercancel', cleanup);
+    windowRef.addEventListener('blur', cleanup);
   };
 }

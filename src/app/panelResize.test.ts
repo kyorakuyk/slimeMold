@@ -24,4 +24,37 @@ describe('panel resize adapter', () => {
     expect(document.body.style.cursor).toBe('');
     expect(document.body.style.userSelect).toBe('');
   });
+
+  it('uses the bottom minimum and restores styles on cancellation/blur', () => {
+    const sizes = { bottom: 208 };
+    document.body.style.cursor = 'crosshair';
+    document.body.style.userSelect = 'text';
+    const handler = installPanelResize({
+      axis: 'y',
+      side: 'bottom',
+      initial: sizes.bottom,
+      setLeftWidth: () => undefined,
+      setRightWidth: () => undefined,
+      setPanelHeight: (value) => { sizes.bottom = value; },
+    });
+
+    handler({ preventDefault: () => undefined, clientX: 0, clientY: 208 });
+    const move = new Event('pointermove') as PointerEvent;
+    Object.defineProperties(move, { clientX: { value: 0 }, clientY: { value: 408 } });
+    window.dispatchEvent(move);
+    expect(sizes.bottom).toBe(120);
+    expect(document.body.style.cursor).toBe('row-resize');
+
+    window.dispatchEvent(new Event('pointercancel'));
+    expect(document.body.style.cursor).toBe('crosshair');
+    expect(document.body.style.userSelect).toBe('text');
+
+    handler({ preventDefault: () => undefined, clientX: 0, clientY: 208 });
+    window.dispatchEvent(new Event('blur'));
+    expect(document.body.style.cursor).toBe('crosshair');
+    expect(document.body.style.userSelect).toBe('text');
+
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
 });
