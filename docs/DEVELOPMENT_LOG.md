@@ -4878,3 +4878,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-status-invariants-verified`，指向上述 exact code commit；该 tag 只闭合本轮纯 Gate A invariant slice。
 - reviewer 明确 durable recovery decision CAS仍在本 slice之外，未接 ProjectFile、eventBuffer、side-effect journal、controller或native host；不得把本 tag解释为 durable CAS或真实 Worker recovery E2E完成。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.323 unverified：extract Worker recovery facts DTO type owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsTypes.ts`，集中拥有 `worker-recovery-facts-v1` schema、DTO、source input及嵌套 receipt 类型；原文件仅保留兼容 import/re-export，不再重复定义类型。
+- 本轮只移动类型与模块依赖，不改变 validator、normalizer、canonical JSON、hash、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；未把类型拆分误报为 fingerprint 巨石已完全解决，后续仍需按 validation/source builder/normalization/serializer边界继续评估。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片仍标记 `unverified`，等待 exact review。
