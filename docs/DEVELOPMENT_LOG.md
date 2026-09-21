@@ -5048,3 +5048,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 更新 workflow facade wiring、direct command tests 和 group proxy tests；本轮未改变图编辑、子图、分组或持久化运行语义。
 - 相关本地 checkpoint：`2dbd778` / `checkpoint/workflow-command-registry-port-split-start`、`b92b795` / `checkpoint/workflow-command-registry-port-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `6 test files / 29 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.28 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.346 unverified：stabilize App Worker runtime lifetime
+
+- `App.tsx` 改用 mount-scoped `useRef` 保存 `createAppWorkerRuntime` 结果，避免每次 React render 重新组合 Worker recovery/action/cleanup controllers；Project lifecycle effect 现在消费稳定的 runtime ports。
+- 保留 store、operation guard、recovery single-flight 和 controller wiring，不改变 Worker/recovery/cleanup 行为；本轮只收口对象生命周期和 composition 可读性。
+- 相关本地 checkpoint：`333b4ac` / `checkpoint/app-runtime-lifetime-seam-start`、`6992e95` / `checkpoint/app-runtime-lifetime-seam-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 26 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.33 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
