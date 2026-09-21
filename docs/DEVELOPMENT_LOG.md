@@ -5127,3 +5127,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 未改变 `io/projectIO` 的兼容 re-export、ProjectFile/WorkflowFile schema、运行历史、资产或 lifecycle 行为；这是 topology repair，不是历史 target 的 retroactive verification。
 - 相关本地 checkpoint：`8f4f6f4` / `checkpoint/direct-owner-residual-repair-start`、`2035f96` / `checkpoint/direct-owner-residual-repair-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `7 test files / 54 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.356 exact review closure：verified code anchors
+
+- `checkpoint/direct-owner-residual-repair-unverified` 的 exact target `2035f966adff091c94ff10d9fa58cb5df2b8e255`、parent `8f4f6f4e0f713ac7089f43a0dcf48b3e241230d2` 已完成 object-level review：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、无 credential literals；对应 code tag：`checkpoint/direct-owner-residual-repair-verified`。
+- `checkpoint/workflow-registry-lifecycle-command-split-unverified` 的 exact target `018fb9c1e77a33e71965215dcdcaafb153783787`、parent `52ba7a4a2872ebe87606405684fd376ea81aa6e6` 已完成 object-level review：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、无 credential literals；对应 code tag：`checkpoint/workflow-registry-lifecycle-command-split-verified`。
+- 两个 verified tag 均指向 reviewer 实际审查的 code commit；本节之后的文档 commit 不继承或改变 verified code HEAD。历史 project metadata target `37d9b3b` 与 execution target `19023bc` 的 fail-closed 结果仍保持 `unverified`，不能被本轮修复追溯升级。
+- 这些 reviewer 只提供 exact Git object topology/logic evidence，未运行测试；对应 code commit 的质量门已分别在同一代码快照上完成：完整 Node `186 test files / 1314 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
