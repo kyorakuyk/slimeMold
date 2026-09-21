@@ -34,7 +34,6 @@ import {
   DIRTY_KEYS,
 } from './workflowSerialize';
 import { useRegistryStore, getNodeDef } from './registryStore';
-import { applyCheckpoint, mergeCheckpointHistory } from '../engine/checkpoint';
 import { useViewStore } from './viewStore';
 import { resolvePorts } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
@@ -65,6 +64,7 @@ import { defaultParams } from './groupProxy';
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
+import { createWorkflowRunStateCommands } from './workflowRunStateCommands';
 import {
   createProjectSaveController,
   type ProjectSaveController,
@@ -200,6 +200,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           cloneBuiltinRoles: () => builtinRoles.map((role) => ({ ...role })),
           createEmptyProjectControl: createEmptyProjectControlSnapshot,
         }),
+      });
+      const runStateCommands = createWorkflowRunStateCommands<WorkflowState>({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        updateState: (updater) => set(updater),
+        setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        saveCheckpointToDisk,
       });
       return {
       workflowName: '未命名工作流',
@@ -624,32 +631,8 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
       setSelectedIds: (ids) => set({ selectedIds: ids }),
-      setRunning: (running, wfId) => {
-        const id = wfId ?? get().activeWfId;
-        set((s) => {
-          const runStates = {
-            ...s.runStates,
-            [id]: { running, progress: s.runStates[id]?.progress ?? { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 } },
-          };
-          // 激活工作流同步回兼容字段
-          const patch: Partial<WorkflowState> = { runStates };
-          if (id === s.activeWfId) patch.running = running;
-          return patch;
-        });
-      },
-      setRunProgress: (p, wfId) => {
-        const id = wfId ?? get().activeWfId;
-        set((s) => {
-          const prev = s.runStates[id]?.progress ?? { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 };
-          const progress = { ...prev, ...p };
-          const runStates = { ...s.runStates, [id]: { running: s.runStates[id]?.running ?? false, progress } };
-          const patch: Partial<WorkflowState> = { runStates };
-          if (id === s.activeWfId) patch.runProgress = progress;
-          return patch;
-        });
-      },
-      setCostLog: (log) => set({ costLog: log }),
-      resetUsage: () => set({ costLog: [] }),
+      ...runStateCommands,
+
       setDebugRun: (v) => set({ debugRun: v }),
       setFailFast: (v) => set({ failFast: v }),
       setSkipFailed: (v) => set({ skipFailed: v }),
@@ -676,75 +659,6 @@ export const useWorkflowStore = create<WorkflowState>()(
         const next = { ...get().variables };
         delete next[key];
         set({ variables: next });
-      },
-      pushRunHistory: (rec) =>
-        set({ runHistory: [rec, ...get().runHistory].slice(0, 30) }),
-      clearRunHistory: () => set({ runHistory: [] }),
-
-      // 阶段 C 可恢复执行：检查点
-      setCheckpoint: (cp) => {
-        projectDirtyController.setSuppressed(true); // 运行收尾写检查点不构成「未保存的项目改动」
-        const s = get();
-        set({
-          checkpoints: { ...s.checkpoints, [cp.wfId]: cp },
-          // 阶段 G2：终态/快照同时并入多版本历史（按 runId 去重，保留最近 N 条）
-          checkpointHistory: {
-            ...s.checkpointHistory,
-            [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
-          },
-        });
-        projectDirtyController.setSuppressed(false);
-      },
-      // F3/F10：运行收尾「即落盘」——内存更新 + 独立写 .slimemold/runs/checkpoints.json，
-      // 不依赖用户手动保存，也不标脏（检查点是运行态快照，非项目内容变更）。
-      // 返回 Promise 供 executor 收尾 await，避免「runWorkflow 已返回但磁盘尚未写完」的竞态。
-      persistCheckpoint: async (cp) => {
-        const s = get();
-        projectDirtyController.setSuppressed(true);
-        const nextCheckpoints = { ...s.checkpoints, [cp.wfId]: cp };
-        const nextHistory = {
-          ...s.checkpointHistory,
-          [cp.wfId]: mergeCheckpointHistory(s.checkpointHistory[cp.wfId], cp),
-        };
-        set({ checkpoints: nextCheckpoints, checkpointHistory: nextHistory });
-        projectDirtyController.setSuppressed(false);
-        // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
-        await saveCheckpointToDisk(s.projectPath, nextCheckpoints, nextHistory);
-      },
-      // 阶段 G2：运行中节流快照——只更新 latest（同 runId 覆盖），不进历史（避免中间态污染版本列表），
-      // 但会落盘，使崩溃/强制关闭后仍能从最近进度恢复。
-      persistCheckpointSnapshot: async (cp) => {
-        const s = get();
-        projectDirtyController.setSuppressed(true);
-        const next = { ...s.checkpoints, [cp.wfId]: cp };
-        set({ checkpoints: next });
-        projectDirtyController.setSuppressed(false);
-        // 落盘段已抽到 workflowPersistence.saveCheckpointToDisk（G5 门面化）
-        await saveCheckpointToDisk(s.projectPath, next, s.checkpointHistory);
-      },
-      clearCheckpoint: (wfId) => {
-        const id = wfId ?? get().activeWfId;
-        if (!id) return;
-        const next = { ...get().checkpoints };
-        delete next[id];
-        const nextHistory = { ...get().checkpointHistory };
-        delete nextHistory[id];
-        set({ checkpoints: next, checkpointHistory: nextHistory });
-      },
-      restoreCheckpoint: (wfId) => {
-        const id = wfId ?? get().activeWfId;
-        if (!id) return false;
-        const s = get();
-        const cp = s.checkpoints[id];
-        if (!cp) return false;
-        const nodes = id === s.activeWfId ? s.nodes : (s.workflows[id]?.nodes ?? []);
-        const restored = applyCheckpoint(cp, nodes);
-        if (id === s.activeWfId) {
-          set({ nodes: restored });
-        } else {
-          set({ workflows: { ...s.workflows, [id]: { ...s.workflows[id]!, nodes: restored } } });
-        }
-        return true;
       },
 
       setWorkflowName: (name) => set({ workflowName: name }),
