@@ -2,52 +2,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConfig } from '../types/agent';
+import { useWorkflowStore } from '../store/workflowStore';
 
-const mocks = vi.hoisted(() => {
-  const store = {
-    agents: [] as AgentConfig[],
-    globalAgents: [] as AgentConfig[],
-    defaultAgentId: null as string | null,
-    roles: [] as Array<{ id: string; name: string; system: string; contextScope: 'shared' | 'isolated'; builtin?: boolean }>,
-    upsertAgent: vi.fn((agent: AgentConfig) => {
-      const index = store.agents.findIndex((item) => item.id === agent.id);
-      store.agents = index < 0
-        ? [...store.agents, agent]
-        : store.agents.map((item, itemIndex) => (itemIndex === index ? agent : item));
-    }),
-    removeAgent: vi.fn((id: string) => {
-      store.agents = store.agents.filter((agent) => agent.id !== id);
-    }),
-    upsertGlobalAgent: vi.fn((agent: AgentConfig) => {
-      const index = store.globalAgents.findIndex((item) => item.id === agent.id);
-      store.globalAgents = index < 0
-        ? [...store.globalAgents, agent]
-        : store.globalAgents.map((item, itemIndex) => (itemIndex === index ? agent : item));
-    }),
-    removeGlobalAgent: vi.fn((id: string) => {
-      store.globalAgents = store.globalAgents.filter((agent) => agent.id !== id);
-    }),
-    setDefaultAgent: vi.fn((id: string | null) => {
-      store.defaultAgentId = id;
-    }),
-    upsertRole: vi.fn(),
-    removeRole: vi.fn(),
-  };
-  const fetchOllamaModels = vi.fn();
-  return { store, fetchOllamaModels };
-});
-
-vi.mock('../store/workflowStore', () => ({
-  useWorkflowStore: Object.assign(
-    (selector: (state: typeof mocks.store) => unknown) => selector(mocks.store),
-    { getState: () => mocks.store },
-  ),
-}));
-
-vi.mock('../store/viewStore', () => ({
-  useViewStore: {
-    getState: () => ({ globalProxyUrl: '' }),
-  },
+const mocks = vi.hoisted(() => ({
+  fetchOllamaModels: vi.fn(),
 }));
 
 vi.mock('../agents/agentManager', async () => {
@@ -80,6 +38,16 @@ const baseAgent: AgentConfig = {
   temperature: 0.7,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('AgentPanel', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -88,17 +56,15 @@ describe('AgentPanel', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    mocks.store.agents = [{ ...baseAgent }];
-    mocks.store.globalAgents = [];
-    mocks.store.defaultAgentId = null;
-    mocks.store.roles = [];
-    mocks.store.upsertAgent.mockClear();
-    mocks.store.removeAgent.mockClear();
-    mocks.store.upsertGlobalAgent.mockClear();
-    mocks.store.removeGlobalAgent.mockClear();
-    mocks.store.setDefaultAgent.mockClear();
-    mocks.store.upsertRole.mockClear();
-    mocks.store.removeRole.mockClear();
+    useWorkflowStore.setState({
+      projectId: 'project-1',
+      agents: [{ ...baseAgent }],
+      globalAgents: [],
+      defaultAgentId: null,
+      roles: [],
+      agentRouteTable: {},
+      logs: [],
+    } as never);
     mocks.fetchOllamaModels.mockReset();
     mocks.fetchOllamaModels.mockResolvedValue([]);
   });
@@ -108,7 +74,7 @@ describe('AgentPanel', () => {
     container.remove();
   });
 
-  it('writes an edited agent field through the catalog action', async () => {
+  it('writes an edited agent field through the real catalog action', async () => {
     await act(async () => {
       root.render(<AgentPanel embedded />);
     });
@@ -124,14 +90,15 @@ describe('AgentPanel', () => {
       nameInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
-    expect(mocks.store.agents[0]).toMatchObject({ id: 'agent-1', name: '更新后的模型' });
-    expect(mocks.store.upsertAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'agent-1', name: '更新后的模型' }),
-    );
+    expect(useWorkflowStore.getState().agents[0]).toMatchObject({
+      id: 'agent-1',
+      name: '更新后的模型',
+    });
   });
 
   it('surfaces Ollama model-pull failures and clears loading state', async () => {
-    mocks.fetchOllamaModels.mockRejectedValueOnce(new Error('ollama unavailable'));
+    const pending = deferred<string[]>();
+    mocks.fetchOllamaModels.mockReturnValueOnce(pending.promise);
 
     await act(async () => {
       root.render(<AgentPanel embedded />);
@@ -144,40 +111,46 @@ describe('AgentPanel', () => {
     await act(async () => {
       refreshButton.click();
       await Promise.resolve();
-      await Promise.resolve();
     });
+    expect(refreshButton.disabled).toBe(true);
+    expect(mocks.fetchOllamaModels).toHaveBeenCalledWith(baseAgent.baseUrl);
 
-    expect(container.textContent).toContain('agent.model.pullFailed');
-    expect(container.textContent).toContain('ollama unavailable');
-    expect(refreshButton.disabled).toBe(false);
+    const failure = new Error('ollama unavailable');
+    await act(async () => {
+      pending.reject(failure);
+      await pending.promise.catch(() => undefined);
+    });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('agent.model.pullFailed');
+      expect(container.textContent).toContain('ollama unavailable');
+      expect(refreshButton.disabled).toBe(false);
+    });
   });
 
   it('preserves embedded and sidebar container contracts', async () => {
-    const host = document.createElement('div');
-    host.className = 'flex min-h-0 flex-1';
-    container.appendChild(host);
-
     await act(async () => {
-      root.render(
-        <div className="flex min-h-0 flex-1">
-          <AgentPanel embedded />
-        </div>,
-      );
+      root.render(<AgentPanel embedded />);
     });
-    expect(container.querySelector('.flex.min-h-0.flex-1')).not.toBeNull();
+
+    const embeddedRoot = container.firstElementChild as HTMLDivElement;
+    expect(embeddedRoot.className).toContain('h-full');
+    expect(embeddedRoot.className).toContain('min-h-0');
+    expect(embeddedRoot.className).toContain('flex-1');
+    expect(embeddedRoot.className).toContain('flex-col');
+    expect(container.querySelector('.fixed.inset-0')).toBeNull();
 
     await act(async () => {
       root.render(<AgentPanel variant="sidebar" />);
     });
-    expect(Array.from(container.querySelectorAll('div')).some((element) =>
-      element.className.includes('overflow-visible'),
-    )).toBe(true);
+    const sidebarLayout = Array.from(container.querySelectorAll('div')).find((element) =>
+      element.className.includes('relative') && element.className.includes('overflow-visible'),
+    );
+    expect(sidebarLayout).toBeDefined();
+    expect(container.querySelector('.absolute.left-full')).toBeNull();
 
     await act(async () => {
       (container.querySelector('ul li') as HTMLLIElement).click();
     });
-    expect(Array.from(container.querySelectorAll('div')).some((element) =>
-      element.className.includes('absolute left-full'),
-    )).toBe(true);
+    expect(container.querySelector('.absolute.left-full')).not.toBeNull();
   });
 });
