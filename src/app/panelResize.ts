@@ -16,6 +16,19 @@ export interface ResizePointerEvent {
   preventDefault: () => void;
   clientX: number;
   clientY: number;
+  pointerId?: number;
+  currentTarget?: EventTarget | null;
+}
+
+type PointerCaptureTarget = EventTarget & {
+  setPointerCapture?: (pointerId: number) => void;
+  releasePointerCapture?: (pointerId: number) => void;
+};
+
+const activeResizeByWindow = new WeakMap<Window, () => void>();
+
+export function cancelActivePanelResize(windowRef: Window = window): void {
+  activeResizeByWindow.get(windowRef)?.();
 }
 
 export function installPanelResize(deps: PanelResizeDependencies): (event: ResizePointerEvent) => void {
@@ -23,9 +36,12 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
   const documentRef = deps.documentRef ?? document;
 
   return (event) => {
+    cancelActivePanelResize(windowRef);
     event.preventDefault();
     const startPos = deps.axis === 'x' ? event.clientX : event.clientY;
     const sign = deps.side === 'bottom' ? -1 : 1;
+    const pointerTarget = (event.currentTarget ?? null) as PointerCaptureTarget | null;
+    const pointerId = event.pointerId;
 
     const onMove = (moveEvent: PointerEvent) => {
       const currentPos = deps.axis === 'x' ? moveEvent.clientX : moveEvent.clientY;
@@ -47,15 +63,39 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
       windowRef.removeEventListener('pointerup', cleanup);
       windowRef.removeEventListener('pointercancel', cleanup);
       windowRef.removeEventListener('blur', cleanup);
+      windowRef.removeEventListener('pagehide', cleanup);
+      documentRef.removeEventListener('visibilitychange', cleanup);
+      pointerTarget?.removeEventListener('lostpointercapture', cleanup);
+      if (pointerId !== undefined) {
+        try {
+          pointerTarget?.releasePointerCapture?.(pointerId);
+        } catch {
+          // Pointer capture may already be released by the browser.
+        }
+      }
+      if (activeResizeByWindow.get(windowRef) === cleanup) {
+        activeResizeByWindow.delete(windowRef);
+      }
       documentRef.body.style.cursor = previousCursor;
       documentRef.body.style.userSelect = previousUserSelect;
     };
 
+    activeResizeByWindow.set(windowRef, cleanup);
     documentRef.body.style.cursor = deps.axis === 'x' ? 'col-resize' : 'row-resize';
     documentRef.body.style.userSelect = 'none';
     windowRef.addEventListener('pointermove', onMove);
     windowRef.addEventListener('pointerup', cleanup);
     windowRef.addEventListener('pointercancel', cleanup);
     windowRef.addEventListener('blur', cleanup);
+    windowRef.addEventListener('pagehide', cleanup);
+    documentRef.addEventListener('visibilitychange', cleanup);
+    pointerTarget?.addEventListener('lostpointercapture', cleanup);
+    if (pointerId !== undefined) {
+      try {
+        pointerTarget?.setPointerCapture?.(pointerId);
+      } catch {
+        // Pointer capture is best-effort for non-DOM test/host targets.
+      }
+    }
   };
 }

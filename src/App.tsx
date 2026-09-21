@@ -33,7 +33,7 @@ import { createWorkerRecoverySingleFlight } from './projectControl/workerRecover
 import { createAppWorkerRuntime } from './app/workerRuntime';
 import { restoreLastProjectSession } from './app/projectStartup';
 import { installGlobalShortcuts } from './app/globalShortcuts';
-import { installPanelResize } from './app/panelResize';
+import { cancelActivePanelResize, installPanelResize } from './app/panelResize';
 
 registerBuiltins();
 
@@ -223,6 +223,8 @@ export default function App() {
       setPanelHeight: setPanelH,
     })(event);
   };
+
+  useEffect(() => () => cancelActivePanelResize(), []);
 
   useEffect(() => {
     // 桌面端启动时自动扫描插件目录

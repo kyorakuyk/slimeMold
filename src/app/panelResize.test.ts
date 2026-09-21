@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { installPanelResize } from './panelResize';
+import { cancelActivePanelResize, installPanelResize } from './panelResize';
 
 describe('panel resize adapter', () => {
   it('updates the selected panel and cleans pointer listeners/styles', () => {
@@ -46,6 +46,11 @@ describe('panel resize adapter', () => {
     expect(document.body.style.cursor).toBe('row-resize');
 
     window.dispatchEvent(new Event('pointercancel'));
+    const cancelledSize = sizes.bottom;
+    const cancelledMove = new Event('pointermove') as PointerEvent;
+    Object.defineProperties(cancelledMove, { clientX: { value: 0 }, clientY: { value: 0 } });
+    window.dispatchEvent(cancelledMove);
+    expect(sizes.bottom).toBe(cancelledSize);
     expect(document.body.style.cursor).toBe('crosshair');
     expect(document.body.style.userSelect).toBe('text');
 
@@ -56,5 +61,42 @@ describe('panel resize adapter', () => {
 
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
+  });
+
+  it('arbitrates overlapping sessions and exposes explicit cancellation', () => {
+    const sizes = { first: 200, second: 300 };
+    const first = installPanelResize({
+      axis: 'x',
+      side: 'left',
+      initial: sizes.first,
+      setLeftWidth: (value) => { sizes.first = value; },
+      setRightWidth: () => undefined,
+      setPanelHeight: () => undefined,
+    });
+    first({ preventDefault: () => undefined, clientX: 200, clientY: 0 });
+
+    const second = installPanelResize({
+      axis: 'x',
+      side: 'right',
+      initial: sizes.second,
+      setLeftWidth: () => undefined,
+      setRightWidth: (value) => { sizes.second = value; },
+      setPanelHeight: () => undefined,
+    });
+    second({ preventDefault: () => undefined, clientX: 300, clientY: 0 });
+
+    const move = new Event('pointermove') as PointerEvent;
+    Object.defineProperties(move, { clientX: { value: 340 }, clientY: { value: 0 } });
+    window.dispatchEvent(move);
+    expect(sizes.first).toBe(200);
+    expect(sizes.second).toBe(340);
+
+    cancelActivePanelResize();
+    const afterCancel = new Event('pointermove') as PointerEvent;
+    Object.defineProperties(afterCancel, { clientX: { value: 380 }, clientY: { value: 0 } });
+    window.dispatchEvent(afterCancel);
+    expect(sizes.second).toBe(340);
+    expect(document.body.style.cursor).toBe('');
+    expect(document.body.style.userSelect).toBe('');
   });
 });
