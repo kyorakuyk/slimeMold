@@ -1,4 +1,4 @@
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 
 export type BeforeProjectFileSideEffect = () => void;
 

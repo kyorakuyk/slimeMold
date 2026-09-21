@@ -14,7 +14,7 @@
  *   其余节点标 dirty（增量运行重跑它们及下游）。
  */
 import type { RunRecord } from '../types/execution';
-import type { FlowNode, NodeStatus } from '../types';
+import type { FlowNode, NodeStatus } from '../types/graph';
 
 /** 单个节点的检查点快照（仅运行期关心字段，不含画布瞬态）。 */
 export interface CheckpointNode {

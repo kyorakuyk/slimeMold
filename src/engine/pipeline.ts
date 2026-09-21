@@ -27,7 +27,7 @@ import type {
   PipelineStage,
   ProjectArtifacts,
 } from '../types/orchestration';
-import type { ModuleItem } from '../types';
+import type { ModuleItem } from '../types/dispatch';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getActiveRunId } from './executor';
 

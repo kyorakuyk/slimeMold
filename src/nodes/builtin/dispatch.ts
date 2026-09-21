@@ -1,6 +1,6 @@
 import { createNodeDef } from '../../types/node';
 import type { NodeDefinition } from '../../types/node';
-import { type ModuleItem, type TaskItem } from '../../types';
+import type { ModuleItem, TaskItem } from '../../types/dispatch';
 import type { ChatMessage } from '../../types/agent';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { resolveActiveWorkflowWorkspaceDir } from '../../store/workflowRegistryState';

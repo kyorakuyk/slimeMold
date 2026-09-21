@@ -1,5 +1,5 @@
 import { persistProjectFile } from './projectFilePersistence';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 
 export interface ProjectSaveAsState {
   projectName: string | null;

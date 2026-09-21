@@ -4,7 +4,7 @@
  * New-project/open-project state construction stays pure; this module owns only dirty,
  * ProjectControl and Zustand patch choreography. Async path/save/error handling stays in the facade.
  */
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import {
   buildNewProjectState,
   buildOpenProjectState,

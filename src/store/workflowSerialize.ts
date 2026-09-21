@@ -14,7 +14,8 @@ import type { Orchestration } from '../types/orchestration';
 import type { RunRecord } from '../types/execution';
 import type { AssetMeta } from '../types/project';
 import type { NodeGroup, SubgraphDef, WorkflowFile, WorkflowFileEdge, WorkflowFileInMemory, WorkflowFileNode } from '../types/workflow';
-import type { FlowEdge, FlowNode, NodeStatus, ProjectFile, WorkflowNodeData } from '../types';
+import type { ProjectFile } from '../types/projectFile';
+import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 
@@ -173,7 +174,7 @@ export function buildProjectFile(
     checkpoints?: Record<string, import('../engine/checkpoint').RunCheckpoint>;
     checkpointHistory?: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
     artifacts: import('../types').ProjectArtifacts;
-    agentRouteTable: import('../types').AgentRouteTable;
+    agentRouteTable: import('../types/dispatch').AgentRouteTable;
     pipelines: import('../types').PipelineDef[];
     orchestrations?: Orchestration[];
     workerRuns?: import('../domain/workerQueue').WorkerRunQueueState[];

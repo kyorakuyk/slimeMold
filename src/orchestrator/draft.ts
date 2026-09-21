@@ -8,7 +8,7 @@
  */
 
 import type { AgentConfig } from '../types/agent';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 import type { ArtifactKind, PipelineDraft } from '../types/orchestration';
 import { decideAgentCall } from '../agents/agentDecision';
 import type { OrchestratorRequest } from './types';

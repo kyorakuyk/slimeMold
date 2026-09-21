@@ -17,7 +17,7 @@
  * 既有行为——显式 agentId 存在时就是它，本层只在缺失/失效时兜底与记录。
  */
 import type { AgentConfig } from '../types/agent';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 import type { RunContext } from '../engine/runContext';
 import { scoreCandidates, type CandidateScore, type ScoringWeights } from './routerScoring';
 

@@ -11,7 +11,7 @@
  */
 
 import type { WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
-import type { AgentRouteTable, ModuleItem } from '../types';
+import type { AgentRouteTable, ModuleItem } from '../types/dispatch';
 import { FALLBACK_CATEGORY } from '../agents/agentRouter';
 
 let _seq = 0;

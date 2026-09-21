@@ -1,7 +1,7 @@
 /** projectCatalogState direct tests. */
 import { describe, it, expect } from 'vitest';
 import type { AgentConfig, RoleTemplate } from '../types/agent';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 import {
   buildRemoveAgentState,
   buildRemoveRoleState,

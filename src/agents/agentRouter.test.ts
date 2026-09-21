@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { estimateTier, resolveAgent, candidateChain, resolveAgentForRunContext, resolveAgentScored, isAgentCallable } from './agentRouter';
 import type { AgentConfig } from '../types/agent';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 
 const ag = (id: string, model = 'm1'): AgentConfig =>
   ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model, credentialKey: `k:${id}` } as AgentConfig);

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentConfig, RoleTemplate } from '../types/agent';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 import { useWorkflowStore } from './workflowStore';
 
 const agent = { id: 'agent-a', name: 'A' } as unknown as AgentConfig;

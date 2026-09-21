@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import type { ProjectControlRuntimeState, ProjectControlStoreAdapter } from './projectControlLifecycle';
 import { createProjectBootstrapActions } from './projectBootstrapActions';
 

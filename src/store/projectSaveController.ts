@@ -1,4 +1,4 @@
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import type { ProjectSaveGuard } from './workflowStoreTypes';
 import { persistProjectFile } from './projectFilePersistence';
 

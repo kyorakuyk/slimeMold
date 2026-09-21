@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import { persistProjectFile } from './projectFilePersistence';
 
 const file = { id: 'project-1' } as ProjectFile;

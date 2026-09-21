@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import { createProjectSaveAsController } from './projectSaveAsController';
 
 function createDeps(overrides: Record<string, unknown> = {}) {
