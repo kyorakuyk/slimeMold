@@ -596,6 +596,8 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     taskIds.add(task.taskId);
     safeInteger(task.attempt, 'facts task attempt');
     if (!new Set(['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled']).has(task.status)) throw new Error('facts task status 无效');
+    if (task.cleanupStatus !== undefined && task.cleanupStatus !== 'cleaned') throw new Error('facts cleanupStatus 无效');
+    if (task.worktreeStatus !== undefined && !new Set(['created', 'cleaned', 'orphaned', 'registration-pending']).has(task.worktreeStatus)) throw new Error('facts worktreeStatus 无效');
     if (task.taskDefinitionVersion !== undefined && task.taskDefinitionVersion !== 1) throw new Error('facts taskDefinitionVersion 无效');
     if (task.taskExecutionId !== undefined) {
       const taskExecutionId = assertTaskExecutionId(task.taskExecutionId);
@@ -608,6 +610,8 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     const assignmentFields = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision];
     const assignmentCount = assignmentFields.filter((value) => value !== undefined).length;
     if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) throw new Error('facts task assignment 不完整');
+    if (['created', 'orphaned', 'registration-pending'].includes(task.worktreeStatus ?? '')
+      && (assignmentCount !== assignmentFields.length || task.branchRevision === undefined)) throw new Error('facts assigned worktree provenance 不完整');
     if (task.worktreeStatus !== undefined && !new Set(['created', 'cleaned', 'orphaned', 'registration-pending']).has(task.worktreeStatus)) throw new Error('facts worktreeStatus 无效');
     if (task.worktreePath !== undefined) comparableWorkerPath(task.worktreePath);
     if (task.branch !== undefined) canonicalRef(task.branch, 'facts task branch');
@@ -668,6 +672,8 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     const parsedAttempt = parseAttemptId(requiredText(effect.attemptId, 'facts effect attemptId'));
     if (parsedExecutionId !== currentTask.taskExecutionId || parsedAttempt.taskExecutionId !== parsedExecutionId || parsedAttempt.attempt !== currentTask.attempt || effect.attemptId !== currentTask.currentAttemptId) throw new Error('facts effect current attempt lineage 无效');
     if (effect.status !== 'started' && effect.status !== 'unknown') throw new Error('facts effect status 无效');
+    if (effect.status === 'started' && effect.recovery !== 'retry') throw new Error('facts started lifecycle 无效');
+    if (effect.status === 'unknown' && effect.recovery !== 'needs-user') throw new Error('facts unknown lifecycle 无效');
     if (kind === 'worktree-cleanup') {
       if (!currentTask.worktreePath || !currentTask.baseRevision || !currentTask.cleanupStateSignature
         || comparableWorkerPath(effect.target) !== comparableWorkerPath(currentTask.worktreePath)
@@ -689,22 +695,8 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     }
 
     if (effect.recovery !== 'retry' && effect.recovery !== 'needs-user') throw new Error('facts effect recovery 无效');
+    if (effect.receipt !== undefined) throw new Error('facts recoverable effect 不应携带 receipt');
     if (effect.status === 'unknown') requiredText(effect.unknownReason ?? '', 'facts effect unknownReason');
-    if (effect.receipt !== undefined) {
-      const receipt = assertObject(effect.receipt, 'facts effect receipt');
-      assertKeys(receipt, ['receiptId', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'files', 'error'], 'facts effect receipt');
-      requiredText(effect.receipt.receiptId, 'facts receipt id');
-      if (effect.receipt.outcome !== 'succeeded' && effect.receipt.outcome !== 'failed') throw new Error('facts receipt outcome 无效');
-      if (effect.receipt.evidenceIds !== undefined) sortedStrings(effect.receipt.evidenceIds);
-      if (effect.receipt.files !== undefined) {
-        const files = effect.receipt.files.map((file) => {
-          const fileRecord = assertObject(file, 'facts receipt file');
-          assertKeys(fileRecord, ['path', 'contentHash'], 'facts receipt file');
-          return { path: comparableWorkerPath(file.path), contentHash: requiredText(file.contentHash, 'facts receipt file hash') };
-        });
-        if (new Set(files.map((file) => file.path)).size !== files.length) throw new Error('facts receipt file path 重复');
-      }
-    }
   }
 }
 
@@ -714,7 +706,11 @@ function normalizeFactsDto(facts: WorkerRecoveryFactsV1): WorkerRecoveryFactsV1 
     run: {
       ...facts.run,
       tasks: facts.run.tasks
-        .map((task) => ({ ...task, evidenceIds: sortedStrings(task.evidenceIds) }))
+        .map((task) => ({
+          ...task,
+          ...(task.worktreePath === undefined ? {} : { worktreePath: comparableWorkerPath(task.worktreePath) }),
+          evidenceIds: sortedStrings(task.evidenceIds),
+        }))
         .sort((left, right) => compareUtf8(left.taskId, right.taskId)),
     },
     taskGraph: {
@@ -722,7 +718,7 @@ function normalizeFactsDto(facts: WorkerRecoveryFactsV1): WorkerRecoveryFactsV1 
       tasks: facts.taskGraph.tasks
         .map((task) => ({
           ...task,
-          scope: [...task.scope].sort(compareUtf8),
+          scope: task.scope.map((path) => comparableWorkerPath(path)).sort(compareUtf8),
           dependsOn: sortedStrings(task.dependsOn),
           acceptanceCriteria: [...task.acceptanceCriteria],
         }))
@@ -730,16 +726,29 @@ function normalizeFactsDto(facts: WorkerRecoveryFactsV1): WorkerRecoveryFactsV1 
     },
     failedTaskIds: sortedStrings(facts.failedTaskIds),
     recoverableEffects: facts.recoverableEffects
-      .map((effect) => ({
-        ...effect,
-        ...(effect.receipt === undefined ? {} : {
-          receipt: {
-            ...effect.receipt,
-            ...(effect.receipt.evidenceIds === undefined ? {} : { evidenceIds: sortedStrings(effect.receipt.evidenceIds) }),
-            ...(effect.receipt.files === undefined ? {} : { files: [...effect.receipt.files].sort((left, right) => compareUtf8(left.path, right.path)) }),
-          },
-        }),
-      }))
+      .map((effect) => {
+        let target = effect.target;
+        let inputHash = effect.inputHash;
+        if (effect.kind === 'worktree-cleanup') {
+          target = comparableWorkerPath(target);
+        } else {
+          const tuple = JSON.parse(inputHash) as unknown[];
+          tuple[5] = comparableWorkerPath(String(tuple[5]));
+          inputHash = JSON.stringify(tuple);
+        }
+        return {
+          ...effect,
+          target,
+          inputHash,
+          ...(effect.receipt === undefined ? {} : {
+            receipt: {
+              ...effect.receipt,
+              ...(effect.receipt.evidenceIds === undefined ? {} : { evidenceIds: sortedStrings(effect.receipt.evidenceIds) }),
+              ...(effect.receipt.files === undefined ? {} : { files: [...effect.receipt.files].map((file) => ({ ...file, path: comparableWorkerPath(file.path) })).sort((left, right) => compareUtf8(left.path, right.path)) }),
+            },
+          }),
+        };
+      })
       .sort((left, right) => compareUtf8(left.idempotencyKey, right.idempotencyKey)),
   };
 }
