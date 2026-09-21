@@ -3,8 +3,8 @@
 // 与调度主流程（runWorkflow）解耦，使 executor.ts 从「上帝模块」进一步瘦身。
 
 import type { CostRecord } from '../types/agent';
+import type { CapabilityLevel } from '../types/capability';
 import type {
-  CapabilityLevel,
   ExecContext,
   FlowEdge,
   NodeDefinition,

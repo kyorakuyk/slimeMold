@@ -1,5 +1,5 @@
+import type { CapabilityLevel } from '../types/capability';
 import type {
-  CapabilityLevel,
   LoadedPlugin,
   NodeDefinition,
   NodeExecuteFn,

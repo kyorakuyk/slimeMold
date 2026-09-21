@@ -150,7 +150,7 @@ export abstract class GitNode extends SystemNode {
  * 职业 → 能力等级映射（供阶段 B 的 loader 把"继承的职业类"翻译成 minCapability）。
  * 用户自定义职业类继承某框架职业后，能力上限 = 该职业对应的等级。
  */
-export const OCCUPATION_CAPABILITY: Record<string, import('../types').CapabilityLevel> = {
+export const OCCUPATION_CAPABILITY: Record<string, import('../types/capability').CapabilityLevel> = {
   ComputeNode: 'compute',
   IoNode: 'io',
   SandboxWriteNode: 'sandbox_write',
@@ -160,7 +160,7 @@ export const OCCUPATION_CAPABILITY: Record<string, import('../types').Capability
 };
 
 /** 取一个类所继承的职业等级（沿原型链向上找，命中 OCCUPATION_CAPABILITY 即返回） */
-export function capabilityOfClass(ctor: unknown): import('../types').CapabilityLevel | undefined {
+export function capabilityOfClass(ctor: unknown): import('../types/capability').CapabilityLevel | undefined {
   let proto = (ctor as { prototype?: unknown })?.prototype as { constructor?: unknown } | undefined;
   const seen = new Set<unknown>();
   while (proto && !seen.has(proto)) {

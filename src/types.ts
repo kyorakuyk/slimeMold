@@ -1,3 +1,6 @@
+import type { CapabilityLevel } from './types/capability';
+export type { CapabilityLevel } from './types/capability';
+
 import type { ProjectControlSnapshot } from './projectControl/types';
 import type {
   EdgeKind,
@@ -305,20 +308,6 @@ export const NODE_ROLE_META: Record<
   io: { label: '端点', color: '#9ca3af', hint: '工作流的输入与输出边界' },
 };
 
-/**
- * 步骤 11 阶段 D：节点权限能力分级（capability model）。
- * 执行引擎在 executeNode 时按节点声明的 minCapability（或按 typeId 推断的默认等级）
- * 裁剪注入的 ExecContext：越权字段被替换为「拒绝型」实现，而非缺失（保持类型完整、运行时受控）。
- *
- * - `compute`       L0 纯计算只读：仅 logger/vars/signal/costLog。禁止任何 I/O（无 llm/storage/sandbox/addAsset）。
- * - `io`            L1 受限 I/O：+ storage/addAsset/llm/assets。不直接碰工作区文件系统。
- * - `sandbox_write` L2 隔离写：+ sandbox 句柄，但剥离 commitAll/commitLanes（落地权只给协调者）。
- * - `coordinator`   L3 协调者：+ sandboxLanes + 完整 commit 汇总权（唯一能把沙箱产物落地主工作区的角色）。
- * - `system`        L4 系统级：可经 Rust command 调用系统能力（git worktree 等）。当前前端节点自主 invoke，引擎仅放开签名。
- *
- * 等级单调递增：未显式声明 minCapability 时，引擎按 typeId 前缀推断默认等级（见 executor.resolveCapability）。
- */
-export type CapabilityLevel = 'compute' | 'io' | 'sandbox_write' | 'coordinator' | 'system';
 
 export interface NodeDefinition {
   typeId: string;

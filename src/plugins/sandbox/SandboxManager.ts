@@ -12,7 +12,8 @@
  */
 
 import type { CostRecord } from '../../types/agent';
-import type { CapabilityLevel, ExecContext, NodeExecuteFn } from '../../types';
+import type { CapabilityLevel } from '../../types/capability';
+import type { ExecContext, NodeExecuteFn } from '../../types';
 import { SANDBOX_RUNTIME_SRC } from './runtime';
 import type { CapabilityMethod, HostToWorker, WorkerToHost } from './protocol';
 import { allowedMethodsFor, isCapabilityAllowed } from './protocol';

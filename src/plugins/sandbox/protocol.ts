@@ -6,7 +6,7 @@
  */
 
 import type { CostRecord } from '../../types/agent';
-import type { CapabilityLevel } from '../../types';
+import type { CapabilityLevel } from '../../types/capability';
 
 /** 宿主 → worker */
 export type HostToWorker =
