@@ -146,6 +146,39 @@ describe('recoverWorkerRunCommand', () => {
     });
   });
 
+  it('clears the previous worktree lifecycle before retrying a persisted created task', () => {
+    const persistedState: WorkerRunQueueState = {
+      ...state,
+      tasks: {
+        ...state.tasks,
+        'task-1': {
+          ...state.tasks['task-1'],
+          worktreeStatus: 'created',
+          branchRevision: 'old-branch-tip',
+        },
+      },
+    };
+
+    const result = recoverWorkerRunCommand({
+      projectId: 'project-1',
+      state: persistedState,
+      taskGraph: graph,
+      journal: unknownJournal,
+      decision: 'retry',
+      reason: '确认旧 worktree 不能复用',
+      decisionId: 'recovery-decision-created-worktree',
+      now: '2026-09-01T00:04:00.000Z',
+    });
+
+    expect(result.state.tasks['task-1']).toMatchObject({
+      status: 'queued',
+      pendingAttempt: 2,
+    });
+    expect(result.state.tasks['task-1'].worktreeId).toBeUndefined();
+    expect(result.state.tasks['task-1'].worktreeStatus).toBeUndefined();
+    expect(result.state.tasks['task-1'].branchRevision).toBeUndefined();
+  });
+
   it('retries a terminal failed task even when claim produced no side-effect record', () => {
     const failedState: WorkerRunQueueState = {
       ...state,

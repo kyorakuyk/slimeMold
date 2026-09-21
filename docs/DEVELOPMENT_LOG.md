@@ -4967,4 +4967,14 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在当前 exact source checkpoint `212ad1db2e0064f7947df493d7489959782037f1` 启动真实 `npx tauri dev`；实测 Vite `http://localhost:1420/` ready、Rust dev profile完成编译、真实 `SlimeMold · Agent 工作流`窗口可由 Windows UIA 枚举；不是把 CLI 进程存活当作 GUI 证据。
 - 在 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z-failure-clean` 的真实 WebView 中，先 read-back 未绑定智能体的 failure fixture，再通过当前 GUI combo 选择 `开启（离线回显）`，点击真实运行按钮；fixture `.slimemold/runs/checkpoints.json` read-back 为 `wf-failure/runId=3/status=success`，Worker node output包含离线模拟 plan，`durationMs=212`；ProjectFile 的 `runs.history`保留此前 unbound error runs。
 - 交叉 read-back 显示这次成功属于通用 Workflow checkpoint：`.slimemold/project.json` 的 `workerRuns=[]`，`events/events.jsonl` 只有 ProjectControl baseline，fixture内没有 WorkerQueue `TaskStarted/TaskSucceeded/Failed`、Evidence、Acceptance、Receipt或CleanupReceipt。因此本轮证明了真实 Tauri/WebView generic workflow与离线模拟持久 checkpoint，不证明 WorkerQueue/provider/worktree/recovery E2E，也不证明 durable CAS。
-- 本轮未删除 disposable fixture、worktree或历史现场；停止已核对属于当前项目的 Tauri/Vite/Rust/WebView 进程并确认 `localhost:1420` 端口释放。
+- 本轮未删除 disposable fixture、worktree 或历史现场；停止已核对属于当前项目的 Tauri/Vite/Rust/WebView 进程并确认 `localhost:1420` 端口释放。
+
+### 7.337 unverified：real Tauri Worker recovery retry E2E and persisted worktree reset repair
+
+- 在真实 `npm run tauri dev` 的 `slime-mold.exe` 窗口中打开 `D:/Temp/slimemold-worker-e2e-failure`，重新加载后 GUI 明确显示 `WorkerRun=partial` 的 recovery capability，并提供 `确认重试新 attempt` 与 `确认跳过任务`；本轮通过 GUI 选择 retry，不把 headless projection 当作 GUI 证据。
+- GUI retry 首次暴露了一个真实恢复缺陷：旧 task 已持久化 `worktreeStatus=created`/`branchRevision`，恢复命令只清除了 worktree id/path/branch/baseRevision，导致新 attempt 入队后宿主报“缺少完整 worktree assignment”。修复 `applyWorkerRunRecoveryDecision` 在 retry 时同时清除 `worktreeStatus` 与 `branchRevision`，并新增 persisted-created-task 回归测试；先观察到 focused test RED，再修复为 GREEN。
+- 为使 disposable fixture 的 imported `approval=approved` 与事件事实一致，先备份 `.slimemold` 到 `D:/Temp/slimemold-worker-e2e-failure-before-approval-fix`，再通过事件存储追加 `BriefApproved` 与 `TaskGraphApproved`；未清理原始现场。
+- 修复后的同一 GUI retry 真实落盘 `WorkerRunRecoveryDecided(decision=retry)`、`RunQueued(nextAttempt=2)`、`TaskAttemptMarkedUnknown`；随后从 GUI 启动 Worker，落盘 attempt 2 的 `RunStarted`/`TaskStarted`，创建独立 worktree `D:/Temp/slimemold-worker-e2e-failure-workers/w-b9106efb232f38bf0b1aa0a9`，并在该 worktree 生成真实 `docs/WORKER_E2E_FAIL.txt`。
+- 宿主验收按 fixture 设计失败：`host.jsonl` 有 compile/tests/diff 三条 failed Evidence 与一条 path-policy passed Evidence，`acceptance/records.jsonl` 为 `passed=false`、`failedChecks=[compile,tests,diff]`，最终 Run 为 `partial`，没有 `RunSucceeded`；这证明失败结果、Evidence、Acceptance 和 worktree provenance 被持久化，不证明成功交付。
+- GUI 截图和 read-back 证据保存在 `D:/Temp/slimemold-worker-e2e-failure/.slimemold/evidence/gui/` 与同目录持久化文件中；保留 failure worktree，未自动 cleanup。原始 fixture 在修复前的备份仍保留。
+- 验证：focused `1 file / 6 tests`；完整 Node `170 test files / 1281 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,185.80 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`git diff --check` 通过。当前代码与本轮 E2E 证据标记 `unverified`，剩余风险是宿主 fixture 的验收故意失败以及尚未执行 skip 分支。
