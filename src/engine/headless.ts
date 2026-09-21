@@ -1,7 +1,7 @@
 // 无 UI 工作流运行器：不依赖 zustand store，适合 CLI / API / 测试场景。
 // 复用与 executor 相同的执行内核（拓扑分层、缓存、分支剪枝、限流重试）。
 import type { ExecContext } from '../types/node';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import { topoStages } from './topoSort';
 import { getChannel } from '../agents/llmChannel';
 import { runAgentLoop } from '../agents/harness';

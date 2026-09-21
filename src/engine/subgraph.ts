@@ -13,7 +13,7 @@
  */
 import type { NodeDefinition } from '../types/node';
 import type { SubgraphDef, SubgraphPort, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import type { PortDef } from '../types/graph';
 
 /** 子图引用节点的类型 id */

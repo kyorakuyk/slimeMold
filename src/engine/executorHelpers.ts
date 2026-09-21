@@ -6,7 +6,7 @@ import type { NodeDefinition } from '../types/node';
 import type { CostRecord } from '../types/agent';
 import type { CapabilityLevel } from '../types/capability';
 import type { ExecContext } from '../types/node';
-import type { FlowEdge, NodeUsageStat } from '../types';
+import type { FlowEdge, NodeUsageStat } from '../types/graph';
 
 /** 按节点定义推导其能力等级（单一真相源：minCapability 优先，否则按 typeId 前缀推断）。 */
 export function resolveCapability(def: NodeDefinition): CapabilityLevel {

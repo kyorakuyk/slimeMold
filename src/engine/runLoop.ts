@@ -8,7 +8,7 @@
  *
  * 设计原则：纯函数，不持有 store；dirtySet/force/loopVarsState 作为可变容器传入。
  */
-import type { FlowNode } from '../types';
+import type { FlowNode } from '../types/graph';
 
 /** 每轮循环的循环体信息：gateId → 循环体节点 id 集合（来自 runPlan 的 loopBodyOf）。 */
 export type LoopBodies = Map<string, Set<string>>;

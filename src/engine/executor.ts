@@ -1,6 +1,6 @@
 import type { CostRecord } from '../types/agent';
 import type { ExecContext } from '../types/node';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
 import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowRegistryState';
 import { useRegistryStore } from '../store/registryStore';

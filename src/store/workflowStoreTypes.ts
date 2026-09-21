@@ -11,7 +11,7 @@ import type { AssetMeta } from '../types/project';
 import type { NodeGroup, SubgraphDef, WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
 import type { AgentRouteTable } from '../types/dispatch';
 import type { ProjectFile } from '../types/projectFile';
-import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types/graph';
 import type { RunCheckpoint } from '../engine/checkpoint';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 import type { WorkerRunQueueState } from '../domain/workerQueue';

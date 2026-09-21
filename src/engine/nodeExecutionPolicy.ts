@@ -10,7 +10,7 @@
  * 缓存键计算所需函数（collectInputs / cacheKey / getCached）作为参数注入，保持零 store 依赖。
  * isBranchPruned 本地实现（与 graphAlgo 一致），避免本模块反向依赖 graphAlgo。
  */
-import type { FlowEdge, FlowNode, NodeStatus } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types/graph';
 import type { NodeExecutionMode } from './graphAlgo';
 
 /** 节点定义（决策所需最小子集）。 */

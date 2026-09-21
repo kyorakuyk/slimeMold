@@ -6,7 +6,7 @@
  * 它们从 executor.ts 抽取而来，源码行为保持零回归。
  */
 import type { NodeDefinition } from '../types/node';
-import type { FlowEdge, FlowNode, NodeStatus } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types/graph';
 import { ownerRefId } from './subgraph';
 
 /** 将 startId 的全部下游节点收集进一个 Set（BFS），含 startId 自身。返回新集合，不改入参。 */

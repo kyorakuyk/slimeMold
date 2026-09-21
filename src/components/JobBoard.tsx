@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getRunBus } from '../engine/runEvents';
 import { applyRunEvent, initialBoardState, replayBoardState } from '../engine/runBoard';
-import type { NodeStatus } from '../types';
+import type { NodeStatus } from '../types/graph';
 import { CheckCircle2, XCircle, Loader2, Circle, Zap, SkipForward } from 'lucide-react';
 import { useT } from '../i18n/useT';
 

@@ -2,7 +2,7 @@ import type { InterventionRequest, InterventionResult } from '../types/node';
 import type { SandboxHandle } from '../types/node';
 import type { AssetMeta } from '../types/project';
 import type { ExecContext } from '../types/node';
-import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types/graph';
 import type { ExecutionRuntime } from './runtime';
 
 type ContextAdapterState = {

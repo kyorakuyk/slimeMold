@@ -2,7 +2,7 @@
 // 这些函数只依赖传入的节点/连线列表，不触碰 store 单例，可独立测试。
 // 从 workflowStore 的 resetStatuses action 内联逻辑抽离，行为等价。
 
-import type { FlowEdge, FlowNode, NodeStatus } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types/graph';
 
 /** 把节点列表的运行态字段复位为 idle（供运行结束/中止后清理，避免「卡在 running」） */
 export function resetNodeRuntime(

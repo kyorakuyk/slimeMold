@@ -5,7 +5,7 @@
  * Zustand set/get, persistence, dialogs and ProjectControl lifecycle remain in the facade.
  */
 import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import { fromDisk, serializeCurrent } from './workflowSerialize';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 
@@ -25,8 +25,8 @@ export interface WorkflowSwitchView {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  agents: import('../types').AgentConfig[];
-  roles: import('../types').RoleTemplate[];
+  agents: import('../types/agent').AgentConfig[];
+  roles: import('../types/agent').RoleTemplate[];
   variables: Record<string, unknown>;
   groups?: import('../types/workflow').NodeGroup[];
   defaultAgentId?: string | null;
@@ -39,8 +39,8 @@ export interface SwitchWorkflowState {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  agents: import('../types').AgentConfig[];
-  roles: import('../types').RoleTemplate[];
+  agents: import('../types/agent').AgentConfig[];
+  roles: import('../types/agent').RoleTemplate[];
   variables: Record<string, unknown>;
   groups: import('../types/workflow').NodeGroup[];
   selectedNodeId: null;
@@ -114,9 +114,9 @@ export interface WorkflowRemovalActivation {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  agents: import('../types').AgentConfig[];
+  agents: import('../types/agent').AgentConfig[];
   defaultAgentId?: string | null;
-  roles: import('../types').RoleTemplate[];
+  roles: import('../types/agent').RoleTemplate[];
   variables: Record<string, unknown>;
   selectedNodeId: null;
   logs: never[];
@@ -197,9 +197,9 @@ export interface RegisteredWorkflowActivation {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  agents: import('../types').AgentConfig[];
+  agents: import('../types/agent').AgentConfig[];
   defaultAgentId: string | null;
-  roles: import('../types').RoleTemplate[];
+  roles: import('../types/agent').RoleTemplate[];
   variables: Record<string, unknown>;
   groups: import('../types/workflow').NodeGroup[];
   selectedNodeId: null;
@@ -264,8 +264,8 @@ export interface NewWorkflowInProjectStateInput {
     workflowName: string;
     nodes: FlowNode[];
     edges: FlowEdge[];
-    agents: import('../types').AgentConfig[];
-    roles: import('../types').RoleTemplate[];
+    agents: import('../types/agent').AgentConfig[];
+    roles: import('../types/agent').RoleTemplate[];
     variables: Record<string, unknown>;
     groups?: import('../types/workflow').NodeGroup[];
     defaultAgentId?: string | null;

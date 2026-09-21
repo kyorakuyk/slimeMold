@@ -15,7 +15,7 @@
  */
 import type { CostRecord } from '../types/agent';
 import type { RunRecord } from '../types/execution';
-import type { FlowNode } from '../types';
+import type { FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
 import { ownerRefId } from './subgraph';
 import { buildCheckpoint } from './checkpoint';

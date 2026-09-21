@@ -4,7 +4,7 @@
  * Platform path selection, persistence, session storage and warning reporting are capabilities;
  * ProjectFile saving and host lifecycle remain owned by the facade/controllers.
  */
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import {
   buildCreateProjectState,
   type CreateProjectState,

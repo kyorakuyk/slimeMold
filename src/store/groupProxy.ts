@@ -6,7 +6,7 @@
 
 import type { NodeDefinition } from '../types/node';
 import type { NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types/workflow';
-import type { FlowEdge, FlowNode } from '../types';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import type { PortType } from '../types/graph';
 import { getNodeDef } from './registryStore';
 

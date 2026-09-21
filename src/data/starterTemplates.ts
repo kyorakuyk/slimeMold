@@ -1,4 +1,4 @@
-import type { FlowNode, FlowEdge } from '../types';
+import type { FlowNode, FlowEdge } from '../types/graph';
 
 export interface StarterTemplate {
   id: string;

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useWorkflowStore } from '../store/workflowStore';
 import { stopWorkflow } from '../engine/executor';
 import type { CostRecord } from '../types/agent';
-import type { NodeUsageStat } from '../types';
+import type { NodeUsageStat } from '../types/graph';
 import {
   Activity,
   ChevronDown,

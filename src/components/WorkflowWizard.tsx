@@ -3,7 +3,7 @@ import { X, Sparkles, ArrowRight, ArrowLeft, Check } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getNodeDef } from '../store/registryStore';
 import { useT } from '../i18n/useT';
-import type { FlowNode, FlowEdge } from '../types';
+import type { FlowNode, FlowEdge } from '../types/graph';
 
 type GoalKind = 'chat' | 'translate' | 'summarize' | 'fetch' | 'image' | 'batch';
 type DataSource = 'manual' | 'http' | 'none';
