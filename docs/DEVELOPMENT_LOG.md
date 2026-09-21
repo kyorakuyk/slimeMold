@@ -5024,3 +5024,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 结构结果：`src/store/workflowStore.ts` 由 `1224` 行降至 `1194` 行，新增 `src/store/projectSavePreparation.ts` 为 `83` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
 - 相关本地 checkpoint：`28c01e2` / `checkpoint/workflow-save-preparation-split-start`、`5c158c6` / `checkpoint/workflow-save-preparation-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `5 test files / 19 tests`；完整 Node `179 test files / 1300 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.87 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.343 unverified：repair save side-effect fencing and workflow-store type compatibility
+
+- 修复 `projectSaveController` 的 stale-I/O window：`projectFilePersistence` 新增可选 `beforeWrite/beforeFlush` hooks，普通 Save 的 Tauri adapters 在 dynamic import 完成、真实写入/flush 开始前重新执行 `ProjectSaveGuard`；项目切换或 abort 不再只在副作用之后才被发现。
+- 在 `src/store/workflowStore.ts` 恢复 `ProjectSaveGuard`、`RunProgressShape`、`RunState`、`WorkflowState` 的历史 type-only facade exports，并新增 compatibility test；未复制类型实现。
+- 新增 guard regression，模拟 adapter await 期间项目切换，确认实际写入不会发生；保留 ProjectFile persistence 原有无 callback 时的调用形状，避免无关测试/调用方变化。
+- 相关本地 checkpoint：`7a5bb46` / `checkpoint/workflow-save-guard-compat-repair-start`、`4109bee` / `checkpoint/workflow-save-guard-compat-repair-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 16 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
