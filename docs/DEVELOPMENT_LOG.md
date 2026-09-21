@@ -5220,3 +5220,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - panel resize 的后续 repair anchors `fbdccc7`、`2b20e26`、`955c642`、`5f5b5f0`、`9e1fae6` 中，只有最终 clean exact-approved target `9e1fae6` 被 verified；此前 target 的 dirty/logic fail-closed verdict 保持原状。
 - 最终已验证的拓扑事实：production direct importers of `src/types.ts` 为 `0`；注释剥离后的 production relative graph 实测为 `288` files / `1289` edges / `0` multi-node SCC；`workflowStore.ts` `904` 行，`WorkflowState` contract `333` 行，catalog/projection fields 各有独立 owner；App startup/shortcut/resize、executor run contract、shared runtime contracts均通过窄 ports或shared owner收口。
 - 最终代码质量门（最终 panel target）：完整 `201 test files / 1339 tests`；`npm run build` 通过，最大 chunk `1,191.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。未改变 Worker/recovery、ProjectFile、DomainEvent、Evidence/Acceptance/Receipt、Tauri 或 workflow persistence schema；未保留 credential values。
+
+### 7.366 exact review closure：AgentPanel direct harness
+
+- 新增 `src/components/AgentPanel.test.tsx`，覆盖三条最小 vertical paths：真实 Zustand catalog action 的 Agent 字段编辑与 DOM read-back；deferred Ollama model pull 的 loading、base URL 参数、失败提示与 loading cleanup；embedded/sidebar 根节点、modal overlay 边界与编辑 drawer 结构。
+- 测试 fixture 使用真实 `useWorkflowStore`，通过 `closeProject` 的 dirty suppression/lifecycle cleanup、完整安全 state replacement、`projectDirty` 二次 baseline reset、`slime-mold-workflow`/`sm.lastSession` 清理和 fake-timer teardown 隔离测试；不调用真实网络、Tauri、Codex OAuth 或 credential store，不保存 credential values。
+- exact target `5a9e6363d0ebe620d51d8459184211518a99af84`、parent `9e99a4dff183c083ffe293fa681e5c15412d10a7` 已由 3 个独立 read-only object reviewers 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`。reviewers 未运行测试，质量门来自同一 code target。
+- verified tag `checkpoint/agent-panel-direct-harness-verified` 已创建并回读，明确指向 `5a9e636`；后续 docs-only closure commit 不继承为 verified code HEAD。此前 `dd653bb`、`bc778f9`、`9e99a4d` 等 repair anchors 保持原 unverified 状态，不追溯升级。
+- 同一 code target 的真实质量门：focused `3 tests passed`；完整 `202 test files / 1342 tests`；`npm run build` 通过，最大 chunk `1,191.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+- 本轮只建立 direct-test evidence，没有声称 `AgentPanel` 已完成模块拆分；下一刀仍按已确认顺序进入纯 agent pool/scope projection owner，再处理 credential/protocol leaf 与 list/editor panes。
