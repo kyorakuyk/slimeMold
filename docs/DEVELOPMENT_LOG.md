@@ -5119,3 +5119,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 registry owner direct tests，保留原有 switch/new/register 覆盖；`workflowStore.ts` 删除重复 lifecycle implementation，未改变工作流重命名、删除、激活或持久化语义。
 - 相关本地 checkpoint：`52ba7a4` / `checkpoint/workflow-registry-lifecycle-command-split-start`、`018fb9c` / `checkpoint/workflow-registry-lifecycle-command-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `3 test files / 16 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.355 unverified：complete direct project and execution owner imports
+
+- 根据 exact-snapshot review 发现的 residual，`BeginnerExperience.tsx` 改为直接从 `src/types/project.ts` 导入 `RecentProject`，不再依赖 `io/projectIO` compatibility seam。
+- `workflowLifecycleState.ts` 的 `AssetMeta` 与 `RunRecord` inline compatibility imports 改为直接依赖 `types/project.ts` 与 `types/execution.ts`；当前 direct owner residual scan 为 `0`。
+- 未改变 `io/projectIO` 的兼容 re-export、ProjectFile/WorkflowFile schema、运行历史、资产或 lifecycle 行为；这是 topology repair，不是历史 target 的 retroactive verification。
+- 相关本地 checkpoint：`8f4f6f4` / `checkpoint/direct-owner-residual-repair-start`、`2035f96` / `checkpoint/direct-owner-residual-repair-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 54 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
