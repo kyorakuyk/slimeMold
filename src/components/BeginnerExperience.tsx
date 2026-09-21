@@ -35,8 +35,8 @@ import {
   pushRecentProject,
   removeRecentProject,
   saveLastSession,
-  type RecentProject,
 } from '../io/projectIO';
+import type { RecentProject } from '../types/project';
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 import type { RunRecord } from '../types/execution';
 import { useT } from '../i18n/useT';

@@ -5,6 +5,7 @@
  * and ProjectControl runtime activation remain owned by workflowStore and its controllers.
  */
 import type { AgentConfig, RoleTemplate } from '../types/agent';
+import type { RunRecord } from '../types/execution';
 import type { AssetMeta } from '../types/project';
 import type {
   FlowEdge,
@@ -108,10 +109,10 @@ export interface OpenProjectState {
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
-  projectAssets: import('../types').AssetMeta[];
+  projectAssets: AssetMeta[];
   subgraphs: Record<string, import('../types').SubgraphDef>;
   groups: import('../types').NodeGroup[];
-  runHistory: import('../types').RunRecord[];
+  runHistory: RunRecord[];
   checkpoints: Record<string, import('../engine/checkpoint').RunCheckpoint>;
   checkpointHistory: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
   artifacts: import('../types').ProjectArtifacts;
@@ -215,7 +216,7 @@ export interface CreateProjectState {
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
-  projectAssets: import('../types').AssetMeta[];
+  projectAssets: AssetMeta[];
   workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
   projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
@@ -292,7 +293,7 @@ export interface NewProjectState {
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
-  projectAssets: import('../types').AssetMeta[];
+  projectAssets: AssetMeta[];
   workerRuns: import('../domain/workerQueue').WorkerRunQueueState[];
   projectControl: ProjectControlSnapshot;
   selectedNodeId: null;
