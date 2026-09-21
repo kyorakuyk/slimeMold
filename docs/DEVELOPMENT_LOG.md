@@ -4897,3 +4897,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - source `taskFact` 与 direct `validateFactsDto` 现在导入同一 `assertTaskAttemptInvariant`；canonical path/ref/order等规则不再在 fingerprint facade 内重复定义。未移动 source builder、DTO validator、DTO normalization、canonical JSON或SHA-256行为。
 - 本轮保持纯内存边界，不接 ProjectFile、eventBuffer、side-effect journal、controller、native host或durable CAS；当前 fingerprint facade仍有后续 source/DTO validation与normalization拆分工作。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.326 verified closure：Worker recovery facts shared rules owner
+
+- exact reviewer 针对 `115929998e60d05f85efd690b4954f1ec2a7e017`、parent `fae69771f055e82fd22cffe3e0391d049a3842cb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 diff 仅包含纯 shared-rules extraction、facade imports和 append-only log，所有 moved helper唯一归属 `workerRecoveryFactsRules.ts`，taskFact与validateFactsDto共享同一 attempt invariant，原函数体和 fingerprint logic未改变，且依赖无环、公共 facade与 durable CAS scope保持不变。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-rules-verified`，指向上述 exact code commit；该 tag只闭合共享规则 owner结构切片，不证明 source/DTO validator、normalizer、canonical serializer或durable CAS已全部闭合。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
