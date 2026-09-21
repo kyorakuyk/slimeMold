@@ -49,8 +49,6 @@ import {
   clearWorkerRunRuntime,
   installWorkerRunRuntime,
 } from '../projectControl/workerRunRuntime';
-import { projectWorkerRunsOntoOrchestrations } from '../projectControl/workerRunOrchestrationProjection';
-import { restoreMissingWorkerRunsFromEvents } from '../projectControl/workerRunRehydration';
 import {
   createProjectControlStoreAdapter,
   normalizeProjectControlSnapshot,
@@ -63,10 +61,13 @@ import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
 import { resetNodeRuntime, resetEdgeRuntime } from './nodeRuntime';
 import {
-  assertProjectSaveGuard,
   createProjectSaveController,
   type ProjectSaveController,
 } from './projectSaveController';
+import {
+  createProjectSavePreparation,
+  type ProjectSavePreparation,
+} from './projectSavePreparation';
 import { createProjectDirtyController, type ProjectDirtyController } from './projectDirtyController';
 import { installProjectConfigAutosave } from './projectConfigAutosave';
 import { createProjectSaveAsController, type ProjectSaveAsController } from './projectSaveAsController';
@@ -1083,6 +1084,11 @@ export const useWorkflowStore = create<WorkflowState>()(
 // 加载/切换期间临时抑制自动脏检测，避免误标
 
 const projectSaveQueue = createProjectSaveQueue();
+const projectSavePreparation: ProjectSavePreparation = createProjectSavePreparation<WorkflowState>({
+  isTauri,
+  getState: (): WorkflowState => useWorkflowStore.getState(),
+  setState: (patch) => useWorkflowStore.setState(patch),
+});
 const projectSaveController: ProjectSaveController = createProjectSaveController<WorkflowState>({
   getState: (): WorkflowState => useWorkflowStore.getState(),
   setState: (patch) => useWorkflowStore.setState(patch),
@@ -1101,43 +1107,7 @@ const projectSaveController: ProjectSaveController = createProjectSaveController
     );
   },
   snapshot: projectSnapshot,
-  prepareForSave: async (guard) => {
-    let state = useWorkflowStore.getState();
-    assertProjectSaveGuard(state, guard);
-    // Never let a startup/recovery save erase a WorkerRun projection that is already
-    // durable in the event stream while the in-memory registry is still empty.
-    if (isTauri && state.projectId && state.projectPath && state.workerRuns.length === 0) {
-      const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-      const repository = new EventStreamRepository(
-        createTauriEventStoreAdapter(state.projectPath),
-        state.projectPath,
-      );
-      const parsed = await repository.readStream();
-      assertProjectSaveGuard(useWorkflowStore.getState(), guard);
-      if (parsed.status === 'needs-repair') {
-        throw new Error(
-          `Worker 事件流需要修复：第 ${parsed.corruption?.line ?? '?'} 行 ${parsed.corruption?.reason ?? ''}`,
-        );
-      }
-      const restored = restoreMissingWorkerRunsFromEvents({
-        projectId: state.projectId,
-        events: parsed.events,
-        taskGraphs: state.projectControl.taskGraphs ?? [],
-        existingRuns: state.workerRuns,
-      });
-      if (restored.issues.length > 0) {
-        throw new Error(`Worker Run 投影恢复被阻止：${restored.issues.map((item) => item.message).join('；')}`);
-      }
-      if (restored.restored) {
-        useWorkflowStore.setState({
-          workerRuns: restored.runs,
-          orchestrations: projectWorkerRunsOntoOrchestrations(state.orchestrations, restored.runs),
-        });
-        state = useWorkflowStore.getState();
-      }
-    }
-    assertProjectSaveGuard(state, guard);
-  },
+  prepareForSave: (guard) => projectSavePreparation.prepareForSave(guard),
 });
 const projectSaveAsController: ProjectSaveAsController = createProjectSaveAsController<WorkflowState>({
   isTauri,
