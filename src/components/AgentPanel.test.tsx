@@ -48,6 +48,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function resetWorkflowStore() {
+  localStorage.removeItem('slime-mold-workflow');
+  useWorkflowStore.setState({
+    projectId: 'project-1',
+    projectName: 'AgentPanel test project',
+    projectPath: null,
+    projectDirty: false,
+    lastSavedSnapshot: null,
+    agents: [{ ...baseAgent }],
+    globalAgents: [],
+    defaultAgentId: null,
+    roles: [],
+    agentRouteTable: {},
+    logs: [],
+  } as never);
+}
+
 describe('AgentPanel', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -56,15 +73,7 @@ describe('AgentPanel', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    useWorkflowStore.setState({
-      projectId: 'project-1',
-      agents: [{ ...baseAgent }],
-      globalAgents: [],
-      defaultAgentId: null,
-      roles: [],
-      agentRouteTable: {},
-      logs: [],
-    } as never);
+    resetWorkflowStore();
     mocks.fetchOllamaModels.mockReset();
     mocks.fetchOllamaModels.mockResolvedValue([]);
   });
@@ -72,6 +81,7 @@ describe('AgentPanel', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    localStorage.removeItem('slime-mold-workflow');
   });
 
   it('writes an edited agent field through the real catalog action', async () => {
@@ -94,6 +104,7 @@ describe('AgentPanel', () => {
       id: 'agent-1',
       name: '更新后的模型',
     });
+    expect(container.textContent).toContain('更新后的模型');
   });
 
   it('surfaces Ollama model-pull failures and clears loading state', async () => {
