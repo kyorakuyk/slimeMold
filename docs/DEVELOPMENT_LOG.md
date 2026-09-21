@@ -5071,3 +5071,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 移除旧 barrel 中的重复实现，未改变运行历史、日志、checkpoint、ProjectFile schema 或执行语义。
 - 相关本地 checkpoint：`a765171` / `checkpoint/types-execution-contract-split-start`、`19023bc` / `checkpoint/types-execution-contract-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `5 test files / 43 tests`；完整 Node `181 test files / 1304 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.349 unverified：extract capability type contract
+
+- 将 `CapabilityLevel` 从 `src/types.ts` 迁移到 `src/types/capability.ts`，为节点权限分级与插件 sandbox RPC 提供独立 owner。
+- `engine/executorHelpers`、`nodes/sdk`、plugin loader、sandbox manager/protocol 改为直接依赖 capability owner；`src/types.ts` 保留兼容 re-export，未改变 capability whitelist、节点权限裁剪或插件执行语义。
+- 新增 capability contract test；本轮只移动类型事实与 import 边界，没有放宽任何能力等级或宿主拦截规则。
+- 相关本地 checkpoint：`5e59bef` / `checkpoint/types-capability-contract-split-unverified`；另保留 `4ea1dcc` / `checkpoint/types-plugin-contract-split-start` 作为插件边界探索锚点；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 47 tests`；完整 Node `182 test files / 1305 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
