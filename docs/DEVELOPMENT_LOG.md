@@ -5032,3 +5032,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 guard regression，模拟 adapter await 期间项目切换，确认实际写入不会发生；保留 ProjectFile persistence 原有无 callback 时的调用形状，避免无关测试/调用方变化。
 - 相关本地 checkpoint：`7a5bb46` / `checkpoint/workflow-save-guard-compat-repair-start`、`4109bee` / `checkpoint/workflow-save-guard-compat-repair-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `5 test files / 16 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.344 unverified：migrate production callers to direct type owners
+
+- 将 Agent/API/LLM/Cost contracts 的生产与测试调用方从兼容 `src/types.ts` 迁移到 `src/types/agent.ts`；将 Artifact/Pipeline/Orchestration/Draft contracts 的调用方迁移到 `src/types/orchestration.ts`。
+- 涉及 engine、IO、nodes、orchestrator、plugins、ProjectControl、store 及对应 direct tests；当前静态扫描确认 moved Agent 与 orchestration symbols 从 compatibility `types` path 的残留计数均为 `0`。
+- `src/types.ts` 仍保留兼容 re-export，但本轮不再有新/现有内部调用方依赖它承载这两类已迁移事实；未改变运行时、ProjectFile、DomainEvent、WorkerQueue 或 Evidence/Acceptance/Receipt 结构。
+- 相关本地 checkpoint：`086c7d7` / `checkpoint/direct-type-owner-import-migration-start`、`54f7ca5` / `checkpoint/direct-type-owner-import-migration-unverified`；均为本地回退锚点，未 push。
+- 验证：owner-focused `18 test files / 182 tests`；supplementary sandbox/type-owner `5 test files / 87 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
