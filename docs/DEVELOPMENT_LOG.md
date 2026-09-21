@@ -4915,3 +4915,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 针对 `f81e0abdbc5734de72a67331bd31d3eb21d158af`、parent `0ad8f23b3a63f72102d99c96c4d1111425a30723` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 `normalizeFactsDto` body及全部 path/order/inputHash/receipt-file transform未改变，新模块仅依赖 types/rules、无循环或 host/store/runtime依赖，fingerprint facade、validation、builder和 durable CAS scope不变。
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-normalization-verified`，指向上述 exact code commit；该 tag只闭合 normalization owner结构切片，不证明 source/DTO validator、canonical serializer或durable CAS已全部闭合。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.329 unverified：extract Worker recovery canonical JSON owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsCanonicalJson.ts`，集中拥有 deterministic JSON value serialization、undefined/array rejection、safe-integer number encoding和UTF-8 object-key ordering；facade 保留 `canonicalizeWorkerRecoveryFactsV1` public API，仅委托 serializer。
+- 本轮未改变 DTO validator、normalization、source builder、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新模块只依赖 `workerRecoveryFactsRules.ts`，保持纯内存、无 host/store/runtime依赖。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
