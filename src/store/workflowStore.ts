@@ -97,10 +97,6 @@ import {
   buildCloseProjectState,
 } from './workflowLifecycleState';
 import {
-  buildRemoveWorkflowState,
-  buildRenameWorkflowState,
-} from './workflowRegistryState';
-import {
   buildRemoveAgentState,
   buildRemoveRoleState,
   buildSetDefaultAgentState,
@@ -138,6 +134,15 @@ export const useWorkflowStore = create<WorkflowState>()(
         getState: () => get(),
         setState: (patch) => set(patch),
         setDirtySuppressed: (suppressed) => projectDirtyController.setSuppressed(suppressed),
+        cleanupWorkflow: (workflowId) => {
+          import('@tauri-apps/api/path')
+            .then(async (p) => {
+              const base = `${await p.appDataDir()}/slime-mold/${workflowId}`;
+              const fs = await import('@tauri-apps/plugin-fs');
+              await fs.remove(base, { recursive: true });
+            })
+            .catch(() => {});
+        },
         resolveStandalonePath: async (workspaceDir) => workspaceDir ?? (await defaultStandaloneDir()),
         now: () => Date.now(),
         nowIso: () => new Date().toISOString(),
@@ -730,43 +735,6 @@ export const useWorkflowStore = create<WorkflowState>()(
       ...registryActions,
 
       ...projectDataCommands,
-
-      renameWorkflow: (name) => {
-        const s = get();
-        set({ workflowName: name });
-        const renamed = buildRenameWorkflowState({
-          workflows: s.workflows,
-          activeWfId: s.activeWfId,
-          name,
-        });
-        if (renamed) {
-          set({ workflows: { ...s.workflows, [s.activeWfId]: renamed } });
-        }
-      },
-
-      removeWorkflow: (id) => {
-        const s = get();
-        const result = buildRemoveWorkflowState({
-          workflows: s.workflows,
-          activeWfId: s.activeWfId,
-          id,
-        });
-        // 未指定工作区时保留原有 AppData 清理策略；用户工作区不动。
-        if (result.cleanupWorkflowId !== null) {
-          import('@tauri-apps/api/path')
-            .then(async (p) => {
-              const base = `${await p.appDataDir()}/slime-mold/${result.cleanupWorkflowId}`;
-              const fs = await import('@tauri-apps/plugin-fs');
-              await fs.remove(base, { recursive: true });
-            })
-            .catch(() => {});
-        }
-        if (result.activation) {
-          set({ workflows: result.workflows, ...result.activation });
-        } else {
-          set({ workflows: result.workflows });
-        }
-      },
 
       ...projectLifecycleActions,
 

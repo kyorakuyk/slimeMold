@@ -9,6 +9,8 @@ import type { WorkflowFile } from '../types';
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
+  buildRemoveWorkflowState,
+  buildRenameWorkflowState,
   buildSwitchWorkflowState,
   type WorkflowSwitchView,
 } from './workflowRegistryState';
@@ -24,6 +26,7 @@ export interface WorkflowRegistryActionDeps {
   getState: () => WorkflowRegistryActionState;
   setState: (patch: Partial<WorkflowRegistryActionState>) => void;
   setDirtySuppressed: (suppressed: boolean) => void;
+  cleanupWorkflow: (workflowId: string) => void;
   resolveStandalonePath: (workspaceDir?: string | null) => Promise<string | undefined>;
   now: () => number;
   nowIso: () => string;
@@ -34,6 +37,8 @@ export interface WorkflowRegistryActions {
   switchWorkflow: (id: string) => void;
   newWorkflowInProject: (workspaceDir?: string | null) => Promise<void>;
   registerWorkflow: (workflow: WorkflowFile, opts?: { activate?: boolean; name?: string }) => string;
+  renameWorkflow: (name: string) => void;
+  removeWorkflow: (id: string) => void;
 }
 
 export function createWorkflowRegistryActions(
@@ -106,5 +111,33 @@ export function createWorkflowRegistryActions(
     return id;
   };
 
-  return { switchWorkflow, newWorkflowInProject, registerWorkflow };
+  const renameWorkflow = (name: string): void => {
+    const state = deps.getState();
+    deps.setState({ workflowName: name });
+    const renamed = buildRenameWorkflowState({
+      workflows: state.workflows,
+      activeWfId: state.activeWfId,
+      name,
+    });
+    if (renamed) {
+      deps.setState({ workflows: { ...state.workflows, [state.activeWfId]: renamed } });
+    }
+  };
+
+  const removeWorkflow = (id: string): void => {
+    const state = deps.getState();
+    const result = buildRemoveWorkflowState({
+      workflows: state.workflows,
+      activeWfId: state.activeWfId,
+      id,
+    });
+    if (result.cleanupWorkflowId !== null) deps.cleanupWorkflow(result.cleanupWorkflowId);
+    if (result.activation) {
+      deps.setState({ workflows: result.workflows, ...result.activation });
+    } else {
+      deps.setState({ workflows: result.workflows });
+    }
+  };
+
+  return { switchWorkflow, newWorkflowInProject, registerWorkflow, renameWorkflow, removeWorkflow };
 }

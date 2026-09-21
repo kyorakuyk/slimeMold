@@ -20,17 +20,19 @@ const harness = (initial: Partial<WorkflowRegistryActionState> = {}) => {
     ...initial,
   } as WorkflowRegistryActionState;
   const setSuppressed = vi.fn();
+  const cleanupWorkflow = vi.fn();
   const resolveStandalonePath = vi.fn(async (path?: string | null) => path ?? 'C:/default');
   const actions = createWorkflowRegistryActions({
     getState: () => state,
     setState: (patch) => Object.assign(state, patch),
     setDirtySuppressed: setSuppressed,
+    cleanupWorkflow,
     resolveStandalonePath,
     now: () => 1000,
     nowIso: () => '2026-01-01T00:00:00.000Z',
     createRegisteredWorkflowId: () => 'wf-registered',
   });
-  return { state, actions, setSuppressed, resolveStandalonePath };
+  return { state, actions, setSuppressed, resolveStandalonePath, cleanupWorkflow };
 };
 
 describe('workflowRegistryActions', () => {
@@ -62,6 +64,7 @@ describe('workflowRegistryActions', () => {
       getState: () => state.state,
       setState: (patch) => Object.assign(state.state, patch),
       setDirtySuppressed: state.setSuppressed,
+      cleanupWorkflow: vi.fn(),
       resolveStandalonePath,
       now,
       nowIso,
@@ -80,5 +83,29 @@ describe('workflowRegistryActions', () => {
     expect(id).toBe('wf-registered');
     expect(state.workflows['wf-registered']?.name).toBe('Registered');
     expect(state.activeWfId).toBe('wf-active');
+  });
+
+  it('renames the active workflow through the registry owner', () => {
+    const { state, actions } = harness({
+      activeWfId: 'wf-1',
+      workflows: { 'wf-1': { name: 'Before', nodes: [], edges: [], agents: [], roles: [] } } as never,
+    });
+    actions.renameWorkflow('After');
+    expect(state.workflowName).toBe('After');
+    expect(state.workflows['wf-1']?.name).toBe('After');
+  });
+
+  it('removes an active workflow through the registry owner and delegates cleanup', () => {
+    const { state, actions, cleanupWorkflow } = harness({
+      activeWfId: 'wf-1',
+      workflows: {
+        'wf-1': { name: 'Before', nodes: [], edges: [], agents: [], roles: [] },
+        'wf-2': { name: 'After', nodes: [node('b')], edges: [], agents: [], roles: [] },
+      } as never,
+    });
+    actions.removeWorkflow('wf-1');
+    expect(cleanupWorkflow).toHaveBeenCalledWith('wf-1');
+    expect(state.activeWfId).toBe('wf-2');
+    expect(state.workflowName).toBe('After');
   });
 });
