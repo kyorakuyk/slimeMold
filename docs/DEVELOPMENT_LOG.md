@@ -4863,3 +4863,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 direct contract tests：多 task/effect insertion order稳定、attempt/effect identity变化改变 fingerprint、时间 metadata不改变结果、cross-task/legacy/malformed provenance、invalid state/version/number、assignment/receipt/path/ref/reference fail-closed。
 - 本轮不改变任何 WorkerRun/ProjectFile/DomainEvent/SideEffect schema，不接 durable CAS；Gate A 通过不等于 recovery decision CAS 闭合。
 - 验证：focused `1 file / 4 tests`；完整 Node `170 test files / 1274 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前修复 snapshot仍标记 `unverified`，等待下一次 exact Gate A re-review。
+
+### 7.321 unverified：close direct recovery facts status and failed-task invariants
+
+- 第十次 exact review 对 `66c8c8a55b41460734bea78402d5e33262a7299f` fail-closed：review 请求中的 parent hash 不存在，实际 parent 为 `ccbb3f926b4455544ff0500e9302896980ed65af`；同时确认 direct DTO 允许 `running`、`waiting-feedback`、`succeeded` 的 `attempt: 0` 且缺少当前 lineage，并允许 `failedTaskIds` 与 failed/running task 集合不一致。
+- 新增 direct DTO RED 回归：三类 status 的 zero-attempt/no-lineage payload，以及 ghost/mismatched `failedTaskIds`；先观察到 4 个失败，再实现修复。
+- 抽出共享 `assertTaskAttemptInvariant`，使 source builder 与 direct DTO validator 对 `running`、`waiting-feedback`、`succeeded`、`failed` 统一要求 `attempt >= 1`；direct DTO validator 现在从 task status 派生 expected failed/running IDs，并与 canonical sorted `failedTaskIds` 做逐项等价比较。
+- 本轮未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；当前 snapshot仍为 `unverified`，第十次 reviewer verdict因 parent 参数错误与上述逻辑缺陷不能继承。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。

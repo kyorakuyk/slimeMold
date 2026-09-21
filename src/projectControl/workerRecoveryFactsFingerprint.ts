@@ -191,6 +191,12 @@ function sortedStrings(values: readonly string[]): string[] {
   return [...normalized].sort(compareUtf8);
 }
 
+function assertTaskAttemptInvariant(status: WorkerQueueTask['status'], attempt: number, field: string): void {
+  if (['running', 'waiting-feedback', 'succeeded', 'failed'].includes(status) && attempt < 1) {
+    throw new Error(`${field} 的 attempt 无效：${attempt}`);
+  }
+}
+
 function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV1 {
   const taskId = requiredText(task.taskId, 'task id');
   const taskStatuses = new Set(['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled']);
@@ -205,6 +211,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
   }
   if (!taskStatuses.has(task.status)) throw new Error(`task status 无效：${task.status}`);
   safeInteger(task.attempt, 'attempt');
+  assertTaskAttemptInvariant(task.status, task.attempt, `Worker Task ${taskId}`);
 
   if (task.pendingAttempt !== undefined) {
     safeInteger(task.pendingAttempt, 'pendingAttempt', 1);
@@ -230,7 +237,6 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
     && (task.cleanupStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) {
     throw new Error(`cleaned worktree 缺少 cleanup receipt：${taskId}`);
   }
-  if (task.status === 'running' && task.attempt < 1) throw new Error(`running task attempt 无效：${taskId}`);
   if (task.worktreePath !== undefined) canonicalPath(task.worktreePath, 'worktree path');
   if (task.branch !== undefined) canonicalRef(task.branch, 'branch');
   if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'baseRevision');
@@ -602,6 +608,7 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     taskIds.add(task.taskId);
     safeInteger(task.attempt, 'facts task attempt');
     if (!new Set(['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled']).has(task.status)) throw new Error('facts task status 无效');
+    assertTaskAttemptInvariant(task.status, task.attempt, `facts task ${task.taskId}`);
     if (task.cleanupStatus !== undefined && task.cleanupStatus !== 'cleaned') throw new Error('facts cleanupStatus 无效');
     if (task.worktreeStatus !== undefined && !new Set(['created', 'cleaned', 'orphaned', 'registration-pending']).has(task.worktreeStatus)) throw new Error('facts worktreeStatus 无效');
     if (task.acceptanceStageId !== undefined) stringValue(task.acceptanceStageId, 'facts task acceptanceStageId');
@@ -679,7 +686,15 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   if (facts.taskGraph.id !== facts.run.taskGraphId || facts.taskGraph.graphVersion !== facts.run.taskGraphVersion) throw new Error('facts run/graph identity 不一致');
   if (graphIds.size === 0 || graphIds.size !== runTaskIds.size || [...graphIds].some((id) => !runTaskIds.has(id))) throw new Error('facts run/graph task set 不一致');
   if (!Array.isArray(facts.failedTaskIds) || !Array.isArray(facts.recoverableEffects)) throw new Error('facts recovery arrays 无效');
-  sortedStrings(facts.failedTaskIds);
+  const expectedFailedTaskIds = facts.run.tasks
+    .filter((task) => task.status === 'failed' || task.status === 'running')
+    .map((task) => task.taskId)
+    .sort(compareUtf8);
+  const actualFailedTaskIds = sortedStrings(facts.failedTaskIds);
+  if (actualFailedTaskIds.length !== expectedFailedTaskIds.length
+    || actualFailedTaskIds.some((taskId, index) => taskId !== expectedFailedTaskIds[index])) {
+    throw new Error('facts failedTaskIds 与 task status 不一致');
+  }
   const effectIds = new Set<string>();
   for (const effect of facts.recoverableEffects) {
     const record = assertObject(effect, 'facts effect');

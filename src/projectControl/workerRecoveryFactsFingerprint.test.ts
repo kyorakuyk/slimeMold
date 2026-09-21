@@ -188,6 +188,39 @@ describe('worker recovery facts fingerprint v1', () => {
     }))).toThrow();
   });
 
+  it.each(['running', 'waiting-feedback', 'succeeded'] as const)(
+    'rejects direct DTO %s task with attempt zero and no current lineage',
+    (status) => {
+      const facts = buildWorkerRecoveryFactsV1(input());
+      const task = facts.run.tasks[0];
+      const malformed = {
+        ...facts,
+        run: {
+          ...facts.run,
+          tasks: [{
+            ...task,
+            status,
+            attempt: 0,
+            taskExecutionId: undefined,
+            currentAttemptId: undefined,
+            ...(status === 'waiting-feedback' ? { feedbackId: 'feedback-1' } : {}),
+          }],
+        },
+        failedTaskIds: status === 'running' ? [task.taskId] : [],
+        recoverableEffects: [],
+      };
+      expect(() => canonicalizeWorkerRecoveryFactsV1(malformed)).toThrow();
+    },
+  );
+
+  it('rejects direct DTO failedTaskIds that do not equal failed and running tasks', () => {
+    const facts = buildWorkerRecoveryFactsV1(input());
+    expect(() => canonicalizeWorkerRecoveryFactsV1({
+      ...facts,
+      failedTaskIds: ['ghost-task'],
+    })).toThrow();
+  });
+
   it('rejects missing lineage, invalid receipts, duplicate terminal ids, paths, and graph references', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
       run: run({
