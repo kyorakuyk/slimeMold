@@ -51,8 +51,11 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
     const sign = deps.side === 'bottom' ? -1 : 1;
     const pointerTarget = (event.currentTarget ?? null) as PointerCaptureTarget | null;
     const pointerId = event.pointerId;
+    const acceptsPointer = (pointerEvent: PointerEvent): boolean =>
+      pointerId === undefined || pointerEvent.pointerId === undefined || pointerEvent.pointerId === pointerId;
 
     const onMove = (moveEvent: PointerEvent) => {
+      if (!acceptsPointer(moveEvent)) return;
       const currentPos = deps.axis === 'x' ? moveEvent.clientX : moveEvent.clientY;
       const delta = currentPos - startPos;
       const min = deps.side === 'bottom' ? 120 : 160;
@@ -63,13 +66,14 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
     };
 
     let session: ActiveResizeSession;
+    let onEnd: (endEvent: PointerEvent) => void;
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       windowRef.removeEventListener('pointermove', onMove);
-      windowRef.removeEventListener('pointerup', cleanup);
-      windowRef.removeEventListener('pointercancel', cleanup);
+      windowRef.removeEventListener('pointerup', onEnd);
+      windowRef.removeEventListener('pointercancel', onEnd);
       windowRef.removeEventListener('blur', cleanup);
       windowRef.removeEventListener('pagehide', cleanup);
       documentRef.removeEventListener('visibilitychange', cleanup);
@@ -87,14 +91,18 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
         documentRef.body.style.userSelect = previousUserSelect;
       }
     };
+    onEnd = (endEvent) => {
+      if (!acceptsPointer(endEvent)) return;
+      cleanup();
+    };
     session = { cleanup, cursor: previousCursor, userSelect: previousUserSelect };
     activeResizeByWindow.set(windowRef, session);
 
     documentRef.body.style.cursor = deps.axis === 'x' ? 'col-resize' : 'row-resize';
     documentRef.body.style.userSelect = 'none';
     windowRef.addEventListener('pointermove', onMove);
-    windowRef.addEventListener('pointerup', cleanup);
-    windowRef.addEventListener('pointercancel', cleanup);
+    windowRef.addEventListener('pointerup', onEnd);
+    windowRef.addEventListener('pointercancel', onEnd);
     windowRef.addEventListener('blur', cleanup);
     windowRef.addEventListener('pagehide', cleanup);
     documentRef.addEventListener('visibilitychange', cleanup);

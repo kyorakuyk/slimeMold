@@ -145,4 +145,40 @@ describe('panel resize adapter', () => {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   });
+
+  it('ignores stale pointer events after a replacement session', () => {
+    const sizes = { first: 200, second: 300 };
+    const first = installPanelResize({
+      axis: 'x',
+      side: 'left',
+      initial: sizes.first,
+      setLeftWidth: (value) => { sizes.first = value; },
+      setRightWidth: () => undefined,
+      setPanelHeight: () => undefined,
+    });
+    const second = installPanelResize({
+      axis: 'x',
+      side: 'right',
+      initial: sizes.second,
+      setLeftWidth: () => undefined,
+      setRightWidth: (value) => { sizes.second = value; },
+      setPanelHeight: () => undefined,
+    });
+    first({ preventDefault: () => undefined, clientX: 200, clientY: 0, pointerId: 1 });
+    second({ preventDefault: () => undefined, clientX: 300, clientY: 0, pointerId: 2 });
+
+    const dispatchPointer = (type: string, pointerId: number, clientX: number) => {
+      const event = new Event(type) as PointerEvent;
+      Object.defineProperties(event, { clientX: { value: clientX }, clientY: { value: 0 }, pointerId: { value: pointerId } });
+      window.dispatchEvent(event);
+    };
+
+    dispatchPointer('pointermove', 1, 360);
+    expect(sizes.second).toBe(300);
+    dispatchPointer('pointerup', 1, 360);
+    dispatchPointer('pointermove', 2, 340);
+    expect(sizes.second).toBe(340);
+    dispatchPointer('pointerup', 2, 340);
+    expect(document.body.style.cursor).toBe('');
+  });
 });
