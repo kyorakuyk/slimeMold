@@ -56,6 +56,7 @@ import { createWorkerRunTransitionPersistence } from './projectControl/workerRun
 import { createWorkerRunHostInfrastructure } from './projectControl/workerRunHostInfrastructure';
 import { admitWorkerRunSession } from './projectControl/workerRunSessionAdmission';
 import { createWorkerRunRecoveryAuditController } from './projectControl/workerRunRecoveryAuditController';
+import { restoreWorkerWorktrees as restoreWorkerWorktreesFromState } from './projectControl/workerWorktreeRestore';
 
 registerBuiltins();
 
@@ -222,35 +223,16 @@ export default function App() {
   );
   const refreshWorkerCleanupProposals = workerCleanupProposalController.refresh;
 
-  const restoreWorkerWorktrees = async (
+  const restoreWorkerWorktrees = (
     session: NonNullable<Awaited<ReturnType<typeof ensureGuiDevSession>>>,
     runs: readonly WorkerRunQueueState[],
     signal?: AbortSignal,
-  ): Promise<void> => {
-    for (const run of runs) {
-      for (const task of Object.values(run.tasks)) {
-        if (signal?.aborted) return;
-        if (task.cleanupStatus === 'cleaned') continue;
-        if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) continue;
-        const restored = await session.manager.restore({
-          id: task.worktreeId,
-          path: task.worktreePath,
-          branch: task.branch,
-          baseRevision: task.baseRevision,
-          branchRevision: task.branchRevision,
-          createdAt: task.updatedAt,
-          status: task.worktreeStatus ?? 'created',
-        }, { signal });
-        if (signal?.aborted) return;
-        if (!restored) {
-          useWorkflowStore.getState().addLog(
-            'warn',
-            `Worker worktree 未能从 git 恢复登记：${task.taskId}`,
-          );
-        }
-      }
-    }
-  };
+  ): Promise<void> => restoreWorkerWorktreesFromState({
+    session,
+    runs,
+    signal,
+    warn: (message) => useWorkflowStore.getState().addLog('warn', message),
+  });
 
   const workerRunRecoveryAuditController = createWorkerRunRecoveryAuditController({
     isTauri,
