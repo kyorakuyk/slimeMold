@@ -16,7 +16,7 @@ import { loginCodex, codexLoginStatus, logoutCodex } from '../agents/providers/c
 import { saveCredential, removeCredential, loadCredential, defaultCredentialKey, listVaults, loadVaultKey } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
 import { useViewStore } from '../store/viewStore';
-import type { AgentConfig, AntigravityMode, ApiVault, Protocol, RoleTemplate } from '../types';
+import type { AgentConfig, AntigravityMode, ApiVault, Protocol, RoleTemplate } from '../types/agent';
 import { useT } from '../i18n/useT';
 
 interface AgentPanelProps {

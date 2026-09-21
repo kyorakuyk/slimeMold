@@ -12,7 +12,8 @@
  * 通过 opts.events 把事件推给调用方（节点接 ctx.setPartial + ctx.logger，审查 Agent 接日志）。
  */
 
-import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart, ExecContext } from '../types';
+import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart } from '../types/agent';
+import type { ExecContext } from '../types';
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';

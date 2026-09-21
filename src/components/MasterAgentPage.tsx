@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useWorkflowStore } from '../store/workflowStore';
 import { stopWorkflow } from '../engine/executor';
-import type { CostRecord, NodeUsageStat } from '../types';
+import type { CostRecord } from '../types/agent';
+import type { NodeUsageStat } from '../types';
 import {
   Activity,
   ChevronDown,

@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../types/agent';
 import { chatWithAgent } from './agentManager';
 import { useViewStore } from '../store/viewStore';
 import { loadCredential, loadEndpointKey, loadVaultKey } from './credentialStore';

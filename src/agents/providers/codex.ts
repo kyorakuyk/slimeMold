@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec } from '../../types/agent';
 import { isTauri } from '../../platform/env';
 
 interface CodexAuthStatus {

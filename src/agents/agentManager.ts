@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLMToolSpec } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLMToolSpec } from '../types/agent';
 import { chatOpenAI } from './providers/openai';
 import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';

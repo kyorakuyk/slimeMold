@@ -9,7 +9,8 @@
  *
  * 返回决策 + 路由日志文案（供调用方 emit/写日志），不依赖 executeNode 可变闭包。
  */
-import type { AgentConfig, AgentRouteTable } from '../types';
+import type { AgentConfig } from '../types/agent';
+import type { AgentRouteTable } from '../types';
 import { resolveAgentScored, type RouterDecision } from './agentRouter';
 import { successRateByAgent } from './experienceStore';
 

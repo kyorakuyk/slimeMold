@@ -33,7 +33,7 @@ import {
   removeEndpoint,
 } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
-import type { ApiVault, Protocol } from '../types';
+import type { ApiVault, Protocol } from '../types/agent';
 import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
 import { RouteTableEditor } from './RouteTableEditor';

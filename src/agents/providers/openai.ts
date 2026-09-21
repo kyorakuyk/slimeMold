@@ -1,5 +1,5 @@
 import { httpFetch } from '../../platform/env';
-import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec, ContentPart } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec, ContentPart } from '../../types/agent';
 import { forEachSSEData } from '../streamSSE';
 
 /**

@@ -1,4 +1,4 @@
-import type { AntigravityMode } from '../../types';
+import type { AntigravityMode } from '../../types/agent';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from '../../platform/env';
 
