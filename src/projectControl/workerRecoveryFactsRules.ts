@@ -1,5 +1,15 @@
 import type { WorkerQueueTask } from '../domain/workerQueue';
 
+export function assertObject(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${field} 必须是对象`);
+  return value as Record<string, unknown>;
+}
+
+export function assertKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const allowedKeys = new Set(allowed);
+  for (const key of Object.keys(value)) if (!allowedKeys.has(key)) throw new Error(`${field} 包含未知字段：${key}`);
+}
+
 export function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} 不能为空`);

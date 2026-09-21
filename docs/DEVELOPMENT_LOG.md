@@ -4927,3 +4927,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 针对 `9305aa4c8658282bd3d0bbcee0b06682a5d28514`、parent `6dddd3d48f7cad1a0827fdf30f1ac4a95a14cbb1` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 canonical serializer 行为不变、唯一 owner、rules-only dependency、public facade兼容，且 validator、normalization、builder、hash和 durable CAS scope均未改变。
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-canonical-json-verified`，指向上述 exact code commit；该 tag只闭合 canonical JSON owner结构切片，不证明 source/DTO validator或 durable CAS已完成。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.331 unverified：extract Worker recovery direct DTO validator owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsDtoValidation.ts`，集中拥有 direct DTO 的 allowed-key、scalar、status/attempt、lineage、assignment/worktree、TaskGraph membership/dependency、failedTaskIds derivation和 recoverable-effect provenance validation。
+- `assertObject`/`assertKeys` 提升到 shared rules owner，source receipt validation与direct DTO validation共享同一 unknown-key/object guard；fingerprint facade 仅保留 source builder、public canonicalize/hash facade，并继续兼容 `canonicalizeWorkerRecoveryFactsV1`。
+- 本轮未改变 source builder、normalization、canonical JSON、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新 DTO validator 仅依赖 domain execution、types和rules，保持纯内存边界。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
