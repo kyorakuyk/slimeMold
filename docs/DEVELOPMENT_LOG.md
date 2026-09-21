@@ -5055,3 +5055,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 保留 store、operation guard、recovery single-flight 和 controller wiring，不改变 Worker/recovery/cleanup 行为；本轮只收口对象生命周期和 composition 可读性。
 - 相关本地 checkpoint：`333b4ac` / `checkpoint/app-runtime-lifetime-seam-start`、`6992e95` / `checkpoint/app-runtime-lifetime-seam-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `5 test files / 26 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.33 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.347 unverified：share save preparation with Save As
+
+- `projectSaveAsController` 新增可选 `prepareForSave` port；Save As 在目录选择完成后、构建 ProjectFile 前复用 Worker event-stream preparation，避免 Save 与 Save As 的恢复前置条件分叉。
+- preparation 失败时 Save As fail-closed，记录既有 warning 文案，不构建或写入项目；prepared state 用于后续 ProjectFile 和 active workflow metadata。
+- 更新 Save As direct tests、workflowStore Save As integration test 和 shared preparation wiring；未改变普通 Save、ProjectFile schema 或 event semantics。
+- 相关本地 checkpoint：`cf09ab8` / `checkpoint/shared-save-preparation-wiring-start`、`5798c14` / `checkpoint/shared-save-preparation-wiring-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `4 test files / 17 tests`；完整 Node `180 test files / 1303 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
