@@ -1,5 +1,5 @@
 import type { SideEffectRecord } from '../domain/contracts';
-import { assertTaskExecutionLineage, assertTaskExecutionId, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage, assertTaskExecutionId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph, ProjectTask } from './types';
 
@@ -80,6 +80,7 @@ export interface WorkerRecoveryFactsV1 {
   schema: WorkerRecoveryFactsSchema;
   projectId: string;
   run: {
+    version: 1;
     runId: string;
     orchestrationId: string | null;
     taskGraphId: string;
@@ -88,6 +89,7 @@ export interface WorkerRecoveryFactsV1 {
     tasks: WorkerRecoveryTaskFactV1[];
   };
   taskGraph: {
+    version: 1;
     id: string;
     graphVersion: number;
     sessionId: string;
@@ -148,15 +150,27 @@ function comparableWorkerPath(value: string): string {
 }
 function canonicalRef(value: string, field: string): string {
   const text = requiredText(value, field);
-  if (/[\\\s]/.test(text) || text.includes('..') || text.includes('//') || text.startsWith('/') || text.endsWith('/')) {
-    throw new Error(`${field} 不是 canonical ref`);
+  const components = text.split('/');
+  if (!/^[A-Za-z0-9._/-]+$/.test(text)
+    || text.includes('..')
+    || text.includes('@{')
+    || text.startsWith('/')
+    || text.endsWith('/')
+    || components.some((component) => !component || component.startsWith('.') || component.endsWith('.') || component.endsWith('.lock'))) {
+    throw new Error(`${field} 不是 canonical Git ref`);
   }
+  return text;
+}
+
+function canonicalTimestamp(value: string, field: string): string {
+  const text = requiredText(value, field);
+  if (new Date(text).toISOString() !== text) throw new Error(`${field} 不是 canonical timestamp`);
   return text;
 }
 
 function canonicalRevision(value: string, field: string): string {
   const text = requiredText(value, field);
-  if (!/^[0-9a-f]{7,64}$/i.test(text)) throw new Error(`${field} 不是 canonical revision`);
+  if (!/^[0-9a-f]{40}$/.test(text)) throw new Error(`${field} 不是 canonical revision`);
   return text;
 }
 
@@ -197,9 +211,14 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
   if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) {
     throw new Error(`WorkerTask assignment 不完整：${taskId}`);
   }
-  if (task.worktreeStatus === 'created' && assignmentCount !== assignmentFields.length) {
-    throw new Error(`created worktree 缺少 assignment：${taskId}`);
+  if (['created', 'orphaned', 'registration-pending'].includes(task.worktreeStatus ?? '')
+    && (assignmentCount !== assignmentFields.length || task.branchRevision === undefined)) {
+    throw new Error(`assigned worktree state 缺少完整 provenance：${taskId}`);
   }
+  if (task.cleanupStatus === 'cleaned' && (task.worktreeStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) {
+    throw new Error(`cleanupStatus 与 worktree/receipt 不一致：${taskId}`);
+  }
+  if (task.status === 'running' && task.attempt < 1) throw new Error(`running task attempt 无效：${taskId}`);
   if (task.worktreePath !== undefined) canonicalPath(task.worktreePath, 'worktree path');
   if (task.branch !== undefined) canonicalRef(task.branch, 'branch');
   if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'baseRevision');
@@ -224,6 +243,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
       attempt: task.attempt,
     });
   }
+  canonicalTimestamp(task.updatedAt, 'WorkerTask updatedAt');
   return {
     taskId,
     ...(task.acceptanceStageId === undefined ? {} : { acceptanceStageId: requiredText(task.acceptanceStageId, 'acceptance stage id') }),
@@ -255,6 +275,8 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
   if (task.version !== 1) throw new Error(`task definition version 不受支持：${task.version}`);
   const taskStatuses = new Set(['proposed', 'approved', 'queued', 'in_progress', 'review', 'blocked', 'done', 'cancelled']);
   if (!taskStatuses.has(task.status)) throw new Error(`ProjectTask status 无效：${task.status}`);
+  canonicalTimestamp(task.createdAt, 'ProjectTask createdAt');
+  canonicalTimestamp(task.updatedAt, 'ProjectTask updatedAt');
   const scope = task.scope.map((path) => comparableWorkerPath(canonicalPath(path, 'task scope path'))).sort(compareUtf8);
   const dependsOn = sortedStrings(task.dependsOn);
   const acceptanceCriteria = uniqueStringsPreserveOrder(task.acceptanceCriteria, 'acceptance criterion');
@@ -278,13 +300,14 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
 
 function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerRecoveryEffectFactV1['receipt'] {
   if (typeof receipt !== 'object' || receipt === null) throw new Error('receipt 必须是对象');
+  assertKeys(receipt as unknown as Record<string, unknown>, ['receiptId', 'observedAt', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'files', 'error'], 'receipt');
   if (receipt.outcome !== undefined && receipt.outcome !== 'succeeded' && receipt.outcome !== 'failed') {
     throw new Error(`receipt outcome 无效：${receipt.outcome}`);
   }
   if (receipt.evidenceIds !== undefined && !Array.isArray(receipt.evidenceIds)) throw new Error('receipt evidenceIds 必须是数组');
   if (receipt.files !== undefined && !Array.isArray(receipt.files)) throw new Error('receipt files 必须是数组');
   requiredText(receipt.receiptId, 'receipt id');
-  requiredText(receipt.observedAt, 'receipt observedAt');
+  canonicalTimestamp(receipt.observedAt, 'receipt observedAt');
   const evidenceIds = receipt.evidenceIds === undefined ? undefined : sortedStrings(receipt.evidenceIds);
   const files = receipt.files === undefined ? undefined : receipt.files
     .map((file) => ({ path: comparableWorkerPath(requiredText(file.path, 'receipt file path')), contentHash: requiredText(file.contentHash, 'receipt file hash') }))
@@ -304,6 +327,17 @@ function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerR
 }
 
 function validateSideEffectEnvelope(effect: SideEffectRecord): void {
+  const idempotencyKey = requiredText(effect.idempotencyKey ?? '', 'effect idempotency key');
+  const kind = requiredText(effect.kind ?? '', 'effect kind');
+  if (kind !== 'worker-execution' && kind !== 'worktree-cleanup') throw new Error(`effect kind 无效：${idempotencyKey}`);
+  requiredText(effect.target ?? '', 'effect target');
+  requiredText(effect.inputHash ?? '', 'effect inputHash');
+  const effectRunId = requiredText(effect.runId ?? '', 'effect run id');
+  const effectTaskId = requiredText(effect.taskId ?? '', 'effect task id');
+  const taskExecutionId = assertTaskExecutionId(requiredText(effect.taskExecutionId ?? '', 'effect task execution id'));
+  if (taskExecutionId !== createTaskExecutionId(effectRunId, effectTaskId)) throw new Error(`effect execution lineage 不一致：${idempotencyKey}`);
+  const parsedAttempt = parseAttemptId(requiredText(effect.attemptId ?? '', 'effect attempt id'));
+  if (parsedAttempt.taskExecutionId !== taskExecutionId) throw new Error(`effect attempt lineage 不一致：${idempotencyKey}`);
   const statuses = new Set(['planned', 'started', 'receipt', 'unknown']);
   const recoveries = new Set(['retry', 'skip', 'needs-user']);
   if (!statuses.has(effect.status)) throw new Error(`side effect status 无效：${effect.idempotencyKey}`);
@@ -314,7 +348,7 @@ function validateSideEffectEnvelope(effect: SideEffectRecord): void {
   if (effect.status === 'unknown') requiredText(effect.unknownReason ?? '', 'unknownReason');
   if (effect.unknownReason !== undefined) requiredText(effect.unknownReason, 'unknownReason');
   if (effect.status === 'receipt') {
-    if (effect.recovery !== 'skip' || !effect.receipt) throw new Error(`receipt effect receipt/recovery 不一致：${effect.idempotencyKey}`);
+    if (effect.recovery !== 'skip' || !effect.receipt || !effect.receipt.outcome) throw new Error(`receipt effect receipt/recovery/outcome 不一致：${effect.idempotencyKey}`);
     receiptFact(effect.receipt);
   } else if (effect.receipt !== undefined) {
     throw new Error(`非 receipt effect 不能携带 receipt：${effect.idempotencyKey}`);
@@ -424,6 +458,10 @@ function effectFact(
 export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): WorkerRecoveryFactsV1 {
   if (input.run.version !== 1) throw new Error(`Worker Run version 不受支持：${input.run.version}`);
   if (input.taskGraph.version !== 1) throw new Error(`TaskGraph version 不受支持：${input.taskGraph.version}`);
+  canonicalTimestamp(input.run.createdAt, 'WorkerRun createdAt');
+  canonicalTimestamp(input.run.updatedAt, 'WorkerRun updatedAt');
+  canonicalTimestamp(input.taskGraph.createdAt, 'TaskGraph createdAt');
+  canonicalTimestamp(input.taskGraph.updatedAt, 'TaskGraph updatedAt');
   const projectId = requiredText(input.projectId, 'project id');
   const runId = requiredText(input.run.runId, 'run id');
   const taskGraphId = requiredText(input.run.taskGraphId, 'taskGraph id');
@@ -483,6 +521,7 @@ export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): Wor
     schema: WORKER_RECOVERY_FACTS_SCHEMA,
     projectId,
     run: {
+      version: 1,
       runId,
       orchestrationId: input.run.orchestrationId ?? null,
       taskGraphId,
@@ -491,6 +530,7 @@ export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): Wor
       tasks,
     },
     taskGraph: {
+      version: 1,
       id: input.taskGraph.id,
       graphVersion: input.taskGraph.graphVersion,
       sessionId: input.taskGraph.sessionId,
@@ -507,6 +547,77 @@ export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): Wor
       .sort(compareUtf8),
     recoverableEffects,
   };
+}
+
+function assertObject(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${field} 必须是对象`);
+  return value as Record<string, unknown>;
+}
+
+function assertKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const allowedKeys = new Set(allowed);
+  for (const key of Object.keys(value)) if (!allowedKeys.has(key)) throw new Error(`${field} 包含未知字段：${key}`);
+}
+
+function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
+  const root = assertObject(facts, 'facts');
+  assertKeys(root, ['schema', 'projectId', 'run', 'taskGraph', 'failedTaskIds', 'recoverableEffects'], 'facts');
+  if (facts.schema !== WORKER_RECOVERY_FACTS_SCHEMA) throw new Error('Worker recovery facts schema 无效');
+  requiredText(facts.projectId, 'project id');
+  const run = assertObject(facts.run, 'facts.run');
+  assertKeys(run, ['version', 'runId', 'orchestrationId', 'taskGraphId', 'taskGraphVersion', 'status', 'tasks'], 'facts.run');
+  if (facts.run.version !== 1) throw new Error('facts.run version 无效');
+  requiredText(facts.run.runId, 'facts.run runId');
+  requiredText(facts.run.taskGraphId, 'facts.run taskGraphId');
+  safeInteger(facts.run.taskGraphVersion, 'facts.run taskGraphVersion');
+  if (!Array.isArray(facts.run.tasks)) throw new Error('facts.run tasks 必须是数组');
+  const taskIds = new Set<string>();
+  for (const task of facts.run.tasks) {
+    const record = assertObject(task, 'facts.run task');
+    assertKeys(record, ['taskId', 'acceptanceStageId', 'taskDefinitionVersion', 'taskExecutionId', 'status', 'attempt', 'pendingAttempt', 'currentAttemptId', 'worktreeId', 'worktreePath', 'branch', 'baseRevision', 'worktreeStatus', 'branchRevision', 'cleanupStateSignature', 'evidenceIds', 'contextPackId', 'contextPackVersion', 'feedbackId', 'acceptanceId', 'cleanupStatus', 'cleanupReceiptId', 'error'], 'facts.run task');
+    requiredText(task.taskId, 'facts task id');
+    if (taskIds.has(task.taskId)) throw new Error('facts task id 重复');
+    taskIds.add(task.taskId);
+    safeInteger(task.attempt, 'facts task attempt');
+    if (!Array.isArray(task.evidenceIds)) throw new Error('facts task evidenceIds 必须是数组');
+    sortedStrings(task.evidenceIds);
+  }
+  const graph = assertObject(facts.taskGraph, 'facts.taskGraph');
+  assertKeys(graph, ['version', 'id', 'graphVersion', 'sessionId', 'architectureId', 'approval', 'tasks', 'approvedBy', 'revisionOf', 'supersededBy'], 'facts.taskGraph');
+  if (facts.taskGraph.version !== 1) throw new Error('facts.taskGraph version 无效');
+  requiredText(facts.taskGraph.id, 'facts graph id');
+  safeInteger(facts.taskGraph.graphVersion, 'facts graphVersion');
+  if (!Array.isArray(facts.taskGraph.tasks)) throw new Error('facts graph tasks 必须是数组');
+  const graphIds = new Set<string>();
+  for (const task of facts.taskGraph.tasks) {
+    const record = assertObject(task, 'facts graph task');
+    assertKeys(record, ['version', 'id', 'architectureId', 'issueId', 'title', 'description', 'moduleId', 'scope', 'dependsOn', 'acceptanceCriteria', 'category', 'status', 'workflowId', 'stageId'], 'facts graph task');
+    requiredText(task.id, 'facts graph task id');
+    if (graphIds.has(task.id)) throw new Error('facts graph task id 重复');
+    graphIds.add(task.id);
+    if (task.version !== 1) throw new Error('facts graph task version 无效');
+    if (!Array.isArray(task.scope) || !Array.isArray(task.dependsOn) || !Array.isArray(task.acceptanceCriteria)) throw new Error('facts graph task references 必须是数组');
+    sortedStrings(task.dependsOn);
+    uniqueStringsPreserveOrder(task.acceptanceCriteria, 'facts acceptance criterion');
+  }
+  if (!Array.isArray(facts.failedTaskIds) || !Array.isArray(facts.recoverableEffects)) throw new Error('facts recovery arrays 无效');
+  sortedStrings(facts.failedTaskIds);
+  const effectIds = new Set<string>();
+  for (const effect of facts.recoverableEffects) {
+    const record = assertObject(effect, 'facts effect');
+    assertKeys(record, ['idempotencyKey', 'kind', 'target', 'inputHash', 'runId', 'taskId', 'taskExecutionId', 'attemptId', 'orchestrationId', 'acceptanceStageId', 'status', 'recovery', 'unknownReason', 'receipt'], 'facts effect');
+    requiredText(effect.idempotencyKey, 'facts effect idempotencyKey');
+    if (effectIds.has(effect.idempotencyKey)) throw new Error('facts effect idempotencyKey 重复');
+    effectIds.add(effect.idempotencyKey);
+    requiredText(effect.kind, 'facts effect kind');
+    requiredText(effect.target, 'facts effect target');
+    requiredText(effect.inputHash, 'facts effect inputHash');
+    assertTaskExecutionId(requiredText(effect.taskExecutionId, 'facts effect taskExecutionId'));
+    parseAttemptId(requiredText(effect.attemptId, 'facts effect attemptId'));
+    if (effect.status !== 'started' && effect.status !== 'unknown') throw new Error('facts effect status 无效');
+    if (effect.recovery !== 'retry' && effect.recovery !== 'needs-user') throw new Error('facts effect recovery 无效');
+    if (effect.status === 'unknown') requiredText(effect.unknownReason ?? '', 'facts effect unknownReason');
+  }
 }
 
 function canonicalize(value: unknown, inArray = false): string {
@@ -531,7 +642,7 @@ function canonicalize(value: unknown, inArray = false): string {
 }
 
 export function canonicalizeWorkerRecoveryFactsV1(facts: WorkerRecoveryFactsV1): string {
-  if (facts.schema !== WORKER_RECOVERY_FACTS_SCHEMA) throw new Error('Worker recovery facts schema 无效');
+  validateFactsDto(facts);
   return canonicalize(facts);
 }
 

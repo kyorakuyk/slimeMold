@@ -238,5 +238,14 @@ describe('worker recovery facts fingerprint v1', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
       taskGraph: graph([{ ...task('task-1'), dependsOn: ['task-1', 'task-1'] }]),
     }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          branch: 'worker/foo.lock',
+        },
+      }),
+    }))).toThrow();
+    expect(() => canonicalizeWorkerRecoveryFactsV1({ schema: 'worker-recovery-facts-v1' } as never)).toThrow();
   });
 });
