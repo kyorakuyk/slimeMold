@@ -4961,3 +4961,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 针对 `58c7d2eec1b002568f6167d62bdf07b60a1dbed0`、parent `ca3c61552f75d783d8d61f0ca5e75d4ef0bfd4bc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 source builder body除尾部空白外与 parent 语义一致，shared object guards、lineage/provenance、normalization、dependency checks、failed-task derivation、DTO output、exports和error behavior均兼容，且无循环、host/store/runtime依赖或 durable-CAS scope creep。
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-source-builder-verified`，指向上述 exact code commit；该 tag闭合 source builder owner结构切片，连同此前 types/rules/normalization/canonical JSON/DTO validation slices使该 fingerprint facade不再是事实巨石；durable CAS仍未实现。
 - 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.336 unverified：real Tauri GUI smoke and Worker E2E boundary read-back
+
+- 在当前 exact source checkpoint `212ad1db2e0064f7947df493d7489959782037f1` 启动真实 `npx tauri dev`；实测 Vite `http://localhost:1420/` ready、Rust dev profile完成编译、真实 `SlimeMold · Agent 工作流`窗口可由 Windows UIA 枚举；不是把 CLI 进程存活当作 GUI 证据。
+- 在 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z-failure-clean` 的真实 WebView 中，先 read-back 未绑定智能体的 failure fixture，再通过当前 GUI combo 选择 `开启（离线回显）`，点击真实运行按钮；fixture `.slimemold/runs/checkpoints.json` read-back 为 `wf-failure/runId=3/status=success`，Worker node output包含离线模拟 plan，`durationMs=212`；ProjectFile 的 `runs.history`保留此前 unbound error runs。
+- 交叉 read-back 显示这次成功属于通用 Workflow checkpoint：`.slimemold/project.json` 的 `workerRuns=[]`，`events/events.jsonl` 只有 ProjectControl baseline，fixture内没有 WorkerQueue `TaskStarted/TaskSucceeded/Failed`、Evidence、Acceptance、Receipt或CleanupReceipt。因此本轮证明了真实 Tauri/WebView generic workflow与离线模拟持久 checkpoint，不证明 WorkerQueue/provider/worktree/recovery E2E，也不证明 durable CAS。
+- 本轮未删除 disposable fixture、worktree或历史现场；停止已核对属于当前项目的 Tauri/Vite/Rust/WebView 进程并确认 `localhost:1420` 端口释放。
