@@ -1,4 +1,4 @@
-import { NodeDefinition } from '../types/node';
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { FlowNode, NodeGroup } from '../types';
 import { useRegistryStore } from './registryStore';

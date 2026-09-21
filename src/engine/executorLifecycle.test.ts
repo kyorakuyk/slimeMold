@@ -10,7 +10,7 @@
  * - beforeEach 重置 store 关键状态 + registerBuiltins + 清缓存；
  * - 竞态场景用可控延迟的测试节点 def（resolveNodeExecutionMode 前注册）。
  */
-import { NodeDefinition } from '../types/node';
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';

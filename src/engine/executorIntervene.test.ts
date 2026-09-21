@@ -5,8 +5,8 @@
  * resolveIntervention 放行 → 节点以用户结果完成 → 运行成功。
  * 以及：stopWorkflow 后待接管请求被取消（挂起不泄漏）。
  */
-import { NodeDefinition } from '../types/node';
-import { ExecContext } from '../types/node';
+import type { NodeDefinition } from '../types/node';
+import type { ExecContext } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';

@@ -1,4 +1,4 @@
-import { NodeRole } from '../types/node';
+import type { NodeRole } from '../types/node';
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronRight, ChevronDown, Search, Boxes, Trash2, Pencil } from 'lucide-react';

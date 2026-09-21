@@ -1,5 +1,5 @@
-import { InterventionRequest } from '../types/node';
-import { InterventionResult } from '../types/node';
+import type { InterventionRequest } from '../types/node';
+import type { InterventionResult } from '../types/node';
 import { describe, expect, it, vi } from 'vitest';
 import type { FlowEdge, FlowNode } from '../types';
 import type { ExecutionRuntime } from './runtime';

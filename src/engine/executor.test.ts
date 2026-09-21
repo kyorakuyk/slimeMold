@@ -1,4 +1,4 @@
-import { ExecContext } from '../types/node';
+import type { ExecContext } from '../types/node';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   collectInputs, resolveCapability, applyCapability, getActiveRunId, workflowRequiresDevSession, } from './executor';

@@ -7,7 +7,7 @@
  *
  * 隔离策略：与 executorLifecycle 一致——独立 wfId + beforeEach 重置总线（resetRunBus）。
  */
-import { NodeDefinition } from '../types/node';
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';

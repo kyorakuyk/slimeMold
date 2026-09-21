@@ -1,4 +1,4 @@
-import { NodeDefinition } from '../types/node';
+import type { NodeDefinition } from '../types/node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
