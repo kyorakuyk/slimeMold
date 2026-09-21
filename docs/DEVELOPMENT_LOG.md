@@ -4942,3 +4942,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 修复 DTO validator diagnostic 为 `facts.run taskGraphVersion`；`receiptFact` 改为 `const receiptObject = assertObject(receipt, 'receipt')` 后再执行 allowed-key 校验，消除重复 guard并统一 array/null/object边界。
 - 本轮仍未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；等待针对新 repair snapshot的 exact re-review。
 - 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.333 verified closure：Worker recovery direct DTO validator repair
+
+- exact reviewer 针对 `35a2b01d68d883640fecc979ec16ecc562a0a810`、parent `5f8d04ed69c79dcf8665a5f2004f3183ae46db15` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认两条 RED vector均命中修复路径，direct DTO validation、source/builder、normalization、canonicalization、hash、public facade、纯 import boundary和 durable-CAS scope均保持兼容。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-dto-validator-repair-verified`，指向上述 exact code commit；该 tag只闭合本轮 diagnostic/receipt guard repair，不证明 source builder已独立拆出或 durable CAS已实现。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
