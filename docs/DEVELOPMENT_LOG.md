@@ -4997,3 +4997,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 结构结果：`src/types.ts` 由 `1075` 行降至 `907` 行，新增 owner `src/types/agent.ts` 为 `198` 行；当前切片仍标记 `unverified`，尚未执行 exact reviewer closure。
 - 相关本地 checkpoint：`2751c2a` / `checkpoint/types-agent-contract-split-start`、`3afe5fd` / `checkpoint/types-agent-contract-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `6 test files / 68 tests`；完整 Node `176 test files / 1292 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.340 unverified：extract orchestration type contracts owner
+
+- 从 `src/types.ts` 抽出 Artifact、Pipeline、Draft、StageLog、Orchestration 等项目级编排契约到 `src/types/orchestration.ts`；保留 `src/types.ts` type-only compatibility re-export，未改变公共名称或持久化结构。
+- `engine/pipeline.ts`、`orchestrator/*`、Orchestrator UI、ProjectControl orchestration projection/transition callers 已开始直接依赖 `src/types/orchestration.ts`；`ModuleItem` 等非 orchestration 类型仍保留从 facade 导入，保持切片边界清晰。
+- 新增 `src/types/orchestration.test.ts`，覆盖 PipelineDef、Artifact 和 Orchestration contract；本轮未改变 executor、ProjectFile、WorkerQueue、DomainEvent、Evidence/Acceptance/Receipt 运行时行为。
+- 结构结果：`src/types.ts` 由 `907` 行降至 `767` 行，新增 owner `src/types/orchestration.ts` 为 `164` 行；当前切片保持 `unverified`，未进行 exact reviewer closure。
+- 相关本地 checkpoint：`77ff937` / `checkpoint/types-orchestration-contract-split-start`、`ce9ec8f` / `checkpoint/types-orchestration-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 60 tests`；完整 Node `177 test files / 1293 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
