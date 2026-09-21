@@ -15,7 +15,8 @@ import { finalizeRun, type FinalizeInput } from './runFinalizer';
 import { getRunBus, resetRunBus, type RunEvent } from './runEvents';
 import { ExperienceSink } from '../agents/experienceSink';
 import type { CostRecord } from '../types/agent';
-import type { FlowNode, RunRecord, LogEntry } from '../types';
+import type { LogEntry, RunRecord } from '../types/execution';
+import type { FlowNode } from '../types';
 import type { ExecutionRuntime } from './runtime';
 import type { RunContext } from './runContext';
 

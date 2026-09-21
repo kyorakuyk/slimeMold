@@ -17,7 +17,8 @@ import {
   CHECKPOINT_HISTORY_MAX,
   type RunCheckpoint,
 } from './checkpoint';
-import type { FlowNode, RunRecord } from '../types';
+import type { RunRecord } from '../types/execution';
+import type { FlowNode } from '../types';
 
 function mkNode(id: string, patch: Partial<FlowNode['data']> = {}): FlowNode {
   return {

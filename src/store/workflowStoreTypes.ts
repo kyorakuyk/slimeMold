@@ -6,16 +6,15 @@ import type {
   PipelineDef,
   ProjectArtifacts,
 } from '../types/orchestration';
+import type { LogEntry, RunRecord } from '../types/execution';
 import type {
   AgentRouteTable,
   AssetMeta,
   FlowEdge,
   FlowNode,
-  LogEntry,
   NodeGroup,
   NodeStatus,
   ProjectFile,
-  RunRecord,
   SubgraphDef,
   WorkflowFile,
   WorkflowFileInMemory,

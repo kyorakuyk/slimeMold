@@ -9,14 +9,8 @@
  * 当前阶段：工厂实现仍委托 store，行为完全等价，仅建立接缝、零回归。
  */
 import type { CostRecord } from '../types/agent';
-import type {
-  AssetMeta,
-  FlowEdge,
-  LogEntry,
-  NodeStatus,
-  RunRecord,
-  WorkflowNodeData,
-} from '../types';
+import type { LogEntry, RunRecord } from '../types/execution';
+import type { AssetMeta, FlowEdge, NodeStatus, WorkflowNodeData } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { RunProgressShape } from '../store/workflowStoreTypes';
 

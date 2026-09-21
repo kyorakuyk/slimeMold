@@ -38,7 +38,7 @@ import {
   type RecentProject,
 } from '../io/projectIO';
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
-import type { RunRecord } from '../types';
+import type { RunRecord } from '../types/execution';
 import { useT } from '../i18n/useT';
 import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
 import ProjectSessionPanel from './ProjectSessionPanel';

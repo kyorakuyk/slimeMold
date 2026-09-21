@@ -11,6 +11,7 @@
  */
 import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { Orchestration } from '../types/orchestration';
+import type { RunRecord } from '../types/execution';
 import type {
   AssetMeta,
   FlowEdge,
@@ -19,7 +20,6 @@ import type {
   NodeStatus,
   ProjectFile,
   SubgraphDef,
-  RunRecord,
   WorkflowFile,
   WorkflowFileEdge,
   WorkflowFileInMemory,

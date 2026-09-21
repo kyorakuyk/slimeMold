@@ -14,7 +14,8 @@
  * 输出为 Promise<void>（checkpoint 落盘需 await）。所有副作用经 useWorkflowStore / rt / 事件总线。
  */
 import type { CostRecord } from '../types/agent';
-import type { FlowNode, RunRecord } from '../types';
+import type { RunRecord } from '../types/execution';
+import type { FlowNode } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { ownerRefId } from './subgraph';
 import { buildCheckpoint } from './checkpoint';

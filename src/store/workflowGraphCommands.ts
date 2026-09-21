@@ -4,7 +4,8 @@
  * The module owns command orchestration but not Zustand, React Flow or persistence.
  * Pure graph transforms remain in workflowGraph.ts; the facade supplies state ports.
  */
-import type { FlowEdge, FlowNode, LogEntry } from '../types';
+import type { FlowEdge, FlowNode } from '../types';
+import type { LogEntry } from '../types/execution';
 import {
   remapPasted,
   sanitizeForClipboard,

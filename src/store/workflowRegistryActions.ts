@@ -4,7 +4,8 @@
  * This module owns registry/canvas action choreography only. Project identity, persistence,
  * ProjectControl runtime and host lifecycle remain in workflowStore and existing controllers.
  */
-import type { LogEntry, WorkflowFile } from '../types';
+import type { LogEntry } from '../types/execution';
+import type { WorkflowFile } from '../types';
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
