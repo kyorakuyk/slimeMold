@@ -5169,3 +5169,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - 修复后的 exact target `c729808d3c1521cb130bfeb05df1c81d5c9c85af`、parent `9794fa8858a8d436e3abd9aad6f39109a8ef78f8` 已由 3 个独立 read-only object reviewer 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`，无 credential additions，确认 12 个 import-only changes 只规范 type imports，runtime imports 与 owner/re-export topology 保持不变。
 - verified tag `checkpoint/types-node-runtime-import-normalization-verified` 已回读并指向 `c729808d3c1521cb130bfeb05df1c81d5c9c85af`。当前分支后续 docs closure commit 不继承为 verified code HEAD；reviewer 未运行测试，质量门仍以同一 code target 的真实验证记录为依据。
+
+### 7.361 unverified：extract workflow file and graph contracts
+
+- 将 `WorkflowFileNode`、`WorkflowFileEdge`、`WorkflowFile`、`WorkflowFileInMemory`、`SubgraphPort`、`SubgraphDef`、`ProxyPort`、`VirtualEdge`、`NodeGroup` 从 `src/types.ts` 迁移到 `src/types/workflow.ts`，形成 workflow persistence/graph contract owner；`ProjectFile` 暂留 root，仅直接引用 workflow owner 类型。
+- `src/types.ts` 保留 9 个 workflow contracts 的 compatibility re-export；agents、canvas、engine、io、store 生产代码及相关测试改为直接依赖 `src/types/workflow.ts`，包括 `import('../types').X` inline references；root named/inline residual scan 为 `0`，owner reverse import 为 `false`，每个 moved symbol 只有 1 个 owner definition。
+- 新增 `src/types/workflow.test.ts`，覆盖 WorkflowFile、WorkflowFileInMemory、SubgraphDef 和 NodeGroup 的组合 contract。初始纯 type import 会被 Vitest 擦除，补充 side-effect module-resolution assertion 后观察到预期 RED，再创建 owner 变为 GREEN；未改变序列化字段、子图/分组语义或 ProjectFile schema。
+- `src/types.ts` 当前约 `239` 行，workflow owner `161` 行；相关本地 checkpoint：`ef942aa` / `checkpoint/types-workflow-file-contract-split-start`、`6d7be9a` / `checkpoint/types-workflow-file-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `16 test files / 118 tests`；完整 `npm run test` 为 `188 test files / 1316 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。exact review 尚未完成，当前保持 `unverified`。
