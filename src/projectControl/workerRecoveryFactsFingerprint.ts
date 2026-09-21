@@ -118,6 +118,11 @@ function requiredText(value: string, field: string): string {
   return value;
 }
 
+function stringValue(value: unknown, field: string): string {
+  if (typeof value !== 'string') throw new Error(`${field} 必须是 string`);
+  return value;
+}
+
 function safeInteger(value: number, field: string, minimum = 0): number {
   if (!Number.isSafeInteger(value) || value < minimum) throw new Error(`${field} 必须是合法 safe integer：${value}`);
   return value;
@@ -584,7 +589,7 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   if (facts.run.version !== 1) throw new Error('facts.run version 无效');
   if (!new Set(['queued', 'running', 'partial', 'blocked', 'failed', 'cancelled', 'succeeded']).has(facts.run.status)) throw new Error('facts.run status 无效');
   requiredText(facts.run.runId, 'facts.run runId');
-  if (facts.run.orchestrationId !== null) requiredText(facts.run.orchestrationId, 'facts.run orchestrationId');
+  if (facts.run.orchestrationId !== null) stringValue(facts.run.orchestrationId, 'facts.run orchestrationId');
   requiredText(facts.run.taskGraphId, 'facts.run taskGraphId');
   safeInteger(facts.run.taskGraphVersion, 'facts.run taskGraphVersion');
   if (!Array.isArray(facts.run.tasks)) throw new Error('facts.run tasks 必须是数组');
@@ -599,6 +604,8 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     if (!new Set(['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled']).has(task.status)) throw new Error('facts task status 无效');
     if (task.cleanupStatus !== undefined && task.cleanupStatus !== 'cleaned') throw new Error('facts cleanupStatus 无效');
     if (task.worktreeStatus !== undefined && !new Set(['created', 'cleaned', 'orphaned', 'registration-pending']).has(task.worktreeStatus)) throw new Error('facts worktreeStatus 无效');
+    if (task.acceptanceStageId !== undefined) stringValue(task.acceptanceStageId, 'facts task acceptanceStageId');
+    if (task.contextPackVersion !== undefined) safeInteger(task.contextPackVersion, 'facts task contextPackVersion');
     if (task.taskDefinitionVersion !== undefined && task.taskDefinitionVersion !== 1) throw new Error('facts taskDefinitionVersion 无效');
     if (task.taskExecutionId !== undefined) {
       const taskExecutionId = assertTaskExecutionId(task.taskExecutionId);
@@ -635,6 +642,11 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   if (facts.taskGraph.version !== 1) throw new Error('facts.taskGraph version 无效');
   if (!new Set(['draft', 'approved', 'superseded']).has(facts.taskGraph.approval)) throw new Error('facts.taskGraph approval 无效');
   requiredText(facts.taskGraph.id, 'facts graph id');
+  stringValue(facts.taskGraph.sessionId, 'facts graph sessionId');
+  stringValue(facts.taskGraph.architectureId, 'facts graph architectureId');
+  if (facts.taskGraph.approvedBy !== undefined) stringValue(facts.taskGraph.approvedBy, 'facts graph approvedBy');
+  if (facts.taskGraph.revisionOf !== undefined) stringValue(facts.taskGraph.revisionOf, 'facts graph revisionOf');
+  if (facts.taskGraph.supersededBy !== undefined) stringValue(facts.taskGraph.supersededBy, 'facts graph supersededBy');
   safeInteger(facts.taskGraph.graphVersion, 'facts graphVersion');
   if (!Array.isArray(facts.taskGraph.tasks)) throw new Error('facts graph tasks 必须是数组');
   const graphIds = new Set<string>();
@@ -642,6 +654,14 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     const record = assertObject(task, 'facts graph task');
     assertKeys(record, ['version', 'id', 'architectureId', 'issueId', 'title', 'description', 'moduleId', 'scope', 'dependsOn', 'acceptanceCriteria', 'category', 'status', 'workflowId', 'stageId'], 'facts graph task');
     requiredText(task.id, 'facts graph task id');
+    stringValue(task.architectureId, 'facts graph task architectureId');
+    stringValue(task.title, 'facts graph task title');
+    stringValue(task.description, 'facts graph task description');
+    stringValue(task.moduleId, 'facts graph task moduleId');
+    stringValue(task.category, 'facts graph task category');
+    if (task.issueId !== undefined) stringValue(task.issueId, 'facts graph task issueId');
+    if (task.workflowId !== undefined) stringValue(task.workflowId, 'facts graph task workflowId');
+    if (task.stageId !== undefined) stringValue(task.stageId, 'facts graph task stageId');
     if (graphIds.has(task.id)) throw new Error('facts graph task id 重复');
     graphIds.add(task.id);
     if (task.version !== 1) throw new Error('facts graph task version 无效');
@@ -670,6 +690,9 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     const currentTask = facts.run.tasks.find((task) => task.taskId === effect.taskId);
     const graphTask = facts.taskGraph.tasks.find((task) => task.id === effect.taskId);
     if (!currentTask || !graphTask) throw new Error('facts effect task 不存在于 snapshot');
+    if (effect.orchestrationId !== undefined) stringValue(effect.orchestrationId, 'facts effect orchestrationId');
+    if (effect.acceptanceStageId !== undefined) stringValue(effect.acceptanceStageId, 'facts effect acceptanceStageId');
+    if (effect.unknownReason !== undefined) stringValue(effect.unknownReason, 'facts effect unknownReason');
     if (effect.runId !== facts.run.runId) throw new Error('facts effect runId 不匹配');
     if (effect.taskId !== currentTask.taskId) throw new Error('facts effect taskId 不匹配');
     const kind = requiredText(effect.kind, 'facts effect kind');
