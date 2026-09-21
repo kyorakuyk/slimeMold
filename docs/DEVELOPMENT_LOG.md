@@ -4871,3 +4871,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 抽出共享 `assertTaskAttemptInvariant`，使 source builder 与 direct DTO validator 对 `running`、`waiting-feedback`、`succeeded`、`failed` 统一要求 `attempt >= 1`；direct DTO validator 现在从 task status 派生 expected failed/running IDs，并与 canonical sorted `failedTaskIds` 做逐项等价比较。
 - 本轮未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；当前 snapshot仍为 `unverified`，第十次 reviewer verdict因 parent 参数错误与上述逻辑缺陷不能继承。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.322 verified closure：direct recovery facts status and failed-task invariants
+
+- 第十一次 exact reviewer 针对 exact HEAD `d6807ede987e45ad90b7c2a947b9ad2cde16ffea`、parent `183a7cae68171908c15b82d2815f40cc737c395a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 target 与 clean worktree一致，status/attempt/current lineage、failed-task 派生集合、membership、provenance、canonicalization、unknown-key rejection和纯 import boundary均通过。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-status-invariants-verified`，指向上述 exact code commit；该 tag 只闭合本轮纯 Gate A invariant slice。
+- reviewer 明确 durable recovery decision CAS仍在本 slice之外，未接 ProjectFile、eventBuffer、side-effect journal、controller或native host；不得把本 tag解释为 durable CAS或真实 Worker recovery E2E完成。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
