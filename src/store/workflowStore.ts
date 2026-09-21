@@ -18,7 +18,7 @@ import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types';
 import { arePortsCompatible } from '../types/graph';
 import { wouldCreateCycle } from '../engine/topoSort';
-import { saveGlobalAgents } from '../agents/globalAgents';
+
 // 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价
 import {
   fromDisk,
@@ -34,6 +34,7 @@ import { resolvePorts } from '../engine/subgraph';
 import { createAgent, builtinRoles } from '../agents/agentManager';
 import { defaultStandaloneDir, isTauri, showSaveDirDialog } from '../platform/env';
 import { saveLastSession, clearLastSession } from '../io/projectIO';
+import { saveGlobalAgents } from '../agents/globalAgents';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 
@@ -86,20 +87,14 @@ import { createWorkflowGraphCommands } from './workflowGraphCommands';
 import { createWorkflowSubgraphCommands } from './workflowSubgraphCommands';
 import { createWorkflowGroupCommands } from './workflowGroupCommands';
 import { createWorkflowProjectionCommands } from './workflowProjectionCommands';
+import { createWorkflowCatalogCommands } from './workflowCatalogCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
 import {
   buildCloseProjectState,
 } from './workflowLifecycleState';
-import {
-  buildRemoveAgentState,
-  buildRemoveRoleState,
-  buildSetDefaultAgentState,
-  buildUpsertAgentState,
-  buildUpsertRoleState,
-  upsertById,
-} from './projectCatalogState';
+
 
 /** 当前项目态的稳定快照（仅含落盘相关字段，排除运行态/日志等）已抽到 workflowSerialize.projectSnapshot */
 export const useWorkflowStore = create<WorkflowState>()(
@@ -130,6 +125,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         getState: () => get(),
         setState: (patch) => set(patch),
         normalizeProjectControlSnapshot,
+      });
+      const catalogCommands = createWorkflowCatalogCommands({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        saveGlobalAgents,
+        getGlobalMasterAgentId: () => useViewStore.getState().globalMasterAgentId,
+        clearGlobalMasterAgent: () => useViewStore.getState().setGlobalMasterAgent(null),
+        addLog: (level, message) => get().addLog(level, message),
       });
       const registryActions = createWorkflowRegistryActions({
         getState: () => get(),
@@ -604,46 +607,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           ),
         }),
 
-      upsertAgent: (agent) => {
-        // project catalog state is transformed in projectCatalogState; facade owns set/dirty observation.
-        set(buildUpsertAgentState(get().agents, agent));
-      },
-
-      removeAgent: (id) =>
-        set((s) => buildRemoveAgentState(s, id)),
-
-      setDefaultAgent: (id) => set(buildSetDefaultAgentState(id)),
-
-      setGlobalAgents: (agents) => set({ globalAgents: agents }),
-
-      upsertGlobalAgent: (agent) => {
-        // 通用 upsert 纯逻辑已抽到 projectCatalogState.upsertById（G5 门面化）
-        const next = upsertById(get().globalAgents, agent);
-        set({ globalAgents: next });
-        void saveGlobalAgents(next);
-      },
-
-      removeGlobalAgent: (id) => {
-        const next = get().globalAgents.filter((a) => a.id !== id);
-        set({ globalAgents: next });
-        if (useViewStore.getState().globalMasterAgentId === id) {
-          useViewStore.getState().setGlobalMasterAgent(null);
-        }
-        void saveGlobalAgents(next);
-      },
-
-      upsertRole: (role) => {
-        set(buildUpsertRoleState(get().roles, role));
-      },
-
-      removeRole: (id) => {
-        const result = buildRemoveRoleState(get().roles, id);
-        if (result.rejected) {
-          get().addLog('error', result.message ?? '内置角色不可删除');
-          return;
-        }
-        set({ roles: result.roles });
-      },
+      ...catalogCommands,
 
       setSelected: (id, wfId) => set({ selectedNodeId: id, focusWfId: wfId ?? get().activeWfId }),
       setSelectedIds: (ids) => set({ selectedIds: ids }),
