@@ -4948,3 +4948,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 针对 `35a2b01d68d883640fecc979ec16ecc562a0a810`、parent `5f8d04ed69c79dcf8665a5f2004f3183ae46db15` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认两条 RED vector均命中修复路径，direct DTO validation、source/builder、normalization、canonicalization、hash、public facade、纯 import boundary和 durable-CAS scope均保持兼容。
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-dto-validator-repair-verified`，指向上述 exact code commit；该 tag只闭合本轮 diagnostic/receipt guard repair，不证明 source builder已独立拆出或 durable CAS已实现。
 - 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.334 unverified：extract Worker recovery source builder owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsSource.ts`，集中拥有 taskFact、projectTaskFact、receiptFact、side-effect envelope/effectFact与 `buildWorkerRecoveryFactsV1`；fingerprint facade 现在仅保留 schema/type兼容导出、build兼容导出、canonicalize facade与SHA-256 hash。
+- source owner 继续使用 shared rules、execution lineage、types和object guards；未改变 source facts DTO、TaskGraph/WorkerRun/SideEffect schema、normalization、canonical JSON、direct DTO validator、ProjectFile或durable CAS行为。
+- 本轮结构结果：source builder `409` 行，fingerprint facade `37` 行；依赖方向为 source → domain/types/rules，facade → source/validator/normalization/canonical JSON，未引入 host/store/runtime副作用。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
