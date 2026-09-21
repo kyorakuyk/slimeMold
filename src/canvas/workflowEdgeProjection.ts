@@ -1,5 +1,5 @@
 import type { Edge } from '@xyflow/react';
-import type { FlowEdge, PortDef } from '../types';
+import type { FlowEdge, PortDef } from '../types/graph';
 
 export const PORT_COLOR_VAR: Record<string, string> = {
   text: 'var(--pt-text)',

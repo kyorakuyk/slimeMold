@@ -1,10 +1,5 @@
-import type {
-  EdgeKind,
-  FlowEdge,
-  FlowNode,
-  NodeDefinition,
-  WorkflowFile,
-} from '../types';
+import type { FlowEdge, FlowNode, NodeDefinition, WorkflowFile } from '../types';
+import type { EdgeKind } from '../types/graph';
 import { isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';

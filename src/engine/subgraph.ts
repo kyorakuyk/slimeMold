@@ -15,12 +15,12 @@ import type {
   FlowEdge,
   FlowNode,
   NodeDefinition,
-  PortDef,
   SubgraphDef,
   SubgraphPort,
   WorkflowFileEdge,
   WorkflowFileNode,
 } from '../types';
+import type { PortDef } from '../types/graph';
 
 /** 子图引用节点的类型 id */
 export const SUBGRAPH_REF_TYPE = 'subgraph.ref';

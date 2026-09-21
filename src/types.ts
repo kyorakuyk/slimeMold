@@ -1,8 +1,29 @@
-import type { Node, Edge } from '@xyflow/react';
 import type { ProjectControlSnapshot } from './projectControl/types';
+import type {
+  EdgeKind,
+  FlowEdge,
+  FlowNode,
+  NodeStatus,
+  ParamDef,
+  PortDef,
+  PortType,
+} from './types/graph';
+export { EDGE_KIND_STYLE, arePortsCompatible } from './types/graph';
+export type {
+  EdgeKind,
+  FlowEdge,
+  FlowEdgeData,
+  FlowNode,
+  NodeStatus,
+  NodeUsageStat,
+  ParamDef,
+  ParamType,
+  PortDef,
+  PortType,
+  WorkflowNodeData,
+} from './types/graph';
 
 /* ---------- 节点状态与协议 ---------- */
-export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'cached' | 'skipped' | 'bypassed' | 'muted';
 export type AntigravityMode = 'ask' | 'edit' | 'agent' | 'custom';
 export type Protocol = 'openai' | 'anthropic' | 'ollama' | 'codex' | 'antigravity';
 
@@ -122,90 +143,6 @@ export interface ChatMessage {
   content: string | ContentPart[];
   /** role='tool' 时必填：对应的 tool_call id（OpenAI 协议回写工具结果用） */
   tool_call_id?: string;
-}
-
-/* ---------- 节点定义 ---------- */
-/** 端口数据类型。用于连线时的类型校验，避免「把 list 接到只收 text 的端口」这类运行期才发现的问题。 */
-export type PortType =
-  | 'any' // 通配：与任何类型兼容（兜底，默认）
-  | 'text' // 文本 / 标量（与 number、boolean 互通，运行时模板会处理）
-  | 'number'
-  | 'boolean'
-  | 'list' // 列表：仅与 list 兼容
-  | 'json' // 结构化对象：仅与 json 兼容
-  | 'image'; // 图片（data URL 或 https 链接），用于多模态图生文
-
-export interface PortDef {
-  id: string;
-  label: string;
-  /** 端口数据类型，缺省视为 'any'（兼容所有，向后兼容旧节点） */
-  type?: PortType;
-  /** 端口连线语义：
-   * - 'data'：值传递（默认，现有语义）
-   * - 'task'：任务派发（控制流，带 scope，用于 Dispatcher → 下游并行施工）
-   * - 'control'：条件/循环断点（控制流，拓扑排序时视作 stage 边界）
-   * 缺省视为 'data'，向后兼容旧节点。 */
-  flow?: EdgeKind;
-}
-
-/* ---------- 连线语义分层（data / task / control） ---------- */
-/** 连线种类：
- * - 'data'：数据流（值传递，现有默认）
- * - 'task'：任务流（派发任务，控制流，带 scope）
- * - 'control'：控制流（条件/循环断点，拓扑排序视作断点） */
-export type EdgeKind = 'data' | 'task' | 'control';
-
-/** 连线展示样式：按 kind 区分颜色与线型 */
-export const EDGE_KIND_STYLE: Record<EdgeKind, { color: string; dash?: string; label: string }> = {
-  data: { color: '#9ca3af', label: '数据' },
-  task: { color: '#f59e0b', dash: '6 3', label: '任务' },
-  control: { color: '#8b5cf6', dash: '2 4', label: '控制' },
-};
-
-/** 画布连线的 data 载荷 */
-export interface FlowEdgeData extends Record<string, unknown> {
-  kind?: EdgeKind;
-  /** task 流的派发影响域声明（affected files / symbols），供 Coordinator 冲突检测 */
-  scope?: string[];
-}
-
-/**
- * 连线兼容性：返回 source 端口输出能否连到 target 端口输入。
- * 规则：
- *  - 任一为 'any' -> 兼容（通配兜底）
- *  - 类型相同 -> 兼容
- *  - text / number / boolean 三者互通（标量，运行时表达式与模板可处理）
- *  - list 仅兼容 list；json 仅兼容 json
- */
-export function arePortsCompatible(src?: PortType, tgt?: PortType): boolean {
-  const s: PortType = src ?? 'any';
-  const t: PortType = tgt ?? 'any';
-  if (s === 'any' || t === 'any') return true;
-  if (s === t) return true;
-  const scalar = new Set<PortType>(['text', 'number', 'boolean']);
-  return scalar.has(s) && scalar.has(t);
-}
-
-export type ParamType =
-  | 'text'
-  | 'textarea'
-  | 'number'
-  | 'boolean'
-  | 'select'
-  | 'agent'
-  | 'agents' // 多选智能体（逗号分隔的 agentId 列表）
-  | 'role'
-  | 'asset'; // 从当前工作流资产库选择（图片资产下拉 + 气泡手填路径）
-
-export interface ParamDef {
-  key: string;
-  label: string;
-  type: ParamType;
-  options?: { label: string; value: string }[];
-  default?: unknown;
-  placeholder?: string;
-  /** 面板/Inspector 中的使用提示（悬停 tooltip） */
-  tooltip?: string;
 }
 
 export interface ExecLogger {
@@ -617,49 +554,6 @@ function inferRole(typeId: string): NodeRole {
   if (typeId.startsWith('input.')) return 'io';
   return 'worker';
 }
-
-/* ---------- 画布数据 ---------- */
-export interface WorkflowNodeData extends Record<string, unknown> {
-  typeId: string;
-  label: string;
-  params: Record<string, unknown>;
-  status: NodeStatus;
-  error?: string;
-  outputs?: Record<string, unknown>;
-  /** 增量执行标记：true 表示该节点被修改/受影响，需重新执行；false 或缺失表示可命中缓存 */
-  dirty?: boolean;
-  /** 最近一次执行耗时（毫秒）；缓存命中/跳过为 null。仅用于画布展示 */
-  durationMs?: number | null;
-  /** 最近一次真正执行的开始时间戳（ISO）；缓存命中/跳过为 null */
-  startedAt?: string | null;
-  /** 最近一次运行中该节点自身的 token 用量；无 LLM 调用时缺失 */
-  usage?: NodeUsageStat;
-  /** 调试开关：bypass=跳过执行、同名端口透传输入到输出；mute=完全屏蔽（不执行、输出为空） */
-  bypass?: boolean;
-  mute?: boolean;
-}
-
-export type FlowNode = Node<WorkflowNodeData>;
-
-/** 单个节点在最近一次运行中的 token 用量聚合（画布悬停浮层展示用） */
-export interface NodeUsageStat {
-  /** 该节点累计发生的 LLM 调用次数 */
-  calls: number;
-  /** 其中失败的调用次数 */
-  failedCalls: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  cachedPromptTokens: number;
-  writtenPromptTokens: number;
-  reasoningTokens: number;
-  replyTokens: number;
-  /** 累计 LLM 调用耗时（毫秒），不含节点自身其他开销 */
-  llmDurationMs: number;
-  /** 参与过的模型名（去重，按首次出现顺序） */
-  models: string[];
-}
-export type FlowEdge = Edge<FlowEdgeData>;
 
 /* ---------- 工作流文件 ---------- */
 export interface WorkflowFileNode {

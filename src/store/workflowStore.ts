@@ -13,7 +13,6 @@ import type {
   FlowEdge,
   FlowNode,
   NodeGroup,
-  NodeStatus,
   Orchestration,
   PipelineDef,
   SubgraphDef,
@@ -22,7 +21,7 @@ import type {
   WorkflowFileEdge,
   WorkflowFileInMemory,
 } from '../types';
-import { arePortsCompatible } from '../types';
+import { arePortsCompatible } from '../types/graph';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { saveGlobalAgents } from '../agents/globalAgents';
 // 与 store 运行态无关的纯序列化/转换函数已抽到 workflowSerialize，保持行为等价

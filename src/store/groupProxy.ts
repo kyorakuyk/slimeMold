@@ -4,15 +4,8 @@
 // 注意：recomputeProxyPorts / defaultParams 内部读取 useRegistryStore.getState()，
 // 测试时需先通过 registryStore.register(...) 桩入节点定义。
 
-import type {
-  FlowEdge,
-  FlowNode,
-  NodeGroup,
-  PortType,
-  ProxyPort,
-  SubgraphDef,
-  VirtualEdge,
-} from '../types';
+import type { FlowEdge, FlowNode, NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types';
+import type { PortType } from '../types/graph';
 import { useRegistryStore, getNodeDef } from './registryStore';
 
 /** 组框预设配色（创建时轮换取用） */

@@ -31,7 +31,7 @@ import SubgraphEditor from './SubgraphEditor';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus, type EdgeKind } from '../types';
+import { arePortsCompatible, type EdgeKind, type FlowEdge, type FlowNode, type NodeStatus, type PortDef } from '../types/graph';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { NamePrompt } from '../components/NamePrompt';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
