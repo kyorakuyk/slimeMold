@@ -4921,3 +4921,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsCanonicalJson.ts`，集中拥有 deterministic JSON value serialization、undefined/array rejection、safe-integer number encoding和UTF-8 object-key ordering；facade 保留 `canonicalizeWorkerRecoveryFactsV1` public API，仅委托 serializer。
 - 本轮未改变 DTO validator、normalization、source builder、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新模块只依赖 `workerRecoveryFactsRules.ts`，保持纯内存、无 host/store/runtime依赖。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.330 verified closure：Worker recovery facts canonical JSON owner
+
+- exact reviewer 针对 `9305aa4c8658282bd3d0bbcee0b06682a5d28514`、parent `6dddd3d48f7cad1a0827fdf30f1ac4a95a14cbb1` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 canonical serializer 行为不变、唯一 owner、rules-only dependency、public facade兼容，且 validator、normalization、builder、hash和 durable CAS scope均未改变。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-canonical-json-verified`，指向上述 exact code commit；该 tag只闭合 canonical JSON owner结构切片，不证明 source/DTO validator或 durable CAS已完成。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
