@@ -11,7 +11,7 @@
  * workflowStore.ts 调用这些函数替换内联逻辑，对外 API 与行为完全不变。
  */
 import type { NodeDefinition } from '../types/node';
-import type { SubgraphDef } from '../types';
+import type { SubgraphDef } from '../types/workflow';
 import type { EdgeKind, FlowEdge, FlowNode, NodeStatus, PortDef, PortType } from '../types/graph';
 import type { XYPosition } from '@xyflow/react';
 

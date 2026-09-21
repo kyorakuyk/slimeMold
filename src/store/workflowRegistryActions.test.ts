@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { FlowEdge, FlowNode, WorkflowFile } from '../types';
+import type { WorkflowFile } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types';
 import { createWorkflowRegistryActions, type WorkflowRegistryActionState } from './workflowRegistryActions';
 
 const node = (id: string): FlowNode => ({

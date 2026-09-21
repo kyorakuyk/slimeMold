@@ -7,14 +7,8 @@
 import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { RunRecord } from '../types/execution';
 import type { AssetMeta } from '../types/project';
-import type {
-  FlowEdge,
-  FlowNode,
-  NodeGroup,
-  ProjectFile,
-  SubgraphDef,
-  WorkflowFileInMemory,
-} from '../types';
+import type { NodeGroup, SubgraphDef, WorkflowFileInMemory } from '../types/workflow';
+import type { FlowEdge, FlowNode, ProjectFile } from '../types';
 import { flowEdgesFrom, flowNodesFrom, fromDisk } from './workflowSerialize';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
@@ -110,8 +104,8 @@ export interface OpenProjectState {
   variables: Record<string, unknown>;
   projectVariables: Record<string, unknown>;
   projectAssets: AssetMeta[];
-  subgraphs: Record<string, import('../types').SubgraphDef>;
-  groups: import('../types').NodeGroup[];
+  subgraphs: Record<string, import('../types/workflow').SubgraphDef>;
+  groups: import('../types/workflow').NodeGroup[];
   runHistory: RunRecord[];
   checkpoints: Record<string, import('../engine/checkpoint').RunCheckpoint>;
   checkpointHistory: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;

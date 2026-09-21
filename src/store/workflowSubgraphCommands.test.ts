@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { NodeGroup, SubgraphDef } from '../types';
+import type { NodeGroup, SubgraphDef } from '../types/workflow';
 import type { WorkflowSubgraphCommandState } from './workflowSubgraphCommands';
 import { createWorkflowSubgraphCommands } from './workflowSubgraphCommands';
 

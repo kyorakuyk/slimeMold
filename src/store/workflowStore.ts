@@ -15,12 +15,8 @@ import {
   addEdge,
 } from '@xyflow/react';
 import type { Orchestration, PipelineDef } from '../types/orchestration';
-import type {
-  FlowEdge,
-  FlowNode,
-  WorkflowFile,
-  WorkflowFileInMemory,
-} from '../types';
+import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types';
 import { arePortsCompatible } from '../types/graph';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { saveGlobalAgents } from '../agents/globalAgents';

@@ -13,19 +13,8 @@ import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { Orchestration } from '../types/orchestration';
 import type { RunRecord } from '../types/execution';
 import type { AssetMeta } from '../types/project';
-import type {
-  FlowEdge,
-  FlowNode,
-  NodeGroup,
-  NodeStatus,
-  ProjectFile,
-  SubgraphDef,
-  WorkflowFile,
-  WorkflowFileEdge,
-  WorkflowFileInMemory,
-  WorkflowFileNode,
-  WorkflowNodeData,
-} from '../types';
+import type { NodeGroup, SubgraphDef, WorkflowFile, WorkflowFileEdge, WorkflowFileInMemory, WorkflowFileNode } from '../types/workflow';
+import type { FlowEdge, FlowNode, NodeStatus, ProjectFile, WorkflowNodeData } from '../types';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 

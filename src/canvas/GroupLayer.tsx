@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore, useReactFlow } from '@xyflow/react';
 import { ChevronDown, ChevronRight, Palette, X } from 'lucide-react';
-import type { FlowNode, NodeGroup } from '../types';
+import type { NodeGroup } from '../types/workflow';
+import type { FlowNode } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 
 /** 组框相对成员包围盒的内边距 */

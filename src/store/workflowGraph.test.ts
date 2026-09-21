@@ -7,7 +7,8 @@
  */
 import type { NodeDefinition } from '../types/node';
 import { describe, it, expect } from 'vitest';
-import type { FlowNode, FlowEdge, PortDef, SubgraphDef } from '../types';
+import type { SubgraphDef } from '../types/workflow';
+import type { FlowNode, FlowEdge, PortDef } from '../types';
 import {
   classifyConnection,
   expandSubgraphInstance,

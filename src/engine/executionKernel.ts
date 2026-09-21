@@ -6,7 +6,8 @@
  * retry scope, stage clustering, and loop limits. It does not read the store,
  * allocate resources, execute nodes, or persist facts.
  */
-import type { FlowEdge, FlowNode, SubgraphDef } from '../types';
+import type { SubgraphDef } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types';
 import { computeDownstream, computeExecutionSet, planClustersPerStage } from './graphAlgo';
 import { buildRunPlan, type RunPlan } from './runPlan';
 

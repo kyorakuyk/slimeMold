@@ -1,6 +1,7 @@
 /** workflowLifecycleState direct tests. */
 import { describe, it, expect } from 'vitest';
-import type { FlowEdge, FlowNode, ProjectFile, WorkflowFile } from '../types';
+import type { WorkflowFile } from '../types/workflow';
+import type { FlowEdge, FlowNode, ProjectFile } from '../types';
 import {
   buildCreateProjectState,
   buildNewProjectState,

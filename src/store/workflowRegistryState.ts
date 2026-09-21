@@ -4,7 +4,8 @@
  * Pure builders for workflow identity, registration, capture, switching and canvas activation.
  * Zustand set/get, persistence, dialogs and ProjectControl lifecycle remain in the facade.
  */
-import type { FlowEdge, FlowNode, WorkflowFile, WorkflowFileInMemory } from '../types';
+import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types';
 import { fromDisk, serializeCurrent } from './workflowSerialize';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 
@@ -27,7 +28,7 @@ export interface WorkflowSwitchView {
   agents: import('../types').AgentConfig[];
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
-  groups?: import('../types').NodeGroup[];
+  groups?: import('../types/workflow').NodeGroup[];
   defaultAgentId?: string | null;
 }
 
@@ -41,7 +42,7 @@ export interface SwitchWorkflowState {
   agents: import('../types').AgentConfig[];
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
-  groups: import('../types').NodeGroup[];
+  groups: import('../types/workflow').NodeGroup[];
   selectedNodeId: null;
   logs: never[];
 }
@@ -200,7 +201,7 @@ export interface RegisteredWorkflowActivation {
   defaultAgentId: string | null;
   roles: import('../types').RoleTemplate[];
   variables: Record<string, unknown>;
-  groups: import('../types').NodeGroup[];
+  groups: import('../types/workflow').NodeGroup[];
   selectedNodeId: null;
   logs: never[];
 }
@@ -266,7 +267,7 @@ export interface NewWorkflowInProjectStateInput {
     agents: import('../types').AgentConfig[];
     roles: import('../types').RoleTemplate[];
     variables: Record<string, unknown>;
-    groups?: import('../types').NodeGroup[];
+    groups?: import('../types/workflow').NodeGroup[];
     defaultAgentId?: string | null;
   };
   projectId: string | null;

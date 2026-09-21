@@ -5,7 +5,8 @@
 // Tests for the pure port projection pass an explicit definition table.
 
 import type { NodeDefinition } from '../types/node';
-import type { FlowEdge, FlowNode, NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types';
+import type { NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types';
 import type { PortType } from '../types/graph';
 import { getNodeDef } from './registryStore';
 

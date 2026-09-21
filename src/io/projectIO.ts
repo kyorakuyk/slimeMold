@@ -1,7 +1,8 @@
 import type { RecentProject } from '../types/project';
 export type { RecentProject } from '../types/project';
 import type { AgentConfig } from '../types/agent';
-import type { ProjectFile, WorkflowFile } from '../types';
+import type { WorkflowFile } from '../types/workflow';
+import type { ProjectFile } from '../types';
 import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
 import type { RunCheckpoint } from '../engine/checkpoint';
 

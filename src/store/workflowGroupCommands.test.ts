@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FlowEdge, FlowNode } from '../types/graph';
-import type { NodeGroup, SubgraphDef } from '../types';
+import type { NodeGroup, SubgraphDef } from '../types/workflow';
 import type { WorkflowGroupCommandState } from './workflowGroupCommands';
 import { createWorkflowGroupCommands } from './workflowGroupCommands';
 

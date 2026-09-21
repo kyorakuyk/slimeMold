@@ -1,6 +1,7 @@
 import type { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { FlowNode, NodeGroup } from '../types';
+import type { NodeGroup } from '../types/workflow';
+import type { FlowNode } from '../types';
 import { useRegistryStore } from './registryStore';
 import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
 

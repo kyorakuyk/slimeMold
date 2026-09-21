@@ -5,7 +5,7 @@
  * ProjectControl runtime and host lifecycle remain in workflowStore and existing controllers.
  */
 import type { LogEntry } from '../types/execution';
-import type { WorkflowFile } from '../types';
+import type { WorkflowFile } from '../types/workflow';
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,

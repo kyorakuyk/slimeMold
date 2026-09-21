@@ -28,7 +28,7 @@ import ProxyPortNode from './nodes/ProxyPortNode';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
 import type { NodeTypes } from '@xyflow/react';
 import type { FlowNode, FlowEdge, NodeStatus, WorkflowNodeData } from '../types/graph';
-import type { SubgraphDef, SubgraphPort } from '../types';
+import type { SubgraphDef, SubgraphPort } from '../types/workflow';
 import type { PortType } from '../types/graph';
 import { resolvePorts } from '../engine/subgraph';
 

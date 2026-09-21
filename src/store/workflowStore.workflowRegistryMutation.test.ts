@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { WorkflowFileInMemory } from '../types';
+import type { WorkflowFileInMemory } from '../types/workflow';
 import { useWorkflowStore } from './workflowStore';
 
 const workflow = (name: string): WorkflowFileInMemory => ({

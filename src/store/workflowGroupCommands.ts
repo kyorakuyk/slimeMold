@@ -1,6 +1,6 @@
 import type { FlowEdge, FlowNode } from '../types/graph';
 import type { NodeDefinition } from '../types/node';
-import type { NodeGroup, SubgraphDef, WorkflowFileEdge, WorkflowFileNode } from '../types';
+import type { NodeGroup, SubgraphDef, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
 import { recomputeProxyPorts, GROUP_COLORS } from './groupProxy';
 
 export interface WorkflowGroupCommandState {

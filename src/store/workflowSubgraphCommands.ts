@@ -1,6 +1,6 @@
 import type { FlowEdge, FlowNode } from '../types/graph';
 import type { NodeDefinition } from '../types/node';
-import type { NodeGroup, SubgraphDef } from '../types';
+import type { NodeGroup, SubgraphDef } from '../types/workflow';
 import { inferPorts, packSubgraph, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { expandSubgraphInstance } from './workflowGraph';
 
