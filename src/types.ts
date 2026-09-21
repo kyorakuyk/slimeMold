@@ -1,5 +1,6 @@
 import type { CapabilityLevel } from './types/capability';
 export type { CapabilityLevel } from './types/capability';
+export type { LoadedPlugin, PluginManifest, PluginNodeMeta, PluginOccupation } from './types/plugin';
 
 import type { ProjectControlSnapshot } from './projectControl/types';
 import type {
@@ -634,63 +635,4 @@ export interface RecentProject {
   path: string;
   name: string;
   openedAt: string;
-}
-
-/* ---------- 插件 ---------- */
-/**
- * 步骤 13（人类-职业-个人抽象）· 自定义职业声明。
- * 允许 custom node 包定义「一类节点」（新职业），而非只能定义单个具体节点。
- * 职业类须继承某个框架职业（见 src/nodes/sdk.ts 的 OCCUPATION_CAPABILITY），
- * 其下具体节点通过 PluginNodeMeta.extends 指向该职业类名，从而获得对应能力等级。
- */
-export interface PluginOccupation {
-  /** 职业类名（在 index.js 中 export，节点 extends 引用此名） */
-  name: string;
-  /** 继承的框架职业类名（ComputeNode/IoNode/SandboxWriteNode/CoordinatorNode/SystemNode/GitNode） */
-  extends: string;
-  description?: string;
-}
-
-export interface PluginNodeMeta {
-  typeId: string;
-  name: string;
-  category?: string;
-  description?: string;
-  inputs: PortDef[];
-  outputs: PortDef[];
-  params?: ParamDef[];
-  /** 插件节点显式声明的最小能力等级；省略时 loader 默认按 'io' 受限边界注入。 */
-  minCapability?: CapabilityLevel;
-  /**
-   * 步骤 13：声明该节点继承的「职业类」名（框架职业或本包 occupations 中定义的新职业）。
-   * 这是继承式提权的唯一入口——不写 extends 的纯 executors 函数节点永远封顶 io。
-   * loader 据此把职业类名翻译成 CapabilityLevel（见 sdk.capabilityOfClass），
-   * 因此写代码时 `class extends SandboxWriteNode` 与 manifest 里 `extends: "SandboxWriteNode"`
-   * 必须一致（DEV 下校验）。
-   */
-  extends?: string;
-}
-
-export interface PluginManifest {
-  id: string;
-  name: string;
-  version?: string;
-  description?: string;
-  /** 入口脚本文件名，如 index.js */
-  entry: string;
-  nodes: PluginNodeMeta[];
-  /**
-   * 步骤 13 阶段 E：本包自定义的职业类清单（创造「新职业」）。
-   * 节点 extends 可指向其中 name；loader 沿「自定义职业 → 其 extends 的框架职业」解析最终能力。
-   */
-  occupations?: PluginOccupation[];
-}
-
-export interface LoadedPlugin {
-  manifest: PluginManifest;
-  // 'dir' = AppData 正式插件；'files' = 浏览器/手动导入；'custom' = custom_nodes/ 用户节点（能力封顶 io）
-  source: 'dir' | 'files' | 'custom';
-  path?: string;
-  // custom 来源的生效范围：'program' = 程序安装目录（全局生效，跨项目）；'project' = 当前项目目录（仅本项目内生效）
-  scope?: 'program' | 'project';
 }
