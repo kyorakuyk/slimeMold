@@ -8,7 +8,7 @@
  * 设计：无 UI 依赖，纯数据收集。harness 的事件回调直接映射到 Sink 的 on* 方法。
  */
 
-import type { HarnessEvents } from './harness';
+import type { HarnessEvents } from './harnessTypes';
 
 export interface TrajectoryStep {
   t: number; // 时间戳

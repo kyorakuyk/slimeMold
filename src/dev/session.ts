@@ -32,6 +32,8 @@ import {
   cleanupBindingFingerprint,
   type WorkerCleanupProposalReady,
 } from '../projectControl/workerCleanup';
+import type { AcceptancePersistence, AcceptanceRecord, CleanupApproval } from './sessionContracts';
+export type { AcceptancePersistence, AcceptanceRecord, CleanupApproval } from './sessionContracts';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -59,26 +61,7 @@ export interface HostResultRecord {
   attemptId?: string;
 }
 
-/** 确定性验收记录（cleanup 确认门校验）。 */
-export interface AcceptanceRecord {
-  acceptanceId: string;
-  orchestrationId: string;
-  stageId: string;
-  worktreePath: string;
-  passed: boolean;
-  failedChecks: string[];
-  at: string;
-  /** 当前 Worker execution lineage；旧 acceptance 可没有这些字段。 */
-  runId?: string;
-  taskId?: string;
-  taskExecutionId?: string;
-  attemptId?: string;
-}
-
-export interface AcceptancePersistence {
-  append(record: AcceptanceRecord): Promise<void>;
-  load(): Promise<AcceptanceRecord[]>;
-}
+/** Acceptance JSONL validation and persistence stay implemented by this session owner. */
 
 export function createHostAcceptanceStoreWithFs(
   acceptanceRoot: string,
@@ -177,36 +160,7 @@ function isAcceptanceRecord(value: unknown): value is AcceptanceRecord {
   }
 }
 
-/**
- * 宿主清理审批（P1：一次性 + 绑定版本/状态/验收）。
- * cleanup 确认门校验（全部满足才允许清理）：
- * - 审批存在且未 consumed；
- * - 若绑定 baseRevision：当前 worktree 基线一致；
- * - 若绑定 stateSignature：当前 worktree 状态签名一致（防 worktree 被再次修改后清理）；
- * - 若绑定 acceptanceId：对应验收记录存在且 passed、worktreePath 一致。
- */
-export interface CleanupApproval {
-  worktreePath: string;
-  worktreeId?: string;
-  branch?: string;
-  branchRevision?: string;
-  branchRevisionRequired?: boolean;
-  runId?: string;
-  taskId?: string;
-  taskExecutionId?: string;
-  attemptId?: string;
-  attempt?: number;
-  baseRevision?: string;
-  stateSignature?: string;
-  acceptanceId?: string;
-  /** 绑定的验收所属任务/阶段（cleanup 校验 acceptance 三元组） */
-  orchestrationId?: string;
-  stageId?: string;
-  taskStatus?: 'succeeded';
-  cleanupStatus?: 'active';
-  approvedAt: string;
-  consumed: boolean;
-}
+/** Cleanup approval behavior stays implemented by this session owner. */
 
 function cloneAcceptanceRecord(record: AcceptanceRecord): AcceptanceRecord {
   return { ...record, failedChecks: [...record.failedChecks] };

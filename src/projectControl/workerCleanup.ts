@@ -1,4 +1,4 @@
-import type { AcceptanceRecord, CleanupApproval } from '../dev/session';
+import type { AcceptanceRecord, CleanupApproval } from '../dev/sessionContracts';
 import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
 import { resolveWorkerAcceptanceStageId, type WorkerQueueTask, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { SideEffectRecord } from '../domain/contracts';
