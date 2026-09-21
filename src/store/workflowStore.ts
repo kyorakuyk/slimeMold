@@ -12,13 +12,9 @@ import {
 import type {
   FlowEdge,
   FlowNode,
-  NodeGroup,
   Orchestration,
   PipelineDef,
-  SubgraphDef,
   WorkflowFile,
-  WorkflowFileNode,
-  WorkflowFileEdge,
   WorkflowFileInMemory,
 } from '../types';
 import { arePortsCompatible } from '../types/graph';
@@ -62,7 +58,7 @@ import {
 } from './projectControlLifecycle';
 
 // 分组折叠代理端口计算、节点默认参数、组框配色等纯辅助计算已抽到 groupProxy.ts
-import { recomputeProxyPorts, defaultParams, GROUP_COLORS } from './groupProxy';
+import { defaultParams } from './groupProxy';
 // 节点几何布局（对齐/分布）纯计算已抽到 nodeLayout.ts
 import { alignNodes, distributeNodes } from './nodeLayout';
 // 运行态复位（清节点状态/去边 running class）纯映射已抽到 nodeRuntime.ts
@@ -83,6 +79,7 @@ import { createProjectLifecycleActions } from './projectLifecycleActions';
 import { createWorkflowRegistryActions } from './workflowRegistryActions';
 import { createWorkflowGraphCommands } from './workflowGraphCommands';
 import { createWorkflowSubgraphCommands } from './workflowSubgraphCommands';
+import { createWorkflowGroupCommands } from './workflowGroupCommands';
 // 持久化落盘段（checkpoint 写 runs/checkpoints.json）已抽到 workflowPersistence.ts（G5 门面化）
 import { saveCheckpointToDisk } from './workflowPersistence';
 // Pure project lifecycle state builders; store mutation and host lifecycle stay in this facade.
@@ -130,6 +127,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         setState: (patch) => set(patch),
         pushHistory: () => get().pushHistory(),
         addLog: (level, message) => get().addLog(level, message),
+      });
+      const groupCommands = createWorkflowGroupCommands({
+        getState: () => get(),
+        setState: (patch) => set(patch),
+        pushHistory: () => get().pushHistory(),
+        addLog: (level, message) => get().addLog(level, message),
+        getFocusedSubgraphId: () => useViewStore.getState().focusedSubgraphId,
+        clearFocusedSubgraph: () => useViewStore.getState().setFocusedSubgraph(null),
       });
       const registryActions = createWorkflowRegistryActions({
         getState: () => get(),
@@ -1098,163 +1103,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       ...subgraphCommands,
 
-      /* ---------- 节点组 ---------- */
-
-      createGroup: (nodeIds, title) => {
-        const s = get();
-        get().pushHistory();
-        const valid = nodeIds.filter((id) => s.nodes.some((n) => n.id === id));
-        if (valid.length === 0) {
-          s.addLog('error', '请先选中要编组的节点');
-          return null;
-        }
-        // 一个节点只属于一个组：先从旧组里摘出去
-        const cleaned = s.groups
-          .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((id) => !valid.includes(id)) }))
-          .filter((g) => g.nodeIds.length > 0);
-        const groupId = `grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        const color = GROUP_COLORS[cleaned.length % GROUP_COLORS.length];
-        // 分组即子图：自动生成一份子图定义，并把成员节点作为其内容
-        const sgId = `sg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const members = s.nodes.filter((n) => valid.includes(n.id));
-        const sgNodes: WorkflowFileNode[] = members.map((n) => ({
-          id: n.id,
-          typeId: n.data.typeId,
-          label: n.data.label,
-          position: { ...n.position },
-          params: { ...n.data.params },
-        }));
-        const idSet = new Set(valid);
-        const sgEdges: WorkflowFileEdge[] = s.edges
-          .filter((e) => idSet.has(e.source) && idSet.has(e.target))
-          .map((e) => ({
-            id: e.id,
-            source: e.source,
-            sourceHandle: e.sourceHandle ?? null,
-            target: e.target,
-            targetHandle: e.targetHandle ?? null,
-            kind: e.data?.kind ?? 'data',
-            scope: e.data?.scope,
-          }));
-        const now = new Date().toISOString();
-        const sg: SubgraphDef = {
-          id: sgId,
-          name: title || `分组 ${cleaned.length + 1}`,
-          category: '分组',
-          createdAt: now,
-          updatedAt: now,
-          nodes: sgNodes,
-          edges: sgEdges,
-          inputs: [],
-          outputs: [],
-        };
-        // 计算成员节点包围盒，折叠态用它占位（避免节点落到画布原点 (0,0) 不可见）
-        const memberNodes = s.nodes.filter((n) => valid.includes(n.id));
-        let bounds: { x: number; y: number; width: number; height: number } | undefined;
-        if (memberNodes.length) {
-          const xs = memberNodes.map((n) => n.position.x);
-          const ys = memberNodes.map((n) => n.position.y);
-          const minX = Math.min(...xs);
-          const minY = Math.min(...ys);
-          const maxX = Math.max(...xs);
-          const maxY = Math.max(...ys);
-          bounds = { x: minX, y: minY, width: Math.max(160, maxX - minX + 220), height: Math.max(60, maxY - minY + 120) };
-        }
-        const group: NodeGroup = {
-          id: groupId,
-          title: title || `分组 ${cleaned.length + 1}`,
-          nodeIds: valid,
-          color,
-          collapsed: false,
-          bounds,
-          subgraphId: sgId,
-        };
-        const withProxy = recomputeProxyPorts({ ...group }, sg, s.nodes, s.edges);
-        set({
-          subgraphs: { ...s.subgraphs, [sgId]: sg },
-          groups: [...cleaned, withProxy],
-        });
-        s.addLog('info', `已把 ${valid.length} 个节点编为「${group.title}」（子图：${sg.name}）`);
-        return group.id;
-      },
-
-      removeGroup: (groupId) =>
-        set((st) => {
-          get().pushHistory();
-          const g = st.groups.find((x) => x.id === groupId);
-          const groups = st.groups.filter((x) => x.id !== groupId);
-          const subgraphs = { ...st.subgraphs };
-          if (g?.subgraphId && subgraphs[g.subgraphId]) delete subgraphs[g.subgraphId];
-          // 如果当前正在该子图里编辑，退出聚焦（viewStore 是独立 store）
-          if (g?.subgraphId && useViewStore.getState().focusedSubgraphId === g.subgraphId) {
-            useViewStore.getState().setFocusedSubgraph(null);
-          }
-          return { groups, subgraphs };
-        }),
-
-      updateGroup: (groupId, patch) =>
-        set({
-          groups: get().groups.map((g) => (g.id === groupId ? { ...g, ...patch } : g)),
-        }),
-
-      toggleGroupCollapsed: (groupId) =>
-        set((st) => ({
-          groups: st.groups.map((g) => {
-            if (g.id !== groupId) return g;
-            const next = { ...g, collapsed: !g.collapsed };
-            const sg = st.subgraphs[g.subgraphId ?? ''];
-            let out = sg ? recomputeProxyPorts(next, sg, st.nodes, st.edges) : next;
-            // 折叠时若缺少包围盒，按成员当前位置补算，避免代理节点落到 (0,0) 消失
-            if (out.collapsed && !out.bounds) {
-              const ms = st.nodes.filter((n) => out.nodeIds.includes(n.id));
-              if (ms.length) {
-                const xs = ms.map((n) => n.position.x);
-                const ys = ms.map((n) => n.position.y);
-                const minX = Math.min(...xs);
-                const minY = Math.min(...ys);
-                const maxX = Math.max(...xs);
-                const maxY = Math.max(...ys);
-                out = { ...out, bounds: { x: minX, y: minY, width: Math.max(160, maxX - minX + 220), height: Math.max(60, maxY - minY + 120) } };
-              }
-            }
-            return out;
-          }),
-        })),
-
-      recomputeGroupProxy: (groupId: string) =>
-        set((st) => {
-          const g = st.groups.find((x) => x.id === groupId);
-          if (!g || !g.subgraphId) return {};
-          const sg = st.subgraphs[g.subgraphId];
-          if (!sg) return {};
-          return { groups: st.groups.map((x) => (x.id === groupId ? recomputeProxyPorts(x, sg, st.nodes, st.edges) : x)) };
-        }),
-
-      /** 子图定义更新后，重算所有引用该子图的分组的代理端口/虚拟边，使父图实时同步 */
-      syncGroupProxies: (subgraphId) =>
-        set((st) => {
-          const sg = st.subgraphs[subgraphId];
-          if (!sg) return {};
-          return {
-            groups: st.groups.map((g) =>
-              g.subgraphId === subgraphId ? recomputeProxyPorts(g, sg, st.nodes, st.edges) : g,
-            ),
-          };
-        }),
-
-      moveGroup: (groupId, dx, dy) => {
-        const s = get();
-        const g = s.groups.find((x) => x.id === groupId);
-        if (!g) return;
-        const member = new Set(g.nodeIds);
-        set({
-          nodes: s.nodes.map((n) =>
-            member.has(n.id)
-              ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
-              : n,
-          ),
-        });
-      },
+      ...groupCommands,
     };
     },
     {
