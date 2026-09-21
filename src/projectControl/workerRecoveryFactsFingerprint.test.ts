@@ -7,6 +7,7 @@ import {
   canonicalizeWorkerRecoveryFactsV1,
   fingerprintWorkerRecoveryFactsV1,
 } from './workerRecoveryFactsFingerprint';
+import { validateFactsDto } from './workerRecoveryFactsDtoValidation';
 
 function task(id: string) {
   return {
@@ -219,6 +220,21 @@ describe('worker recovery facts fingerprint v1', () => {
       ...facts,
       failedTaskIds: ['ghost-task'],
     })).toThrow();
+  });
+
+  it('preserves direct DTO validation diagnostic field names', () => {
+    const facts = buildWorkerRecoveryFactsV1(input());
+    expect(() => validateFactsDto({
+      ...facts,
+      run: { ...facts.run, taskGraphVersion: Number.MAX_SAFE_INTEGER + 1 },
+    })).toThrow('facts.run taskGraphVersion');
+  });
+
+  it('uses the shared object guard for array-shaped source receipts', () => {
+    const arrayReceipt = Object.assign([], { outcome: 'succeeded' }) as never;
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({ status: 'receipt', recovery: 'skip', receipt: arrayReceipt })],
+    }))).toThrow('receipt 必须是对象');
   });
 
   it('rejects missing lineage, invalid receipts, duplicate terminal ids, paths, and graph references', () => {

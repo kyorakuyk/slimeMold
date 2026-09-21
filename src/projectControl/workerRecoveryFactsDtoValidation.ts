@@ -35,7 +35,7 @@ export function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   requiredText(facts.run.runId, 'facts.run runId');
   if (facts.run.orchestrationId !== null) stringValue(facts.run.orchestrationId, 'facts.run orchestrationId');
   requiredText(facts.run.taskGraphId, 'facts.run taskGraphId');
-  safeInteger(facts.run.taskGraphVersion, 'facts taskGraphVersion');
+  safeInteger(facts.run.taskGraphVersion, 'facts.run taskGraphVersion');
   if (!Array.isArray(facts.run.tasks)) throw new Error('facts.run tasks 必须是数组');
   const taskIds = new Set<string>();
   for (const task of facts.run.tasks) {

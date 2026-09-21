@@ -4934,3 +4934,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `assertObject`/`assertKeys` 提升到 shared rules owner，source receipt validation与direct DTO validation共享同一 unknown-key/object guard；fingerprint facade 仅保留 source builder、public canonicalize/hash facade，并继续兼容 `canonicalizeWorkerRecoveryFactsV1`。
 - 本轮未改变 source builder、normalization、canonical JSON、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新 DTO validator 仅依赖 domain execution、types和rules，保持纯内存边界。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.332 unverified：repair DTO validator diagnostic parity and shared receipt guard
+
+- 第十一次 exact review 对 `06612355e46b3a1c2b4687d88aa6775319864458` fail-closed：确认 direct validator 与 parent 存在两个结构切片回归——`facts.run.taskGraphVersion` 的 safeInteger diagnostic field 被改成 `facts taskGraphVersion`，source `receiptFact` 仍使用 inline object guard，未复用 shared `assertObject`，且 array-shaped receipt 会落入后续 undefined.trim 错误。
+- 新增两个 RED 回归：direct owner diagnostic field parity、带 `outcome` 属性的 array-shaped source receipt必须得到 `receipt 必须是对象`；先观察到两项失败，再修复。
+- 修复 DTO validator diagnostic 为 `facts.run taskGraphVersion`；`receiptFact` 改为 `const receiptObject = assertObject(receipt, 'receipt')` 后再执行 allowed-key 校验，消除重复 guard并统一 array/null/object边界。
+- 本轮仍未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；等待针对新 repair snapshot的 exact re-review。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。

@@ -164,8 +164,8 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
 }
 
 function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerRecoveryEffectFactV1['receipt'] {
-  if (typeof receipt !== 'object' || receipt === null) throw new Error('receipt 必须是对象');
-  assertKeys(receipt as unknown as Record<string, unknown>, ['receiptId', 'observedAt', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'files', 'error'], 'receipt');
+  const receiptObject = assertObject(receipt, 'receipt');
+  assertKeys(receiptObject, ['receiptId', 'observedAt', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'files', 'error'], 'receipt');
   if (receipt.outcome !== undefined && receipt.outcome !== 'succeeded' && receipt.outcome !== 'failed') {
     throw new Error(`receipt outcome 无效：${receipt.outcome}`);
   }
