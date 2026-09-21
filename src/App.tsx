@@ -32,6 +32,7 @@ import { recordProjectEvents } from './projectControl/eventBuffer';
 import { createWorkerRecoverySingleFlight } from './projectControl/workerRecoverySingleFlight';
 import { createAppWorkerRuntime } from './app/workerRuntime';
 import { restoreLastProjectSession } from './app/projectStartup';
+import { installGlobalShortcuts } from './app/globalShortcuts';
 
 registerBuiltins();
 
@@ -299,79 +300,25 @@ export default function App() {
   }, []);
 
 
-  // 全局快捷键（与菜单标注一致）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      const t = e.target as HTMLElement | null;
-      const inEditable =
-        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-      if (mod && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        exportWorkflow();
-      } else if (mod && e.key.toLowerCase() === 'z') {
-        // 在输入框里不拦截，保留浏览器默认的文本撤销
-        if (inEditable) return;
-        e.preventDefault();
-        if (e.shiftKey) useWorkflowStore.getState().redo();
-        else useWorkflowStore.getState().undo();
-      } else if (mod && e.key.toLowerCase() === 'y') {
-        if (inEditable) return;
-        e.preventDefault();
-        useWorkflowStore.getState().redo();
-      } else if (mod && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        useWorkflowStore.getState().newWorkflowInProject();
-      } else if (mod && e.key.toLowerCase() === 'c') {
-        if (inEditable) return;
-        e.preventDefault();
-        useWorkflowStore.getState().copySelection();
-      } else if (mod && e.key.toLowerCase() === 'v') {
-        if (inEditable) return;
-        e.preventDefault();
-        useWorkflowStore.getState().pasteClipboard();
-      } else if (mod && e.key.toLowerCase() === 'd') {
-        if (inEditable) return;
-        e.preventDefault();
-        e.stopPropagation();
-        useWorkflowStore.getState().duplicateSelection();
-      } else if (mod && e.key.toLowerCase() === 'a') {
-        if (inEditable) return;
-        e.preventDefault();
-        useWorkflowStore.getState().selectAll();
-      } else if (mod && e.key.toLowerCase() === 'b') {
-        if (inEditable) return;
-        e.preventDefault();
-        const st = useWorkflowStore.getState();
-        st.nodes.filter((n) => n.selected).forEach((n) => st.toggleNodeBypass(n.id));
-      } else if (mod && e.key.toLowerCase() === 'm') {
-        if (inEditable) return;
-        e.preventDefault();
-        const st = useWorkflowStore.getState();
-        st.nodes.filter((n) => n.selected).forEach((n) => st.toggleNodeMute(n.id));
-      } else if (mod && e.key.toLowerCase() === 'g') {
-        // Ctrl+G 把选中节点编为一组；Ctrl+Shift+G 打包成可复用子图
-        e.preventDefault();
-        const st = useWorkflowStore.getState();
-        const ids = st.nodes.filter((n) => n.selected).map((n) => n.id);
-        if (ids.length === 0) {
-          st.addLog('error', '请先框选若干节点，再按 Ctrl+G');
-          return;
-        }
-        if (e.shiftKey) {
-          setPrompt({
-            title: '给这个子图起个名字',
-            initial: `子图 ${Object.keys(st.subgraphs).length + 1}`,
-            onConfirm: (name) => st.packSelectionAsSubgraph(ids, name),
-          });
-        } else {
-          st.createGroup(ids);
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  // 全局快捷键由无 React 的 adapter 负责，App 只提供 store/UI ports。
+  useEffect(() => installGlobalShortcuts({
+    exportWorkflow,
+    undo: () => useWorkflowStore.getState().undo(),
+    redo: () => useWorkflowStore.getState().redo(),
+    newWorkflowInProject: () => useWorkflowStore.getState().newWorkflowInProject(),
+    copySelection: () => useWorkflowStore.getState().copySelection(),
+    pasteClipboard: () => useWorkflowStore.getState().pasteClipboard(),
+    duplicateSelection: () => useWorkflowStore.getState().duplicateSelection(),
+    selectAll: () => useWorkflowStore.getState().selectAll(),
+    toggleNodeBypass: (id) => useWorkflowStore.getState().toggleNodeBypass(id),
+    toggleNodeMute: (id) => useWorkflowStore.getState().toggleNodeMute(id),
+    addLog: (level, message) => useWorkflowStore.getState().addLog(level, message),
+    getSelectedNodeIds: () => useWorkflowStore.getState().nodes.filter((node) => node.selected).map((node) => node.id),
+    getSubgraphCount: () => Object.keys(useWorkflowStore.getState().subgraphs).length,
+    createGroup: (ids) => useWorkflowStore.getState().createGroup(ids),
+    packSelectionAsSubgraph: (ids, name) => { useWorkflowStore.getState().packSelectionAsSubgraph(ids, name); },
+    promptForName: (title, initial, onConfirm) => setPrompt({ title, initial, onConfirm }),
+  }), []);
 
   return (
     <ReactFlowProvider>
