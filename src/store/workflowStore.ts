@@ -122,6 +122,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         setState: (patch) => set(patch),
         pushHistory: () => get().pushHistory(),
         addLog: (level, message) => get().addLog(level, message),
+        getNodeDefinitions: () => useRegistryStore.getState().defs,
       });
       const groupCommands = createWorkflowGroupCommands({
         getState: () => get(),
@@ -130,6 +131,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         addLog: (level, message) => get().addLog(level, message),
         getFocusedSubgraphId: () => useViewStore.getState().focusedSubgraphId,
         clearFocusedSubgraph: () => useViewStore.getState().setFocusedSubgraph(null),
+        getNodeDefinitions: () => useRegistryStore.getState().defs,
       });
       const registryActions = createWorkflowRegistryActions({
         getState: () => get(),

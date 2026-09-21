@@ -1,5 +1,6 @@
 import type { FlowEdge, FlowNode } from '../types/graph';
 import type {
+  NodeDefinition,
   NodeGroup,
   SubgraphDef,
   WorkflowFileEdge,
@@ -25,6 +26,7 @@ export interface WorkflowGroupCommandDependencies {
   addLog: (level: 'info' | 'error', message: string) => void;
   getFocusedSubgraphId: () => string | null;
   clearFocusedSubgraph: () => void;
+  getNodeDefinitions: () => Record<string, NodeDefinition>;
 }
 
 /** Owns node-group and proxy-port mutations for the workflow facade. */
@@ -102,7 +104,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
         bounds,
         subgraphId,
       };
-      const withProxy = recomputeProxyPorts({ ...group }, subgraph, state.nodes, state.edges);
+      const withProxy = recomputeProxyPorts({ ...group }, subgraph, state.nodes, state.edges, deps.getNodeDefinitions());
       deps.setState({
         subgraphs: { ...state.subgraphs, [subgraphId]: subgraph },
         groups: [...cleaned, withProxy],
@@ -125,7 +127,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
       });
     },
 
-    updateGroup: (groupId: string, patch: Partial<NodeGroup>): void => {
+    updateGroup: (groupId: string, patch: Partial<Omit<NodeGroup, 'id'>>): void => {
       deps.setState({
         groups: deps.getState().groups.map((group) => (
           group.id === groupId ? { ...group, ...patch } : group
@@ -140,7 +142,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
           const next = { ...group, collapsed: !group.collapsed };
           const subgraph = state.subgraphs[group.subgraphId ?? ''];
           let output = subgraph
-            ? recomputeProxyPorts(next, subgraph, state.nodes, state.edges)
+            ? recomputeProxyPorts(next, subgraph, state.nodes, state.edges, deps.getNodeDefinitions())
             : next;
           if (output.collapsed && !output.bounds) {
             const members = state.nodes.filter((node) => output.nodeIds.includes(node.id));
@@ -176,7 +178,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
         return {
           groups: state.groups.map((item) => (
             item.id === groupId
-              ? recomputeProxyPorts(item, subgraph, state.nodes, state.edges)
+              ? recomputeProxyPorts(item, subgraph, state.nodes, state.edges, deps.getNodeDefinitions())
               : item
           )),
         };
@@ -190,7 +192,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
         return {
           groups: state.groups.map((group) => (
             group.subgraphId === subgraphId
-              ? recomputeProxyPorts(group, subgraph, state.nodes, state.edges)
+              ? recomputeProxyPorts(group, subgraph, state.nodes, state.edges, deps.getNodeDefinitions())
               : group
           )),
         };

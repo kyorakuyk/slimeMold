@@ -38,6 +38,7 @@ function createCommands(state = createState()) {
       addLog: vi.fn(),
       getFocusedSubgraphId: () => null,
       clearFocusedSubgraph: vi.fn(),
+      getNodeDefinitions: () => ({}),
     }),
   };
 }

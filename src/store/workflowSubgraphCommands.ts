@@ -1,6 +1,5 @@
 import type { FlowEdge, FlowNode } from '../types/graph';
-import type { NodeGroup, SubgraphDef } from '../types';
-import { useRegistryStore } from './registryStore';
+import type { NodeDefinition, NodeGroup, SubgraphDef } from '../types';
 import { inferPorts, packSubgraph, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { expandSubgraphInstance } from './workflowGraph';
 
@@ -17,6 +16,7 @@ export interface WorkflowSubgraphCommandDependencies {
   setState: (patch: Partial<WorkflowSubgraphCommandState>) => void;
   pushHistory: () => void;
   addLog: (level: 'info' | 'error', message: string) => void;
+  getNodeDefinitions: () => Record<string, NodeDefinition>;
 }
 
 /** Owns subgraph definition and reference-node mutations for the workflow facade. */
@@ -38,7 +38,7 @@ export function createWorkflowSubgraphCommands(
         return null;
       }
 
-      const defs = useRegistryStore.getState().defs;
+      const defs = deps.getNodeDefinitions();
       const subgraph = packSubgraph(name || '未命名子图', selected, state.edges, defs);
       const cx = selected.reduce((total, node) => total + node.position.x, 0) / selected.length;
       const cy = selected.reduce((total, node) => total + node.position.y, 0) / selected.length;
@@ -142,7 +142,7 @@ export function createWorkflowSubgraphCommands(
 
     saveSubgraphDef: (definition: SubgraphDef): void => {
       const state = deps.getState();
-      const defs = useRegistryStore.getState().defs;
+      const defs = deps.getNodeDefinitions();
       const inferred = inferPorts(definition.nodes, definition.edges, defs);
       const seenInputs = new Set(definition.inputs.map((port) => `${port.innerNodeId}|${port.innerHandle}`));
       const seenOutputs = new Set(definition.outputs.map((port) => `${port.innerNodeId}|${port.innerHandle}`));

@@ -86,7 +86,7 @@ describe('groupProxy 纯辅助（从 workflowStore 抽离，行为等价）', ()
       ]);
       const group = mkGroup('g1', ['n1', 'n2', 'n3']);
       const nodes = [mkNode('n1', 'in.a'), mkNode('n2', 'in.b'), mkNode('n3', 'p.c')];
-      const out = recomputeProxyPorts(group, {} as never, nodes, []);
+      const out = recomputeProxyPorts(group, {} as never, nodes, [], useRegistryStore.getState().defs);
 
       // 聚合：image 输入(来自 n1+n2) -> 1 个代理输入端口；text 输入(来自 n3) -> 1 个；text 输出 -> 1 个
       const inPorts = out.proxyPorts!.filter((p) => p.kind === 'input');
@@ -117,7 +117,7 @@ describe('groupProxy 纯辅助（从 workflowStore 抽离，行为等价）', ()
       const group = mkGroup('g2', ['n1']);
       group.color = '#abc';
       const nodes = [mkNode('n1', 'in.a'), mkNode('nX', 'in.a')]; // nX 不在组内
-      const out = recomputeProxyPorts(group, {} as never, nodes, []);
+      const out = recomputeProxyPorts(group, {} as never, nodes, [], useRegistryStore.getState().defs);
       expect(out.proxyPorts!).toHaveLength(1);
       expect(out.proxyPorts![0].internalTargets).toHaveLength(1);
       expect(out.proxyPorts![0].internalTargets[0].nodeId).toBe('n1');
@@ -130,7 +130,7 @@ describe('groupProxy 纯辅助（从 workflowStore 抽离，行为等价）', ()
       ]);
       const group = mkGroup('g3', ['n1', 'nUnknown']);
       const nodes = [mkNode('n1', 'in.a'), mkNode('nUnknown', 'ghost.type')];
-      const out = recomputeProxyPorts(group, {} as never, nodes, []);
+      const out = recomputeProxyPorts(group, {} as never, nodes, [], useRegistryStore.getState().defs);
       expect(out.proxyPorts).toHaveLength(1);
     });
   });

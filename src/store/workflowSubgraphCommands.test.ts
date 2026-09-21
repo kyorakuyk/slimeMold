@@ -29,6 +29,7 @@ function createState() {
     setState,
     pushHistory: vi.fn(),
     addLog: vi.fn(),
+    getNodeDefinitions: () => ({}),
   });
   return { state, setState, commands };
 }
