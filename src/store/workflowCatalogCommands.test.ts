@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createWorkflowCatalogCommands } from './workflowCatalogCommands';
-import type { WorkflowCatalogState } from './workflowCatalogCommands';
+import type { WorkflowCatalogCommandState } from './workflowCatalogCommands';
 
-function state(): WorkflowCatalogState {
+function state(): WorkflowCatalogCommandState {
   return {
     agents: [{ id: 'agent-a' } as never],
     defaultAgentId: 'agent-a',
@@ -15,7 +15,7 @@ function state(): WorkflowCatalogState {
 describe('workflow catalog commands', () => {
   it('updates project agents/roles and cleans route/default state', () => {
     let current = state();
-    const setState = (patch: Partial<WorkflowCatalogState>) => { current = { ...current, ...patch }; };
+    const setState = (patch: Partial<WorkflowCatalogCommandState>) => { current = { ...current, ...patch }; };
     const commands = createWorkflowCatalogCommands({
       getState: () => current,
       setState,

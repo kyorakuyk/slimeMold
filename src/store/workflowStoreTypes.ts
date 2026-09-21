@@ -4,7 +4,6 @@ import type {
   Artifact,
   Orchestration,
   PipelineDef,
-  ProjectArtifacts,
 } from '../types/orchestration';
 import type { LogEntry, RunRecord } from '../types/execution';
 import type { AssetMeta } from '../types/project';
@@ -20,6 +19,8 @@ import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
 import type { GraphSnapshot } from './workflowGraph';
+import type { WorkflowCatalogState } from './workflowCatalogTypes';
+import type { WorkflowProjectionState } from './workflowProjectionTypes';
 
 /** Runtime progress shared by Job Board and executor wiring. */
 export interface RunProgressShape {
@@ -40,18 +41,10 @@ export interface ProjectSaveGuard {
   projectPath: string;
   signal?: AbortSignal;
 }
-export interface WorkflowState {
+export interface WorkflowState extends WorkflowCatalogState, WorkflowProjectionState {
   workflowName: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  agents: AgentConfig[];
-  /** 全局通用智能体（应用级，跨项目共享，落 AppData；不随项目序列化）。
-   *  项目打开时与项目级 agents 合并为可用候选池，项目级同名(id)覆盖全局。 */
-  globalAgents: AgentConfig[];
-  /** 默认智能体 id：节点未指定智能体时引用此默认项 */
-  defaultAgentId: string | null;
-  /** 角色库：工作流级角色模板（含内置预设 + 用户自建） */
-  roles: RoleTemplate[];
   selectedNodeId: string | null;
   /** React Flow 当前实例选中的节点 id 集合（由 onSelectionChange 写入，拆分视图下左右栏各自维护同一份） */
   selectedIds: string[];
@@ -128,26 +121,6 @@ export interface WorkflowState {
   subgraphs: Record<string, SubgraphDef>;
   /** 当前工作流的节点组（纯视觉编组） */
   groups: NodeGroup[];
-  /** 步骤 14.A：项目级交付物表（跨工作流三方协作的 Artifact 存储），随 .slimemold 持久化 */
-  artifacts: ProjectArtifacts;
-  /** 步骤 14.7：项目级「模块类别 → 智能体」路由表（Builder 生成施工方工作流时绑定 agent 用），随 .slimemold 持久化 */
-  agentRouteTable: AgentRouteTable;
-  /** 步骤 14.A：项目级 Pipeline 定义集合（跨工作流三方协作编排的阶段与流向），随 .slimemold 持久化 */
-  pipelines: PipelineDef[];
-  /** H3 Orchestrator：项目级编排记录（草案/进度/阶段日志），随 .slimemold 持久化 */
-  orchestrations: Orchestration[];
-  /** Phase 1b：项目级 Worker Run registry（队列状态随项目持久化） */
-  workerRuns: WorkerRunQueueState[];
-  /** 从持久队列派生的恢复提示（运行态，不写入 ProjectFile） */
-  workerRunRecoveries: WorkerRunRecovery[];
-  /** 从宿主 EvidenceStore 派生的证据详情（运行态，不写入 ProjectFile） */
-  workerRunEvidence: EvidenceRecord[];
-  /** 从项目 side-effect journal 派生的 receipt 状态（运行态，不写入 ProjectFile） */
-  workerRunSideEffects: SideEffectRecord[];
-  /** 从宿主 acceptance/signature 派生的清理提案（运行态，不写入 ProjectFile） */
-  workerCleanupProposals: WorkerCleanupProposal[];
-  /** 项目控制面快照：主控会话、Decision 和 Project Brief */
-  projectControl: ProjectControlSnapshot;
   /** 当前项目/工作区的磁盘目录（用于 git worktree 隔离、相对路径解析等；null=未绑定目录） */
   workspaceDir: string | null;
 

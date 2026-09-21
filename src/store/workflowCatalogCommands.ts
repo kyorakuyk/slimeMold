@@ -1,5 +1,8 @@
 import type { AgentConfig, RoleTemplate } from '../types/agent';
-import type { AgentRouteTable } from '../types/dispatch';
+import type { WorkflowCatalogState } from './workflowCatalogTypes';
+import type { WorkflowProjectionState } from './workflowProjectionTypes';
+export type { WorkflowCatalogState } from './workflowCatalogTypes';
+export type WorkflowCatalogCommandState = WorkflowCatalogState & Pick<WorkflowProjectionState, 'agentRouteTable'>;
 import {
   buildRemoveAgentState,
   buildRemoveRoleState,
@@ -9,15 +12,7 @@ import {
   upsertById,
 } from './projectCatalogState';
 
-export interface WorkflowCatalogState {
-  agents: AgentConfig[];
-  defaultAgentId: string | null;
-  agentRouteTable: AgentRouteTable;
-  globalAgents: AgentConfig[];
-  roles: RoleTemplate[];
-}
-
-export interface WorkflowCatalogPorts<State extends WorkflowCatalogState = WorkflowCatalogState> {
+export interface WorkflowCatalogPorts<State extends WorkflowCatalogCommandState = WorkflowCatalogCommandState> {
   getState: () => State;
   setState: (patch: Partial<State>) => void;
   saveGlobalAgents: (agents: AgentConfig[]) => void | Promise<unknown>;
@@ -26,10 +21,10 @@ export interface WorkflowCatalogPorts<State extends WorkflowCatalogState = Workf
   addLog: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
-export function createWorkflowCatalogCommands<State extends WorkflowCatalogState>(
+export function createWorkflowCatalogCommands<State extends WorkflowCatalogCommandState>(
   ports: WorkflowCatalogPorts<State>,
 ) {
-  const setCatalog = (patch: Partial<WorkflowCatalogState>): void => {
+  const setCatalog = (patch: Partial<WorkflowCatalogCommandState>): void => {
     ports.setState(patch as Partial<State>);
   };
 
