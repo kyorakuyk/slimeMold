@@ -41,6 +41,8 @@ import {
 import { createNodeSandbox } from './nodeSandboxAdapter';
 import { createNodeLlmAdapter } from './nodeLlmAdapter';
 import { createNodeContextAdapter } from './nodeContextAdapter';
+import type { RunOptions, RunResult } from './runTypes';
+export type { RunOptions, RunResult } from './runTypes';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -155,76 +157,6 @@ export function stopWorkflow(wfId?: string): void {
  */
 export async function rerunWorkflow(wfId?: string): Promise<RunResult> {
   return runWorkflow({ forceRerun: true, force: true, wfId });
-}
-
-/**
- * 运行工作流的选项（RunOptions）。
- */
-export interface RunOptions {
-  /** 目标工作流 id（拆分视图可独立运行；缺省取当前激活工作流） */
-  wfId?: string;
-  /** 增量模式：只执行脏节点及其下游（非脏节点复用已有/缓存结果） */
-  incremental?: boolean;
-  /** 强制重算的节点集合（重跑单节点时使用），会清除其缓存 */
-  forceNodes?: string[];
-  /** 执行到这些节点为止（含），其下游不再执行（标记 skipped）。用于「重跑到此节点」 */
-  stopAfterNodes?: string[];
-  /**
-   * 单节点运行：仅 forceNodes 内的节点参与执行，且不汇聚任何上游输入（以空输入运行），
-   * 下游不执行。用于孤立调试单个节点。
-   */
-  isolated?: boolean;
-  /** 强制重启（忽略并发拦截，用于 Play 按钮检测到运行态卡死时的透传） */
-  force?: boolean;
-  /**
-   * 失败续跑（L1 可靠执行）：仅重跑上一轮处于 error 状态的节点及其下游；
-   * 其余 success/cached 节点复用既有结果不动。需配合 incremental 使用。
-   */
-  retryFailed?: boolean;
-  /** 强制轮次上限（调试用），默认取 loopGate 节点的 maxLoops 参数 */
-  maxLoopsOverride?: number;
-  /**
-   * 失败时继续（failFast 的反面策略）：为 true 时，某节点失败后不中断整体运行，
-   * 且其下游节点不被剪枝、以空上游输出继续尝试执行（跳过失败节点而非卡死）。
-   * 配合 false 的 failFast 一起使用。
-   */
-  skipFailed?: boolean;
-  /**
-   * 强制重跑：清空节点结果缓存（nodeCache），使所有节点无论参数是否变化都重新执行，
-   * 不复用上一轮的 LLM 结果。等价于 ComfyUI 的「忽略缓存重新执行」。
-   */
-  forceRerun?: boolean;
-  /**
-   * 调度进度回调（供 Job Board 等可视化）：每一层开始前上报当前层索引、总层数、轮次。
-   */
-  onProgress?: (p: { layer: number; totalLayers: number; round: number; totalRounds: number }) => void;
-  /**
-   * 真沙箱（步骤 11 阶段 C）：为 true 时，每个写文件的节点获得独立隔离目录
-   * （workspaceDir/.sandbox/<nodeId>/），并行 Worker 互不踩踏；协调者节点
-   * （coord.resolver / coord.council）拿到聚合沙箱句柄，可读取各 Worker 沙箱并 commitAll 汇总。
-   * 默认 false，保持旧行为（共享工作区直写）。
-   */
-  sandbox?: boolean;
-  /** 本次运行的并发上限（覆盖全局 maxConcurrency；缺省取全局值）。 */
-  maxConcurrency?: number;
-  /**
-   * 步骤 11 阶段 C：沙箱隔离强度。
-   * - `copy`（默认）：基于目录副本 `.sandbox/<runId>/<nodeId>/` 做磁盘隔离。
-   * - `gitworktree`：Git Worktree 真隔离——为本次运行创建 detached worktree，Worker 在独立 git 工作树内写文件，
-   *   结束统一 `git worktree remove` 清理（比 .sandbox 残留更干净、可 git 级合并）。
-   *   仅在 Tauri 桌面端且当前 workspaceDir 是 git 仓库时启用；否则自动降级为 `copy` 并记日志。
-   */
-  sandboxMode?: 'copy' | 'gitworktree';
-}
-
-/** runWorkflow 运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行） */
-export interface RunResult {
-  /** success=无失败节点；error=有失败节点；aborted=手动停止/被顶替/空图/非法图 */
-  status: 'success' | 'error' | 'aborted';
-  /** 本次运行代次（runFinalizer 用同一 runId 写历史/checkpoint） */
-  runId: number;
-  /** 失败/拦截原因（aborted/error 时有） */
-  error?: string;
 }
 
 export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
