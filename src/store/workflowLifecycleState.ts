@@ -5,8 +5,8 @@
  * and ProjectControl runtime activation remain owned by workflowStore and its controllers.
  */
 import type { AgentConfig, RoleTemplate } from '../types/agent';
+import type { AssetMeta } from '../types/project';
 import type {
-  AssetMeta,
   FlowEdge,
   FlowNode,
   NodeGroup,

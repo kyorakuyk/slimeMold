@@ -15,7 +15,7 @@ import { useViewStore } from '../store/viewStore';
 import { alertDialog, confirmDialog, downloadBlob, isTauri } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import { useT } from '../i18n/useT';
-import type { AssetMeta } from '../types';
+import type { AssetMeta } from '../types/project';
 
 function kindIcon(kind: string) {
   if (kind === 'image') return <ImageIcon size={14} />;

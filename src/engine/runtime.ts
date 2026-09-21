@@ -10,7 +10,8 @@
  */
 import type { CostRecord } from '../types/agent';
 import type { LogEntry, RunRecord } from '../types/execution';
-import type { AssetMeta, FlowEdge, NodeStatus, WorkflowNodeData } from '../types';
+import type { AssetMeta } from '../types/project';
+import type { FlowEdge, NodeStatus, WorkflowNodeData } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { RunProgressShape } from '../store/workflowStoreTypes';
 

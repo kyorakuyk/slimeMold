@@ -1,5 +1,5 @@
+import type { AssetMeta } from '../types/project';
 import type {
-  AssetMeta,
   ExecContext,
   FlowEdge,
   FlowNode,

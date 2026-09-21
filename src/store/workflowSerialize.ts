@@ -12,8 +12,8 @@
 import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { Orchestration } from '../types/orchestration';
 import type { RunRecord } from '../types/execution';
+import type { AssetMeta } from '../types/project';
 import type {
-  AssetMeta,
   FlowEdge,
   FlowNode,
   NodeGroup,

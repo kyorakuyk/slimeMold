@@ -1,4 +1,5 @@
-import { createNodeDef, type NodeDefinition, type AssetMeta } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types';
+import type { AssetMeta } from '../../types/project';
 
 const imagePreview: NodeDefinition = {
   typeId: 'image.preview',

@@ -7,9 +7,9 @@ import type {
   ProjectArtifacts,
 } from '../types/orchestration';
 import type { LogEntry, RunRecord } from '../types/execution';
+import type { AssetMeta } from '../types/project';
 import type {
   AgentRouteTable,
-  AssetMeta,
   FlowEdge,
   FlowNode,
   NodeGroup,

@@ -1,6 +1,7 @@
 /** workflowRegistryState direct tests. */
 import { describe, it, expect } from 'vitest';
-import type { AssetMeta, FlowEdge, FlowNode, WorkflowFile, WorkflowFileInMemory } from '../types';
+import type { AssetMeta } from '../types/project';
+import type { FlowEdge, FlowNode, WorkflowFile, WorkflowFileInMemory } from '../types';
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,

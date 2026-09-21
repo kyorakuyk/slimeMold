@@ -1,3 +1,5 @@
+import type { RecentProject } from '../types/project';
+export type { RecentProject } from '../types/project';
 import type { AgentConfig } from '../types/agent';
 import type { ProjectFile, WorkflowFile } from '../types';
 import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
@@ -40,11 +42,7 @@ const LEGACY_EXT = '.smproj';
 // 运行历史（可选，落盘到 .slimemold/runs/history.json；类型层宽松处理，避免与主类型耦合）
 type RunHistory = { history: unknown[] };
 
-export interface RecentProject {
-  path: string; // 项目根目录（磁盘真相）
-  name: string;
-  openedAt: string;
-}
+
 
 const RECENT_KEY = 'sm.recentProjects';
 const RECENT_MAX = 12;
