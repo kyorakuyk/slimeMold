@@ -50,19 +50,66 @@ function deferred<T>() {
 
 function resetWorkflowStore() {
   localStorage.removeItem('slime-mold-workflow');
+  localStorage.removeItem('sm.lastSession');
+  useWorkflowStore.getState().closeProject();
+  const current = useWorkflowStore.getState();
   useWorkflowStore.setState({
-    projectId: 'project-1',
+    ...current,
+    workflowName: '',
+    nodes: [],
+    edges: [],
+    selectedNodeId: null,
+    selectedIds: [],
+    focusWfId: '',
+    examplesOpen: false,
+    running: false,
+    runProgress: { active: false, layer: 0, totalLayers: 0, round: 0, totalRounds: 0 },
+    runStates: {},
+    costLog: [],
+    lastAutosave: null,
+    debugRun: { current: 0, active: 0 },
+    failFast: true,
+    skipFailed: false,
+    maxConcurrency: 3,
+    llmChannel: 'backend',
+    logs: [],
+    variables: {},
+    projectVariables: {},
+    projectAssets: [],
+    runHistory: [],
+    checkpoints: {},
+    checkpointHistory: {},
     projectName: 'AgentPanel test project',
+    projectId: 'project-1',
+    projectCreatedAt: null,
     projectPath: null,
     projectDirty: false,
     lastSavedSnapshot: null,
+    workflows: {},
+    activeWfId: '',
+    subgraphs: {},
+    groups: [],
+    workspaceDir: null,
     agents: [{ ...baseAgent }],
-    globalAgents: [],
     defaultAgentId: null,
+    globalAgents: [],
     roles: [],
+    artifacts: {},
     agentRouteTable: {},
-    logs: [],
-  } as never);
+    pipelines: [],
+    orchestrations: [],
+    workerRuns: [],
+    workerRunRecoveries: [],
+    workerRunEvidence: [],
+    workerRunSideEffects: [],
+    workerCleanupProposals: [],
+    projectControl: current.projectControl,
+    maxHistory: 100,
+    past: [],
+    future: [],
+    clipboard: null,
+  } as never, true);
+  useWorkflowStore.setState({ projectDirty: false });
 }
 
 describe('AgentPanel', () => {
@@ -70,10 +117,16 @@ describe('AgentPanel', () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     resetWorkflowStore();
+    expect(useWorkflowStore.getState()).toMatchObject({
+      projectPath: null,
+      projectDirty: false,
+      lastSavedSnapshot: null,
+    });
     mocks.fetchOllamaModels.mockReset();
     mocks.fetchOllamaModels.mockResolvedValue([]);
   });
@@ -82,6 +135,9 @@ describe('AgentPanel', () => {
     act(() => root.unmount());
     container.remove();
     localStorage.removeItem('slime-mold-workflow');
+    localStorage.removeItem('sm.lastSession');
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it('writes an edited agent field through the real catalog action', async () => {
