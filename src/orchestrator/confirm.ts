@@ -10,7 +10,7 @@
  */
 
 import { useWorkflowStore } from '../store/workflowStore';
-import type { Orchestration, OrchestrationStatus, PipelineDraft } from '../types';
+import type { Orchestration, OrchestrationStatus, PipelineDraft } from '../types/orchestration';
 import { generateDraft, type DraftDeps } from './draft';
 import type { Confirmation, OrchestratorRequest } from './types';
 

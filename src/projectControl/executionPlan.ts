@@ -1,4 +1,4 @@
-import type { ArtifactKind, DraftStage, PipelineDraft } from '../types';
+import type { ArtifactKind, DraftStage, PipelineDraft } from '../types/orchestration';
 import type { ProjectTaskGraph } from './types';
 
 export function buildExecutionDraftFromTaskGraph(input: {

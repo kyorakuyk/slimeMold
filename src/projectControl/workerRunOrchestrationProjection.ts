@@ -1,4 +1,4 @@
-import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
+import type { Orchestration, OrchestrationStatus, StageLog } from '../types/orchestration';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
 import { workerRunSuccessIsValid, hasWorkerSuccessProvenance } from '../domain/workerSuccess';
 

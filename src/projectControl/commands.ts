@@ -9,7 +9,7 @@ import type {
   ProjectIssueStatus,
   ProjectPlan,
 } from './types';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import { createIssue, transitionIssue } from './issue';
 import {
   approveArchitecture,

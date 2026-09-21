@@ -19,8 +19,15 @@ export type {
   PipelineEdge,
   PipelineStage,
   ProjectArtifacts,
-} from '../types';
-import type { Artifact, ArtifactKind, ModuleItem, PipelineDef, PipelineStage, ProjectArtifacts } from '../types';
+} from '../types/orchestration';
+import type {
+  Artifact,
+  ArtifactKind,
+  PipelineDef,
+  PipelineStage,
+  ProjectArtifacts,
+} from '../types/orchestration';
+import type { ModuleItem } from '../types';
 import { useWorkflowStore } from '../store/workflowStore';
 import { getActiveRunId } from './executor';
 

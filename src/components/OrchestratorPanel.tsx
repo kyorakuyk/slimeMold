@@ -42,7 +42,7 @@ import {
   stagesReadyToRun,
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
-import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
+import type { Orchestration, OrchestrationStatus, StageLog } from '../types/orchestration';
 import { workerRunViewsFor } from '../projectControl/workerRunView';
 import {
   buildTaskGraphProjection,

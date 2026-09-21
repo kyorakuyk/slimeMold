@@ -1,7 +1,7 @@
 import type { EvidenceRecord } from '../dev/evidence';
 import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import { projectWorkerRunTransition } from './workerRunTransitionProjection';
 
 export type WorkerTransitionProjectState = Parameters<

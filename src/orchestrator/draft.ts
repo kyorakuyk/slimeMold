@@ -7,7 +7,8 @@
  * - 阶段模板先硬编码（MVP），H3d 再接入 LLM 生成。
  */
 
-import type { AgentConfig, AgentRouteTable, ArtifactKind } from '../types';
+import type { AgentConfig, AgentRouteTable } from '../types';
+import type { ArtifactKind } from '../types/orchestration';
 import { decideAgentCall } from '../agents/agentDecision';
 import type { OrchestratorRequest, PipelineDraft } from './types';
 

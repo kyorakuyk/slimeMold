@@ -19,7 +19,7 @@
  */
 
 import { useWorkflowStore } from '../store/workflowStore';
-import type { DraftStage, Orchestration, StageLog } from '../types';
+import type { DraftStage, Orchestration, StageLog } from '../types/orchestration';
 import { cancelOrchestration, getOrchestration, updateOrchestration } from './confirm';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 

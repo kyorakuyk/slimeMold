@@ -1,5 +1,5 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';

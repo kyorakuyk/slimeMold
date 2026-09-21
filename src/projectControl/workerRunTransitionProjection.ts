@@ -1,5 +1,5 @@
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 
 export interface WorkerRunTransitionProjectionInput {
