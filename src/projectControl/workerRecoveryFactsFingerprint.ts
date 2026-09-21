@@ -584,6 +584,7 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   if (facts.run.version !== 1) throw new Error('facts.run version 无效');
   if (!new Set(['queued', 'running', 'partial', 'blocked', 'failed', 'cancelled', 'succeeded']).has(facts.run.status)) throw new Error('facts.run status 无效');
   requiredText(facts.run.runId, 'facts.run runId');
+  if (facts.run.orchestrationId !== null) requiredText(facts.run.orchestrationId, 'facts.run orchestrationId');
   requiredText(facts.run.taskGraphId, 'facts.run taskGraphId');
   safeInteger(facts.run.taskGraphVersion, 'facts.run taskGraphVersion');
   if (!Array.isArray(facts.run.tasks)) throw new Error('facts.run tasks 必须是数组');
@@ -620,6 +621,13 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     if (task.pendingAttempt !== undefined && (task.status !== 'queued' || task.pendingAttempt !== task.attempt + 1 || task.currentAttemptId !== undefined)) throw new Error('facts pendingAttempt fence 无效');
     if (task.cleanupStatus === 'cleaned' && (task.status !== 'succeeded' || task.worktreeStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) throw new Error('facts cleanup invariant 无效');
     if (task.worktreeStatus === 'cleaned' && (task.cleanupStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) throw new Error('facts cleaned worktree invariant 无效');
+    if (task.worktreeId !== undefined) requiredText(task.worktreeId, 'facts task worktreeId');
+    if (task.cleanupStateSignature !== undefined) requiredText(task.cleanupStateSignature, 'facts task cleanupStateSignature');
+    if (task.contextPackId !== undefined) requiredText(task.contextPackId, 'facts task contextPackId');
+    if (task.feedbackId !== undefined) requiredText(task.feedbackId, 'facts task feedbackId');
+    if (task.acceptanceId !== undefined) requiredText(task.acceptanceId, 'facts task acceptanceId');
+    if (task.cleanupReceiptId !== undefined) requiredText(task.cleanupReceiptId, 'facts task cleanupReceiptId');
+    if (task.error !== undefined) requiredText(task.error, 'facts task error');
     sortedStrings(task.evidenceIds);
   }
   const graph = assertObject(facts.taskGraph, 'facts.taskGraph');
@@ -643,6 +651,9 @@ function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     if (new Set(scope).size !== scope.length) throw new Error('facts graph task scope 重复');
     sortedStrings(task.dependsOn);
     uniqueStringsPreserveOrder(task.acceptanceCriteria, 'facts acceptance criterion');
+  }
+  for (const task of facts.taskGraph.tasks) {
+    for (const dependencyId of task.dependsOn) if (!graphIds.has(dependencyId)) throw new Error('facts graph dependency 不存在');
   }
   const runTaskIds = new Set(taskIds);
   if (facts.taskGraph.id !== facts.run.taskGraphId || facts.taskGraph.graphVersion !== facts.run.taskGraphVersion) throw new Error('facts run/graph identity 不一致');
