@@ -5111,3 +5111,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 direct command tests，覆盖状态变更、project asset dependency discovery 和注入的文件删除 port；`workflowStore.ts` 删除约 103 行 inline project-data implementation，未改变 ProjectFile schema 或资产/变量语义。
 - 相关本地 checkpoint：`8135885` / `checkpoint/workflow-project-data-commands-start`、`daa2112` / `checkpoint/workflow-project-data-commands-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `7 test files / 29 tests`；完整 Node `186 test files / 1312 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.61 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.354 unverified：extract workflow registry lifecycle commands
+
+- 将 `renameWorkflow` 与 `removeWorkflow` 从 `workflowStore.ts` 接入已有 `workflowRegistryActions.ts` owner，复用 `buildRenameWorkflowState` / `buildRemoveWorkflowState`。
+- 清理 AppData workflow 的动态 I/O 改为显式 `cleanupWorkflow` port；registry owner 负责状态/激活编排，facade 负责宿主清理 wiring，保留原有 cleanup 顺序、激活结果和兼容 action 签名。
+- 新增 registry owner direct tests，保留原有 switch/new/register 覆盖；`workflowStore.ts` 删除重复 lifecycle implementation，未改变工作流重命名、删除、激活或持久化语义。
+- 相关本地 checkpoint：`52ba7a4` / `checkpoint/workflow-registry-lifecycle-command-split-start`、`018fb9c` / `checkpoint/workflow-registry-lifecycle-command-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `3 test files / 16 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
