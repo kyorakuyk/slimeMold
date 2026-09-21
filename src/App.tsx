@@ -145,6 +145,16 @@ export default function App() {
   const getProjectOperation = operationGuard.get;
   const assertProjectOperation = operationGuard.assert;
   const clearProjectOperation = operationGuard.clear;
+  const workerRuntimeRef = useRef<ReturnType<typeof createAppWorkerRuntime> | null>(null);
+  const workerRuntime = workerRuntimeRef.current ?? (
+    workerRuntimeRef.current = createAppWorkerRuntime({
+      store: { getState: () => useWorkflowStore.getState() },
+      isTauri,
+      recoverySingleFlight,
+      getProjectOperation,
+      assertProjectOperation,
+    })
+  );
   const {
     recoverInterruptedWorkerEffects,
     loadProjectWorkerEvidence,
@@ -154,13 +164,7 @@ export default function App() {
     runQueuedWorker,
     recoverWorkerRun,
     cleanupWorkerRun,
-  } = createAppWorkerRuntime({
-    store: { getState: () => useWorkflowStore.getState() },
-    isTauri,
-    recoverySingleFlight,
-    getProjectOperation,
-    assertProjectOperation,
-  });
+  } = workerRuntime;
 
   // 面板尺寸（可拖拽调节）
   const [leftW, setLeftW] = useState(248);
