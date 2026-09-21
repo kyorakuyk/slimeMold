@@ -5079,3 +5079,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 capability contract test；本轮只移动类型事实与 import 边界，没有放宽任何能力等级或宿主拦截规则。
 - 相关本地 checkpoint：`5e59bef` / `checkpoint/types-capability-contract-split-unverified`；另保留 `4ea1dcc` / `checkpoint/types-plugin-contract-split-start` 作为插件边界探索锚点；均为本地回退锚点，未 push。
 - 验证：focused `6 test files / 47 tests`；完整 Node `182 test files / 1305 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.350 unverified：extract plugin type contracts
+
+- 将 `PluginOccupation`、`PluginNodeMeta`、`PluginManifest`、`LoadedPlugin` 从 `src/types.ts` 迁移到 `src/types/plugin.ts`，并让 plugin loader 与 registry store 直接依赖该 owner。
+- `src/types/plugin.ts` 只依赖 capability 与 graph contracts；`src/types.ts` 保留兼容 re-export，避免继续扩大通用 barrel 的内部扇出。
+- 新增 plugin contract test；未改变 manifest 字段、plugin source/scope 取值、loader 校验、registry 生命周期或 sandbox 执行语义。
+- 相关本地 checkpoint：`1bf0d99` / `checkpoint/types-plugin-contract-owner-split-start`、`6b8ee89` / `checkpoint/types-plugin-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 38 tests`；完整 Node `183 test files / 1306 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
