@@ -5063,3 +5063,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 更新 Save As direct tests、workflowStore Save As integration test 和 shared preparation wiring；未改变普通 Save、ProjectFile schema 或 event semantics。
 - 相关本地 checkpoint：`cf09ab8` / `checkpoint/shared-save-preparation-wiring-start`、`5798c14` / `checkpoint/shared-save-preparation-wiring-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `4 test files / 17 tests`；完整 Node `180 test files / 1303 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.348 unverified：extract execution type contracts
+
+- 将 `RunNodeResult`、`RunRecord`、`LogEntry` 从高扇出的 `src/types.ts` 迁移到 `src/types/execution.ts`，该 owner 只依赖 graph status 与 agent cost contracts。
+- `src/types.ts` 保留兼容 re-export；engine checkpoint/finalizer/runtime、BeginnerExperience、workflow serialization、store contract 与相关测试改为直接依赖 execution owner。
+- 移除旧 barrel 中的重复实现，未改变运行历史、日志、checkpoint、ProjectFile schema 或执行语义。
+- 相关本地 checkpoint：`a765171` / `checkpoint/types-execution-contract-split-start`、`19023bc` / `checkpoint/types-execution-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 43 tests`；完整 Node `181 test files / 1304 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
