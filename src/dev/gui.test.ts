@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
 import { ensureGuiDevSession, getDevGuiError, registerGuiDevDefs, teardownGuiDevSession } from './gui';
 

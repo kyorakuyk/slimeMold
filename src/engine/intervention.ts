@@ -14,7 +14,7 @@
  *   避免旧运行残留的介入请求永远挂起（配合 executor 收尾与 stopWorkflow 调用）。
  * - 纯事件驱动，零 store 依赖；UI 只需订阅总线 + 调 resolve/reject。
  */
-import type { InterventionRequest, InterventionResult } from '../types';
+import type { InterventionRequest, InterventionResult } from '../types/node';
 import { emitNode, getRunBus } from './runEvents';
 
 /** 完整介入请求（含运行定位，UI 展示用）。 */

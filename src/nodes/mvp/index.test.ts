@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ExecContext } from '../../types';
+import type { ExecContext } from '../../types/node';
 import { builtinDefs } from '../builtin';
 import { mvpNodes } from './index';
 

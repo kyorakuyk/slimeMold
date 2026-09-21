@@ -7,7 +7,8 @@ import {
   flattenSubgraphs,
   SUBGRAPH_REF_TYPE,
 } from './subgraph';
-import type { NodeDefinition, SubgraphDef, FlowNode, FlowEdge } from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { SubgraphDef, FlowNode, FlowEdge } from '../types';
 
 // 最小 NodeDefinition 工厂
 function def(

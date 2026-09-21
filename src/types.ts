@@ -1,6 +1,5 @@
 import type { AssetMeta } from './types/project';
 export type { AssetMeta, RecentProject } from './types/project';
-import type { CapabilityLevel } from './types/capability';
 export type { CapabilityLevel } from './types/capability';
 export type { LoadedPlugin, PluginManifest, PluginNodeMeta, PluginOccupation } from './types/plugin';
 
@@ -9,16 +8,11 @@ import type {
   EdgeKind,
   FlowEdge,
   FlowNode,
-  ParamDef,
-  PortDef,
   PortType,
 } from './types/graph';
 
 import type {
   AgentConfig,
-  ChatMessage,
-  CostRecord,
-  ExecLogger,
   RoleTemplate,
 } from './types/agent';
 export type {
@@ -77,6 +71,17 @@ export type {
 } from './types/orchestration';
 import type { RunRecord } from './types/execution';
 export type { LogEntry, RunNodeResult, RunRecord } from './types/execution';
+export { NODE_ROLE_META, createNodeDef } from './types/node';
+export type {
+  ExecContext,
+  InterventionRequest,
+  InterventionResult,
+  NodeDefInput,
+  NodeDefinition,
+  NodeExecuteFn,
+  NodeRole,
+  SandboxHandle,
+} from './types/node';
 
 /* ---------- 任务派发协议（Dispatcher / Coordinator） ---------- */
 /** 一个被派发的任务单元。
@@ -176,229 +181,6 @@ export interface CouncilVerdict {
   consensus: 'unanimous' | 'majority' | 'split';
   /** 是否部分议员失败但成功合成 */
   partialFailure: boolean;
-}
-
-export interface ExecContext {
-  logger: ExecLogger;
-  /** 通过智能体 id 调用 LLM，多协议路由由内部完成。
-   * 传入 onToken 回调即启用流式输出（逐 token 回传）。
-   * modelOverride 可用于节点级模型覆写（仅本次调用生效）。
-   * toolNames 传入则由底层 AgentHarness 启用 tool_call 多轮循环（按名引用 ToolRegistry）。 */
-  llm(
-    agentId: string,
-    messages: ChatMessage[],
-    onToken?: (text: string) => void,
-    modelOverride?: string,
-    toolNames?: string[],
-  ): Promise<string>;
-  /** 成本遥测：每次 LLM 调用后由引擎回调，记录 token 用量与耗时。
-   * Auditor 节点借此汇总全链路成本。 */
-  reportCost(record: CostRecord): void;
-  /** 本次运行全程的成本账本（累积数组），Auditor 节点读取生成报告 */
-  costLog: CostRecord[];
-  /** 执行中实时回写当前节点的某输出端口，用于流式预览 */
-  setPartial(key: string, value: unknown): void;
-  /** 分支节点在执行时声明「激活的输出端口 handle 集合」，未列出的下游分支将被跳过 */
-  setBranches?(handles: string[]): void;
-  storage: {
-    get(key: string): Promise<string | null>;
-    set(key: string, value: string): Promise<void>;
-  };
-  signal: AbortSignal;
-  /** 全局变量（可在 {{}} 模板与表达式中引用） */
-  vars: Record<string, unknown>;
-  /** 当前工作流的资产库（图片资产直连用），含 id/name/kind/content 等 */
-  assets: AssetMeta[];
-  /** 向当前工作流追加一条资产记录（图片保存节点用） */
-  addAsset(meta: AssetMeta): void;
-  /** 执行时把当前节点某输出端口的影响域(scope)写回对应的 task 连线，
-   * 供下游「冲突协调者」与执行引擎读取。仅对 flow:'task' 端口有意义，未提供则不写回。 */
-  writeOutEdgeScope?(handle: string, scope: string[]): void;
-  /**
-   * 真沙箱句柄（步骤 11 阶段 C）：运行期启用 `sandbox: true` 时注入。
-   * 每个写文件的节点拿到独立隔离目录（workspaceDir/.sandbox/<nodeId>/），并行 Worker
-   * 互不踩踏；协调者（coord.resolver / coord.council）拿到聚合句柄，可读取各 Worker
-   * 沙箱并 commitAll() 汇总进主工作区。未启用沙箱时为 undefined，节点应退回共享工作区直写。
-   */
-  sandbox?: SandboxHandle;
-  /**
-   * 协调者（coord.resolver / coord.council）在沙箱模式下的「上游车道」节点 id 列表，
-   * 即直接连入本节点的源节点。供 commitLanes 汇总这些 Worker 的沙箱产物到主工作区。
-   */
-  sandboxLanes?: string[];
-  /**
-   * 实时接管（阶段 D）：节点可请求人工介入——挂起本节点执行，直到用户在 UI
-   * 提交结果（resolved）或取消（cancelled）。仅显式调用此能力的节点生效；
-   * 默认不注入此能力时节点正常自动执行，行为完全不变。
-   */
-  intervene?(request: InterventionRequest): Promise<InterventionResult>;
-  /**
-   * 当前节点 id（owner ?? id，子图虚拟节点回写用）。供沙箱插件 RPC 按节点归属路由
-   * 日志/partial/能力调用；非沙箱节点通常不需要读它。
-   */
-  nodeId?: string;
-}
-
-/** 实时接管请求（阶段 D）：节点请求人工介入的输入。 */
-export interface InterventionRequest {
-  /** 请求说明（为何需要人工介入），展示给用户 */
-  message: string;
-  /** 可选的预填结果（如模型中途产出的草稿），用户可修改后提交 */
-  defaultResult?: string;
-}
-
-/** 实时接管结果（阶段 D）：人工介入的两种结束方式。 */
-export type InterventionResult =
-  | { kind: 'resolved'; result: string }
-  | { kind: 'cancelled'; error?: string };
-
-/**
- * 沙箱句柄：把"并行改同一份文件"的竞态收敛为"各自改副本、协调者合并"。
- * - 普通 Worker 节点：用 writeFile 落到自己的隔离目录；
- * - 协调者节点：用 readFrom / list 汇聚各 Worker 产物，commitAll 把结果落地主工作区。
- * 浏览器环境无真实文件系统，baseDir 为 null，所有读写为内存态（仅登记资产预览）。
- */
-export interface SandboxHandle {
-  /** 当前节点 id */
-  nodeId: string;
-  /** 沙箱根目录绝对路径；浏览器为 null */
-  baseDir: string | null;
-  /** 是否浏览器环境（无真实文件系统） */
-  inBrowser: boolean;
-  /** 在「当前节点」的沙箱内写文件，返回沙箱内路径（Tauri）或标识串（浏览器） */
-  writeFile(filename: string, content: string): Promise<string>;
-  /** 读取「另一节点」沙箱内的文件内容（协调者汇总用）；不存在返回 null */
-  readFrom(otherNodeId: string, filename: string): Promise<string | null>;
-  /** 列出「另一节点」沙箱内的文件名列表（协调者汇总用） */
-  list(otherNodeId: string): Promise<string[]>;
-  /** 把「当前节点沙箱」的全部内容提交（复制）到主工作区目录；返回已落盘的路径列表 */
-  commitAll(): Promise<string[]>;
-  /**
-   * 协调者专用：把若干「上游车道（worker 节点）」的沙箱内容汇总提交到主工作区。
-   * 用于并行 Worker 各自写沙箱副本后，由 coord.resolver / coord.council 统一落地。
-   * laneIds 通常为协调者节点的直接上游节点 id 列表。
-   */
-  commitLanes(laneIds: string[]): Promise<string[]>;
-}
-
-export type NodeExecuteFn = (
-  inputs: Record<string, unknown>,
-  params: Record<string, unknown>,
-  ctx: ExecContext,
-) => Promise<Record<string, unknown>>;
-
-/** 节点角色分类（对齐多 Agent 编排语义：编排者 / 探索者 / 执行者 / 校验者 / 观察者 / 输出）。
- * 用于节点面板按角色筛选与场景推荐，帮助用户快速定位「这一步该用哪类节点」。 */
-export type NodeRole =
-  | 'orchestrator' // 编排 / 调度 / 控制流（flow.*、dispatch.*、coord.*）
-  | 'architect' // 架构设计 / 技术规划（architect.*）
-  | 'explorer' // 探索 / 取数 / 检索（tool.http、image.load）
-  | 'worker' // 执行者 / 生产内容（agent.chat、image.generate、tool.writeFile）
-  | 'verifier' // 校验 / 断言 / 审计（verify.assert、auditor.*）
-  | 'observer' // 观察 / 汇总 / 预览（output.*、image.preview）
-  | 'io'; // 输入 / 输出端点（input.*、output.text 等）
-
-export const NODE_ROLE_META: Record<
-  NodeRole,
-  { label: string; color: string; hint: string }
-> = {
-  orchestrator: { label: '编排', color: '#8b5cf6', hint: '调度流程、控制分支与循环' },
-  architect: { label: '架构', color: '#6366f1', hint: '技术设计、模块划分与接口规划' },
-  explorer: { label: '探索', color: '#0ea5e9', hint: '抓取外部数据、检索与读取' },
-  worker: { label: '执行', color: '#2e9e5b', hint: '调用 LLM / 生成内容 / 落盘' },
-  verifier: { label: '校验', color: '#f59e0b', hint: '质量闸门、断言与成本审计' },
-  observer: { label: '观察', color: '#64748b', hint: '汇总结果、预览与展示' },
-  io: { label: '端点', color: '#9ca3af', hint: '工作流的输入与输出边界' },
-};
-
-
-export interface NodeDefinition {
-  typeId: string;
-  name: string;
-  category: string;
-  description?: string;
-  inputs: PortDef[];
-  outputs: PortDef[];
-  params: ParamDef[];
-  execute: NodeExecuteFn;
-  /** 来源插件 id（内置节点为空） */
-  pluginId?: string;
-  /** 导入工作流时未找到类型的占位标记 */
-  missing?: boolean;
-  /** 节点角色分类（用于面板筛选与场景推荐） */
-  role?: NodeRole;
-  /** 使用建议：何时该用这个节点（显示在面板 tooltip / 角色筛选说明） */
-  whenToUse?: string;
-  /**
-   * 步骤 11 阶段 D：节点权限能力等级下限。执行引擎据此裁剪注入的 ExecContext。
-   * 未声明时按 typeId 前缀推断默认等级（见 executor.resolveCapability）。
-   * 显式声明可用于收紧（如把内置写文件节点降为 io 以禁止落盘）或放开（插件节点声明 coordinator）。
-   */
-  minCapability?: CapabilityLevel;
-}
-
-/** 自定义节点的宽松入参：必填最小集合，其余字段由 createNodeDef 兜底。 */
-export type NodeDefInput = {
-  typeId: string;
-  name: string;
-  inputs: PortDef[];
-  outputs: PortDef[];
-  execute: NodeExecuteFn;
-} & Partial<Omit<NodeDefinition, 'typeId' | 'name' | 'inputs' | 'outputs' | 'execute'>>;
-
-/**
- * 步骤 11 阶段 D：自定义节点工厂。降低手写 NodeDefinition 的门槛——
- * 补齐缺省字段（category 默认「自定义」、params 默认 []、role 按 typeId 前缀推断），
- * 并在开发期（DEV）做端口 id 唯一性等轻量校验（warn 不抛错，不打断运行）。
- *
- * - minCapability 缺省不在此处理：交给引擎 resolveCapability 的权威推断（单一真相源）；
- *   显式传入则透传采用（同文件 NodeDefinition.minCapability 注释）。
- * - role 缺省按 typeId 前缀推断（coord./dispatch./flow.→orchestrator，architect.→architect，
- *   agent./tool./http→worker，verify./auditor.→verifier，output./image.preview→observer，input.→io，其余→worker）。
- */
-export function createNodeDef(input: NodeDefInput): NodeDefinition {
-  const role = input.role ?? inferRole(input.typeId);
-  const def: NodeDefinition = {
-    typeId: input.typeId,
-    name: input.name,
-    category: input.category ?? '自定义',
-    description: input.description,
-    inputs: input.inputs,
-    outputs: input.outputs,
-    params: input.params ?? [],
-    execute: input.execute,
-    pluginId: input.pluginId,
-    missing: input.missing,
-    role,
-    whenToUse: input.whenToUse,
-    minCapability: input.minCapability,
-  };
-
-  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
-    const inIds = new Set<string>();
-    for (const p of def.inputs) {
-      if (inIds.has(p.id)) console.warn(`[createNodeDef] 节点 ${def.typeId} 输入端口 id 重复: ${p.id}`);
-      inIds.add(p.id);
-    }
-    const outIds = new Set<string>();
-    for (const p of def.outputs) {
-      if (outIds.has(p.id)) console.warn(`[createNodeDef] 节点 ${def.typeId} 输出端口 id 重复: ${p.id}`);
-      outIds.add(p.id);
-    }
-  }
-  return def;
-}
-
-function inferRole(typeId: string): NodeRole {
-  if (typeId.startsWith('coord.') || typeId.startsWith('dispatch.') || typeId.startsWith('flow.'))
-    return 'orchestrator';
-  if (typeId.startsWith('architect.')) return 'architect';
-  if (typeId.startsWith('agent.') || typeId.startsWith('tool.') || typeId.startsWith('http'))
-    return 'worker';
-  if (typeId.startsWith('verify.') || typeId.startsWith('auditor.')) return 'verifier';
-  if (typeId.startsWith('output.') || typeId.startsWith('image.preview')) return 'observer';
-  if (typeId.startsWith('input.')) return 'io';
-  return 'worker';
 }
 
 /* ---------- 工作流文件 ---------- */

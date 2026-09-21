@@ -11,7 +11,7 @@
  * 单例：headless/CI 启动时 initDevSession()；GUI（WebView）不初始化——dev 节点调用即抛错
  * （node:child_process shim + fail-closed registry 双重兜底）。
  */
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 import { defaultDevPolicy, type SelfDevelopmentPolicy } from './policy';
 import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry } from './capabilities';
 import { WorktreeManager, createNodeGitRunner, type DevGitRunner, type WorktreeIdentityReader, type WorktreePathVerifier } from './worktree';

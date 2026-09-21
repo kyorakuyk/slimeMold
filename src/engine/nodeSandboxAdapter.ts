@@ -1,4 +1,4 @@
-import type { SandboxHandle } from '../types';
+import type { SandboxHandle } from '../types/node';
 import type { RunResources } from './runResources';
 import {
   assertAllowedSandboxLane,

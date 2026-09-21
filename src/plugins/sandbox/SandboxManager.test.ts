@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SandboxManager, createSandboxedNodeExecute, execContextResponder } from './SandboxManager';
 import type { WorkerLike, SandboxExecuteParams } from './SandboxManager';
 import type { HostToWorker, WorkerToHost } from './protocol';
-import type { ExecContext } from '../../types';
+import type { ExecContext } from '../../types/node';
 
 // jsdom 环境缺 URL.createObjectURL/revokeObjectURL（Node 22 也无全局 Worker），
 // 打桩让 createRuntimeUrl 能生成伪 URL、worker 工厂照常被调用。

@@ -10,13 +10,14 @@
  * - beforeEach 重置 store 关键状态 + registerBuiltins + 清缓存；
  * - 竞态场景用可控延迟的测试节点 def（resolveNodeExecutionMode 前注册）。
  */
+import { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
 import { registerBuiltins } from '../nodes/builtin';
 import { runWorkflow, stopWorkflow, getActiveRunId } from './executor';
 import { clearCache, beginRun } from './nodeCache';
-import type { FlowNode, FlowEdge, NodeDefinition } from '../types';
+import type { FlowNode, FlowEdge } from '../types';
 
 /** 注册一个可控延迟的测试节点：execute 返回 pending 直至手动 resolve/abort。 */
 function registerGateNode(typeId: string, opts: { delayMs?: number; output?: Record<string, unknown> } = {}) {

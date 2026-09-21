@@ -1,4 +1,4 @@
-import { createNodeDef, type NodeDefinition } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
 
 /**
  * 成本审计节点（Auditor / 书记员骨架）：

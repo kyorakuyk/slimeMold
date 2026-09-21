@@ -10,7 +10,8 @@
  * 设计原则：纯函数，不触碰 store 单例 / IO / 运行态；只依赖输入参数 + 类型。
  * workflowStore.ts 调用这些函数替换内联逻辑，对外 API 与行为完全不变。
  */
-import type { NodeDefinition, SubgraphDef } from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { SubgraphDef } from '../types';
 import type { EdgeKind, FlowEdge, FlowNode, NodeStatus, PortDef, PortType } from '../types/graph';
 import type { XYPosition } from '@xyflow/react';
 

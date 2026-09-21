@@ -19,7 +19,7 @@
  * `createNodeDef` 与 `loader.ts` 的适配（类式 → NodeDefinition）留待阶段 B 实现。
  */
 
-import type { ExecContext, NodeRole } from '../types';
+import type { ExecContext, NodeRole } from '../types/node';
 
 /* ============ 第一层：人类（所有节点的元抽象） ============ */
 

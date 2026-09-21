@@ -1,12 +1,8 @@
+import { ExecContext } from '../types/node';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  collectInputs,
-  resolveCapability,
-  applyCapability,
-  getActiveRunId,
-  workflowRequiresDevSession,
-} from './executor';
-import type { NodeDefinition, ExecContext } from '../types';
+  collectInputs, resolveCapability, applyCapability, getActiveRunId, workflowRequiresDevSession, } from './executor';
+import type { NodeDefinition } from '../types/node';
 import { useWorkflowStore } from '../store/workflowStore';
 
 function def(typeId: string, minCapability?: 'compute' | 'io' | 'sandbox_write' | 'coordinator' | 'system'): NodeDefinition {

@@ -1,3 +1,4 @@
+import { NodeRole } from '../types/node';
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronRight, ChevronDown, Search, Boxes, Trash2, Pencil } from 'lucide-react';
@@ -6,8 +7,8 @@ import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { CATEGORY_ORDER } from '../nodes/builtin';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import type { NodeDefinition, NodeRole } from '../types';
-import { NODE_ROLE_META } from '../types';
+import type { NodeDefinition } from '../types/node';
+import { NODE_ROLE_META } from '../types/node';
 import { useT } from '../i18n/useT';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */

@@ -1,4 +1,4 @@
-import { createNodeDef, type NodeDefinition } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
 
 const textInput: NodeDefinition = {
   typeId: 'input.text',

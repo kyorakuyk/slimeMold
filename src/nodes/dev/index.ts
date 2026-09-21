@@ -7,7 +7,7 @@
  * - 节点 execute 内不重复实现安全检查；
  * - GUI（WebView）下 DevSession 未初始化 → execute 抛错（shim/fail-closed 兜底），节点失败。
  */
-import type { NodeDefinition } from '../../types';
+import type { NodeDefinition } from '../../types/node';
 import type { ParamType, PortType } from '../../types/graph';
 import { evaluateDevAcceptance, type AcceptanceRule } from '../../dev/evaluator';
 import type { DevSession } from '../../dev/session';

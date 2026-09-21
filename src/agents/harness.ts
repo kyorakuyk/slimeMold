@@ -13,7 +13,7 @@
  */
 
 import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart } from '../types/agent';
-import type { ExecContext } from '../types';
+import type { ExecContext } from '../types/node';
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';

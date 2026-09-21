@@ -1,14 +1,15 @@
+import { NodeDefinition } from '../types/node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   runLlmWithFallback: vi.fn(async (input: { toolSandbox: unknown }) => {
     return input.toolSandbox ? 'sandbox-visible' : 'sandbox-denied';
-  }),
-}));
+  }), }));
 
 vi.mock('./runLlmCall', () => ({ runLlmWithFallback: mocks.runLlmWithFallback }));
 
-import type { ExecContext, FlowNode, NodeDefinition } from '../types';
+import type { ExecContext } from '../types/node';
+import type { FlowNode } from '../types';
 import { registerBuiltins } from '../nodes/builtin';
 import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';

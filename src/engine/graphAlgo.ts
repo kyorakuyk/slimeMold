@@ -5,7 +5,8 @@
  * 因此可被 Vitest 在 node 环境下直接单测覆盖，而无需启动整个运行态。
  * 它们从 executor.ts 抽取而来，源码行为保持零回归。
  */
-import type { FlowEdge, FlowNode, NodeDefinition, NodeStatus } from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types';
 import { ownerRefId } from './subgraph';
 
 /** 将 startId 的全部下游节点收集进一个 Set（BFS），含 startId 自身。返回新集合，不改入参。 */

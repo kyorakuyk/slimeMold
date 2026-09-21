@@ -1,5 +1,5 @@
-import type { NodeDefinition } from '../../types';
-import { createNodeDef } from '../../types';
+import type { NodeDefinition } from '../../types/node';
+import { createNodeDef } from '../../types/node';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { findRole, resolveRoleSystem } from '../../agents/agentManager';
 

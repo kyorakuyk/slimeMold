@@ -11,7 +11,7 @@
 import { initDevSession, resetDevSession, getDevSession, createHostAcceptanceStoreWithFs } from './session';
 import { useRegistryStore } from '../store/registryStore';
 import { pathComparisonKey } from './path-utils';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 
 /** dev.* 节点 typeId 集合（teardown 时从 registry 精确移除）。 */
 const DEV_TYPE_IDS = [

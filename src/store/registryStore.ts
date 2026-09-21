@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { LoadedPlugin } from '../types/plugin';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 
 interface RegistryState {
   defs: Record<string, NodeDefinition>;

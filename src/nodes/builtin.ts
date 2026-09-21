@@ -1,4 +1,4 @@
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 import { useRegistryStore } from '../store/registryStore';
 import { creativeNodes } from './creative';
 import { toolRegistry } from '../agents/toolRegistry';

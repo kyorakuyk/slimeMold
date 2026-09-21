@@ -4,7 +4,8 @@
 // `recomputeProxyPorts` receives node definitions through its caller; `defaultParams` remains a thin registry adapter.
 // Tests for the pure port projection pass an explicit definition table.
 
-import type { FlowEdge, FlowNode, NodeDefinition, NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { FlowEdge, FlowNode, NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types';
 import type { PortType } from '../types/graph';
 import { getNodeDef } from './registryStore';
 

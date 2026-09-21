@@ -10,7 +10,7 @@
  * 不涉及「选谁」。事件/日志经注入回调，不直接依赖 store。
  */
 import type { AgentConfig, ChatMessage, CostRecord } from '../types/agent';
-import type { SandboxHandle } from '../types';
+import type { SandboxHandle } from '../types/node';
 import { runAgentLoop } from '../agents/harness';
 import { getChannel } from '../agents/llmChannel';
 import { withRetry, type Semaphore } from './rateLimiter';

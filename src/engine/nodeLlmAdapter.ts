@@ -1,5 +1,7 @@
+import type { ExecContext } from '../types/node';
+import type { SandboxHandle } from '../types/node';
 import type { AgentConfig, CostRecord } from '../types/agent';
-import type { AgentRouteTable, ExecContext, SandboxHandle } from '../types';
+import type { AgentRouteTable } from '../types';
 import type { ExperienceSink } from '../agents/experienceSink';
 import type { Semaphore } from './rateLimiter';
 import type { EventBus } from './runEvents';
