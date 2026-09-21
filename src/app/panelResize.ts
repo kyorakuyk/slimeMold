@@ -25,10 +25,16 @@ type PointerCaptureTarget = EventTarget & {
   releasePointerCapture?: (pointerId: number) => void;
 };
 
-const activeResizeByWindow = new WeakMap<Window, () => void>();
+interface ActiveResizeSession {
+  cleanup: () => void;
+  cursor: string;
+  userSelect: string;
+}
+
+const activeResizeByWindow = new WeakMap<Window, ActiveResizeSession>();
 
 export function cancelActivePanelResize(windowRef: Window = window): void {
-  activeResizeByWindow.get(windowRef)?.();
+  activeResizeByWindow.get(windowRef)?.cleanup();
 }
 
 export function installPanelResize(deps: PanelResizeDependencies): (event: ResizePointerEvent) => void {
@@ -36,6 +42,9 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
   const documentRef = deps.documentRef ?? document;
 
   return (event) => {
+    const previousSession = activeResizeByWindow.get(windowRef);
+    const previousCursor = previousSession?.cursor ?? documentRef.body.style.cursor;
+    const previousUserSelect = previousSession?.userSelect ?? documentRef.body.style.userSelect;
     cancelActivePanelResize(windowRef);
     event.preventDefault();
     const startPos = deps.axis === 'x' ? event.clientX : event.clientY;
@@ -53,8 +62,7 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
       else deps.setPanelHeight(next);
     };
 
-    const previousCursor = documentRef.body.style.cursor;
-    const previousUserSelect = documentRef.body.style.userSelect;
+    let session: ActiveResizeSession;
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
@@ -73,14 +81,15 @@ export function installPanelResize(deps: PanelResizeDependencies): (event: Resiz
           // Pointer capture may already be released by the browser.
         }
       }
-      if (activeResizeByWindow.get(windowRef) === cleanup) {
+      if (activeResizeByWindow.get(windowRef) === session) {
         activeResizeByWindow.delete(windowRef);
+        documentRef.body.style.cursor = previousCursor;
+        documentRef.body.style.userSelect = previousUserSelect;
       }
-      documentRef.body.style.cursor = previousCursor;
-      documentRef.body.style.userSelect = previousUserSelect;
     };
+    session = { cleanup, cursor: previousCursor, userSelect: previousUserSelect };
+    activeResizeByWindow.set(windowRef, session);
 
-    activeResizeByWindow.set(windowRef, cleanup);
     documentRef.body.style.cursor = deps.axis === 'x' ? 'col-resize' : 'row-resize';
     documentRef.body.style.userSelect = 'none';
     windowRef.addEventListener('pointermove', onMove);

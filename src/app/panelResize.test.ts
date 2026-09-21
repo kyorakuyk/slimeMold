@@ -99,4 +99,50 @@ describe('panel resize adapter', () => {
     expect(document.body.style.cursor).toBe('');
     expect(document.body.style.userSelect).toBe('');
   });
+
+  it('preserves root styles during a reentrant replacement cleanup', () => {
+    document.body.style.cursor = 'initial-cursor';
+    document.body.style.userSelect = 'initial-select';
+    let replacement: () => void = () => undefined;
+    const captureTarget = {
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      setPointerCapture: () => undefined,
+      releasePointerCapture: () => replacement(),
+    } as unknown as EventTarget;
+    const first = installPanelResize({
+      axis: 'x',
+      side: 'left',
+      initial: 200,
+      setLeftWidth: () => undefined,
+      setRightWidth: () => undefined,
+      setPanelHeight: () => undefined,
+    });
+    const second = installPanelResize({
+      axis: 'y',
+      side: 'bottom',
+      initial: 200,
+      setLeftWidth: () => undefined,
+      setRightWidth: () => undefined,
+      setPanelHeight: () => undefined,
+    });
+    replacement = () => second({ preventDefault: () => undefined, clientX: 0, clientY: 200 });
+
+    first({
+      preventDefault: () => undefined,
+      clientX: 200,
+      clientY: 0,
+      pointerId: 1,
+      currentTarget: captureTarget,
+    });
+    cancelActivePanelResize();
+    expect(document.body.style.cursor).toBe('row-resize');
+    expect(document.body.style.userSelect).toBe('none');
+
+    cancelActivePanelResize();
+    expect(document.body.style.cursor).toBe('initial-cursor');
+    expect(document.body.style.userSelect).toBe('initial-select');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
 });
