@@ -131,11 +131,39 @@ function compareUtf8(left: string, right: string): number {
   return leftBytes.length - rightBytes.length;
 }
 
+function canonicalPath(value: string, field: string): string {
+  const text = requiredText(value, field);
+  if (text.includes('\\') || text.split('/').some((segment, index) => (index > 0 && segment === '') || segment === '.' || segment === '..')) {
+    throw new Error(`${field} 不是 canonical path`);
+  }
+  if (text.endsWith('/') && !/^[A-Za-z]:\/$/.test(text) && !text.startsWith('//')) throw new Error(`${field} 不能以 / 结尾`);
+  return text;
+}
+
 function comparableWorkerPath(value: string): string {
-  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = canonicalPath(value, 'path');
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
     ? normalized.toLowerCase()
     : normalized;
+}
+function canonicalRef(value: string, field: string): string {
+  const text = requiredText(value, field);
+  if (/[\\\s]/.test(text) || text.includes('..') || text.includes('//') || text.startsWith('/') || text.endsWith('/')) {
+    throw new Error(`${field} 不是 canonical ref`);
+  }
+  return text;
+}
+
+function canonicalRevision(value: string, field: string): string {
+  const text = requiredText(value, field);
+  if (!/^[0-9a-f]{7,64}$/i.test(text)) throw new Error(`${field} 不是 canonical revision`);
+  return text;
+}
+
+function uniqueStringsPreserveOrder(values: readonly string[], field: string): string[] {
+  const normalized = values.map((value) => requiredText(value, field));
+  if (new Set(normalized).size !== normalized.length) throw new Error(`${field} 不允许重复 reference`);
+  return [...normalized];
 }
 
 function sortedStrings(values: readonly string[]): string[] {
@@ -159,8 +187,27 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
   if (!taskStatuses.has(task.status)) throw new Error(`task status 无效：${task.status}`);
   safeInteger(task.attempt, 'attempt');
 
-  if (task.pendingAttempt !== undefined) safeInteger(task.pendingAttempt, 'pendingAttempt', 1);
+  if (task.pendingAttempt !== undefined) {
+    safeInteger(task.pendingAttempt, 'pendingAttempt', 1);
+    if (task.pendingAttempt <= task.attempt) throw new Error(`pendingAttempt 必须大于当前 attempt：${taskId}`);
+  }
   if (task.contextPackVersion !== undefined) safeInteger(task.contextPackVersion, 'contextPackVersion');
+  const assignmentFields = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision];
+  const assignmentCount = assignmentFields.filter((value) => value !== undefined).length;
+  if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) {
+    throw new Error(`WorkerTask assignment 不完整：${taskId}`);
+  }
+  if (task.worktreeStatus === 'created' && assignmentCount !== assignmentFields.length) {
+    throw new Error(`created worktree 缺少 assignment：${taskId}`);
+  }
+  if (task.worktreePath !== undefined) canonicalPath(task.worktreePath, 'worktree path');
+  if (task.branch !== undefined) canonicalRef(task.branch, 'branch');
+  if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'baseRevision');
+  if (task.branchRevision !== undefined) canonicalRevision(task.branchRevision, 'branchRevision');
+  if (task.worktreeId !== undefined) requiredText(task.worktreeId, 'worktree id');
+  if (task.attempt > 0 && (task.taskExecutionId === undefined || task.currentAttemptId === undefined)) {
+    throw new Error(`attempt > 0 的 task 缺少 current attempt lineage：${taskId}`);
+  }
   if (task.taskExecutionId !== undefined) {
     const taskExecutionId = requiredText(task.taskExecutionId, 'task execution id');
     assertTaskExecutionId(taskExecutionId);
@@ -187,11 +234,11 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
     ...(task.pendingAttempt === undefined ? {} : { pendingAttempt: task.pendingAttempt }),
     ...(task.currentAttemptId === undefined ? {} : { currentAttemptId: requiredText(task.currentAttemptId, 'attempt id') }),
     ...(task.worktreeId === undefined ? {} : { worktreeId: requiredText(task.worktreeId, 'worktree id') }),
-    ...(task.worktreePath === undefined ? {} : { worktreePath: comparableWorkerPath(requiredText(task.worktreePath, 'worktree path')) }),
-    ...(task.branch === undefined ? {} : { branch: requiredText(task.branch, 'branch') }),
-    ...(task.baseRevision === undefined ? {} : { baseRevision: requiredText(task.baseRevision, 'base revision') }),
+    ...(task.worktreePath === undefined ? {} : { worktreePath: comparableWorkerPath(task.worktreePath) }),
+    ...(task.branch === undefined ? {} : { branch: canonicalRef(task.branch, 'branch') }),
+    ...(task.baseRevision === undefined ? {} : { baseRevision: canonicalRevision(task.baseRevision, 'base revision') }),
     ...(task.worktreeStatus === undefined ? {} : { worktreeStatus: task.worktreeStatus }),
-    ...(task.branchRevision === undefined ? {} : { branchRevision: requiredText(task.branchRevision, 'branch revision') }),
+    ...(task.branchRevision === undefined ? {} : { branchRevision: canonicalRevision(task.branchRevision, 'branch revision') }),
     ...(task.cleanupStateSignature === undefined ? {} : { cleanupStateSignature: requiredText(task.cleanupStateSignature, 'cleanup state signature') }),
     evidenceIds: sortedStrings(task.evidenceIds),
     ...(task.contextPackId === undefined ? {} : { contextPackId: requiredText(task.contextPackId, 'context pack id') }),
@@ -205,9 +252,12 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
 }
 
 function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
-  safeInteger(task.version, 'task definition version', 1);
+  if (task.version !== 1) throw new Error(`task definition version 不受支持：${task.version}`);
   const taskStatuses = new Set(['proposed', 'approved', 'queued', 'in_progress', 'review', 'blocked', 'done', 'cancelled']);
   if (!taskStatuses.has(task.status)) throw new Error(`ProjectTask status 无效：${task.status}`);
+  const scope = task.scope.map((path) => comparableWorkerPath(canonicalPath(path, 'task scope path'))).sort(compareUtf8);
+  const dependsOn = sortedStrings(task.dependsOn);
+  const acceptanceCriteria = uniqueStringsPreserveOrder(task.acceptanceCriteria, 'acceptance criterion');
   return {
     version: task.version,
     id: requiredText(task.id, 'task id'),
@@ -216,9 +266,9 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
     title: task.title,
     description: task.description,
     moduleId: requiredText(task.moduleId, 'module id'),
-    scope: [...task.scope],
-    dependsOn: [...task.dependsOn],
-    acceptanceCriteria: [...task.acceptanceCriteria],
+    scope,
+    dependsOn,
+    acceptanceCriteria,
     category: task.category,
     status: task.status,
     ...(task.workflowId === undefined ? {} : { workflowId: requiredText(task.workflowId, 'workflow id') }),
@@ -227,20 +277,29 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
 }
 
 function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerRecoveryEffectFactV1['receipt'] {
+  if (typeof receipt !== 'object' || receipt === null) throw new Error('receipt 必须是对象');
+  if (receipt.outcome !== undefined && receipt.outcome !== 'succeeded' && receipt.outcome !== 'failed') {
+    throw new Error(`receipt outcome 无效：${receipt.outcome}`);
+  }
+  if (receipt.evidenceIds !== undefined && !Array.isArray(receipt.evidenceIds)) throw new Error('receipt evidenceIds 必须是数组');
+  if (receipt.files !== undefined && !Array.isArray(receipt.files)) throw new Error('receipt files 必须是数组');
+  requiredText(receipt.receiptId, 'receipt id');
+  requiredText(receipt.observedAt, 'receipt observedAt');
+  const evidenceIds = receipt.evidenceIds === undefined ? undefined : sortedStrings(receipt.evidenceIds);
+  const files = receipt.files === undefined ? undefined : receipt.files
+    .map((file) => ({ path: comparableWorkerPath(requiredText(file.path, 'receipt file path')), contentHash: requiredText(file.contentHash, 'receipt file hash') }))
+    .sort((left, right) => compareUtf8(left.path, right.path));
+  if (files && new Set(files.map((file) => file.path)).size !== files.length) throw new Error('receipt files 不允许重复 path');
   return {
     receiptId: requiredText(receipt.receiptId, 'receipt id'),
-    ...(receipt.outputHash === undefined ? {} : { outputHash: receipt.outputHash }),
+    ...(receipt.outputHash === undefined ? {} : { outputHash: requiredText(receipt.outputHash, 'receipt output hash') }),
     ...(receipt.outcome === undefined ? {} : { outcome: receipt.outcome }),
-    ...(receipt.evidenceIds === undefined ? {} : { evidenceIds: sortedStrings(receipt.evidenceIds) }),
+    ...(evidenceIds === undefined ? {} : { evidenceIds }),
     ...(receipt.acceptanceId === undefined ? {} : { acceptanceId: requiredText(receipt.acceptanceId, 'acceptance id') }),
     ...(receipt.artifactCandidateId === undefined ? {} : { artifactCandidateId: requiredText(receipt.artifactCandidateId, 'artifact candidate id') }),
     ...(receipt.approvalId === undefined ? {} : { approvalId: requiredText(receipt.approvalId, 'approval id') }),
-    ...(receipt.files === undefined ? {} : {
-      files: receipt.files
-        .map((file) => ({ path: comparableWorkerPath(requiredText(file.path, 'receipt file path')), contentHash: requiredText(file.contentHash, 'receipt file hash') }))
-        .sort((left, right) => compareUtf8(left.path, right.path)),
-    }),
-    ...(receipt.error === undefined ? {} : { error: receipt.error }),
+    ...(files === undefined ? {} : { files }),
+    ...(receipt.error === undefined ? {} : { error: requiredText(receipt.error, 'receipt error') }),
   };
 }
 
@@ -252,6 +311,8 @@ function validateSideEffectEnvelope(effect: SideEffectRecord): void {
   if (effect.status === 'planned' && effect.recovery !== 'retry') throw new Error(`planned effect recovery 不一致：${effect.idempotencyKey}`);
   if (effect.status === 'started' && effect.recovery !== 'retry') throw new Error(`started effect recovery 不一致：${effect.idempotencyKey}`);
   if (effect.status === 'unknown' && effect.recovery !== 'needs-user') throw new Error(`unknown effect recovery 不一致：${effect.idempotencyKey}`);
+  if (effect.status === 'unknown') requiredText(effect.unknownReason ?? '', 'unknownReason');
+  if (effect.unknownReason !== undefined) requiredText(effect.unknownReason, 'unknownReason');
   if (effect.status === 'receipt') {
     if (effect.recovery !== 'skip' || !effect.receipt) throw new Error(`receipt effect receipt/recovery 不一致：${effect.idempotencyKey}`);
     receiptFact(effect.receipt);
@@ -285,10 +346,13 @@ function effectFact(
     attemptId,
     attempt: task.attempt,
   });
-  if (task.taskExecutionId !== undefined && task.taskExecutionId !== taskExecutionId) {
+  if (task.taskExecutionId === undefined || task.currentAttemptId === undefined) {
+    throw new Error(`当前 task 缺少完整 current attempt lineage：${taskId}`);
+  }
+  if (task.taskExecutionId !== taskExecutionId) {
     throw new Error(`recoverable effect taskExecutionId 不属于当前 task：${effect.idempotencyKey}`);
   }
-  if (task.currentAttemptId !== undefined && task.currentAttemptId !== attemptId) {
+  if (task.currentAttemptId !== attemptId) {
     throw new Error(`recoverable effect attemptId 不属于当前 attempt：${effect.idempotencyKey}`);
   }
   const target = requiredText(effect.target, 'effect target');
@@ -358,6 +422,8 @@ function effectFact(
 }
 
 export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): WorkerRecoveryFactsV1 {
+  if (input.run.version !== 1) throw new Error(`Worker Run version 不受支持：${input.run.version}`);
+  if (input.taskGraph.version !== 1) throw new Error(`TaskGraph version 不受支持：${input.taskGraph.version}`);
   const projectId = requiredText(input.projectId, 'project id');
   const runId = requiredText(input.run.runId, 'run id');
   const taskGraphId = requiredText(input.run.taskGraphId, 'taskGraph id');
@@ -392,10 +458,17 @@ export function buildWorkerRecoveryFactsV1(input: WorkerRecoveryFactsInput): Wor
     throw new Error(`TaskGraph task id 重复：${input.taskGraph.id}`);
   }
   const graphTaskIds = new Set(graphTasks.map((task) => task.id));
+  for (const task of graphTasks) {
+    for (const dependencyId of task.dependsOn) {
+      if (!graphTaskIds.has(dependencyId)) throw new Error(`TaskGraph dependency 不存在：${task.id} -> ${dependencyId}`);
+    }
+  }
   for (const task of tasks) {
     if (!graphTaskIds.has(task.taskId)) throw new Error(`Worker Run task 不存在于 TaskGraph：${task.taskId}`);
   }
   const graphTasksById = new Map(input.taskGraph.tasks.map((task) => [task.id, task]));
+  const allEffectKeys = input.sideEffects.map((effect) => requiredText(effect.idempotencyKey, 'effect idempotency key'));
+  if (new Set(allEffectKeys).size !== allEffectKeys.length) throw new Error(`side effect idempotency key 重复：${runId}`);
   for (const effect of input.sideEffects) validateSideEffectEnvelope(effect);
 
   const recoverableEffects = input.sideEffects
@@ -444,7 +517,7 @@ function canonicalize(value: unknown, inArray = false): string {
   if (value === null) return 'null';
   if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('canonical facts 不允许非有限数字');
+    if (!Number.isSafeInteger(value)) throw new Error('canonical facts 只允许 safe integer 数字');
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) return `[${value.map((item) => canonicalize(item, true)).join(',')}]`;

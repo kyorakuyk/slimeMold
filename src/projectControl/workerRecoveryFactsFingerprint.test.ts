@@ -62,13 +62,14 @@ function effect(overrides: Partial<SideEffectRecord> = {}): SideEffectRecord {
     idempotencyKey: 'effect-1',
     kind: 'worker-execution',
     target: 'worktree-1',
-    inputHash: '["run-1","task-1",1,1,"base","C:/worktree","worker/task-1"]',
+    inputHash: '["run-1","task-1",1,1,"0123456789abcdef0123456789abcdef01234567","C:/worktree","worker/task-1"]',
     runId: 'run-1',
     taskId: 'task-1',
     taskExecutionId: 'task-execution:run-1:task-1',
     attemptId: 'task-execution:run-1:task-1:attempt-1',
     status: 'unknown',
     recovery: 'needs-user',
+    unknownReason: 'worker interrupted',
     ...overrides,
   };
 }
@@ -90,7 +91,7 @@ function input(overrides: {
         worktreeId: 'worktree-1',
         worktreePath: 'C:/worktree',
         branch: 'worker/task-1',
-        baseRevision: 'base',
+        baseRevision: '0123456789abcdef0123456789abcdef01234567',
         evidenceIds: ['evidence-1'],
         updatedAt: '2026-09-20T00:01:00.000Z',
       },
@@ -108,7 +109,7 @@ describe('worker recovery facts fingerprint v1', () => {
       taskId: 'task-2',
       taskExecutionId: 'task-execution:run-1:task-2',
       attemptId: 'task-execution:run-1:task-2:attempt-1',
-      inputHash: '["run-1","task-2",1,1,"base","C:/worktree-2","worker/task-2"]',
+      inputHash: '["run-1","task-2",1,1,"0123456789abcdef0123456789abcdef01234567","C:/worktree-2","worker/task-2"]',
     });
     const taskTwo = {
       taskId: 'task-2',
@@ -119,7 +120,7 @@ describe('worker recovery facts fingerprint v1', () => {
       worktreeId: 'worktree-2',
       worktreePath: 'C:/worktree-2',
       branch: 'worker/task-2',
-      baseRevision: 'base',
+      baseRevision: '0123456789abcdef0123456789abcdef01234567',
       evidenceIds: ['evidence-2'],
       updatedAt: '2026-09-20T00:01:00.000Z',
     };
@@ -164,7 +165,7 @@ describe('worker recovery facts fingerprint v1', () => {
       }),
       sideEffects: [effect({
         attemptId: 'task-execution:run-1:task-1:attempt-2',
-        inputHash: '["run-1","task-1",1,2,"base","C:/worktree","worker/task-1"]',
+        inputHash: '["run-1","task-1",1,2,"0123456789abcdef0123456789abcdef01234567","C:/worktree","worker/task-1"]',
       })],
     });
     const changedEffect = await fingerprintWorkerRecoveryFactsV1({
@@ -187,7 +188,7 @@ describe('worker recovery facts fingerprint v1', () => {
     }))).toThrow();
   });
 
-  it('rejects invalid states, unsafe numbers, and duplicate references', () => {
+  it('rejects missing lineage, invalid receipts, duplicate terminal ids, paths, and graph references', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
       run: run({
         'task-1': {
@@ -211,6 +212,31 @@ describe('worker recovery facts fingerprint v1', () => {
           evidenceIds: ['evidence-1', 'evidence-1'],
         },
       }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          currentAttemptId: undefined,
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({ status: 'receipt', recovery: 'skip', receipt: { receiptId: 'receipt-1', outcome: 'other' } as never })],
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({ idempotencyKey: 'effect-1' }), effect({ idempotencyKey: 'effect-1' })],
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          worktreePath: 'C:/worktree/../other',
+        },
+      }),
+    }))).toThrow();
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      taskGraph: graph([{ ...task('task-1'), dependsOn: ['task-1', 'task-1'] }]),
     }))).toThrow();
   });
 });
