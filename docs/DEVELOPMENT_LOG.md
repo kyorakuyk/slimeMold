@@ -5087,3 +5087,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 plugin contract test；未改变 manifest 字段、plugin source/scope 取值、loader 校验、registry 生命周期或 sandbox 执行语义。
 - 相关本地 checkpoint：`1bf0d99` / `checkpoint/types-plugin-contract-owner-split-start`、`6b8ee89` / `checkpoint/types-plugin-contract-split-unverified`；均为本地回退锚点，未 push。
 - 验证：focused `6 test files / 38 tests`；完整 Node `183 test files / 1306 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.351 unverified：extract workflow run state commands
+
+- 将 `setRunning`、`setRunProgress`、成本日志、运行历史、checkpoint memory/persistence/snapshot/clear/restore actions 从 `workflowStore.ts` 抽到 `src/store/workflowRunStateCommands.ts`。
+- 新 owner 只通过显式 `getState`、`setState`、`updateState`、dirty suppression 与 checkpoint persistence ports 工作；facade 仅负责 composition，保留 active workflow 兼容字段同步和 checkpoint 落盘语义。
+- 新增 command owner focused tests；`workflowStore.ts` 删除约 96 行 inline run/checkpoint implementation，未改变 Worker executor、恢复、ProjectFile 或运行历史行为。
+- 相关本地 checkpoint：`f6a870d` / `checkpoint/workflow-run-state-command-split-start`、`812019c` / `checkpoint/workflow-run-state-command-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 37 tests`；完整 Node `184 test files / 1308 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.63 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
