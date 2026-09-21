@@ -4890,3 +4890,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - exact reviewer 针对 `7567b6a93be738a1c302299fafb9219f655c4931`、parent `fccd342cc9ad66df68cea0cdd674b60613373795` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 DTO/schema block 已完整迁移、schema 唯一定义、facade value/type re-export兼容，fingerprint builder/validator/normalizer/canonicalizer/hash未发生语义变化，且无反向循环或 durable CAS scope creep。
 - 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-types-verified`，指向上述 exact code commit；该 tag只证明 DTO type ownership结构切片，不证明 recovery facts 巨石已完全拆完或 durable CAS已实现。
 - 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.325 unverified：extract Worker recovery facts shared rules owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsRules.ts`，集中拥有 required text/string/safe integer、UTF-8 canonical ordering、path/ref/timestamp/revision normalization、sorted/unique references和 shared task attempt invariant。
+- source `taskFact` 与 direct `validateFactsDto` 现在导入同一 `assertTaskAttemptInvariant`；canonical path/ref/order等规则不再在 fingerprint facade 内重复定义。未移动 source builder、DTO validator、DTO normalization、canonical JSON或SHA-256行为。
+- 本轮保持纯内存边界，不接 ProjectFile、eventBuffer、side-effect journal、controller、native host或durable CAS；当前 fingerprint facade仍有后续 source/DTO validation与normalization拆分工作。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。

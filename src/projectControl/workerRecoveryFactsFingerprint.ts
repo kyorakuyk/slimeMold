@@ -24,91 +24,20 @@ export type {
   WorkerRecoveryTaskFactV1,
 } from './workerRecoveryFactsTypes';
 
-function requiredText(value: string, field: string): string {
-  const normalized = value.trim();
-  if (!normalized) throw new Error(`${field} 不能为空`);
-  if (normalized !== value) throw new Error(`${field} 必须使用 canonical 形式，不能包含首尾空白`);
-  return value;
-}
-
-function stringValue(value: unknown, field: string): string {
-  if (typeof value !== 'string') throw new Error(`${field} 必须是 string`);
-  return value;
-}
-
-function safeInteger(value: number, field: string, minimum = 0): number {
-  if (!Number.isSafeInteger(value) || value < minimum) throw new Error(`${field} 必须是合法 safe integer：${value}`);
-  return value;
-}
-
-function compareUtf8(left: string, right: string): number {
-  const leftBytes = new TextEncoder().encode(left);
-  const rightBytes = new TextEncoder().encode(right);
-  const length = Math.min(leftBytes.length, rightBytes.length);
-  for (let index = 0; index < length; index += 1) {
-    if (leftBytes[index] !== rightBytes[index]) return leftBytes[index] - rightBytes[index];
-  }
-  return leftBytes.length - rightBytes.length;
-}
-
-function canonicalPath(value: string, field: string): string {
-  const text = requiredText(value, field);
-  if (text.includes('\\') || text.split('/').some((segment, index) => (index > 0 && segment === '') || segment === '.' || segment === '..')) {
-    throw new Error(`${field} 不是 canonical path`);
-  }
-  if (text.endsWith('/') && !/^[A-Za-z]:\/$/.test(text) && !text.startsWith('//')) throw new Error(`${field} 不能以 / 结尾`);
-  return text;
-}
-
-function comparableWorkerPath(value: string): string {
-  const normalized = canonicalPath(value, 'path');
-  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
-    ? normalized.toLowerCase()
-    : normalized;
-}
-function canonicalRef(value: string, field: string): string {
-  const text = requiredText(value, field);
-  const components = text.split('/');
-  if (!/^[A-Za-z0-9._/-]+$/.test(text)
-    || text.includes('..')
-    || text.includes('@{')
-    || text.startsWith('/')
-    || text.endsWith('/')
-    || components.some((component) => !component || component.startsWith('.') || component.endsWith('.') || component.endsWith('.lock'))) {
-    throw new Error(`${field} 不是 canonical Git ref`);
-  }
-  return text;
-}
-
-function canonicalTimestamp(value: string, field: string): string {
-  const text = requiredText(value, field);
-  if (new Date(text).toISOString() !== text) throw new Error(`${field} 不是 canonical timestamp`);
-  return text;
-}
-
-function canonicalRevision(value: string, field: string): string {
-  const text = requiredText(value, field);
-  if (!/^[0-9a-f]{40}$/.test(text)) throw new Error(`${field} 不是 canonical revision`);
-  return text;
-}
-
-function uniqueStringsPreserveOrder(values: readonly string[], field: string): string[] {
-  const normalized = values.map((value) => requiredText(value, field));
-  if (new Set(normalized).size !== normalized.length) throw new Error(`${field} 不允许重复 reference`);
-  return [...normalized];
-}
-
-function sortedStrings(values: readonly string[]): string[] {
-  const normalized = values.map((value) => requiredText(value, 'string'));
-  if (new Set(normalized).size !== normalized.length) throw new Error('canonical facts 不允许重复 reference');
-  return [...normalized].sort(compareUtf8);
-}
-
-function assertTaskAttemptInvariant(status: WorkerQueueTask['status'], attempt: number, field: string): void {
-  if (['running', 'waiting-feedback', 'succeeded', 'failed'].includes(status) && attempt < 1) {
-    throw new Error(`${field} 的 attempt 无效：${attempt}`);
-  }
-}
+import {
+  assertTaskAttemptInvariant,
+  canonicalPath,
+  canonicalRef,
+  canonicalRevision,
+  canonicalTimestamp,
+  comparableWorkerPath,
+  compareUtf8,
+  requiredText,
+  safeInteger,
+  sortedStrings,
+  stringValue,
+  uniqueStringsPreserveOrder,
+} from './workerRecoveryFactsRules';
 
 function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV1 {
   const taskId = requiredText(task.taskId, 'task id');
