@@ -5201,3 +5201,22 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - reviewer 确认 catalog/projection fields 各自只有一个 owner，`WorkflowState` 保持合并后的公开 shape，route cleanup 使用预期的 catalog/projection command-state intersection，owner modules 无 reverse facade import，diff 无 runtime behavior change。
 - verified tag `checkpoint/workflow-state-projection-contract-split-verified` 已创建并回读，指向 exact code target `ae5b88f`；后续 docs-only commit 不继承为 verified code HEAD。reviewer 未运行测试。
 - 同一 code target 的真实质量门：完整 `201 test files / 1333 tests`；`npm run build` 通过，最大 chunk `1,190.18 kB`；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+
+### 7.365 exact review closure：module topology verified anchors
+
+- clean fixed-object review 已闭合并创建 verified tags：
+  - `checkpoint/types-project-file-control-contracts-verified` → `085317c`；
+  - `checkpoint/workflow-projection-command-split-verified` → `a08d89f`；
+  - `checkpoint/workflow-state-projection-contract-split-verified` → `ae5b88f`；
+  - `checkpoint/executor-context-port-compat-test-verified` → `acf7751`；
+  - `checkpoint/app-startup-bootstrap-split-verified` → `4b0d4d5`；
+  - `checkpoint/app-global-shortcuts-split-verified` → `63828f0`；
+  - `checkpoint/workflow-catalog-command-split-verified` → `a77d970`；
+  - `checkpoint/shared-runtime-contract-cycle-split-verified` → `2eabc74`；
+  - `checkpoint/direct-agent-owner-residual-repair-verified` → `9638006`；
+  - `checkpoint/app-panel-resize-final-verified` → `9e1fae6`。
+- 每个 verified tag 均指向 reviewer 实际审查的 code object；后续 docs-only commits 不继承为 verified code HEAD。reviewers 只执行 Git object review，不运行测试；测试/build/i18n/tsc/diff evidence 来自对应 code target 或其明确记录。
+- `checkpoint/types-graph-direct-owner-normalization-unverified` → `8ea96a6` 保持 unverified：exact review 发现当时 `openai.ts` 仍有 `import('../../types').ToolCall` residual。该 residual 已由 `9638006` 单独修复并 verified，但原 graph normalization target 不追溯升级。
+- panel resize 的后续 repair anchors `fbdccc7`、`2b20e26`、`955c642`、`5f5b5f0`、`9e1fae6` 中，只有最终 clean exact-approved target `9e1fae6` 被 verified；此前 target 的 dirty/logic fail-closed verdict 保持原状。
+- 最终已验证的拓扑事实：production direct importers of `src/types.ts` 为 `0`；注释剥离后的 production relative graph 为 `286` files / `1274` edges / `0` multi-node SCC；`workflowStore.ts` `904` 行，`WorkflowState` contract `333` 行，catalog/projection fields 各有独立 owner；App startup/shortcut/resize、executor run contract、shared runtime contracts均通过窄 ports或shared owner收口。
+- 最终代码质量门（最终 panel target）：完整 `201 test files / 1339 tests`；`npm run build` 通过，最大 chunk `1,191.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。未改变 Worker/recovery、ProjectFile、DomainEvent、Evidence/Acceptance/Receipt、Tauri 或 workflow persistence schema；未保留 credential values。
