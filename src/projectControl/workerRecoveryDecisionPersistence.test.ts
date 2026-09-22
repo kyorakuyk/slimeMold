@@ -9,7 +9,17 @@ import {
 
 function candidate() {
   return {
-    state: { runId: 'run-1', status: 'queued' } as unknown as WorkerRunQueueState,
+    state: {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-09-22T00:00:00.000Z',
+      updatedAt: '2026-09-22T00:00:00.000Z',
+      tasks: {},
+    } satisfies WorkerRunQueueState,
     events: [{
       eventId: 'decision-1:WorkerRunRecoveryDecided:run-1',
       streamId: 'project-1',
@@ -68,7 +78,42 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     const restarted = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
     await expect(restarted.admit(exact, {
       readCurrentFactsFingerprint: async () => 'worker-recovery-facts-v1:sha256:post-commit',
+      isCandidateApplied: async () => true,
     })).resolves.toMatchObject({ kind: 'replay', record: { status: 'committed' } });
+  });
+
+  it('resumes a committed request when its durable candidate is missing from the projection', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await persistence.commit(exact);
+
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+      isCandidateApplied: async () => false,
+    })).resolves.toMatchObject({ kind: 'resume', record: { status: 'committed' } });
+  });
+
+  it('tracks retry post-commit dispatch and reads the status back durably', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await expect(persistence.commit(exact)).resolves.toMatchObject({
+      status: 'committed',
+      postCommitStatus: 'pending',
+    });
+    await expect(persistence.markPostCommit(exact, 'completed', exact.now)).resolves.toMatchObject({
+      postCommitStatus: 'completed',
+    });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'completed' })] },
+    });
   });
 
   it('resumes an admitted request with its durable candidate after a restart', async () => {
@@ -130,5 +175,26 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     })).rejects.toMatchObject({ code: 'needs-repair' });
     expect(persistence).toBeInstanceOf(WorkerRecoveryDecisionPersistence);
     expect(WorkerRecoveryDecisionCasError).toBeDefined();
+  });
+
+  it('rejects a durable candidate with an invalid run state before admission', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+        candidate: {
+          ...exact.candidate,
+          state: { ...exact.candidate.state, status: 'not-a-worker-run-status' },
+        },
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
   });
 });

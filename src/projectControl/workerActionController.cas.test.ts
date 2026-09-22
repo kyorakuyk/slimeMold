@@ -81,7 +81,7 @@ const run: WorkerRunQueueState = {
 };
 
 describe('worker action controller recovery CAS wiring', () => {
-  it('persists one decision and does not rerun an exact request after replay', async () => {
+  it('persists one decision, repairs a missing projection, and does not rerun an exact request', async () => {
     const state = {
       projectId: 'project-1',
       projectPath: 'C:/project',
@@ -91,11 +91,11 @@ describe('worker action controller recovery CAS wiring', () => {
       workerCleanupProposals: [],
       orchestrations: [],
       taskGraphs: [taskGraph],
-      setWorkerRunSideEffects: vi.fn(),
-      setWorkerRuns: vi.fn(),
-      setOrchestrations: vi.fn(),
-      setWorkerCleanupProposals: vi.fn(),
-      setWorkerRunRecoveries: vi.fn(),
+      setWorkerRunSideEffects: vi.fn((effects) => { state.workerRunSideEffects = effects; }),
+      setWorkerRuns: vi.fn((runs) => { state.workerRuns = runs; }),
+      setOrchestrations: vi.fn((orchestrations) => { state.orchestrations = orchestrations; }),
+      setWorkerCleanupProposals: vi.fn((proposals) => { state.workerCleanupProposals = proposals; }),
+      setWorkerRunRecoveries: vi.fn((recoveries) => { state.workerRunRecoveries = recoveries; }),
     };
     const operation = { projectId: 'project-1', projectPath: 'C:/project', controller: new AbortController() };
     const recordProjectEvents = vi.fn();
@@ -118,13 +118,49 @@ describe('worker action controller recovery CAS wiring', () => {
 
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
+    state.workerRuns = [run];
+    await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
 
-    expect(recordProjectEvents).toHaveBeenCalledTimes(1);
-    expect(saveProject).toHaveBeenCalledTimes(1);
+    expect(recordProjectEvents).toHaveBeenCalledTimes(2);
+    expect(saveProject).toHaveBeenCalledTimes(2);
     expect(runQueuedWorker).toHaveBeenCalledTimes(1);
     await expect(persistence.read()).resolves.toMatchObject({
       status: 'ok',
       journal: { entries: [expect.objectContaining({ requestIdentity: 'request-1', status: 'committed' })] },
     });
+
+    const durableRecord = await persistence.find('request-1');
+    expect(durableRecord).toBeDefined();
+    if (!durableRecord) throw new Error('durable recovery decision missing from test journal');
+    const durableInput = {
+      projectId: durableRecord.projectId,
+      runId: durableRecord.runId,
+      requestIdentity: durableRecord.requestIdentity,
+      action: durableRecord.action,
+      semanticPayloadVersion: durableRecord.semanticPayloadVersion,
+      decisionId: durableRecord.decisionId,
+      factsFingerprint: durableRecord.factsFingerprint,
+      candidate: durableRecord.candidate,
+      now: durableRecord.admittedAt,
+    };
+    await persistence.markPostCommit(durableInput, 'failed', durableRecord.admittedAt);
+    runQueuedWorker.mockRejectedValueOnce(new Error('dispatch failed'));
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+    ).rejects.toThrow('dispatch failed');
+    runQueuedWorker.mockResolvedValueOnce(undefined);
+    await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
+    expect(runQueuedWorker).toHaveBeenCalledTimes(3);
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'completed' })] },
+    });
+
+    state.workerRuns = [run];
+    saveProject.mockImplementationOnce(async () => {
+      state.workerRuns = [run];
+    });
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+    ).rejects.toMatchObject({ code: 'needs-repair' });
   });
 });

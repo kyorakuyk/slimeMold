@@ -14,8 +14,11 @@ import { mergeWorkerSideEffects } from './workerEvidence';
 import { assertWorkerRecoveryDecisionPrecondition } from './workerRecoveryDecisionPrecondition';
 import { fingerprintWorkerRecoveryFactsV1 } from './workerRecoveryFactsFingerprint';
 import {
+  WorkerRecoveryDecisionCasError,
   WorkerRecoveryDecisionPersistence,
   type WorkerRecoveryDecisionCandidate,
+  type WorkerRecoveryDecisionInput,
+  type WorkerRecoveryDecisionRecord,
 } from './workerRecoveryDecisionPersistence';
 import {
   createWorkerRecoverySingleFlight,
@@ -109,35 +112,9 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
     deps.assertProjectOperation(operation);
     current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
-    const decisionState = deps.getState();
-    assertWorkerRecoveryDecisionPrecondition({
-      projectId,
-      projectPath,
-      runId,
-      capturedRun: run,
-      capturedTaskGraph: taskGraph,
-      current: decisionState,
-    });
     const normalizedReason = reason.trim();
     const requestKey = requestIdentity?.trim() || `run:${runId}:${decision}`;
     const decisionId = `recovery:${requestKey}`;
-    const now = new Date().toISOString();
-    const factsFingerprint = await fingerprintWorkerRecoveryFactsV1({
-      projectId,
-      run,
-      taskGraph,
-      sideEffects: journal.entries,
-    });
-    const result = recoverWorkerRunCommand({
-      projectId,
-      state: run,
-      taskGraph,
-      journal,
-      decision,
-      reason: normalizedReason,
-      decisionId,
-      now,
-    });
     const decisionPersistence = deps.recoveryDecisionPersistence
       ?? (deps.createRecoveryDecisionPersistence
         ? await deps.createRecoveryDecisionPersistence(projectPath)
@@ -148,6 +125,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
             projectPath,
           );
         })());
+
     const readCurrentFactsFingerprint = async (): Promise<string> => {
       const latest = deps.getState();
       const latestRun = latest.workerRuns.find((item) => item.runId === runId);
@@ -161,29 +139,126 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         sideEffects: latestSideEffects.length > 0 ? latestSideEffects : journal.entries,
       });
     };
-    const admission = await decisionPersistence.admit({
-      projectId,
-      runId,
-      requestIdentity: requestKey,
-      action: decision,
-      semanticPayloadVersion: 1,
-      decisionId,
-      factsFingerprint,
-      candidate: {
-        state: result.state,
-        events: result.events,
-      },
-      now,
-    }, {
+    const isCandidateApplied = async (candidate: WorkerRecoveryDecisionCandidate): Promise<boolean> => {
+      const latest = deps.getState();
+      const latestRun = latest.workerRuns.find((item) => item.runId === runId);
+      return !!latestRun && JSON.stringify(latestRun) === JSON.stringify(candidate.state);
+    };
+    const dispatchPostCommit = async (record: WorkerRecoveryDecisionRecord): Promise<void> => {
+      if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
+      const recordInput: WorkerRecoveryDecisionInput = {
+        projectId: record.projectId,
+        runId: record.runId,
+        requestIdentity: record.requestIdentity,
+        action: record.action,
+        semanticPayloadVersion: record.semanticPayloadVersion,
+        decisionId: record.decisionId,
+        factsFingerprint: record.factsFingerprint,
+        candidate: record.candidate,
+        now: record.admittedAt,
+      };
+      try {
+        await deps.runQueuedWorker(runId, workerRuntime);
+      } catch (cause) {
+        await decisionPersistence.markPostCommit(recordInput, 'failed', new Date().toISOString());
+        throw cause;
+      }
+      await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
+    };
+
+    const durableRecord = await decisionPersistence.find(requestKey);
+    let decisionInput: WorkerRecoveryDecisionInput;
+    let admission: Awaited<ReturnType<WorkerRecoveryDecisionPersistence['admit']>>;
+    if (durableRecord) {
+      if (durableRecord.projectId !== projectId
+        || durableRecord.runId !== runId
+        || durableRecord.action !== decision
+        || durableRecord.decisionId !== decisionId) {
+        throw new WorkerRecoveryDecisionCasError(
+          'conflict',
+          `recovery requestIdentity 已绑定其它项目、Run 或 action：${requestKey}`,
+        );
+      }
+      if (durableRecord.candidate.state.taskGraphId !== taskGraph.id
+        || durableRecord.candidate.state.taskGraphVersion !== taskGraph.graphVersion) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery durable candidate 与当前 TaskGraph 不一致：${requestKey}`,
+        );
+      }
+      decisionInput = {
+        projectId: durableRecord.projectId,
+        runId: durableRecord.runId,
+        requestIdentity: durableRecord.requestIdentity,
+        action: durableRecord.action,
+        semanticPayloadVersion: durableRecord.semanticPayloadVersion,
+        decisionId: durableRecord.decisionId,
+        factsFingerprint: durableRecord.factsFingerprint,
+        candidate: durableRecord.candidate,
+        now: durableRecord.admittedAt,
+      };
+    } else {
+      const now = new Date().toISOString();
+      assertWorkerRecoveryDecisionPrecondition({
+        projectId,
+        projectPath,
+        runId,
+        capturedRun: run,
+        capturedTaskGraph: taskGraph,
+        current: deps.getState(),
+      });
+      const factsFingerprint = await fingerprintWorkerRecoveryFactsV1({
+        projectId,
+        run,
+        taskGraph,
+        sideEffects: journal.entries,
+      });
+      const result = recoverWorkerRunCommand({
+        projectId,
+        state: run,
+        taskGraph,
+        journal,
+        decision,
+        reason: normalizedReason,
+        decisionId,
+        now,
+      });
+      decisionInput = {
+        projectId,
+        runId,
+        requestIdentity: requestKey,
+        action: decision,
+        semanticPayloadVersion: 1,
+        decisionId,
+        factsFingerprint,
+        candidate: {
+          state: result.state,
+          events: result.events,
+        },
+        now,
+      };
+    }
+
+    admission = await decisionPersistence.admit(decisionInput, {
       readCurrentFactsFingerprint,
-      isCandidateApplied: async (candidate: WorkerRecoveryDecisionCandidate) => {
-        const latest = deps.getState();
-        const latestRun = latest.workerRuns.find((item) => item.runId === runId);
-        return !!latestRun && JSON.stringify(latestRun) === JSON.stringify(candidate.state);
-      },
+      isCandidateApplied,
     });
-    if (admission.kind === 'replay') return;
+    if (admission.kind === 'replay') {
+      await dispatchPostCommit(admission.record);
+      return;
+    }
     const admittedCandidate = admission.record.candidate;
+    const decisionState = deps.getState();
+    if (!(await isCandidateApplied(admittedCandidate))) {
+      assertWorkerRecoveryDecisionPrecondition({
+        projectId,
+        projectPath,
+        runId,
+        capturedRun: run,
+        capturedTaskGraph: taskGraph,
+        current: decisionState,
+      });
+    }
     deps.assertProjectOperation(operation);
     deps.recordProjectEvents(projectId, admittedCandidate.events);
     const nextRuns = decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item);
@@ -201,18 +276,18 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     deps.assertProjectOperation(operation);
     await deps.saveProject(projectId, projectPath, operation.controller.signal);
     deps.assertProjectOperation(operation);
-    await decisionPersistence.commit({
-      projectId,
-      runId,
-      requestIdentity: requestKey,
-      action: decision,
-      semanticPayloadVersion: 1,
-      decisionId,
-      factsFingerprint,
+    if (!(await isCandidateApplied(admittedCandidate))) {
+      throw new WorkerRecoveryDecisionCasError(
+        'needs-repair',
+        `recovery candidate 在 ProjectFile 保存期间发生漂移：${requestKey}`,
+      );
+    }
+    const committed = await decisionPersistence.commit({
+      ...decisionInput,
       candidate: admittedCandidate,
       now: new Date().toISOString(),
     });
-    if (decision === 'retry') await deps.runQueuedWorker(runId, workerRuntime);
+    await dispatchPostCommit(committed);
     } finally {
       lease.release();
     }
