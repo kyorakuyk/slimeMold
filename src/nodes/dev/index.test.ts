@@ -86,6 +86,7 @@ function fakeSession(opts: {
       const rel = relFromWorker(abs);
       files.set(rel ?? abs, content);
     },
+    mkdir: async () => {},
     resolveInside: async (root, rel) => (await import('node:path')).resolve(root, rel),
     relativePath: async (root, abs) => (await import('node:path')).relative(root, abs).replace(/\\/g, '/'),
   };

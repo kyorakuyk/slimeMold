@@ -5238,3 +5238,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 因 restart host registration 未闭合，本轮没有生成 cleanup proposal、没有用户批准、没有 `CleanupReceipt`/`TaskCleaned`，没有删除任何 worktree；durable recovery decision CAS 仍处于 design gate。完整报告：`docs/verification/TAURI_WORKER_E2E_REPORT_20260922.md`。
 - Windows/host 修复已固化为本地 checkpoint `e84492635cee9d2b6e332c0939d396b95e188427`，tag 为 `checkpoint/tauri-worker-e2e-evidence-repair-20260922`，未 push/merge。修复包含 `.cmd` 空格路径 launcher regression、WebView 无 Node `process` 时的 Windows detection、host diff 错误保留。
 - 验证：focused Vitest `2 files / 29 tests`；完整 `npm run test -- --reporter=dot` 为 `202 test files / 1344 tests`；`cargo fmt --manifest-path src-tauri/Cargo.toml --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml dev_exec -- --nocapture` 为 `33 passed / 0 failed / 70 filtered`；`npm run build`、`npm run i18n:check`（`1026/1026`）、`npx tsc --noEmit`、`git diff --check` 均通过。构建保留既有 dynamic/static import 与大 chunk warnings；本轮完整 formal acceptance 仍为 partial-fail，exact reviewer 尚未闭合。
+
+### 7.368 fix：修复 Ubuntu CI 暴露的跨平台 Worker 路径规范化
+
+- PR #1 的 GitHub CI run `35771226554` 在 Ubuntu 上真实失败：`202` 个测试文件中 `198` 个通过、`5` 个失败、`1339/1344` 个测试通过。失败集中在 `evidencePathFor`、`WorktreeManager`、`DevSession` restore 和结构化 patch parent directory；不是把红灯归类为环境噪声。
+- 根因是 Node `path.resolve` 在 POSIX runner 上会把 `C:/...`、`D:/...` 当作相对路径，导致 Windows 路径被拼到 runner checkout 目录；同时 `pathComparisonKey` 在 Windows 主机上未把 native 反斜杠转换为统一分隔符，破坏 worktree scope/overlap 比较。
+- `src/dev/path-utils.ts` 现在对 Windows drive/UNC 路径使用纯前端 `resolveWeb`，对 native resolve 结果统一转换 `/`；新增 `src/dev/path-utils.test.ts` 覆盖 Windows absolute path、大小写不敏感比较和 overlap。`src/nodes/dev/index.test.ts` 的 fake host 注入 `mkdir`，避免测试尝试向 `/repo-workers` 写入真实目录。
+- 验证：focused Vitest `5 files / 70 tests`；完整 `npm run test -- --reporter=dot` 为 `203 test files / 1346 tests`；`npm run build` 通过；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml dev_exec -- --nocapture` 为 `33 passed / 0 failed / 70 filtered`。
+- 本轮只修复 CI 暴露的路径与测试隔离问题，不改变 formal Tauri Worker E2E 结论；restart live worktree recovery、Cleanup/`CleanupReceipt`/`TaskCleaned` 和 durable recovery CAS 仍未闭合，不能写成 formal acceptance passed。
