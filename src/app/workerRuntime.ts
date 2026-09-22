@@ -1,7 +1,7 @@
 import { EventStreamRepository } from '../domain/eventStore';
 import { isTauri as defaultIsTauri } from '../platform/env';
 import { ensureGuiDevSession, getDevGuiError } from '../dev/gui';
-import { saveProjectFile } from '../io/projectIO';
+import { openProjectByPath, saveProjectFile } from '../io/projectIO';
 import { buildProjectFile } from '../store/workflowSerialize';
 import { recordProjectEvents, flushPendingProjectEvents } from '../projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator, type WorkerRuntime } from '../projectControl/workerRunCoordinator';
@@ -216,6 +216,15 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     recordProjectEvents,
     saveProject: async (projectId, projectPath, signal) => {
       await store.getState().saveProject({ projectId, projectPath, signal });
+    },
+    readProjectProjection: async (projectPath) => {
+      const file = await openProjectByPath(projectPath);
+      return file
+        ? {
+            workerRuns: file.workerRuns ?? [],
+            orchestrations: file.orchestrations ?? [],
+          }
+        : null;
     },
     runQueuedWorker,
     isTauri,

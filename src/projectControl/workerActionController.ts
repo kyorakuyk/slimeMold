@@ -1,6 +1,6 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
 import type { Orchestration } from '../types/orchestration';
-import type { SideEffectRecord } from '../domain/contracts';
+import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { WorkerRunRecovery } from './workerRunRuntime';
@@ -8,7 +8,7 @@ import type { WorkerCleanupProposal } from './workerCleanup';
 import type { WorkerRuntime } from './workerRunCoordinator';
 import type { ProjectOperation } from './projectLifecycleController';
 import { recoverWorkerRunCommand } from './workerRecoveryCommand';
-import { installWorkerRunRuntime } from './workerRunRuntime';
+import { installWorkerRunRuntime, rehydrateWorkerRunRegistry } from './workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { mergeWorkerSideEffects } from './workerEvidence';
 import { assertWorkerRecoveryDecisionPrecondition } from './workerRecoveryDecisionPrecondition';
@@ -32,6 +32,19 @@ type ProjectSave = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
+type PersistedProjectProjection = {
+  workerRuns: WorkerRunQueueState[];
+  orchestrations: Orchestration[];
+};
+
+function samePersistedEvent(expected: DomainEvent, actual: DomainEvent): boolean {
+  const comparable = (event: DomainEvent): unknown => {
+    const { sequence: _sequence, ...withoutSequence } = event;
+    return withoutSequence;
+  };
+  return JSON.stringify(comparable(expected)) === JSON.stringify(comparable(actual));
+}
+
 export interface WorkerActionState {
   projectId: string | null;
   projectPath: string | null;
@@ -54,6 +67,7 @@ export interface WorkerActionControllerDeps {
   assertProjectOperation: (operation: ProjectOperation) => void;
   recordProjectEvents: (projectId: string, events: Parameters<typeof recoverWorkerRunCommand>[0]['state'] extends never ? never : ReturnType<typeof recoverWorkerRunCommand>['events']) => void;
   saveProject: ProjectSave;
+  readProjectProjection: (projectPath: string) => Promise<PersistedProjectProjection | null>;
   runQueuedWorker: (runId: string, workerRuntime?: WorkerRuntime) => Promise<void>;
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
@@ -82,147 +96,219 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     requestIdentity?: string,
   ): Promise<void> => {
     if (!deps.isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
-    const current = deps.getState();
-    const projectId = current.projectId;
-    const projectPath = current.projectPath;
-    const run = current.workerRuns.find((item) => item.runId === runId);
-    const taskGraph = run
-      ? current.taskGraphs.find((item) => item.id === run.taskGraphId)
-      : undefined;
+    const initial = deps.getState();
+    const projectId = initial.projectId;
+    const projectPath = initial.projectPath;
     if (!projectId || !projectPath) throw new Error('项目必须先保存，才能恢复 Worker Run');
-    if (!run || !taskGraph) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
+    const normalizedReason = reason.trim();
+    const requestKey = requestIdentity?.trim() || `run:${runId}:${decision}`;
+    const decisionId = `recovery:${requestKey}`;
     const lease = recoverySingleFlight.acquire({ projectId, projectPath, runId });
     if (!lease) throw new Error(`Worker Run 恢复正在处理中：${runId}`);
     try {
       const operation = deps.getProjectOperation(projectId, projectPath);
-    deps.assertProjectOperation(operation);
-
-    const modulesPromise = loadWorkerHostRepositoryModules();
-    const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
-    if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
-    const bundle = createWorkerHostRepositoryBundleFromModules(
-      {
-        projectPath,
-        listAcceptances: () => session.listAcceptances(),
-      },
-      await modulesPromise,
-    );
-    const recorder = bundle.sideEffects;
-    deps.assertProjectOperation(operation);
-    const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
-    deps.assertProjectOperation(operation);
-    current.setWorkerRunSideEffects(mergeWorkerSideEffects(current.workerRunSideEffects, journal.entries));
-    const normalizedReason = reason.trim();
-    const requestKey = requestIdentity?.trim() || `run:${runId}:${decision}`;
-    const decisionId = `recovery:${requestKey}`;
-    const decisionPersistence = deps.recoveryDecisionPersistence
-      ?? (deps.createRecoveryDecisionPersistence
-        ? await deps.createRecoveryDecisionPersistence(projectPath)
-        : await (async () => {
-          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
-          return new WorkerRecoveryDecisionPersistence(
-            createTauriEventStoreAdapter(projectPath),
-            projectPath,
+      deps.assertProjectOperation(operation);
+      const session = await ensureGuiDevSession(projectPath, operation.controller.signal);
+      if (!session) throw new Error('开发宿主不可用，无法恢复 Worker Acceptance');
+      const decisionPersistence = deps.recoveryDecisionPersistence
+        ?? (deps.createRecoveryDecisionPersistence
+          ? await deps.createRecoveryDecisionPersistence(projectPath)
+          : await (async () => {
+            const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+            return new WorkerRecoveryDecisionPersistence(
+              createTauriEventStoreAdapter(projectPath),
+              projectPath,
+            );
+          })());
+      const durableRecord = await decisionPersistence.find(requestKey);
+      const capturedState = deps.getState();
+      const capturedRun = capturedState.workerRuns.find((item) => item.runId === runId);
+      const taskGraphId = capturedRun?.taskGraphId ?? durableRecord?.candidate.state.taskGraphId;
+      const taskGraph = taskGraphId
+        ? capturedState.taskGraphs.find((item) => item.id === taskGraphId)
+        : undefined;
+      if (!taskGraph) throw new WorkerRecoveryDecisionCasError(
+        'needs-repair',
+        `找不到 durable recovery 对应的 TaskGraph：${runId}`,
+      );
+      const capturedTaskGraph = taskGraph;
+      if (durableRecord) {
+        if (durableRecord.projectId !== projectId
+          || durableRecord.runId !== runId
+          || durableRecord.action !== decision
+          || durableRecord.decisionId !== decisionId) {
+          throw new WorkerRecoveryDecisionCasError(
+            'conflict',
+            `recovery requestIdentity 已绑定其它项目、Run 或 action：${requestKey}`,
           );
-        })());
+        }
+        if (durableRecord.candidate.state.taskGraphId !== taskGraph.id
+          || durableRecord.candidate.state.taskGraphVersion !== taskGraph.graphVersion) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery durable candidate 与当前 TaskGraph 不一致：${requestKey}`,
+          );
+        }
+      } else if (!capturedRun) {
+        throw new Error(`找不到可恢复的 Worker Run：${runId}`);
+      }
 
-    const readCurrentFactsFingerprint = async (): Promise<string> => {
-      const latest = deps.getState();
-      const latestRun = latest.workerRuns.find((item) => item.runId === runId);
-      const latestTaskGraph = latest.taskGraphs.find((item) => item.id === taskGraph.id);
-      if (!latestRun || !latestTaskGraph) throw new Error(`Worker recovery facts 在 admission 期间丢失：${runId}`);
-      const latestSideEffects = latest.workerRunSideEffects.filter((effect) => effect.runId === runId);
-      return fingerprintWorkerRecoveryFactsV1({
-        projectId,
-        run: latestRun,
-        taskGraph: latestTaskGraph,
-        sideEffects: latestSideEffects.length > 0 ? latestSideEffects : journal.entries,
-      });
-    };
-    const isCandidateApplied = async (candidate: WorkerRecoveryDecisionCandidate): Promise<boolean> => {
-      const latest = deps.getState();
-      const latestRun = latest.workerRuns.find((item) => item.runId === runId);
-      return !!latestRun && JSON.stringify(latestRun) === JSON.stringify(candidate.state);
-    };
-    const dispatchPostCommit = async (record: WorkerRecoveryDecisionRecord): Promise<void> => {
-      if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
-      const recordInput: WorkerRecoveryDecisionInput = {
-        projectId: record.projectId,
-        runId: record.runId,
-        requestIdentity: record.requestIdentity,
-        action: record.action,
-        semanticPayloadVersion: record.semanticPayloadVersion,
-        decisionId: record.decisionId,
-        factsFingerprint: record.factsFingerprint,
-        candidate: record.candidate,
-        now: record.admittedAt,
-      };
-      try {
-        await deps.runQueuedWorker(runId, workerRuntime);
-      } catch (cause) {
-        await decisionPersistence.markPostCommit(recordInput, 'failed', new Date().toISOString());
-        throw cause;
-      }
-      await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
-    };
+      const modulesPromise = loadWorkerHostRepositoryModules();
+      const bundle = createWorkerHostRepositoryBundleFromModules(
+        {
+          projectPath,
+          listAcceptances: () => session.listAcceptances(),
+        },
+        await modulesPromise,
+      );
+      const recorder = bundle.sideEffects;
+      deps.assertProjectOperation(operation);
+      const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
+      deps.assertProjectOperation(operation);
+      const afterJournal = deps.getState();
+      afterJournal.setWorkerRunSideEffects(mergeWorkerSideEffects(afterJournal.workerRunSideEffects, journal.entries));
 
-    const durableRecord = await decisionPersistence.find(requestKey);
-    let decisionInput: WorkerRecoveryDecisionInput;
-    let admission: Awaited<ReturnType<WorkerRecoveryDecisionPersistence['admit']>>;
-    if (durableRecord) {
-      if (durableRecord.projectId !== projectId
-        || durableRecord.runId !== runId
-        || durableRecord.action !== decision
-        || durableRecord.decisionId !== decisionId) {
-        throw new WorkerRecoveryDecisionCasError(
-          'conflict',
-          `recovery requestIdentity 已绑定其它项目、Run 或 action：${requestKey}`,
-        );
-      }
-      if (durableRecord.candidate.state.taskGraphId !== taskGraph.id
-        || durableRecord.candidate.state.taskGraphVersion !== taskGraph.graphVersion) {
-        throw new WorkerRecoveryDecisionCasError(
-          'needs-repair',
-          `recovery durable candidate 与当前 TaskGraph 不一致：${requestKey}`,
-        );
-      }
-      decisionInput = {
-        projectId: durableRecord.projectId,
-        runId: durableRecord.runId,
-        requestIdentity: durableRecord.requestIdentity,
-        action: durableRecord.action,
-        semanticPayloadVersion: durableRecord.semanticPayloadVersion,
-        decisionId: durableRecord.decisionId,
-        factsFingerprint: durableRecord.factsFingerprint,
-        candidate: durableRecord.candidate,
-        now: durableRecord.admittedAt,
+      const readCurrentFactsFingerprint = async (): Promise<string | undefined> => {
+        const latest = deps.getState();
+        const latestRun = latest.workerRuns.find((item) => item.runId === runId);
+        const latestTaskGraph = latest.taskGraphs.find((item) => item.id === taskGraph.id);
+        if (!latestRun || !latestTaskGraph) return undefined;
+        const latestSideEffects = latest.workerRunSideEffects.filter((effect) => effect.runId === runId);
+        return fingerprintWorkerRecoveryFactsV1({
+          projectId,
+          run: latestRun,
+          taskGraph: latestTaskGraph,
+          sideEffects: latestSideEffects.length > 0 ? latestSideEffects : journal.entries,
+        });
       };
-    } else {
-      const now = new Date().toISOString();
-      assertWorkerRecoveryDecisionPrecondition({
-        projectId,
-        projectPath,
-        runId,
-        capturedRun: run,
-        capturedTaskGraph: taskGraph,
-        current: deps.getState(),
-      });
-      const factsFingerprint = await fingerprintWorkerRecoveryFactsV1({
-        projectId,
-        run,
-        taskGraph,
-        sideEffects: journal.entries,
-      });
-      const result = recoverWorkerRunCommand({
-        projectId,
-        state: run,
-        taskGraph,
-        journal,
-        decision,
-        reason: normalizedReason,
-        decisionId,
-        now,
-      });
+      const readCandidateProjection = async (candidate: WorkerRecoveryDecisionCandidate): Promise<{
+        stateApplied: boolean;
+        fullyApplied: boolean;
+      }> => {
+        const latest = deps.getState();
+        const latestRun = latest.workerRuns.find((item) => item.runId === runId);
+        const stateApplied = !!latestRun && JSON.stringify(latestRun) === JSON.stringify(candidate.state);
+        if (!stateApplied) return { stateApplied: false, fullyApplied: false };
+
+        const persisted = await deps.readProjectProjection(projectPath);
+        const persistedRun = persisted?.workerRuns.find((item) => item.runId === runId);
+        if (!persisted || !persistedRun || JSON.stringify(persistedRun) !== JSON.stringify(candidate.state)) {
+          return { stateApplied: true, fullyApplied: false };
+        }
+        if (candidate.state.orchestrationId !== undefined
+          && !persisted.orchestrations.some((item) => item.id === candidate.state.orchestrationId)) {
+          return { stateApplied: true, fullyApplied: false };
+        }
+        const expectedOrchestrations = projectWorkerRunsOntoOrchestrations(
+          persisted.orchestrations,
+          persisted.workerRuns,
+        );
+        const orchestrationApplied = JSON.stringify(persisted.orchestrations) === JSON.stringify(expectedOrchestrations)
+          && JSON.stringify(latest.orchestrations) === JSON.stringify(expectedOrchestrations);
+        const expectedRecoveries = rehydrateWorkerRunRegistry({
+          projectId,
+          taskGraphs: latest.taskGraphs,
+          runs: latest.workerRuns,
+        }).recoveries;
+        const runtimeApplied = JSON.stringify(latest.workerRunRecoveries) === JSON.stringify(expectedRecoveries);
+        const cleanupApplied = !latest.workerCleanupProposals.some((proposal) => proposal.runId === runId);
+        const eventStream = await bundle.createEventRepository().readStream();
+        const eventsApplied = eventStream.status === 'ok'
+          && candidate.events.every((expected) => eventStream.events.some((actual) => samePersistedEvent(expected, actual)));
+        return {
+          stateApplied: true,
+          fullyApplied: orchestrationApplied && runtimeApplied && cleanupApplied && eventsApplied,
+        };
+      };
+      const isCandidateApplied = async (candidate: WorkerRecoveryDecisionCandidate): Promise<boolean> =>
+        (await readCandidateProjection(candidate)).fullyApplied;
+      const isCandidateRepairable = async (candidate: WorkerRecoveryDecisionCandidate): Promise<boolean> => {
+        const latestRun = deps.getState().workerRuns.find((item) => item.runId === runId);
+        return !latestRun || JSON.stringify(latestRun) === JSON.stringify(candidate.state);
+      };
+      const isProjectionMissing = async (): Promise<boolean> =>
+        !deps.getState().workerRuns.some((item) => item.runId === runId);
+
+      const dispatchPostCommit = async (record: WorkerRecoveryDecisionRecord): Promise<void> => {
+        if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
+        if (record.postCommitStatus !== 'pending') {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit side effect 状态未知，拒绝自动重试：${record.requestIdentity}`,
+          );
+        }
+        const recordInput: WorkerRecoveryDecisionInput = {
+          projectId: record.projectId,
+          runId: record.runId,
+          requestIdentity: record.requestIdentity,
+          action: record.action,
+          semanticPayloadVersion: record.semanticPayloadVersion,
+          decisionId: record.decisionId,
+          factsFingerprint: record.factsFingerprint,
+          candidate: record.candidate,
+          now: record.admittedAt,
+        };
+        const dispatching = await decisionPersistence.markPostCommit(
+          recordInput,
+          'dispatching',
+          new Date().toISOString(),
+        );
+        try {
+          await deps.runQueuedWorker(runId, workerRuntime);
+        } catch (cause) {
+          await decisionPersistence.markPostCommit(
+            {
+              ...recordInput,
+              now: dispatching.committedAt ?? recordInput.now,
+            },
+            'failed',
+            new Date().toISOString(),
+          );
+          throw cause;
+        }
+        await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
+      };
+
+      let decisionInput: WorkerRecoveryDecisionInput;
+      if (durableRecord) {
+        decisionInput = {
+          projectId: durableRecord.projectId,
+          runId: durableRecord.runId,
+          requestIdentity: durableRecord.requestIdentity,
+          action: durableRecord.action,
+          semanticPayloadVersion: durableRecord.semanticPayloadVersion,
+          decisionId: durableRecord.decisionId,
+          factsFingerprint: durableRecord.factsFingerprint,
+          candidate: durableRecord.candidate,
+          now: durableRecord.admittedAt,
+        };
+      } else {
+        if (!capturedRun) throw new Error(`找不到可恢复的 Worker Run：${runId}`);
+        const now = new Date().toISOString();
+        assertWorkerRecoveryDecisionPrecondition({
+          projectId,
+          projectPath,
+          runId,
+          capturedRun,
+          capturedTaskGraph,
+          current: deps.getState(),
+        });
+        const factsFingerprint = await fingerprintWorkerRecoveryFactsV1({
+          projectId,
+          run: capturedRun,
+          taskGraph: capturedTaskGraph,
+          sideEffects: journal.entries,
+        });
+        const result = recoverWorkerRunCommand({
+          projectId,
+          state: capturedRun,
+          taskGraph: capturedTaskGraph,
+          journal,
+          decision,
+          reason: normalizedReason,
+          decisionId,
+          now,
+        });
       decisionInput = {
         projectId,
         runId,
@@ -232,6 +318,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         decisionId,
         factsFingerprint,
         candidate: {
+          taskGraphTaskIds: taskGraph.tasks.map((task) => task.id),
           state: result.state,
           events: result.events,
         },
@@ -239,55 +326,99 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       };
     }
 
-    admission = await decisionPersistence.admit(decisionInput, {
-      readCurrentFactsFingerprint,
-      isCandidateApplied,
-    });
-    if (admission.kind === 'replay') {
-      await dispatchPostCommit(admission.record);
-      return;
-    }
-    const admittedCandidate = admission.record.candidate;
-    const decisionState = deps.getState();
-    if (!(await isCandidateApplied(admittedCandidate))) {
-      assertWorkerRecoveryDecisionPrecondition({
+    let postCommitRecord: WorkerRecoveryDecisionRecord | undefined;
+    await decisionPersistence.withDecisionLock(async (decisionLock) => {
+      const admission = await decisionPersistence.admit(decisionInput, {
+        readCurrentFactsFingerprint,
+        isCandidateApplied,
+        isCandidateRepairable,
+        isProjectionMissing,
+      }, decisionLock);
+      if (admission.kind === 'replay') {
+        postCommitRecord = admission.record;
+        return;
+      }
+      const admittedCandidate = admission.record.candidate;
+      const decisionState = deps.getState();
+      const currentRun = decisionState.workerRuns.find((item) => item.runId === runId);
+      const stateAlreadyMatches = !!currentRun
+        && JSON.stringify(currentRun) === JSON.stringify(admittedCandidate.state);
+      if (!stateAlreadyMatches && currentRun) {
+        if (!capturedRun) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery candidate 的当前 Worker Run 投影已漂移：${requestKey}`,
+          );
+        }
+        assertWorkerRecoveryDecisionPrecondition({
+          projectId,
+          projectPath,
+          runId,
+          capturedRun,
+          capturedTaskGraph: taskGraph,
+          current: decisionState,
+        });
+      } else if (!stateAlreadyMatches && admission.kind === 'admitted') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate 的当前 Worker Run 投影已丢失：${requestKey}`,
+        );
+      }
+      deps.assertProjectOperation(operation);
+      deps.recordProjectEvents(projectId, admittedCandidate.events);
+      const nextRuns = currentRun
+        ? decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item)
+        : [...decisionState.workerRuns, admittedCandidate.state];
+      decisionState.setWorkerRuns(nextRuns);
+      decisionState.setOrchestrations(
+        projectWorkerRunsOntoOrchestrations(decisionState.orchestrations, nextRuns),
+      );
+      decisionState.setWorkerCleanupProposals(
+        decisionState.workerCleanupProposals.filter((proposal) => proposal.runId !== runId),
+      );
+      const runtime = installWorkerRunRuntime({
         projectId,
-        projectPath,
-        runId,
-        capturedRun: run,
-        capturedTaskGraph: taskGraph,
-        current: decisionState,
+        taskGraphs: decisionState.taskGraphs,
+        runs: nextRuns,
       });
-    }
-    deps.assertProjectOperation(operation);
-    deps.recordProjectEvents(projectId, admittedCandidate.events);
-    const nextRuns = decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item);
-    decisionState.setWorkerRuns(nextRuns);
-    decisionState.setOrchestrations(
-      projectWorkerRunsOntoOrchestrations(decisionState.orchestrations, nextRuns),
-    );
-    decisionState.setWorkerCleanupProposals(decisionState.workerCleanupProposals.filter((proposal) => proposal.runId !== runId));
-    const runtime = installWorkerRunRuntime({
-      projectId,
-      taskGraphs: decisionState.taskGraphs,
-      runs: decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item),
+      decisionState.setWorkerRunRecoveries(runtime.recoveries);
+      deps.assertProjectOperation(operation);
+      await deps.saveProject(projectId, projectPath, operation.controller.signal);
+      deps.assertProjectOperation(operation);
+      if (!(await isCandidateApplied(admittedCandidate))) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate 在 ProjectFile 保存期间发生漂移：${requestKey}`,
+        );
+      }
+      const commitInput: WorkerRecoveryDecisionInput = admission.kind === 'admitted'
+        ? {
+          ...decisionInput,
+          candidate: admittedCandidate,
+          now: new Date().toISOString(),
+        }
+        : {
+          projectId: admission.record.projectId,
+          runId: admission.record.runId,
+          requestIdentity: admission.record.requestIdentity,
+          action: admission.record.action,
+          semanticPayloadVersion: admission.record.semanticPayloadVersion,
+          decisionId: admission.record.decisionId,
+          factsFingerprint: admission.record.factsFingerprint,
+          candidate: admittedCandidate,
+          now: admission.record.admittedAt,
+        };
+      postCommitRecord = await decisionPersistence.commit(commitInput, {
+        verifyProjection: () => isCandidateApplied(admittedCandidate),
+      }, decisionLock);
     });
-    decisionState.setWorkerRunRecoveries(runtime.recoveries);
-    deps.assertProjectOperation(operation);
-    await deps.saveProject(projectId, projectPath, operation.controller.signal);
-    deps.assertProjectOperation(operation);
-    if (!(await isCandidateApplied(admittedCandidate))) {
+    if (!postCommitRecord) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
-        `recovery candidate 在 ProjectFile 保存期间发生漂移：${requestKey}`,
+        `recovery decision 未产生 durable commit：${requestKey}`,
       );
     }
-    const committed = await decisionPersistence.commit({
-      ...decisionInput,
-      candidate: admittedCandidate,
-      now: new Date().toISOString(),
-    });
-    await dispatchPostCommit(committed);
+    await dispatchPostCommit(postCommitRecord);
     } finally {
       lease.release();
     }

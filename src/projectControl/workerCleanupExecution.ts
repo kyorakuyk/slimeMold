@@ -3,6 +3,7 @@ import {
   createSideEffect,
   markSideEffectUnknown,
   startSideEffect,
+  type CleanupReceipt,
   type SideEffectRecord,
 } from '../domain/contracts';
 import {
@@ -19,6 +20,11 @@ import { pathComparisonKey } from '../dev/path-utils';
 export interface WorkerCleanupExecutionHost {
   /** Host method must re-check approval, acceptance, baseline, and state signature. */
   confirmAndCleanup(path: string, signal?: AbortSignal, expectedFingerprint?: string): Promise<boolean>;
+  /** Read back the host-owned worktree registry after cleanup; no in-memory UI state. */
+  readCleanupState(path: string): Promise<{
+    present: boolean;
+    status: 'absent' | 'created' | 'orphaned' | 'registration-pending' | 'cleaned';
+  }>;
 }
 
 export interface WorkerCleanupExecutionInput {
@@ -89,12 +95,21 @@ function matchesCompletedCleanupReceipt(
   proposal: Extract<WorkerCleanupProposal, { status: 'ready' }>,
   isLegacyKey: boolean,
 ): boolean {
+  const cleanup = entry.receipt?.cleanup;
   return entry.status === 'receipt'
     && matchesProposal(entry, proposal, isLegacyKey)
     && entry.receipt?.receiptId === `${entry.idempotencyKey}:receipt`
     && entry.recovery === 'skip'
     && entry.receipt.outcome === 'succeeded'
-    && entry.receipt.outputHash === proposal.stateSignature;
+    && entry.receipt.outputHash === proposal.stateSignature
+    && !!cleanup
+    && cleanup.worktreePath === proposal.worktreePath
+    && cleanup.worktreeId === proposal.worktreeId
+    && cleanup.targetIdentity === proposal.targetIdentity
+    && cleanup.branch === proposal.branch
+    && cleanup.branchRevision === proposal.branchRevision
+    && cleanup.baseRevision === proposal.baseRevision
+    && cleanup.finalStatus === 'absent';
 }
 
 /** Execute only after the caller has already recorded the explicit host approval. */
@@ -205,11 +220,31 @@ export async function executeWorkerCleanupWithReceipt(
         sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
       };
     }
+    const readback = await input.host.readCleanupState(proposal.worktreePath);
+    if (readback.present || readback.status !== 'absent') {
+      const unknown = markSideEffectUnknown(startedRecord, 'cleanup-host-readback-retained-worktree');
+      const journal = await input.repository.record(unknown);
+      return {
+        cleaned: false,
+        sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+      };
+    }
+    const cleanupReceipt: CleanupReceipt = {
+      worktreePath: proposal.worktreePath,
+      worktreeId: proposal.worktreeId,
+      ...(proposal.targetIdentity ? { targetIdentity: proposal.targetIdentity } : {}),
+      branch: proposal.branch,
+      branchRevision: proposal.branchRevision,
+      baseRevision: proposal.baseRevision,
+      finalStatus: 'absent',
+      hostVerifiedAt: now,
+    };
     const receipt = completeSideEffect(startedRecord, {
       receiptId: `${key}:receipt`,
       observedAt: now,
       outputHash: proposal.stateSignature,
       outcome: 'succeeded',
+      cleanup: cleanupReceipt,
     });
     const journal = await input.repository.record(receipt);
     return {

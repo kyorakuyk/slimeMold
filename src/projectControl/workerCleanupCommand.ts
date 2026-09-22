@@ -63,6 +63,14 @@ export function markWorkerTaskCleaned(
     || input.receipt.receipt?.receiptId !== `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:receipt`
     || input.receipt.receipt?.outcome !== 'succeeded'
     || input.receipt.receipt?.outputHash !== stateSignature
+    || !input.receipt.receipt?.cleanup
+    || input.receipt.receipt.cleanup.worktreePath !== task.worktreePath
+    || input.receipt.receipt.cleanup.worktreeId !== task.worktreeId
+    || input.receipt.receipt.cleanup.targetIdentity !== task.targetIdentity
+    || input.receipt.receipt.cleanup.branch !== task.branch
+    || input.receipt.receipt.cleanup.branchRevision !== task.branchRevision
+    || input.receipt.receipt.cleanup.baseRevision !== task.baseRevision
+    || input.receipt.receipt.cleanup.finalStatus !== 'absent'
     || input.receipt.recovery !== 'skip'
     || input.receipt.runId !== input.state.runId
     || input.receipt.taskId !== taskId

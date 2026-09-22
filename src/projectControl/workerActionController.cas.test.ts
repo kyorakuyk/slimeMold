@@ -2,18 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventStoreAdapter } from '../domain/eventStore';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import type { Orchestration } from '../types/orchestration';
 import type { ProjectTaskGraph } from './types';
 import { WorkerRecoveryDecisionPersistence } from './workerRecoveryDecisionPersistence';
 import { createWorkerActionController } from './workerActionController';
 
-const hostModules = vi.hoisted(() => ({
-  load: vi.fn(async () => ({})),
-  create: vi.fn(() => ({
-    sideEffects: {
-      recoverInterruptedRun: vi.fn(async () => ({ schemaVersion: 1 as const, entries: [] })),
-    },
-  })),
-}));
+const hostModules = vi.hoisted(() => {
+  const events: unknown[] = [];
+  return {
+    events,
+    load: vi.fn(async () => ({})),
+    create: vi.fn(() => ({
+      sideEffects: {
+        recoverInterruptedRun: vi.fn(async () => ({ schemaVersion: 1 as const, entries: [] })),
+      },
+      createEventRepository: () => ({
+        readStream: vi.fn(async () => ({ status: 'ok' as const, events, lastSequence: events.length })),
+      }),
+    })),
+  };
+});
 
 vi.mock('./workerHostRepositoryBundle', () => ({
   loadWorkerHostRepositoryModules: hostModules.load,
@@ -82,6 +90,7 @@ const run: WorkerRunQueueState = {
 
 describe('worker action controller recovery CAS wiring', () => {
   it('persists one decision, repairs a missing projection, and does not rerun an exact request', async () => {
+    hostModules.events.length = 0;
     const state = {
       projectId: 'project-1',
       projectPath: 'C:/project',
@@ -89,7 +98,13 @@ describe('worker action controller recovery CAS wiring', () => {
       workerRunSideEffects: [],
       workerRunRecoveries: [],
       workerCleanupProposals: [],
-      orchestrations: [],
+      orchestrations: [{
+        id: 'orch-1',
+        status: 'failed',
+        runIds: [],
+        stageLogs: [],
+        updatedAt: '2026-09-22T00:01:00.000Z',
+      } as unknown as Orchestration],
       taskGraphs: [taskGraph],
       setWorkerRunSideEffects: vi.fn((effects) => { state.workerRunSideEffects = effects; }),
       setWorkerRuns: vi.fn((runs) => { state.workerRuns = runs; }),
@@ -98,16 +113,23 @@ describe('worker action controller recovery CAS wiring', () => {
       setWorkerRunRecoveries: vi.fn((recoveries) => { state.workerRunRecoveries = recoveries; }),
     };
     const operation = { projectId: 'project-1', projectPath: 'C:/project', controller: new AbortController() };
-    const recordProjectEvents = vi.fn();
+    const recordProjectEvents = vi.fn((_projectId, events: unknown[]) => {
+      hostModules.events.push(...events);
+    });
     const saveProject = vi.fn(async () => undefined);
     const runQueuedWorker = vi.fn(async () => undefined);
-    const persistence = new WorkerRecoveryDecisionPersistence(new InMemoryEventStoreAdapter(), 'C:/project');
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'C:/project');
     const controller = createWorkerActionController({
       getState: () => state,
       getProjectOperation: () => operation,
       assertProjectOperation: vi.fn(),
       recordProjectEvents,
       saveProject,
+      readProjectProjection: vi.fn(async () => ({
+        workerRuns: state.workerRuns,
+        orchestrations: state.orchestrations,
+      })),
       runQueuedWorker,
       isTauri: true,
       ensureGuiDevSession: vi.fn(async () => ({
@@ -118,11 +140,26 @@ describe('worker action controller recovery CAS wiring', () => {
 
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
-    state.workerRuns = [run];
+    state.workerRuns = [];
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
 
     expect(recordProjectEvents).toHaveBeenCalledTimes(2);
     expect(saveProject).toHaveBeenCalledTimes(2);
+    expect(runQueuedWorker).toHaveBeenCalledTimes(1);
+    hostModules.events.length = 0;
+    await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
+    expect(recordProjectEvents).toHaveBeenCalledTimes(3);
+    expect(saveProject).toHaveBeenCalledTimes(3);
+    expect(runQueuedWorker).toHaveBeenCalledTimes(1);
+    state.workerRunRecoveries = [{
+      runId: 'run-1',
+      projectId: 'project-1',
+      reason: 'failed-tasks',
+      message: 'stale runtime projection',
+    }] as never;
+    await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
+    expect(recordProjectEvents).toHaveBeenCalledTimes(4);
+    expect(saveProject).toHaveBeenCalledTimes(4);
     expect(runQueuedWorker).toHaveBeenCalledTimes(1);
     await expect(persistence.read()).resolves.toMatchObject({
       status: 'ok',
@@ -143,11 +180,33 @@ describe('worker action controller recovery CAS wiring', () => {
       candidate: durableRecord.candidate,
       now: durableRecord.admittedAt,
     };
-    await persistence.markPostCommit(durableInput, 'failed', durableRecord.admittedAt);
+    const currentJournal = await persistence.read();
+    if (currentJournal.status !== 'ok') throw new Error('test journal was not readable');
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: currentJournal.journal.entries.map((entry) => (
+        entry.requestIdentity === 'request-1'
+          ? { ...entry, postCommitStatus: 'failed' }
+          : entry
+      )),
+    }));
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+    ).rejects.toMatchObject({ code: 'needs-repair' });
+    expect(runQueuedWorker).toHaveBeenCalledTimes(1);
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'failed' })] },
+    });
+    await persistence.markPostCommit(durableInput, 'pending', durableRecord.admittedAt);
     runQueuedWorker.mockRejectedValueOnce(new Error('dispatch failed'));
     await expect(
       controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
     ).rejects.toThrow('dispatch failed');
+    expect(runQueuedWorker).toHaveBeenCalledTimes(2);
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'failed' })] },
+    });
+    await persistence.markPostCommit(durableInput, 'pending', durableRecord.admittedAt);
     runQueuedWorker.mockResolvedValueOnce(undefined);
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
     expect(runQueuedWorker).toHaveBeenCalledTimes(3);

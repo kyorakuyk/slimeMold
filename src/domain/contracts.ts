@@ -935,6 +935,17 @@ export function validateWorkerCapability(
 export type SideEffectStatus = 'planned' | 'started' | 'receipt' | 'unknown';
 export type SideEffectRecovery = 'retry' | 'skip' | 'needs-user';
 
+export interface CleanupReceipt {
+  worktreePath: string;
+  worktreeId: string;
+  targetIdentity?: string;
+  branch: string;
+  branchRevision: string;
+  baseRevision: string;
+  finalStatus: 'absent';
+  hostVerifiedAt: string;
+}
+
 export interface SideEffectReceipt {
   receiptId: string;
   observedAt: string;
@@ -944,6 +955,7 @@ export interface SideEffectReceipt {
   acceptanceId?: string;
   artifactCandidateId?: string;
   approvalId?: string;
+  cleanup?: CleanupReceipt;
   files?: Array<{ path: string; contentHash: string }>;
   error?: string;
 }

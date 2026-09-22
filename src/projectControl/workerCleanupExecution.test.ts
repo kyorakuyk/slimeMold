@@ -30,6 +30,8 @@ function proposal(): WorkerCleanupProposalReady {
   };
 }
 
+const absentReadback = async () => ({ present: false as const, status: 'absent' as const });
+
 describe('worker cleanup execution', () => {
   it('writes a start record, calls the approved host gate, and writes a receipt', async () => {
     const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
@@ -38,7 +40,7 @@ describe('worker cleanup execution', () => {
     const result = await executeWorkerCleanupWithReceipt({
       proposal: proposal(),
       repository,
-      host: { confirmAndCleanup },
+      host: { confirmAndCleanup, readCleanupState: absentReadback },
       now: '2026-09-01T00:03:00.000Z',
     });
 
@@ -71,7 +73,7 @@ describe('worker cleanup execution', () => {
     const result = await executeWorkerCleanupWithReceipt({
       proposal: proposal(),
       repository,
-      host: { confirmAndCleanup },
+      host: { confirmAndCleanup, readCleanupState: absentReadback },
       now: '2026-09-01T00:03:00.000Z',
       signal: controller.signal,
     });
@@ -84,7 +86,7 @@ describe('worker cleanup execution', () => {
   it('turns a rejected host cleanup into unknown and refuses an automatic second delete', async () => {
     const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
     const confirmAndCleanup = vi.fn(async () => false);
-    const input = { proposal: proposal(), repository, host: { confirmAndCleanup }, now: '2026-09-01T00:03:00.000Z' };
+    const input = { proposal: proposal(), repository, host: { confirmAndCleanup, readCleanupState: absentReadback }, now: '2026-09-01T00:03:00.000Z' };
 
     await expect(executeWorkerCleanupWithReceipt(input)).resolves.toMatchObject({
       cleaned: false,
@@ -92,6 +94,24 @@ describe('worker cleanup execution', () => {
     });
     await expect(executeWorkerCleanupWithReceipt(input)).rejects.toThrow(/需要人工核对/);
     expect(confirmAndCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the host reports cleanup success but read-back still finds the worktree', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    const confirmAndCleanup = vi.fn(async () => true);
+    const result = await executeWorkerCleanupWithReceipt({
+      proposal: proposal(),
+      repository,
+      host: {
+        confirmAndCleanup,
+        readCleanupState: async () => ({ present: true as const, status: 'created' as const }),
+      },
+      now: '2026-09-01T00:03:00.000Z',
+    });
+
+    expect(result.cleaned).toBe(false);
+    expect(result.sideEffect).toMatchObject({ status: 'unknown', recovery: 'needs-user' });
+    expect(result.sideEffect.receipt).toBeUndefined();
   });
 
   it('rejects an existing receipt whose lineage does not match the current proposal', async () => {
@@ -121,7 +141,7 @@ describe('worker cleanup execution', () => {
     await expect(executeWorkerCleanupWithReceipt({
       proposal: current,
       repository,
-      host: { confirmAndCleanup: vi.fn(async () => true) },
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
       now: '2026-09-01T00:04:00.000Z',
     })).rejects.toThrow(/lineage|receipt/);
   });
@@ -152,7 +172,7 @@ describe('worker cleanup execution', () => {
     await expect(executeWorkerCleanupWithReceipt({
       proposal: current,
       repository,
-      host: { confirmAndCleanup: vi.fn(async () => true) },
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
       now: '2026-09-01T00:03:00.000Z',
     })).rejects.toThrow(/failed|失败|outcome/);
   });
@@ -183,7 +203,7 @@ describe('worker cleanup execution', () => {
     await expect(executeWorkerCleanupWithReceipt({
       proposal: current,
       repository,
-      host: { confirmAndCleanup: vi.fn(async () => true) },
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
       now: '2026-09-01T00:02:00.000Z',
     })).rejects.toThrow(/receipt/);
   });
@@ -206,13 +226,23 @@ describe('worker cleanup execution', () => {
         observedAt: '2026-09-01T00:02:00.000Z',
         outcome: 'succeeded',
         outputHash: current.stateSignature,
+        cleanup: {
+          worktreePath: current.worktreePath,
+          worktreeId: current.worktreeId,
+          ...(current.targetIdentity ? { targetIdentity: current.targetIdentity } : {}),
+          branch: current.branch,
+          branchRevision: current.branchRevision,
+          baseRevision: current.baseRevision,
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+        },
       },
     });
 
     const result = await executeWorkerCleanupWithReceipt({
       proposal: current,
       repository,
-      host: { confirmAndCleanup: vi.fn(async () => true) },
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
       now: '2026-09-01T00:03:00.000Z',
     });
 

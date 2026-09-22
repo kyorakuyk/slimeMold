@@ -223,7 +223,13 @@ export function createWorkerCleanupActionController(
     const cleanupResult = await executeWorkerCleanupWithReceipt({
       proposal,
       repository,
-      host: session,
+      host: {
+        confirmAndCleanup: session.confirmAndCleanup.bind(session),
+        readCleanupState: async (path) => ({
+          present: !!session.manager.getByPath(path),
+          status: session.manager.getByPath(path)?.status ?? 'absent',
+        }),
+      },
       now: new Date().toISOString(),
       signal: operation.controller.signal,
     });

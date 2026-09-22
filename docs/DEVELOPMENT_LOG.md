@@ -5264,3 +5264,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增/扩展 controller CAS 回归：同一 request 在 state projection 变化后 replay、committed projection 缺失后的 repair、retry dispatch failure 后 replay retry、保存期间 candidate drift；新增 persistence 回归：committed candidate 缺失、post-commit durable read-back、非法 run state journal rejection。
 - 验证：focused recovery/CAS `11 test files / 114 tests`；完整 `npm run test` 为 `205 test files / 1360 tests`；`npm run build` 通过（最大 chunk `1,238.19 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 `104 passed / 0 failed`；`git diff --check` 通过。
 - 当前边界：真实 Tauri GUI restart/cleanup read-back、双 controller/跨进程竞争、crash matrix、正式 Host Evidence/Acceptance 仍未执行；本轮修复尚未完成新的 exact staged-snapshot review，保持 `unverified / partial-fail / not closed`，未 push。
+
+### 7.371 unverified：补强跨投影 recovery lock 与 CleanupReceipt host read-back
+
+- 在 7.370 的 candidate/replay 修复之上，`WorkerRecoveryDecisionPersistence.withDecisionLock` 现在可由 controller 包住 admission、ProjectFile/event projection save、candidate read-back 与 durable commit；同一 project-local lock 仍不是跨文件原子事务，不能替代 Gate D 的 crash/cross-process 证据。
+- retry post-commit 增加 `dispatching` 状态和受限状态迁移：只有 `pending → dispatching → completed/failed`，失败后才允许 `failed → pending`；未知或重复状态不自动重新触发 Worker，避免 dispatch 已产生副作用但 completed marker 未落盘时无条件重复执行。
+- `CleanupReceipt` 现在是显式的 receipt contract，绑定 worktree path/id、target identity、branch、branch revision、base revision、host verification time 和 `finalStatus=absent`。Cleanup host gate 成功后必须调用 host-owned read-back；若 worktree 仍存在或状态不是 absent，则写入 `unknown/needs-user`，不产生成功 receipt。
+- `markWorkerTaskCleaned` 同时校验 CleanupReceipt 与当前 Task 的 execution/attempt、worktree、target identity、branch/revision/base revision 和 state signature；`TaskCleaned` 只能在 receipt/read-back 证据一致时写入。
+- 新增 retained-worktree read-back RED→GREEN 回归、CleanupReceipt parser rejection 回归，并更新 legacy cleanup receipt migration fixture；focused recovery/Cleanup/CAS/side-effect `10 test files / 76 tests`，完整 `npm run test` 为 `205 test files / 1365 tests`。
+- 最终质量门：`npm run build` 通过（`2098 modules transformed`，最大 JS chunk `1,248.36 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 `104 passed / 0 failed`；`git diff --check` 通过。
+- 当前边界仍未改变：正式 Tauri GUI restart/cleanup read-back、真实 Host Evidence/Acceptance、双 controller/跨进程竞争、crash matrix、Node/Rust decision-contract parity vectors 和新的 exact-HEAD reviewer 尚未完成；本轮保持 `unverified / partial-fail / not closed`，未 push。

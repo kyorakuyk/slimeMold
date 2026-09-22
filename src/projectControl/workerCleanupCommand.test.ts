@@ -25,6 +25,7 @@ function state(): WorkerRunQueueState {
         worktreeId: 'wt-1',
         worktreePath: 'C:/project-workers/run-1/task-1',
         branch: 'worker/task-1',
+        branchRevision: 'a'.repeat(40),
         baseRevision: 'abc123',
         updatedAt: '2026-09-01T00:01:00.000Z',
       },
@@ -47,7 +48,21 @@ function cleanupReceipt(attempt: number): SideEffectRecord {
     attemptId,
     status: 'receipt',
     recovery: 'skip',
-    receipt: { receiptId: `${key}:receipt`, observedAt: '2026-09-01T00:02:00.000Z', outcome: 'succeeded', outputHash: 'sig-1' },
+    receipt: {
+      receiptId: `${key}:receipt`,
+      observedAt: '2026-09-01T00:02:00.000Z',
+      outcome: 'succeeded',
+      outputHash: 'sig-1',
+      cleanup: {
+        worktreePath: 'C:/project-workers/run-1/task-1',
+        worktreeId: 'wt-1',
+        branch: 'worker/task-1',
+        branchRevision: 'a'.repeat(40),
+        baseRevision: 'abc123',
+        finalStatus: 'absent',
+        hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+      },
+    },
   };
 }
 

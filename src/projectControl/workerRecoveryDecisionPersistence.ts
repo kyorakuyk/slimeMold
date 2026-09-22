@@ -5,17 +5,35 @@ import type {
   TaskProjectionStatus,
 } from '../domain/contracts';
 import type { EventStoreAdapter, EventStoreLock } from '../domain/eventStore';
-import { createTaskExecutionId, parseAttemptId } from '../domain/execution';
+import {
+  assertTaskExecutionId,
+  assertTaskExecutionLineage,
+  createTaskExecutionId,
+  parseAttemptId,
+} from '../domain/execution';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import {
+  assertTaskAttemptInvariant,
+  canonicalPath,
+  canonicalRef,
+  canonicalRevision,
+  canonicalTimestamp,
+} from './workerRecoveryFactsRules';
+import {
+  hasWorkerSuccessProvenance,
+  normalizeWorkerSuccessProvenance,
+  workerRunSuccessIsValid,
+} from '../domain/workerSuccess';
 
 export const WORKER_RECOVERY_DECISION_RELATIVE_PATH = '.slimemold/runs/recovery-decisions.json';
 export const WORKER_RECOVERY_DECISION_LOCK_RELATIVE_PATH = '.slimemold/runs/recovery-decisions.json.lock';
 
 export type WorkerRecoveryDecisionAction = 'retry' | 'skip' | 'inspect';
 type WorkerRecoveryDecisionStatus = 'admitted' | 'committed';
-export type WorkerRecoveryDecisionPostCommitStatus = 'not-required' | 'pending' | 'completed' | 'failed';
+export type WorkerRecoveryDecisionPostCommitStatus = 'not-required' | 'pending' | 'dispatching' | 'completed' | 'failed';
 
 export interface WorkerRecoveryDecisionCandidate {
+  taskGraphTaskIds: string[];
   state: WorkerRunQueueState;
   events: DomainEvent[];
 }
@@ -49,13 +67,19 @@ export interface WorkerRecoveryDecisionRecord {
 }
 
 export interface WorkerRecoveryDecisionReadOptions {
-  readCurrentFactsFingerprint: () => Promise<string>;
+  readCurrentFactsFingerprint: () => Promise<string | undefined>;
   isCandidateApplied?: (candidate: WorkerRecoveryDecisionCandidate) => Promise<boolean>;
+  isCandidateRepairable?: (candidate: WorkerRecoveryDecisionCandidate) => Promise<boolean>;
+  isProjectionMissing?: () => Promise<boolean>;
 }
 
 export interface WorkerRecoveryDecisionAdmission {
   kind: 'admitted' | 'resume' | 'replay';
   record: WorkerRecoveryDecisionRecord;
+}
+
+export interface WorkerRecoveryDecisionCommitOptions {
+  verifyProjection?: () => Promise<boolean>;
 }
 
 export type WorkerRecoveryDecisionCasErrorCode = 'stale' | 'conflict' | 'needs-repair';
@@ -92,7 +116,18 @@ function requiredText(value: unknown, field: string): string {
 
 function requiredIsoText(value: unknown, field: string): string {
   const text = requiredText(value, field);
-  if (Number.isNaN(Date.parse(text))) throw new Error(`${field} 不是有效时间`);
+  try {
+    return canonicalTimestamp(text, field);
+  } catch {
+    throw new Error(`${field} 不是 canonical timestamp`);
+  }
+}
+
+function requiredFactsFingerprint(value: unknown, field: string): string {
+  const text = requiredText(value, field);
+  if (!/^worker-recovery-facts-v1:sha256:[0-9a-f]{64}$/.test(text)) {
+    throw new Error(`${field} 不是 canonical recovery facts fingerprint`);
+  }
   return text;
 }
 
@@ -140,15 +175,21 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
   if (!TASK_STATUSES.has(value.status as TaskProjectionStatus)) {
     throw new Error(`decision candidate task status 无效：${taskId}`);
   }
+  const status = value.status as TaskProjectionStatus;
   const attempt = requiredSafeInteger(value.attempt, `decision candidate attempt：${taskId}`);
+  assertTaskAttemptInvariant(status, attempt, `decision candidate task：${taskId}`);
   const pendingAttempt = value.pendingAttempt === undefined
     ? undefined
     : requiredSafeInteger(value.pendingAttempt, `decision candidate pendingAttempt：${taskId}`, 1);
-  if (pendingAttempt !== undefined && pendingAttempt <= attempt) {
-    throw new Error(`decision candidate pendingAttempt 必须大于 attempt：${taskId}`);
+  if (pendingAttempt !== undefined
+    && (status !== 'queued' || pendingAttempt !== attempt + 1 || value.currentAttemptId !== undefined)) {
+    throw new Error(`decision candidate pendingAttempt fence 无效：${taskId}`);
   }
   if (!Array.isArray(value.evidenceIds) || value.evidenceIds.some((item) => typeof item !== 'string' || !item.trim())) {
     throw new Error(`decision candidate evidenceIds 无效：${taskId}`);
+  }
+  if (new Set(value.evidenceIds).size !== value.evidenceIds.length) {
+    throw new Error(`decision candidate evidenceIds 重复：${taskId}`);
   }
   requiredIsoText(value.updatedAt, `decision candidate updatedAt：${taskId}`);
   if (value.taskDefinitionVersion !== undefined && value.taskDefinitionVersion !== 1) {
@@ -158,15 +199,36 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
     requiredSafeInteger(value.contextPackVersion, `decision candidate contextPackVersion：${taskId}`, 1);
   }
   const taskExecutionId = optionalText(value.taskExecutionId, `decision candidate taskExecutionId：${taskId}`);
-  if (taskExecutionId !== undefined && taskExecutionId !== createTaskExecutionId(runId, taskId)) {
+  if (taskExecutionId === undefined) {
+    throw new Error(`decision candidate task 缺少 taskExecutionId：${taskId}`);
+  }
+  assertTaskExecutionId(taskExecutionId);
+  if (taskExecutionId !== createTaskExecutionId(runId, taskId)) {
     throw new Error(`decision candidate taskExecutionId 与 runId/taskId 不一致：${taskId}`);
   }
+  if (attempt > 0 && status !== 'queued' && (taskExecutionId === undefined || value.currentAttemptId === undefined)) {
+    throw new Error(`decision candidate attempt 缺少 current attempt lineage：${taskId}`);
+  }
   if (value.currentAttemptId !== undefined) {
+    if (status === 'queued') throw new Error(`queued decision candidate 不能携带 currentAttemptId：${taskId}`);
     const executionId = taskExecutionId ?? createTaskExecutionId(runId, taskId);
-    const parsed = parseAttemptId(requiredText(value.currentAttemptId, `decision candidate currentAttemptId：${taskId}`));
+    const currentAttemptId = requiredText(value.currentAttemptId, `decision candidate currentAttemptId：${taskId}`);
+    assertTaskExecutionLineage({
+      runId,
+      taskId,
+      taskExecutionId: executionId,
+      attemptId: currentAttemptId,
+      attempt,
+    });
+    const parsed = parseAttemptId(currentAttemptId);
     if (parsed.taskExecutionId !== executionId || parsed.attempt !== attempt || attempt < 1) {
       throw new Error(`decision candidate currentAttemptId 与 task lineage 不一致：${taskId}`);
     }
+  }
+  const assignmentFields = [value.worktreeId, value.worktreePath, value.branch, value.baseRevision];
+  const assignmentCount = assignmentFields.filter((fieldValue) => fieldValue !== undefined).length;
+  if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) {
+    throw new Error(`decision candidate WorkerTask assignment 不完整：${taskId}`);
   }
   for (const [field, fieldValue] of [
     ['worktreeId', value.worktreeId],
@@ -183,14 +245,34 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
   ] as const) {
     optionalText(fieldValue, `decision candidate ${field}：${taskId}`);
   }
+  if (value.worktreePath !== undefined) canonicalPath(value.worktreePath as string, `decision candidate worktreePath：${taskId}`);
+  if (value.branch !== undefined) canonicalRef(value.branch as string, `decision candidate branch：${taskId}`);
+  if (value.baseRevision !== undefined) canonicalRevision(value.baseRevision as string, `decision candidate baseRevision：${taskId}`);
+  if (value.branchRevision !== undefined) canonicalRevision(value.branchRevision as string, `decision candidate branchRevision：${taskId}`);
   if (value.worktreeStatus !== undefined && !WORKTREE_STATUSES.has(value.worktreeStatus as string)) {
     throw new Error(`decision candidate worktreeStatus 无效：${taskId}`);
+  }
+  if (['created', 'orphaned', 'registration-pending'].includes(value.worktreeStatus as string)
+    && (assignmentCount !== assignmentFields.length || value.branchRevision === undefined)) {
+    throw new Error(`decision candidate assigned worktree 缺少 provenance：${taskId}`);
   }
   if (value.cleanupStatus !== undefined && value.cleanupStatus !== 'cleaned') {
     throw new Error(`decision candidate cleanupStatus 无效：${taskId}`);
   }
-  if (value.cleanupStatus === 'cleaned' && value.cleanupReceiptId === undefined) {
-    throw new Error(`decision candidate cleaned task 缺少 cleanupReceiptId：${taskId}`);
+  if (value.cleanupStatus === 'cleaned'
+    && (status !== 'succeeded' || value.worktreeStatus !== 'cleaned' || value.cleanupReceiptId === undefined)) {
+    throw new Error(`decision candidate cleanup provenance 无效：${taskId}`);
+  }
+  if (value.worktreeStatus === 'cleaned'
+    && (value.cleanupStatus !== 'cleaned' || value.cleanupReceiptId === undefined)) {
+    throw new Error(`decision candidate cleaned worktree 缺少 receipt：${taskId}`);
+  }
+  if (status === 'succeeded') normalizeWorkerSuccessProvenance(value.evidenceIds, value.acceptanceId);
+  if (status === 'waiting-feedback' && value.feedbackId === undefined) {
+    throw new Error(`decision candidate waiting-feedback 缺少 feedbackId：${taskId}`);
+  }
+  if (status !== 'waiting-feedback' && value.feedbackId !== undefined) {
+    throw new Error(`非 waiting-feedback decision candidate 不能携带 feedbackId：${taskId}`);
   }
 }
 
@@ -220,9 +302,27 @@ function validateActor(value: unknown): asserts value is DomainActor {
   throw new Error('decision event actor 无效');
 }
 
+const RECOVERY_EVENT_TYPES = new Set([
+  'WorkerRunRecoveryDecided',
+  'RunQueued',
+  'RunPartial',
+  'TaskAttemptMarkedUnknown',
+  'TaskQueued',
+  'TaskFailed',
+  'TaskBlocked',
+]);
+
 function validateEvent(
   value: unknown,
-  context: { projectId: string; runId: string; decisionId: string; taskGraphId: string; taskGraphVersion: number },
+  context: {
+    projectId: string;
+    runId: string;
+    decisionId: string;
+    action: WorkerRecoveryDecisionAction;
+    taskGraphId: string;
+    taskGraphVersion: number;
+    taskGraphTaskIds: ReadonlySet<string>;
+  },
 ): DomainEvent {
   if (!isRecord(value)) throw new Error('decision candidate event 必须是对象');
   const eventId = requiredText(value.eventId, 'decision eventId');
@@ -230,32 +330,53 @@ function validateEvent(
   if (requiredText(value.streamId, 'decision streamId') !== context.projectId) {
     throw new Error('decision event streamId 与 projectId 不一致');
   }
-  requiredSafeInteger(value.sequence, 'decision event sequence', 1);
+  const sequence = requiredSafeInteger(value.sequence, 'decision event sequence', 1);
   requiredText(value.aggregateType, 'decision aggregateType');
-  requiredText(value.aggregateId, 'decision aggregateId');
+  const aggregateType = value.aggregateType as string;
+  const aggregateId = requiredText(value.aggregateId, 'decision aggregateId');
   requiredSafeInteger(value.aggregateVersion, 'decision aggregateVersion', 1);
-  requiredText(value.eventType, 'decision eventType');
+  const eventType = requiredText(value.eventType, 'decision eventType');
+  if (!RECOVERY_EVENT_TYPES.has(eventType)) throw new Error(`decision eventType 不允许：${eventType}`);
   if (value.schemaVersion !== 1) throw new Error('decision event schemaVersion 无效');
   if (!isRecord(value.payload)) throw new Error('decision event payload 必须是对象');
-  if (value.payload.runId !== undefined && value.payload.runId !== context.runId) {
+  if (requiredText(value.payload.runId, 'decision event payload.runId') !== context.runId) {
     throw new Error('decision event payload.runId 与 record 不一致');
   }
   if (value.payload.recoveryDecisionId !== undefined && value.payload.recoveryDecisionId !== context.decisionId) {
     throw new Error('decision event recoveryDecisionId 与 decisionId 不一致');
   }
+  if (aggregateType === 'Run') {
+    if (aggregateId !== context.runId) throw new Error('decision Run aggregateId 与 runId 不一致');
+  } else if (aggregateType === 'TaskExecution') {
+    assertTaskExecutionId(aggregateId);
+    const taskId = requiredText(value.payload.taskId, 'decision task event payload.taskId');
+    if (!context.taskGraphTaskIds.has(taskId)) throw new Error(`decision event taskId 不属于 task graph：${taskId}`);
+    const taskExecutionId = requiredText(value.payload.taskExecutionId, 'decision task event payload.taskExecutionId');
+    assertTaskExecutionId(taskExecutionId);
+    if (value.payload.attemptId !== undefined) {
+      assertTaskExecutionLineage({
+        runId: context.runId,
+        taskId,
+        taskExecutionId,
+        attemptId: requiredText(value.payload.attemptId, 'decision event attemptId'),
+        ...(value.payload.attempt !== undefined ? { attempt: requiredSafeInteger(value.payload.attempt, 'decision event attempt', 0) } : {}),
+      });
+    }
+    if (taskExecutionId !== aggregateId) throw new Error('decision task event aggregateId 与 taskExecutionId 不一致');
+  } else {
+    throw new Error(`decision aggregateType 不允许：${aggregateType}`);
+  }
   validateActor(value.actor);
   requiredIsoText(value.occurredAt, 'decision event occurredAt');
-  if (value.correlationId !== undefined && requiredText(value.correlationId, 'decision event correlationId') !== context.runId) {
+  if (requiredText(value.correlationId, 'decision event correlationId') !== context.runId) {
     throw new Error('decision event correlationId 与 runId 不一致');
   }
-  if (value.source !== undefined) {
-    if (!isRecord(value.source)) throw new Error('decision event source 必须是对象');
-    if (requiredText(value.source.objectId, 'decision event source.objectId') !== context.taskGraphId) {
-      throw new Error('decision event source.objectId 与 taskGraphId 不一致');
-    }
-    if (requiredSafeInteger(value.source.objectVersion, 'decision event source.objectVersion', 1) !== context.taskGraphVersion) {
-      throw new Error('decision event source.objectVersion 与 taskGraphVersion 不一致');
-    }
+  if (!isRecord(value.source)) throw new Error('decision event source 必须是对象');
+  if (requiredText(value.source.objectId, 'decision event source.objectId') !== context.taskGraphId) {
+    throw new Error('decision event source.objectId 与 taskGraphId 不一致');
+  }
+  if (requiredSafeInteger(value.source.objectVersion, 'decision event source.objectVersion', 1) !== context.taskGraphVersion) {
+    throw new Error('decision event source.objectVersion 与 taskGraphVersion 不一致');
   }
   if (value.sensitivity !== undefined && value.sensitivity !== 'normal' && value.sensitivity !== 'private') {
     throw new Error('decision event sensitivity 无效');
@@ -263,20 +384,37 @@ function validateEvent(
   if (value.synthetic !== undefined && typeof value.synthetic !== 'boolean') {
     throw new Error('decision event synthetic 无效');
   }
+  if (context.action !== 'inspect' && eventType === 'WorkerRunRecoveryDecided' && sequence !== 1) {
+    throw new Error('mutating recovery decision 必须以 WorkerRunRecoveryDecided 开始');
+  }
   return value as unknown as DomainEvent;
 }
 
 function validateCandidate(
   value: unknown,
-  context: { projectId: string; runId: string; decisionId: string },
+  context: { projectId: string; runId: string; decisionId: string; action: WorkerRecoveryDecisionAction },
 ): WorkerRecoveryDecisionCandidate {
   if (!isRecord(value)) throw new Error('decision candidate 必须是对象');
+  if (!Array.isArray(value.taskGraphTaskIds)
+    || value.taskGraphTaskIds.some((taskId) => typeof taskId !== 'string' || !taskId.trim())
+    || new Set(value.taskGraphTaskIds).size !== value.taskGraphTaskIds.length) {
+    throw new Error('decision candidate.taskGraphTaskIds 无效');
+  }
   if (!Array.isArray(value.events)) throw new Error('decision candidate.events 必须是数组');
+  if (context.action !== 'inspect' && value.events.length === 0) {
+    throw new Error('mutating recovery decision 不能没有事件');
+  }
   const state = validateState(value.state, context);
+  const stateTaskIds = Object.keys(state.tasks).sort();
+  const graphTaskIds = [...value.taskGraphTaskIds].sort();
+  if (JSON.stringify(stateTaskIds) !== JSON.stringify(graphTaskIds)) {
+    throw new Error('decision candidate task set 与 task graph 不一致');
+  }
   const eventContext = {
     ...context,
     taskGraphId: state.taskGraphId,
     taskGraphVersion: state.taskGraphVersion,
+    taskGraphTaskIds: new Set(value.taskGraphTaskIds),
   };
   const events = value.events.map((event) => validateEvent(event, eventContext));
   const eventIds = new Set<string>();
@@ -285,9 +423,7 @@ function validateCandidate(
   for (const [index, event] of events.entries()) {
     if (eventIds.has(event.eventId)) throw new Error(`decision eventId 重复：${event.eventId}`);
     if (sequences.has(event.sequence)) throw new Error(`decision event sequence 重复：${event.sequence}`);
-    if (index > 0 && event.sequence <= events[index - 1].sequence) {
-      throw new Error('decision event sequence 必须递增');
-    }
+    if (event.sequence !== index + 1) throw new Error('decision event sequence 必须从 1 连续递增');
     const aggregateKey = `${event.aggregateType}:${event.aggregateId}`;
     const previousVersion = aggregateVersions.get(aggregateKey) ?? 0;
     if (event.aggregateVersion !== previousVersion + 1) {
@@ -297,7 +433,17 @@ function validateCandidate(
     sequences.add(event.sequence);
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
   }
+  const tasks = Object.values(state.tasks);
+  for (const task of tasks) {
+    if (task.status === 'succeeded' && !hasWorkerSuccessProvenance(task)) {
+      throw new Error(`succeeded Worker Task 缺少 success provenance：${task.taskId}`);
+    }
+  }
+  if (state.status === 'succeeded' && !workerRunSuccessIsValid(tasks)) {
+    throw new Error('succeeded Worker Run 缺少完整 success provenance');
+  }
   return {
+    taskGraphTaskIds: [...value.taskGraphTaskIds],
     state,
     events,
   };
@@ -318,6 +464,7 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
     : value.postCommitStatus;
   if (postCommitStatus !== 'not-required'
     && postCommitStatus !== 'pending'
+    && postCommitStatus !== 'dispatching'
     && postCommitStatus !== 'completed'
     && postCommitStatus !== 'failed') {
     throw new Error('recovery decision postCommitStatus 无效');
@@ -346,13 +493,27 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
     action,
     semanticPayloadVersion: 1,
     decisionId,
-    factsFingerprint: requiredText(value.factsFingerprint, 'recovery decision factsFingerprint'),
+    factsFingerprint: requiredFactsFingerprint(value.factsFingerprint, 'recovery decision factsFingerprint'),
     status,
     postCommitStatus,
-    candidate: validateCandidate(value.candidate, { projectId, runId, decisionId }),
+    candidate: validateCandidate(value.candidate, { projectId, runId, decisionId, action }),
     admittedAt: requiredIsoText(value.admittedAt, 'recovery decision admittedAt'),
     ...(committedAt ? { committedAt } : {}),
   };
+}
+
+function validateDecisionInput(input: WorkerRecoveryDecisionInput): void {
+  const projectId = requiredText(input.projectId, 'recovery decision projectId');
+  const runId = requiredText(input.runId, 'recovery decision runId');
+  const decisionId = requiredText(input.decisionId, 'recovery decision decisionId');
+  requiredText(input.requestIdentity, 'recovery decision requestIdentity');
+  if (input.action !== 'retry' && input.action !== 'skip' && input.action !== 'inspect') {
+    throw new Error('recovery decision action 无效');
+  }
+  if (input.semanticPayloadVersion !== 1) throw new Error('recovery decision semanticPayloadVersion 无效');
+  requiredFactsFingerprint(input.factsFingerprint, 'recovery decision factsFingerprint');
+  requiredIsoText(input.now, 'recovery decision now');
+  validateCandidate(input.candidate, { projectId, runId, decisionId, action: input.action });
 }
 
 function parseJournal(text: string | null | undefined): ParsedDecisionJournal {
@@ -423,6 +584,15 @@ export class WorkerRecoveryDecisionPersistence {
     return parsed.journal.entries.find((record) => record.requestIdentity === requestIdentity);
   }
 
+  async withDecisionLock<T>(operation: (lock: EventStoreLock) => Promise<T>): Promise<T> {
+    const lock = await this.adapter.acquireLock(this.lockPath);
+    try {
+      return await operation(lock);
+    } finally {
+      await lock.release();
+    }
+  }
+
   private async persistAndReadBack(journal: DecisionJournal): Promise<DecisionJournal> {
     const serialized = serializeJournal(journal);
     await this.adapter.writeTextAtomic(this.path, serialized);
@@ -430,7 +600,7 @@ export class WorkerRecoveryDecisionPersistence {
     if (parsed.status !== 'ok' || serializeJournal(parsed.journal) !== serialized) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
-        `recovery decision 写入后 read-back 不一致：${this.path}`,
+        `recovery decision 写入后 read-back 不一致：${this.path}${parsed.reason ? ` (${parsed.reason})` : ''}`,
       );
     }
     return parsed.journal;
@@ -439,8 +609,10 @@ export class WorkerRecoveryDecisionPersistence {
   async admit(
     input: WorkerRecoveryDecisionInput,
     options: WorkerRecoveryDecisionReadOptions,
+    existingLock?: EventStoreLock,
   ): Promise<WorkerRecoveryDecisionAdmission> {
-    const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
+    validateDecisionInput(input);
+    const lock = existingLock ?? await this.adapter.acquireLock(this.lockPath);
     try {
       const parsed = parseJournal(await this.adapter.readText(this.path));
       if (parsed.status === 'needs-repair') {
@@ -474,8 +646,14 @@ export class WorkerRecoveryDecisionPersistence {
             ? await options.isCandidateApplied(existing.candidate)
             : false;
           if (applied) return { kind: 'replay', record: existing };
+          const repairable = options.isCandidateRepairable
+            ? await options.isCandidateRepairable(existing.candidate)
+            : false;
+          if (repairable || (options.isProjectionMissing && await options.isProjectionMissing())) {
+            return { kind: 'resume', record: existing };
+          }
           const currentFingerprint = await options.readCurrentFactsFingerprint();
-          if (currentFingerprint !== existing.factsFingerprint) {
+          if (currentFingerprint === undefined || currentFingerprint !== existing.factsFingerprint) {
             throw new WorkerRecoveryDecisionCasError(
               'needs-repair',
               `committed recovery decision 的 candidate 与当前 facts 均不一致：${input.requestIdentity}`,
@@ -483,8 +661,14 @@ export class WorkerRecoveryDecisionPersistence {
           }
           return { kind: 'resume', record: existing };
         }
+        const repairable = options.isCandidateRepairable
+          ? await options.isCandidateRepairable(existing.candidate)
+          : false;
+        if (repairable || (options.isProjectionMissing && await options.isProjectionMissing())) {
+          return { kind: 'resume', record: existing };
+        }
         const currentFingerprint = await options.readCurrentFactsFingerprint();
-        if (currentFingerprint !== existing.factsFingerprint) {
+        if (currentFingerprint === undefined || currentFingerprint !== existing.factsFingerprint) {
           const applied = options.isCandidateApplied
             ? await options.isCandidateApplied(existing.candidate)
             : false;
@@ -499,7 +683,7 @@ export class WorkerRecoveryDecisionPersistence {
       }
 
       const currentFingerprint = await options.readCurrentFactsFingerprint();
-      if (currentFingerprint !== input.factsFingerprint) {
+      if (currentFingerprint === undefined || currentFingerprint !== input.factsFingerprint) {
         throw new WorkerRecoveryDecisionCasError(
           'stale',
           `recovery decision facts 已过期：${input.requestIdentity}`,
@@ -528,12 +712,17 @@ export class WorkerRecoveryDecisionPersistence {
         record: journal.entries.find((item) => item.requestIdentity === input.requestIdentity) ?? record,
       };
     } finally {
-      await lock.release();
+      if (!existingLock) await lock.release();
     }
   }
 
-  async commit(input: WorkerRecoveryDecisionInput): Promise<WorkerRecoveryDecisionRecord> {
-    const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
+  async commit(
+    input: WorkerRecoveryDecisionInput,
+    options: WorkerRecoveryDecisionCommitOptions = {},
+    existingLock?: EventStoreLock,
+  ): Promise<WorkerRecoveryDecisionRecord> {
+    validateDecisionInput(input);
+    const lock = existingLock ?? await this.adapter.acquireLock(this.lockPath);
     try {
       const parsed = parseJournal(await this.adapter.readText(this.path));
       if (parsed.status === 'needs-repair') {
@@ -550,7 +739,21 @@ export class WorkerRecoveryDecisionPersistence {
       if (!sameIdentity(existing, input)) {
         throw new WorkerRecoveryDecisionCasError('conflict', `recovery decision commit identity 冲突：${input.requestIdentity}`);
       }
-      if (existing.status === 'committed') return existing;
+      if (existing.status === 'committed') {
+        if (options.verifyProjection && !(await options.verifyProjection())) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery projection 在 durable commit lock 内发生漂移：${input.requestIdentity}`,
+          );
+        }
+        return existing;
+      }
+      if (options.verifyProjection && !(await options.verifyProjection())) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery projection 在 durable commit lock 内发生漂移：${input.requestIdentity}`,
+        );
+      }
       const committed: WorkerRecoveryDecisionRecord = {
         ...existing,
         status: 'committed',
@@ -562,7 +765,7 @@ export class WorkerRecoveryDecisionPersistence {
       const journal = await this.persistAndReadBack({ schemaVersion: 1, entries });
       return journal.entries[index];
     } finally {
-      await lock.release();
+      if (!existingLock) await lock.release();
     }
   }
 
@@ -570,8 +773,10 @@ export class WorkerRecoveryDecisionPersistence {
     input: WorkerRecoveryDecisionInput,
     status: Exclude<WorkerRecoveryDecisionPostCommitStatus, 'not-required'>,
     now: string,
+    existingLock?: EventStoreLock,
   ): Promise<WorkerRecoveryDecisionRecord> {
-    const lock: EventStoreLock = await this.adapter.acquireLock(this.lockPath);
+    validateDecisionInput(input);
+    const lock = existingLock ?? await this.adapter.acquireLock(this.lockPath);
     try {
       const parsed = parseJournal(await this.adapter.readText(this.path));
       if (parsed.status === 'needs-repair') {
@@ -588,6 +793,16 @@ export class WorkerRecoveryDecisionPersistence {
       if (!sameIdentity(existing, input) || existing.status !== 'committed' || existing.action !== 'retry') {
         throw new WorkerRecoveryDecisionCasError('conflict', `recovery post-commit identity 冲突：${input.requestIdentity}`);
       }
+      const allowedTransition = existing.postCommitStatus === status
+        || (existing.postCommitStatus === 'pending' && status === 'dispatching')
+        || (existing.postCommitStatus === 'dispatching' && (status === 'completed' || status === 'failed'))
+        || (existing.postCommitStatus === 'failed' && status === 'pending');
+      if (!allowedTransition) {
+        throw new WorkerRecoveryDecisionCasError(
+          'conflict',
+          `recovery post-commit 状态迁移非法：${existing.postCommitStatus} -> ${status}`,
+        );
+      }
       const updated: WorkerRecoveryDecisionRecord = {
         ...existing,
         postCommitStatus: status,
@@ -598,7 +813,7 @@ export class WorkerRecoveryDecisionPersistence {
       const journal = await this.persistAndReadBack({ schemaVersion: 1, entries });
       return journal.entries[index];
     } finally {
-      await lock.release();
+      if (!existingLock) await lock.release();
     }
   }
 }
