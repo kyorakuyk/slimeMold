@@ -246,6 +246,24 @@ describe('createDevWorkerAcceptance', () => {
     expect(result.failureReason).toContain('diff');
   });
 
+  it('persists the host diff failure detail instead of collapsing it into a no-op', async () => {
+    const deps = host({ service: {
+      testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tests ok', stderr: '', durationMs: 10 })),
+      gitDiff: vi.fn(async () => ({ exitCode: -1, stdout: '', stderr: 'path policy rejected', durationMs: 1 })),
+      gitChangedFiles: vi.fn(async () => ['src/marker.ts']),
+    } });
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost).evaluate({ lease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(false);
+    expect(deps.collector.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'diff',
+        status: 'failed',
+        summary: expect.stringContaining('path policy rejected'),
+      }),
+    ]));
+  });
+
   it('requires the host compile check before accepting a Worker result', async () => {
     const deps = host({
       service: {

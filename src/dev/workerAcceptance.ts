@@ -289,7 +289,9 @@ export function createDevWorkerAcceptance(
           status: hasDiff ? 'passed' : 'failed',
           summary: hasDiff
             ? `检测到 ${changedFiles.length} 个实际变更文件`
-            : '未检测到可验收的实际变更',
+            : `${commandEvidenceSummary('宿主 diff', diff)}；${changedFiles.length > 0
+              ? `已检测到 ${changedFiles.length} 个变更文件，但 diff 命令未成功`
+              : '未检测到可验收的实际变更'}`,
           runId: lease.runId,
           taskId: lease.task.id,
           taskExecutionId: lease.taskExecutionId,

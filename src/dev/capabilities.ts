@@ -58,6 +58,11 @@ export interface DevCapabilityService {
   gitUntrackedFiles(ctx: DevContext): Promise<string[]>;
 }
 
+function isWindowsRuntime(): boolean {
+  if (typeof process !== 'undefined' && process.platform) return process.platform === 'win32';
+  return typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+}
+
 /* ------------------------------------------------------------------ */
 /* applyUnifiedPatch（纯函数）                                         */
 /* ------------------------------------------------------------------ */
@@ -478,7 +483,7 @@ export function createNodeDevService(
     for (let index = fromIndex; index < args.length; index += 1) {
       const a = args[index];
       if (!a || a.startsWith('-')) continue;
-      if (process.platform === 'win32' && a.includes(':')) {
+      if (isWindowsRuntime() && a.includes(':')) {
         throw new Error(`拒绝 Windows ADS/stream 路径：${a}`);
       }
       if (a.includes('*') || a.includes('?')) {

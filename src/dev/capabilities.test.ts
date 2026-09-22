@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile, mkdir, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { applyUnifiedPatch, createNodeDevService, type NodeDevDeps } from './capabilities';
 import { defaultDevPolicy } from './policy';
 import type { CommandResult } from './node-run';
@@ -268,6 +268,19 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     const diff = await svc.gitDiff('HEAD', ctx);
     expect(diff.stdout).toContain('diff --git');
     await expect(svc.gitDiff('--output=/tmp/out', ctx)).rejects.toThrow(/baseRef|Git/);
+  });
+
+  it('Tauri/browser path guard does not assume a Node process global', async () => {
+    vi.stubGlobal('process', undefined);
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
+    try {
+      const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
+      const result = await svc.shellRun(['cat', 'src/components/A.tsx:stream'], ctx);
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toContain('ADS/stream');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('gitChangedFiles：按指定 baseRef 合并 tracked diff 与 untracked', async () => {

@@ -542,9 +542,19 @@ fn trusted_windows_program(candidate: &std::path::Path) -> Option<std::path::Pat
         return None;
     }
     let canonical = candidate.canonicalize().ok()?;
-    (path_compare_key(&canonical.to_string_lossy())
-        == path_compare_key(&candidate.to_string_lossy()))
-    .then_some(canonical)
+    if path_compare_key(&canonical.to_string_lossy())
+        != path_compare_key(&candidate.to_string_lossy())
+    {
+        return None;
+    }
+    let canonical_text = canonical.to_string_lossy();
+    if let Some(rest) = canonical_text.strip_prefix(r"\\?\UNC\") {
+        return Some(std::path::PathBuf::from(format!(r"\\{rest}")));
+    }
+    if let Some(rest) = canonical_text.strip_prefix(r"\\?\") {
+        return Some(std::path::PathBuf::from(rest));
+    }
+    Some(canonical)
 }
 
 #[cfg(windows)]
@@ -784,4 +794,42 @@ pub(crate) fn dev_exec(
         update_pending_worktree_after_success(&canonical_cwd, &args);
     }
     Ok(result)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::command_for_dev_exec;
+    use std::fs;
+
+    #[test]
+    fn cmd_launcher_executes_space_path_without_quote_corruption() {
+        let root = std::env::temp_dir().join(format!(
+            "slimemold cmd launcher test {}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create launcher test directory");
+        let script = root.join("runner.cmd");
+        fs::write(&script, "@echo off\r\necho %*\r\n").expect("write launcher test script");
+
+        let args = vec![
+            script.to_string_lossy().into_owned(),
+            "run".to_string(),
+            "build".to_string(),
+        ];
+        let mut command = command_for_dev_exec(&args).expect("construct cmd launcher");
+        let output = command.output().expect("run cmd launcher");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            output.status.success(),
+            "cmd launcher failed: stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert!(
+            stdout.contains("run build"),
+            "cmd launcher lost arguments: stdout={stdout:?} stderr={stderr:?}"
+        );
+    }
 }
