@@ -189,6 +189,18 @@ describe('worker recovery facts fingerprint v1', () => {
     }))).toThrow();
   });
 
+  it('carries the durable worktree target identity into recovery facts', () => {
+    const facts = buildWorkerRecoveryFactsV1(input({
+      run: run({
+        'task-1': {
+          ...input().run.tasks['task-1'],
+          targetIdentity: 'v1:1:2',
+        },
+      }),
+    }));
+    expect(facts.run.tasks[0].targetIdentity).toBe('v1:1:2');
+  });
+
   it.each(['running', 'waiting-feedback', 'succeeded'] as const)(
     'rejects direct DTO %s task with attempt zero and no current lineage',
     (status) => {

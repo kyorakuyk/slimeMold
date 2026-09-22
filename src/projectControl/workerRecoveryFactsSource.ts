@@ -73,6 +73,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
   if (task.worktreePath !== undefined) canonicalPath(task.worktreePath, 'worktree path');
   if (task.branch !== undefined) canonicalRef(task.branch, 'branch');
   if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'baseRevision');
+  if (task.targetIdentity !== undefined) requiredText(task.targetIdentity, 'target identity');
   if (task.branchRevision !== undefined) canonicalRevision(task.branchRevision, 'branchRevision');
   if (task.worktreeId !== undefined) requiredText(task.worktreeId, 'worktree id');
   if (task.attempt > 0 && (task.taskExecutionId === undefined || task.currentAttemptId === undefined)) {
@@ -108,6 +109,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
     ...(task.worktreePath === undefined ? {} : { worktreePath: comparableWorkerPath(task.worktreePath) }),
     ...(task.branch === undefined ? {} : { branch: canonicalRef(task.branch, 'branch') }),
     ...(task.baseRevision === undefined ? {} : { baseRevision: canonicalRevision(task.baseRevision, 'base revision') }),
+    ...(task.targetIdentity === undefined ? {} : { targetIdentity: requiredText(task.targetIdentity, 'target identity') }),
     ...(task.worktreeStatus === undefined ? {} : { worktreeStatus: task.worktreeStatus }),
     ...(task.branchRevision === undefined ? {} : { branchRevision: canonicalRevision(task.branchRevision, 'branch revision') }),
     ...(task.cleanupStateSignature === undefined ? {} : { cleanupStateSignature: requiredText(task.cleanupStateSignature, 'cleanup state signature') }),

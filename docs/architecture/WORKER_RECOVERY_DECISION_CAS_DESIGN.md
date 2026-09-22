@@ -1,15 +1,15 @@
 ---
 title: Worker Recovery Decision CAS Design Gate
 type: architecture-design
-status: design-gate
-updated: 2026-09-21
+status: partial-implementation-gate
+updated: 2026-09-22
 authority: design-proposal
 ---
 
 # Worker Recovery Decision CAS Design Gate
 
-> 本文是 Worker recovery durable decision CAS 的设计门，不是已实现能力，也不是跨文件原子事务的宣称。
-> 在本文的 contract、migration 和 crash matrix 被接受前，不得把 fingerprint 写入 ProjectFile、DomainEvent 或 side-effect journal，也不得把当前 process-local single-flight 当作 durable CAS。
+> 本文仍是 Worker recovery durable decision CAS 的设计门；当前已实现 Gate A、Gate B 的 durable decision owner 与 Gate C 的 controller wiring，但不是跨文件原子事务或真实 restart/cross-process acceptance 的宣称。
+> 当前 `WorkerRecoveryDecisionPersistence` 只允许在 durable decision journal read-back 成功后继续 ProjectFile/event projection，并保留 admitted/committed 状态；在 crash matrix、双 controller 竞争和真实 GUI read-back 完成前，不得把 recovery decision 写成 fully closed。
 
 ## 1. 目的与边界
 
@@ -37,9 +37,9 @@ captured recovery facts
 
 ## 2. 设计状态与证据边界
 
-- **状态：** `设计基线`，尚未实现、尚未完成用户可见的 durable read-back，也没有真实跨进程/重启证明。
+- **状态：** `Gate A/B/C partial implementation`；decision journal 有 durable lock、schema validation、atomic write/read-back、stale/conflict/replay/resume 处理，controller 已在 projection/save 前 admission、save 后 commit；尚未完成真实跨进程/重启 GUI 证明，也没有宣称跨文件原子事务。
 - **本轮依据：** 当前源码、测试、ProjectFile/event/journal 写入顺序和 exact read-only audit；实现事实以源码和测试为准。
-- **禁止升级：** 不能因为有纯函数测试、event-stream sequence CAS 或 process-local save queue，就写成“recovery decision 已幂等”或“跨进程 CAS 已闭合”。
+- **禁止升级：** 不能因为有 persistence unit/integration tests、event-stream sequence CAS、decision journal lock 或 process-local save queue，就写成“跨文件 recovery decision CAS 已闭合”；当前只能称为已实现 admission/replay slice，formal E2E 仍 partial-fail。
 - **重新审议：** 若 ProjectFile/event store 的事实源分工、Task/Attempt identity、宿主锁能力或用户对 retry/skip 的授权语义改变，必须新建或 supersede 本设计，而不是静默改写历史 contract。
 
 ## 3. 两层身份：Facts Fingerprint 与 Decision Identity
@@ -122,7 +122,7 @@ DecisionIdentityV1 = {
 
 ## 4. Durable owner 与写入顺序
 
-当前没有一个 owner 同时覆盖 ProjectFile、event stream 和 journal。后续实现必须先建立一个窄的 `WorkerRecoveryDecisionPersistence`/等价 owner，不能把 CAS 逻辑散落到 UI、`workerRecoveryCommand`、`saveProject` 和 eventBuffer。
+当前已建立窄的 `WorkerRecoveryDecisionPersistence` owner，负责 decision journal、durable lock、schema validation、admission/commit 与 read-back；它不取代 ProjectFile、event stream 或 side-effect journal 的各自事实源，也不把跨文件写入误称为原子事务。CAS 逻辑不能散落到 UI、`workerRecoveryCommand`、`saveProject` 和 eventBuffer。
 
 实现前必须冻结一条可恢复的 commit protocol：
 
@@ -134,7 +134,7 @@ DecisionIdentityV1 = {
 6. 每个 durable write 都必须有明确 crash/retry 状态：pending、committed、conflict 或 needs-repair；跨文件无法原子时，必须有可重放的 commit marker/reconciliation，而不是吞掉第二个写失败。
 7. read-back ProjectFile、event stream/projection 和 decision record；只有 read-back 一致后才允许 retry，且 WorkerQueue 仍保持 running lease 在外部 executor/side effect 之前持久化。
 
-**明确禁止：** 直接在当前 `workerActionController` 中先生成 fingerprint、调用现有 `saveProject`，然后把结果称为 durable CAS；那只会把新语义叠加到旧的非原子写顺序上。
+**当前限制：** `workerActionController` 已按 fresh facts → decision admission → projection/save → decision commit → retry 接线；decision journal 本身有 durable read-back，但 ProjectFile/event stream 与 decision journal 仍是跨文件写入。任何 save/commit crash window 必须由 admitted candidate 重放或 `needs-repair` 处理，不能称作跨文件原子 CAS。
 
 ## 5. Legacy 与 migration
 
@@ -146,22 +146,22 @@ DecisionIdentityV1 = {
 
 ## 6. 分阶段实施门
 
-### Gate A：纯 contract vectors（下一条允许的代码切片）
+### Gate A：纯 contract vectors（已实现，仍需 parity closure）
 
-只实现纯 DTO normalization/serializer/fingerprint helper和 direct tests：
+已实现 recovery facts normalization/serializer/fingerprint helper 和 direct tests：
 
 - 不写 ProjectFile、DomainEvent、eventBuffer、journal、runtime 或 native host；
 - 覆盖 key insertion order、array/set policy、undefined/null、path policy、timestamps、historical terminal effects、malformed/legacy/unbound facts；
 - Node 与未来 Tauri/Rust parity vectors先固定；helper 输出必须 versioned；
 - Gate A 通过不等于 durable CAS 已实现。
 
-### Gate B：durable decision admission
+### Gate B：durable decision admission（已实现 partial）
 
-单独实现 persistence owner、durable lock/generation、decision lookup、stale/conflict/idempotence和 read-back；加入 ProjectFile/event/journal crash matrix。不得与 UI capability或runtime selection混合。
+`WorkerRecoveryDecisionPersistence` 已实现 decision lookup、项目内 durable lock、stale/conflict/idempotence、admitted/committed 状态和 atomic JSON read-back；ProjectFile/event/journal crash matrix、跨文件 commit marker 与跨进程证明仍待 Gate D，不得与 UI capability 或 runtime selection混合。
 
-### Gate C：controller wiring
+### Gate C：controller wiring（已实现 partial）
 
-只在 Gate B read-back可证明后接回 `workerActionController`：fresh durable facts → decision admission → projection/event commit → retry。旧的 in-memory precondition和single-flight保留为快速 guard，不代替 durable CAS。
+`workerActionController` 已接入 fresh facts → decision admission → projection/event save → decision commit → retry；旧的 in-memory precondition 和 single-flight 仍是快速 guard，不代替 durable CAS。Task/ProjectFile/event read-back 与 crash recovery 仍需真实路径验证。
 
 ### Gate D：真实 restart/cross-process
 
@@ -178,7 +178,7 @@ DecisionIdentityV1 = {
 - “有当前 state，所以可以 backfill 历史 decision fingerprint”；
 - “runtime callback 透传已证明 restart runtime provenance”。
 
-只有 Gate B 的 durable read-back、Gate C 的 controller wiring 和 Gate D 的真实 restart/cross-process evidence同时对应同一 exact source checkpoint，才可称 recovery decision CAS closed。
+只有 Gate B 的 durable read-back、Gate C 的 controller wiring 和 Gate D 的真实 restart/cross-process evidence 同时对应同一 exact source checkpoint，才可称 recovery decision CAS closed；本轮尚未达到该条件。
 
 ## 8. 相关权威
 

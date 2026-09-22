@@ -658,7 +658,7 @@ fn git_branch_exists(repo: &std::path::Path, branch: &str) -> Result<bool, Strin
 
 /// 登记一个 worktree（前端 dev.worktree.create 成功后调用；支持相对路径基于主仓库根解析）。
 #[tauri::command]
-pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
+pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<String, String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_register_worktree")?;
     let (base, base_identity, registration_generation) = {
@@ -761,7 +761,7 @@ pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<(),
     }
     st.pending_worktrees
         .retain(|pending| path_compare_key(&pending.path) != path_compare_key(&canonical_path));
-    Ok(())
+    Ok(identity.token())
 }
 
 #[tauri::command]
@@ -769,6 +769,7 @@ pub(crate) fn dev_restore_worktree(
     path: String,
     branch: String,
     generation: u64,
+    target_identity: Option<String>,
 ) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_restore_worktree")?;
@@ -793,7 +794,7 @@ pub(crate) fn dev_restore_worktree(
         return Err("dev_restore_worktree: 主仓库 directory identity 已变化".into());
     }
     let canon = dev_abs_of(&path)?;
-    let trusted_target_identity = {
+    let registered_target_identity = {
         let state = DEV_STATE.lock().unwrap();
         state
             .registrations
@@ -807,9 +808,6 @@ pub(crate) fn dev_restore_worktree(
                 )
             })
             .map(|registered| registered.identity.clone())
-            .ok_or_else(|| {
-                "dev_restore_worktree: 缺少 trusted target identity，拒绝重绑定当前路径".to_string()
-            })?
     };
     if !canon.is_dir() {
         return Err(format!(
@@ -817,9 +815,19 @@ pub(crate) fn dev_restore_worktree(
         ));
     }
     let identity = stable_directory_identity(&canon)?;
-    if identity != trusted_target_identity {
+    let expected_identity_token = target_identity
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            registered_target_identity
+                .as_ref()
+                .map(StableDirectoryIdentity::token)
+        })
+        .ok_or_else(|| {
+            "dev_restore_worktree: 缺少 durable target identity，拒绝重绑定当前路径".to_string()
+        })?;
+    if identity.token() != expected_identity_token {
         return Err(
-            "dev_restore_worktree: current target identity 不匹配 trusted registration".into(),
+            "dev_restore_worktree: current target identity 不匹配 durable registration".into(),
         );
     }
     let canonical_path = canon.to_string_lossy().to_string();

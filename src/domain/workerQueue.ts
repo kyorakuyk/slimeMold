@@ -21,6 +21,7 @@ export interface WorkerWorktreeAssignment {
   path: string;
   branch: string;
   baseRevision: string;
+  targetIdentity?: string;
 }
 
 export interface WorkerDependencyArtifact {
@@ -103,6 +104,8 @@ export interface WorkerQueueTask {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  /** Host-owned stable identity used to rebind the live worktree after restart. */
+  targetIdentity?: string;
   worktreeStatus?: WorkerWorktreeStatus;
   branchRevision?: string;
   cleanupStateSignature?: string;
@@ -601,6 +604,7 @@ export class WorkerTaskQueue {
             worktreePath: requiredText(assignment.path, 'worktree 路径'),
             branch: requiredText(assignment.branch, 'worktree 分支'),
             baseRevision: requiredText(assignment.baseRevision, 'worktree 基线'),
+            targetIdentity: assignment.targetIdentity,
             worktreeStatus: 'created',
             branchRevision: undefined,
             cleanupStateSignature: undefined,
@@ -620,6 +624,7 @@ export class WorkerTaskQueue {
         worktreePath: assignment.path,
         branch: assignment.branch,
         baseRevision: assignment.baseRevision,
+        targetIdentity: assignment.targetIdentity,
         worktreeStatus: 'created',
         branchRevision: undefined,
         attempt,

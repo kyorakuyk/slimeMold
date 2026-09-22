@@ -89,6 +89,7 @@ export function createWorktreeAllocator(
           path: requiredText(info.path, 'worktree 路径'),
           branch: requiredText(info.branch, 'worktree 分支'),
           baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
+          ...(info.targetIdentity ? { targetIdentity: requiredText(info.targetIdentity, 'worktree target identity') } : {}),
         };
       } catch (error) {
         reservedPaths.delete(pathKey);

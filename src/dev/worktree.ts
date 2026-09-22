@@ -340,6 +340,16 @@ export class WorktreeManager {
     this.infos.delete(id);
   }
 
+  /** Attach the host-owned stable target identity returned by native registration. */
+  bindTargetIdentity(id: string, targetIdentity: string): WorktreeInfo | undefined {
+    const normalized = targetIdentity.trim();
+    const info = this.infos.get(id);
+    if (!info || !normalized) return info;
+    const updated = { ...info, targetIdentity: normalized };
+    this.infos.set(id, updated);
+    return updated;
+  }
+
   markRegistrationPending(id: string): void {
     const info = this.infos.get(id);
     if (info?.status === 'cleaned') this.infos.set(id, { ...info, status: 'registration-pending' });

@@ -77,8 +77,8 @@ pub(crate) use session_authority::{dev_cwd_kind, DevCwdKind};
 #[cfg(test)]
 pub(crate) use worktree_authority::{
     cleanup_target_absence_is_confirmed, cleanup_target_identity_is_current,
-    dev_main_repo_git_allowed_at, dev_register_worktree, dev_unregister_worktree,
-    main_repo_worktree_args_are_valid, record_pending_worktree_add,
+    dev_main_repo_git_allowed_at, dev_register_worktree, dev_restore_worktree,
+    dev_unregister_worktree, main_repo_worktree_args_are_valid, record_pending_worktree_add,
     registered_worktree_identity_conflicts, registered_worktree_identity_matches, worker_root_path,
     worker_target_is_safe_for_existing_operation, worktree_add_target_is_safe,
 };

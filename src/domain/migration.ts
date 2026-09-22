@@ -543,6 +543,7 @@ function addWorkerTask(
         ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
         ...(task.branch ? { branch: task.branch } : {}),
         ...(task.baseRevision ? { baseRevision: task.baseRevision } : {}),
+        ...(task.targetIdentity ? { targetIdentity: task.targetIdentity } : {}),
         ...(task.evidenceIds.length > 0 ? { evidenceIds: [...task.evidenceIds] } : {}),
         ...(task.acceptanceId ? { acceptanceId: task.acceptanceId } : {}),
         ...(task.error ? { error: task.error } : {}),

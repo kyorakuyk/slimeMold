@@ -68,6 +68,7 @@ export interface AttemptRecord {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  targetIdentity?: string;
   evidenceIds?: string[];
   acceptanceId?: string;
   feedbackId?: string;
@@ -271,6 +272,7 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(typeof payload.worktreePath === 'string' ? { worktreePath: payload.worktreePath } : {}),
     ...(typeof payload.branch === 'string' ? { branch: payload.branch } : {}),
     ...(typeof payload.baseRevision === 'string' ? { baseRevision: payload.baseRevision } : {}),
+    ...(typeof payload.targetIdentity === 'string' ? { targetIdentity: payload.targetIdentity } : {}),
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),

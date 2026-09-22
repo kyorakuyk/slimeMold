@@ -18,6 +18,7 @@ export interface WorkerRecoveryTaskFactV1 {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  targetIdentity?: string;
   worktreeStatus?: WorkerQueueTask['worktreeStatus'];
   branchRevision?: string;
   cleanupStateSignature?: string;

@@ -12,6 +12,7 @@ export interface WorkerCleanupProposalReady {
   taskExecutionId: string;
   attemptId: string;
   worktreeId: string;
+  targetIdentity?: string;
   branch: string;
   branchRevision: string;
   branchRevisionRequired: true;
@@ -64,6 +65,7 @@ export interface WorkerCleanupHost {
     path: string,
     options: {
       worktreeId: string;
+      targetIdentity?: string;
       branch: string;
       branchRevision?: string;
       branchRevisionRequired?: boolean;
@@ -86,7 +88,7 @@ export interface WorkerCleanupHost {
 
 /** Canonical binding used by both approval and the destructive host confirmation gate. */
 export function cleanupBindingFingerprint(
-  value: Pick<CleanupApproval, 'worktreePath' | 'worktreeId' | 'branch' | 'branchRevision'
+  value: Pick<CleanupApproval, 'worktreePath' | 'worktreeId' | 'targetIdentity' | 'branch' | 'branchRevision'
     | 'branchRevisionRequired' | 'runId' | 'taskId' | 'taskExecutionId' | 'attemptId'
     | 'attempt' | 'baseRevision' | 'stateSignature' | 'acceptanceId' | 'orchestrationId'
     | 'stageId' | 'taskStatus' | 'cleanupStatus'> | WorkerCleanupProposalReady,
@@ -94,6 +96,7 @@ export function cleanupBindingFingerprint(
   return JSON.stringify([
     normalizeAbsolutePath(value.worktreePath),
     value.worktreeId ?? null,
+    value.targetIdentity ?? null,
     value.branch ?? null,
     value.branchRevision ?? null,
     ('branchRevisionRequired' in value
@@ -116,6 +119,10 @@ export function cleanupBindingFingerprint(
 
 export function workerCleanupEffectKey(_taskExecutionId: string, attemptId: string): string {
   return `cleanup:${attemptId}`;
+}
+
+export function workerCleanupDecisionId(taskExecutionId: string, attemptId: string): string {
+  return `cleanup-decision:${workerCleanupEffectKey(taskExecutionId, attemptId)}`;
 }
 
 function blocked(runId: string, taskId: string, reason: string): WorkerCleanupProposalBlocked {
@@ -261,6 +268,7 @@ export async function buildWorkerCleanupProposal(
     taskExecutionId: lineage.taskExecutionId,
     attemptId: lineage.attemptId,
     worktreeId: task.worktreeId,
+    ...(task.targetIdentity ? { targetIdentity: task.targetIdentity } : {}),
     branch: task.branch,
     branchRevision: requiredBranchRevision,
     branchRevisionRequired: true,
@@ -296,6 +304,7 @@ export function approveWorkerCleanupProposal(
   if (proposal.status === 'cleaned') throw new Error('清理提案已经完成，不能重复批准');
   host.approveCleanup(proposal.worktreePath, {
     worktreeId: proposal.worktreeId,
+    targetIdentity: proposal.targetIdentity,
     branch: proposal.branch,
     branchRevision: proposal.branchRevision,
     branchRevisionRequired: proposal.branchRevisionRequired,

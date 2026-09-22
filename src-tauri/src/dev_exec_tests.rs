@@ -650,6 +650,92 @@ fn successful_worktree_add_creates_a_scoped_pending_rollback_lease() {
 }
 
 #[test]
+fn restart_restore_uses_durable_target_identity_after_host_registry_reset() {
+    let _test_guard = lock_dev_state_tests();
+    let test_root = std::env::temp_dir().join("slimemold-test-runs");
+    let root = test_root.join(format!(
+        "sm-restart-restore-{}_{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    let base = root.join("repo");
+    let workers = root.join("repo-workers");
+    let target = workers.join("attempt-1");
+    let base_str = base.to_string_lossy().to_string();
+    let target_str = target.to_string_lossy().to_string();
+    let branch = "worker/attempt-1".to_string();
+    let _cleanup = TempDirs(vec![root.clone()]);
+    fs::create_dir_all(&base).unwrap();
+    fs::create_dir_all(&workers).unwrap();
+    fs::write(base.join("README.md"), "fixture").unwrap();
+    let git = |args: &[&str], cwd: &std::path::Path| {
+        let output = Command::new(resolve_dev_program("git"))
+            .args(args)
+            .current_dir(cwd)
+            .env_clear()
+            .envs(dev_sanitized_env())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"], &base);
+    git(&["config", "user.email", "test@example.invalid"], &base);
+    git(&["config", "user.name", "SlimeMold Test"], &base);
+    git(&["add", "README.md"], &base);
+    git(&["commit", "-qm", "fixture"], &base);
+
+    let first_generation = dev_init_session(base_str.clone()).unwrap();
+    let add = dev_exec(
+        sv(&[
+            "git",
+            "worktree",
+            "add",
+            "-q",
+            &target_str,
+            "-b",
+            &branch,
+            "HEAD",
+        ]),
+        base_str.clone(),
+        first_generation,
+    )
+    .unwrap();
+    assert_eq!(add.code, 0);
+    let target_identity = stable_directory_identity(&target).unwrap();
+    let target_identity_token = format!(
+        "v1:{}:{}",
+        target_identity.volume_or_device, target_identity.file_or_inode
+    );
+    dev_register_worktree(target_str.clone(), first_generation).unwrap();
+
+    dev_clear_session(first_generation).unwrap();
+    let restarted_generation = dev_init_session(base_str.clone()).unwrap();
+    let mismatch = dev_restore_worktree(
+        target_str.clone(),
+        branch.clone(),
+        restarted_generation,
+        Some("v1:0:0".to_string()),
+    );
+    assert!(mismatch.is_err(), "replacement identity must fail closed");
+    let restored = dev_restore_worktree(
+        target_str.clone(),
+        branch,
+        restarted_generation,
+        Some(target_identity_token),
+    );
+
+    assert!(
+        restored.is_ok(),
+        "restart restore must rebind from durable identity"
+    );
+    dev_clear_session(restarted_generation).unwrap();
+}
+
+#[test]
 fn orphan_registration_preserves_native_branch_revision() {
     let _test_guard = lock_dev_state_tests();
     let test_root = std::env::temp_dir().join("slimemold-test-runs");

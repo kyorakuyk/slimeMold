@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AcceptanceRecord } from '../dev/session';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
-import { buildWorkerCleanupProposal, buildWorkerCleanupProposalSafely } from './workerCleanup';
+import {
+  buildWorkerCleanupProposal,
+  buildWorkerCleanupProposalSafely,
+  workerCleanupDecisionId,
+} from './workerCleanup';
 
 function run(): WorkerRunQueueState {
   return {
@@ -52,6 +56,14 @@ function acceptance(): AcceptanceRecord {
 }
 
 describe('worker cleanup proposal', () => {
+  it('derives the TaskCleaned decision id from the cleanup attempt lineage', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(workerCleanupDecisionId(taskExecutionId, attemptId))
+      .toBe(`cleanup-decision:cleanup:${attemptId}`);
+  });
+
   it('binds cleanup to the accepted worktree baseline and current signature', async () => {
     const computeWorktreeSignature = vi.fn(async () => 'sig-1');
     const proposal = await buildWorkerCleanupProposal({

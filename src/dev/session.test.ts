@@ -138,6 +138,58 @@ describe('DevSession cleanup', () => {
     expect(session.manager.get(replacement!.id)?.status).toBe('created');
   });
 
+  it('rejects cleanup when the registered target identity changes after approval', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({ baseRepoPath: '/repo', gitRunner: { git } });
+    const info = await session.manager.create('worker-id', '/repo-workers/identity', { branch: 'worker/identity' });
+    expect(info).not.toBeNull();
+    session.manager.bindTargetIdentity(info!.id, 'target-old');
+    session.computeWorktreeSignature = vi.fn(async () => 'sig-1');
+    const acceptanceId = session.nextAcceptanceId();
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      worktreePath: info!.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
+      baseRevision: info!.baseRevision,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
+    });
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
+    session.manager.bindTargetIdentity(info!.id, 'target-new');
+
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
+    expect(session.manager.get(info!.id)?.status).toBe('created');
+  });
+
   it('rejects cleanup when the live branch tip changes after approval', async () => {
     let tip = TIP_OID;
     const git = vi.fn(async (args: string[]) => {

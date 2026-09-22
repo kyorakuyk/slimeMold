@@ -12,6 +12,11 @@ import { installWorkerRunRuntime } from './workerRunRuntime';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { mergeWorkerSideEffects } from './workerEvidence';
 import { assertWorkerRecoveryDecisionPrecondition } from './workerRecoveryDecisionPrecondition';
+import { fingerprintWorkerRecoveryFactsV1 } from './workerRecoveryFactsFingerprint';
+import {
+  WorkerRecoveryDecisionPersistence,
+  type WorkerRecoveryDecisionCandidate,
+} from './workerRecoveryDecisionPersistence';
 import {
   createWorkerRecoverySingleFlight,
   type WorkerRecoverySingleFlight,
@@ -50,6 +55,8 @@ export interface WorkerActionControllerDeps {
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
   recoverySingleFlight?: WorkerRecoverySingleFlight;
+  recoveryDecisionPersistence?: WorkerRecoveryDecisionPersistence;
+  createRecoveryDecisionPersistence?: (projectPath: string) => Promise<WorkerRecoveryDecisionPersistence>;
 }
 
 export function createWorkerActionController(deps: WorkerActionControllerDeps): {
@@ -58,6 +65,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     decision: 'retry' | 'skip',
     reason: string,
     workerRuntime?: WorkerRuntime,
+    requestIdentity?: string,
   ) => Promise<void>;
 } {
   const ensureGuiDevSession = deps.ensureGuiDevSession ?? defaultEnsureGuiDevSession;
@@ -68,6 +76,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     decision: 'retry' | 'skip',
     reason: string,
     workerRuntime?: WorkerRuntime,
+    requestIdentity?: string,
   ): Promise<void> => {
     if (!deps.isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
     const current = deps.getState();
@@ -109,20 +118,75 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       capturedTaskGraph: taskGraph,
       current: decisionState,
     });
-    const decisionId = globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const normalizedReason = reason.trim();
+    const requestKey = requestIdentity?.trim() || `run:${runId}:${decision}`;
+    const decisionId = `recovery:${requestKey}`;
+    const now = new Date().toISOString();
+    const factsFingerprint = await fingerprintWorkerRecoveryFactsV1({
+      projectId,
+      run,
+      taskGraph,
+      sideEffects: journal.entries,
+    });
     const result = recoverWorkerRunCommand({
       projectId,
       state: run,
       taskGraph,
       journal,
       decision,
-      reason,
+      reason: normalizedReason,
       decisionId,
-      now: new Date().toISOString(),
+      now,
     });
+    const decisionPersistence = deps.recoveryDecisionPersistence
+      ?? (deps.createRecoveryDecisionPersistence
+        ? await deps.createRecoveryDecisionPersistence(projectPath)
+        : await (async () => {
+          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          return new WorkerRecoveryDecisionPersistence(
+            createTauriEventStoreAdapter(projectPath),
+            projectPath,
+          );
+        })());
+    const readCurrentFactsFingerprint = async (): Promise<string> => {
+      const latest = deps.getState();
+      const latestRun = latest.workerRuns.find((item) => item.runId === runId);
+      const latestTaskGraph = latest.taskGraphs.find((item) => item.id === taskGraph.id);
+      if (!latestRun || !latestTaskGraph) throw new Error(`Worker recovery facts 在 admission 期间丢失：${runId}`);
+      const latestSideEffects = latest.workerRunSideEffects.filter((effect) => effect.runId === runId);
+      return fingerprintWorkerRecoveryFactsV1({
+        projectId,
+        run: latestRun,
+        taskGraph: latestTaskGraph,
+        sideEffects: latestSideEffects.length > 0 ? latestSideEffects : journal.entries,
+      });
+    };
+    const admission = await decisionPersistence.admit({
+      projectId,
+      runId,
+      requestIdentity: requestKey,
+      action: decision,
+      semanticPayloadVersion: 1,
+      decisionId,
+      factsFingerprint,
+      candidate: {
+        state: result.state,
+        events: result.events,
+      },
+      now,
+    }, {
+      readCurrentFactsFingerprint,
+      isCandidateApplied: async (candidate: WorkerRecoveryDecisionCandidate) => {
+        const latest = deps.getState();
+        const latestRun = latest.workerRuns.find((item) => item.runId === runId);
+        return !!latestRun && JSON.stringify(latestRun) === JSON.stringify(candidate.state);
+      },
+    });
+    if (admission.kind === 'replay') return;
+    const admittedCandidate = admission.record.candidate;
     deps.assertProjectOperation(operation);
-    deps.recordProjectEvents(projectId, result.events);
-    const nextRuns = decisionState.workerRuns.map((item) => item.runId === runId ? result.state : item);
+    deps.recordProjectEvents(projectId, admittedCandidate.events);
+    const nextRuns = decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item);
     decisionState.setWorkerRuns(nextRuns);
     decisionState.setOrchestrations(
       projectWorkerRunsOntoOrchestrations(decisionState.orchestrations, nextRuns),
@@ -131,12 +195,23 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     const runtime = installWorkerRunRuntime({
       projectId,
       taskGraphs: decisionState.taskGraphs,
-      runs: decisionState.workerRuns.map((item) => item.runId === runId ? result.state : item),
+      runs: decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item),
     });
     decisionState.setWorkerRunRecoveries(runtime.recoveries);
     deps.assertProjectOperation(operation);
     await deps.saveProject(projectId, projectPath, operation.controller.signal);
     deps.assertProjectOperation(operation);
+    await decisionPersistence.commit({
+      projectId,
+      runId,
+      requestIdentity: requestKey,
+      action: decision,
+      semanticPayloadVersion: 1,
+      decisionId,
+      factsFingerprint,
+      candidate: admittedCandidate,
+      now: new Date().toISOString(),
+    });
     if (decision === 'retry') await deps.runQueuedWorker(runId, workerRuntime);
     } finally {
       lease.release();

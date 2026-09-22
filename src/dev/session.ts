@@ -201,6 +201,7 @@ export interface DevSession {
     path: string,
     opts?: {
       worktreeId?: string;
+      targetIdentity?: string;
       branch?: string;
       branchRevision?: string;
       branchRevisionRequired?: boolean;
@@ -373,10 +374,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     path: string,
     branch?: string,
     branchRevision?: string,
-  ): Promise<void> => {
-    if (env !== 'tauri') return;
+    targetIdentity?: string,
+  ): Promise<string | undefined> => {
+    if (env !== 'tauri') return undefined;
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke(fn === 'register'
+    const result = await invoke<unknown>(fn === 'register'
       ? 'dev_register_worktree'
       : fn === 'restore'
         ? 'dev_restore_worktree'
@@ -387,7 +389,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       generation: hostGeneration,
       ...(branch ? { branch } : {}),
       ...(branchRevision ? { branchRevision } : {}),
+      ...(targetIdentity ? { targetIdentity } : {}),
     });
+    return typeof result === 'string' && result.trim() ? result : undefined;
   };
   // Host registration is a separate side effect from Git cleanup. Keep its
   // success state so a failed initial registration never turns a later Git
@@ -409,8 +413,12 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         }
       }
       try {
-        await syncRust('register', info.path);
+        const targetIdentity = await syncRust('register', info.path);
+        const registeredInfo = targetIdentity
+          ? manager.bindTargetIdentity(info.id, targetIdentity) ?? info
+          : info;
         registeredWorktrees.add(info.id);
+        return registeredInfo;
       } catch (error) {
         // Tauri host keeps a pending add lease until registration succeeds, so
         // this cleanup can pass the host gate. Preserve the manager record when
@@ -435,7 +443,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       }
     }
     try {
-      await syncRust('restore', info.path, info.branch);
+      await syncRust('restore', info.path, info.branch, undefined, info.targetIdentity);
       registeredWorktrees.add(info.id);
       return true;
     } catch {
@@ -589,6 +597,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       approvedCleanups.set(key, {
         worktreePath: normalizedPath,
         worktreeId: opts?.worktreeId,
+        targetIdentity: opts?.targetIdentity,
         branch: opts?.branch,
         branchRevision: opts?.branchRevision,
         branchRevisionRequired: opts?.branchRevisionRequired,
@@ -668,6 +677,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           || !info
           || info.id !== approval.worktreeId
           || info.branch !== approval.branch) return rejectCleanup();
+        if (approval.targetIdentity !== info.targetIdentity) return rejectCleanup();
         if (approval.taskExecutionId !== createTaskExecutionId(approval.runId, approval.taskId)
           || approval.attemptId !== createAttemptId(approval.taskExecutionId, approval.attempt)) return rejectCleanup();
         if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return rejectCleanup();
