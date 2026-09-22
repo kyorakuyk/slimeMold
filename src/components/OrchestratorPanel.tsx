@@ -10,7 +10,7 @@
  *   创建为真实空白工作流（activate:false）并打开编辑；
  * - 废弃只删除编排记录，不触碰用户工作流；运行中须先取消。
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   Target,
@@ -25,6 +25,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import { confirmDialog } from '../platform/env';
 import {
@@ -41,9 +42,18 @@ import {
   stagesReadyToRun,
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
-import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
+import type { Orchestration, OrchestrationStatus, StageLog } from '../types/orchestration';
 import { workerRunViewsFor } from '../projectControl/workerRunView';
+import {
+  buildTaskGraphProjection,
+  buildTaskGraphProjectionFromWorkerRun,
+  taskIssueId,
+} from '../projectControl/taskGraphProjection';
+import TaskGraphDAGView from './TaskGraphDAGView';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
+import { reviseTaskGraphCommand } from '../projectControl/commands';
+import { recordProjectEvents } from '../projectControl/eventBuffer';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 
 /** 编排整体状态徽标配色 */
 const statusCls: Record<string, string> = {
@@ -93,7 +103,7 @@ export default function OrchestratorPanel({
   onCleanupWorkerRun,
 }: {
   embedded?: boolean;
-  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
   onCleanupWorkerRun?: (runId: string, taskId: string, action: 'approve' | 'cleanup') => Promise<void> | void;
 }) {
   const t = useT('panels');
@@ -107,6 +117,10 @@ export default function OrchestratorPanel({
   const workerRunEvidence = useWorkflowStore((s) => s.workerRunEvidence ?? []);
   const workerRunSideEffects = useWorkflowStore((s) => s.workerRunSideEffects ?? []);
   const workerCleanupProposals = useWorkflowStore((s) => s.workerCleanupProposals ?? []);
+  const projectId = useWorkflowStore((s) => s.projectId);
+  const projectControl = useWorkflowStore((s) => s.projectControl);
+  const taskGraphSelection = useViewStore((s) => s.taskGraphSelection);
+  const setTaskGraphSelection = useViewStore((s) => s.setTaskGraphSelection);
 
   // 目标输入与约束
   const [goal, setGoal] = useState('');
@@ -122,11 +136,52 @@ export default function OrchestratorPanel({
   const [cancelling, setCancelling] = useState(false);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [revisionTitle, setRevisionTitle] = useState('');
+  const [revisionDependsOn, setRevisionDependsOn] = useState('');
+  const [revisionDependsOnTouched, setRevisionDependsOnTouched] = useState(false);
+  const [revisionBusy, setRevisionBusy] = useState(false);
 
   const selected = orchestrations.find((o) => o.id === selectedId) ?? null;
   const selectedWorkerRuns = selected
-    ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals)
+    ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals, projectControl.taskGraphs ?? [])
     : [];
+  const taskGraphDAG = useMemo(() => {
+    if (!selected) return { projection: null, error: null };
+    const taskGraphRuns = workerRuns
+      .filter((run) => run.projectId === projectId && run.orchestrationId === selected.id)
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+    const latestRun = taskGraphRuns.at(-1);
+    const selectedGraphId = taskGraphSelection?.projectId === projectId ? taskGraphSelection.taskGraphId : undefined;
+    const graphId = selectedGraphId
+      ?? latestRun?.taskGraphId
+      ?? selected.draft?.stages.find((stage) => stage.sourceTaskGraphId)?.sourceTaskGraphId;
+    const graph = graphId
+      ? projectControl.taskGraphs?.find((item) => item.id === graphId)
+      : undefined;
+    if (!graph) return { projection: null, error: null };
+    const issues = projectControl.issues.filter((issue) => issue.projectId === projectId || issue.projectId === null);
+    try {
+      if (latestRun) {
+        return {
+          projection: buildTaskGraphProjectionFromWorkerRun({ graph, issues, run: latestRun }),
+          error: null,
+        };
+      }
+      return {
+        projection: buildTaskGraphProjection({
+          graph,
+          issues,
+          execution: { lastSequence: 0, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} },
+        }),
+        error: null,
+      };
+    } catch (cause) {
+      return {
+        projection: null,
+        error: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+  }, [projectControl.issues, projectControl.taskGraphs, projectId, selected, taskGraphSelection, workerRuns]);
   const allAgents = [...globalAgents, ...agents];
   const workflowsList = Object.entries(workflows).map(([id, w]) => ({
     id,
@@ -287,7 +342,8 @@ export default function OrchestratorPanel({
   };
 
   const onRecover = (runId: string, decision: 'retry' | 'skip') => {
-    if (!onRecoverWorkerRun || recoveryBusy) return;
+    const selectedRun = selectedWorkerRuns.find((run) => run.runId === runId);
+    if (!onRecoverWorkerRun || recoveryBusy || !selectedRun?.recoveryActions.includes(decision)) return;
     setRecoveryBusy(true);
     const reason = `用户在专业编排中选择 ${decision}`;
     void (async () => {
@@ -313,6 +369,63 @@ export default function OrchestratorPanel({
         setCleanupBusy(false);
       }
     })();
+  };
+
+  const onReviseTaskGraph = async () => {
+    const projection = taskGraphDAG.projection;
+    const selection = taskGraphSelection;
+    if (!projectId || !projection || !selection || selection.taskGraphId !== projection.graphId) {
+      setErr(t('orchestrator.taskGraph.selectTask'));
+      return;
+    }
+    const task = projection.nodes.find((node) => node.taskId === selection.taskId);
+    const session = projectControl.sessions.find((item) => item.id === projection.sessionId);
+    const sourceGraph = projectControl.taskGraphs?.find((graph) => graph.id === projection.graphId);
+    if (!task || !session || !sourceGraph) {
+      setErr(t('orchestrator.taskGraph.revisionUnavailable'));
+      return;
+    }
+    if (!revisionTitle.trim() && !revisionDependsOnTouched) {
+      setErr(t('orchestrator.taskGraph.revisionEmpty'));
+      return;
+    }
+    setRevisionBusy(true);
+    setErr(null);
+    try {
+      const next = reviseTaskGraphCommand({
+        snapshot: projectControl,
+        sessionId: session.id,
+        sourceTaskGraphId: sourceGraph.id,
+        id: `${sourceGraph.id}:revision:${sourceGraph.graphVersion + 1}`,
+        now: new Date().toISOString(),
+        changes: [{
+          taskId: task.taskId,
+          ...(revisionTitle.trim() ? { title: revisionTitle.trim() } : {}),
+          ...(revisionDependsOnTouched
+            ? { dependsOn: revisionDependsOn.split(',').map((value) => value.trim()).filter(Boolean) }
+            : {}),
+        }],
+      });
+      recordProjectEvents(projectId, next.events);
+      const store = useWorkflowStore.getState();
+      store.setProjectControl(next.snapshot);
+      if (store.projectPath) await store.saveProject();
+      setTaskGraphSelection({
+        projectId,
+        taskGraphId: sourceGraph.id === next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId
+          ? sourceGraph.id
+          : next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId ?? sourceGraph.id,
+        taskId: task.taskId,
+        issueId: taskIssueId(next.snapshot.sessions.find((item) => item.id === session.id)?.taskGraphId ?? sourceGraph.id, task.taskId),
+      });
+      setRevisionTitle('');
+      setRevisionDependsOn('');
+      setRevisionDependsOnTouched(false);
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRevisionBusy(false);
+    }
   };
 
   const inner = (
@@ -565,6 +678,64 @@ export default function OrchestratorPanel({
               );
             })}
 
+            {taskGraphDAG.projection && (
+              <TaskGraphDAGView
+                projection={taskGraphDAG.projection}
+                selectedTaskId={taskGraphSelection?.taskGraphId === taskGraphDAG.projection.graphId ? taskGraphSelection.taskId : undefined}
+                onSelectTask={(node) => {
+                  if (!projectId) return;
+                  setTaskGraphSelection({
+                    projectId,
+                    taskGraphId: taskGraphDAG.projection!.graphId,
+                    taskId: node.taskId,
+                    issueId: node.issueId,
+                  });
+                }}
+              />
+            )}
+            {taskGraphDAG.projection && taskGraphDAG.projection.approval !== 'superseded' && (
+              <details className="rounded border border-line px-2.5 py-2" data-testid="taskgraph-revision-editor">
+                <summary className="cursor-pointer text-[11px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
+                  {t('orchestrator.taskGraph.revise')}
+                </summary>
+                <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
+                  <p style={{ color: 'var(--sm-ink-faint)' }}>
+                    {t('orchestrator.taskGraph.selectedTask')}: {taskGraphSelection?.taskId ?? t('orchestrator.taskGraph.noneSelected')}
+                  </p>
+                  <input
+                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
+                    placeholder={t('orchestrator.taskGraph.titlePlaceholder')}
+                    value={revisionTitle}
+                    onChange={(event) => setRevisionTitle(event.target.value)}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  />
+                  <input
+                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
+                    placeholder={t('orchestrator.taskGraph.dependsOnPlaceholder')}
+                    value={revisionDependsOn}
+                    onChange={(event) => {
+                      setRevisionDependsOn(event.target.value);
+                      setRevisionDependsOnTouched(true);
+                    }}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  />
+                  <button
+                    type="button"
+                    className="sm-btn justify-center hover:border-accent hover:text-accent"
+                    onClick={() => { void onReviseTaskGraph(); }}
+                    disabled={!taskGraphSelection || revisionBusy}
+                  >
+                    {t('orchestrator.taskGraph.applyRevision')}
+                  </button>
+                </div>
+              </details>
+            )}
+            {taskGraphDAG.error && (
+              <div className="rounded border border-dashed border-warn px-2.5 py-1.5 text-[10.5px] text-warn" data-testid="orchestrator-taskgraph-dag-error">
+                {taskGraphDAG.error}
+              </div>
+            )}
+
             {/* 草稿阶段间 DAG 边提示 */}
             {selected.draft && selected.draft.edges.length > 0 && (
               <div className="rounded border border-dashed border-line px-2.5 py-1.5 text-[10.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -598,26 +769,30 @@ export default function OrchestratorPanel({
                           <p className="break-all text-[10.5px] text-warn">
                             {t('orchestrator.worker.recovery')}: {run.recovery.message}
                           </p>
-                          {onRecoverWorkerRun && (
+                          {onRecoverWorkerRun && run.recoveryActions.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                data-testid={`orchestrator-worker-retry-${run.runId}`}
-                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                                disabled={recoveryBusy}
-                                onClick={() => onRecover(run.runId, 'retry')}
-                              >
-                                {t('orchestrator.worker.recovery.retryAction')}
-                              </button>
-                              <button
-                                type="button"
-                                data-testid={`orchestrator-worker-skip-${run.runId}`}
-                                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
-                                disabled={recoveryBusy}
-                                onClick={() => onRecover(run.runId, 'skip')}
-                              >
-                                {t('orchestrator.worker.recovery.skipAction')}
-                              </button>
+                              {run.recoveryActions.includes('retry') && (
+                                <button
+                                  type="button"
+                                  data-testid={`orchestrator-worker-retry-${run.runId}`}
+                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
+                                  disabled={recoveryBusy}
+                                  onClick={() => onRecover(run.runId, 'retry')}
+                                >
+                                  {t('orchestrator.worker.recovery.retryAction')}
+                                </button>
+                              )}
+                              {run.recoveryActions.includes('skip') && (
+                                <button
+                                  type="button"
+                                  data-testid={`orchestrator-worker-skip-${run.runId}`}
+                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
+                                  disabled={recoveryBusy}
+                                  onClick={() => onRecover(run.runId, 'skip')}
+                                >
+                                  {t('orchestrator.worker.recovery.skipAction')}
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -673,7 +848,7 @@ export default function OrchestratorPanel({
                                 ))}
                               </ul>
                             )}
-                            {task.cleanup && (
+                            {task.cleanup ? (
                               task.cleanup.status === 'ready' ? (
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px]" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
                                   <span className="break-all text-ok">
@@ -710,7 +885,11 @@ export default function OrchestratorPanel({
                                   {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.blocked')}: {task.cleanup.reason}
                                 </p>
                               )
-                            )}
+                            ) : task.status === 'succeeded' ? (
+                              <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
+                                {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.unavailable')}
+                              </p>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

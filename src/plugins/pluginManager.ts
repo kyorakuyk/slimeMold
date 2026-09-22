@@ -6,7 +6,7 @@ import { loadPluginFromSource } from './loader';
 import { sandboxManager } from './sandbox';
 import { assertPluginRelativePath } from './pluginPath';
 import { SLIMEMOLD_DIR } from '../io/projectIO';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 
 /** 当前是否启用插件沙箱执行（H2）：由 viewStore.pluginSandbox 决定 */
 function sandboxEnabled(): boolean {

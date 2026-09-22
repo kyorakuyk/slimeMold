@@ -8,7 +8,7 @@ import {
   recordProjectEvents,
 } from './eventBuffer';
 
-const event = (partial: Partial<DomainEvent> & Pick<DomainEvent, 'eventType' | 'payload'>): DomainEvent => ({
+const event = (partial: Partial<DomainEvent> & { appendGeneration?: number; checksum?: string } & Pick<DomainEvent, 'eventType' | 'payload'>): DomainEvent & { appendGeneration?: number; checksum?: string } => ({
   eventId: partial.eventId ?? `evt-${partial.sequence ?? 1}`,
   streamId: partial.streamId ?? 'project-1',
   sequence: partial.sequence ?? 1,
@@ -20,6 +20,8 @@ const event = (partial: Partial<DomainEvent> & Pick<DomainEvent, 'eventType' | '
   payload: partial.payload,
   actor: partial.actor ?? 'user',
   occurredAt: partial.occurredAt ?? '2026-09-01T00:00:00.000Z',
+  appendGeneration: partial.appendGeneration,
+  checksum: partial.checksum,
 });
 
 beforeEach(() => {
@@ -66,6 +68,21 @@ describe('project event buffer', () => {
     });
   });
 
+  it('rejects malformed pending lifecycle facts before event-buffer flush writes them', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    recordProjectEvents('project-1', [event({
+      eventId: 'pending-orphan-cleanup',
+      aggregateType: 'Task',
+      aggregateId: 'task-pending-orphan',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-pending-orphan', receiptId: 'cleanup-receipt' },
+    })]);
+
+    await expect(flushPendingProjectEvents('project-1', repository)).rejects.toMatchObject({ code: 'sequence-conflict' });
+    expect(getPendingProjectEvents('project-1')).toHaveLength(1);
+    expect((await repository.readStream()).status).toBe('empty');
+  });
   it('keeps pending events when the destination stream needs repair', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new EventStreamRepository(adapter, 'project-root');
@@ -109,5 +126,44 @@ describe('project event buffer', () => {
       source: 'snapshot',
       projection: { lastSequence: 1 },
     });
+  });
+
+  it('serializes concurrent flushes for one project and avoids false eventId conflicts', async () => {
+    const backing = new InMemoryEventStoreAdapter();
+    const delayedAdapter = {
+      readText: async (path: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return backing.readText(path);
+      },
+      writeTextAtomic: (path: string, text: string) => backing.writeTextAtomic(path, text),
+      acquireLock: (path: string) => backing.acquireLock(path),
+    };
+    const repository = new EventStreamRepository(delayedAdapter, 'project-root');
+    recordProjectEvents('project-1', [
+      event({ eventId: 'recovery-decision', eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ]);
+
+    const results = await Promise.all([
+      flushPendingProjectEvents('project-1', repository),
+      flushPendingProjectEvents('project-1', repository),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(['empty', 'flushed']);
+    expect((await repository.readStream()).events).toHaveLength(1);
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
+
+  it('treats sequence and aggregate version as persistence positions for idempotent replay', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    await repository.appendBatch([
+      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 1, eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ], 0);
+    recordProjectEvents('project-1', [
+      event({ eventId: 'recovery-decision', sequence: 1, aggregateVersion: 7, occurredAt: '2026-09-02T00:00:00.000Z', appendGeneration: 999, checksum: 'recomputed', eventType: 'WorkerRunRecoveryDecided', payload: { taskIds: ['task-1'] } }),
+    ]);
+
+    await expect(flushPendingProjectEvents('project-1', repository)).resolves.toMatchObject({ status: 'already-present', count: 1 });
+    expect(getPendingProjectEvents('project-1')).toEqual([]);
   });
 });

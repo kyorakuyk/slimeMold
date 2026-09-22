@@ -80,6 +80,28 @@ describe('Tauri event store adapter', () => {
     ).toBe(true);
   });
 
+  it('serializes same-process lock IPC so a waiting command cannot starve release', async () => {
+    const deps = fakeDeps();
+    const adapter = createTauriEventStoreAdapter('D:/repo', deps);
+    const path = 'D:/repo/.slimemold/runs/side-effects.json.lock';
+    const first = await adapter.acquireLock(path);
+    let secondResolved = false;
+    const secondPromise = adapter.acquireLock(path).then((lock) => {
+      secondResolved = true;
+      return lock;
+    });
+
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+    expect(deps.calls.filter((call) => call.startsWith('event_lock_acquire:'))).toHaveLength(1);
+
+    await first.release();
+    const second = await secondPromise;
+    expect(secondResolved).toBe(true);
+    expect(deps.calls.filter((call) => call.startsWith('event_lock_acquire:'))).toHaveLength(2);
+    await second.release();
+  });
+
   it('fails closed for paths outside the adapter root', async () => {
     const adapter = createTauriEventStoreAdapter('D:/repo', fakeDeps());
     await expect(adapter.readText('D:/other/.slimemold/events/events.jsonl')).rejects.toThrow(/逃逸/);

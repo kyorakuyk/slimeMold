@@ -5,7 +5,7 @@ import {
   getBezierPath,
   type EdgeProps,
 } from '@xyflow/react';
-import { EDGE_KIND_STYLE, type FlowEdge } from '../types';
+import { EDGE_KIND_STYLE, type FlowEdge } from '../types/graph';
 
 /** 按连线语义（data/task/control）渲染不同颜色与线型的自定义边。 */
 function KindEdgeImpl({

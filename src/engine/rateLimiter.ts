@@ -1,46 +1,64 @@
 /** 信号量：限制同时进行的异步任务数量（用于 LLM 并发限流） */
 export class Semaphore {
   private permits: number;
-  private queue: Array<() => void> = [];
+  private queue: Array<{
+    resolve: () => void;
+    reject: (reason?: unknown) => void;
+    onAbort: () => void;
+    settled: boolean;
+  }> = [];
 
   constructor(permits: number) {
     this.permits = Math.max(1, permits);
   }
 
   async acquire(signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
     if (this.permits > 0) {
       this.permits--;
       return () => this.release();
     }
     return new Promise((resolve, reject) => {
-      const entry: { resolve: () => void; reject?: (err: Error) => void } = {
+      const entry = {
         resolve: () => {
+          if (entry.settled) return;
+          entry.settled = true;
+          signal?.removeEventListener('abort', entry.onAbort);
           this.permits--;
           resolve(() => this.release());
         },
+        reject,
+        onAbort: () => {
+          if (entry.settled) return;
+          entry.settled = true;
+          const idx = this.queue.indexOf(entry);
+          if (idx >= 0) this.queue.splice(idx, 1);
+          signal?.removeEventListener('abort', entry.onAbort);
+          reject(new DOMException('Aborted', 'AbortError'));
+        },
+        settled: false,
       };
       // 若 signal 已中止或随后中止，直接 reject 让调用方抛 AbortError
       if (signal?.aborted) {
+        entry.settled = true;
         reject(new DOMException('Aborted', 'AbortError'));
         return;
       }
-      const onAbort = () => {
-        const idx = this.queue.indexOf(entry as unknown as () => void);
-        if (idx >= 0) this.queue.splice(idx, 1);
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.queue.push(() => {
-        signal?.removeEventListener('abort', onAbort);
-        (entry as { resolve: () => void }).resolve();
-      });
+      signal?.addEventListener('abort', entry.onAbort, { once: true });
+      this.queue.push(entry);
     });
   }
 
   private release(): void {
     this.permits++;
-    const next = this.queue.shift();
-    if (next) next();
+    while (this.queue.length > 0) {
+      const next = this.queue.shift()!;
+      if (next.settled) continue;
+      next.resolve();
+      break;
+    }
   }
 }
 

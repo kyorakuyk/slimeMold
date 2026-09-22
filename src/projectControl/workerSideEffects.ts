@@ -11,8 +11,15 @@ import {
   type SideEffectJournal,
 } from '../domain/sideEffects';
 import type {
+  EvidencePersistence,
   EvidenceRecord,
 } from '../dev/evidence';
+import type {
+  AcceptanceRecord,
+} from '../dev/session';
+import {
+  loadWorkerEvidence,
+} from './workerEvidence';
 import type {
   WorkerExecutionResult,
   WorkerRunQueueState,
@@ -20,7 +27,8 @@ import type {
   WorkerSideEffectRecorder,
   WorkerTaskLease,
 } from '../domain/workerQueue';
-import { restoreWorkerRunQueue } from '../domain/workerQueue';
+import { restoreWorkerRunQueue, resolveWorkerAcceptanceStageId } from '../domain/workerQueue';
+import { normalizeWorkerSuccessProvenance } from '../domain/workerSuccess';
 import { assertTaskExecutionLineage, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import type { ProjectTaskGraph } from './types';
 
@@ -30,6 +38,8 @@ export interface WorkerRunRecoveryPlan {
   runId: string;
   effects: SideEffectRecord[];
   recoverableEffects?: SideEffectRecord[];
+  /** Failed or interrupted tasks whose current attempt needs explicit recovery. */
+  failedTaskIds?: string[];
   effectKeys: string[];
   requiresUser: boolean;
   allowedDecisions: readonly WorkerRunRecoveryDecision[];
@@ -49,10 +59,23 @@ export type WorkerSideEffectClock = () => string;
 export interface WorkerEvidenceVerificationInput {
   record: SideEffectRecord;
   evidenceIds: readonly string[];
+  expectedOrchestrationId?: string;
+  expectedStageId?: string;
 }
 
 export type WorkerEvidenceVerifier = (
   input: WorkerEvidenceVerificationInput,
+) => Promise<void> | void;
+
+export interface WorkerAcceptanceVerificationInput {
+  record: SideEffectRecord;
+  acceptanceId: string;
+  expectedOrchestrationId?: string;
+  expectedStageId?: string;
+}
+
+export type WorkerAcceptanceVerifier = (
+  input: WorkerAcceptanceVerificationInput,
 ) => Promise<void> | void;
 
 export interface WorkerEvidenceSource {
@@ -84,8 +107,13 @@ function comparableWorkerPath(value: string): string {
 }
 
 export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): WorkerEvidenceVerifier {
-  return async ({ record, evidenceIds }) => {
+  return async ({ record, evidenceIds, expectedOrchestrationId, expectedStageId }) => {
     assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    const boundOrchestrationId = expectedOrchestrationId ?? record.orchestrationId;
+    const boundStageId = expectedStageId ?? record.acceptanceStageId;
+    if (!boundOrchestrationId || !boundStageId) {
+      throw new Error(`Worker Evidence verifier 缺少 orchestration/stage binding：${record.idempotencyKey}`);
+    }
     let hash: unknown;
     try {
       hash = JSON.parse(record.inputHash);
@@ -105,6 +133,8 @@ export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): Work
       if (
         evidence.capturedBy !== 'host'
         || evidence.status !== 'passed'
+        || evidence.orchestrationId !== boundOrchestrationId
+        || evidence.stageId !== boundStageId
         || evidence.runId !== record.runId
         || evidence.taskId !== record.taskId
         || evidence.taskExecutionId !== record.taskExecutionId
@@ -117,6 +147,80 @@ export function createWorkerEvidenceVerifier(source: WorkerEvidenceSource): Work
       }
     }
   };
+}
+
+export function createPersistedWorkerEvidenceVerifier(
+  persistence: Pick<EvidencePersistence, 'load'>,
+): WorkerEvidenceVerifier {
+  return createWorkerEvidenceVerifier({
+    loadPersisted: () => loadWorkerEvidence(persistence),
+  });
+}
+
+export interface WorkerAcceptanceSource {
+  loadPersisted(): Promise<readonly AcceptanceRecord[]>;
+}
+
+export function createWorkerAcceptanceVerifier(source: WorkerAcceptanceSource): WorkerAcceptanceVerifier {
+  return async ({ record, acceptanceId, expectedOrchestrationId, expectedStageId }) => {
+    assertRecoverableWorkerEffect(record, requiredText(record.runId ?? '', 'run id'));
+    const boundOrchestrationId = expectedOrchestrationId ?? record.orchestrationId;
+    const boundStageId = expectedStageId ?? record.acceptanceStageId;
+    if (!boundOrchestrationId || !boundStageId) {
+      throw new Error(`Worker Acceptance verifier 缺少 orchestration/stage binding：${record.idempotencyKey}`);
+    }
+    let hash: unknown;
+    try {
+      hash = JSON.parse(record.inputHash);
+    } catch {
+      throw new Error(`Worker Acceptance verifier 无法解析 inputHash：${record.idempotencyKey}`);
+    }
+    if (!Array.isArray(hash) || hash.length !== 7 || typeof hash[5] !== 'string') {
+      throw new Error(`Worker Acceptance verifier 缺少 assignment provenance：${record.idempotencyKey}`);
+    }
+    const matches = (await source.loadPersisted()).filter((acceptance) => acceptance.acceptanceId === acceptanceId);
+    if (matches.length !== 1) {
+      throw new Error(`Worker Acceptance 不存在或不唯一：${acceptanceId}`);
+    }
+    const acceptance = matches[0];
+    if (
+      !acceptance.passed
+      || acceptance.failedChecks.length !== 0
+      || acceptance.orchestrationId !== boundOrchestrationId
+      || acceptance.stageId !== boundStageId
+      || acceptance.runId !== record.runId
+      || acceptance.taskId !== record.taskId
+      || acceptance.taskExecutionId !== record.taskExecutionId
+      || acceptance.attemptId !== record.attemptId
+      || comparableWorkerPath(acceptance.worktreePath) !== comparableWorkerPath(hash[5])
+    ) {
+      throw new Error(`Worker Acceptance provenance 不匹配：${acceptanceId}`);
+    }
+  };
+}
+
+/** Build the host verifier from the same durable Acceptance persistence used by the GUI. */
+export function createPersistedWorkerAcceptanceVerifier(
+  persistence: { load(): Promise<readonly AcceptanceRecord[]> },
+): WorkerAcceptanceVerifier {
+  return createWorkerAcceptanceVerifier({
+    loadPersisted: () => persistence.load(),
+  });
+}
+
+
+export function createPersistedWorkerSideEffectRecorder(
+  repository: SideEffectJournalRepository,
+  persistence: Pick<EvidencePersistence, 'load'>,
+  now: WorkerSideEffectClock = () => new Date().toISOString(),
+  verifyAcceptance?: WorkerAcceptanceVerifier,
+): WorkerSideEffectRecorderWithRecovery {
+  return createWorkerSideEffectRecorder(
+    repository,
+    now,
+    createPersistedWorkerEvidenceVerifier(persistence),
+    verifyAcceptance,
+  );
 }
 
 function entryFor(journal: SideEffectJournal, idempotencyKey: string): SideEffectRecord {
@@ -355,25 +459,11 @@ function assertExistingEffectMatchesLease(
   });
 }
 
-/**
- * Persist the Worker execution lifecycle in the project side-effect journal.
- * The journal is outside the worktree and is the source used during restart recovery.
- */
-function normalizedEvidenceIds(ids: string[] | undefined, key: string): string[] {
-  if (!ids || ids.length === 0) {
-    throw new Error(`成功 Worker receipt 缺少非空 Evidence provenance：${key}`);
-  }
-  const normalized = ids.map((id) => requiredText(id, 'Evidence id'));
-  if (new Set(normalized).size !== normalized.length) {
-    throw new Error(`成功 Worker receipt 的 Evidence provenance 重复：${key}`);
-  }
-  return normalized;
-}
-
 async function assertWorkerExecutionReceipt(
   record: SideEffectRecord,
   lease: WorkerTaskLease,
   verifyEvidence: WorkerEvidenceVerifier | undefined,
+  verifyAcceptance: WorkerAcceptanceVerifier | undefined,
 ): Promise<void> {
   const key = effectKeyFor(lease);
   if (
@@ -393,9 +483,22 @@ async function assertWorkerExecutionReceipt(
     throw new Error(`已有 Worker receipt 未通过 canonical 校验：${record.idempotencyKey}`);
   }
   if (record.receipt.outcome === 'succeeded') {
-    const evidenceIds = normalizedEvidenceIds(record.receipt.evidenceIds, key);
+    const success = normalizeWorkerSuccessProvenance(record.receipt.evidenceIds, record.receipt.acceptanceId);
+    const evidenceIds = success.evidenceIds;
     if (!verifyEvidence) throw new Error(`成功 Worker receipt 缺少 host Evidence verifier：${key}`);
-    await verifyEvidence({ record, evidenceIds });
+    if (!verifyAcceptance) throw new Error(`成功 Worker receipt 缺少 host Acceptance verifier：${key}`);
+    await verifyEvidence({
+      record,
+      evidenceIds,
+      expectedOrchestrationId: lease.orchestrationId,
+      expectedStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
+    });
+    await verifyAcceptance({
+      record,
+      acceptanceId: success.acceptanceId,
+      expectedOrchestrationId: lease.orchestrationId,
+      expectedStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
+    });
   }
 }
 
@@ -403,6 +506,7 @@ export function createWorkerSideEffectRecorder(
   repository: SideEffectJournalRepository,
   now: WorkerSideEffectClock = () => new Date().toISOString(),
   verifyEvidence?: WorkerEvidenceVerifier,
+  verifyAcceptance?: WorkerAcceptanceVerifier,
 ): WorkerSideEffectRecorderWithRecovery {
   const claim = async (lease: WorkerTaskLease): Promise<WorkerSideEffectClaim> => {
     const idempotencyKey = effectKeyFor(lease);
@@ -415,6 +519,8 @@ export function createWorkerSideEffectRecorder(
       taskId: lease.task.id,
       taskExecutionId: lease.taskExecutionId,
       attemptId: lease.attemptId,
+      ...(lease.orchestrationId ? { orchestrationId: lease.orchestrationId } : {}),
+      acceptanceStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
     });
     const legacyPlanned = createSideEffect({
       idempotencyKey: legacyEffectKeyFor(lease),
@@ -425,10 +531,12 @@ export function createWorkerSideEffectRecorder(
       taskId: lease.task.id,
       taskExecutionId: lease.taskExecutionId,
       attemptId: lease.attemptId,
+      ...(lease.orchestrationId ? { orchestrationId: lease.orchestrationId } : {}),
+      acceptanceStageId: resolveWorkerAcceptanceStageId(lease.task.id, lease.task.stageId),
     });
     const claimed = await repository.claim(startSideEffect(planned), [legacyPlanned]);
     if (!claimed.claimed && claimed.record.status === 'receipt') {
-      await assertWorkerExecutionReceipt(claimed.record, lease, verifyEvidence);
+      await assertWorkerExecutionReceipt(claimed.record, lease, verifyEvidence, verifyAcceptance);
     }
     return { record: claimed.record, claimed: claimed.claimed };
   };
@@ -469,19 +577,40 @@ export function createWorkerSideEffectRecorder(
         && current.attemptId === record.attemptId;
       if (!sameIdentity) throw new Error(`迟到 Worker completion 的 lineage 不一致：${record.idempotencyKey}`);
       if (current.status !== 'started') return current;
-      const evidenceIds = result.status === 'succeeded'
-        ? normalizedEvidenceIds(result.evidenceIds, record.idempotencyKey)
-        : result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
+      if (result.status === 'waiting-feedback') {
+        throw new Error(`waiting-feedback 不能写入 terminal side-effect receipt：${record.idempotencyKey}`);
+      }
+      let evidenceIds: string[] | undefined;
+      let acceptanceId: string | undefined;
+      if (result.status === 'succeeded') {
+        const success = normalizeWorkerSuccessProvenance(result.evidenceIds, result.acceptanceId);
+        evidenceIds = success.evidenceIds;
+        acceptanceId = success.acceptanceId;
+      } else {
+        evidenceIds = result.evidenceIds?.map((id) => requiredText(id, 'Evidence id'));
+      }
       if (result.status === 'succeeded') {
         if (!verifyEvidence) throw new Error(`Worker succeeded receipt 缺少 host Evidence verifier：${record.idempotencyKey}`);
-        await verifyEvidence({ record: current, evidenceIds: evidenceIds! });
+        if (!verifyAcceptance) throw new Error(`Worker succeeded receipt 缺少 host Acceptance verifier：${record.idempotencyKey}`);
+        await verifyEvidence({
+          record: current,
+          evidenceIds: evidenceIds!,
+          expectedOrchestrationId: current.orchestrationId,
+          expectedStageId: current.acceptanceStageId,
+        });
+        await verifyAcceptance({
+          record: current,
+          acceptanceId: acceptanceId!,
+          expectedOrchestrationId: current.orchestrationId,
+          expectedStageId: current.acceptanceStageId,
+        });
       }
       const receipt = {
         receiptId: `${requiredText(current.idempotencyKey, 'idempotencyKey')}:receipt`,
         observedAt: now(),
         outcome: result.status,
         ...(evidenceIds ? { evidenceIds: [...evidenceIds] } : {}),
-        ...(result.acceptanceId ? { acceptanceId: result.acceptanceId } : {}),
+        ...(acceptanceId ? { acceptanceId } : {}),
         ...(result.status === 'failed' && result.error ? { error: result.error } : {}),
       };
       const completed = completeSideEffect(current, receipt);
@@ -527,15 +656,24 @@ export function createWorkerSideEffectRecorder(
 export function buildWorkerRunRecoveryPlan(
   runId: string,
   journal: SideEffectJournal,
+  failedTaskIds: readonly string[] = [],
+  state?: WorkerRunQueueState,
 ): WorkerRunRecoveryPlan {
   const normalizedRunId = requiredText(runId, 'run id');
+  const normalizedFailedTaskIds = [...new Set(failedTaskIds.map((taskId) => requiredText(taskId, 'task id')))];
   const effects = journal.entries
     .filter((entry) => entry.runId === normalizedRunId)
+    .map((entry) => {
+      if (state) assertRecoverableWorkerEffect(entry, normalizedRunId);
+      return entry;
+    })
+    .filter((entry) => !state || (entry.taskId !== undefined && effectBelongsToCurrentAttempt(entry, state, entry.taskId)))
     .map((entry) => ({ ...entry }));
   return normalizeWorkerRunRecoveryPlan({
     runId: normalizedRunId,
     effects,
     recoverableEffects: effects.filter((entry) => entry.status === 'started' || entry.status === 'unknown'),
+    failedTaskIds: normalizedFailedTaskIds,
     effectKeys: [],
     requiresUser: false,
     allowedDecisions: ['inspect', 'retry', 'skip'],
@@ -545,6 +683,7 @@ export function buildWorkerRunRecoveryPlan(
 function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunRecoveryPlan {
   const runId = requiredText(plan.runId, 'run id');
   const effects = Array.isArray(plan.effects) ? plan.effects.map((effect) => ({ ...effect })) : [];
+  const failedTaskIds = [...new Set((plan.failedTaskIds ?? []).map((taskId) => requiredText(taskId, 'task id')))];
   const suppliedRecoverable = plan.recoverableEffects;
   const candidates = effects
     .filter((effect) => effect.status === 'started' || effect.status === 'unknown');
@@ -587,8 +726,9 @@ function normalizeWorkerRunRecoveryPlan(plan: WorkerRunRecoveryPlan): WorkerRunR
     runId,
     effects,
     recoverableEffects: candidates,
+    failedTaskIds,
     effectKeys: candidates.map((effect) => effect.idempotencyKey),
-    requiresUser: candidates.length > 0,
+    requiresUser: candidates.length > 0 || failedTaskIds.length > 0,
     allowedDecisions,
   };
 }
@@ -602,7 +742,7 @@ export function decideWorkerRunRecovery(
   const normalizedPlan = normalizeWorkerRunRecoveryPlan(plan);
   if (!normalizedPlan.allowedDecisions.includes(decision)) throw new Error(`不允许的恢复决策：${decision}`);
   const normalizedReason = requiredText(reason, '恢复理由');
-  if (!normalizedPlan.requiresUser) throw new Error(`Run 没有待核对的副作用：${normalizedPlan.runId}`);
+  if (!normalizedPlan.requiresUser) throw new Error(`Run 没有待核对的副作用或当前 task/attempt/assignment 不匹配：${normalizedPlan.runId}`);
   return {
     runId: normalizedPlan.runId,
     decision,
@@ -642,7 +782,27 @@ export function applyWorkerRunRecoveryDecision(input: {
   const effectTaskIds = new Set(
     scopedRecoverableEffects.map((effect) => effect.taskId).filter((taskId): taskId is string => !!taskId),
   );
+  for (const taskId of plan.failedTaskIds ?? []) effectTaskIds.add(taskId);
   if (effectTaskIds.size === 0) throw new Error(`恢复计划没有绑定可处理的任务：${input.state.runId}`);
+  for (const taskId of plan.failedTaskIds ?? []) {
+    const status = input.state.tasks[taskId]?.status;
+    if (status !== 'failed' && status !== 'running') {
+      throw new Error(`恢复计划 taskId 当前不是 failed/running：${taskId}`);
+    }
+  }
+  if (applied.decision === 'retry') {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const task of input.taskGraph.tasks) {
+        if (effectTaskIds.has(task.id) || input.state.tasks[task.id]?.status !== 'blocked') continue;
+        if (task.dependsOn.some((dependency) => effectTaskIds.has(dependency))) {
+          effectTaskIds.add(task.id);
+          changed = true;
+        }
+      }
+    }
+  }
 
   const tasks = Object.fromEntries(
     Object.entries(input.state.tasks).map(([taskId, task]) => {
@@ -655,6 +815,8 @@ export function applyWorkerRunRecoveryDecision(input: {
           worktreePath: undefined,
           branch: undefined,
           baseRevision: undefined,
+          worktreeStatus: undefined,
+          branchRevision: undefined,
           evidenceIds: [],
           currentAttemptId: undefined,
           pendingAttempt: task.attempt + 1,

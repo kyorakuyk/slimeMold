@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Junction</title>
+  <desc id="desc">A clear three-way workflow junction with distinct input, decision and output nodes.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#15171a"/>
+  <path d="M306 512h154M570 468c68-74 104-112 157-112M570 556c68 74 104 112 157 112" fill="none" stroke="#2997ff" stroke-linecap="round" stroke-linejoin="round" stroke-width="34"/>
+  <rect x="150" y="424" width="156" height="176" rx="52" fill="#f5f7fa"/>
+  <circle cx="512" cy="512" r="104" fill="#2997ff"/>
+  <circle cx="512" cy="512" r="34" fill="#15171a"/>
+  <rect x="710" y="278" width="164" height="164" rx="52" fill="#24282e" stroke="#8fcaff" stroke-width="24"/>
+  <rect x="710" y="582" width="164" height="164" rx="52" fill="#24282e" stroke="#8fcaff" stroke-width="24"/>
+  <circle cx="790" cy="360" r="24" fill="#f5f7fa"/>
+  <circle cx="790" cy="664" r="24" fill="#f5f7fa"/>
+</svg>

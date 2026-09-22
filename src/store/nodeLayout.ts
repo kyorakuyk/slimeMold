@@ -3,7 +3,7 @@
 // 因而可独立测试、避免 workflowStore 进一步膨胀。
 // 从 workflowStore 的 alignSelected / distributeSelected action 内联逻辑抽离，行为等价。
 
-import type { FlowNode } from '../types';
+import type { FlowNode } from '../types/graph';
 
 export type AlignMode = 'left' | 'right' | 'top' | 'bottom' | 'hcenter' | 'vcenter';
 export type DistributeAxis = 'x' | 'y';

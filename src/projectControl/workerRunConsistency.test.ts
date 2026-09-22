@@ -4,7 +4,9 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
+import type { SideEffectRecord } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { hashContent } from '../dev/capabilities';
 import { auditWorkerRunConsistency } from './workerRunConsistency';
 
 const run: WorkerRunQueueState = {
@@ -25,6 +27,7 @@ const run: WorkerRunQueueState = {
       evidenceIds: ['evidence-1'],
       acceptanceId: 'acceptance-1',
       cleanupStatus: 'cleaned',
+      worktreeStatus: 'cleaned',
       cleanupReceiptId: 'cleanup-receipt-1',
       updatedAt: '2026-09-01T00:01:00.000Z',
     },
@@ -107,11 +110,168 @@ const trustedGraph: ProjectTaskGraph = {
 };
 
 describe('worker run consistency audit', () => {
+  it('rejects a succeeded task without Acceptance provenance even when replay agrees', () => {
+    const invalidRun: WorkerRunQueueState = {
+      ...run,
+      tasks: {
+        'task-1': { ...run.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const invalidEvents = events.map((item) => item.eventType === 'TaskSucceeded'
+      ? {
+          ...item,
+          payload: { ...(item.payload as Record<string, unknown>), acceptanceId: undefined },
+        }
+      : item);
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [invalidRun],
+      events: invalidEvents,
+      evidence: [evidence1],
+      acceptances: [],
+    });
+
+    expect(report.ok).toBe(false);
+    expect(report.issues.some((issue) => (
+      issue.code === 'acceptance-lineage-drift' || issue.code === 'invalid-event-stream'
+    ))).toBe(true);
+  });
+
+  it('rejects an empty succeeded run and incomplete TaskGraph coverage', () => {
+    const emptyRun: WorkerRunQueueState = { ...run, tasks: {} };
+    const runEvents = [
+      event({ eventId: 'empty-run-queued', aggregateType: 'Run', aggregateId: 'run-1', eventType: 'RunQueued', payload: { runId: 'run-1' } }),
+      event({ eventId: 'empty-run-succeeded', sequence: 2, aggregateType: 'Run', aggregateId: 'run-1', aggregateVersion: 2, eventType: 'RunSucceeded', payload: { runId: 'run-1' } }),
+    ];
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [emptyRun],
+      events: runEvents,
+      taskGraphs: [trustedGraph],
+      evidence: [],
+      acceptances: [],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.issues.some((item) => (
+      item.code === 'invalid-event-stream' || item.code === 'task-status-drift'
+    ))).toBe(true);
+  });
+
+  it('rejects duplicate persisted Evidence records instead of silently overwriting them', () => {
+    const duplicate = { ...evidence1 };
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1, duplicate],
+      acceptances: [acceptance1],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'evidence-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
+    ]));
+  });
+
+
   it('accepts a ProjectFile worker registry that matches replayed facts', () => {
     expect(auditWorkerRunConsistency({ projectId: 'project-1', runs: [run], events, evidence: [evidence1], acceptances: [acceptance1] })).toMatchObject({
       ok: true,
       issues: [],
       projection: { runs: { 'run-1': { status: 'succeeded' } } },
+    });
+  });
+
+  it('accepts a delivery receipt without treating it as worker execution', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const delivery: SideEffectRecord = {
+      idempotencyKey: 'artifact-delivery:candidate-1',
+      kind: 'artifact-delivery',
+      target: 'D:/Temp/delivery-destination',
+      inputHash: 'delivery-input-hash',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: 'artifact-delivery:candidate-1:receipt',
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outputHash: hashContent('docs/WORKER_E2E_OK.txt\u0000hmarker'),
+        outcome: 'succeeded',
+        acceptanceId: 'acceptance-1',
+        artifactCandidateId: 'candidate-1',
+        approvalId: 'approval-1',
+        files: [{ path: 'docs/WORKER_E2E_OK.txt', contentHash: 'hmarker' }],
+      },
+    };
+    expect(auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [delivery],
+    })).toMatchObject({ ok: true, issues: [] });
+
+    const forged: SideEffectRecord = {
+      ...delivery,
+      receipt: { ...delivery.receipt!, acceptanceId: 'acceptance-other' },
+    };
+    const forgedResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [forged],
+    });
+    expect(forgedResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'side-effect-lineage-drift' }),
+      ]),
+    });
+
+    const malformed: SideEffectRecord = {
+      ...delivery,
+      receipt: {
+        ...delivery.receipt!,
+        artifactCandidateId: 'candidate-other',
+        approvalId: '',
+        outputHash: '',
+        files: [{ path: '../escape.txt', contentHash: '' }],
+      },
+    };
+    const malformedResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [malformed],
+    });
+    expect(malformedResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'side-effect-lineage-drift' }),
+      ]),
+    });
+
+    const failedAcceptanceResult = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events,
+      evidence: [evidence1],
+      acceptances: [{ ...acceptance1, failedChecks: ['compile'] }],
+      sideEffects: [delivery],
+    });
+    expect(failedAcceptanceResult).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'acceptance-lineage-drift' }),
+      ]),
     });
   });
 
@@ -185,6 +345,35 @@ describe('worker run consistency audit', () => {
     });
   });
 
+  it('rejects malformed persisted worktree state through restore-backed audit', () => {
+    const malformed = {
+      ...run,
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+          worktreeStatus: 'created' as const,
+          worktreeId: undefined,
+          worktreePath: undefined,
+          branch: undefined,
+          baseRevision: undefined,
+        },
+      },
+    };
+    const result = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [malformed],
+      events,
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      taskGraphs: [trustedGraph],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'control-state-drift' }),
+    ]));
+  });
   it('reports persisted run and task status drift instead of choosing a side silently', () => {
     const drifted = {
       ...run,
@@ -564,6 +753,114 @@ describe('worker run consistency audit', () => {
     ]));
   });
 
+  it('rejects a succeeded worker-execution receipt without success provenance', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const running: WorkerRunQueueState = {
+      ...run,
+      status: 'running',
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          status: 'running',
+          taskDefinitionVersion: 1,
+          taskExecutionId,
+          currentAttemptId: attemptId,
+          worktreeId: 'worktree-1',
+          worktreePath: 'C:/worktrees/task-1',
+          branch: 'worker/task-1',
+          baseRevision: 'base-1',
+          evidenceIds: [],
+          acceptanceId: undefined,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+        },
+      },
+    };
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [running],
+      events: [],
+      evidence: [],
+      acceptances: [],
+      sideEffects: [{
+        idempotencyKey: `worker-execution:${attemptId}:attempt-1`,
+        kind: 'worker-execution',
+        target: 'worktree-1',
+        inputHash: JSON.stringify(['run-1', 'task-1', 1, 1, 'base-1', 'C:/worktrees/task-1', 'worker/task-1']),
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId,
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: {
+          receiptId: `worker-execution:${attemptId}:attempt-1:receipt`,
+          observedAt: '2026-09-01T00:02:00.000Z',
+          outcome: 'succeeded',
+        },
+      }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'side-effect-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
+    ]));
+  });
+  it('rejects a worker receipt whose Acceptance record is not bound to the current attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const running: WorkerRunQueueState = {
+      ...run,
+      status: 'running',
+      tasks: {
+        'task-1': {
+          ...run.tasks['task-1'],
+          status: 'running',
+          taskDefinitionVersion: 1,
+          taskExecutionId,
+          currentAttemptId: attemptId,
+          worktreeId: 'worktree-1',
+          worktreePath: 'C:/worktrees/task-1',
+          branch: 'worker/task-1',
+          baseRevision: 'base-1',
+          evidenceIds: [],
+          acceptanceId: undefined,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+        },
+      },
+    };
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [running],
+      events: [],
+      evidence: [evidence1],
+      acceptances: [acceptance1],
+      sideEffects: [{
+        idempotencyKey: `worker-execution:${attemptId}:attempt-1`,
+        kind: 'worker-execution',
+        target: 'worktree-1',
+        inputHash: JSON.stringify(['run-1', 'task-1', 1, 1, 'base-1', 'C:/worktrees/task-1', 'worker/task-1']),
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        attemptId,
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: {
+          receiptId: `worker-execution:${attemptId}:attempt-1:receipt`,
+          observedAt: '2026-09-01T00:02:00.000Z',
+          outcome: 'succeeded',
+          evidenceIds: ['evidence-1'],
+          acceptanceId: 'acceptance-forged',
+        },
+      }],
+    });
+
+    expect(report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'side-effect-lineage-drift', runId: 'run-1', taskId: 'task-1' }),
+    ]));
+  });
   it('accepts the canonical Worker side-effect hash with path and branch provenance', () => {
     const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
     const attemptId = createAttemptId(taskExecutionId, 1);

@@ -51,7 +51,12 @@ describe('Phase 0a domain contracts', () => {
       aggregateType: 'Task',
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { taskId: 'task-1', runId: 'run-1' },
+      payload: {
+        taskId: 'task-1',
+        runId: 'run-1',
+        evidenceIds: ['evidence-1'],
+        acceptanceId: 'acceptance-1',
+      },
     });
     const stream = appendDomainEvent(appendDomainEvent(appendDomainEvent([], created), started), succeeded);
 
@@ -63,6 +68,35 @@ describe('Phase 0a domain contracts', () => {
     });
   });
 
+  it('rejects malformed Evidence members instead of filtering them during replay', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'mixed-evidence',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-mixed-evidence',
+        evidenceIds: ['evidence-valid', 42],
+        acceptanceId: 'acceptance-valid',
+      },
+    })])).toThrow(/Evidence/);
+  });
+
+  it('rejects RunSucceeded without a complete non-empty task set', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'empty-run-success',
+      aggregateType: 'Run',
+      aggregateId: 'run-empty-success',
+      eventType: 'RunSucceeded',
+      payload: { runId: 'run-empty-success' },
+    })])).toThrow(/RunSucceeded|provenance|task/i);
+  });
+
+  it('rejects TaskCleaned without a preceding succeeded task', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'orphan-cleaned',
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-orphan-cleaned', receiptId: 'cleanup-receipt-1' },
+    })])).toThrow(/TaskCleaned|succeeded|Attempt/i);
+  });
   it('replays an unknown interrupted attempt before a retry attempt starts', () => {
     const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
     const attempt1 = createAttemptId(taskExecutionId, 1);
@@ -101,6 +135,44 @@ describe('Phase 0a domain contracts', () => {
       status: 'queued',
       runId: 'run-queued',
     });
+  });
+
+  it('replays the first retry fence when a task has no prior attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-first-retry', 'task-1');
+    const projection = replayDomainEvents([event({
+      eventId: 'first-retry-queued',
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskQueued',
+      payload: {
+        runId: 'run-first-retry',
+        taskId: 'task-1',
+        taskExecutionId,
+        nextAttempt: 1,
+      },
+    })]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({
+      status: 'queued',
+      pendingAttempt: 1,
+      attemptIds: [],
+    });
+  });
+
+  it('replays duplicate pending retry fences idempotently', () => {
+    const taskExecutionId = createTaskExecutionId('run-duplicate-retry', 'task-1');
+    const base = {
+      runId: 'run-duplicate-retry',
+      taskId: 'task-1',
+      taskExecutionId,
+      nextAttempt: 1,
+    };
+    const projection = replayDomainEvents([
+      event({ eventId: 'duplicate-retry-1', aggregateType: 'TaskExecution', aggregateId: taskExecutionId, eventType: 'TaskQueued', payload: base }),
+      event({ eventId: 'duplicate-retry-2', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskQueued', payload: base }),
+    ]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ status: 'queued', pendingAttempt: 1, attemptIds: [] });
   });
 
   it('replays RunQueued after an explicit Worker recovery retry decision', () => {
@@ -154,8 +226,7 @@ describe('Phase 0a domain contracts', () => {
       acceptanceId: 'acc-failed-1',
     });
   });
-
-  it('replays TaskCleaned without losing the cleanup receipt binding', () => {
+  it('rejects TaskCleaned without a preceding succeeded task', () => {
     const cleaned = event({
       eventId: 'evt-task-cleaned',
       aggregateId: 'task-cleaned',
@@ -163,14 +234,79 @@ describe('Phase 0a domain contracts', () => {
       payload: { runId: 'run-cleaned', receiptId: 'cleanup-receipt-1' },
     });
 
-    expect(replayDomainEvents([cleaned]).tasks['task-cleaned']).toEqual({
-      status: 'succeeded',
-      runId: 'run-cleaned',
-      cleanupStatus: 'cleaned',
-      cleanupReceiptId: 'cleanup-receipt-1',
-    });
+    expect(() => replayDomainEvents([cleaned])).toThrow(/TaskCleaned|succeeded|provenance/i);
   });
 
+  it('rejects TaskCleaned without a cleanup receipt even after a valid success', () => {
+    const succeeded = event({
+      eventId: 'cleanup-success',
+      aggregateId: 'task-cleanup-receipt',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-cleanup-receipt',
+        evidenceIds: ['evidence-cleanup'],
+        acceptanceId: 'acceptance-cleanup',
+      },
+    });
+    const cleaned = event({
+      eventId: 'cleanup-without-receipt',
+      sequence: 2,
+      aggregateId: 'task-cleanup-receipt',
+      aggregateVersion: 2,
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-cleanup-receipt' },
+    });
+
+    expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/receipt|TaskCleaned/i);
+  });
+  it('rejects cleanupStatus on a non-TaskCleaned lifecycle event', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'fake-cleanup-status',
+      eventType: 'TaskStarted',
+      payload: {
+        runId: 'run-fake-cleanup',
+        cleanupStatus: 'cleaned',
+      },
+    })])).toThrow(/cleanupStatus|TaskCleaned/i);
+  });
+  it('rejects legacy TaskCleaned reused across different runs', () => {
+    const succeeded = event({
+      eventId: 'legacy-success-run-a',
+      aggregateId: 'task-cross-run',
+      eventType: 'TaskSucceeded',
+      payload: {
+        runId: 'run-a',
+        evidenceIds: ['evidence-cross-run'],
+        acceptanceId: 'acceptance-cross-run',
+      },
+    });
+    const cleaned = event({
+      eventId: 'legacy-cleaned-run-b',
+      sequence: 2,
+      aggregateId: 'task-cross-run',
+      aggregateVersion: 2,
+      eventType: 'TaskCleaned',
+      payload: { runId: 'run-b', receiptId: 'cleanup-cross-run' },
+    });
+
+    expect(() => replayDomainEvents([succeeded, cleaned])).toThrow(/runId|lineage|一致/i);
+  });
+  it('rejects unknown worktreeStatus in lifecycle payloads', () => {
+    expect(() => replayDomainEvents([event({
+      eventId: 'unknown-worktree-status',
+      aggregateType: 'TaskExecution',
+      aggregateId: 'task-execution:run-worktree:task-1',
+      eventType: 'TaskStarted',
+      payload: {
+        runId: 'run-worktree',
+        taskId: 'task-1',
+        taskExecutionId: 'task-execution:run-worktree:task-1',
+        attempt: 1,
+        attemptId: 'task-execution:run-worktree:task-1:attempt-1',
+        worktreeStatus: 'mystery',
+      },
+    })])).toThrow(/worktreeStatus/i);
+  });
   it('keeps separate task executions and attempts when one task runs twice', () => {
     const firstExecutionId = createTaskExecutionId('run-a', 'task-1');
     const secondExecutionId = createTaskExecutionId('run-b', 'task-1');
@@ -270,6 +406,7 @@ describe('Phase 0a domain contracts', () => {
           attemptId: secondAttemptId,
           attempt: 1,
           evidenceIds: ['evidence-b'],
+          acceptanceId: 'acceptance-b',
         },
       }),
     ]);
@@ -407,7 +544,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-conflict', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-conflict',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-conflict'],
+        acceptanceId: 'acceptance-conflict',
+      },
     });
     const failed = event({
       eventId: 'conflict-failed',
@@ -439,7 +584,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-jump', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-jump',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-jump'],
+        acceptanceId: 'acceptance-jump',
+      },
     });
     const queued = event({
       eventId: 'jump-queued',
@@ -471,7 +624,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateType: 'TaskExecution',
       aggregateId: taskExecutionId,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-reopen-queued', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-reopen-queued',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-reopen'],
+        acceptanceId: 'acceptance-reopen',
+      },
     });
     const queued = event({
       eventId: 'reopen-queued',
@@ -558,7 +719,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 3,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-late-completion', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-late-completion',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-late'],
+        acceptanceId: 'acceptance-late',
+      },
     });
 
     expect(() => replayDomainEvents([started, queued, late])).toThrow(/Attempt|attempt|running/);
@@ -593,7 +762,15 @@ describe('Phase 0a domain contracts', () => {
       aggregateId: taskExecutionId,
       aggregateVersion: 2,
       eventType: 'TaskSucceeded',
-      payload: { runId: 'run-terminal-reopen', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+      payload: {
+        runId: 'run-terminal-reopen',
+        taskId: 'task-1',
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        evidenceIds: ['evidence-terminal'],
+        acceptanceId: 'acceptance-terminal',
+      },
     });
     const reopened = event({
       eventId: 'terminal-reopened',

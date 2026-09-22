@@ -1,44 +1,32 @@
-import type {
-  AssetMeta,
-  CostRecord,
-  ExecContext,
-  FlowEdge,
-  FlowNode,
-  SandboxHandle,
-} from '../types';
+import type { CostRecord } from '../types/agent';
+import type { ExecContext } from '../types/node';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
+import { resolveActiveWorkflowWorkspaceDir } from '../store/workflowRegistryState';
 import { useRegistryStore } from '../store/registryStore';
 import { scopedStorage, isTauri } from '../platform/env';
 import { Semaphore, withRetry } from './rateLimiter';
 import { ownerRefId } from './subgraph';
 import {
   computeDownstream,
-  computeExecutionSet,
-  planClustersPerStage,
   resolveNodeExecutionMode,
   shouldContinueLoop,
 } from './graphAlgo';
-import { buildRunPlan } from './runPlan';
+import { compileExecutionPlan } from './executionKernel';
+import { ExecutionCoordinator } from './executionCoordinator';
 import { runStage } from './runScheduler';
 import { prepareLoopRound, loopLogMessages } from './runLoop';
 import { decideNodeExecution } from './nodeExecutionPolicy';
-import { runLlmWithFallback } from './runLlmCall';
 import { handleNodeSuccess, handleNodeFailure } from './nodeResultHandler';
 import { createStoreRuntime, type ExecutionRuntime } from './runtime';
 import { ExperienceSink } from '../agents/experienceSink';
 import { derivePolicy, type RunContext } from './runContext';
 import { emitNode, emitRun, getRunBus } from './runEvents';
-import { decideAgentCall } from '../agents/agentDecision';
 import { buildRunningCheckpoint } from './checkpoint';
 import { attachEventLog, getEventPersistenceMode } from './eventLog';
 import { finalizeRun } from './runFinalizer';
 import { requestIntervention, cancelInterventionsForRun } from './intervention';
-import { matchExperience } from '../agents/experienceStore';
-import {
-  cleanupRun,
-  createRunResources,
-  getRunResources,
-} from './runResources';
+import { createRunResources, cleanupRun, getRunResources } from './runResources';
 import {
   beginRun,
   cacheKey,
@@ -46,15 +34,15 @@ import {
   composeCacheScope,
   countSkip,
   getCached,
+  getCachedBranches,
   setCached,
   strike,
 } from './nodeCache';
-import {
-  assertAllowedSandboxLane,
-  encodeSandboxIdentifier,
-  assertSandboxRelativePath,
-} from './sandboxPath';
-import { createSandboxFsGuard } from './sandboxFs';
+import { createNodeSandbox } from './nodeSandboxAdapter';
+import { createNodeLlmAdapter } from './nodeLlmAdapter';
+import { createNodeContextAdapter } from './nodeContextAdapter';
+import type { RunOptions, RunResult } from './runTypes';
+export type { RunOptions, RunResult } from './runTypes';
 
 /**
  * 步骤 11 阶段 D：解析节点的能力等级。
@@ -81,17 +69,8 @@ export {
   accumulateUsage,
 };
 
-/** 每工作流独立的运行代次/中止器（拆分视图左右栏可同时运行互不打断） */
-const runGens = new Map<string, { currentRunId: number; activeRunId: number; abort: AbortController | null }>();
-
-function genFor(wfId: string): { currentRunId: number; activeRunId: number; abort: AbortController | null } {
-  let g = runGens.get(wfId);
-  if (!g) {
-    g = { currentRunId: 0, activeRunId: 0, abort: null };
-    runGens.set(wfId, g);
-  }
-  return g;
-}
+/** 每工作流独立的运行生命周期协调器：运行准入、取消和 stale completion fencing。 */
+const executionCoordinator = new ExecutionCoordinator();
 
 /**
  * 运行代次（run generation）：每次启动 runWorkflow 自增并取走当前代次号；
@@ -102,7 +81,7 @@ function genFor(wfId: string): { currentRunId: number; activeRunId: number; abor
 /** 步骤 14：暴露当前运行代次（字符串快照），供节点发布 Artifact 时填写 runId（新鲜度判断）。 */
 export function getActiveRunId(wfId?: string): number {
   const id = wfId ?? useWorkflowStore.getState().activeWfId;
-  return genFor(id).activeRunId;
+  return executionCoordinator.getActiveRunId(id);
 }
 
 export function workflowRequiresDevSession(nodes: readonly FlowNode[]): boolean {
@@ -111,8 +90,11 @@ export function workflowRequiresDevSession(nodes: readonly FlowNode[]): boolean 
 
 /** 把运行代次同步到 store 供状态栏诊断显示 */
 function syncDebugRun(wfId: string): void {
-  const g = genFor(wfId);
-  useWorkflowStore.getState().setDebugRun({ current: g.currentRunId, active: g.activeRunId });
+  const snapshot = {
+    current: executionCoordinator.getCurrentRunId(wfId),
+    active: executionCoordinator.getActiveRunId(wfId),
+  };
+  useWorkflowStore.getState().setDebugRun(snapshot);
 }
 
 /* ---------------- 阶段 G2：运行中节流检查点快照 ----------------
@@ -151,11 +133,8 @@ const NODE_RETRY_BASE_MS = 1500;
 
 export function stopWorkflow(wfId?: string): void {
   const id = wfId ?? useWorkflowStore.getState().activeWfId;
-  const g = genFor(id);
-  g.currentRunId += 1; // 让旧协程过期
-  const abortedRunId = g.currentRunId - 1; // 被终止运行的代次号
-  g.abort?.abort();
-  g.abort = null;
+  const stopped = executionCoordinator.stop(id);
+  const abortedRunId = stopped.abortedRunId;
   const wf = useWorkflowStore.getState();
   wf.setRunning(false, id);
   // 阶段 G2：停止前强制落盘快照（跳过节流），保存已完成节点结果——resetStatuses 会清空节点状态
@@ -166,9 +145,7 @@ export function stopWorkflow(wfId?: string): void {
   cancelInterventionsForRun(id, abortedRunId);
   // 运行级中止事件：立即发出（被终止的旧协程 isCurrentRun=false，不再重复发）
   emitRun(getRunBus(), 'run.aborted', { wfId: id, runId: abortedRunId }, { reason: 'user-stopped' });
-  // 同步诊断代次：active 对齐 current，避免状态栏误报「旧协程残留」——
-  // 停止是主动收尾，activeRunId 指向被终止运行的代次，此处推进为与 current 一致。
-  g.activeRunId = g.currentRunId;
+  // 停止是主动收尾，协调器已推进 active/current fence。
   syncDebugRun(id);
 }
 
@@ -182,117 +159,45 @@ export async function rerunWorkflow(wfId?: string): Promise<RunResult> {
   return runWorkflow({ forceRerun: true, force: true, wfId });
 }
 
-/**
- * 运行工作流的选项（RunOptions）。
- */
-export interface RunOptions {
-  /** 目标工作流 id（拆分视图可独立运行；缺省取当前激活工作流） */
-  wfId?: string;
-  /** 增量模式：只执行脏节点及其下游（非脏节点复用已有/缓存结果） */
-  incremental?: boolean;
-  /** 强制重算的节点集合（重跑单节点时使用），会清除其缓存 */
-  forceNodes?: string[];
-  /** 执行到这些节点为止（含），其下游不再执行（标记 skipped）。用于「重跑到此节点」 */
-  stopAfterNodes?: string[];
-  /**
-   * 单节点运行：仅 forceNodes 内的节点参与执行，且不汇聚任何上游输入（以空输入运行），
-   * 下游不执行。用于孤立调试单个节点。
-   */
-  isolated?: boolean;
-  /** 强制重启（忽略并发拦截，用于 Play 按钮检测到运行态卡死时的透传） */
-  force?: boolean;
-  /**
-   * 失败续跑（L1 可靠执行）：仅重跑上一轮处于 error 状态的节点及其下游；
-   * 其余 success/cached 节点复用既有结果不动。需配合 incremental 使用。
-   */
-  retryFailed?: boolean;
-  /** 强制轮次上限（调试用），默认取 loopGate 节点的 maxLoops 参数 */
-  maxLoopsOverride?: number;
-  /**
-   * 失败时继续（failFast 的反面策略）：为 true 时，某节点失败后不中断整体运行，
-   * 且其下游节点不被剪枝、以空上游输出继续尝试执行（跳过失败节点而非卡死）。
-   * 配合 false 的 failFast 一起使用。
-   */
-  skipFailed?: boolean;
-  /**
-   * 强制重跑：清空节点结果缓存（nodeCache），使所有节点无论参数是否变化都重新执行，
-   * 不复用上一轮的 LLM 结果。等价于 ComfyUI 的「忽略缓存重新执行」。
-   */
-  forceRerun?: boolean;
-  /**
-   * 调度进度回调（供 Job Board 等可视化）：每一层开始前上报当前层索引、总层数、轮次。
-   */
-  onProgress?: (p: { layer: number; totalLayers: number; round: number; totalRounds: number }) => void;
-  /**
-   * 真沙箱（步骤 11 阶段 C）：为 true 时，每个写文件的节点获得独立隔离目录
-   * （workspaceDir/.sandbox/<nodeId>/），并行 Worker 互不踩踏；协调者节点
-   * （coord.resolver / coord.council）拿到聚合沙箱句柄，可读取各 Worker 沙箱并 commitAll 汇总。
-   * 默认 false，保持旧行为（共享工作区直写）。
-   */
-  sandbox?: boolean;
-  /** 本次运行的并发上限（覆盖全局 maxConcurrency；缺省取全局值）。 */
-  maxConcurrency?: number;
-  /**
-   * 步骤 11 阶段 C：沙箱隔离强度。
-   * - `copy`（默认）：基于目录副本 `.sandbox/<runId>/<nodeId>/` 做磁盘隔离。
-   * - `gitworktree`：Git Worktree 真隔离——为本次运行创建 detached worktree，Worker 在独立 git 工作树内写文件，
-   *   结束统一 `git worktree remove` 清理（比 .sandbox 残留更干净、可 git 级合并）。
-   *   仅在 Tauri 桌面端且当前 workspaceDir 是 git 仓库时启用；否则自动降级为 `copy` 并记日志。
-   */
-  sandboxMode?: 'copy' | 'gitworktree';
-}
-
-/** runWorkflow 运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行） */
-export interface RunResult {
-  /** success=无失败节点；error=有失败节点；aborted=手动停止/被顶替/空图/非法图 */
-  status: 'success' | 'error' | 'aborted';
-  /** 本次运行代次（runFinalizer 用同一 runId 写历史/checkpoint） */
-  runId: number;
-  /** 失败/拦截原因（aborted/error 时有） */
-  error?: string;
-}
-
 export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const wfId = opts.wfId ?? useWorkflowStore.getState().activeWfId;
   const wf = useWorkflowStore.getState();
-  const gen = genFor(wfId);
   const graphNodesForSession = wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId]?.nodes ?? []);
   if (isTauri && workflowRequiresDevSession(graphNodesForSession)) {
     if (!wf.projectPath) {
       const error = '包含 dev.* 节点的工作流必须先打开已保存项目';
       wf.addLog('error', error);
-      return { status: 'aborted', runId: gen.currentRunId, error };
+      return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error };
     }
     const { ensureGuiDevSession } = await import('../dev/gui');
     const session = await ensureGuiDevSession(wf.projectPath);
     if (!session) {
       const error = 'Tauri DevSession 未就绪，开发节点未执行';
       wf.addLog('error', error);
-      return { status: 'aborted', runId: gen.currentRunId, error };
+      return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error };
     }
   }
   // 解耦接缝：执行引擎的输出动作（日志/进度/历史/成本）经 ExecutionRuntime 接口，
   // 默认实现委托 store；后续可替换为测试桩或独立运行时，使 executor 不依赖具体 store。
   const rt = createStoreRuntime(wfId);
-  // 若上一次运行仍有效（activeRunId 与最新代次一致，即未被停止过）才阻止并发重入；
-  // 若已被 stopWorkflow 自增代次，则允许新启动（解决「刷新键后启动键失效」）。
   const running = wf.runStates[wfId]?.running ?? false;
-  if (running && gen.activeRunId === gen.currentRunId) {
-    if (opts.force) {
-      gen.abort?.abort();
-      // F5：force 重启同样取消旧运行残留的待接管请求（防旧协程挂在介入 Promise 上不进入收尾）
-      cancelInterventionsForRun(wfId, gen.currentRunId);
-      wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
-    } else {
-      wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
-      return { status: 'aborted', runId: gen.currentRunId, error: '上一次运行仍在有效进行中，已忽略重复启动' };
-    }
+  const admission = executionCoordinator.start(wfId, { running, force: Boolean(opts.force) });
+  if (admission.status === 'rejected') {
+    wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
+    return {
+      status: 'aborted',
+      runId: admission.runId,
+      error: '上一次运行仍在有效进行中，已忽略重复启动',
+    };
   }
-  const myRun = ++gen.currentRunId; // 本次运行代次
-  gen.activeRunId = myRun;
+  if (admission.supersededRunId !== undefined) {
+    // F5：force 重启取消旧运行残留的待接管请求，避免旧协程挂在介入 Promise 上。
+    cancelInterventionsForRun(wfId, admission.supersededRunId);
+    wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
+  }
+  const myRun = admission.runId;
   syncDebugRun(wfId);
   const resources = createRunResources(wfId, myRun);
-  let abortController: AbortController | null = null;
   // G4：事件日志 detach 句柄——在 try 顶部声明（finally 总可安全调用），run.created 后赋值
   let detachEventLog: () => void = () => {};
   try {
@@ -329,17 +234,39 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const graphEdges = wfId === wf.activeWfId ? wf.edges : (wf.workflows[wfId]?.edges ?? []);
   if (graphNodes.length === 0) {
     wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
-    return { status: 'aborted', runId: gen.currentRunId, error: '还没放任何节点' };
+    return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error: '还没放任何节点' };
   }
 
-  let plan: ReturnType<typeof buildRunPlan>;
+  let plan: ReturnType<typeof compileExecutionPlan>;
   try {
-    plan = buildRunPlan(graphNodes, graphEdges, wf.subgraphs);
+    plan = compileExecutionPlan(graphNodes, graphEdges, wf.subgraphs, {
+      incremental: opts.incremental,
+      retryFailed: opts.retryFailed,
+      forceNodes: opts.forceNodes,
+      stopAfterNodes: opts.stopAfterNodes,
+      isolated: opts.isolated,
+      maxLoopsOverride: opts.maxLoopsOverride,
+    });
   } catch (err) {
     wf.addLog('error', err instanceof Error ? err.message : String(err));
-    return { status: 'aborted', runId: gen.currentRunId, error: err instanceof Error ? err.message : String(err) };
+    return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error: err instanceof Error ? err.message : String(err) };
   }
-  const { nodes, edges, stages, cyclic, loopGateIds, loopVarOf, maxLoopsOf, loopBodyOf, hasLoop } = plan;
+  const {
+    nodes,
+    edges,
+    stages,
+    cyclic,
+    loopGateIds,
+    loopVarOf,
+    loopBodyOf,
+    hasLoop,
+    force,
+    dirtySet,
+    stopAfter,
+    isolatedIds,
+    clusterPlan,
+    maxRounds,
+  } = plan;
   const expandedCount = nodes.length - graphNodes.length;
   if (expandedCount > 0) {
     wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
@@ -353,32 +280,17 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
       wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' }, wfId);
     }
     wf.addLog('error', `有节点连成了死循环（${labels}），请拆掉其中一条连线后再运行`);
-    return { status: 'aborted', runId: gen.currentRunId, error: `节点连成了死循环（${labels}）` };
+    return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error: `节点连成了死循环（${labels}）` };
   }
 
-  const force = new Set(opts.forceNodes ?? []);
-  const stopAfter = new Set(opts.stopAfterNodes ?? []);
-  const isolatedIds = opts.isolated ? new Set(opts.forceNodes ?? []) : undefined;
-  // 失败续跑（L1）：把上一轮 error 节点及其全部下游标记为本次需执行集
-  if (opts.retryFailed) {
-    const errored = nodes.filter((n) => n.data.status === 'error').map((n) => n.id);
-    for (const id of errored) {
-      const downstream = computeDownstream(id, edges); // 含 errored 自身
-      for (const d of downstream) force.add(d);
-    }
-  }
   // 全量运行：清除所有脏标记（之后全部节点都视为需执行，命中缓存者跳过）
   // 增量运行：保留脏标记，仅执行脏节点及其下游
   if (!opts.incremental && !opts.retryFailed) {
     wf.clearDirty();
-    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '', composeCacheScope(wfId, id));
   } else {
-    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '');
+    for (const id of force) strike(graphNodes.find((n) => n.id === id)?.data.typeId ?? '', composeCacheScope(wfId, id));
   }
-  // 执行集（纯计算，来自 graphAlgo.computeExecutionSet）：
-  //  - force 节点恒在执行集；增量模式叠加 data.dirty；子图虚拟节点一律视为需执行。
-  const { dirtySet } = computeExecutionSet(nodes, { ...opts, forceNodes: [...force] });
-
 
   // 强制重跑：清空全局节点缓存，使所有节点都重新执行（不复用上一轮 LLM 结果）
   if (opts.forceRerun) {
@@ -386,11 +298,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
     wf.addLog('info', '已清空节点结果缓存，本轮将全量重新执行（强制重跑）');
   }
 
-  abortController = new AbortController();
-  gen.abort = abortController;
-  const signal = abortController.signal;
+  const signal = admission.signal;
   wf.setRunning(true, wfId);
-  wf.resetStatuses(wfId);
+  wf.resetStatuses(wfId, { preserveOutputs: Boolean(opts.incremental || opts.retryFailed) });
   // A3：构建贯穿本次运行的 RunContext（A1 定型），并发出运行创建事件。
   // 供统一事件流 / JobBoard / 后续检查点持久化与 AgentRouter 共用。
   const runCtx: RunContext = {
@@ -460,11 +370,8 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   for (const gid of loopGateIds) loopVarsState[loopVarOf.get(gid)!] = 0;
 
   // 整体轮次循环：存在 control 回环时重复跑整个 stage 序列（Step 6 迭代循环）
-  const maxRounds = opts.maxLoopsOverride ?? Math.min(50, Math.max(1, ...maxLoopsOf.values()));
   let round = 0;
   let loopContinued = false;
-  // 预计算每层的 scope 串行化簇划分（层结构 stages 与边 edges 在轮间稳定，无需每轮重算）
-  const clusterPlan = planClustersPerStage(stages, edges);
   // A3：真正开始调度前发出运行开始事件（Node 级事件紧随其后）。
   emitRun(getRunBus(), 'run.started', runCtx);
   do {
@@ -477,14 +384,14 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
       dirtySet,
       force,
       loopVarsState,
-      strike,
+      strike: (nodeId, typeId) => strike(typeId, composeCacheScope(wfId, nodeId)),
     });
     // 本轮开始日志（round > 0）
     if (round > 0) {
       wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
     }
     for (let li = 0; li < stages.length; li++) {
-      if (signal.aborted || myRun !== gen.currentRunId) break;
+      if (signal.aborted || myRun !== executionCoordinator.getCurrentRunId(wfId)) break;
       // 单层调度已抽到 runScheduler.runStage：进度事件 / 簇并发 / executeNode / fail-fast / 层快照
       await runStage({
         layer: stages[li]!,
@@ -495,9 +402,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
         clusters: clusterPlan[li],
         failed,
         signal,
-        isCurrent: () => myRun === gen.currentRunId,
+        isCurrent: () => myRun === executionCoordinator.getCurrentRunId(wfId),
         failFast,
-        abort: () => gen.abort?.abort(),
+        abort: () => { admission.abort(); },
         wfId,
         runCtx,
         rt,
@@ -536,7 +443,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
           ),
       });
     }
-    if (signal.aborted || myRun !== gen.currentRunId) break;
+    if (signal.aborted || myRun !== executionCoordinator.getCurrentRunId(wfId)) break;
 
     // 判断是否需要继续迭代：任一 loopGate 本轮走了 pass 分支 ⇒ 循环体被激活 ⇒ 继续
     const { loopContinued: cont, reachedMax } = shouldContinueLoop({
@@ -564,7 +471,7 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   const finalizeResult = await finalizeRun({
     wfId,
     myRun,
-    isCurrentRun: myRun === gen.currentRunId,
+    isCurrentRun: myRun === executionCoordinator.getCurrentRunId(wfId),
     workflowName: wf.workflowName,
     nodes,
     startedWall,
@@ -583,11 +490,11 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
 
   } finally {
     // 只有最新代次才允许复位 UI/Abort；资源则始终按 runId 清理自己的那一份。
-    if (myRun === gen.activeRunId && myRun === gen.currentRunId) {
+    const isCurrentRun = executionCoordinator.finish(wfId, myRun);
+    if (isCurrentRun) {
       const latest = useWorkflowStore.getState();
       latest.setRunning(false, wfId);
       rt.setRunProgress({ active: false }, wfId);
-      if (abortController && gen.abort === abortController) gen.abort = null;
     }
     await cleanupRun(wfId, myRun);
     // 阶段 D：无论正常/异常结束，取消本运行残留的待接管请求（防挂起泄漏）
@@ -631,8 +538,7 @@ async function executeNode(
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
   const targetWfId = wfId ?? store.activeWfId;
-  const targetRunId = myRun ?? genFor(targetWfId).currentRunId;
-  const gen = genFor(targetWfId);
+  const targetRunId = myRun ?? executionCoordinator.getCurrentRunId(targetWfId);
   // A3：节点级事件统一从全局单例总线发出（携带 wfId + runId + nodeId 三元组）。
   const runBus = getRunBus();
   const nodeCtx = { wfId: targetWfId, runId: targetRunId };
@@ -686,8 +592,9 @@ async function executeNode(
   // ---- 缓存隔离环境指纹（细粒度化）：目标工作流的 workspace 上下文。----
   // 文件读写类节点的产物依赖工作区内容，workspace 变化时旧缓存应失效。
   const curStore = useWorkflowStore.getState();
-  const targetWorkflow =
-    targetWfId === curStore.activeWfId ? { workspaceDir: curStore.workspaceDir } : curStore.workflows[targetWfId];
+  const targetWorkflow = targetWfId === curStore.activeWfId
+    ? { workspaceDir: resolveActiveWorkflowWorkspaceDir(curStore) }
+    : curStore.workflows[targetWfId];
   const nodeWorkspaceDir = targetWorkflow?.workspaceDir ?? null;
   // 细粒度缓存 scope：wfId → nodeId → workspaceDir（节点实例级隔离，杜绝同工作流内
   // 相同配置的节点实例互相串产物；workspace 指纹使环境变化自动失效）。
@@ -706,7 +613,7 @@ async function executeNode(
     forced,
     isolated: isolatedIds?.has(id),
     cacheScope,
-    cacheHooks: { collectInputs, cacheKey, getCached },
+    cacheHooks: { collectInputs, cacheKey, getCached, getCachedBranches },
   });
   // 按决策执行副作用（不直接进后续沙箱/执行路径）
   switch (policy.kind) {
@@ -743,6 +650,9 @@ async function executeNode(
       setStatus(id, 'muted', { startedAt: null, durationMs: null });
       return;
     case 'incremental-skip':
+      if (policy.branches !== undefined) {
+        branchState.set(id, new Set(policy.branches));
+      }
       setStatus(id, policy.prevStatus === 'cached' ? 'cached' : policy.prevStatus ?? 'idle');
       emitNode(runBus, 'node.skipped', nodeCtx, id, {
         reason: 'incremental-skip',
@@ -772,7 +682,8 @@ async function executeNode(
     case 'cached': {
       const cached = policy.outputs;
       outputsMap.set(id, cached);
-      branchState.set(id, new Set((def?.outputs ?? []).map((o) => o.id)));
+      const activeBranches = policy.branches ?? (def?.outputs ?? []).map((o) => o.id);
+      branchState.set(id, new Set(activeBranches));
       countSkip();
       setStatus(id, 'cached', { outputs: cached, startedAt: null, durationMs: null });
       emitNode(runBus, 'node.completed', nodeCtx, id, {
@@ -788,94 +699,92 @@ async function executeNode(
       break; // 继续执行路径
   }
 
-  // 每个节点一份独立隔离目录（workspaceDir/.sandbox/<nodeId>），并行 Worker 互不踩踏。
-  // 协调者（coord.resolver / coord.council）拿到聚合句柄，可跨节点读取并 commitAll 汇总。
-  let sandbox: SandboxHandle | undefined;
-  if (sandboxEnabled) {
-    const inBrowser = !isTauri;
-
-    // 主工作区根：有 workspaceDir 用其；否则惰性取 AppData 内部目录（避免同步调用 tauri API）
-    const rootDir = async (): Promise<string | null> => {
-      if (inBrowser) return null;
-      // 步骤 11 阶段 C：Git Worktree 强隔离模式下，所有节点沙箱根指向 worktree（按 wfId）
-      const resources = getRunResources(targetWfId, targetRunId);
-      const wt = resources?.worktree;
-      if (wt) return wt.path;
-      if (nodeWorkspaceDir) return nodeWorkspaceDir;
-      try {
-        const { appDataDir } = await import('@tauri-apps/api/path');
-        return `${await appDataDir()}/slime-mold/${targetWfId}`;
-      } catch {
-        return null;
-      }
-    };
-    // 解析 + 登记：任何节点触达的真实根目录都登记到当前 run 的资源对象，
-    // 供 runWorkflow 结束按 runId 清理其下 `.sandbox/` 残留。
-    const rootDirAndTrack = async (): Promise<string | null> => {
-      const base = await rootDir();
-      if (base) {
-        const resources = getRunResources(targetWfId, targetRunId);
-        resources?.sandboxRoots.add(base);
-      }
-      return base;
-    };
-
-    const allowedSandboxNodeIds = new Set(
-      incoming.filter((e) => e.target === id).map((e) => e.source),
-    );
-    const sandboxRoot = (nid: string): string =>
-      `.sandbox/${encodeSandboxIdentifier(nid, '沙箱节点 id')}`;
-
-    sandbox = {
-      nodeId: id,
-      baseDir: null, // 真实路径惰性确定，构造期未知
-      inBrowser,
-      async writeFile(filename, content) {
-        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
-        const base = await rootDirAndTrack();
-        if (!base) return `[sandbox:${id}] ${safeFilename}`; // 浏览器/无根：内存态
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).writeFile(sandboxRoot(id), safeFilename, content);
-      },
-      async readFrom(otherNodeId, filename) {
-        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
-        const safeFilename = assertSandboxRelativePath(filename, '沙箱文件路径');
-        const base = await rootDirAndTrack();
-        if (!base) return null;
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).readFile(sandboxRoot(safeNodeId), safeFilename);
-      },
-      async list(otherNodeId) {
-        const safeNodeId = assertAllowedSandboxLane(otherNodeId, allowedSandboxNodeIds);
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).list(sandboxRoot(safeNodeId));
-      },
-      async commitAll() {
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        return createSandboxFsGuard(fs, base).commit(sandboxRoot(id));
-      },
-      async commitLanes(laneIds) {
-        const safeLaneIds = laneIds.map((laneId) =>
-          assertAllowedSandboxLane(laneId, allowedSandboxNodeIds),
-        );
-        const base = await rootDirAndTrack();
-        if (!base) return [];
-        const fs = await import('@tauri-apps/plugin-fs');
-        const committed: string[] = [];
-        const guard = createSandboxFsGuard(fs, base);
-        for (const lane of safeLaneIds) {
-          committed.push(...(await guard.commit(sandboxRoot(lane))));
-        }
-        return committed;
-      },
-    };
-  }
+  const sandbox = createNodeSandbox({
+    enabled: Boolean(sandboxEnabled),
+    isTauri,
+    nodeId: id,
+    wfId: targetWfId,
+    runId: targetRunId,
+    nodeWorkspaceDir,
+    incomingNodeIds: incoming.filter((e) => e.target === id).map((e) => e.source),
+    getRunResources,
+  });
 
   let branchesTaken: string[] | undefined;
+  const nodeStorage = scopedStorage(`${def.pluginId ?? 'core'}:${def.typeId}:${id}`);
+  const nodeState = useWorkflowStore.getState();
+  const nodeVars = {
+    ...(extraVars ?? {}),
+    ...nodeState.projectVariables,
+    ...(targetWfId === nodeState.activeWfId
+      ? nodeState.variables
+      : (nodeState.workflows[targetWfId]?.variables ?? {})),
+  };
+  const llm = createNodeLlmAdapter({
+    node: {
+      id,
+      label: node.data.label,
+      typeId: node.data.typeId,
+      params: node.data.params,
+    },
+    targetWfId,
+    targetRunId,
+    myRun: myRun ?? targetRunId,
+    nodeCtx,
+    runBus,
+    signal,
+    limiter,
+    maxRetries: MAX_RETRIES,
+    retryBaseMs: RETRY_BASE_MS,
+    sink,
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        activeWfId: state.activeWfId,
+        workflowName: state.workflowName,
+        workflows: state.workflows,
+        agents: state.agents,
+        globalAgents: state.globalAgents,
+        agentRouteTable: state.agentRouteTable,
+        defaultAgentId: state.defaultAgentId,
+        projectId: state.projectId,
+        llmChannel: state.llmChannel,
+      };
+    },
+    getTools: () => ({ vars: ctx.vars, storage: ctx.storage, sandbox: ctx.sandbox }),
+    logInfo: (message) => R.addLog('info', message),
+    logWarn: (message) => R.addLog('warn', message),
+    logError: (message) => R.addLog('error', message),
+    recordCost: trackCost,
+  });
+  const contextAdapter = createNodeContextAdapter({
+    nodeId: id,
+    ownerId: owner,
+    nodeTypeId: node.data.typeId,
+    nodeLabel: node.data.label,
+    targetWfId,
+    targetRunId,
+    myRun: myRun ?? targetRunId,
+    incomingNodeIds: incoming.filter((e) => e.target === id).map((e) => e.source),
+    edges,
+    sandbox,
+    runtime: R,
+    getState: () => {
+      const state = useWorkflowStore.getState();
+      return {
+        activeWfId: state.activeWfId,
+        nodes: state.nodes,
+        workflows: state.workflows,
+        projectAssets: state.projectAssets,
+      };
+    },
+    setStatus,
+    onBranches: (handles) => { branchesTaken = handles; },
+    onGate,
+    getCurrentRunId: (wfId) => executionCoordinator.getCurrentRunId(wfId),
+    scheduleRunCheckpoint,
+    requestIntervention,
+  });
   const ctx: ExecContext = {
     signal,
     // 当前节点 id（owner ?? id，子图虚拟节点回写用）：供沙箱插件 RPC 按节点归属路由
@@ -885,188 +794,14 @@ async function executeNode(
       error: (m) => R.addLog('error', `[${node.data.label}] ${m}`),
       warn: (m) => R.addLog('warn', `[${node.data.label}] ${m}`),
     },
-    llm: async (agentId, messages, onToken, modelOverride, toolNames) => {
-      // B/F4：AgentRouter 运行时决策（已抽到 agents/agentDecision.ts）——
-      // 始终经 Router 统一决策：显式 agent 有效直接使用；缺失/失效按类别路由 → fallback 链 → 默认 → 首个可用。
-      const requestedAgentId = agentId;
-      const st0 = useWorkflowStore.getState();
-      const goal =
-        targetWfId === st0.activeWfId
-          ? st0.workflowName
-          : (st0.workflows[targetWfId]?.name ?? '');
-      const { decision, routed, mergedAgents, routeLog } = decideAgentCall({
-        requestedAgentId,
-        typeId: node.data.typeId,
-        params: node.data.params,
-        agents: st0.agents,
-        globalAgents: st0.globalAgents,
-        routeTable: st0.agentRouteTable,
-        defaultAgentId: st0.defaultAgentId,
-        goal,
-        projectId: st0.projectId ?? '',
-      });
-      // 经历路由（reason≠explicit）才 emit + 日志；显式绑定直接命中则保持安静
-      if (routed) {
-        emitNode(runBus, 'node.progress', nodeCtx, id, {
-          progressKind: 'agent-route',
-          requestedAgentId: requestedAgentId ?? '',
-          agentId: decision.agent.id,
-          reason: decision.reason,
-          chain: decision.chain,
-          tier: decision.tier,
-          category:
-            typeof node.data.params?.category === 'string' && node.data.params.category.trim()
-              ? node.data.params.category.trim()
-              : undefined,
-          topScores: decision.scores?.slice(0, 3).map((c) => ({
-            agentId: c.agent.id,
-            model: c.agent.model,
-            score: Number(c.score.toFixed(2)),
-            costPer1M: c.costPer1M,
-          })),
-        });
-        R.addLog('info', `「${node.data.label}」${routeLog}`);
-      }
-      const byId = (id0: string) => mergedAgents.find((a) => a.id === id0);
-      // E/F7 自我学习消费：同类型节点的历史经验注入本次调用——
-      // ① 事件与日志（可观测）；② 注入 system prompt（真正影响本次 LLM 决策）。
-      const expHits = matchExperience(useWorkflowStore.getState().projectId ?? '', node.data.typeId);
-      let effectiveMessages = messages;
-      if (expHits.length > 0) {
-        emitNode(runBus, 'node.progress', nodeCtx, id, {
-          progressKind: 'experience',
-          typeId: node.data.typeId,
-          count: expHits.length,
-          insights: expHits.map((e) => e.insights[0] ?? e.summary),
-        });
-        R.addLog(
-          'info',
-          `「${node.data.label}」命中 ${expHits.length} 条历史经验（${node.data.typeId}），已注入提示词`,
-        );
-        const expText = expHits.map((e) => `- ${e.insights[0] ?? e.summary}`).join('\n');
-        const expBlock = `\n\n【历史经验参考（本项目「${node.data.typeId}」节点往期运行沉淀）】\n${expText}\n请结合上述经验优化本次执行，但不要机械照搬。`;
-        // 有 system 消息则追加到末尾，否则前置一条 system
-        if (messages.length > 0 && messages[0]!.role === 'system') {
-          effectiveMessages = [
-            { ...messages[0], content: `${messages[0].content}\n${expBlock}` },
-            ...messages.slice(1),
-          ];
-        } else {
-          effectiveMessages = [{ role: 'system' as const, content: expBlock }, ...messages];
-        }
-      }
-
-      // F4：调用失败 fallback——按 decision.chain 逐级尝试候选 agent（runLlmCall.ts）
-      return runLlmWithFallback({
-        chainIds: decision.chain,
-        byId,
-        messages,
-        effectiveMessages,
-        onToken,
-        modelOverride,
-        toolNames,
-        signal,
-        limiter,
-        maxRetries: MAX_RETRIES,
-        retryBaseMs: RETRY_BASE_MS,
-        recordCost: (rec) => trackCost(rec),
-        node: { id, label: node.data.label, typeId: node.data.typeId },
-        sink,
-        vars: ctx.vars,
-        toolStorage: ctx.storage,
-        toolSandbox: ctx.sandbox,
-        llmChannel: useWorkflowStore.getState().llmChannel,
-        myRun: myRun ?? targetRunId,
-        targetRunId,
-        logger: {
-          info: (m) => R.addLog('info', m),
-          warn: (m) => R.addLog('warn', m),
-          error: (m) => R.addLog('error', m),
-        },
-      });
-    },
+    llm,
     // 成本账本引用 + 上报回调（供 Auditor 节点读取与未来外部接入）
     costLog,
     reportCost: (rec) => trackCost(rec),
-    setPartial: (key, value) => {
-      const target = owner ?? id;
-      const st = useWorkflowStore.getState();
-      const targetNodes = targetWfId === st.activeWfId
-        ? st.nodes
-        : (st.workflows[targetWfId]?.nodes ?? []);
-      const cur = targetNodes.find((n) => n.id === target)?.data.outputs ?? {};
-      setStatus(id, 'running', {
-        outputs: { ...cur, [key]: value },
-      });
-    },
-    setBranches: (handles) => {
-      branchesTaken = handles;
-      // 把分支结果回报给执行引擎（loopGate 迭代判断用）
-      if (node.data.typeId === 'flow.loopGate') onGate?.(id, handles);
-    },
-    // 存储按节点实例隔离（scope = 插件 + 类型 + 实例 id），避免同插件不同节点/同类型不同实例互相读写。
-    storage: scopedStorage(`${def.pluginId ?? 'core'}:${def.typeId}:${id}`),
-    // 变量：基础(extraVars) < 项目级 < 工作流级（后者覆盖前者同名项）
-    vars: {
-      ...(extraVars ?? {}),
-      ...useWorkflowStore.getState().projectVariables,
-      ...(targetWfId === useWorkflowStore.getState().activeWfId
-        ? useWorkflowStore.getState().variables
-        : (useWorkflowStore.getState().workflows[targetWfId]?.variables ?? {})),
-    },
-    // 资产：项目级库与当前工作流库合并（工作流级同名 id 覆盖项目级）
-    assets: (() => {
-      const st = useWorkflowStore.getState();
-      const wfAssets = targetWfId === st.activeWfId
-        ? st.workflows[st.activeWfId ?? '']?.assets ?? []
-        : st.workflows[targetWfId]?.assets ?? [];
-      const byId = new Map<string, AssetMeta>();
-      for (const a of st.projectAssets) byId.set(a.id, a);
-      for (const a of wfAssets) byId.set(a.id, a);
-      return [...byId.values()] as never;
-    })(),
-    addAsset: (meta) => R.addAsset(meta),
-    // 步骤 11 阶段 C：真沙箱句柄（仅 sandbox 运行模式注入，普通模式为 undefined）
+    ...contextAdapter,
+    storage: nodeStorage,
+    vars: nodeVars,
     sandbox,
-    // 协调者节点的上游车道 id（供 commitLanes 汇总 Worker 沙箱）
-    sandboxLanes: sandbox
-      ? incoming.filter((e) => e.target === id).map((e) => e.source)
-      : undefined,
-    // 派发节点执行时把某输出端口的影响域(scope)写回对应的 task 连线（按 source+handle 匹配）。
-    // 双写：① 直接 mutate 执行器局部 edges 数组（保证本次调度的 scope 串行化立刻生效）；
-    //       ② 经 setEdges 同步全局 store（用于持久化与右侧 Inspector 展示）。
-    writeOutEdgeScope: (handle, scope) => {
-      for (const e of edges) {
-        if (e.source === id && (e.sourceHandle ?? null) === (handle ?? null)) {
-          e.data = { ...e.data, kind: e.data?.kind ?? 'task', scope };
-        }
-      }
-      R.setEdges((prev) =>
-        prev.map((e) =>
-          e.source === id && (e.sourceHandle ?? null) === (handle ?? null)
-            ? { ...e, data: { ...e.data, kind: e.data?.kind ?? 'task', scope } }
-            : e,
-        ),
-      );
-    },
-    // 阶段 D 实时接管：节点请求人工介入 → 挂起直至 UI 提交/取消。
-    // 挂起点绑定 wfId+runId+nodeId，运行结束/停止时由 cancelInterventionsForRun 统一放行。
-    intervene: async (req) => {
-      if (myRun !== gen.currentRunId) {
-        // 代次已过期：不再挂起，直接以取消返回（旧协程不应阻塞）
-        return { kind: 'cancelled', error: '运行已停止，介入请求被取消' };
-      }
-      // 阶段 G2：人工接管挂起前落盘快照——用户处理期间应用崩溃也不丢已有进度
-      scheduleRunCheckpoint(targetWfId, targetRunId, Date.now());
-      return requestIntervention({
-        wfId: targetWfId,
-        runId: targetRunId,
-        nodeId: owner ?? id,
-        label: node.data.label,
-        typeId: node.data.typeId,
-        ...req,
-      });
-    },
   };
 
   // 步骤 11 阶段 D：按节点能力等级裁剪 ctx——越权字段替换为「拒绝型」实现（保持类型完整、运行时受控）
@@ -1074,7 +809,7 @@ async function executeNode(
 
   // 代次守卫：若当前运行已被 stopWorkflow 抢占（代次过期），立即跳过执行，
   // 避免旧协程在节点返回后仍去调 def.execute / 改 store 状态。
-  if (myRun !== gen.currentRunId) {
+  if (myRun !== executionCoordinator.getCurrentRunId(targetWfId)) {
     return;
   }
 
@@ -1107,7 +842,7 @@ async function executeNode(
           ),
       },
     );
-    if (signal.aborted || targetRunId !== gen.currentRunId) {
+    if (signal.aborted || targetRunId !== executionCoordinator.getCurrentRunId(targetWfId)) {
       // 竞态防御：abort 时节点可能仍停在「running」（stopWorkflow 的 resetStatuses
       // 在 execute 返回前已执行，随后无后续复位）。这里把当前节点复位为 idle，
       // 避免停止后节点永久显示「正在运行」。
@@ -1141,7 +876,7 @@ async function executeNode(
       },
     });
   } catch (err) {
-    if (signal.aborted || targetRunId !== gen.currentRunId) {
+    if (signal.aborted || targetRunId !== executionCoordinator.getCurrentRunId(targetWfId)) {
       // 竞态防御（同上）：abort 路径复位节点为 idle
       setStatus(id, 'idle', { outputs: undefined, error: undefined, usage: undefined });
       return;

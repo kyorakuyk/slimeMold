@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { estimateCallCost, aggregateCostByAgent } from './agentEconomics';
 import { economicsOf, resolveModelPrice, type AgentEconomics } from './routerScoring';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 function ag(model: string, cost?: AgentEconomics, subscription?: boolean): AgentConfig {
   return {

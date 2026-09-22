@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-06
+updated: 2026-09-22
 tags:
   - SlimeMold
   - Agent
@@ -11,7 +11,7 @@ tags:
   - Rust
   - 工作流
   - 工程复盘
-period: 2026-07-29 至 2026-09-06
+period: 2026-07-29 至 2026-09-18
 ---
 
 # SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
@@ -2292,9 +2292,410 @@ Issue 工作台采用四个面板：
 - reviewer 剩余问题归入 Phase 2 native host authority，而不是继续局部补 TypeScript gate：Rust-owned TaskGraph/Approval authority、destructive mutation capability、worktree identity race fencing、orphan terminal reconciliation、cleanup-unknown inspect/skip UI、conflict-aware side-effect merge 和持久化失败恢复。
 - 同一最终工作树质量门：`npm run test` 为 109 个测试文件、990 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；Rust 43 tests、fmt、diff-check 均通过。
 
-## 八、适合拆成的博客系列
+### 7.91 Phase 2 第一条垂直切片：TaskGraph → Issue → execution/DAG projection
 
-如果不想一次发布全文，可以拆成下面几篇：
+- 在独立分支 `phase2/taskgraph-issue-dag-projection` 建立第一条生产化控制面切片：`ProjectTaskGraph` 不再只停留在主控会话侧，生成任务图时同步 materialize 每个 Task 的稳定 Task Issue；批准任务图时把对应 Issue 推进到 `approved`。
+- 新增 `src/projectControl/taskGraphProjection.ts`：用 deterministic `issue:task:<taskGraphId>:<taskId>` 关联同一 Task、Issue、依赖边、TaskExecution、Attempt、Evidence 和 Acceptance；执行状态映射为 Issue/DAG 可读状态；缺失 Issue、Task/Issue 关联漂移、Issue 状态漂移和 execution lineage 漂移显式保留为 consistency 状态，不静默修复。
+- `generateTaskGraphCommand` 与 `approveTaskGraphCommand` 现在同时返回 ProjectControl snapshot 和可审计 `IssueCreated`/`IssueStatusChanged` facts；materialization 幂等，不重复创建 Task Issue。
+- 本轮仍是控制面底座，不宣称完整 UI 双向编辑已完成：下一条切片需要把该 projection 接入 IssueBoard 与 DAG 视图，并让 Worker event projection 回写两者；当前主线仍保留 native host authority 的独立生产验证边界。
+
+验证结果：`npm run test` 为 110 个测试文件、992 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 991 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.92 IssueBoard 读通 Task execution lineage
+
+- IssueBoard 现在从 `ProjectTaskGraph`、最新兼容 `WorkerRunQueueState` 和同一组 `taskId` 生成只读 Task projection；Issue 卡片可以显示关联 Task、当前执行列和 Evidence 数量，不再只显示独立 Issue 状态。
+- 新增 Worker registry → canonical `DomainProjection` 适配，校验 `taskGraphId` 与 `taskGraphVersion`，再复用同一个 TaskGraph projection；组件不维护第二套执行状态，也不新增执行副作用入口。
+- Issue、Task、TaskExecution、Attempt、Evidence 和 Acceptance 现在在 IssueBoard 上有第一条可见的 lineage；DAG 画布的同一 projection 接入仍是下一条切片，当前不宣称双向编辑已完成。
+
+验证结果：`npm run test` 为 110 个测试文件、994 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 993 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.93 专业 OrchestratorPanel 接入 TaskGraph DAG projection
+
+- 新增 `TaskGraphDAGView`，只读渲染 canonical TaskGraph projection：Task 节点、依赖边、Issue、TaskExecution/Attempt、Evidence、Acceptance 和一致性状态均来自同一 projection；不开放第二套画布编辑或执行协议。
+- OrchestratorPanel 根据当前 orchestration 的 `sourceTaskGraphId`/WorkerRun 选择 graph，校验 `taskGraphId` 与 `taskGraphVersion` 后显示 DAG；版本漂移或 lineage 不一致显示恢复边界，不静默画错状态。
+- 现在的可见链路为：主控 TaskGraph → Task Issue → IssueBoard lineage → Orchestrator DAG → WorkerRun/Evidence/Acceptance；DAG 编辑命令、Issue↔DAG 互相定位和 plan revision 写回仍是后续切片。
+
+验证结果：`npm run test` 为 111 个测试文件、995 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 1000 keys 对齐；`cargo test --manifest-path src-tauri/Cargo.toml` 为 43 tests 通过；`cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.94 Native cleanup capability 与 Worktree identity hardening
+
+- Rust 的 Worktree registration 现在保存 `generation + canonical path + branch`，Cleanup 不再只按 path 认领对象；当前 Git worktree path/branch 漂移时 fail-closed。
+- normal Worktree registration 必须消费当前 host 通过受控 `git worktree add` 产生的 pending lease，重复注册仅允许同一 identity 幂等返回。
+- orphan recovery 对 missing path 要求受控 Worker branch 仍存在；existing path 仍必须与 Git worktree branch 精确匹配。
+- Cleanup 新增 Rust-owned 一次性 capability：native revalidation + 原生确认对话框签发 token，destructive `dev_cleanup_worktree` 必须携带精确 token，成功后立即消费。
+- `DevSession` 的 Acceptance 与 Cleanup approval 对外只返回深拷贝，避免调用方反向修改 durable approval snapshot。
+- 验证：`npm run test` 为 `111` 个测试文件、`996` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1000` keys 对齐；Rust `45` tests、Tauri session 定向 `27` tests、`cargo fmt --check` 和 `git diff --check` 通过。
+
+### 7.95 TaskGraph DAG 双向 selection、revision command 与 Issue Command/Event 闭环
+
+- OrchestratorPanel 的 DAG projection 与 IssueBoard 共享 `viewStore.taskGraphSelection`，selection 只保存 `projectId/taskGraphId/taskId/issueId`，不持久化为事实；Issue card 与 DAG node 互相高亮、可定位。
+- DAG 选中 Task 后可提交 title/dependsOn 修改；`reviseTaskGraphCommand` 生成新 graph ID 和递增 graphVersion，写入 `revisionOf`，旧 graph 标记 `superseded`，新 Issue 重新 materialize，所有状态变化通过 DomainEvent 记录，禁止直接 mutate 旧 graph。
+- revision command 拒绝 unknown dependency、self-loop 和 cycle；ready session 可回到 plan-review，executing session 不可修改任务图。
+- IssueBoard 的 queue/approve/triage 改为 `transitionIssueCommand` + `IssueStatusChanged` + project event buffer/save，不再建立第二套 UI snapshot mutation。
+- 增加 persistence round-trip regression：重启模拟后旧/new graph history、Task Issue ID、Task/DAG projection 仍可恢复；selection 保持临时状态。
+- 验证：`npm run test` 为 `111` 个测试文件、`1004` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.96 Cleanup capability replay invalidation 与 revision-aware consistency audit
+
+- Rust native cleanup capability 在 path/branch drift、CAS 删除失败、worktree remove 部分失败、session read-back drift 和 host probe error 后都会失效；错误 token 不再留下可重放的 destructive binding。无 fingerprint 的未授权调用仍只拒绝、不消耗合法 approval。
+- Project control consistency audit 识别 `IssueStatusChanged`、`TaskGraphRevisionCreated`、`TaskGraphSuperseded`，能检查 Issue status drift 和 TaskGraph revision graphVersion/approval，不再把新 command/event 当成 orphan 或缺少 proposal。
+- 保留未知 cleanup 的 durable `unknown/needs-user` 和 side-effect lock/claim/replay 约束；未重新执行真实 destructive cleanup。
+- 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests、`cargo fmt --check`、`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.97 Unassigned Issue transition 的项目事件流修复
+
+- `transitionIssueCommand` 接受显式 project context；Issue 未认领时仍把 `IssueStatusChanged` 写入当前 project stream，避免 IssueBoard 的 event buffer 因 `issue:<id>` stream 与当前项目不一致而 fail。
+- IssueBoard queue/approve/triage 的 command/event 路径现在同时覆盖 project-owned 与 unassigned Issue。
+- 验证：`npm run test` 为 `111` 个测试文件、`1005` 个测试通过；此前同一最终工作树的 `npm run build`、`npm run i18n:check`、Rust `45` tests、`cargo fmt --check`、`git diff --check` 均通过。
+
+### 7.98 Phase A/B 层级协议与项目规划闭环
+
+- 新增 `src/projectControl/hierarchy.ts` 与 `protocol.ts`：定义 Master/Project Delivery Architect/Department/Module/Worker/Specialist 及横向审查角色；实现 `ChildScope = ParentScope ∩ PolicyScope ∩ ChildTaskScope`，并对文件、数据类别、工具、角色、depth/fan-out、Token、调用次数、费用、时限做最严格求交；结构化 Agent envelope、ContextPack、DelegationRequest 和 FeedbackRequest 具备第一版运行时边界校验。
+- 新增 `src/projectControl/projectPlanning.ts` 与 planning types：承建方可生成带需求、方案、可行性、里程碑和部门 charter 引用的 `ProjectPlan` 草案；只有可行且无未决阻塞问题的计划才能批准；未批准计划不能创建 dispatched `DepartmentWorkPackage`；多模型 planning review 冻结 EvidencePack、保留全部 opinion 和少数意见。
+- 将 ProjectPlan proposal/approval、Department Work Package dispatch 接入 `src/projectControl/commands.ts` 的 Command/Event；接入 `persistence.ts` 和 `projectControlConsistency.ts`，支持旧快照兼容、规划事实 read-back 和版本 drift 审计。未接入 UI、真实 Agent provider、递归调度或 Tauri Worker 执行，不能据此宣称层级化生产能力已完成。
+- 验证结果：`npm run test` 为 `114` 个测试文件、`1026` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.99 Evidence projection、bounded retrieval 与 Worker feedback gate
+
+- 新增 `progressSummary.ts`、`evidenceIndex.ts` 和 `retrieval.ts`：从 TaskGraph projection 聚合 evidence-backed ManagerBrief/TaskProgressCapsule；Evidence index 只保存结构化 metadata/terms，支持 exact ID、metadata、关键词候选、结果/Token 上限和跨项目拒绝，关键词结果不会单独成为事实或权限。
+- 新增 `contextPack.ts` 与 `delegation.ts`：ContextPack 对文件、数据类别、工具和 Agent role 做显式访问判断；delegation graph 检查 project 隔离、幂等 key、fan-out 与 Task parent/child cycle。
+- WorkerQueue 新增 `waiting-feedback` 状态和 `TaskFeedbackRequested` replay fact；FeedbackRequest 必须绑定当前 project/task/attempt，Run 在无 running 但存在等待反馈时保持 blocked；已 claim 的副作用在 waiting 前先进入 unknown，禁止生成非法 terminal receipt。
+- 当前切片仍未实现 Feedback resolution/PlanRevision 自动重派、完整 Agent provider 调度、UI 投影、真实 Tauri disposable E2E 或独立 reviewer `passed=true`，控制面继续保持 `mvp-closed-unverified`。
+- 验证结果：`npm run test` 为 `119` 个测试文件、`1041` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；本轮未修改 Rust，未重复运行 Rust 测试；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.100 Bounded Budget、Release Gate 与 DAG expansion
+
+- 新增 `src/projectControl/budget.ts`：以 reserve/settle ledger 控制 token、调用次数、费用和时长；reservation 具备 project/task 归属和幂等重放，超额 settlement 明确返回 `over-budget`，安全整数溢出拒绝。
+- 新增 `releaseGate.ts`：QA、Security、Integration receipt 必须项目一致、通过、独立且无 blocking issue；固定 slot kind 校验和高影响用户批准门只生成 `ready/blocked` candidate，不直接执行 release。
+- 新增 `taskGraphExpansion.ts`：动态新增任务必须引用 Evidence、绑定 source、通过数量/depth/fan-out/依赖环校验；审批前不改图，审批时重新校验 proposal 与 base graph version，并通过既有 `reviseTaskGraph` 生成新 graph revision。
+- 本轮独立 reviewer 曾针对旧 staged snapshot 运行但未在超时前返回；其 verdict 按 interrupted/未验证处理，commit `f136f12` 明确为 `(unverified)`，不得标记 `[verified]` 或宣称生产级 release/DAG 自治。
+- 验证结果：`npm run test` 为 `122` 个测试文件、`1055` 个测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1009` keys 对齐；Rust `45` tests 与 `cargo fmt --check` 通过；`git diff --check` 通过。Vite 既有动态 import/chunk size warning 未新增失败。
+
+### 7.101 对抗性审阅 P0 修复与执行层回归收口
+
+- 修复 Worker 成功路径的生产装配：`App.tsx` 现在为 GUI Worker side-effect recorder 注入基于持久化 EvidenceStore 的 host verifier；`workerSideEffects.ts` 新增 durable persistence adapter helper。成功 receipt 仍必须通过 Evidence provenance、lineage、worktree 和 base revision 校验；本轮没有把该修复冒充为真实 Tauri E2E 通过。
+- 修复执行层的确定性缺陷：`topoStages` 对 loopGate data 回流停止抬高 gate，并增加 bounded fail-closed guard；`Semaphore` 使用真实 queue entry 清理 AbortSignal，取消的 waiter 不再吞掉后续 permit；增量/retry 状态复位保留既有 outputs；旧 run 的 fail-fast callback 不再通过共享 generation abort 新 run；cache strike 按 workflow/node scope 收敛，branch cache 保存并恢复激活 handles。
+- 收紧宿主验收与控制面事实边界：Worker acceptance 在 build/test 前先检查 changed protected/disallowed paths，并将 package/lockfile/Vitest 配置、脚本和测试目录加入默认 protected paths；Issue 创建改走 `createIssueCommand` + `IssueCreated` fact；Brief/Architecture/TaskGraph 的 approval consistency 增加 snapshot-approved 但缺批准事实的反向检查；active workflow workspace 使用统一 resolver。
+- 修复可见产品问题：NodePalette 将 `nodepalette` 纳入 i18n fallback namespace；移除 `topbar.run` 重复 key；i18n checker 按 namespace 文件检测真正重复定义，不把不同 namespace 的同名 key 误报为重复。
+- 本轮所有新增回归均先验证 RED，再验证 targeted GREEN；未修改 `CODEBUDDY.md`、未修改 `D:/Agents/SMtest`，未 push/merge，状态继续保持 `mvp-closed-unverified`。
+
+验证结果：
+
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；仍有既有 dynamic/static import 与大 chunk warning；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 尚未在本轮重跑；独立 reviewer 仍没有针对当前最终工作树返回 `passed=true`，因此不能标记 `[verified]` 或宣称 Phase 2 生产级完成。
+
+
+### 7.102 前置策略拒绝的失败证据补齐
+
+- 自验收发现：Worker acceptance 的 preflight path-policy 拒绝会阻止宿主 build/test，但原实现直接返回空 `evidenceIds`/`acceptanceId`，使“未执行的原因”无法进入 durable 交付档案。
+- 修复 `src/dev/workerAcceptance.ts`：preflight 拒绝现在先写入并 flush 失败 `path-policy` Evidence，再持久化 `passed:false`、`failedChecks:['path-policy']` 的 Acceptance，之后才返回失败；仍不会执行受保护的 build/test oracle。
+- 新增回归断言，覆盖“不执行 build/test + Evidence/Acceptance 均有 lineage 且持久化”的组合。
+
+验证结果：
+
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+本轮仍未执行真实 Tauri Worker/GUI read-back；当前状态继续为 `mvp-closed-unverified`。
+
+### 7.103 Worker Evidence verifier 三条 Tauri 生产路径收口
+
+- 自验收发现 `runQueuedWorker` 虽已使用持久化 host Evidence verifier，但启动恢复 `recoverInterruptedWorkerEffects` 和手动 retry/skip 恢复路径仍调用无 verifier 的 recorder；这会使恢复阶段遇到 succeeded receipt 时继续 fail-closed，上一轮“全生产路径修复”并不完整。
+- 新增 `createPersistedWorkerSideEffectRecorder`，统一从 durable Evidence persistence 构造 host verifier；`App.tsx` 的 queued execution、启动恢复和手动恢复三处均改用该 factory。
+- 先将 durable persistence 测试改为要求新 factory 并确认 RED（`createPersistedWorkerSideEffectRecorder is not a function`），再实现 factory、运行 targeted GREEN。
+
+验证结果：
+
+- `npx vitest run src/projectControl/workerSideEffects.test.ts`：22 个测试通过；
+- `npm run test`：123 个测试文件、1067 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disposable fixture 做了文件事实 read-back；该 fixture 被识别为旧通用 workflow（`workerRuns=[]`），不是当前 WorkerQueue 执行。自动化打开项目入口在本次 WebView 输入通道中未获得可靠回读，因此没有把旧 workflow 的 Evidence/Acceptance 记录冒充为当前 Worker E2E。真实 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 仍未通过当前 HEAD 的完整 GUI 闭环，状态继续为 `mvp-closed-unverified`。
+
+
+### 7.104 真实 Tauri Worker GUI 自验收：worktree 分配 fail-closed
+
+- 通过当前分支真实 Tauri WebView 加载仓库外 disposable Worker fixture，经过轻量工作台的 `确认执行计划` 产品门，确实写入 `RunCreated`、`TaskQueued`、`RunStarted` 和 `TaskStarted`；这不是 headless 或 Agent 自报结果。
+- 在独立 clone `D:/Temp/slimemold-worker-acceptance-isolated-20260914-094939` 上，Run `run-3973fc2f-cc49-4e69-a59c-0822dda5e28c` 最终为 `partial`，Task 为 `failed`，canonical error 为 `worktree 分配失败：创建 worktree 失败`；目标 `docs/WORKER_E2E_OK.txt` 不存在，`evidence/host.jsonl` 和 `acceptance/records.jsonl` 均没有记录，Git worktree list 没有登记成功 Worker。
+- 同一 identity 在短 disposable clone `D:/Temp/sm-e2e` 上直接执行 `git worktree add` 成功，而长 fixture 的同一次尝试留下 branch 后报 `'$GIT_DIR' too big`；因此本次失败首先暴露了 Windows/Git worktree 路径长度边界，不能冒充 Evidence/Acceptance 成功，也不能据此宣称 Worker 闭环已通过。
+- 另建短根 approval-fact fixture `D:/Temp/sm-e2e-accept`；第二次 GUI 确认动作被自动化执行审批拦截，未产生 Run，未把它计入结果。
+- 失败 Run、branch 和 disposable probe worktree 均保留；没有清理成功 worktree，没有触碰 `D:/Agents/SMtest`。
+
+本次真实 GUI 验收结论：`FAIL / mvp-closed-unverified`。代码/自动化质量门仍通过，但 Worker → Evidence/Acceptance → Delivery → Cleanup → Restart/Recovery/read-back 的成功闭环尚未通过当前 HEAD；不得标记 `[verified]`、push 或 merge。
+
+### 7.105 旧快照 reviewer 发现的执行层回归补齐
+
+- 独立 reviewer 返回的是旧快照 `e8a8563` 的 fail-closed 结果，不能外推到当前 HEAD；其中 preflight Evidence/Acceptance 意见已由 `0304041` 修复。
+- 对仍适用于当前 HEAD 的两处机制缺陷先写 RED 回归：已有 permit 时，已中止的 `Semaphore.acquire` 会错误返回 release；增量 skip 不恢复缓存中的 branch handles。
+- 修复 `src/engine/rateLimiter.ts`：先检查 `signal.aborted`，再消费 permit；修复后取消不会拿到许可。
+- 修复 `src/engine/nodeExecutionPolicy.ts` 与 `src/engine/executor.ts`：incremental-skip 按当前 cache scope/key 恢复 branch handles，并把空数组保留为全部屏蔽，避免下游错误执行旧分支。
+
+验证结果：
+
+- targeted：`rateLimiter.test.ts`、`nodeExecutionPolicy.test.ts` 共 29 个测试通过；
+- `npm run test`：123 个测试文件、1069 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+这些是代码/自动化修复，不改变真实 Tauri Worker GUI 闭环仍未通过的结论；状态继续为 `mvp-closed-unverified`。
+
+### 7.106 对抗性审阅 P0/P1 边界修复
+
+- `66bd610`：Worker acceptance 的 tracked changed-files 现在按 `lease.assignment.baseRevision` 比较，而不是只比较当前 `HEAD`；Worker 先提交 protected 文件不能再通过 preflight 隐藏变更。
+- `193cd75`：Issue status command 拒绝把已归属其它项目的 Issue 写入当前项目事实流；未分配 Issue (`projectId:null`) 仍可由当前项目接管。
+- `da7a936`：Codex Worker 只有在 host Acceptance 返回非空 `acceptanceId` 且 Evidence 存在时才能返回 `succeeded`。
+- `e632111`：loop round cache invalidation 按 `wfId + nodeId` 作用域执行，避免同类型节点跨 workflow/cache scope 被误清除。
+
+本轮明确未宣称已解决的 reviewer 风险：path-policy 与 build/test 之间的 TOCTOU、取消发生在 worktree allocation 后的 orphan rollback，以及 succeeded receipt 对 Acceptance/Evidence 的完整 orchestration/stage provenance read-back。这些仍阻止生产级 `[verified]`。
+
+验证结果：
+
+- targeted：capabilities/workerAcceptance 23 个、commands 14 个、codexWorkerExecutor 7 个、runLoop/nodeCache/executor 42 个测试通过；
+- `npm run test`：123 个测试文件、1070 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 失败结论不变，当前状态继续为 `mvp-closed-unverified`。
+
+
+### 7.107 记录 ChangeSet 与远端开发生态决策边界
+
+- 本轮没有修改生产代码，没有修改 `D:/Agents/SMtest`，没有 push/merge，也没有把计划、图标素材、原始日志或 `.workbuddy` 纳入本轮文档提交；控制面状态继续为 `mvp-closed-unverified`。
+- 按用户要求暂停实现，补充 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md`，新增 ADR-SM-051 至 ADR-SM-067。
+- 文档记录了 Git worktree 作为代码状态/谱系第二事实源、ChangeSet 一级对象、Repository 多对多引用、Local/Remote Observation 分离、GitHub 外部投影、External Operation Ledger、多仓库 Integration Saga、snapshot-bound Context Gateway、混合 GitObservation 采集、宿主 commit 身份、远端 secret 隔离、Council 治理和 provisional 性能 guardrails。
+- 正式记录“版本化架构协议”是后续实现前的协议门禁：当前只纳入计划，尚未声称协议文档、schema、兼容矩阵或 conformance fixtures 已实现。
+- 待议事项同步扩展为协议版本/迁移、ChangeSet 持久化、GitHub 权限与同步、外部操作恢复、多仓库补偿、Council quorum/权重/veto、artifact GC 和 benchmark 等问题。
+
+验证结果：
+
+- `git diff --check`：通过。
+- 本轮为文档决策整理，未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless 或 Rust 测试；不能把本轮文档检查写成生产质量门通过。
+
+
+### 7.108 执行引擎第一刀：抽离纯执行计划编译
+
+- 本轮在新的本地 checkpoint `4093b9f` 之后开始实施执行引擎渐进拆分；保留无关未跟踪计划、图标素材、原始日志和 `.workbuddy`，没有 push/merge，也没有修改 `D:/Agents/SMtest`。
+- 新增 `src/engine/executionKernel.ts` 与 `src/engine/executionKernel.test.ts`，把图展开、执行集计算、`retryFailed` 作用域、层内冲突簇、循环最大轮数和运行选项归一收拢为无 store、无 I/O 的纯 `compileExecutionPlan`。
+- `src/engine/executor.ts` 现在消费该计划并继续负责副作用、节点执行、缓存失效、运行事件、状态写回和收尾；本轮没有把 Tauri、Worker、Evidence、Acceptance、Receipt 或 ProjectFile 纳入拆分，避免一次性改变生产事实边界。
+- 测试先固定了“retryFailed 必须包含失败节点自身及其下游”的契约；迁移时补上失败节点本身的 force 标记，修正原有实现只加入下游、可能漏重跑失败节点的问题。
+- 这是执行内核的第一条垂直切片，不代表执行引擎已经完成拆分，也不代表真实 Tauri Worker 闭环已通过；控制面状态继续为 `mvp-closed-unverified`。
+
+验证结果：
+
+- targeted：`executionKernel`、`executorLifecycle`、`runScheduler`、`graphAlgo` 共 4 个测试文件、81 个测试通过；
+- `npm run test`：124 个测试文件、1073 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 仍未重新验收；本轮只完成执行计划纯逻辑的进程内拆分，不能标记 `[verified]`。
+
+
+### 7.109 执行引擎第二刀：抽离运行生命周期协调器
+
+- 本轮在本地 checkpoint `cbdaaa9` 之后继续执行渐进拆分；未 push/merge，没有修改 `D:/Agents/SMtest`，保留 `.gitignore` 的非本轮改动以及其它未跟踪计划、素材和 `.workbuddy`。
+- 新增 `src/engine/executionCoordinator.ts` 与 `src/engine/executionCoordinator.test.ts`，将 per-workflow 的运行代次、准入、重复运行拦截、force takeover、stop、abort、finish ownership 和 stale completion fencing 从 `executor.ts` 抽出。
+- `executor.ts` 不再维护 `runGens`、直接持有该生命周期的 `AbortController` 或通过旧 generation map 取消；节点调度、运行事件、store 写回、节点副作用、资源清理和持久化仍留在原路径，避免扩大本轮范围。
+- 协调器将 fail-fast abort 与用户 stop 区分：fail-fast 只中止当前 signal、不推进 generation；stop/force takeover 推进 fence。旧运行的 finish 不能清理新运行的取消句柄。
+- 这是第二条进程内垂直切片，不代表 Host Adapter、Evidence/Acceptance/Receipt 或 ProjectControl 持久化已经拆出；真实 Tauri Worker GUI 闭环仍未通过，状态继续为 `mvp-closed-unverified`。
+
+验证结果：
+
+- targeted：`executionCoordinator`、`executorLifecycle`、`executorEvents`、`executorIntervene`、`executor` 共 5 个测试文件、42 个测试通过；
+- `npm run test`：125 个测试文件、1078 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：45 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri Worker GUI 仍未重新验收；本轮没有标记 `[verified]`。
+
+
+### 7.110 真实 Tauri Worker 垂直闭环验证：Worktree 成功但验收与恢复失败
+
+- 本轮验证基线为执行生命周期协调器提交 `9fed909`，随后创建仅包含本轮文档变更边界的空 checkpoint `1e94122`；没有修改生产代码，没有 push/merge，没有修改 `D:/Agents/SMtest`，也没有清理成功的 disposable worktree。
+- 第一份短路径 fixture `D:/Temp/sm-tauri` 通过真实 Tauri GUI 的项目选择和执行计划确认入口验证；由于 `.slimemold/acceptance/records.jsonl` 父目录不存在，`dev_init_session` 后的 Acceptance store 初始化失败，错误为 `failed to open file .../.slimemold/acceptance/records.jsonl with os error 3`，UI 显示“开发宿主不可用，Worker 未启动”。重启后其事件流仍有 15 条，但 `workerRuns` 被读回为空，说明该失败路径也暴露了持久化快照覆盖问题。
+- 为隔离前置目录缺陷，第二份 fixture `D:/Temp/sm-tauri2` 以 Git 基线 `3be065e` 创建，并预置空的 `.slimemold/acceptance/records.jsonl` 与 `.slimemold/evidence/host.jsonl`。真实 GUI 确认执行计划后，事件流按顺序产生 `ExecutionDraftApproved → RunCreated → TaskQueued → RunStarted → TaskStarted → TaskFailed → RunPartial`。
+- 第二次运行真实创建了 Worker worktree：`D:/Temp/sm-tauri2-workers/w-7461736b2d657865637574696f6e3a72756e2d31343131383266342d353539302d343434612d383938372d3466643266343139626665623a7461736b2d6372656174652d776f726b65722d6d61726b65723a617474656d70742d31`，branch 为对应的 `worker/w-...`，基线为 `3be065ee082a5c4c10c1c3f0c11226154485b1f5`；worktree 真实存在，`docs/WORKER_E2E_OK.txt` 真实存在且内容为 `SlimeMold Tauri Worker E2E passed.`。这证明了 `确认计划 → Worker Attempt → Tauri worktree → Worker 文件落盘` 已穿过当前 HEAD。
+- Host Acceptance 随后失败在 Rust `dev_exec` 命令白名单：前端 `gitChangedFiles()` 必须调用 `git diff --name-only 3be065ee082a5c4c10c1c3f0c11226154485b1f5`，而 Rust worktree 白名单只覆盖 `git diff --name-only HEAD`，因此返回 `dev_exec: 命令在当前 cwd 不被允许`。本次失败发生在 changed-files 读取之前，host Evidence 为 0 条、Acceptance 为 0 条；Run 为 `partial`，Task 为 `failed`，Orchestration 为 `failed`，没有 Delivery 或 Cleanup。
+- 重启第二份 Tauri 应用后，事件流仍保留 19 条，failed worktree、branch 和 marker 均仍在；但 `project.json` 的 `workerRuns` 从 1 变回 0，UI 回到“准备执行/执行编排已生成”，Orchestration 的 `failed` 与 `runIds` 仍保留。这证明当前 Restart/Recovery 不能可靠恢复 WorkerRun 快照，且不能把保留的 Git worktree 单独解释为控制面恢复成功。
+
+验证结果：
+
+- 真实 Tauri GUI：项目打开、计划确认、Worker 启动、worktree 分配和 marker 文件 read-back 均有实际窗口/磁盘/Git 事实；
+- Worktree：创建成功，未清理，保留现场供后续修复与复核；
+- Host Acceptance：失败，Evidence/Acceptance 均为 0 条；
+- Restart/Recovery/read-back：失败，`workerRuns` 丢失但事件流和 worktree 仍保留；
+- 本轮未重新运行 `npm run test`、`npm run build`、`npm run i18n:check` 或 Rust 测试，不能把此前自动化质量门结果当作本轮 GUI 验证结果。
+
+本轮真实 Tauri 验收结论：`FAIL / mvp-closed-unverified`。下一步应先修复 Acceptance 的 base revision Git 命令 conformance、缺失 JSONL 父目录的首次启动处理，以及 WorkerRun snapshot 与 DomainEvent 的恢复一致性；在此之前不得继续拆 Runtime/Host Adapter、不得标记 `[verified]`、push 或 merge。
+
+
+### 7.111 修复 Tauri Acceptance 首次启动与 WorkerRun 事件恢复
+
+- 本轮在修复前 checkpoint `dcf4d16` 之后实施，修复提交为 `0fd4d47`；没有修改 `D:/Agents/SMtest`，没有 push/merge，也没有清理既有 disposable Worker worktree。
+- `src/dev/evidence.ts` 与 `src/dev/capabilities.ts` 现在把 Tauri/Windows 的 `os error 3` 识别为缺失文件，仍拒绝 `os error 5` 和权限错误；新增 RED→GREEN 回归覆盖首次缺失 JSONL 文件。
+- `src-tauri/src/lib.rs` 的 worktree Git 白名单现在允许与 TypeScript `assertSafeGitRevision` 同约束的 `git diff --name-only <baseRevision>`，拒绝 `..`、`//`、过长和非法字符；新增 Rust 回归覆盖安全 SHA、branch revision、路径逃逸和长度边界。
+- 新增 `src/projectControl/workerRunRehydration.ts`，从当前项目边界内的 `RunCreated`、批准且版本匹配的 TaskGraph 以及 Task/Run 生命周期事件重建缺失的 WorkerRun projection；缺图、版本漂移和未知 Task 不自动猜测，保持 fail-closed。
+- `App.tsx` 启动 Worker 事实审计前接入该重建：仅当 ProjectFile 的 `workerRuns` 为空且事件流可完整重建时，先保存 projection，再执行一致性审计和恢复 UI；实际状态转换由事件流控制，不新增伪造事件。
+
+验证结果：
+
+- targeted：5 个测试文件、54 个测试通过；
+- `npm run test`：126 个测试文件、1079 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1009 个 key 对齐；
+- `npm run headless -- examples/headless-demo.json`：7 个节点，成功 6、跳过 1、失败 0；
+- `cargo test --manifest-path src-tauri/Cargo.toml`：46 个 Rust 测试通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `git diff --check`：通过。
+
+真实 Tauri recovery read-back：修复前遗留的 `D:/Temp/sm-tauri2` 在启动前为 `workerRuns=0`、事件流 19 条、Worktree 保留；修复后真实 Tauri 启动把同一 Run 重建为 `partial`，ProjectFile read-back 为 `workerRuns=1`，UI 显示“Worker 部分失败，需要恢复”，没有启动新 Attempt，既有 Worktree 和 marker 保持不变。该事实证明 Restart/Recovery projection 已修复，但本轮没有再次执行新 Worker，因此 Evidence/Acceptance/Delivery/Cleanup 的成功闭环仍未通过，控制面继续为 `mvp-closed-unverified`。
+
+### 7.112 编排界面深色主题与 Worker 收口信息修复
+
+- 本轮在修复前 checkpoint `53b62da` 之后实施，修复提交为 `afa0271`；未修改 `D:/Agents/SMtest`、disposable fixture 或既有 Worker Worktree，没有 push/merge/cleanup。
+- `src/styles/typora.css` 为 `.sm-pro-shell` 增加主题作用域映射，令 legacy `bg-paper`、`text-ink-*`、`border-line`、状态色和专业暗色变量一致；新增 TaskGraph DAG 的标题、节点、lineage、Evidence/Acceptance 字段和边关系布局，避免暗色界面中出现浅色卡片、低对比度文本和字段粘连。
+- `OrchestratorPanel` 对成功 Task 在 Cleanup proposal 尚未生成时显示明确状态；Cleanup proposal 宿主准备异常现在转换为可见的 blocked proposal，不再静默消失，仍保持 fail-closed，不允许绕过批准直接清理。
+- 中英文 `orchestrator.bindLocked` 改为单一明确的“阶段绑定已锁定 / Stage bindings locked”，避免“执行中/已结束”混合状态文案。
+
+验证结果：
+
+- targeted：3 个相关测试文件、17 个测试通过；
+- `npm run test`：126 个测试文件、1080 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过；既有 dynamic/static import 与大 chunk warning 保留；
+- `npm run i18n:check`：中英文 1010 个 key 对齐；
+- `git diff --check`：通过；
+- 本轮未重新执行真实 Tauri Worker、Rust 测试或 headless；此前成功 disposable Worker 现场仍保留，当前控制面仍为 `mvp-closed-unverified`。
+
+### 7.113 归并跨工具会话与 AI 审查中的决策取舍
+
+- 本轮在本地 checkpoint `f3d1bce` 之后进行；只修改 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md` 和本日志，没有修改生产代码、`D:/Agents/SMtest`、disposable fixture 或成功 Worker Worktree，没有 push/merge/cleanup。
+- 读取并交叉核对当前 worktree、`docs/DEVELOPMENT_LOG.md`、其它 AI 工具的敏感归档、zcode 架构/UI 审查、`CODEBUDDY.md`，以及 Hermes 中 `查看项目代码`、`处理会话超限问题`、`修复 MasterAgentPage 未使用变量与 workflowState 测试期望` 三个会话和附加会话列表截图。
+- 在 ADR 文档中新增来源归并规则和 0.5 会话用途说明，新增 ADR-SM-069 至 ADR-SM-082，覆盖：原始对话不是事实源、跨会话 handoff、主控 Agent 作用域、Tauri/React 与 Rust/TS 边界、Provider/认证分离、可信插件限制、驾驶舱与专业画布、显式执行门、外部 AI 审查分级、真实 GUI 优先、Memory/Skill 晋升、节点与角色边界、Vite/Cargo watcher 隔离，以及初始完整框架愿景被垂直切片策略替代。
+- 明确保留未决边界：跨工具 handoff schema、auto-run/F5 最终策略、不可信插件进程沙箱、Provider capability matrix/CLI 可恢复控制、多项目 `masterAgentId` read-back 和 AI 审查资料的长期索引；文档没有把这些写成已实现能力。
+
+验证结果：
+
+- ADR 结构脚本：82 条 ADR，编号 `1–82` 连续且唯一；来源引用 `S1–S24` 无缺失/未知；敏感凭据模式匹配 0；`mvp-closed-unverified` 保留；
+- `git diff --check`：通过；
+- 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
+- 控制面状态继续为 `mvp-closed-unverified`。
+
+### 7.114 记录 Evidence/ContextPack 倒排索引的后置演进决策
+
+- 本轮在本地 checkpoint `8921d2c` 之后进行；只修改 `docs/architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md` 和本日志，没有修改生产代码、`D:/Agents/SMtest`、disposable fixture 或 Worker Worktree，没有 push/merge/cleanup。
+- 新增 ADR-SM-083：确认未来可能需要倒排索引，但当前 `src/projectControl/evidenceIndex.ts` 的结构化 metadata/terms + 线性扫描先作为正确性基线；索引必须是按 project/sourceVersion/scope 隔离、可重建的派生投影，不能成为 Evidence、Acceptance、权限或 Task 成功的事实源。
+- 记录后续触发条件：先对千级、万级、十万级 Evidence/Artifact 规模测量查询 p50/p95、构建/增量更新时间、内存、召回率、stale/dangling index 和 ContextPack token 成本，再决定内存倒排结构或 SQLite FTS 等实现；中文/多语言 tokenization 仍未决定。
+
+验证结果：
+
+- ADR 结构脚本：83 条 ADR，编号 `1–83` 连续且唯一；来源引用 `S1–S24` 无缺失/未知；敏感凭据模式匹配 0；
+- `git diff --check`：通过；
+- 本轮未运行 `npm run test`、`npm run build`、`npm run i18n:check`、headless、Rust 测试或真实 Tauri，因为没有修改代码或运行时协议；
+- 控制面状态继续为 `mvp-closed-unverified`。
+
+### 7.115 以 2048 机制复现验证独立产品交付档案
+
+- 本轮在本地 checkpoint `1123f67` 之后进行；SlimeMold 主仓库没有新增生产代码，未修改 `D:/Agents/SMtest`，未 push/merge/cleanup。独立产品保存在仓库外的 disposable repo，避免把成品代码混入控制面项目。
+- 真实运行 `npm run headless -- examples/2048.workflow.json`：6 个节点，成功 6，失败 0；该工作流使用 offline simulate，证明规划→架构→Builder→handoff 图连通，不证明真实 LLM 提取质量。
+- 外部产品以 public Steam `2048` 页面仅作可观察玩法参考，由结构化主控提取稿限定范围，再交给 3 个下游工作包：纯棋盘逻辑、原创 UI/持久化、release/acceptance。没有复制 Steam 商标、素材、截图、音频、源代码或私有实现。
+- 独立产品四阶段提交为 `c36485f`、`f3c3312`、`c974382`、`688c343`，最终证据档案提交为 `1c880dd`；档案包括 master extraction、downstream task graph、Acceptance、browser read-back、5 张截图和实验数据。
+
+验证结果：
+
+- 产品 Acceptance：`acc-fourfold-20260915143237462`，通过；7 个核心测试、5 个 Acceptance 子检查、静态 release build 通过；核心测试 294 ms，build 107 ms；
+- Playwright Chromium：6 个浏览器检查通过，覆盖初始棋盘、键盘合并、Undo、刷新持久化、2048 胜利层和无可移动结束层；5 张 1440×1032 PNG 截图已 read-back 并视觉检查；
+- 引擎实验：1,000 局确定性随机输入，160.25 ms；平均 119.88 步，p95 192 步，平均分 1,110.37，最高观察块 256；token/费用未计量，未写成 0；
+- `git diff --check`：SlimeMold 与独立产品均通过；当前 SlimeMold 控制面仍为 `mvp-closed-unverified`，真实 Master Agent 运行和完整 Worker→Delivery→Cleanup→Restart 闭环仍未宣称完成。
+
+### 7.116 补充 Fourfold 启动入口与 SlimeMold 编排 UI 证据
+
+- 本轮在主项目 checkpoint `e54c3f6` 之后进行；没有修改 SlimeMold 生产代码，没有修改 `D:/Agents/SMtest`，没有 push/merge/cleanup。证据通过隔离 Playwright context 读取当前分支 Vite UI，避免触碰用户浏览器和真实项目。
+- 节点图证据 `ORCH-001`：从 2048 starter template 读回 `6` 个节点、`7` 条连接，包含目标、规划、架构、仲裁回流、Builder 和 handoff；它证明 UI projection，不证明执行。
+- 主控证据 `ORCH-002`/`ORCH-002A`：读回项目级 `Ollama 本地智能体 / qwen2.5:3b` 的显式选择，以及选择前“全局未设置主控”的继承状态；权限边界明确写着主控只能提出结构化方案，不能直接修改/执行/发布；没有把截图解释成 LLM 调用。
+- Issue 证据 `ORCH-003`/`ORCH-003A`：读回空看板到创建 1 条 `需求` Issue 的前后状态，Issue 位于 `收件箱 / 未规划`，内容覆盖 2048 合并、随机生成、胜利和结束条件；隔离 context 不证明生产项目 durable persistence。
+- Fourfold 直接双击 `index.html` 的启动障碍已复现为 Chrome `file://` module CORS；独立产品新增 `run-fourfold.cmd` 和 server `--open`，修复提交为 `0135117`；最终证据档案提交为 `1a4cf7a`。
+
+验证结果：
+
+- 独立产品最终 Acceptance：`acc-fourfold-20260915144800090`，通过；7 个核心测试、5 个 Acceptance 子检查、静态 build 通过；
+- Playwright Chromium：6 个产品浏览器检查通过；5 张产品截图和 5 张 SlimeMold 编排 UI 截图均为有效 PNG 并纳入 Evidence index；
+- 编排 UI 证据机器档案：`artifacts/slimemold-orchestration-evidence.json`（位于独立产品档案仓库）；
+- 当前控制面继续为 `mvp-closed-unverified`；真实 LLM/Worker/Delivery/Cleanup/Restart 仍未被本轮 UI 截图替代。
+
+### 7.117 Fourfold online Worker 收口与 Manager Delivery Assembly
+
+- 本轮在现有本地 checkpoint 链之后继续执行，没有修改 `D:/Agents/SMtest`，没有 push、merge 或 Cleanup；所有 Worker worktree 保留为审计现场。
+- 真实 online Run `run-7db0134c-0f0f-4e5f-b8de-050b8e4789c3` 最终 read-back 为 `partial`：9 succeeded、2 failed、2 blocked。失败为 `task_unit_tests`、`task_integration_tests`，阻塞为 `task_browser_acceptance`、`task_docs`；没有标记 `[verified]`。
+- 本轮修复了 task-scoped Host Acceptance、Windows Rust command gate、`.cmd` shim、Node/tsc resolver、event/retry fence、pendingAttempt projection、TaskBlocked replay、并发 event/snapshot flush 等边界；修复后的真实 Evidence 已读到 `node --check` 与 `tsc --noEmit --target es2020` exitCode=0。
+- 成功 Worker worktree 未自动合并；为获得一个可运行的独立 disposable 产品，Manager 在 `C:/Users/rnfmabj/Documents/SlimeMold/Fourfold-online-session` 做了明确标注的 Delivery Assembly，提交 `81ca600`，并写入 `artifacts/online-master/manager-delivery-receipt.json`。这不是原始 Worker Run 全绿的替代声明。
+
+验证结果：
+
+- online assembly `npm test`：通过，输出 `tests passed: merge, move, score, spawn, game-over predicate`；
+- online assembly `npm run build`：通过，输出 `build check passed: 4 delivery files`；
+- local HTTP smoke：`http://127.0.0.1:4173/` 返回 HTTP 200；
+- Browser Use backend无法启动 Chromium，即使安装 `agent-browser` Chromium 后仍未形成可验证 localhost DOM read-back，因此 browser acceptance 明确为 blocked；
+- 主仓库最新质量门：`npm run build` 通过，`npm run i18n:check` 为 1011 keys 对齐，`npm run test` 为 126 test files / 1097 tests passed，`git diff --check` 通过；
+- 当前控制面仍为 `mvp-closed-unverified`；没有声称 Worker全绿、Delivery verified、browser acceptance passed、Cleanup或push。
+
+### 7.118 Fourfold Worker RunSucceeded 与真实 Delivery Acceptance
+
+- 通过 dependency artifact ContextPack 修复和 queued+failed recovery gate 修复，真实 online Run `run-7db0134c-0f0f-4e5f-b8de-050b8e4789c3` 最终 read-back 为 `RunSucceeded`：13 succeeded、0 failed、0 blocked，最终事件 sequence 563；历史失败 attempts仍保留在 `.slimemold/`。
+- 成功依赖 Worker 的 Worktree path/branch/revision 进入下游 lease 的只读 ContextPack；下游 Task 不再从空 baseline 盲跑。该修复提交于主仓库 `1ecf5bc`；queued+failed recovery显示修复提交于 `93c2608`。
+- integration Worker worktree 增加 `src/main.js` durable session bootstrap facade，真实 `persistence.test.js` 5/5 和 `interaction-flow.test.js` 3/3 通过，并产生 Worker worktree commits `28ffe55`、`41d7442`。
+- online Delivery 仓库组装成功 Worker-derived 产品与测试产物，提交 `40fcff6`，随后 provenance README 提交 `ef70320`；包含 `test:integration`、`test:interaction`、`test:browser` scripts 和 durable receipt `artifacts/online-master/manager-delivery-receipt.json`。
+- Delivery 真实验证：`npm test`、`npm run build`、integration 5/5、interaction 3/3、HTTP 200、Chrome 152.0.7977.83 CDP browser acceptance 1/1通过；browser acceptance覆盖移动、合并、Undo、刷新/重启持久化、offline和storage fallback。
+- Browser Use managed backend仍无法识别 Chromium，但独立 Chrome/CDP已形成真实 DOM/行为 read-back；该 backend限制没有被冒充为产品验收失败。
+- 主仓库最终质量门重新通过：`npm run build`、`npm run i18n:check`（1011 keys）、`npm run test`（126 test files / 1097 tests）、`git diff --check`；没有 push、主仓库 merge、Cleanup 或 reviewer `[verified]`。
+
+### 7.119 TaskGraph Worker 内部时序图
+
+- 新增自包含图示：`docs/diagrams/FOURFOLD_TASKGRAPH_WORKER_SEQUENCE.html`，使用 SVG 泳道表达 `ProjectControl → WorkerQueue → Worktree Host → Codex Worker → Host Acceptance → Evidence/Receipt → Delivery`。
+- 图中明确标出成功判定边界：Codex 文本不是成功事实，必须经过 changed-file scope、Host validation、Evidence 和 Acceptance；同时标出 dependency artifact ContextPack、Restart/Recovery retry loop 和 `RunSucceeded`。
+- 图右侧单独标出普通 Workflow 节点图为另一条路径，避免将 `coord.council` 红色节点、Ollama Agent 配置或节点耗时误读为 TaskGraph Worker 的成功/失败来源。
+- 图示依据本轮 durable facts：TaskGraph v1、13 tasks、RunSucceeded sequence 563、Delivery commit `40fcff6`；HTML 无外部依赖、无凭据。
+
+### 7.120 分封/认领图重画与 Antigravity 接入勘探
+
+- 原有 `FOURFOLD_TASKGRAPH_WORKER_SEQUENCE.html` 只表达了调用时序，未充分表达 SlimeMold 的核心设计意图；新增 `docs/diagrams/SLIMEMOLD_TASKGRAPH_DELEGATION_AND_CLAIM.html`，分成“目标控制层级”和“Fourfold 实际 TaskGraph 投影”两层。
+- 新图显式表达 Master/CEO → Project Delivery Architect → Department Head → Module Lead → Worker/IC → Specialist 的目标分封链，以及 DelegationRequest、ClaimLease、ContextPack、Worktree/Attempt、ProgressCapsule、Evidence/Acceptance 和 FeedbackRequest 的上下行边界。
+- Fourfold 实际 13 Task 以四个解释性 Work Package 展示，明确声明这些分组不是第二套任务系统；canonical source 仍是 `projectControl.taskGraphs[0].tasks`。
+- 本机已检测到 `D:/Family/Antigravity IDE`：产品元数据 `ideVersion=2.5.5`，CLI 报告 `1.107.0`；CLI 支持 `chat --mode agent`、workspace path 和 `--add-mcp`，官方文档支持全局 `~/.gemini/config/mcp_config.json` 与 workspace `.agents/mcp_config.json`。
+- 接入结论：Antigravity 可以作为 Worker Runtime Adapter 接入，但不能越过 SlimeMold 的 TaskGraph、Worktree、Host Acceptance、Evidence、Receipt 和 Recovery；当前尚未实现 adapter，也未修改用户的 Antigravity MCP 配置。CLI `--list-extensions` 能列出已安装扩展，但随后出现原生 V8 abort，暂不把该命令视为稳定管理接口。
+
+---
 
 1. 从 ComfyUI 到 SlimeMold：为什么我开始做节点式 Agent 工作流
 2. 一个 1500 行 executor 的重构：为什么我没有选择直接重写
@@ -2310,3 +2711,2538 @@ Issue 工作台采用四个面板：
 > 本文是 2026 年的回顾性整理，依据 Git 提交、开发日志和测试记录重建时间线。
 
 不要把事后整理的文章伪装成当时同步发布的开发日记。真实的失败、误判、回退和边界，反而是这段开发经历里最有价值的部分。
+
+### 7.121 Antigravity Worker Runtime Adapter 第一条垂直切片
+
+- 在不修改全局 `~/.gemini/config/mcp_config.json`、不保存凭据、不 push/merge/cleanup 的前提下，实现 `codex | antigravity` Worker Runtime 选择；默认仍为 Codex。
+- `ProjectSessionPanel` 对 queued Run 显示 Runtime selector；选中 Antigravity 后，`App → Project Worker Coordinator → registered Worktree` 使用新的 Runtime Adapter，旧的 Codex 路径保持不变。
+- 新增 `src-tauri/src/antigravity.rs`：校验 session generation 和登记 Worktree，生成 Attempt-scoped `.agents/slimemold-worker/<operationId>/context.json`，只在 workspace `.agents/mcp_config.json` 没有冲突时写入 `slimemold-worker` server，并等待 MCP `result.json`；没有 Attempt result 不返回成功。
+- 新增 `scripts/slimemold-antigravity-mcp.mjs`，暴露 `slimemold_get_task_context`、`slimemold_report_progress`、`slimemold_request_feedback`、`slimemold_submit_attempt_result`。MCP server 只读写当前 Attempt 目录，不能直接写 TaskGraph、Acceptance 或 Receipt。
+- Windows `.cmd` 启动只向 `cmd /C` 传固定启动词；真实任务指令写入 ContextPack 文件，避免把任意任务 prompt 拼入 shell command。CLI basename 限制为 `antigravity-ide.cmd`、`antigravity-ide.exe` 或 `antigravity-ide`。
+- `completed` 回报仍必须经过 Host Acceptance；`blocked` 回报创建绑定 project/task/attempt 的 `FeedbackRequest`。没有把 Antigravity UI、进程启动或 Agent 自报成功当作 TaskSucceeded。
+- 当前只实现 CLI 已确认的 `ask/edit/agent/custom` mode 值，并可传递 workspace `profile`；没有把未经官方契约确认的 model、thinking/reasoning 或 quota 映射成可用能力，也没有把 Antigravity 账户订阅伪装成 Gemini API/Vertex AI Provider。
+
+验证结果：
+
+- `npm run test`：127 test files / 1099 tests passed；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1015 keys 对齐；
+- `cargo check`：通过；`cargo test --lib`：50/50 passed；
+- `rustfmt --edition 2021 --check src/antigravity.rs`：通过；完整 `cargo fmt -- --check` 仍被既有 `src-tauri/src/lib.rs` 的 `dev_exec` 与测试格式漂移阻塞，本轮没有重排无关旧代码；
+- MCP stdio 实际 read-back：initialize/tools/get_context，以及 progress/feedback/submit result 写回均通过；
+- `git diff --check`：通过；当前没有独立 reviewer，因此不标记 `[verified]`。
+
+### 7.122 Antigravity Agent 配置与设置列表布局修复
+
+- 用户反馈 Antigravity 不能像 Codex CLI 一样配置，以及设置页底部的创建/删除操作被列表越界裁切。本轮将 `antigravity` 增加为独立 Agent protocol/runtime，不伪装成 OpenAI API。
+- Agent 设置现在可配置：Antigravity mode（ask/edit/agent/custom）、workspace profile 和可选 CLI path；当前 CLI 没有稳定的 model/thinking/reasoning 参数，因此 UI 明确显示由 Antigravity Runtime 控制，不提供虚假的模型下拉。
+- 配置的 Antigravity Agent 会被 App 层映射到 TaskGraph Worker Coordinator，启动 Worker 时传递 mode/profile/cliPath；普通 Workflow Engine 使用 Antigravity Agent 会 fail-closed，避免把交互式 CLI 当作普通聊天 API。
+- 修复 `AgentPanel` 的双层 flex 约束：左侧 Agent 列表 `min-h-0 + overflow-y-auto`，创建 footer `shrink-0` 固定在列表底端；右侧编辑表单内容滚动，禁用/删除操作栏移出滚动区并固定在底部。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1026 keys 对齐；
+- `npm run test`：127 test files / 1099 tests passed；
+- 当前运行中的 Tauri 窗口通过 WebView accessibility read-back 确认设置→智能体页面仍可打开；未输入凭据、未修改全局 Antigravity 配置；
+- 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。
+
+### 7.123 修复 AgentPanel 高度链断裂导致的 footer 裁切
+
+- 复现确认：截图中 Agent 列表的五条记录可见，但“按供应商预设新建…”及编辑区禁用/删除操作不可见；仅给列表添加 `overflow-y-auto` 未建立有效 viewport。
+- 根因：`SettingsCenter → AgentSection` 的嵌入容器是 block wrapper，而 `AgentPanel` 的 `inner` 只有 `flex-1`、没有 `h-full`，导致 `AgentsTab` 高度按内容计算，滚动区和 footer 被外层 `overflow-hidden` 裁切。
+- 修复：AgentPanel inner 增加 `h-full`；SettingsCenter 的 AgentPanel wrapper 改为 `flex min-h-0 flex-1`，让高度约束沿 `SettingsCenter → AgentSection → AgentPanel → AgentsTab → ul` 连续传递。
+- GUI read-back：fresh Tauri build 中左侧“按供应商预设新建…”可见；选中 Ollama Agent 后，右侧“禁用”和“删除此智能体”均位于底部操作栏且可见。当前仅 5 条 Agent，列表内容未超过 viewport，因此没有滚动需求；超过 viewport 时由真实 `ul` 的 `overflow-y-auto` 滚动，footer 位于滚动区外。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：en-US/zh-CN 1026 keys 对齐；
+- `npm run test`：127 test files / 1099 tests passed；
+- `git diff --check`：通过；
+- 本轮没有 push、merge、cleanup，也没有独立 reviewer `[verified]`。
+
+### 7.124 当前 HEAD Verified Closure：真实 Tauri Host Acceptance 成功
+
+- 本轮代码基线为 `f2b03db`，修复前一轮独立审查发现的主题文件拖拽遮罩和 NodePalette drag ghost 层级回归；同时修正 NodePalette 角色筛选的 `useMemo` 依赖。
+- 在仓库外创建并保留三个 disposable Git fixture。第一份 fixture 的 `runs/history.json` 保留了最早的“worktree 成功→patch preimage 缺失”尝试，随后同路径重复尝试在 `worktree.create` 因路径占用失败；第二份真实 Tauri workflow 暴露 protected `tests/**` 拒绝；没有绕过策略、伪造 Evidence/Acceptance 或删除失败 worktree。
+- 第三次 fixture `D:/Temp/slimemold-verified-closure-20260917-142509` 通过真实 `slime-mold.exe` WebView、GUI 项目菜单和 workflow 按钮执行：run 3 为 `success`；真实创建并保留 Worker worktree；结构化 patch 只修改两个 `src/components` 文件；build/test/diff 全部成功；Host Acceptance 为 `passed: true`、`failedChecks: []`、`changedProtectedPaths: []`。
+- 四条 host Evidence 和 Acceptance record 已写入 fixture 的 `.slimemold/evidence/host.jsonl`、`.slimemold/acceptance/records.jsonl`；完整路径、Evidence ID、Acceptance ID 和失败尝试记录见 `docs/reports/VERIFIED_CLOSURE_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；
+- `npm run i18n:check`：1026 keys aligned；
+- `npm run test`：127 test files / 1099 tests passed；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：50 passed / 0 failed；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，输出仅涉及本轮未修改的既有 `src-tauri/src/lib.rs` 格式漂移；
+- 真实 Tauri Host Acceptance：`acc-mu55bxiz-0522b09e`，通过；
+- 同一 Tauri WebView 的受控 DOM smoke read-back（原始 JSON 未单独归档，属于未归档的 manual observation）证明 dark/light veil 随 `--sm-bg` 变化、veil 为 `z-index=99999`、NodePalette drag ghost 为 `z-index=10000`；主题已恢复，未释放文件或执行 workflow；
+- 本轮不宣称 Antigravity E2E、WorkerQueue Restart/Recovery、Delivery/Cleanup、Browser Use managed backend 或历史 121 个 `(unverified)` commit 已逐笔 verified；没有 push、merge 或 Cleanup。
+
+### 7.125 当前 HEAD Worker Restart/Recovery 与 Skip 决策 read-back
+
+- 本轮在已验证 checkpoint `43fbcb6` 上继续，未修改生产代码；使用新的仓库外 disposable fixture `D:/Temp/sm-tauri2-recovery-v2-154444`，保留失败 fixture、真实 Worker worktree 和 side-effect journal，没有 Cleanup。
+- fixture 初始 ProjectFile 的 `workerRuns=0`，但保留 19 条合法 checksum 事件、批准 TaskGraph、失败 Attempt、`worker-execution` receipt 和真实 worktree；另一份 `...-153618` fixture 因路径替换后未重算 checksum，被当前 HEAD fail-closed，未冒充恢复成功。
+- 真实 Tauri 进程重启后，当前 ProjectFile read-back 为 `workerRuns=1`；Run=`partial`、Task=`failed`、attempt=`1`、worktree/branch/baseRevision/error lineage 完整；事件仍为 19 条，没有自动创建新 attempt。UI 明确显示“Worker 等待恢复核对”，并禁止自动重跑。
+- 通过真实恢复 UI 执行 `skip` 后，事件增至 20 条，新增 `WorkerRunRecoveryDecided`；`decision=skip`、`requiresNewAttempt=false`、`effectKeys=[]`；ProjectFile error 更新为恢复决策，attempt 仍为 1，worktree 仍保留。
+- 完整路径、事件 payload、ProjectFile 字段和未验证边界见 `docs/reports/WORKER_RECOVERY_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- 真实 Tauri restart/read-back：通过；
+- 真实 recovery UI：通过；
+- durable `WorkerRunRecoveryDecided(skip)`：通过；
+- ProjectFile / event stream / side-effect / Git worktree read-back：通过；
+- 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；当前代码质量门与独立 reviewer 结论仍绑定 `43fbcb6`；
+- 本轮不宣称 retry 新 attempt、Delivery/Cleanup、Antigravity E2E 或历史 commit 重写；没有 push、merge 或 Cleanup。
+
+### 7.126 当前 HEAD Worker Retry 新 Attempt 与 Host Acceptance 成功
+
+- 本轮在 `79dae6c` 上继续，没有修改生产代码；使用 `D:/Temp/sm-tauri2-recovery-v2-174611` disposable fixture。初始 `workerRuns=0`，事件 19 条，attempt 1 的副作用为 `unknown/needs-user`。
+- 真实 Tauri 重启后，轻量工作台显示 recovery gate；通过真实 UI 选择 retry，系统创建 attempt 2、新 worktree、新 branch 和新 idempotency key，没有复用 attempt 1 的未知副作用。
+- attempt 2 最终 `Run/Task=succeeded`；真实 marker 文件落盘；Host build/test/diff/path-policy 四条 Evidence 通过；Acceptance `acc-mu5cm748-b24a9dda` 为 `passed=true`、`failedChecks=[]`。
+- 事件尾部为 `WorkerRunRecoveryDecided → RunQueued → TaskQueued → RunStarted → TaskStarted → TaskSucceeded → RunSucceeded`；attempt 1 的 unknown receipt 仍保留，成功事实全部绑定 attempt 2。
+- 完整 Evidence ID、worktree/branch、attempt lineage 和未验证边界见 `docs/reports/WORKER_RETRY_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- 真实 Tauri recovery UI：通过；
+- retry 新 attempt/worktree：通过；
+- Host compile/test/diff/path-policy Evidence：4/4 通过；
+- Host Acceptance：通过；
+- marker 文件与 Git worktree read-back：通过；
+- 本轮没有修改生产代码，因此未重复运行 npm/Rust 质量门；没有 push、merge 或 Cleanup；
+- 本轮不宣称 Delivery/Cleanup、Antigravity E2E、Browser Use managed backend 或历史 commit 重写。
+
+### 7.127 DeliveryReceipt 与 Restart 后 Cleanup Proposal Read-back
+
+- 本轮从 checkpoint `5b874de` 继续，使用 `D:/Temp/sm-tauri2-recovery-v2-174611`；Delivery 实际执行来源保留为 `ab74d13`，没有修改生产项目，没有 push、merge 或 Cleanup。
+- 对 attempt 2 的 accepted marker 生成 `ArtifactCandidate`、用户批准和真实 DeliveryReceipt：destination 为 `D:/Temp/slimemold-delivery-dest-20260917-181500`，receipt=`artifact-delivery:candidate-tauri-worker-attempt-2-20260917:receipt`，file=`docs/WORKER_E2E_OK.txt`，source/content hash=`h16fxepq`，outputHash=`h8tva18`，outcome=`succeeded`。
+- destination 文件真实 read-back 成功；同一 candidate/approval 第二次调用返回相同 receipt，side-effect journal status=`ok`，artifact-delivery entry 为 `receipt/skip`。
+- 发现并修复三个断链：artifact-delivery 被 Worker consistency audit 误判为 worker-execution；重启后 live Worktree 缺少 Rust restore registry 入口；Rust 主仓库只读 gate 未允许重启后安全的 Worker branch-tip probe。新增 `dev_restore_worktree`、Delivery audit 分支和 branch revision regression。
+- 真实 Tauri 重启、产品项目入口和编排详情 read-back 显示：`清理提案: 已通过绑定检查，等待宿主批准 · acc-mu5cm748-b24a9dda`，并显示“批准清理”；proposal 已绑定当前 Run/Task/Execution/Attempt、Worktree、branch revision、state signature、Acceptance 和 stage。
+- 本轮没有点击批准清理，没有生成 CleanupReceipt，没有删除 Worktree/branch；因此闭合的是 DeliveryReceipt + Cleanup proposal ready，不是 CleanupReceipt/删除成功。完整记录见 `docs/reports/WORKER_DELIVERY_CLEANUP_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 Vite chunk/dynamic-import warning 保留；
+- `npm run i18n:check`：1026 keys 对齐；
+- `npm run test`：127 test files / 1101 tests passed；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：51 passed / 0 failed；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
+- 独立 reviewer 复审发现 DeliveryReceipt 结构校验和 Rust 特殊 allowlist 的 fail-closed 缺口；已增加严格 receipt shape/Acceptance/failedChecks/outputHash/files 校验，并为主仓库特殊分支补充 `args[0] == git` 回归；修复后 targeted 与全量质量门重新通过；
+- 没有 push、merge、Cleanup；Antigravity E2E、Browser Use managed backend 和历史 commit 重写仍未验证。
+
+### 7.128 已批准 Worker CleanupReceipt 与 Worktree/Branch 删除闭合
+
+- 延续 `7.127` 的同一 disposable fixture；用户明确批准的范围仅为 attempt 2 的 Worktree `D:/Temp/sm-tauri2-recovery-v2-174611-workers/w-92fbfecb4bff7a8f8aca59dd` 和 branch `worker/w-92fbfecb4bff7a8f8aca59dd`。没有扩展到主仓库、Delivery destination、其他审计 fixture、push、merge 或历史 commit。
+- 通过真实 Tauri WebView 进入编排详情，点击“批准清理”后执行“执行清理”；native confirmation dialog 再次显示并核对了精确 path、branch 和 revision，随后确认。该 GUI/native 对话框观察未单独归档，属于 manual observation；最终结论以 durable side-effect、event、ProjectFile、Filesystem/Git 和 Delivery read-back 为准。没有使用裸 `git worktree remove`、`git branch -D` 或手工删除绕过 host authority。
+- disposable fixture 的 side-effect journal 新增且仅有一条 `kind=worktree-cleanup` receipt：`cleanup:task-execution:run-141182f4-5590-444a-8987-4fd2f419bfeb:task-create-worker-marker:attempt-2:receipt`；`status=receipt`、`recovery=skip`、`outcome=succeeded`、`outputHash=hxymq3c`，并绑定当前 Run/Task/Execution/Attempt、target 和 inputHash。
+- 实际删除 read-back：Worktree 目录不存在；`worker/w-92fbfecb4bff7a8f8aca59dd` branch ref 不存在；主仓库 `git worktree list --porcelain` 不再列出该 Worktree。ProjectFile 为 `worktreeStatus=cleaned`、`cleanupStatus=cleaned` 并保存 receipt ID。
+- event stream 共 27 条，末尾为唯一的 `TaskCleaned`（`sequence=27`）；UI 显示“清理提案: 已清理”，没有再次 Cleanup 按钮。清理后的 proposal 会投影为 terminal `cleaned`，执行器对已清理 proposal 直接拒绝重复执行；没有产生第二 receipt 或第二 `TaskCleaned`。
+- Delivery destination `D:/Temp/slimemold-delivery-dest-20260917-181500/docs/WORKER_E2E_OK.txt` 仍存在且内容未变；attempt 1 的 `unknown/needs-user` worker-execution side-effect、失败事件和失败 provenance 均保留；attempt 2 的 4 条 Host Evidence 与唯一的 `passed=true` Acceptance 记录保留。完整字段、原始路径和边界见 `docs/reports/WORKER_CLEANUP_VERIFICATION_20260917.md`。
+
+验证结果：
+
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；本轮仍有多处 dynamic/static import warning，主 bundle `index-CIus0AVq.js` 为 `1,145.37 kB`，保留 Vite 大 chunk warning；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `npm run test`：`127 test files / 1101 tests passed`；包含 Cleanup proposal/receipt 定向测试；
+- `git diff --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`51 passed / 0 failed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍报告 `src-tauri/src/lib.rs` 的既有格式漂移；本轮没有全文件重排；
+- 当前仍不宣称 Antigravity E2E、Browser Use managed backend 或历史 commit 重写已验证；没有 push 或 merge。
+
+### 7.129 Rust fs_guard 纯路径身份 helper 第一条垂直切片
+
+- 在 checkpoint `f783427` 后开始本轮；保留无关未跟踪 `.workbuddy/memory/2026-09-17.md`，没有修改凭据、`DEV_STATE`、Tauri command 注册、worktree authorization 或 cleanup authority。
+- 将 `path_compare_key` 与 `path_is_same_or_child` 从 `src-tauri/src/lib.rs` 移入新 module `src-tauri/src/fs_guard.rs`；`lib.rs` 继续通过 `pub(crate)` helper 使用同一实现，避免复制第二套路径边界规则。
+- 先写 `path_compare_key` 的失败测试并实际看到 RED；随后完成 module 实现，新增 trailing separator、Windows verbatim UNC 和 component-boundary 测试。命令参数 lexical guard、canonicalize guard、`dev_strip_verbatim` 和 `DEV_STATE` 仍留在 `lib.rs`，作为后续独立 slice，不在本轮混拆。
+
+验证结果：
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib fs_guard::tests`：`3 passed / 0 failed`；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`54 passed / 0 failed`；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `rustfmt --edition 2021 --check src-tauri/src/fs_guard.rs`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import warning 和 `index-CIus0AVq.js` `1,145.37 kB` 大 chunk warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `npm run test`：`127 test files / 1101 tests passed`；
+- `git diff --check`：通过；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：未通过，仍为 `src-tauri/src/lib.rs` 既有格式漂移，本轮没有全文件重排；
+- 当前 slice 未涉及 GUI、credentials、endpoint/vault、push、merge 或 Cleanup；下一条 fs_guard slice 需继续保持单一边界并重新建立 reviewer/verified 证据。
+
+### 7.130 跨宿主 native authority hardening 暂停于 unverified checkpoint
+
+- 在 `204105d` unverified checkpoint 后继续收紧 Rust Tauri 与 Node/headless 的命令 grammar、路径 canonicalization、protected path、hardlink、Windows launcher、worktree identity 和 orphan/cleanup 前置校验；新增 Unix `O_NOFOLLOW`、Windows `OPEN_REPARSE_POINT` handle-bound 文件读写，以及 broken symlink、Git pathspec、grep/find/tsx、UNC 和 child-cwd 回归测试。
+- 独立 fail-closed reviewer 针对完整有效 snapshot 返回 `passed: false`。真实发现包括：直接 `gitDiff`/generic diff 的 protected 内容边界仍不统一；Node/Rust command AST/grammar 仍有差异；native `allowedPaths` 与 protected policy 尚未由同一 host-owned contract 管理；worktree、cwd、launcher 和父路径仍存在稳定对象身份/跨组件 no-follow 缺口；cleanup capability 尚未绑定完整 Task/Execution/Attempt/Acceptance lineage；orphan branch-only recovery 与跨平台验证仍未闭合。
+- 已将当前结果保存为本地 checkpoint `ac7a8bb`（`unverified: checkpoint native authority review findings`），工作树干净；没有 push、merge、历史重写或凭据变更。该 checkpoint 不是 `[verified]`，也不代表生产 native authority 已安全通过。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`63 passed / 0 failed`；
+- `npm run test`：`127 test files / 1104 tests passed`；
+- Node authority 定向测试：`39 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，无新增构建失败；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 独立 reviewer：`passed: false`，因此本轮只能记录为 `unverified`，不能标记 verified。下一步需先确认共享 command AST、host-owned policy、stable identity/no-follow 和完整 cleanup lineage 的架构切片，再开始新的代码修改。
+
+### 7.131 共享 command policy parity 继续收紧于 unverified checkpoint
+
+- 针对 Slice 0 reviewer 发现的 Git pathspec、Windows 路径规范化、grep 空 pattern、tsx 参数和 Node/Rust 分歧，新增 shared negative vectors，并同步收紧 Node 与 Rust parser。
+- 当前 vectors 覆盖 Git bracket glob、重复分隔符、Windows trailing dot/space、Unicode 非 ASCII path、grep 空 pattern、find 多 root/action、tsx dot/colon/wildcard script 与 Windows root-relative extra；accepted vectors 同时校验 `intentKind`，不再只比较 boolean。
+- 本轮只建立 command grammar/parity contract，没有接管现有 native runtime authority；旧的 cross-host hardening 仍保持 `unverified`，不能据此宣称 native authority 已安全闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待新的独立 fail-closed reviewer，当前不能标记 verified。
+
+### 7.132 统一 tsx root 与 dot-dot grammar 于 unverified checkpoint
+
+- 根据 reviewer 反馈，Node `tsx` parser 不再对 script root 做大小写折叠，必须精确使用 `scripts/`；Rust 同步拒绝任意包含 `..` 的 script path，消除两宿主 accepted language 漂移。
+- shared vectors 新增 `Scripts/check.ts`、`scripts/foo..bar.ts` 和 trailing-space protected path，日志覆盖声明与实际 vectors 对齐。
+- 本轮仍只收敛 shared command grammar/parity contract，没有接管现有 native runtime authority；Slice 0 完成与否仍以独立 reviewer 的 fail-closed verdict 为准。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；当前仍不能标记 verified。
+
+### 7.133 共享 command grammar 扩展至 generic path、read 与 typecheck 于 unverified checkpoint
+
+- 针对最终 reviewer 发现的 generic embedded `..`、控制字符、Windows device basename、Git invalid ref、find predicate 缺 operand 和 shared corpus 覆盖不足，Node/Rust 两侧同步收紧。
+- `find` 现在按 predicate arity 解析：`-name/-path/-maxdepth/-mindepth/-type` 等必须带安全 operand；缺失或未知 predicate fail-closed。
+- shared contract 新增 `ls/cat/head/tail` 的 scoped read intent，以及 `tsc --noEmit/-b`、`node --check scripts/...` 的 typecheck intent；`node -e` 和 option injection 保持拒绝。
+- launcher/ComSpec、child-cwd、stable filesystem identity 和真实 runtime 接入仍属于后续 host authority slices，本轮不宣称已解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.134 收紧 protected ancestor、tsx extras 与 find expression 于 unverified checkpoint
+
+- 针对 reviewer 发现的 protected root ancestor 绕过，Node/Rust 现在同时拒绝覆盖 protected root 的上级 operand，例如 `src`、`src/plugins`、`src-tauri`；不仅拒绝直接命中 protected root 或其子路径。
+- `tsx` extras 收紧为显式 allowlist `--reporter=dot`，拒绝 protected path、控制字符和任意未建模 positional argument；Node/Rust 保持同一语言。
+- Git ref 两侧使用同一 ASCII grammar，拒绝 `@{` 等 Git-invalid revision；grep pattern 现在必须非空且无控制字符。
+- `find` expression 改为 primary/unary/binary 结构校验：`!/-not` 必须有 operand，`-o/-or/-a/-and` 两侧必须有 expression，root scanner 正确识别 `!`；补充对应 RED vectors。
+- 8.3 short-name alias、真实 runtime 接入、launcher/ComSpec、child-cwd 和 stable filesystem identity 仍留在后续 host slice，未被本轮宣称解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`64 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.135 收紧 names-only Git、tail legacy option 与 find unary depth 于 unverified checkpoint
+
+- `git diff --name-only` 现在必须使用显式 `--` 分隔符，拒绝无分隔符的 path-looking revision ambiguity；shared vectors 同步更新。
+- `find` unary parser 从递归改为最多 128 层的迭代解析，超限直接拒绝；Node/Rust 都增加 129 层回归，避免 RangeError 或 native stack overflow。
+- `tail` read intent 拒绝 `+N` legacy offset operand，避免把它解释为 stdin/起始行选项而绕过 scoped file grammar。
+- 本轮仍未接入真实 Node/Rust runtime authority；8.3 alias、launcher/ComSpec、child-cwd 和 stable filesystem identity继续留在后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`65 passed / 0 failed`；
+- `npm run test`：`128 test files / 1109 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`5 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.136 增加 Node/Rust command input budget 与 malformed argv fail-closed 于 unverified checkpoint
+
+- 针对 reviewer 发现的 sparse array、非字符串 token 和无界 argv，Node/Rust 共享并执行同一输入预算：最多 `256` 个 token、单 token 最多 `4096` UTF-8 bytes、总命令最多 `32768` UTF-8 bytes。
+- Node 先检查数组密度和 token 类型，再进入 grammar；Rust 在 parser 入口执行同等预算检查；超限、hole、非字符串和超长 operand 均直接拒绝。
+- 新增 Node sparse/non-string/oversized 回归，以及 Rust oversized command 回归；这仍是 test contract，不代表 parser 已接入真实 runtime authority。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.137 收紧 inherited argv 与 malformed Unicode 边界于 unverified checkpoint
+
+- Node command boundary 不再使用 `index in command`，改为 own-property 校验，拒绝通过 `Array.prototype`/自定义 prototype 注入的 inherited token。
+- Node 在预算计算前拒绝未配对 UTF-16 surrogate，避免 TextEncoder replacement 与 Rust UTF-8 `String` 语言不一致。
+- 新增 exact boundary 回归：4096/4097 token bytes、32768/32769 total bytes，以及 inherited token 和 lone surrogate；Rust 同步校验 token/total budget。
+- 本轮仍未接入真实 runtime authority；下一步仍是 shared Git-diff intent 接入 Node capabilities 与 Rust dev_exec。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.138 使用 trusted snapshot 拒绝 exotic Node argv 于 unverified checkpoint
+
+- Node parser 在 grammar 前读取 own data descriptors，拒绝 inherited getter、own accessor 和 descriptor 读取异常；只把可信 token snapshot 交给后续解析，caller 自带的 `slice/some` shadow 不再影响 intent。
+- 新增 inherited getter 不触发、own accessor 拒绝和 shadowed `slice` 仍按可信 token 正确解析的回归。
+- 本轮仍未接入真实 runtime authority；8.3 alias、launcher/ComSpec、cwd/identity 和 cleanup/recovery 保持后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.139 采用固定 length trusted snapshot 收紧 Proxy argv 于 unverified checkpoint
+
+- Node snapshot 在 try/catch 内一次捕获并验证 length：必须是 `1..256` 的 safe integer；随后只遍历固定长度的 own data descriptor，并在结束时 recheck live length，拒绝 revoked、throwing-length、fractional-length、growth/shrink Proxy。
+- 新增 Proxy 回归：revoked、throwing length、非整数 length、mutable shrink/growth；避免预算绕过、sparse intent 和未捕获异常。
+- 本轮仍未接入真实 runtime authority；下一步仍是 shared Git-diff intent 接入 Node capabilities 与 Rust dev_exec。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.140 补齐 shared protected roots 与日志时间范围于 unverified checkpoint
+
+- shared Node/Rust protected roots 与既有 `defaultDevPolicy` 对齐，新增 `src/store/workflowStore.ts`、`src/engine/executor.ts`，并将 `.git`、`.slimemold` metadata roots 明确列为不可读的 protected roots。
+- vectors 覆盖 exact file、ancestor、case-fold alias、metadata root 和 `git/cat/ls/grep/find` 多入口；修复了 `workflowStore.ts` 大小写比较导致的 Windows protected-path 漏洞。
+- DEVELOPMENT_LOG front matter 更新为 `updated: 2026-09-18`、period 至 `2026-09-18`。
+- 本轮仍未接入真实 runtime authority；Slice 0 reviewer 通过前不标记 verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`66 passed / 0 failed`；
+- `npm run test`：`128 test files / 1110 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts`：`6 passed / 0 failed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；等待针对最终 snapshot 的独立 reviewer，当前仍不能标记 verified。
+
+### 7.141 shared Git-diff intent 接入 Node/Rust runtime 于 unverified checkpoint
+
+- Node `createNodeDevService` 的 `shellRun`、`gitDiff`、`gitChangedFiles` 现在先通过 shared `parseWorkerCommand`，再由 `buildSafeGitDiffArgs` 构造固定 invocation；raw `git diff` 不再绕过 parser。
+- Rust 将 `dev_command_policy` 编译进 production host；worktree `git diff` gate 使用 shared intent，`dev_exec` 在 canonicalization 后重写为固定 argv。
+- 所有 scoped/name-only Git diff 均强制 `--no-pager`、`--no-ext-diff`、`--no-textconv`，并保留 Node/Rust sanitized environment：不继承 `GIT_EXTERNAL_DIFF`、`GIT_DIFF_OPTS`、`GIT_PAGER`、`GIT_CONFIG_*`、`GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE` 等配置驱动入口。
+- 旧 unscoped/path-ambiguous Git diff 断言改为显式 `revision -- pathspecs`；H4 fake runner 同步新的 invocation contract。
+- 当前仍未处理 main-repo legacy `run_git`、stable filesystem identity、launcher lifecycle、cleanup lineage 与 orphan recovery；本轮不宣称这些边界已完成。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`67 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/commandPolicy.test.ts src/dev/capabilities.test.ts`：`2 files / 22 tests passed`；
+- `npx vitest run src/dev/node-run.test.ts src/nodes/dev/index.test.ts`：`4 files / 46 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- disposable Git probe：配置 `diff.external` helper 后执行固定 `--no-pager --no-ext-diff --no-textconv` invocation，marker 未生成，exit 0；
+- 本轮未 push、未 merge、未修改凭据或外部系统；Slice 1 当前仍为 unverified。
+
+### 7.142 修复 Tauri hardened Git diff gate 与 WebView hardlink hook 于 unverified checkpoint
+
+- Rust worktree gate 现在接受 Node/Tauri builder 的完整 `git --no-pager diff --no-ext-diff --no-textconv ...` argv，并拒绝缺少或替换固定控制参数的变体；raw `git diff` 仍在 host 内重写为 hardened invocation。
+- raw Git diff 在 Rust `dev_exec` 的 path validation/canonicalization 前完成 rewrite，避免 canonicalized absolute pathspec 被再次当作 raw grammar 拒绝。
+- `fs_guard` 的 `dev_exec_validate_paths` 与 `canonicalize_dev_exec_args` 同步识别 hardened Git diff，继续对 `--` 后 pathspec 做存在性、symlink/real-path 和 worktree containment 检查。
+- Node capability 增加可注入 hardlink checker；headless 默认使用 `node-run` stat 检查，Tauri WebView 不再调用缺失的 `node:fs/promises.stat` shim，最终 hardlink authority 由 Rust `dev_exec` 执行。
+- 新增 Tauri exact argv、Rust hardened gate、Rust fs_guard canonicalization 和 WebView hardlink delegation 回归；本轮修复后尚未重新获得独立 reviewer verdict。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`69 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/tauri-run.test.ts src/dev/capabilities.test.ts src/dev/commandPolicy.test.ts`：`3 files / 31 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.143 收紧 Rust hardened Git recursive pathspec 于 unverified checkpoint
+
+- reviewer 发现 direct Tauri `git --no-pager diff --no-ext-diff --no-textconv HEAD -- .` 可绕过 Node path policy；Rust hardened gate 现在在 canonicalization 后按 worktree-relative key 重新检查 Git pathspec。
+- 拒绝 worktree root、`.`、dot-segment canonical root、`src`/`src/store` 等 protected ancestor、protected exact/descendant、`.git` 和 `.slimemold`；安全的 `src/components` pathspec 保持可用。
+- 新增 Rust recursive protected-path regression，并保留 hardened gate、fs_guard canonicalization、Tauri exact argv 和 Node/Rust 全量回归。
+- reviewer 同时指出 check/canonicalize/spawn 之间仍存在 path identity TOCTOU；本轮不伪称 race 已闭合，stable worktree/file identity 是下一条独立 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx vitest run src/dev/tauri-run.test.ts src/dev/capabilities.test.ts src/dev/commandPolicy.test.ts`：`3 files / 31 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.144 对齐 Rust recursive Git protected matcher 的跨平台 case-fold 于 unverified checkpoint
+
+- 修复 Unix/macOS 下 `git_diff_pathspec_allowed` 未 lower-case relative key 的差异；现在 `workflowStore.ts`、`src/Store`、`.GIT`、`.SLIMEMOLD` 等大小写 alias 与 Windows protected policy 一致拒绝。
+- 保留 `src/components` 安全路径放行和 root/ancestor/exact/descendant 递归语义；新增跨平台 alias regression。
+- stable check/canonicalize/spawn identity TOCTOU 仍是下一条 stable worktree/file identity slice，不在本轮宣称已解决。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.145 拒绝 hardened Git pathspec bracket magic 于 unverified checkpoint
+
+- reviewer 发现 Rust hardened pathspec 只拒绝 `*`/`?`，未拒绝 `[`/`]`；Git 可将 `package[.]json`解释为 glob，绕过 literal protected-path 检查。
+- hardened pathspec grammar 现在与 shared literal path policy 对齐，拒绝 bracket magic；新增固定 hardened argv 回归，保留安全 path 和 protected ancestor/case-fold 检查。
+- stable check/canonicalize/spawn identity TOCTOU 仍保留为下一条独立 identity slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.146 拒绝 hardened Git pathspec colon magic 于 unverified checkpoint
+
+- reviewer 发现 Git pathspec 仍接受 `:(icase)`、`:(top)`、`:/`、`:!`、`:^`、`:(attr:...)` 和 `:(literal)` 等 colon-leading magic。
+- hardened pathspec grammar 现在拒绝 colon-leading operand，同时保留合法 Windows drive path（如 `C:/...`）；新增完整 magic variants 回归。
+- stable check/canonicalize/spawn identity TOCTOU 仍保留为下一条独立 identity slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`70 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.147 为已登记 Worker worktree 绑定 stable directory identity 于 unverified checkpoint
+
+- Rust `RegisteredWorktree` 现在保存 registration-time directory identity：Unix 使用 device/inode，Windows 使用 volume serial/file index，并保留 canonical path。
+- `dev_register_worktree`、`dev_restore_worktree` 在登记时绑定 identity；后续 `dev_cwd_kind` 重新读取已登记根目录 identity，检测同路径目录替换后 fail-closed。
+- 新增 same-path replacement regression；本轮只闭合“已登记 worktree 根目录 identity”这条 slice，文件 operand handle/no-follow、parent replacement、spawn 前 TOCTOU 和 Node WorktreeManager 对等 identity 仍未完成。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`71 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.148 修复 lexical registration 先于 canonicalization 的 worktree redirect bypass 于 unverified checkpoint
+
+- reviewer 发现 `dev_cwd_kind` 先 canonicalize cwd 后再选择 registration：registered A 被 junction/symlink 重定向到 registered B 时，可能借用 B identity 放行。
+- 新增 lexical cwd → registration 选择；只有 lexical path 命中原 registration，且原 worktree identity 仍匹配、canonical target 仍在原 root 内时才允许执行；未命中 registration 的 canonical alias 在存在 registrations 时 fail-closed。
+- 新增真实 A→B directory-link regression；非 Unix/Windows 平台 identity 不再使用 `(0,0)` 伪稳定值。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`72 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.149 收紧 base identity 与 restore identity conflict 于 unverified checkpoint
+
+- 为 `base_repo` 绑定 registration-time stable directory identity；base path 被替换、或被重定向到 registered worktree 时，main-repo lexical exception fail-closed。
+- `dev_restore_worktree` 遇到同 generation/path/branch 的不同 identity 不再静默接受或形成歧义 registration，直接拒绝 identity conflict。
+- 新增 base→registered-worktree redirect regression；文件 operand handle/no-follow、parent replacement after cwd validation、spawn TOCTOU 与 Node 对等 identity仍留在后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`73 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.150 强制 base identity invariant 并收紧 register/restore/orphan rebind 于 unverified checkpoint
+
+- `assert_session_generation` 现在要求 `base_repo` 与 `base_identity` 同时存在；partial session state 直接 fail-closed。
+- `dev_cwd_kind` 不再允许非 lexical base alias 落入旧 canonical-path fallback；base replacement、重复分隔符/`.` alias 均拒绝。
+- `dev_register_worktree`、`dev_restore_worktree`、`dev_register_orphan_worktree` 在初始读取、Git probe 前和最终 state read-back 均重新比较 base identity。
+- `stable_directory_identity` 拒绝 Unix `dev/ino` 或 Windows volume/file-index 为零的不可用标识。
+- restore 使用 all-duplicate conflict 检查；新增 duplicate identity conflict、base alias regression，并迁移 direct-state tests 到 stable identity invariant。
+- 文件 operand handle/no-follow、parent replacement after cwd validation、spawn TOCTOU 与 Node 对等 identity仍留在后续 slice。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`75 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.151 收紧 base rebind、registration identity conflict 与 orphan live-target gate 于 unverified checkpoint
+
+- 新增统一 `assert_base_identity_current`；`assert_session_generation`、`dev_cwd_kind` 和 `dev_base_repo` 在使用主仓库路径前重新绑定 stable identity，registered worktree early-return 不再绕过 base replacement 检查。
+- `dev_register_worktree` 在 duplicate registration 中比较 target identity；same path/branch 的 replacement identity 不再 consume lease 或保留旧 binding。
+- register/restore/orphan 在 Git probe 后、state commit 前和最终 state read-back 继续比较 base identity；orphan 只接受受控、branch 仍存在且目标目录已消失的 branch-only lineage，live listed/existing target 拒绝。
+- 新增 partial base + registered candidate、same-path registration identity conflict、live orphan target 和真实 temp session fixture 回归。
+- 文件 operand handle/no-follow、parent replacement after cwd validation、spawn TOCTOU 与 Node 对等 identity仍保留为后续 slice；本轮未宣称 check/use race 已完全消除。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`77 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.152 收紧 target metadata、cleanup capability identity、trusted restore 与 branch-only cleanup 于 unverified checkpoint
+
+- `assert_base_identity_current` 增加 filesystem check 后的 session read-back；Antigravity Worker 纳入 `lock_dev_operation`，避免项目切换与 workspace writes/CLI spawn 并发交错。
+- register/restore 在 Git probe 后重新比较 target directory identity；restore 仅接受已有 trusted host registration 提供的 historical identity，跨重启缺少 trusted identity 时 fail-closed，不把当前同路径目录重绑定为历史 worktree。
+- `dev_path_allowed` 对已登记 registration 重新绑定 root identity，防止替换后的 worktree继续放行文件操作。
+- orphan recovery 使用 `symlink_metadata` 区分目录、regular file、broken symlink 和缺失路径；无论目标目录是否存在都执行 Git listing/branch probe，并拒绝 live listed、branch 已在其他 worktree checkout 或重新出现的 target。
+- `worker_target_is_safe_for_existing_operation` 现在要求真实目录，regular file不能进入 cleanup/update-ref 路径。
+- cleanup approval要求 registered target identity与原 registration一致；orphan capability只能绑定缺失 target。cleanup binding同时绑定 base identity与target identity；approval dialog后、branch CAS前后、worktree remove前和state read-back均重新验证 identity。
+- branch-only orphan cleanup允许缺失目录在branch-tip CAS后完成；registered target若CAS后Git listing消失、Git probe失败或target identity漂移，则保持未知结果并不清除host lineage。
+- pending rollback lease保存creation-time target identity；worktree remove/lock/unlock只接受identity仍匹配的当前target。
+- generic `dev_exec` 在spawn前再次执行cwd/registration identity gate；`dev_create_dir`、`dev_read_file`、`dev_write_file` 在相对路径解析前重新绑定base identity。
+- 新增 partial base真实temp-path、regular-file target、branch-only cleanup identity回归；文件 handle-relative/no-follow、parent replacement 与 spawn check/use race仍是明确 residual，Node 对等 identity尚未实现。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`79 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,158.11 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.153 收紧 strict Git listing、rollback branch CAS、Node identity 与 unregister gate 于 unverified checkpoint
+
+- `git worktree list --porcelain` 现在要求非空、未截断且结构完整的 worktree/HEAD blocks；malformed、unknown field、empty/truncated output统一 fail-closed，不再把 probe异常当作 absence。
+- pending rollback lease保存创建时 branch revision；`update-ref -d` rollback gate必须匹配该host-owned revision，不能由调用方用同名branch的新tip替代。
+- `dev_unregister_worktree` 对仍有 registered/orphan lineage的路径拒绝裸注销；只有native cleanup已清除lineage后的幂等 read-back可返回成功。
+- Node `WorktreeInfo` 在默认 Node runtime保存 creation-time `dev:ino` identity；restore、created cleanup和orphan cleanup重新比较当前对象，替换目录不再复用旧lineage；Tauri路径继续由Rust authority负责。
+- Node/Tauri仍保留平台相关 handle-relative/no-follow、parent replacement与最终spawn check/use race为明确 residual；Node custom fake runner和跨重启无trusted identity的恢复仍需后续专门证据。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`79 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.154 收紧 bound file identity 与 Node headless replacement fencing 于 unverified checkpoint
+
+- Rust `dev_read_file`/existing-target `dev_write_file` 在 preflight capture file identity，并在真实 `O_NOFOLLOW`/reparse-aware bound handle打开后重新比较 device/inode 或 volume/file-index；same-path file replacement被拒绝，旧对象不会写入新路径对象。
+- 新增 bound file replacement regression；新增 `StableFileIdentity` platform helper，hardlink检查与bound handle identity检查同时保留。
+- Node默认 headless `WorktreeManager`保存 creation-time `dev:ino` identity；create失败时尝试回滚，restore、created cleanup、orphan cleanup和remove后 read-back均拒绝替换对象。
+- parent-directory replacement、missing-target create/openat、Windows完整 handle-relative mutation、最终spawn check/use race与Node custom fake runner仍为明确 residual；本轮不宣称所有外部filesystem race已原子消除。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.155 引入 Unix handle-relative parent/file open seam 于 unverified checkpoint
+
+- Unix read/write bound path改用逐级 directory-fd `openat`，每层使用 `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`，最终文件使用 `O_NOFOLLOW`；parent被替换为symlink时操作失败，不跟随到外部目录。
+- Unix missing-target create改用parent-fd `openat(O_CREAT|O_EXCL|O_NOFOLLOW)`；unsupported平台的bound read/write fallback改为显式error，避免未来call-site绕过identity gate。
+- Windows仍保留reparse-aware final handle与StableFileIdentity校验；Windows parent-relative完整原子mutation、macOS/Linux native matrix仍需后续平台专项验证。
+- Unix `dev_exec` spawn前绑定cwd directory fd，并在子进程中使用 `fchdir`；Unix路径不再在最终spawn阶段重新解析cwd。Windows仍使用pathname `current_dir`，该平台race保持明确 residual。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.156 收紧 Unix parent identity、cwd type 与 FIFO acquisition 于 unverified checkpoint
+
+- Unix `openat` traversal在最终文件打开前比较实际parent fd与preflight canonical parent identity；existing read/write和missing create共同使用这一parent binding。
+- Unix cwd acquisition强制`O_DIRECTORY`，打开后再次比较cwd directory identity；regular file/FIFO不能成为spawn cwd；regular file bound open增加`O_NONBLOCK`，避免FIFO在host timeout前阻塞。
+- `/`作为合法Unix directory cwd不再被错误拒绝；Windows目录identity继续复用`FILE_FLAG_BACKUP_SEMANTICS`路径。
+- ordinary-directory replacement、hardlink addition after open、Windows parent-relative atomic mutation、macOS/Linux native matrix仍需后续专项验证；本轮不宣称所有跨平台race已闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.157 让授权 cwd/file identity贯穿最终Unix fd acquisition 于 unverified checkpoint
+
+- `dev_cwd_binding`现在在同一授权流程中返回 `DevCwdKind + StableDirectoryIdentity`；spawn前检查ownership未变化，并把这份exact identity传入Unix cwd `openat` final fd compare，不再在最后一步从可能已替换的路径重新生成expected。
+- Unix read/write/create在`dev_path_allowed(parent)`之后capture parent identity；bound open同时比较parent fd与final file identity。Windows仍保留final handle identity，并显式拒绝非regular write target。
+- existing write target与bound write fd都拒绝FIFO/device等非regular object；hardlink count检查仍保留。新增逻辑不宣称 hardlink addition after open、Windows parent-relative atomic mutation、Linux/macOS native matrix已完全闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.158 保持初始cwd identity贯穿最终spawn授权 于 unverified checkpoint
+
+- `dev_exec`初次授权现在直接保留 `dev_cwd_binding` 返回的 `DevCwdKind + initial_cwd_identity`；spawn前必须同时匹配初始kind和initial identity，same-path child directory replacement不会只因kind相同而重新授权。
+- Unix cwd fd acquisition继续使用spawn阶段binding返回的exact identity做final fd compare；hardlink addition race、Windows parent-relative mutation和native Linux/macOS证据仍未闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.159 抽取 Rust process capture/timeout lifecycle seam 于 unverified checkpoint
+
+- 新增 `src-tauri/src/dev_process.rs`，集中持有 `DevExecResult`、stdout/stderr bounded capture、timeout polling、wait、join和错误收敛。
+- `lib.rs`保留 `kill_dev_child_tree` 作为平台相关launcher policy注入点，通过薄wrapper调用 `dev_process::run_with_timeout`；Codex复用的crate-private output helper保留单一实现转发，不复制逻辑。
+- 本轮未移动 command policy、cwd/identity、Windows trusted program/ComSpec resolution；Windows `current_dir`→CreateProcess race、native Linux/macOS runtime evidence和hardlink atomicity仍明确为后续残余。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`80 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.160 收紧 process timeout cleanup、checked output capture 与process-group lifecycle 于 unverified checkpoint
+
+- `dev_process`共享`DEV_OUTPUT_CAP`，`drain_child_output_checked`对Interrupted重试、对其他I/O错误显式返回；不再把读取错误静默当作EOF。
+- timeout错误使用实际timeout毫秒；stdout/stderr通过channel bounded receive，超时或pipe descendant不再无界join阻塞host operation lock。
+- Unix process启动时建立process group，timeout callback尝试kill整个group后再direct kill；Windows继续使用taskkill tree + direct kill，Job Object级别完整保证仍是Windows residual。
+- 新增process模块直测：output cap、Interrupted reader、non-zero exit；本轮仍不宣称Windows current_dir race、native Linux/macOS matrix和hardlink atomicity已闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.161 收紧 descendant pipe error、Codex checked capture 与unknown propagation 于 unverified checkpoint
+
+- process output receiver在post-exit pipe descendant/reader failure时先调用同一kill callback再返回；dev_exec不再把capture/timeout错误伪装成普通`DevExecResult{code:-1}`，错误文本明确标记`side effects unknown`。
+- Codex stdout/stderr reader改用Result-returning checked capture；正常完成时I/O错误上抛，移除legacy silent EOF helper。
+- 保留Unix process-group kill与Windows taskkill/direct-kill策略；Windows Job Object、Windows current_dir race、native Linux/macOS matrix和hardlink atomicity仍未闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.162 统一Codex descendant cleanup与bounded checked output lifecycle 于 unverified checkpoint
+
+- Codex Unix child现在建立process group，timeout/cancel/reader error使用group kill + direct kill；reader错误路径统一执行child reap、active registry unregister和临时output文件清理。
+- Codex stdout/stderr复用`dev_process`的bounded channel reader/receive，不再使用无界JoinHandle join或silent EOF helper；正常完成的非Interrupted reader错误显式上抛并标记side effects unknown。
+- Windows Job Object、Windows current_dir race、native Linux/macOS matrix和hardlink atomicity仍明确为后续残余；本轮不宣称所有native process entry point都已闭合。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.163 收紧Codex cancellation atomicity、success descendant cleanup与output-last-message cap 于 unverified checkpoint
+
+- active Codex registry与cancel现在按同一lock顺序处理；cancel在child kill/reap完成前不移除active entry，避免operation id过早复用和stale PID cleanup。
+- Codex leader退出后主动清理其process group；`--output-last-message`改为16MiB bounded read，overflow/read failure标记side effects unknown并清理registry/temp file。
+- Windows Job Object、Windows current_dir race、native Linux/macOS matrix和hardlink atomicity仍未闭合；本轮不宣称Codex/所有native process lifecycle全部verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`83 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.30 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.164 收紧Codex generation lease、output file authority与unknown-effects transport 于 unverified checkpoint
+
+- pending Codex operation改为单一 generation-tagged registry；cancel、begin、register和finish共享状态边界，旧run的finish不能移除新run的同ID lease；新增 stale-generation regression。
+- active child unregister改为按 `Arc` exact handle compare-and-remove，不再仅凭operation id删除可能已复用的active entry；output/read finalization完成前保持active lease。
+- `--output-last-message`先用 `symlink_metadata`拒绝symlink、directory、FIFO等非regular object，再使用Unix `O_NOFOLLOW|O_NONBLOCK`或Windows reparse-aware open，并限制16MiB读取；unlink失败显式进入unknown-effects路径或记录cleanup uncertainty。
+- Node/Tauri `CommandResult`增加可选 `unknownEffects`，Tauri host invoke/cleanup失败不再只表现为普通 `exitCode: -1`。
+- Windows Job Object、Windows current_dir race、native Linux/macOS matrix、Unix process-group escape和hardlink atomicity仍未闭合；本轮不宣称process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.35 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.165 收紧Codex launch authority、session-generation cancellation与stdin/output lifecycle 于 unverified checkpoint
+
+- Codex output改为temp下唯一私有目录中的`create_new` regular file，Unix使用0600权限；cleanup同时处理文件和私有目录，read阶段继续使用no-follow/nonblock和16MiB上限。
+- Codex Worker在最终spawn前重新通过Rust `dev_cwd_binding`比较cwd stable identity；本检查降低path replacement窗口，但不宣称Windows `current_dir`到CreateProcess已原子闭合。
+- stdin写入改为独立writer并纳入30分钟执行预算，主执行线程不再被阻塞式`write_all`永久卡住；writer无法在收尾窗口结束时返回unknown-effects。
+- Codex executable解析拒绝最终symlink并使用canonical regular file；Windows cleanup使用SystemRoot下可信`taskkill.exe`，不再依赖PATH裸命令。
+- `codex_worker_cancel`携带session generation，pending/active entry保存并比较generation；前端abort链路已传递同一generation，旧session取消不会触碰新child。
+- Windows Job Object、Windows current_dir原子spawn、Unix setsid/pidfd级descendant containment、operation-id调用方唯一性、native Linux/macOS matrix、hardlink atomicity及unknownEffects在所有上层recovery消费者中的完整传播仍未闭合；本轮不宣称Codex launch/process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.40 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.166 修复Codex finalization lock order、stdin bounded cleanup与spawn failure cleanup 于 unverified checkpoint
+
+- `cleanup_codex_run`现在先按 active-registry→child-handle顺序释放exact handle，再kill/reap；与cancel路径统一锁序，消除并发cleanup/cancel的ABBA deadlock。
+- timeout与`try_wait`错误路径等待stdin writer的bounded收尾窗口；writer未结束会保留unknown-effects语义，不再随执行线程无界遗留。
+- `Command::spawn`失败现在清理已创建的exclusive output file和私有目录；此前命令未启动也可能留下临时工件。
+- Windows Job Object/current_dir原子spawn、Unix setsid/pidfd descendant containment、host-issued worker capability、operation-id调用方唯一性、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.40 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.167 引入host-issued Codex Worker lease与abort-before-begin fencing 于 unverified checkpoint
+
+- 新增 `codex_worker_prepare`：Rust在当前session与已登记worktree校验通过后生成一次性lease token，并绑定session generation与canonical worktree path；`codex_worker_exec`不再接受renderer自造operation id作为active capability。
+- 前端Codex Worker先申请host lease，再执行；AbortSignal在lease申请前置为pending abort，lease返回后立即调用generation-matched cancel，避免abort-before-begin丢失。
+- prepared、pending、active三阶段均比较session generation；cancel只标记匹配generation，旧session/旧lease不能触碰新child；exec要求token未使用且cwd与prepare绑定路径一致。
+- `dev_cwd_binding`最终recheck的错误和identity mismatch路径显式清理output file/directory；host lease不宣称已经完成task/attempt lineage capability或Windows/Unix原子spawn containment。
+- Windows Job Object/current_dir原子spawn、Unix setsid/pidfd descendant containment、renderer prompt/task lineage授权、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.168 收紧prepared lease TTL/identity、cancel consumption与finalization linearization 于 unverified checkpoint
+
+- prepared lease增加5分钟TTL与128条cap；prepare先在host operation lock内校验session/worktree并清理过期entry，避免abandoned prepare造成无界内存增长。
+- lease绑定stable directory identity；exec同时比较session、canonical path与identity，same-path replacement/re-registration不会重新授权旧lease。
+- prepared cancel现在消费匹配generation的lease；exec在prepared race失败时finish pending，避免prepared/pending registry泄漏。
+- pending finish改为与cancel共享锁的线性化点：cancel先写入标记则Worker返回unknown-effects，finish先移除则后到cancel视为已完成，不会在finalization竞态下错误报告成功。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.169 收紧Codex lease expiry fail-closed、session purge与prepared identity传递 于 unverified checkpoint
+
+- exec现在强制检查prepared lease TTL并消费过期token；prepare/clear session切换会清理旧prepared leases，避免旧generation占用新session cap。
+- `finish_pending_operation`改为Result返回；pending registry poison不再被解释为“没有取消”，而是直接返回unknown/fail-closed错误；begin后prepared registry获取失败也会清理pending entry。
+- prepared stable identity现在沿worker调用链传入`run_exec`最终spawn授权，不再从可变cwd路径重新生成预期identity；read-only provider仍使用正常cwd binding路径。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.170 收紧Codex pending registry poison、missing finalization与pre-spawn cancellation fail-closed 于 unverified checkpoint
+
+- `take_cancelled_operation`现在返回Result，pending registry poison在spawn前直接阻断，不再被解释为false/未取消。
+- `finish_pending_operation`对missing或generation mismatch显式返回unknown/fail-closed错误；finalization不再把异常状态当作成功完成。
+- 所有begin后prepared registry获取失败路径都先尝试finish pending，再返回错误，避免操作token永久卡在pending。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.171 引入Codex pre-spawn active/pending reservation 于 unverified checkpoint
+
+- active/pending registry现在在Command::spawn前以统一锁序（active→pending）预留；reservation跨越spawn并在child创建后直接插入active，cancel必须等待reservation完成，消除检查取消后到spawn/register之间的窗口。
+- 删除旧的spawn后register authority，active registry poison、pending lease丢失或reservation冲突会在child启动前fail-closed；spawn失败由外层pending finalization处理。
+- host-issued lease仍不包含task/attempt lineage或prompt权限约束；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery propagation仍未闭合；本轮不宣称Codex process lifecycle已verified。
+
+验证结果：
+
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`：`84 passed / 0 failed`；
+- `npm run test`：`128 test files / 1111 tests passed`；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 仍为 unverified。
+
+### 7.172 verified：Codex pre-spawn active/pending reservation
+
+- 最终fail-closed reviewer针对精确HEAD `73aec5081ee9e1ebe46a7e27653efe48c235881a`返回：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- verified tag：`checkpoint/native-codex-pre-spawn-reservation-verified`，指向上述reviewed HEAD；该tag创建后未修改代码。
+- 本slice验证锁序、spawn前reservation、child注册与cancel竞争边界；reviewer建议后续增加确定性interleaving regression，但不构成当前slice阻塞。
+- task/attempt lineage与prompt capability、Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍属于未完成残余。
+
+验证结果：
+
+- Rust：`84 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有dynamic/static import与大bundle warning保留，最大产物约`1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN对齐；
+- `git diff --check`：通过；
+- 本轮未push、未merge、未修改凭据或外部系统。
+
+### 7.173 unverified：Codex operation binding 强制 session generation
+
+- `src-tauri/src/codex.rs` 新增唯一 `validate_operation_binding` seam：带 `operation_id` 的执行必须同时带 non-zero `session_generation`；只带其中一个或 generation 为零均 fail-closed。
+- 新增 `reserve_codex_operation`，统一 active→pending 锁序，并在 spawn reservation 时比较 `PendingOperation.session_generation`；取消标记、operation 重用和 generation mismatch 都不能进入 child spawn。
+- 新增 3 个 Rust 回归：operation binding 完整性、已取消 pending reservation 拒绝、跨 session generation reservation 拒绝；保留原有 stale-generation 与 cancellation 测试。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir 原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合；本 checkpoint 不标记 verified。
+
+验证结果：
+
+- Rust：`87 passed / 0 failed`；Codex targeted：`9 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.174 verified：Codex operation binding reviewer closure
+
+- fail-closed reviewer审查精确HEAD `5f93dd49769a9d480e69a83f94afe4bac545dcdf`及其相对`3c6914f1e05cd0e01f6f46789b95312df163cdf`的完整diff，返回`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- verified tag：`checkpoint/native-codex-session-generation-binding-verified`，经read-back确认指向reviewed HEAD；tag创建后未修改代码。
+- reviewer确认：partial/zero operation binding被拒绝；active→pending reservation在spawn期间保持；pending session generation被核对；cancel与session reset路径保持fail-closed。
+- reviewer非阻塞建议：补充spawn前确定性interleaving测试；将`PendingOperation.generation`继续纳入reservation stale-operation fence；对防御性post-spawn注册失败显式清理child/output。这些不影响本slice verified，但属于下一步加固。
+
+验证结果：
+
+- Rust：`87 passed / 0 failed`；Codex targeted：`9 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.175 unverified：Codex spawn reservation interleaving 与 stale generation fence
+
+- `CodexSpawnReservation` 统一持有 active→pending registry guard，并保存 `PendingOperation.generation`、session generation 和 operation id；child 注册必须在同一 reservation 内重新核对三者与 cancellation 标记。
+- `run_exec` 将 pending operation generation 传入 reservation；stale pending generation、session generation mismatch、取消中的 operation 都在 spawn 前 fail-closed。
+- 新增 `cleanup_unregistered_codex_child`：防御性 child 注册失败会 kill/wait child、释放 handle、join stdout/stderr reader、删除私有 output artifact；cleanup失败显式返回 `side effects unknown`。
+- 新增确定性 reservation/cancel interleaving 回归：cancel 线程在 active→pending reservation持锁期间不能越过 child 注册；释放 reservation 后才完成取消并保留 pending finalization。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir 原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合；本 checkpoint 不标记 verified。
+
+验证结果：
+
+- Rust：`88 passed / 0 failed`；Codex targeted：`10 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.176 unverified：Codex termination fencing 与 cleanup recovery
+
+- `terminate_child_checked` 现在先确认 child 已退出，再请求 Unix process-group/Windows taskkill/direct kill，并以 bounded `try_wait`确认终止；kill、wait、status读取或超时失败均保留 unknown-effects，不再静默丢弃。
+- `cleanup_unregistered_codex_child` 在终止未确认时保留 child handle；`CodexSpawnReservation` 将其重新登记到 active registry供后续 cancel/recovery，不再 detach继续运行的 child。
+- `cleanup_codex_run`、timeout、try_wait error、stdin/output failure路径统一传播 cleanup failure；成功终止后才 unregister和删除私有 output artifact。
+- `CodexExecRequest` value object收敛`run_exec` binding，移除本轮新增的 too-many-arguments clippy告警；新增真实跨平台 child/reader/output-artifact cleanup回归。
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`仍失败，但剩余报告只涉及既有`src-tauri/src/fs_guard.rs`、`src-tauri/src/lib.rs`和`src-tauri/src/dev_command_policy.rs`；本轮`codex.rs`相关告警已清零。本 checkpoint 不标记 verified。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin detached writer强制关闭、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`89 passed / 0 failed`；Codex targeted：`11 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.177 unverified：Codex shared cleanup context 与 cancellation recovery
+
+- 新增 `CodexCleanupContext`，由 active child 持有私有 output path、stdout/stderr reader handles及完成状态；run_exec、cancel、timeout、try_wait error、stdin/output failure和registration failure共享同一 cleanup owner。
+- `codex_worker_cancel` 现在只有在 bounded termination、pending cancellation标记、reader join和artifact removal全部确认后才移除 active；termination或cleanup不确定时保留 active child/context供重试恢复。
+- cancellation state读取失败不再在 reader join前直接返回；reader handles通过 context 统一消费，已完成 reader不会被重复join；active unregister对registry poison、handle mismatch和非cancellation missing entry fail-closed。
+- 新增/更新 interleaving与真实 child/reader/artifact cleanup回归；Codex request value object与lock-order invariant保留。
+- clippy仍只被既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint阻塞；本轮`codex.rs`无新增clippy告警。本 checkpoint 不标记 verified。
+- task/attempt lineage 与 prompt capability、Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer更深层 bounded join、native Linux/macOS matrix、hardlink atomicity和完整unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`89 passed / 0 failed`；Codex targeted：`11 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.178 unverified：Codex post-exit ownership 与 recoverable reader cleanup
+
+- 修复 post-exit termination 后重复消费 child handle 的路径；正常成功、非零退出、取消和异常 finalization 现在通过同一 `cleanup_codex_run` 顺序收敛，避免先 take child 再 artifact/unregister 的分叉。
+- `CodexCleanupContext` 增加 per-reader joining 状态；reader bounded wait 超时或 channel 断开时保留 `(JoinHandle, Receiver)`，不伪标记 done，后续 recovery 可再次 join。
+- cancellation 在 active→pending 锁序下先校验并标记 matching pending generation；pending 缺失或 generation 不匹配直接 fail-closed，不再终止 child 后静默成功。
+- `unregister_child` 在 active/pending registry与 expected handle一致、且 handle可锁定后才移除并消费 child；registry poison、mismatch和非cancellation missing均传播 `side effects unknown`。
+- 新增 exited-child single-consumption 与 reader-timeout retry 回归测试。本 checkpoint 不标记 verified；仍需 exact HEAD reviewer。
+- Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`91 passed / 0 failed`；Codex targeted：`13 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；最终仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.179 unverified：Codex recovery owner 与 pending fence retention
+
+- `ActiveChild` 现在绑定 pending-operation generation；`finish_pending_operation`按 active→pending锁序检查同 generation active recovery，cleanup失败时不再删除 pending fence。
+- cancellation同时校验 session generation与pending generation；active recovery、pending registry和child handle在同一锁序下收敛，generation漂移、pending丢失和registry异常均 fail-closed。
+- termination未确认时不消费 reader或删除 output artifact；reader cleanup失败时也保留 artifact。registration failure即使 child已终止，只要 reader/artifact cleanup失败仍保留完整 recovery context。
+- 无 operation id 的只读 `codex_exec`失败路径进入有上限的 host-owned unscoped recovery registry；后续普通 Codex调用先尝试 bounded retry，失败则继续保留并返回 unknown。
+- spawn后 stdin初始化、status polling 的 handle lock/handle missing错误改走 shared cleanup，不再用 `?`直接丢弃 child/reader ownership；新增 active pending fence与unscoped recovery owner回归测试。本 checkpoint 不标记 verified。
+- Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`93 passed / 0 failed`；Codex targeted：`15 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.180 unverified：Codex recovery slot、reader terminal state 与 session quiescence
+
+- unscoped `codex_exec` 在 spawn 前预留有上限的 recovery slot；Reserved/Retrying状态计入 cap，slot满时在创建 child前拒绝，cleanup失败写回同一 slot，成功才释放，避免 cap overflow后丢失 child ownership。
+- unscoped recovery retry不再用 `mem::take`移走所有条目；Retained会转为Retrying并继续占用槽位，新的普通 Codex调用不会绕过恢复上限。
+- reader返回IO错误或thread panic时记录 terminal error并标记 joined/done；后续cleanup重复报告原始错误，不再伪报 reader未启动。timeout仍保留reader句柄；只有reader terminal或完全成功时才进入artifact cleanup。
+- 修复 prepared lease mutex持有期间调用 pending finalization的死锁；`leases.remove`缺失分支先释放prepared锁，再处理pending。
+- session init/clear改用 Codex quiescence gate：先处理 unscoped recovery，checked-cancel active child，验证 active/pending已收敛后才清 prepared leases；未取消 pending或cleanup失败会阻止旧session切换，避免旧generation泄漏到新项目。
+- 新增 reader terminal error回归测试；本 checkpoint 不标记 verified，仍需 exact HEAD reviewer。本轮仍未闭合 Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery。
+
+验证结果：
+
+- Rust：`94 passed / 0 failed`；Codex targeted：`16 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.181 unverified：Codex execution/session lock boundary 与 terminal reader disconnect
+
+- 普通只读 `codex_exec` 的 retry、auth、program resolve、spawn、cleanup和recovery owner现在都在 `DEV_OPERATION_LOCK` 内；session init/clear不会与 unscoped Codex process或recovery retry并发。
+- Worker `prepare → pending begin → prepared lease consume → auth → spawn → cleanup → finish_pending`整体移动到同一 blocking host operation lease；不再在等待 host lock前创建 pending，session quiescence不会错过旧 worker。
+- `clear_codex_session_state`只在同一 host lock内执行，未取消 pending、active cleanup failure或unscoped recovery failure都会阻止session切换；pending的最终移除仍由worker finalization负责。
+- `RecvTimeoutError::Disconnected`现在join reader thread并记录terminal failure，不再保留已终止的JoinHandle；新增 disconnected-reader回归测试。
+- 本 checkpoint 不标记 verified；Windows Job Object/current_dir原子spawn、Unix descendant containment、stdin writer深层 bounded join、native Linux/macOS matrix、hardlink atomicity、task/attempt lineage/prompt capability和完整 structured unknownEffects recovery仍未闭合。
+
+验证结果：
+
+- Rust：`95 passed / 0 failed`；Codex targeted：`17 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.182 unverified：抽出 Codex cleanup/reader/artifact seam
+
+- 新增 `src-tauri/src/codex_cleanup.rs`，承接 `CodexCleanupContext`、reader join/retry、terminal reader error、output artifact创建/读取/删除、stdin writer和cleanup constants。
+- `codex.rs`仅通过显式 cleanup seam使用这些能力；本刀不改变 registry、spawn、权限或 session 语义，删除原 facade中的重复实现。
+- 现有 Codex lifecycle与真实 child/reader/artifact测试保持通过；本 checkpoint 不标记 verified，下一刀继续抽 registry/lease authority。
+
+
+验证结果：
+
+- Rust：`95 passed / 0 failed`；Codex targeted：`17 passed / 0 failed`；
+- Node：`128 test files / 1111 tests passed`；
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`：通过；
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过；
+- `npx tsc --noEmit`：通过；
+- `npm run build`：通过；既有 dynamic/static import 与大 bundle warning 保留，最大产物约 `1,159.81 kB`；
+- `npm run i18n:check`：`1026 keys`，en-US/zh-CN 对齐；
+- `git diff --check`：通过；
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：失败；仅报告既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint，本轮 `codex.rs` 无新增告警；
+- 本轮未 push、未 merge、未修改凭据或外部系统。
+
+### 7.183 unverified：抽出 Codex registry/lease authority
+
+- 新增 `src-tauri/src/codex_registry.rs`，承接 `ActiveChild`、prepared lease、pending operation、session generation、spawn reservation及registry lock order。
+- `codex.rs`保留Tauri command、session/cwd/lease编排和recovery orchestration；不再定义 active/pending/prepared registry状态机。
+- 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
+- `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.184 unverified：抽出 Codex process execution seam
+
+- 新增 `src-tauri/src/codex_process.rs`，承接 `CodexExecRequest`、`CodexExecResult`、Codex usage/event解析、exec参数构造和 `run_exec` process lifecycle。
+- `codex.rs`保留Tauri command、session/cwd/lease编排及现有cleanup/recovery orchestration；process执行通过既有registry reservation与cleanup seam，不改变行为语义。
+- 验证：Rust `95 passed / 0 failed`；Codex targeted `17 passed / 0 failed`；Node `128 test files / 1111 tests passed`；`cargo check`、`cargo fmt --check`、`npm run build`、`npm run i18n:check`（1026 keys）、`npx tsc --noEmit`、`git diff --check`通过。
+- `cargo clippy --all-targets -- -D warnings`仍失败于既有 `fs_guard.rs`、`lib.rs`、`dev_command_policy.rs` lint；本轮未新增 `codex.rs` 或 `codex_process.rs` lint。build既有最大bundle约`1,159.81 kB` warning保留。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.185 unverified：迁移 lib.rs 内联测试模块
+
+- 将 `src-tauri/src/lib.rs` 第 4442 行之后的 `dev_exec_tests` 与 `dev_write_symlink_tests` 内联测试原文迁移到 `src-tauri/src/dev_exec_tests.rs` 和 `src-tauri/src/dev_write_symlink_tests.rs`，生产实现未改动。
+- `lib.rs`仅保留两个 `#[cfg(test)] mod ...;` 声明；测试继续通过 `super::*` 访问同一宿主私有 API，保持测试语义和权限边界不变。
+- 验证：Rust `95 passed / 0 failed`；`cargo fmt`、`cargo check`、`git diff --check`通过；迁移后 `lib.rs` 实测 `4447` 行，两个外置测试文件分别为 `1376` 和 `609` 行。
+- 本轮未运行前端门（仅移动 Rust 内联测试，不涉及 TypeScript/前端产物）；本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.186 unverified：抽出 fs_guard 的 verbatim path normalizer
+
+- 将纯函数 `dev_strip_verbatim` 从 `src-tauri/src/lib.rs` 迁移到已有 `src-tauri/src/fs_guard.rs`，保留 Windows `\\?\`/UNC 分支和非 Windows 透传语义。
+- `lib.rs`通过 crate 内可见 import 保持原调用名；`fs_guard`内部改为直接使用本模块 helper，未移动 `DEV_STATE`、identity rebinding 或文件生命周期逻辑。
+- 验证：`fs_guard` `11 passed / 0 failed`；`dev_exec_tests` `26 passed / 0 failed`；`dev_write_symlink_tests` `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4432` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.187 unverified：抽出 fs_guard 的 protected path policy
+
+- 将纯函数 `protected_relative_path`、`protected_path_error` 和 `protected_path_is_execution_only_script` 从 `src-tauri/src/lib.rs` 迁移到 `src-tauri/src/fs_guard.rs`。
+- 保留 `dev_path_allowed_with_options` 的 `DEV_STATE`、identity rebind、allow-execution-only 分支和文件权限编排；root 仅保留测试条件下的 `protected_relative_path` re-export。
+- 验证：fs_guard `11 passed / 0 failed`；dev_exec `26 passed / 0 failed`；dev_write `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4392` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.188 unverified：抽出 fs_guard 的 Git diff pathspec policy
+
+- 将纯函数 `git_diff_pathspec_allowed` 从 `src-tauri/src/lib.rs` 迁移到 `src-tauri/src/fs_guard.rs`，保留独立的 Git protected-root/ancestor 列表，不与 host file protected policy 合并。
+- `lib.rs`生产 `dev_exec` 通过 fs_guard import继续调用；未移动 `has_multiple_hardlinks`、`DEV_STATE`、cwd identity 或文件写入 gate。
+- 验证：fs_guard `11 passed / 0 failed`；dev_write `20 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4352` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.189 unverified：抽出 cleanup lineage predicates
+
+- 新增 `src-tauri/src/cleanup_lineage_policy.rs`，承接 `cleanup_binding_matches` 与 `orphan_target_is_deleted_candidate` 两个纯 predicate。
+- `CleanupBinding`、DEV_STATE、token生成/消费、orphan registration、cleanup approval/CAS/read-back仍由 `lib.rs` host authority 持有；新模块不拥有状态或副作用。
+- 验证：orphan predicate targeted `1 passed / 0 failed`；cleanup binding targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4329` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.190 unverified：抽出 worktree ref/name lexical policy
+
+- 新增 `src-tauri/src/worktree_policy.rs`，承接 `worker_name_is_valid`、`worker_branch_is_valid`、`is_full_object_id`、`worker_branch_from_tip_arg` 和 `worker_branch_from_ref_arg`。
+- `lib.rs`保留 `worker_target_is_valid`、worktree path/canonicalization、pending/registered lease、session、identity 和 CAS authority；新模块仅提供纯输入解析与校验。
+- 验证：worker name targeted `1 passed / 0 failed`；worktree lifecycle targeted `1 passed / 0 failed`；scoped branch probe targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4301` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.191 unverified：抽出 Git worktree porcelain parser
+
+- 新增 `src-tauri/src/git_worktree_policy.rs`，承接 `validate_git_worktree_porcelain`；保留 output cap、必需 `worktree/HEAD` 字段、40/64位 object ID、detached/bare/locked/prunable 和 unknown-field fail-closed 语义。
+- `lib.rs`保留 `git_worktree_list` 及所有 Git probe、registration、restore、orphan、cleanup、CAS 和 DEV_STATE authority；parser仅依赖 `DEV_OUTPUT_CAP` 与 worktree policy object-id validator。
+- 验证：worktree add targeted `1 passed / 0 failed`；unregister targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4259` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.192 unverified：抽出 SessionAuthority state carrier
+
+- 新增 `src-tauri/src/dev_state.rs`，承接 `DEV_STATE`、`DEV_OPERATION_LOCK`、generation helper、测试 state lock，以及 `DevState`、`RegisteredWorktree`、`PendingWorktree`、`CleanupBinding` carrier types。
+- `lib.rs`继续持有所有 session transition、identity rebind、Git/worktree lifecycle、cleanup capability、file/process authority；本刀只改变 carrier 归属和 crate-private visibility，不改变状态转换或 lock order。
+- 验证：stale generation targeted `1 passed / 0 failed`；session operation lock targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4185` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.193 unverified：抽出 stable directory identity primitive
+
+- 新增 `src-tauri/src/fs_identity.rs`，承接 `StableDirectoryIdentity` 与 `stable_directory_identity` 的平台探测实现；`lib.rs`通过 crate-private re-export 保持 Codex、registry、测试和 host caller 的现有类型路径。
+- 保留 Unix device/inode、Windows volume/file-index、canonical directory 检查和 zero-identifier fail-closed 语义；未移动 StableFileIdentity、bound I/O、DEV_STATE 或 stateful cwd/file gates。
+- 验证：stable identity targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4101` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.194 unverified：建立 SessionStamp snapshot/recheck seam
+
+- `dev_state.rs`新增不可变 `SessionStamp`、state-only snapshot/expected-generation snapshot和stamp recheck API。
+- `lib.rs` 的 `assert_base_identity_current` 与 `assert_session_generation` 改为 snapshot → 释放 DEV_STATE → stable identity probe → stamp recheck；调用签名、operation lock归属、Codex/Antigravity caller和错误语义保持不变。
+- 未移动 dev_init/dev_clear transition、cwd binding、Codex lease、Antigravity lifecycle 或任何 Git/file mutation；SessionStamp不是 capability，也不替代 `DEV_OPERATION_LOCK`。
+- 验证：stale generation targeted `1 passed / 0 failed`；session lock targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4068` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.195 unverified：收窄 base-repo state accessors
+
+- `dev_state.rs`新增 `snapshot_base_repo` 与 `base_repo_is_initialized` 两个窄 accessor，返回 owned `Option<String>`/bool，不暴露 `MutexGuard` 或通用 state getter。
+- `dev_lexical_abs_of`、`dev_abs_of` 和 `dev_cwd_binding` 的低风险 raw `base_repo` 读取改走 accessor；cwd ownership、identity rebind、legacy fallback 与 lifecycle transition保持在 `lib.rs`。
+- 验证：cwd prefix targeted `1 passed / 0 failed`；stale generation targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `4063` 行。
+- 本轮未 push、未 merge、未修改凭据或外部系统；本 checkpoint 不标记 verified。
+
+### 7.196 unverified：抽出 credentials/storage authority boundary
+
+- 新增 `src-tauri/src/credentials.rs`，完整承接 OS keyring credential index、AppData `endpoints.json`、endpoint/vault commands、AES-GCM master-key persistence、API-key encrypt/decrypt 与 crate-local base64 helpers。
+- `lib.rs` 仅保留模块声明、Tauri command registration、共享 bootstrap；未移动 Git/worktree、DEV_STATE、file authority、process lifecycle 或 credential values。Tauri commands 的参数、返回值和注册顺序保持不变。
+- 验证：AES/base64 targeted `2 passed / 0 failed`；credential environment targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `3633` 行，新 `credentials.rs` `439` 行。
+- 全量 Rust 首次受到既有 `event_store` disposable lock fixture 残留影响，清理精确 Temp fixture 后重跑通过；未修改 `event_store` 生产代码。build 仍有既有大 chunk warning（最大约 `1,159.81 kB`）。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.197 verified closure：credentials/storage boundary
+
+- exact reviewed HEAD：`263b232ebb71448c75a63b5433c0e6e94d62cc54`；独立 reviewer 返回 `passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `credentials.rs` 是 semantics-preserving extraction；12 个 Tauri command 名称与注册顺序保持不变，未发现新增安全或逻辑问题。
+- verified tag：`checkpoint/lib-credentials-storage-verified`。Reviewer 建议将 crypto round-trip 测试进一步靠近 credentials 模块，并补 Linux/macOS keyring/AppData CI；两项均为非阻塞后续事项。
+
+### 7.198 unverified：抽出 session/cwd authority seam
+
+- 新增 `src-tauri/src/session_authority.rs`，承接 `dev_base_repo`、SessionStamp validation/recheck、generation assertion、relative/canonical path resolution、`DevCwdKind`、cwd binding 和 registered-worktree assertion。
+- `DEV_STATE`、`DEV_OPERATION_LOCK`、SessionStamp/carrier storage 继续由 `dev_state.rs` 所有；Git/worktree registration、pending/orphan/cleanup lifecycle 仍留在 `lib.rs`，本轮不改变 lock order、identity probe 顺序或 session transition。
+- 保留 crate-private root re-export 供 Codex、Antigravity、dev/file commands 和 test modules 使用；`dev_cwd_kind` 与 `PathBuf` 仅在 cfg(test) 下保留测试兼容 seam。
+- 验证：cwd prefix targeted `1 passed / 0 failed`；stale generation targeted `1 passed / 0 failed`；Codex cwd targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；`lib.rs`实测 `3417` 行，新 `session_authority.rs` `236` 行。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.199 unverified：抽出 worktree admission/pending lease authority
+
+- 新增 `src-tauri/src/worktree_authority.rs`，承接 worker target/root validation、worktree-add root guard、registered identity predicates、pending rollback lease admission/update、main-repo worktree command gate 与 cleanup token invalidation seam。
+- `lib.rs` 继续持有 Git probes、session init/clear、registration/restore/orphan/cleanup/unregister command bodies；本轮只移动其共享生命周期 helper，仍使用同一个 `DEV_STATE`/`DEV_OPERATION_LOCK`，未改变 generation、identity、branch CAS 或 pending lease 语义。
+- 保留明确 crate-private root re-export：生产 caller 使用 lifecycle helper，测试 helper 仅在 cfg(test) 暴露；未增加第二套 state carrier 或 lock。
+- 验证：worktree lifecycle targeted `1 passed / 0 failed`；pending rollback targeted `1 passed / 0 failed`；identity-conflict targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `2953` 行，新 `worktree_authority.rs` `503` 行。
+- build 保留既有动态/静态 import 与大 chunk warning（最大约 `1,159.81 kB`）；本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.200 unverified：抽出 worktree Git/lifecycle authority
+
+- `worktree_authority.rs`继续承接 Git worktree/branch probes、porcelain validation、registration、trusted restore、orphan lineage、native cleanup approval/CAS/removal 与 unregister；`dev_init_session`/`dev_clear_session`仍留在 `lib.rs`，保留Codex session teardown顺序。
+- Tauri handler 改为 module-qualified registration；command names、参数、返回值和前端 IPC 字符串保持不变。`cleanup_lineage_policy`直接依赖 `dev_state::CleanupBinding`，测试所需 carrier/policy 仅通过 cfg(test) root seam 暴露。
+- 没有新增 state carrier、operation lock 或权限旁路；所有 lifecycle command 继续使用同一 `DEV_OPERATION_LOCK`、SessionStamp/generation、StableDirectoryIdentity、pending lease、cleanup capability 和 branch CAS/read-back顺序。
+- 验证：Codex cwd targeted `1 passed / 0 failed`；unregister targeted `1 passed / 0 failed`；cleanup capability targeted `1 passed / 0 failed`；orphan candidate targeted `1 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `2030` 行，新 `worktree_authority.rs` `1440` 行。
+- build 仍保留既有动态/静态 import 与大 chunk warning（最大约 `1,159.81 kB`）；本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.201 unverified：抽出 file authority
+
+- 新增 `src-tauri/src/file_authority.rs`，承接 stateful registered-worktree path gate、hardlink rejection、StableFileIdentity、Windows handle/reparse FFI、Unix openat/no-follow parent/final binding、bound read/write/create helpers及三个 file commands。
+- `lib.rs` 保留 dev_exec/process authority、session init/clear、Tauri bootstrap；dev_exec通过crate-private seam继续调用 `dev_exec_path_allowed`、hardlink与Unix bound cwd identity helpers，`fs_identity.rs`通过同一 file authority FFI实现，未复制第二份平台实现。
+- file commands 的 Tauri name、参数、返回值和 handler 顺序保持不变；SessionStamp/generation、DEV_OPERATION_LOCK、worktree registration和protected-path policy ownership未改变。
+- 验证：file targeted `6 passed / 0 failed`；Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；`lib.rs`实测 `1357` 行，新 `file_authority.rs` `695` 行。
+- 当前验证发生在 Windows；Unix/macOS openat/no-follow 原生矩阵、Windows reparse/junction adversarial matrix仍未验证。build保留既有大 chunk warning（最大约 `1,159.81 kB`）；本 checkpoint 不标记 verified。
+
+### 7.202 unverified：src-tauri namespace consolidation
+
+- 将平铺模块按领域收进四个 namespace：`authority/`、`policy/`、`storage/`、`execution/`；root `lib.rs`通过 crate-private aliases 保持现有调用路径和 Tauri command contract。
+- 当前目录职责：authority承载 state/session/file/worktree；policy承载 command/fs/worktree/Git/cleanup policy；storage承载 credentials/event store；execution承载 dev_process。Codex/Antigravity和测试模块本轮保持原位置，避免混入生命周期修复。
+- 本轮只改变文件路径、`mod.rs`聚合和显式 import/re-export；未改变 state carrier、lock order、命令参数、权限规则、进程行为或外部 IPC 名称。
+- 验证：Rust 全量 `95 passed / 0 failed`；`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；既有 build 动态/静态 import 与大 chunk warning 保持不变。
+- 本轮未 push、未 merge、未修改或保留任何凭据；本 checkpoint 不标记 verified。
+
+### 7.203 verified：namespace consolidation review closure
+
+- exact HEAD `3d14acd1608b831f4a2127688fb16adc83537649` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认四个 namespace 聚合、crate-private aliases、两处 nested import 调整没有引入重复实现、模块环、路径敏感断裂或行为变化；Tauri `generate_handler!` 保持 37 个 command，Rust 95 个测试仍可发现。
+- reviewer 质量门：`cargo test --locked` 为 `95 passed / 0 failed`；`cargo check --locked`、`cargo fmt -- --check`、`git diff --check`通过；工作树与审查的 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/native-src-directory-consolidation-verified`。审查仅覆盖 Windows；Unix/macOS native matrix、GUI/E2E 与既有 worktree lifecycle blocker 仍未验证/未解决。
+
+### 7.204 unverified：orphan branch lineage repair
+
+- `dev_register_orphan_worktree` 现在要求调用方提供合法 `branchRevision`，native 重新读取当前 branch tip，只有与 durable revision 完全一致时才写入 `PendingWorktree.branch_revision`；stale same-name branch tip 直接 fail-closed，不进入 `DEV_STATE`。同一路径的重复 orphan registration 只有 generation、branch、revision 和 removed 状态完全一致时才幂等成功，否则拒绝 duplicate lineage conflict。
+- `dev_approve_cleanup` 与 `dev_cleanup_worktree` 对 orphan lineage 不再只接受 caller revision；必须匹配 native orphan 中保存的 revision，缺失或漂移均拒绝。旧的无 revision orphan 记录不能获得 cleanup capability。
+- Node Tauri orphan restore 将 `WorktreeInfo.branchRevision` 传入 `dev_register_orphan_worktree`；新增 IPC payload 回归，保持 live restore 与 orphan restore 分支分离。
+- 新增真实 Git fixture：`orphan_registration_preserves_native_branch_revision`、`orphan_registration_rejects_branch_revision_drift`；focused Rust `2 passed / 0 failed`，完整 Rust `97 passed / 0 failed`。
+- 验证：`cargo check`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`，既有动态/静态 import 与大 chunk warning 保持不变。
+- 本 slice 只闭合 orphan branch-revision provenance；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。本轮未 push、未 merge、未保留凭据；等待 exact HEAD reviewer。
+
+### 7.205 unverified：orphan lineage all-record conflict repair
+
+- exact HEAD `97dedb45e252a7303264adea04b9fa3525e1548d` reviewer fail-closed 发现 `find` 只检查同路径第一条 orphan record，后续 generation/branch/revision/removed 冲突可能被忽略；该 verdict 已按 `passed=false` 处理。
+- 新增统一 `orphan_records_for_path` 与 exact lineage matcher：registration、approval、cleanup 都扫描同路径全部 orphan records；必须恰好一条且 generation、branch、native revision、removed 全部一致，才允许幂等/继续，否则拒绝 ambiguous duplicate lineage。
+- 扩展真实 Git fixture，覆盖第一条 legacy 缺失 revision和后续冲突记录两种顺序；focused orphan Rust `2 passed / 0 failed`。
+- 新 snapshot 验证：Rust `97 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本 snapshot 仍为 unverified，待新 exact HEAD reviewer；restore durable target identity、cleanup partial-CAS recovery、post-remove read-back、pending probe unknown 和 Windows TOCTOU 仍未解决。
+
+### 7.206 verified：orphan lineage all-record review closure
+
+- exact HEAD `ff1261d14809467ab1466503d44ae02b1717410a` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 shared matcher 使用 canonical path comparison 扫描全部同路径 orphan records；registration、approval、cleanup 仅接受唯一且 generation/branch/revision/removed 全匹配的记录，ambiguous、legacy 和冲突记录均拒绝；session generation、operation lock、live registration 与 Node branch-revision payload 未回归。
+- reviewer 质量门：Rust `97 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/native-orphan-lineage-all-records-verified`。直接 `dev_approve_cleanup`/`dev_cleanup_worktree` seam tests、exact duplicate idempotence/path-alias tests作为非阻塞后续增强；GUI/E2E、Unix/macOS native matrix及其他 worktree blockers仍未验证/未解决。
+
+### 7.207 unverified：cleanup capability probe invalidation
+
+- 新增 `cleanup_probe_or_invalidate`，统一包裹 capability 已匹配后的 identity/base/read-back probe；任何 `Result<T, String>` error 都先消费 one-shot cleanup token，再返回原错误，避免 capability 在 fallible path 后保持可重试。
+- 覆盖 cleanup 的 target identity、pre-CAS identity、post-CAS identity、worktree-remove 前 identity 和最终 base read-back；approval 阶段尚未生成 token 的 probe 保持原有错误路径。
+- 新增 `cleanup_probe_error_consumes_capability` regression；Rust 全量 `98 passed / 0 failed`。
+- 验证：`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本 slice 只闭合 capability invalidation，不宣称 durable recovery：branch CAS 后 remove/read-back partial outcome、unknown recovery owner、post-remove strict absence、pending probe unknown、restore ordering 和 Windows TOCTOU 仍未解决；等待 exact HEAD reviewer。
+
+### 7.208 unverified：cleanup identity short-circuit repair
+
+- exact HEAD `031b1dffb80f064d3b01986d92f7454e6a453934` reviewer fail-closed 发现 refactor 后 base identity mismatch 仍继续执行 target probe，改变了原有短路与 phase-specific error precedence；该 verdict 已按 `passed=false` 处理。
+- 新增 `cleanup_identity_guard`：先验证 base identity，只有匹配时才执行 target probe；三处 cleanup guard 恢复原有短路顺序和错误语义，同时保留 probe error 的 token invalidation。
+- 新增 `cleanup_identity_guard_preserves_base_mismatch_short_circuit` regression，确认 target probe 未被调用、phase-specific error 保持、capability 被消费。
+- 新 snapshot 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本 slice 仍只处理 cleanup capability invalidation/guard 语义；durable partial-CAS recovery、post-remove strict absence、pending probe unknown、restore ordering 和 Windows TOCTOU仍未解决，等待新的 exact HEAD reviewer。
+
+### 7.209 verified：cleanup capability invalidation review closure
+
+- exact HEAD `b855766624275aba92ffea64d12c5f6b405fd9b4` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `cleanup_probe_or_invalidate` 在 capability 后的 fallible probe 中消费 token，`cleanup_identity_guard` 保持 base mismatch 短路、phase-specific error precedence 和三处 cleanup mutation order；无 DEV_STATE 锁内失效死锁或成功路径回归。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/native-cleanup-identity-short-circuit-verified`。本轮 hardening 到此冻结；partial-CAS durable recovery、post-remove strict absence、pending probe unknown、restore ordering、Windows TOCTOU、GUI/E2E 与 Unix/macOS native matrix仍是明确 residual，不在本轮继续扩大。
+
+### 7.210 unverified：storage endpoint/vault structural split
+
+- 将 `storage/credentials.rs` 按事实所有权拆开：`credentials.rs` 只保留 OS keyring 的 generic set/get/delete/list；新增 `storage/endpoint_store.rs` 承接 endpoints.json、Vault、master key、AES-GCM、base64 和相关敏感路径。
+- Tauri endpoint/vault command 名称、参数、返回值和 `generate_handler!` 注册顺序保持不变；root `lib.rs` 只改 module-qualified registration，未改变 IPC contract 或存储格式。
+- `vault_crypto_roundtrip_tests` 随敏感实现迁移到 `storage::endpoint_store::tests`；`fs_atomic_replace_tests`仍暂留 `lib.rs`，下一结构 slice再按文件持久化边界迁移。
+- 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 本轮未改变 cleanup hardening、权限、generation、identity 或外部命令行为；等待结构 slice exact HEAD reviewer。
+
+### 7.211 verified：storage endpoint/vault structural review closure
+
+- exact HEAD `02d8a1887e9567025d3d7fcc38991f74c2ba92fe` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `credentials.rs` 只拥有 generic keyring credential set/get/delete/list；`endpoint_store.rs` 拥有 endpoint/vault AppData、master key、AES-GCM、base64 与 crypto tests；private storage keyring service、command visibility、IPC order、存储格式和行为均未改变。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/storage-endpoint-vault-split-verified`。GUI/E2E、Unix/macOS native matrix仍未验证；下一结构 slice转向 execution/dev_exec。
+
+### 7.212 unverified：execution dev_exec structural split
+
+- 将原 `lib.rs` H4 execution block 迁移到 `src-tauri/src/execution/dev_exec.rs`：`dev_exec` command、cwd/session fence、command admission、environment sanitization、program resolution、timeout bridge、Windows `.cmd/.bat`/ComSpec launcher 与 trusted Windows program checks均由 execution namespace 持有。
+- `policy/command.rs` 的 command grammar 与 hardened Git diff helpers未复制；`dev_exec` 继续调用既有 policy authority。`authority/worktree.rs`、`codex.rs`、`codex_process.rs`改为直接依赖 `execution::dev_exec`，root 只保留 Tauri registration、legacy `run_git`/session facade 和 cfg(test) seam re-export。
+- `lib.rs` 从约 `1316` 行降至 `511` 行；未改变 Tauri command 名称、参数、注册顺序、session/generation、cwd、环境清理、launcher、timeout 或 mutation hook 语义。
+- 验证：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`通过；build 最大 chunk 约 `1,159.86 kB`。
+- 仅完成结构拆分；GUI/E2E、Unix/macOS native matrix、既有 worktree lifecycle residual不在本 slice扩大范围，exact HEAD reviewer尚未完成。
+
+### 7.213 verified：execution dev_exec structural review closure
+
+- exact HEAD `1c09425d6d9384785bdebf661dc73d99b1bf544c` 经独立 fail-closed reviewer 审查通过：`passed=true`、`security_concerns=[]`、`logic_errors=[]`。
+- reviewer 确认 `execution/dev_exec.rs` 是 H4 execution authority 的生产唯一 owner；`policy/command.rs` 未复制或改写；root 仅保留 bootstrap、registration、legacy `run_git`/session facade 和 cfg(test) seam re-export。
+- reviewer 确认 37 个 Tauri command 的名称、参数、注册顺序和 `dev_exec` IPC contract不变；无 lock、mutation order、session/cwd fence、环境清理、launcher 或 timeout 回归。
+- reviewer 质量门：Rust `99 passed / 0 failed`；`cargo check --locked`、`cargo fmt --all -- --check`、`git diff --check`通过；Node `128 test files / 1111 tests`；build、i18n、TypeScript通过；工作树与 exact HEAD 一致。
+- 已创建本地 verified tag：`checkpoint/execution-dev-exec-split-verified`。GUI/E2E、Unix/macOS native matrix以及既有 worktree lifecycle residual仍未验证；下一刀继续处理剩余 root facade，不扩大 hardening范围。
+
+### 7.214 unverified：Worker successful terminal requires Acceptance
+
+- 确认当前 exact HEAD 的逻辑 blocker：`WorkerTaskQueue.markSucceeded` 只要求非空 Evidence，允许 `acceptanceId` 缺失；`normalizeQueueTask` 对恢复的 `succeeded` task 也未要求 Acceptance，因此可把无验收的 Worker 结果投影为 succeeded/RunSucceeded/Orchestration done。
+- 新增运行时与恢复回归：成功 terminal 缺 Acceptance 必须拒绝；持久化 `succeeded` 状态缺 Acceptance 必须拒绝。同步修正 queue、coordinator、runtime 测试 fixtures，使所有合法成功结果显式携带 Acceptance；失败/feedback 结果契约未改变。
+- RED：新增 `rejects successful task completion without Acceptance id` 初次运行失败（当前实现未抛错）；GREEN：`workerQueue.test.ts` `32/32`，相关 Worker/coordinator/runtime/side-effect/cleanup 测试 `82/82`。
+- 完整验证：Node `128 test files / 1113 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,159.92 kB`，保留既有 dynamic/static import 和 chunk warning。
+- 本 slice 只闭合 Acceptance terminal invariant；旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt Evidence/Acceptance provenance、全局 runtime project fencing 和 stale ProjectFile save 仍未处理，exact HEAD reviewer 尚未完成。
+
+### 7.215 unverified：close Acceptance provenance bypasses across recovery and projections
+
+- 针对上一轮 reviewer fail-closed 指出的绕过补齐同一 `workerSuccess` invariant：运行时 queue、持久化 queue restore、event rehydration、domain replay、legacy snapshot migration、WorkerRun→Orchestration projection、consistency audit 和 side-effect receipt 均要求成功 terminal 同时拥有非空 Evidence 与 Acceptance。
+- 缺失 provenance 的 `TaskSucceeded` event 不再进入恢复 projection；缺失 provenance 的 `RunSucceeded` 不再升级 run/orchestration terminal success；legacy migration 直接拒绝生成 synthetic success facts；receipt verifier 在 Evidence verifier 前拒绝缺失 Acceptance。
+- 新增/更新跨路径 regression，focused `113/113`；完整 Node `128 test files / 1118 tests`；`npm run build`、`npm run i18n:check`、`npx tsc --noEmit`、`git diff --check`通过；build 最大 chunk 约 `1,161.31 kB`，保留既有 warning。
+- 本 slice 未处理旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance 规则、Worker runtime project fencing、stale ProjectFile save，以及 native/GUI residual；新 exact HEAD reviewer 尚未完成。
+
+### 7.216 unverified：close second-round Worker success invariant bypasses
+
+- `8ee0ae0` 的 exact HEAD reviewer 仍 fail-closed，确认 success invariant 还有十条旁路：混合类型 Evidence 被过滤、空 `RunSucceeded`、孤立 `TaskCleaned`、persisted Run/task status mismatch、空/不完整 TaskGraph coverage、重复 Evidence 被 Map 覆盖、成功 worker receipt 缺 provenance、migration success event 顺序、已 done orchestration 被 invalid run 保留，以及 raw TaskGraph projection 和 invalid rehydration state。
+- 在 checkpoint `64793e5` 后逐条写入 RED：focused 首轮 `9` 个失败均对应 reviewer finding；修复 `contracts.ts` 原始 Evidence 校验和 terminal replay guard，queue restore status gate，migration task-facts-before-RunSucceeded 顺序，rehydration run quarantine，orchestration/taskGraph projection coverage/provenance guard，consistency duplicate Evidence/receipt audit。
+- GREEN：focused `126/126`；完整 Node `128 test files / 1128 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,162.91 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前代码尚未重新提交或 exact review；本节只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.217 unverified：close recovery and durable receipt provenance bypasses
+
+- `48d1665` 的 exact reviewer 继续 fail-closed，新增确认两条高风险旁路：rehydration 的 direct state assembly 可接受孤立 `TaskCleaned` 并报告 restored，side-effect receipt 只检查 Evidence/Acceptance id 非空而不验证 durable record 与当前 Run/Task/Execution/Attempt binding；同时指出 stage log 会过滤缺失 Task。
+- 在 checkpoint `a194a94` 后补 RED→GREEN：rehydration 每个 Run 先通过 domain reducer 做局部事件生命周期预验证并 quarantine 非法状态；`TaskCleaned` 统一要求前置有效 success provenance 和 cleanup receipt；side-effect recorder 新增 Acceptance verifier，持久化 verifier 校验唯一 passed record、lineage 和 worktree；consistency audit 对成功 worker receipt 交叉核对 Evidence/Acceptance durable records；orchestration stage log 对缺失 Task 显式 pending。
+- GREEN：focused `131/131`；完整 Node `128 test files / 1133 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build 最大 chunk 约 `1,165.40 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.218 unverified：close event-write, scope-binding, production-wiring, and audit-projection bypasses
+
+- `7c1f307` 的 exact reviewer继续 fail-closed，确认四类旁路：EventStreamRepository/eventBuffer写入前只做 sequence/aggregate检查，孤立 `TaskCleaned` 可落盘；非 `TaskCleaned` payload 可伪装 `cleanupStatus: cleaned`；Evidence/Acceptance verifier 未绑定 orchestration/stage；App 三处 production `createPersistedWorkerSideEffectRecorder` 未传 Acceptance verifier；rehydration缺少最终 queue restore validation；consistency失败后 App 仍可能把 raw succeeded state投影为 done。
+- 在 checkpoint `ce8bf72` 后修复：最终 durable append/appendBatch（以及 eventBuffer flush）统一 replay lifecycle validator，保留 in-memory queue 的 structural append；cleanupStatus仅允许由 TaskCleaned写入；SideEffectRecord持久化 orchestration/stage binding，Evidence/Acceptance verifier校验scope，App启动/恢复/retry三条真实路径均接入 durable Acceptance verifier；rehydration最终复用 restoreWorkerRunQueue；audit失败时 suppression projection 清除 done/success stage外观。
+- 新增跨边界 regression，focused `145/145`；完整 Node `128 test files / 1137 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build最大 chunk约 `1,168.20 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.219 unverified：close legacy cleanup lineage, restore-state, and original-event-position bypasses
+
+- `ba6b003` 的 exact reviewer继续 fail-closed，确认 legacy aggregateType=Task 无 lineage 时仍可伪装 cleanupStatus，TaskCleaned 可跨 runId复用 taskId；restore queue 接受未知 Run/Task status与缺 assignment 的 created/orphaned/registration-pending worktree；rehydration 重写 aggregateVersion，且 audit zero-run/exception路径仍可能保留 done/success projection。
+- 在 checkpoint `8c9f24a` 后修复：replay全局拒绝无 run/task lineage 的 TaskCleaned与非TaskCleaned cleanupStatus，并要求legacy cleanup匹配原run；WorkerQueue维持跨 drain eventHistory/sequence/aggregateVersion，restore validator拒绝未知状态和不完整 assignment；rehydration先验证原始 project event stream、run-local只压缩sequence且最终restore queue；App audit zero-run及exception统一调用 suppression projection；idempotent existing-event append也先验证既有stream lifecycle。
+- GREEN：focused `146/146`；完整 Node `128 test files / 1138 tests`；`npm run build`通过；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。Build最大 chunk约 `1,169.58 kB`，保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.220 unverified：route audit and reconciliation through restore validation
+
+- `439b38f` 的 exact reviewer继续 fail-closed，确认 consistency audit未调用 `restoreWorkerRunQueue`，App仍可投影 malformed non-empty snapshots；未知 `worktreeStatus` 在 replay/rehydration中被静默丢弃；reconcile结果可在后续 audit前写入 ProjectFile；zero Worker runs但已有 orchestration/stage success时 suppression仍有空洞。
+- 在 checkpoint `6d5fd65` 后修复：replay对未知 `worktreeStatus` fail-closed；audit在提供 TaskGraph时对每个 run执行统一 restore validation；reconcile支持 TaskGraph-backed final restore并在 issues存在时禁止保存；App对 zero-run worker projection和 audit failure统一清除 done/success外观。
+- GREEN：本轮 focused `8 files / 148 tests`；完整 Node `128 test files / 1140 tests`；`npm run build`通过，最大 chunk约 `1,170.75 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 当前修复尚未重新提交或 exact review，仍只能标记 `unverified`。旧 executor admission、Worker enqueue ProjectControl admission、跨 attempt 更深层 provenance、runtime/persistence fencing、native command-policy/worktree residual 和 GUI/E2E 仍未处理。
+
+### 7.221 unverified：extract ProjectControl/Worker lifecycle adapter from workflowStore
+
+- 按用户确定的基础建设优先级，暂停继续扩展当前 Worker blocker；从 `workflowStore.ts` 抽出无 React 的 `projectControlLifecycle.ts`，集中负责 ProjectControl snapshot normalization、Worker runtime install/clear 和 runtime-only recovery/evidence/receipt/proposal projection 的初始状态。
+- 保留 `workflowStore` facade、Zustand state shape、公开 action 名称、ProjectFile 序列化、事件 buffer 和现有组件调用合同；`openProject`、`newProject`、`createProject`、`closeProject` 与 persist merge 改为通过 adapter 接入，未改变执行/IPC语义。
+- 新增 adapter 直接测试，并保留 store project-control regression。GREEN：focused `2 files / 10 tests`；完整 Node `129 test files / 1145 tests`；`npm run build`通过，最大 chunk约 `1,170.87 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是第一条纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一刀继续处理 workflowStore 中更完整的 ProjectControl/Worker lifecycle facade，再进入 `App.tsx` 生命周期拆分；真实 Tauri E2E 与历史 unverified 收口后置。
+
+### 7.222 unverified：extract App project lifecycle controller
+
+- 第二条 bounded slice 将 `App.tsx` 中项目身份切换、plugin/DevSession epoch、Worker recovery/evidence/audit scheduling 和 cleanup refresh 的 lifecycle effect 抽到 `src/projectControl/projectLifecycleController.ts`；Worker业务函数通过依赖注入，controller不复制 Worker authority。
+- `App.tsx` 保留 root UI、公开 handler、store facade 与 `ProjectOperation` guard，只保留 controller wiring；旧 subscribe/epoch/cancellation/teardown 顺序保持不变。新增 controller direct tests，覆盖 initial observe/dispose 与 project transition boundary。
+- GREEN：focused `3 files / 12 tests`；完整 Node `130 test files / 1147 tests`；`npm run build`通过，最大 chunk约 `1,171.27 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是行为保持的结构切片，尚未进行 exact HEAD reviewer；当前只能标记 `unverified`。下一步继续收口 WorkerRecovery/receipt handler 或 executor adapter，再进行真实 Tauri E2E；历史 unverified 仍后置。
+
+### 7.223 unverified：close duplicate ProjectControl event-buffer cleanup owner
+
+- 旧 `2c566bb` reviewer因 exact HEAD 已漂移不能审批，但其代码 finding在当前链路仍成立：`workflowStore.newProject/openProject` 直接清理 event buffer，adapter同时拥有部分 lifecycle cleanup，导致事实所有权重复。
+- 修复为：`resetProjectControlLifecycle(previousProjectId)` 统一处理新项目切换；新增 `activateProjectControlRuntime` 统一处理 open-project 的 pending event buffer 清理与 Worker runtime install；store 删除 direct `clearProjectEventBuffer` lifecycle callers，并增加 activation cleanup regression。
+- GREEN：focused `3 files / 13 tests`；完整 Node `130 test files / 1148 tests`；`npm run build`通过，最大 chunk约 `1,171.30 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是对前两条结构切片的 ownership repair，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。
+
+### 7.224 unverified：restore App lifecycle warning observability
+
+- `9b001e8` exact reviewer确认 controller extraction 把原 App 中的三类 warning log 静默吞掉：Worker recovery scheduling、Evidence scheduling、项目生命周期 transition failure。该问题属于结构切片引入的行为回归，不扩大 Worker authority。
+- 新增 `reportWarning` 注入边界，恢复原有中文 warning 文案和 abort 条件；新增 rejection regression，确保 recovery/evidence 调度失败仍可观察，项目切换失败仍由 controller报告。
+- GREEN：focused `1 file / 3 tests`；完整 Node `130 test files / 1149 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` 基准 `1026` keys、`en-US 1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是对 App lifecycle 结构切片的行为修复，尚未进行新的 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E 与历史 unverified 收口继续后置。
+
+### 7.225 verified：App lifecycle foundation slice review closure
+
+- exact HEAD `96e81c7` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`；确认 warning propagation、abort suppression、ProjectOperation、centralized lifecycle/event-buffer ownership 和 scheduler guards均保持行为一致。
+- 同一代码快照质量门：Node `130 test files / 1149 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-lifecycle-warning-observability-verified`。该 tag只证明本条前端 lifecycle foundation slice及其自动化质量门，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
+
+### 7.226 unverified：extract Worker recovery facts from App
+
+- 第三条前端基础切片将 App 顶层的纯 Worker recovery facts（成功 CleanupReceipt reconciliation、unknown/needs-user cleanup Run detection）抽到 `src/projectControl/workerRecoveryFacts.ts`；Tauri I/O、store mutation 和 UI handler仍留在 App，避免跨 authority 混切。
+- App 删除重复实现并改为导入 recovery facts；新增 direct tests，验证无可信 receipt时不改变 Worker state、unknown/needs-user effect只产生对应 Run recovery集合。
+- GREEN：focused `4 files / 16 tests`；完整 Node `131 test files / 1151 tests`；`npm run build`通过，最大 chunk约 `1,171.66 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是新的纯结构 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续抽 WorkerRecovery/receipt controller 的 I/O wiring，再进行真实 Tauri E2E；历史 unverified继续后置。
+
+### 7.227 verified：Worker recovery facts slice review closure
+
+- exact HEAD `fd74927` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认抽出函数与原 App 实现语义等价，App调用方已切换到唯一 owner，I/O/store/UI边界未移动，底层 cleanup receipt lineage/attempt/hash校验保持有效。
+- 同一代码快照质量门：Node `131 test files / 1151 tests`；focused `24 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-recovery-facts-verified`。该 tag只证明 recovery facts结构切片，不代表 Worker blocker、真实 GUI/E2E、native hardening或历史 unverified已关闭。Reviewer建议的额外 valid/cross-attempt direct fixture为非阻塞建议。
+
+### 7.228 unverified：extract Worker recovery I/O controller from App
+
+- 第四条前端基础切片将 App 中 `recoverInterruptedWorkerEffects` 与 `loadProjectWorkerEvidence` 的 Tauri evidence/journal I/O、Acceptance verifier wiring、receipt reconciliation、unknown cleanup recovery projection 抽到 `src/projectControl/workerRecoveryIoController.ts`。
+- controller通过显式 state/save/event/report callbacks接入，`recoverWorkerRun`、cleanup UI action、runQueuedWorker及其直接 side-effect路径保持在 App；非 Tauri/Abort路径保持 no-op。App删除原两段重复 I/O实现。
+- GREEN：focused `3 files / 6 tests`；完整 Node `132 test files / 1152 tests`；`npm run build`通过，最大 chunk约 `1,172.01 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续收口剩余 Worker recovery用户动作或进入 executor adapter；真实 Tauri E2E与历史 unverified继续后置。
+
+### 7.229 verified：Worker recovery I/O controller review closure
+
+- exact HEAD `4edcf83` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 Tauri dynamic imports、Acceptance verifier、journal/evidence merge、receipt reconciliation、unknown recovery projection、save/abort/project guards均保持一致，`runQueuedWorker`、`recoverWorkerRun`、cleanup handler未被改变。
+- 同一代码快照质量门：Node `132 test files / 1152 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-recovery-io-controller-verified`。该 tag只证明 recovery I/O结构切片，不代表真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
+
+### 7.230 unverified：extract Worker recovery action controller from App
+
+- 第五条前端基础切片将 App 中用户触发的 `recoverWorkerRun` action抽到 `src/projectControl/workerActionController.ts`；controller负责 durable journal recovery、RecoveryCommand、runtime reinstall、ProjectFile save和 retry callback。
+- cleanup destructive action、runQueuedWorker、Tauri cleanup receipt执行仍留在 App；controller保留非桌面环境、未保存项目和缺失 durable Run 的 fail-closed guards。新增 direct guards测试。
+- GREEN：focused `3 files / 6 tests`；完整 Node `133 test files / 1154 tests`；`npm run build`通过，最大 chunk约 `1,172.46 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 chunk warning。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。下一步继续处理 cleanup action边界或进入 executor adapter；真实 Tauri E2E与历史 unverified继续后置。
+
+### 7.231 verified：Worker recovery action controller review closure
+
+- exact HEAD `5f894dc` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 journal/Acceptance/RecoveryCommand顺序、ProjectOperation与项目身份 guard、runtime reinstall、state projection、cleanup proposal suppression、save/retry callback均保持一致，cleanup/runQueued/direct receipt路径未改变。
+- 同一代码快照质量门：Node `133 test files / 1154 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-action-controller-verified`。该 tag只证明 recovery action结构切片，不代表 cleanup action、真实 GUI/E2E、Worker blocker、native hardening或历史 unverified已关闭。
+
+### 7.232 unverified：extract Worker cleanup action controller from App
+
+- 第六条前端基础切片将 App 中破坏性 `cleanupWorkerRun` action抽到 `src/projectControl/workerCleanupActionController.ts`；controller保留 TaskGraph restore、proposal fingerprint字段校验、branch CAS、显式 approve、durable side-effect receipt、unknown recovery、TaskCleaned event、ProjectFile save/read-back和 proposal refresh顺序。
+- App仅保留 controller wiring与公开 handler facade；`workerCleanup.ts` proposal authority、`workerCleanupExecution.ts` host receipt authority、`workerCleanupCommand.ts` lifecycle event authority未复制。新增 controller direct guard测试，覆盖非 Tauri、未保存项目、缺失/非 ready proposal。
+- GREEN：focused cleanup/controller `4 files / 25 tests`；完整 Node `134 test files / 1157 tests`；`npm run build`通过，最大 chunk约 `1,172.69 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor adapter和历史 unverified收口继续后置。
+
+### 7.233 verified：Worker cleanup action controller review closure
+
+- exact HEAD `5b8efe4` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 cleanup action为单一 owner，TaskGraph restore/proposal lineage、branch CAS、approval、receipt、unknown recovery、TaskCleaned projection、save/read-back与proposal refresh均保持一致，App仅保留 facade wiring。
+- 同一代码快照质量门：Node `134 test files / 1157 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。真实 Tauri GUI/native/executor/history仍不在本切片证据范围内。
+- 已创建本地 verified tag：`checkpoint/frontend-worker-cleanup-action-controller-verified`。该 tag只证明 cleanup action结构切片，不代表真实 E2E、Worker residual、native hardening或历史 unverified已关闭。
+
+### 7.234 unverified：extract executor NodeSandboxAdapter
+
+- 第七条前端基础切片将 `executor.ts` 中节点 sandbox handle创建抽到 `src/engine/nodeSandboxAdapter.ts`；adapter唯一负责 sandbox root选择、run resource登记、browser fallback、lane allowlist、relative path校验和 Tauri fs guard调用。
+- `executor.ts` 保留运行 facade、`executeNode`调度、ExecContext、LLM routing、状态/事件/成本/重试语义；旧 sandbox实现已删除，无第二套 owner。新增 direct adapter tests覆盖 disabled、browser in-memory、relative path和 lane拒绝。
+- GREEN：focused `6 files / 54 tests`；完整 Node `135 test files / 1159 tests`；`npm run build`通过，最大 chunk约 `1,172.89 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor context/adapter后续切片和历史 unverified收口继续后置。
+
+### 7.235 verified：executor NodeSandboxAdapter review closure
+
+- exact HEAD `5d03e17` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 sandbox root优先级、run resource登记、编码路径、lane allowlist、relative path、动态 Tauri fs、browser fallback及全部 sandbox操作保持一致，`executeNode` 的 ExecContext/LLM/status/event/cost/retry路径未改变。
+- 同一代码快照质量门：Node `135 test files / 1159 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-executor-sandbox-adapter-verified`。该 tag只证明 sandbox结构切片，不代表 executor context、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.236 unverified：extract executor NodeLlmAdapter
+
+- 第八条前端基础切片将 `executeNode` 内 LLM adapter抽到 `src/engine/nodeLlmAdapter.ts`；adapter负责 AgentRouter决策、route telemetry、项目经验注入、fallback调用和工具/成本/logger透传。
+- `executor.ts` 保留 `ExecContext` facade、节点状态/事件/干预、资产/变量/边 scope、重试和执行时序；adapter默认复用已有 `decideAgentCall`、`runLlmWithFallback`、`matchExperience`，未新增路由或执行策略。新增 direct test覆盖路由事件、经验注入和 sandbox/storage工具透传。
+- GREEN：focused `8 files / 83 tests`；完整 Node `136 test files / 1160 tests`；`npm run build`通过，最大 chunk约 `1,173.70 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。真实 Tauri E2E、executor剩余 context切片和历史 unverified收口继续后置。
+
+### 7.237 unverified：repair executor LLM capability fencing
+
+- `9dc7441` exact reviewer fail-closed：发现 adapter通过静态 `getTools` closure把 raw sandbox传入 `runLlmWithFallback`，绕过 `applyCapability` 对 io 节点的 sandbox deny与 sandbox_write 的 commit fencing；同时与旧 closure 的调用时读取语义不一致。
+- 修复：`executeNode` 先声明 mutable `ExecContext`，LLM adapter在调用时从最终 `ctx.vars/ctx.storage/ctx.sandbox`读取；`applyCapability` 后的裁剪结果因此成为唯一工具边界。新增真实 executor integration RED→GREEN，io 节点在 `sandbox:true` 下观察到 `toolSandbox === undefined`。
+- GREEN：capability/executor focused `6 files / 40 tests`；完整 Node `137 test files / 1161 tests`；`npm run build`通过，最大 chunk约 `1,173.73 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。旧 reviewer verdict不适用于修复后的 HEAD，新的 exact review待进行；真实 Tauri E2E及其他 residual仍未关闭。
+
+### 7.238 verified：executor LLM capability fencing review closure
+
+- exact HEAD `c6e3636` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认 adapter在调用时读取 mutable `ctx.vars/ctx.storage/ctx.sandbox`，`applyCapability` 后 io sandbox deny、sandbox_write commit fencing与 coordinator权限均保留，无 TDZ、初始化顺序、重复 owner或 stale import问题。
+- 同一代码快照质量门：Node `137 test files / 1161 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-executor-llm-capability-repair-verified`。该 tag只证明 LLM capability fencing repair，不代表 executor剩余 context、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.239 unverified：extract executor NodeContextAdapter
+
+- 第九条前端基础切片将 `executeNode` 中 assets合并、partial output、branch callback、edge scope双写和 intervention lifecycle抽到 `src/engine/nodeContextAdapter.ts`。
+- adapter通过显式 runtime/store/edge/generation依赖保留原行为：项目资产与工作流资产按 id 覆盖、setPartial动态读取节点输出、loopGate branches继续回写 gateTaken、edge scope同时更新局部 edges和 runtime store、过期 run拒绝 intervention并抑制 checkpoint。
+- `executor.ts` 保留 LLM/storage/vars/sandbox、capability裁剪、节点执行/重试/结果处理与运行时序；旧 callback实现已删除，无第二套 owner。新增 direct context tests及完整 executor lifecycle regression。
+- GREEN：focused `7 files / 42 tests`；完整 Node `138 test files / 1163 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。保留既有 dynamic/static import 与 large-chunk warnings。
+- 这是新的 bounded slice，尚未进行 exact HEAD reviewer；当前仍只能标记 `unverified`。executor结构拆分、真实 Tauri E2E与历史 unverified收口继续后置。
+
+### 7.240 verified：executor NodeContextAdapter review closure
+
+- exact HEAD `f398274` 的独立 reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认资产合并/id覆盖、动态 partial/owner映射、branches/onGate、sandbox lanes、edge双写、过期 intervention cancel、checkpoint-before-request、owner identity、capability fencing与 executor lifecycle均保持一致，无重复 callback、stale import、循环、TDZ或 loop regression。
+- 同一代码快照质量门：Node `138 test files / 1163 tests`；`npm run build`通过；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。仅保留既有 dynamic/static import 与 large-chunk warnings。
+- 已创建本地 verified tag：`checkpoint/frontend-executor-context-adapter-verified`。该 tag只证明 context结构切片，不代表 workflowStore/WorkflowEditor剩余结构债务、真实 Tauri GUI/native、Worker residual或历史 unverified已关闭。
+
+### 7.241 unverified：real Tauri E2E acceptance evidence
+
+- 在真实 `npm run tauri dev` GUI中使用 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z`，通过 File→Open Project 加载成功场景；GUI显示 `Tauri E2E Disposable`、`Offline Worker smoke`，运行后两个节点成功（约 `7ms/194ms`），最近输出包含 evidence marker。
+- GUI File→Save Project后，fixture `project.json`真实落盘 `run_1789866123349`、`status=success`、2节点输出；关闭项目再从最近项目重新打开，运行历史面板真实显示 success、2节点、0.2s，详情输出恢复。
+- 第二个 clean disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z-failure-clean` 关闭离线模拟且无 agent；GUI真实显示 `runHistory.status.error`、红色 Worker 节点与 `2/2`拓扑完成。保存后 ProjectFile包含 error run、节点级 success/error、明确错误文本；checkpoint JSON包含同一 error run，事件流保留 baseline。
+- 真实验收发现 concrete-risk：成功和失败场景保存后 GUI项目名旁的 `*` 未清除，尽管 ProjectFile已写入；该问题进入 7.242 修复。离线模拟场景未覆盖真实 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree副作用，不能将本轮称为完整 Worker E2E verified；两个 fixture按约定保留，不自动 cleanup。
+
+### 7.242 unverified：repair dirty marker after ProjectFile save
+
+- 根因：`saveProject`以 raw `JSON.stringify(file)`写入 `lastSavedSnapshot`，dirty checker比较 stable `projectSnapshot`，导致保存后永远偏离并保留 `*`。
+- 修复：保存成功后先清除 `projectDirty`，再以当前 state 的 stable `projectSnapshot(get())`建立基准；新增 store regression覆盖 `projectDirty=false`、`isProjectDirty()=false`与快照一致。
+- GREEN：dirty/store focused `3 files / 48 tests`；完整 Node `138 test files / 1164 tests`；`npm run build`通过，最大 chunk约 `1,174.41 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。新的 exact HEAD review与修复后 Tauri GUI recheck待进行。
+- 修复后真实 Tauri recheck：同一 clean failure fixture运行后通过 File→Save Project，fresh GUI中项目名旁 `*` 消失；`project.json` read-back包含 error history，Tauri dev进程与端口已停止。修复代码仍等待 exact HEAD reviewer，两个 disposable fixture保留未自动 cleanup。
+
+### 7.243 unverified：close Save As dirty snapshot bypass
+
+- exact reviewer 对 `fc24b1c` fail-closed：发现 `saveProjectAs` 仍用 raw `JSON.stringify(file)`写 `lastSavedSnapshot`，普通 Save 修复不能覆盖另存为入口。
+- 修复：Save As 与普通 Save统一使用保存后的 `projectSnapshot(get())` stable baseline；新增隔离 Tauri mock regression覆盖 Save As 的 `projectDirty=false`、`isProjectDirty()=false`与快照一致。
+- GREEN：Save/Save As focused `4 files / 49 tests`；完整 Node `139 test files / 1165 tests`；`npm run build`通过，最大 chunk约 `1,174.40 kB`；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit`、`git diff --check`通过。新的 exact HEAD review待进行。
+
+### 7.244 verified：Save and Save As dirty baseline review closure
+
+- exact HEAD `f06a457` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；确认普通 Save与 Save As均使用 stable `projectSnapshot(get())`，project identity/path/event flush/guard/saveLastSession语义未变，无 raw snapshot旁路。
+- 同一代码快照质量门：focused `4 files / 49 tests`；完整 Node `139 test files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check全部通过。
+- 已创建本地 verified tag：`checkpoint/tauri-save-as-dirty-marker-repair-verified`。该 tag只证明 dirty baseline repair，不代表完整 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree E2E、native hardening或历史 unverified已关闭。
+
+### 7.245 evidence：historical unverified triage dossier
+
+- 基于当前 exact HEAD `4c5f0ccefad9981eb82734af1958d16e3c2f5e9c`、`DEVELOPMENT_LOG.md` 7.196–7.240、checkpoint tags、当前 source 与三路只读 triage，新增 `docs/HISTORICAL_UNVERIFIED_TRIAGE.md`。档案将历史项分为 `superseded`、`evidence-missing`、`concrete-risk`、`environment-blocked`，明确历史 tag不等于当前全树 approval。
+- 档案记录当前仍开放的 native concrete risks：worktree fresh-session identity、partial-CAS、post-remove read-back、pending probe recovery、Windows TOCTOU、protected metadata、find parity、launcher parity、legacy `run_git`；并记录 Worker admission/provenance/runtime fencing与完整 WorkerQueue Tauri E2E仍未收口。
+- 真实 Tauri E2E边界同时写入档案：disposable success/failure fixture 的 GUI、ProjectFile、event/checkpoint、close/reopen history 和 dirty-marker repair证据已 read-back；离线模拟未覆盖真实 WorkerQueue/Evidence/Acceptance/Receipt/Git-worktree mutation，因此不标记完整 E2E verified。
+- 本轮为 docs-only；实际检查：`git diff --check`通过。未因档案变更重跑 Node/build/i18n/tsc，历史质量门数字保持原文不变。
+
+### 7.246 unverified：protect native `.git` and `.slimemold` file roots
+
+- Read-only triage确认 `src-tauri/src/policy/fs_guard.rs` 的 direct file authority protected list遗漏 `.git`/`.slimemold`，而 `git_diff_pathspec_allowed` 与 Node policy已有独立保护，存在 native direct read/write policy旁路。
+- 先写 RED：`host_protected_path_policy_covers_default_sensitive_roots` 对 `.git`、`.git/config`、`.slimemold`、`.slimemold/events/events.jsonl` 失败；修复只在 `protected_relative_path` 增加 exact/descendant component-boundary，不改 find grammar、legacy `run_git`或 execution launcher。
+- 验证：targeted native `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `99/99`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前只能标记 `unverified`，等待 exact native reviewer。
+
+### 7.247 unverified：repair Windows metadata aliases at native file authority
+
+- `ad0f516` exact reviewer fail-closed：literal `.git`/`.slimemold`已保护，但 Windows trailing-dot/space 与 ADS alias（如 `.git.`、`.slimemold `、`.git:stream`）仍可绕过 direct `dev_write_file`/`dev_create_dir`。
+- 先写 public mutation RED：新增 Windows-only `direct_file_authority_rejects_windows_metadata_aliases`，确认上述 alias 在 write 与 mkdir均被拒绝；修复在 native `protected_relative_path` 增加 Windows component canonicalization：去除 trailing dot/space，并按 `:` 前 owner识别 ADS，保留 `.gitignore`/`.slimemoldish`兄弟名不误伤。
+- 验证：alias targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.248 verified：native protected metadata alias review closure
+
+- exact HEAD `7c30dec` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 mutation probes拒绝 `.git`/`.slimemold` exact、descendant及 Windows trailing-dot/space/ADS aliases，保留 `.gitignore`/`.slimemoldish`；无 grammar或 legacy `run_git`旁路变更。
+- 同一快照质量门：Windows targeted `1/1`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Linux/macOS sysroot/pkg-config/C toolchain缺失，作为 environment-blocked residual记录，不升级为跨平台 verified。
+- 已创建本地 verified tag：`checkpoint/native-protected-metadata-alias-repair-verified`。该 tag只证明 direct file protected metadata slice，不代表完整 native hardening、Worker、GUI/E2E或历史 unverified已关闭。
+
+### 7.249 unverified：unify native runtime `find` grammar with structured policy
+
+- Read-only triage与 RED确认 `src-tauri/src/execution/dev_exec.rs` 的 direct `find` gate只检查 lexical option/root，`find src/components -name` 会被接受，而 Node/structured Rust parser应 fail-closed。
+- 修复将 runtime `find`分支委托给已有 `dev_command_policy::command_intent_kind(args) == Some("find")`，删除重复 `find_option_is_safe` grammar；新增 missing operand、missing maxdepth和trailing operator回归，保留合法 `-P/-name/glob`路径。
+- 验证：find targeted `1/1`、shared policy vectors `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `100/100`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.250 verified：native find policy parity review closure
+
+- exact HEAD `7eb98ac` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；runtime `find`统一走结构化 `command_intent_kind`，合法 `-P/-name/glob`保持可用，missing operand/trailing operator/external-file/mutation/protected-root/path cases fail-closed，无 legacy `run_git`旁路变更。
+- 同一快照质量门：find/shared-vector targeted `2/2`；Rust fmt/check、全量 lib `100/100`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。该 closure只覆盖 native find admission，Unix/macOS、spawn/path identity、GUI/E2E、Worker和历史 debt仍独立开放。
+- 已创建本地 verified tag：`checkpoint/native-find-policy-parity-verified`。
+
+### 7.251 unverified：harden legacy `run_git` diff invocation
+
+- Read-only triage确认 legacy `run_git`仍是独立 raw Git read-only surface；其 `diff`路径未显式关闭 pager、external diff和textconv，可能受 repository-local Git config影响。
+- 先写 RED：新增 `legacy_git_diff_uses_hardened_invocation`，要求 `diff HEAD`转换为 `--no-pager diff --no-ext-diff --no-textconv HEAD`；`run_git`实际使用共享 builder，其他 read-only probes保持 allowlist与 cwd/top-level guard。
+- 验证：legacy targeted `2/2`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `101/101`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.252 verified：legacy `run_git` invocation review closure
+
+- exact HEAD `44ae249` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；legacy builder受既有 read-only allowlist约束，`run_git`实际使用 hardened argv，diff/name-only/stat语法保持有效，并显式关闭 pager/external diff/textconv；cwd/top-level/error/launcher/Worker路径无变更。
+- 同一快照质量门：legacy targeted `2/2`；Rust fmt/check、全量 lib `101/101`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。Reviewer建议后续补 name-only/stat direct assertions与 hostile-config integration test，作为非阻塞 follow-up。
+- 已创建本地 verified tag：`checkpoint/native-legacy-run-git-policy-verified`。该 closure只覆盖 legacy read-only Git invocation，不代表完整 native hardening、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
+
+### 7.253 unverified：strict cleanup post-remove read-back
+
+- Read-only triage确认 cleanup 成功后只重查 base identity，随后直接清理 registrations/orphan state；target目录或 Git worktree listing 未做严格 absence read-back。
+- 先写 RED：真实临时 Git repo测试要求 target存在时 read-back false，target删除且 Git listing无 target时 true；新增 `cleanup_target_absence_is_confirmed`，并在 `dev_cleanup_worktree` 消费 capability前同时检查 filesystem `symlink_metadata` absence 与 `git worktree list` absence，失败保持 unknown并拒绝清理完成。
+- 验证：cleanup read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待 exact native reviewer。
+
+### 7.254 unverified：strengthen cleanup read-back regression with real worktree listing
+
+- `33d262c` reviewer fail-closed指出初始 regression只创建普通目录并直接调用 helper，未证明“目录已消失但 Git administrative worktree entry仍在”时返回 false，也未覆盖真实 worktree fixture。
+- 修复测试 fixture：临时 Git repo提交初始 commit，执行 `git worktree add --detach`，删除 target目录但保留 Git listing断言 read-back false，再执行 `git worktree prune`断言 true；production cleanup顺序不变，仍在 registry/orphan projection前执行 strict read-back。
+- 验证：真实 worktree read-back targeted `1/1`；Rust `cargo fmt --check`、`cargo check`、全量 `cargo test` `102/102`；Node `npm test` `139 files / 1165 tests`、build通过（最大 chunk `1,174.40 kB`）、i18n `1026/1026`、tsc、diff check通过。当前仍 `unverified`，等待新 exact native reviewer。
+
+### 7.255 verified：cleanup post-remove read-back review closure
+
+- exact HEAD `d994a49` reviewer通过：`security_concerns=[]`、`logic_errors=[]`；真实 Git fixture覆盖 target存在 false、target目录删除但 Git listing残留 false、prune后 absence true；production cleanup在 registry/orphan projection前执行 strict read-back。
+- 同一快照质量门：targeted `1/1`；Rust fmt/check、全量 lib `102/102`；Node `139 files / 1165 tests`；build、i18n `1026/1026`、tsc、diff check通过。后续可将 fixture setup迁移到 `TempDirs`/sanitized Git resolver，但不影响本 bounded closure。
+- 已创建本地 verified tag：`checkpoint/native-cleanup-post-remove-readback-verified`。该 closure只覆盖 cleanup absence read-back，不代表 partial-CAS、pending probe、Windows TOCTOU、Unix/macOS、GUI/E2E、Worker或历史 debt关闭。
+
+### 7.256 evidence：partial-CAS recovery design gate
+
+- 只读研究确认 concrete-risk：`dev_cleanup_worktree` 在 branch CAS成功后 remove/probe失败时没有 durable native phase；Node/Worker 侧只有 generic `unknown/needs-user` 与旧 branchRevision，restart/orphan restore要求 branch仍存在，无法可靠收敛。
+- 证据路径：`src-tauri/src/authority/worktree.rs` CAS/remove顺序、`authority/state.rs`无partial phase、`src/dev/worktree.ts` orphan/restore分支、`src/dev/tauri-run.ts` generic unknown映射；现有 cleanup side-effect owner能抑制 proposal但不能记录“branch已删除”的native事实。
+- 当前分类：`concrete-risk`。推荐下一次架构切片保持 CAS顺序，引入 host-owned durable `branch-cas-succeeded/worktree-remove-pending` phase与不重复CAS的 inspect/finalize path；重排 CAS/remove需另行评审。未获角色/字段/authority确认前不编码；本轮为 evidence-only，未重跑代码质量门。
+
+### 7.257 evidence：reconcile triage dossier with verified native closures
+
+- 将 `HISTORICAL_UNVERIFIED_TRIAGE.md` 基线更新到 current HEAD `0f13dd1` 与 entries `7.196–7.256`；移除已通过 exact review 的 protected metadata alias、find parity、legacy `run_git`、cleanup post-remove read-back作为“仍开放风险”，保留其跨平台/环境证据边界。
+- 当前 concrete native residual收敛为 fresh-session restore identity、partial-CAS、pending probe unknown、Windows pathname TOCTOU、launcher parity与Unix/macOS matrix；Worker terminal/admission/provenance/runtime fencing、完整 WorkerQueue Tauri E2E和workflowStore/WorkflowEditor结构债务仍未收口。
+- 本轮为 docs-only；实际检查：`git diff --check`通过，未重跑代码质量门。partial-CAS设计仍等待角色/字段/authority确认。
+
+### 7.258 decision：confirm Terraform-level partial-CAS baseline, defer implementation
+
+- 用户确认 partial-CAS采用本地 Terraform 级工具范围：项目目录内 durable cleanup state、四 phase matrix（`cas-pending` → `cas-succeeded` → `remove-pending` → `finalized`）、显式 native inspect/finalize、禁止重复 branch CAS、重启 native rebind与 identity/Git read-back。
+- 用户明确调整执行顺序：先完成前端巨石拆分，再实现 partial-CAS；本轮不修改 native production code。前端剩余结构债务仍是下一阶段主线。
+- 本轮为 docs-only；实际检查待提交前运行 `git diff --check`。
+
+### 7.259 unverified：extract workflowStore project save queue owner
+
+- 新增 `src/store/projectSaveQueue.ts`，收口原 workflowStore 内联 `projectSaveTails`：同项目 key 串行、不同项目 key并行、失败后队列继续；Save/Save As公开 store action合同和持久化顺序不变。
+- 新增 direct regression：queue success/failure ordering；workflowStore现有 save、Save As、serialize suite继续通过。
+- 验证：focused `4 files / 28 tests`；完整 Node `140 test files / 1167 tests`；build通过（最大 chunk `1,174.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前只能标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.260 verified：exact review closes workflowStore project save queue slice
+
+- 独立 reviewer 对 exact HEAD `694414e79a79058df253e146691d87b9996c1e78` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认同 key 串行、跨 key 并行、失败后续队列释放、identity-checked tail cleanup，以及 workflowStore Save 返回值、guard 和 finalization行为未改变。
+- reviewer独立复核 focused `9/9`、全量 `140 files / 1167 tests`、build、i18n `1026/1026`、TypeScript 和 diff check；非阻塞建议记录为后续回归：第三个同 key pending task 的 tail cleanup race、Save guard abort/project-switch rejection。
+- 创建 verified tag：`checkpoint/frontend-workflow-save-queue-verified`；原 `checkpoint/frontend-workflow-save-queue-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore bounded split。
+
+### 7.261 unverified：extract workflow Save As controller
+
+- 新增 `src/store/projectSaveAsController.ts`，收口 Save As 的 Tauri gate、目录选择、ProjectFile 写入、pending event flush、失败 warning 和保存完成 callback；`workflowStore.ts` 保留 facade、stable `projectSnapshot`、dirty state 与 `saveLastSession`。
+- 新增 controller direct regressions：browser gate、取消选择、成功 flush/回调、持久化失败；既有 Save As dirty-marker regression继续通过。显式用 `WorkflowState` 类型打断 module-level controller 与 Zustand store 的推断回环，避免全仓 selector退化为 `any`。
+- 验证：focused `4 files / 11 tests`；完整 Node `141 test files / 1171 tests`；build通过（最大 chunk `1,175.00 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.262 verified：exact review closes workflow Save As controller slice
+
+- 独立 reviewer 对 exact HEAD `8110dcb0f6c9bab36d4aaf2be81f9e8a1083147a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 source comparison、Save As facade wiring、browser/cancel/success/error边界及动态 I/O wiring无新增逻辑或安全问题。
+- reviewer独立复核 focused `4 files / 11 tests`、全量 `141 files / 1171 tests`、build、i18n `1026/1026`、tsc、diff check 和 security scan；非阻塞建议记录为后续回归：pending-event flush rejection、Save/Save As共享 guard或queue。
+- 创建 verified tag：`checkpoint/frontend-workflow-save-as-controller-verified`；原 `checkpoint/frontend-workflow-save-as-controller-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
+
+### 7.263 unverified：extract project configuration autosave owner
+
+- 新增 `src/store/projectConfigAutosave.ts`，收口 agents、roles、defaultAgentId、agentRouteTable 四类配置变化监听、projectPath gate、1s debounce、最新 state save 和静默失败；提供 dispose 清理 subscriber/timer。
+- `workflowStore.ts` 保留 `suppressDirty` 生命周期 gate和 store facade，仅通过 `installProjectConfigAutosave` 接入；没有改变自动保存触发字段、延迟或失败策略。
+- 新增 direct regressions：配置变更合并为一次保存、无项目/抑制状态不调度；验证 focused `5 files / 15 tests`，完整 Node `142 test files / 1173 tests`，build通过（最大 chunk `1,175.12 kB`），i18n `1026/1026`，tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.264 verified：exact review closes project configuration autosave slice
+
+- 独立 reviewer 对 exact HEAD `2b542c7db56c9bb87b53734af4e52bdcda72f2fc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认四个 trigger key、suppression/projectPath gate、1000ms debounce、latest-state save、rejection swallowing 与 timer cleanup行为保持不变。
+- reviewer独立复核 focused `5 files / 15 tests`、全量 `142 files / 1173 tests`、build、i18n `1026/1026`、tsc、diff check 和 static scan；非阻塞建议记录为后续回归：逐一覆盖四个 trigger key、unrelated field、rejection swallowing、latest-state capture 和 disposer cancellation/idempotence。
+- 创建 verified tag：`checkpoint/frontend-project-config-autosave-verified`；原 `checkpoint/frontend-project-config-autosave-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore dirty/persistence bounded split。
+
+### 7.265 unverified：extract project dirty runtime owner
+
+- 新增 `src/store/projectDirtyController.ts`，收口项目 dirty subscriber、stable snapshot比较、suppression flag、`finalizeLoaded` baseline重建与dispose；`workflowStore.ts` 的 checkpoint、new/open/close/switch action改为调用 controller，不再持有裸 `suppressDirty` 或旧 subscriber实现。
+- `projectConfigAutosave`继续通过 dirty controller读取 suppression状态；`DIRTY_KEYS`、`projectSnapshot`和 store API合同未改变。显式 `ProjectDirtyController` 类型注解避免 module-level controller 与 Zustand initializer 形成推断回环。
+- 验证：focused `6 files / 17 tests`；完整 Node `143 test files / 1175 tests`；build通过（最大 chunk `1,175.52 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.266 verified：exact review closes project dirty runtime slice
+
+- 独立 reviewer 对 exact HEAD `f6f85a2539e34253dc1f9a6a21704a4df0c8ea99` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 dirty subscriber、DIRTY_KEYS比较、no-snapshot/stable mismatch行为、suppression覆盖和 open/finalize顺序无改变，未发现 Zustand cycle 或 duplicate owner。
+- reviewer独立复核 focused `6 files / 17 tests`、全量 `143 files / 1175 tests`、build、i18n `1026/1026`、tsc、diff check；非阻塞建议记录为后续回归：no-snapshot/stable-mismatch、unrelated DIRTY_KEYS、dispose idempotence、throwing state update，以及 scoped suppression helper。
+- 创建 verified tag：`checkpoint/frontend-project-dirty-runtime-verified`；原 `checkpoint/frontend-project-dirty-runtime-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
+
+### 7.267 unverified：share ProjectFile and pending-event persistence owner
+
+- 新增 `src/store/projectFilePersistence.ts`，收口“ProjectFile save返回 root → 按 project id检查 pending events → 使用返回 root flush”的共享顺序；普通 Save 与 Save As 均接入，原有 guard checkpoints、SaveAs错误日志、stable snapshot、queue合同保留。
+- 新增 direct regressions：返回 root绑定 flush、无 pending跳过、save/flush异常原样传播；并修正 Save As adapter 的 optional target path 类型，使 `tsc -b` project-reference检查不退化。
+- 验证：focused `5 files / 16 tests`；完整 Node `144 test files / 1178 tests`；build通过（最大 chunk `1,175.86 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.268 verified：exact review closes shared ProjectFile persistence slice
+
+- 独立 reviewer 对 exact HEAD `fa7b47ad41fbb82105ca0a056b982283673937b5` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`；确认 save → returned root → pending count → flush顺序、异常传播、Save/Save As接入、guard/non-Tauri行为和 dynamic adapter wiring均保持正确，无 duplicate legacy sequence、race或安全问题。
+- reviewer独立复核 focused `5 files / 16 tests`、全量 `144 files / 1178 tests`、build、i18n `1026/1026`、TypeScript、diff check 和 static scans；无工作树修改。
+- 创建 verified tag：`checkpoint/frontend-project-file-persistence-verified`；原 `checkpoint/frontend-project-file-persistence-unverified` 保留为历史回退锚点。partial-CAS仍未编码，下一阶段继续 workflowStore persistence bounded split。
+
+### 7.269 unverified：extract createProject pure state builder
+
+- 在既有 `src/store/workflowState.ts` 增加 `buildCreateProjectState`，收口模板 graph → WorkflowFileInMemory、canvas dirty nodes、项目 metadata、默认 agents/roles、project variables/assets、empty Worker registry 与 ProjectControl snapshot；`workflowStore.createProject` 保留 Tauri path resolution、suppression、save/session、失败恢复和日志。
+- 新增 workflowState direct regression：template/project metadata、两份 node dirty projection、edges和初始 worker state一致；原 store facade/API合同不变。
+- 验证：focused `5 files / 36 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.15 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.270 unverified：repair createProject role projection aliasing
+
+- exact reviewer 对 `7e189dba90d5e5c154037ba63652d5aeb64423c0` 发现 logic blocker：`buildCreateProjectState` 将 top-level `roles` 与 workflow `roles` 共享数组/元素引用，偏离父实现的独立 projection。
+- 先以 RED regression 固化 array/object identity，再让 builder分别 map builtin roles；保留其它 createProject state、facade和副作用合同不变。
+- 验证：focused `3 files / 31 tests`；完整 Node `144 test files / 1179 tests`；build通过（最大 chunk `1,176.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair HEAD仍标记 `unverified`，等待新的 exact reviewer。
+
+### 7.271 verified：exact review closes createProject role projection repair
+
+- 独立 reviewer 对 exact HEAD `3ac48f581d45f4f8eebd282fb68df6fb2b334dbc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 role arrays/objects已独立，且 createProject graph、node dirty projection、metadata、defaults、state fields和facade integration保持正确。
+- reviewer独立复核 focused/full tests、build、i18n、tsc、diff check、runtime identity checks 和 static scans；建议保留的 workflow node dirty assertion已与 role identity assertions同时存在。
+- 创建 verified tag：`checkpoint/frontend-create-project-role-alias-repair-verified`；原 `checkpoint/frontend-create-project-role-alias-repair-unverified` 保留为历史回退锚点。createProject builder现已 verified，partial-CAS仍未编码。
+
+### 7.272 unverified：extract WorkflowEditor styled-edge projection
+
+- 新增 `src/canvas/workflowEdgeProjection.ts`，收口纯 styled-edge transformation：source-port color、collapsed-group source/target proxy handle重定向、missing-port fallback和style合并；无 React/store副作用。
+- `WorkflowEditor.tsx` 保留 `portSig`、`outsByNode` memo、group mapping构建和React Flow消费，仅委托纯 projection；新增 direct regression覆盖普通边、proxy边、fallback和输入不可变。
+- 验证：focused `5 files / 69 tests`；完整 Node `145 test files / 1182 tests`；build通过（最大 chunk `1,176.18 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.273 verified：exact review closes WorkflowEditor styled-edge projection slice
+
+- 独立 reviewer 对 exact HEAD `be689df0011b08eb0db4fd1886d683d405e6d904` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 source-port coloring、collapsed-group proxy rewrites、style merge、immutability和 WorkflowEditor memo ownership保持正确。
+- reviewer独立复核 focused/full tests `145 files / 1182 tests`、build、i18n `1026/1026`、TypeScript 和 diff checks；非阻塞建议记录为后续 coverage扩展：全部 port-color mappings、null/undefined source handles、task/control edge-data preservation。
+- 创建 verified tag：`checkpoint/frontend-styled-edge-projection-verified`；原 `checkpoint/frontend-styled-edge-projection-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.274 unverified：extract registerWorkflow state builder
+
+- 在 `src/store/workflowState.ts` 增加 `buildRegisteredWorkflowState`，收口 WorkflowFile normalization、project/standalone identity、fallback agents/roles/variables/assets/groups以及 activate canvas projection；`workflowStore.registerWorkflow` 保留 ID生成、Zustand set和返回合同。
+- 新增 direct regressions：activate=false仅注册、activate=true复用 normalized state生成 dirty canvas activation；未改变 ProjectSessionPanel/Builder caller合同。
+- 验证：focused `4 files / 46 tests`；完整 Node `145 test files / 1184 tests`；build通过（最大 chunk `1,176.50 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.275 verified：exact review closes registerWorkflow state slice
+
+- 独立 reviewer 对 exact HEAD `8868b04d633c9ef816c301452e8e8a4b9ab80936` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 normalization、project/standalone identity、activation projection、public return/set合同无行为变化，未发现 duplicate owner、aliasing、mutation、runtime cycle或安全问题。
+- reviewer独立复核 focused/full `145 files / 1184 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scans；非阻塞建议记录为后续 parity coverage：non-empty fallback、cross-project/standalone combinations、defaultAgent/edge/log preservation、input non-mutation。
+- 创建 verified tag：`checkpoint/frontend-workflow-registry-state-verified`；原 `checkpoint/frontend-workflow-registry-state-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.276 unverified：extract newWorkflowInProject state builder
+
+- 在 `src/store/workflowState.ts` 增加 `buildNewWorkflowInProjectState`，收口游离画布 capture、空白 workflow registry entry、project/standalone identity 和 activation projection；`workflowStore.newWorkflowInProject` 保留默认目录异步解析、时间/ID生成和 Zustand facade。
+- 新增 direct 与 facade regressions：unbound canvas capture、project activation、standalone workspace identity、`assets: []` 初始化；对照父实现保留 dirty 行为与 captured workflow metadata。
+- 验证：focused `2 files / 29 tests`；完整 Node `146 test files / 1187 tests`；build通过（最大 chunk `1,177.02 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend reviewer。
+
+### 7.277 unverified：repair newWorkflow capture timestamp parity
+
+- exact reviewer 对 `37ef92827afe487fe2157664086c3b6fe190172d` fail-closed：指出 capture workflow ID/date 与新 workflow ID/savedAt 的 `Date.now()`/`Date`采样顺序被重排，builder间接依赖时间；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `ce8d5beb1548fc98aa8c018dae576ed78592b146` 为起点：`workflowStore` 重新按父实现顺序负责 capture ID/date 与新 ID/date；`serializeCurrent` 接受注入 savedAt；`buildNewWorkflowInProjectState` 不再取时钟；补 fake-clock、captured timestamp、asset preservation 和 source non-mutation regressions。
+- 验证：focused `2 files / 31 tests`；完整 Node `146 test files / 1189 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend reviewer。
+
+### 7.278 verified：exact review closes newWorkflow registry/timestamp slice
+
+- 独立 reviewer 对 exact HEAD `8fefba355bc6c2479c44cd33de6a927c18525fcb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 workflow identity、unbound capture、assets、activation、standalone/project path、dirty behavior、async facade和输入 aliasing保持父实现合同。
+- reviewer特别复核 capture 顺序为 `Date.now()` capture ID → capture `savedAt` → 新 workflow ID → 新 workflow `savedAt`；确认 builder不再取时钟。独立复核 focused `31/31`、full `146 files / 1189 tests`、build、i18n、TypeScript和diff check通过。
+- 创建 verified tag：`checkpoint/frontend-new-workflow-registry-verified`；`37ef928` 的失败 verdict和 `checkpoint/frontend-new-workflow-registry-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.279 unverified：收口 workflow state module topology
+
+- 按事实所有权新增 `src/store/workflowRegistryState.ts`（workflow switch/register/new、workspace resolution）、`src/store/workflowLifecycleState.ts`（open/create/new project builders）和 `src/store/projectCatalogState.ts`（catalog collection transforms）；`src/store/workflowState.ts` 降为兼容 re-export barrel，不再承载混合实现。
+- `workflowStore.ts` 改为直接依赖 owner module；`executor.ts`、`nodes/builtin/dispatch.ts` 直接从 registry owner 读取 workspace resolution；现有 Zustand action、ProjectFile、ProjectControl、persistence和global-agent contracts未改变。
+- 将原 mixed state tests 按 catalog/registry/lifecycle 物理归属拆为 direct test files，并保留 barrel re-export contract；本轮没有引入 graph command、global-agent AppData 或生命周期副作用抽取。
+- 验证：focused `4 files / 29 tests`；完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend structure reviewer。
+
+### 7.280 unverified：repair duplicated lifecycle type owner
+
+- exact reviewer 对 `f3cc2bf6c732b836ab7a5b216b8cab5b4ccf61a0` fail-closed：发现 `CreateProjectStateInput` 同时存在于 `workflowRegistryState.ts` 和 `workflowLifecycleState.ts`，违反事实 ownership；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `f1615375b5444c1b70ac96297be90c355c32d658` 为起点，从 registry module 删除重复 lifecycle input type，保留 lifecycle module 为唯一 owner；未改变 runtime implementation或兼容 barrel合同。
+- 验证：focused `4 files / 29 tests`；完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact structure reviewer。
+
+### 7.281 unverified：align state owner comments
+
+- 根据 reviewer 非阻塞建议，更新 `workflowStore.ts` 中 catalog、lifecycle、registry builder 的注释，使文案分别指向 `projectCatalogState`、`workflowLifecycleState` 和 `workflowRegistryState`；不改变生产逻辑、导出或调用合同。
+- 验证：完整 Node `149 test files / 1190 tests`；build通过（最大 chunk `1,177.17 kB`）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact structure reviewer。
+
+### 7.282 verified：exact review closes workflow state module topology
+
+- 独立 reviewer 对 exact HEAD `066cc8be7dde6207ac66c59a66ae7330209f5c4d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 owner definitions唯一、reverse imports不存在、compatibility barrel exports保持、调用方编译通过、注释与实际 ownership一致。
+- reviewer独立复核 full `149 test files / 1190 tests`、build、i18n `1026/1026`、tsc和diff check；post-`14226f7` source diff仅为 owner comment alignment。
+- 创建 verified tag：`checkpoint/frontend-state-module-topology-verified`；`f3cc2bf` 的 duplicate lifecycle type failure、`14226f7` repair和相关 unverified tags保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.283 unverified：extract project catalog mutation transforms
+
+- 在 `src/store/projectCatalogState.ts` 增加 project-scope Agent/Role mutation transforms：`buildUpsertAgentState`、`buildRemoveAgentState`、`buildSetDefaultAgentState`、`buildUpsertRoleState`、`buildRemoveRoleState`；保留 route/default 清理、builtin role rejection和caller-owned identity，副作用仍由 facade负责。
+- `workflowStore.ts` 的 project `upsertAgent/removeAgent/setDefaultAgent/upsertRole/removeRole` 改为调用 catalog owner；global-agent AppData 的 `setGlobalAgents/upsertGlobalAgent/removeGlobalAgent` 保持原有 facade persistence/viewStore 行为，未混入 project catalog。
+- 新增 direct catalog regressions与 store facade regressions，覆盖 ID/order、default/route cleanup、builtin log、custom role removal和 source immutability。
+- 验证：focused `2 files / 18 tests`；完整 Node `150 test files / 1200 tests`；build通过（最大 chunk `1,177.40 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend catalog reviewer。
+
+### 7.284 verified：exact review closes project catalog mutation slice
+
+- 独立 reviewer 对 exact HEAD `08b8512c681a97400b83566dd8e433fac77d9c62` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 project/global scope separation、route/default cleanup、builtin-role refusal、source identity、facade set/dirty/autosave/log合同和模块可读性保持正确。
+- reviewer独立复核 focused `18/18`、full `150 files / 1200 tests`、build、i18n `1026/1026`、TypeScript、diff check和static scan；非阻塞建议记录为后续 coverage backlog：projectPath/fake-timer dirty/autosave、global persistence/master cleanup、nested route identity和builder JSDoc。
+- 创建 verified tag：`checkpoint/frontend-project-catalog-mutation-verified`；`checkpoint/frontend-project-catalog-mutation-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.285 unverified：extract graph history/clipboard command facade
+
+- 新增 `src/store/workflowGraphCommands.ts`，收口 `pushHistory/undo/redo/clearHistory/copySelection/pasteClipboard/duplicateSelection` 的 store-bound 编排；通过 `GraphCommandState`、`GraphCommandDeps` 注入 get/set/addLog，不反向依赖 workflowStore/useViewStore。
+- `workflowGraph.ts` 继续作为纯 graph kernel；`selectAll`、React Flow selection policy、group/subgraph/split-view行为保留在 facade或原 owner；现有 public Zustand action names不变。
+- 新增 graph command direct tests，覆盖 history round-trip、clipboard internal-edge filtering/log和paste remap/offset/selection；不在本 slice混入跨 workflow history、stale clipboard或selection双表示等既有行为问题。
+- 验证：focused `6 files / 50 tests`；完整 Node `151 test files / 1203 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend graph reviewer。
+
+### 7.286 unverified：add graph command Zustand assembly regression
+
+- 根据 graph reviewer 非阻塞建议新增 `src/store/workflowStore.graphCommands.test.ts`，验证 command owner spread真实进入 Zustand facade，并确认 inline `selectAll`边界仍由 facade提供；不改变 production graph command implementation。
+- 验证：focused `3 files / 21 tests`；完整 Node `152 test files / 1204 tests`；build通过（最大 chunk `1,177.37 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 assembly repair 标记 `unverified`，等待新的 exact frontend graph reviewer。
+
+### 7.287 verified：exact review closes graph command facade slice
+
+- 独立 reviewer 对 exact HEAD `38c0094ee5c755eb1c45940a17c024c621f8d7fb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 test-only follow-up未改变 production graph command owner，Zustand spread command与inline `selectAll`边界正确。
+- reviewer独立复核 focused `21/21`、full `152 files / 1204 tests`、build、i18n `1026/1026`、TypeScript和diff check；既有 Vite dynamic/static import与大 chunk warnings保持非阻塞。
+- 创建 verified tag：`checkpoint/frontend-graph-command-facade-verified`；`checkpoint/frontend-graph-command-facade-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.288 unverified：extract workflow registry rename/remove mutations
+
+- 在 `src/store/workflowRegistryState.ts` 增加 `buildRenameWorkflowState` 与 `buildRemoveWorkflowState`，收口 active workflow rename、inactive/active/final removal、fallback activation、empty registry patch和 workspace cleanup intent；不触碰 Tauri cleanup副作用。
+- `workflowStore.ts` 保留 public action、两次 rename set 顺序、remove cleanup 的 fire-and-forget/swallowed-error合同；仅将 registry/activation计算委托给 pure owner。close/open/create/new/switch等 ProjectControl/host orchestration不在本 slice。
+- 新增 direct registry mutation tests与 facade tests，覆盖 active rename、inactive/active/final removal、first remaining activation和 public store contract。
+- 验证：focused `4 files / 26 tests`；完整 Node `153 test files / 1212 tests`；build通过（最大 chunk `1,177.78 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend registry reviewer。
+
+### 7.289 unverified：repair workflow registry mutation parity
+
+- exact reviewer 对 `98e108e60cbadddd63e2a4f5ce6f805dc106de7d` fail-closed：发现 final removal错误清除 defaultAgentId、empty active-id rename guard缺失、空字符串 cleanup intent被 facade truthy gate吞掉；该 verdict 不创建 verified tag。
+- 以 repair checkpoint `2591a2e860d0ad3822303655975dd752bd8c6871` 为起点：恢复 parent truthy active-id guard；final activation不再输出 defaultAgentId；cleanup intent改为 `string | null` 并由 facade使用 `!== null`，保留空字符串 workflow id cleanup；新增 parity regressions。
+- 验证：focused `2 files / 18 tests`；完整 Node `153 test files / 1213 tests`；build通过（最大 chunk `1,177.80 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前 repair 标记 `unverified`，等待新的 exact frontend registry reviewer。
+
+### 7.290 verified：exact review closes workflow registry mutation parity
+
+- 独立 reviewer 对 exact HEAD `bfd5ff07d8251378b22621568b6a0b2a5ea5e6b3` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 three parity blockers均已修复且没有新 regression。
+- reviewer独立复核 focused `18/18`、full `153 files / 1213 tests`、build、i18n `1026/1026`、TypeScript、diff check和security scan。
+- 创建 verified tag：`checkpoint/frontend-workflow-registry-mutation-verified`；`checkpoint/frontend-workflow-registry-mutation-unverified` 和 parity repair unverified tag保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.291 unverified：extract workflow registry action facade
+
+- 将 `switchWorkflow`、`newWorkflowInProject`、`registerWorkflow` 的 store-bound 编排抽到 `src/store/workflowRegistryActions.ts`；保留 `workflowRegistryState.ts` 的纯 builder 作为事实 owner，`workflowStore.ts` 只负责 Zustand facade 与 capability wiring。
+- 注入 StatePort、dirty suppression、standalone path、clock/ISO time 与 registered-id factory；未移动 project identity、ProjectFile persistence、ProjectControl/runtime、host lifecycle 或 global-agent persistence。现有 public action signatures 与 capture-before-create 时间顺序保持不变。
+- 新增 `workflowRegistryActions.test.ts` direct tests，覆盖 switch suppression、standalone path/capture clock ordering、register `activate:false`；保留原 facade/new-workflow/ProjectControl regressions。
+- 验证：focused `6 files / 47 tests`；完整 Node `154 test files / 1216 tests`；build通过（最大 chunk `1,178.10 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact frontend registry action reviewer。
+
+### 7.292 verified：exact review closes workflow registry action facade
+
+- 独立 reviewer 对 exact HEAD `d4a1c1edb32fe92a4ba75f5dcf9e360a60c38de4` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 facade wiring、switch suppression、standalone path、clock ordering、builder normalization/aliasing、activation和依赖 ownership保持。
+- reviewer独立复核 focused `20/20`、full `154 files / 1216 tests`、build、i18n `1026/1026`、TypeScript和diff check；仅保留既有 build warnings及非阻塞 coverage suggestion。
+- 创建 verified tag：`checkpoint/frontend-workflow-registry-actions-verified`；`checkpoint/frontend-workflow-registry-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.293 unverified：extract close project lifecycle action
+
+- 将 `closeProject` 的纯状态 patch抽到 `workflowLifecycleState.buildCloseProjectState`，将 reset/suppression/set/session 顺序抽到 `projectLifecycleActions.ts`；`workflowStore.ts` 只负责注入 `resetProjectControlLifecycle`、dirty controller、`clearLastSession` 和默认 agent/role/ProjectControl factories。
+- 严格保留 parent 合同：先以旧 `projectId` reset ProjectControl，再 suppression；只清理 close 原本清理的字段，不触碰 `defaultAgentId`、`workspaceDir`、`runHistory`、`artifacts`、`orchestrations` 等未归属字段；释放 suppression 后才 clear last session。未移动 ProjectLifecycleController、plugin/GUI session 或 Worker host orchestration。
+- 新增 `projectLifecycleActions.test.ts` direct tests，覆盖精确 close patch、untouched fields和 reset → suppression → set → release → session 顺序；现有 `workflowStore.projectControl.test.ts` 保留 facade/ProjectControl regressions。
+- 验证：focused `5 files / 18 tests`；完整 Node `155 test files / 1218 tests`；build通过（最大 chunk `1,178.55 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact close lifecycle reviewer。
+
+### 7.294 verified：exact review closes close project lifecycle action
+
+- 独立 reviewer 对 exact HEAD `8528934baacef1dac1d0d4f0fc00a2e71c878520` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 close signature、reset-before-suppression、exact patch、untouched fields、factory identity/aliasing、failure propagation和 single lifecycle ownership保持。
+- reviewer独立复核 focused `26/26`、full `155 files / 1218 tests`、build、i18n `1026/1026`、TypeScript和diff check。
+- 创建 verified tag：`checkpoint/frontend-close-project-action-verified`；`checkpoint/frontend-close-project-action-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.295 unverified：extract ProjectControl lifecycle adapter port
+
+- 在 `src/store/projectControlLifecycle.ts` 增加 `createProjectControlStoreAdapter`，将 reset/activation 的 event-buffer 与 Worker runtime capability 注入；现有 `resetProjectControlLifecycle`、`installProjectControlRuntime`、`activateProjectControlRuntime` 保留为兼容 wrapper，未移动 Worker runtime、event store、ProjectFile persistence或 host lifecycle事实。
+- adapter只负责同步 reset/activate与 runtime-only projection：reset保留有 project id 才清理对应 event buffer、随后清理 active runtime；activate先清理目标项目 buffer，再安装 runtime，返回 recoveries并重新生成空 evidence/side-effects/cleanup-proposals数组。未接入 saveProject、App.tsx、ProjectLifecycleController或 workflowStore 全量 StatePort。
+- 扩展 `projectControlLifecycle.test.ts` direct DI tests，覆盖 injected call order、project-id scope、installer forwarding和 runtime projection；既有 facade/Worker lifecycle tests保持不变。
+- 验证：focused `3 files / 15 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,178.88 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl lifecycle adapter reviewer。
+
+### 7.296 verified：exact review closes ProjectControl lifecycle adapter port
+
+- 独立 reviewer 对 exact HEAD `2ecc1f7482b80c53e8a2a9f4f0008fa2b7c74787` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 reset、activation、install、runtime projection、错误传播、兼容 wrapper和 ownership boundaries保持。
+- reviewer独立复核 focused `3 files / 15 tests`、full `155 files / 1219 tests`、build、i18n `1026/1026`、TypeScript、diff check、static scan和 behavioral probes。
+- 创建 verified tag：`checkpoint/frontend-project-control-adapter-verified`；`checkpoint/frontend-project-control-adapter-unverified` 保留为历史回退锚点。createProject 旧 project-id buffer residual仍未修复，partial-CAS仍未编码。
+
+### 7.297 unverified：wire ProjectControl adapter into workflowStore
+
+- 由 `workflowStore` composition root 构造 `createProjectControlStoreAdapter`，将 `clearProjectEventBuffer`、`clearWorkerRunRuntime`、`installWorkerRunRuntime` 注入；`newProject`、`openProject` 和已验证的 `closeProject` action改用该实例，保留 public facade/API与既有时序。
+- `createProject` 仍暂留兼容 `resetProjectControlLifecycle()` wrapper，未在本结构 slice 中修复其旧 project-id event-buffer residual；未移动 saveProject、event flush、ProjectFile persistence、App host lifecycle或 Worker reconciliation。
+- 验证：focused `4 files / 18 tests`；完整 Node `155 test files / 1219 tests`；build通过（最大 chunk `1,179.00 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact ProjectControl adapter wiring reviewer。
+
+### 7.298 verified：exact review closes ProjectControl adapter wiring
+
+- 独立 reviewer 对 exact HEAD `b1ab5ec0f6afe8e6406f59f6ede6767e0d1e7b5a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 adapter composition、reset/activation、close ordering、dirty suppression/finalizeLoaded、runtime projection、event-buffer scope和 public API parity保持。
+- reviewer独立复核 full `155 files / 1219 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；facade direct regression suggestion非阻塞。
+- 创建 verified tag：`checkpoint/frontend-project-control-adapter-wiring-verified`；`checkpoint/frontend-project-control-adapter-wiring-unverified` 保留为历史回退锚点。createProject 旧 project-id buffer residual仍未修复，partial-CAS仍未编码。
+
+### 7.299 unverified：repair createProject previous-project reset scope
+
+- 新增 facade RED regression：seed旧 project pending event与 active Worker runtime，调用无保存路径的 `createProject`，验证旧 event buffer与 runtime必须清空；原实现因无参数调用 `resetProjectControlLifecycle()` 而失败。
+- 修复 `workflowStore.createProject`：先捕获 `previousProjectId`，再通过已接线 `projectControlAdapter.resetProjectControlLifecycle(previousProjectId)`；未改变模板/path/save-failure/session persistence合同，未移动 ProjectFile/event flush或 host lifecycle。
+- 验证：focused `3 files / 16 tests`；完整 Node `155 test files / 1220 tests`；build通过（最大 chunk `1,178.90 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact createProject reset reviewer。
+
+### 7.300 verified：exact review closes createProject previous-project reset repair
+
+- 独立 reviewer 对 exact HEAD `3e598defcfc2aba4be38486c27e47cf7bb4dbf0d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认旧 project event buffer/runtime scope、new project state、createProject path/template/save-failure/session/API合同和未移动的 event flush/host lifecycle保持。
+- reviewer独立复核 focused `16/16`、single-worker full `155 files / 1220 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；parallel full Vitest出现的两个无关 timeout flake经隔离重跑通过。
+- 创建 verified tag：`checkpoint/frontend-create-project-reset-repair-verified`；`checkpoint/frontend-create-project-reset-repair-unverified` 保留为历史回退锚点。后续可补 unrelated project event buffer 保留断言，partial-CAS仍未编码。
+
+### 7.301 unverified：extract project bootstrap actions
+
+- 将同步 `newProject`、`openProject` 的 store-bound 编排抽到 `src/store/projectBootstrapActions.ts`；纯 state builders仍由 `workflowLifecycleState.ts`拥有，ProjectControl reset/activation使用已注入 adapter，dirty suppression/finalizeLoaded由 facade capability提供。
+- `createProject` 的异步 path/default-directory/save/failure/session合同继续留在 `workflowStore.ts`，未与 bootstrap action 混抽；open invalid file保持 no-op/false，valid open保持 set → finalizeLoaded → runtime activation顺序。
+- 新增 `projectBootstrapActions.test.ts` direct tests，覆盖 new reset/suppression、invalid open no-op、valid open activation/finalization；保留现有 workflowStore ProjectControl/open/new regressions。
+- 验证：focused `5 files / 21 tests`；完整 Node `156 test files / 1222 tests`；build通过（最大 chunk `1,179.13 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact project bootstrap reviewer。
+
+### 7.302 verified：exact review closes project bootstrap actions
+
+- 独立 reviewer 对 exact HEAD `42602046cfa5ce715ba22fba045d145f53fcf7a9` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 new/open sequencing、state construction、runtime projection、dependency injection、public APIs和 ownership boundaries保持，createProject仍保持 inline。
+- reviewer独立复核 focused `21/21`、full `156 files / 1222 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；direct bootstrap coverage suggestion非阻塞。
+- 创建 verified tag：`checkpoint/frontend-project-bootstrap-actions-verified`；`checkpoint/frontend-project-bootstrap-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.303 unverified：extract project creation actions
+
+- 将异步 `createProject` 编排抽到 `src/store/projectCreationActions.ts`；注入 template lookup、identity、save-root resolution、dirty/state、saveProject、last-session和warning capabilities，复用 `buildCreateProjectState` 与 runtime empty projection。
+- 保留 createProject 合同：旧 project reset先行；identity/template/path顺序不变；无 root清理 session；save成功使用返回 root写 last session；save失败保留内存项目、`projectPath=null`、`projectDirty=true`并保留原 warning 文案。未移动 saveProject、ProjectFile persistence、event flush或 host lifecycle。
+- 新增 `projectCreationActions.test.ts` direct tests，覆盖内存创建、保存成功和保存失败 fallback；facade ProjectControl/createProject regressions保留。
+- 验证：focused `5 files / 17 tests`；完整 Node `157 test files / 1225 tests`；build通过（最大 chunk `1,179.60 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact project creation reviewer。
+
+### 7.304 verified：exact review closes project creation actions
+
+- 独立 reviewer 对 exact HEAD `73712d6eb2af9cdc62563dc0760924a6a3a345d8` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 async sequencing、state construction、path/session/save-failure合同、injected wiring、public API和 persistence authority boundaries保持。
+- reviewer独立复核 focused `17/17`、full `157 files / 1225 tests`、build、i18n `1026/1026`、TypeScript、diff check、exact HEAD和 clean tree；template/build ordering与Tauri default-root coverage suggestion非阻塞。
+- 创建 verified tag：`checkpoint/frontend-project-creation-actions-verified`；`checkpoint/frontend-project-creation-actions-unverified` 保留为历史回退锚点。partial-CAS仍未编码。
+
+### 7.305 unverified：extract App ProjectOperation guard
+
+- 将 App 内 inline `projectOperationRef`、`getProjectOperation`、`assertProjectOperation` 与 clear逻辑抽到 `src/projectControl/projectOperation.ts`；保留 `ProjectOperation` shape、AbortError name/message、projectId/projectPath drift fence和 abort-on-replacement语义。
+- App仍是 composition root：用 stable guard ref注入 live Zustand state，继续把 get/assert/clear ports传给现有 `ProjectLifecycleController`、Worker action/cleanup与 queued execution；未移动 lifecycle controller、GUI/plugin、Worker recovery/audit、Evidence/Receipt、cleanup或 terminal finalization authority。
+- 新增 `projectOperation.test.ts` direct tests，覆盖 same identity reuse、id/path replacement abort、cancel/drift fail-closed、clear/idempotence；保留现有 lifecycle/Worker/component caller regressions。
+- 验证：focused `7 files / 25 tests`；完整 Node `158 test files / 1229 tests`；build通过（最大 chunk `1,179.80 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前标记 `unverified`，等待 exact App ProjectOperation reviewer。
+
+### 7.306 verified：exact review closes App ProjectOperation guard
+
+- 独立 reviewer 对 exact HEAD `abb4f09787677d864f41ec402a0b759ced7c8e6a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 guard behavior、live Zustand lookup、React-instance stability、caller signatures和 operation timing保持。
+- reviewer独立复核 focused `25/25`、full `158 files / 1229 tests`、build、i18n `1026/1026`、TypeScript、diff check、security scan、exact HEAD和 clean tree；ProjectOperation type后续集中化建议非阻塞。
+- 创建 verified tag：`checkpoint/frontend-app-project-operation-verified`；`checkpoint/frontend-app-project-operation-unverified` 保留为历史回退锚点。App其余 Worker/GUI/recovery/cleanup authority仍未拆分，partial-CAS仍未编码。
+
+### 7.307 verified：extract App cleanup proposal controller
+
+- 将 App 内 `refreshWorkerCleanupProposals` 抽到 `src/projectControl/workerCleanupProposalController.ts`；保留 canonical `getRestoredWorkerRunForCleanup`、`buildWorkerCleanupProposalSafely`、Acceptance/side-effect/worktree/branch-revision校验事实，只移动 application orchestration。
+- controller通过窄 state port读写 workerRuns、recoveries、sideEffects、proposal projection和warning；App用 stable ref构造并继续把同一 callback传给 ProjectLifecycleController、Worker cleanup action和 queued worker。未移动 restoreWorktrees、audit、cleanup execution、receipt、TaskCleaned或 Worker runtime authority。
+- 新增 direct tests，覆盖 missing/recovery suppression、TaskGraph restore failure warning、abort before host work和 projection boundary；现有 cleanup/lifecycle/Worker/UI regressions保持。
+- 独立 reviewer 对 pinned exact HEAD `2cd2659ce32644322ebcfff243f9b326496b6e58`（相对 `e8f60f9`）返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 canonical restore、Acceptance、side-effect、host signature/tracking、branch revision、abort、stale-project和 per-run projection保持，且 controller 无 React/Zustand/App imports，stable callback wiring保持。建议增加 valid restored task 的 host-read abort、stale projectId suppression和 other-run preservation regression，非阻塞，列入后续增强。
+- 验证：target gate focused `5 files / 20 tests`；完整 Node `159 test files / 1232 tests`；build通过（最大 chunk `1,179.96 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。reviewer新鲜全量复核另见一个与本切片无关的既有 Windows-path assertion failure，不改变 exact target verdict。创建 verified tag：`checkpoint/frontend-app-cleanup-proposal-verified`；原 `checkpoint/frontend-app-project-operation-unverified` 保留为历史回退锚点。
+
+### 7.308 verified：extract queued Worker consistency admission seam
+
+- 将 `runQueuedWorker` 内 pre-execution `assertConsistency` callback 抽到 `src/projectControl/workerRunConsistencyAction.ts`；注入 EventStream read、ProjectOperation assertion、current state、Acceptance list以及 canonical Worker/ProjectControl audit functions。
+- 保留精确 admission合同：assert → read event stream → assert；needs-repair使用原错误；读取 live state后再次 assert；Worker facts或 ProjectControl facts不一致时使用原错误；不移动 audit实现、EventStream、runtime、persistence、transition或terminal finalization authority。
+- 新增 direct tests，覆盖 assert/read/audit输入、needs-repair、Worker audit failure和 ProjectControl audit failure；App 仍是 composition root。
+- 独立 reviewer 对 exact HEAD `3d23f88dd1c5f9f854ae286c1a964da879f0de14` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 assert/read/assert/live-state/assert 时序、exact errors、canonical audit inputs、App composition-root边界和 clean tree保持。顺序敏感断言建议非阻塞，作为后续增强记录。
+- 验证：focused `6 files / 23 tests`；完整 Node `160 test files / 1234 tests`；build通过（最大 chunk `1,180.29 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-consistency-verified`；对应 `checkpoint/frontend-queued-worker-consistency-unverified` 保留为历史回退锚点。
+
+### 7.309 verified：extract queued Worker transition persistence seam
+
+- 将 `runQueuedWorker` 的 `persistTransition` application choreography 抽到 `src/projectControl/workerRunTransitionPersistence.ts`；App 继续作为 composition root，注入当前 project identity、ProjectOperation fence、before-save snapshot、live Zustand state ports、EventBuffer、EventStream、ProjectFile serializer/raw saver、Evidence/side-effect merge与Orchestration projection。
+- 保留两条原始路径：普通 transition 读取最新 live state后写入 WorkerRun/Orchestration/Evidence/SideEffect projection并执行 guarded `saveProject`；receipt 后取消只接受 safe finalization event allowlist，使用 EventBuffer flush与 before-save raw ProjectFile save，不触碰 live store mutation或普通 guarded save。
+- 新增 direct tests，覆盖正常 transition、receipt-after-cancellation、unsafe cancelled events走 operation guard、side-effect读取失败不静默保存；未移动 WorkerQueue、coordinator、runtime、event replay、Evidence/Receipt事实、cleanup或终态事实 owner。
+- 独立 reviewer 对 exact HEAD `45caabc74e84f15482aa1079ef1dd26c73ba7dc2`（相对 `a3e6f9fe00e068be98fd8ccc1e91529f43dc7990`）返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 normal transition fences/fresh-state ordering、safe terminal cancellation allowlist/raw finalization、error propagation、App wiring和 type-only injected ownership boundaries保持。
+- 验证：focused `8 files / 63 tests`；完整 Node `161 test files / 1238 tests`；build通过（最大 chunk `1,181.01 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-transition-persistence-verified`；对应 `checkpoint/frontend-queued-worker-transition-persistence-unverified` 保留为历史回退锚点。
+
+### 7.310 verified：extract queued Worker transition projection helper
+
+- 将 transition persistence 中的 `nextWorkerRuns` 替换和 canonical `projectWorkerRunsOntoOrchestrations` 组合抽到 `src/projectControl/workerRunTransitionProjection.ts`；该模块仅接收 current WorkerRun、current Orchestration和 transition，返回新数组，不执行 Zustand setter、operation guard、EventBuffer、Tauri、session、Evidence/SideEffect I/O或保存。
+- 保留精确 map 语义：只替换同 `runId`，缺失 run 不追加，未匹配 run 保留原引用；Orchestration 仍委托既有 canonical projection owner。persistence controller 仅调用 helper，setter 顺序和所有异步边界保持。
+- 新增 direct tests，覆盖 matching replacement、missing run no-append、caller-owned array不变性与真实 Orchestration projection；现有 persistence/coordinator/orchestration regressions保持。
+- 独立 reviewer 对 exact HEAD `668878d235750a78a5b650f02e68c331a04a9029` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 replace-only mapping、identity/nonmutation、canonical projection delegation、persistence fences、setter order、cancellation finalization与 App/coordinator contracts保持。首个 projection 测试的 `not.toBe` 断言较弱，作为后续非阻塞测试增强记录。
+- 验证：focused `4 files / 20 tests`；完整 Node `162 test files / 1241 tests`；build通过（最大 chunk `1,181.17 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-transition-projection-verified`；对应 `checkpoint/frontend-queued-worker-transition-projection-unverified` 保留为历史回退锚点。
+
+### 7.311 verified：extract queued Worker host infrastructure wiring
+
+- 将 `runQueuedWorker` 的 Tauri EventStream/Evidence/SideEffect/Acceptance/recorder construction 抽到 `src/projectControl/workerRunHostInfrastructure.ts`；App 仍拥有 saved-project admission、GUI session、ProjectOperation、runtime/agent选择、coordinator、transition persistence和cleanup refresh。
+- 保留原始 wiring 合同：四个 dynamic imports 并行；创建两个独立 `createTauriEventStoreAdapter(projectPath)` 实例；Evidence 路径为 `${projectPath}/.slimemold/evidence`、`${projectPath}-workers`、`host`；Acceptance verifier通过 `session.listAcceptances()` live closure；recorder使用 `undefined` clock；recorder构造后执行 operation assert，再构造 EventStreamRepository；错误不吞掉、不回退空 repository。
+- adapter只返回 `eventRepository`、`sideEffects`和 `loadSideEffects` bridge，不拥有 GUI session、runtime、coordinator、ProjectFile或cleanup事实；新增 direct tests 覆盖 construction order、路径、双 adapter、live Acceptance closure、construction failure和 assert fence。
+- 独立 reviewer 对 exact HEAD `fc9446838383b4891edffc48aa35cb9774bfd206` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 dynamic imports、双 adapter、Evidence paths、live Acceptance loading、undefined clock、assert fence、private side-effect repository binding和 App ownership/sequencing保持。
+- 验证：focused `10 files / 73 tests`；完整 Node `163 test files / 1244 tests`；build通过（最大 chunk `1,181.87 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-host-infrastructure-verified`；对应 `checkpoint/frontend-queued-worker-host-infrastructure-unverified` 保留为历史回退锚点。
+
+### 7.312 verified：extract queued Worker session admission seam
+
+- 将 `runQueuedWorker` 的 saved queued ProjectFile initial save、GUI session admission、host-unavailable error和 current-project identity fence抽到 `src/projectControl/workerRunSessionAdmission.ts`；保留 `ensureGuiDevSession`、ProjectOperation和 Zustand事实 owner在原模块。
+- 保留精确顺序：saveProject(projectId/projectPath/signal) → assertOperation → ensureGuiDevSession(projectPath/signal) → null时读取 `getDevGuiError` 并抛出原中文文案 → assertOperation → 读取 current projectId并拒绝切换。初始 save/session/errors均不 catch、不回退；session admission后 App 再捕获 current store供 host infrastructure/coordinator使用。
+- 新增 direct tests，覆盖成功顺序、exact unavailable-host error、stale project rejection和 initial save failure；App 的 host infrastructure、runtime、coordinator、transition persistence、cleanup wiring保持。
+- 独立 reviewer 对 exact HEAD `9d958e2e0d44bd19ba5b4882ad8fd1f82d6ab65d` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 admission choreography、fail-closed propagation、identity fencing、Worker wiring/signatures和 canonical ownership boundaries保持。
+- 验证：focused `12 files / 80 tests`；完整 Node `164 test files / 1248 tests`；build通过（最大 chunk `1,182.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-queued-worker-session-admission-verified`；对应 `checkpoint/frontend-queued-worker-session-admission-unverified` 保留为历史回退锚点。
+
+### 7.313 verified：extract Worker recovery audit controller
+
+- 将 App `auditLoadedWorkerRunFacts` 的事件 baseline、retry snapshot reconcile、缺失 WorkerRun rehydrate、Worker/ProjectControl consistency audit、runtime/recovery projection、orchestration suppression、cleanup proposal suppression和 warning/error projection抽到 `src/projectControl/workerRunRecoveryAuditController.ts`；ProjectLifecycleController public callback signature保持不变。
+- controller通过窄 state/setter/save/event-repository ports注入，继续调用 canonical `ensureProjectControlEventBaseline`、reconcile/rehydrate、Worker/ProjectControl audit、runtime install与 orchestration projection；不移动 GUI worktree restore、passive recovery I/O、interactive retry/skip、queued coordinator、cleanup proposal generation或 UI queue admission。
+- 保留原有顺序与失败语义：baseline → reconcile/save → rehydrate/save → audit → runtime recovery projection → valid/suppressed orchestration projection；needs-repair和 audit failure清空 cleanup proposals并保留原 warning，repository failure转为 event-stream-invalid recovery，不吞掉 warning。
+- 新增 direct tests，覆盖 healthy audit、retry reconcile save、needs-repair suppression和 repository failure recovery；recovery/lifecycle/UI caller regressions保持。已知 cleanup-unknown recovery merge、重复 Evidence load、restore-worktree ordering、ProjectOperation around audit await和 recovery UI policy仍是 residual，未混入本结构切片。
+- 独立 reviewer 对 exact HEAD `07a39ea947c6f7d69a3c851f4d33585b9029d5dd` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 audited sequencing、failure semantics、live-state ports、canonical audit/projection calls、lifecycle callback wiring和 authority boundaries保持。所有 abort/state fence 与 exact setter order 的更细回归建议非阻塞，列入后续增强。
+- 验证：recovery-focused `7 files / 27 tests`；完整 Node `165 test files / 1252 tests`；build通过（最大 chunk `1,183.43 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-audit-controller-verified`；对应 `checkpoint/frontend-worker-recovery-audit-controller-unverified` 保留为历史回退锚点。
+
+### 7.314 verified：extract shared Worker recovery host-repository bundle
+
+- 新增 `src/projectControl/workerHostRepositoryBundle.ts`，集中三条真实 caller 共用的 host repository construction：Tauri EventStore adapter、Evidence persistence、SideEffectJournalRepository、live Acceptance verifier和 persisted Worker recorder；返回 `loadEvidence`/`loadSideEffects` bridge，active path另提供 EventStreamRepository factory。
+- 保留两个构造层以避免改变生命周期：full bundle供 queued active run和 interactive recovery；evidence-only bundle供 passive `loadProjectWorkerEvidence`，不额外创建 Acceptance verifier或 recorder。active/interactive 的 dynamic module load先于 session admission，recorder构造与 operation assert顺序保持；passive evidence path保留 Evidence→journal→read 顺序。
+- 迁移 `workerRunHostInfrastructure`、`workerRecoveryIoController`和 `workerActionController`；不移动 ensureGuiDevSession、ProjectOperation、RecoveryCommand、event buffer、runtime install、ProjectFile save、retry/skip policy或 cleanup-unknown policy。现有 active/passive/interactive public signatures保持。
+- 新增 bundle direct tests，覆盖 full/evidence-only construction、exact paths、live Acceptance bridge、双 EventStore adapter、recorder exclusion和 construction failure；caller recovery/lifecycle/UI regressions保持。
+- 独立 reviewer 对 exact HEAD `34284be6a9c936d5ec1b10d9dec61f3fb73c2b7b` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 full/evidence-only bundle、三 caller construction order、paths、live Acceptance bridge、adapter separation、fencing和 recovery contracts保持。
+- 验证：recovery-focused `9 files / 55 tests`；完整 Node `166 test files / 1255 tests`；build通过（最大 chunk `1,183.25 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-shared-worker-recovery-repository-verified`；对应 `checkpoint/frontend-shared-worker-recovery-repository-unverified` 保留为历史回退锚点。
+
+### 7.315 verified：harden interactive Worker recovery decision precondition
+
+- 新增 `src/projectControl/workerRecoveryDecisionPrecondition.ts`，在 interactive `recoverWorkerRun` 完成 journal recovery 后、调用 `recoverWorkerRunCommand` 前重新读取 live state，拒绝 projectId/projectPath drift、目标 WorkerRun 丢失或 same-project WorkerRun/TaskGraph 内容变化。
+- 通过稳定 JSON 对 captured run/TaskGraph 与 fresh state 做 fail-closed 比较；决策应用、event schema、RecoveryCommand、runtime、save、retry/skip事实 owner不变。后续 projection/runtime/save统一使用 precondition通过时的 fresh state，而不是异步前捕获的旧数组。
+- 新增 direct RED→GREEN tests，覆盖 unchanged healthy、same-project run mutation、TaskGraph revision/content drift和 project identity drift；duplicate panel decision/single-flight mutex、decision CAS和 UI allowedDecisions仍是后续独立 slice。
+- 独立 reviewer 对 exact HEAD `4a5fe8d33cb6525c0134b96b027a3624b68e78b0` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 precondition、captured command inputs、fresh-state projection ordering、canonical recovery/event ownership和 forbidden-import boundaries保持。controller-level drift/command-blocking回归建议非阻塞，列入后续增强。
+- 验证：focused `6 files / 26 tests`；完整 Node `167 test files / 1259 tests`；build通过（最大 chunk `1,184.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-decision-precondition-verified`；对应 `checkpoint/frontend-worker-recovery-decision-precondition-unverified` 保留为历史回退锚点。
+
+### 7.316 verified：add stable interactive Worker recovery single-flight
+
+- 新增 `src/projectControl/workerRecoverySingleFlight.ts`，以 projectId、projectPath、runId 为 key 的 process-local lease guard；第二个同 key interactive recovery 在 host/session/journal work 前 fail-fast，different run/project 可并发。
+- `workerActionController` 通过 `finally` release lease，保留首个调用的原 error/AbortError/save/retry语义；App 使用 stable `useRef` 注入 guard，避免 controller 每次 render 重建导致 mutex丢失。old lease 使用 token identity release，不能清除 newer lease。
+- 不改变 WorkerRunRecovery/RecoveryCommand/event schema、durable CAS、UI allowedDecisions、passive startup recovery或 retry runtime selection；这些 residual 保留后续独立切片。
+- 新增 direct guard tests和 action-level concurrency regression，覆盖 same-key reject、different-key concurrency、release-after-failure和 stable re-entry。
+- 独立 reviewer 对 exact HEAD `e798a6a9e7d4681806f4ec56275eaf0c0376c52e` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 key scope、token-safe release、controller admission/finally release、stable App guard lifetime和 existing recovery order保持。跨 controller/process duplicate decisions、durable CAS和 UI allowedDecisions作为明确 residual。
+- 验证：focused `2 files / 6 tests`；完整 Node `168 test files / 1263 tests`；build通过（最大 chunk `1,184.68 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-single-flight-verified`；对应 `checkpoint/frontend-worker-recovery-single-flight-unverified` 保留为历史回退锚点。
+
+### 7.317 verified：project canonical Worker recovery decisions into UI
+
+- 新增 `src/projectControl/workerRecoveryCapabilityProjection.ts`，基于 canonical `buildWorkerRunRecoveryPlan` 将 runtime recovery 投影为可点击的 `retry/skip`；只接受 `failed-tasks`、`unfinished-worker-lease`、`cleanup-unknown`，缺少或版本漂移的 TaskGraph、非 actionable recovery reason、lineage/plan 校验失败均 fail-closed 返回空集合。
+- 不把 `allowedDecisions` 写入 WorkerRunQueueState、ProjectFile、DomainEvent 或 side-effect journal；RecoveryCommand/action controller 仍是最终 authority，`inspect` 继续仅作展示，不新增 inspect action。
+- `workerRunView` 为 Professional view 增加 runtime-only `recoveryActions`；OrchestratorPanel 和 ProjectSessionPanel 只渲染 canonical projection允许的按钮，保留 existing callback signatures、single-flight、precondition和后端 revalidation。
+- 新增 pure projector、professional view和Beginner UI回归：普通 failed-task显示 retry/skip；缺失 TaskGraph 不渲染 recovery actions；malformed side-effect、stale graph和 audit/event recovery reasons均不生成可点击决策。
+- 独立 reviewer 对 exact HEAD `8e55fc0cc6267c43b0378890d2ccfcaaf52bbd0e` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 canonical plan delegation、graph/recovery identity、fail-closed capability、Beginner/Professional projection parity和 action authority保持。OrchestratorPanel direct cleanup-unknown/missing-graph regression及更完整 reason matrix列为后续增强。
+- 验证：focused `3 files / 20 tests`；完整 Node `169 test files / 1269 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-capability-projection-verified`；对应 `checkpoint/frontend-worker-recovery-capability-projection-unverified` 保留为历史回退锚点。
+
+### 7.318 verified：preserve transient Worker runtime through interactive retry
+
+- 将 `WorkerRuntime` 类型收口到 `src/projectControl/workerRunCoordinator.ts`，扩展 recovery callback 的可选 runtime 参数。
+- `ProjectSessionPanel` 在 mounted session 的 recovery retry 中透传当前 transient runtime；`workerActionController` 仅在 `retry` 时将 runtime 转发到 `runQueuedWorker`，`skip` 不启动 Worker；Professional/Orchestrator 无 runtime picker，继续使用 App 的 codex 默认。
+- 不持久化 runtime，不改 WorkerRunQueueState、ProjectFile、DomainEvent、side-effect journal、attempt/effect key 或 restart/reopen 合同；跨重启 runtime provenance 保留为后续独立 schema slice。
+- 新增回归：queued session 选择 antigravity 后进入 recovery，retry callback 仍收到 antigravity；既有 normal queued start 和 skip contract保持。
+- 独立 reviewer 对 exact HEAD `7a2a6b0896ec86512371ed14d0cf46f9120f328a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；确认 transient selection→callback→retry forwarding、codex fallback、Antigravity coordinator selection和无 durable schema漂移。
+- 验证：focused `2 files / 15 tests`；完整 Node `169 test files / 1270 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。创建 verified tag：`checkpoint/frontend-worker-recovery-runtime-propagation-verified`；对应 `checkpoint/frontend-worker-recovery-runtime-propagation-unverified` 保留为历史回退锚点。
+
+### 7.319 design gate：freeze Worker recovery durable decision CAS contract before implementation
+
+- 只读 audit 确认当前没有 canonical recovery facts fingerprint、durable decision owner或跨 ProjectFile/event stream/side-effect journal 的 commit protocol；`workerRecoveryDecisionPrecondition` 和 `workerRecoverySingleFlight` 仍分别只是内存 drift guard 与 process-local lease。
+- 新增 `docs/architecture/WORKER_RECOVERY_DECISION_CAS_DESIGN.md`，冻结 proposed v1 的 FactsFingerprint/DecisionIdentity 两层边界、canonical normalization/hash vectors、durable owner、commit/read-back、same-decision idempotence、conflict、legacy/unbound migration 和 Gate A–D 实施顺序。
+- 新增 ADR-SM-084 并更新 `docs/README.md` 导航；明确不把 event-stream sequence CAS、ProjectFile save queue、UI recoveryActions、transient WorkerRuntime 或 native cleanup partial-CAS 宣称为 recovery decision CAS。
+- 本轮仅修改架构文档，没有写入 fingerprint/schema、没有接入 controller、没有改变 Worker/ProjectFile/Event/SideEffect 行为；durable CAS 仍未实现、未完成跨进程/restart read-back。
+- 验证：docs link/read-back、`git diff --check`通过；未重跑 Node/build/i18n/tsc，因为本轮没有生产代码改动。
+
+### 7.320 unverified：implement pure Worker recovery facts fingerprint Gate A
+
+- 新增 `src/projectControl/workerRecoveryFactsFingerprint.ts`，定义 versioned `worker-recovery-facts-v1` DTO，规范化 current WorkerRun/TaskGraph/task attempt/worktree provenance 与 current recoverable started/unknown effects；排除 transient runtime、wall-clock metadata、UI capability和 durable writes。
+- canonicalizer 对 object key、task/effect ordering、evidence references、Windows path representation和 optional fields做纯内存规范化；exported canonicalizer 同时校验 versioned DTO 的 required/allowed keys、snapshot lineage/provenance、status/number/reference、pendingAttempt/cleanup/receipt invariants，并在 canonicalize 前统一排序归一化；最后补齐 direct scalar 类型、空 assignment/cleanup receipt、ghost dependency、failedTask derivation与 path-case normalization；fingerprint 输出 `worker-recovery-facts-v1:sha256:<hex>`，仅使用 Web Crypto SHA-256，不接 ProjectFile、eventBuffer、side-effect journal、controller或native host。
+- 新增 direct contract tests：多 task/effect insertion order稳定、attempt/effect identity变化改变 fingerprint、时间 metadata不改变结果、cross-task/legacy/malformed provenance、invalid state/version/number、assignment/receipt/path/ref/reference fail-closed。
+- 本轮不改变任何 WorkerRun/ProjectFile/DomainEvent/SideEffect schema，不接 durable CAS；Gate A 通过不等于 recovery decision CAS 闭合。
+- 验证：focused `1 file / 4 tests`；完整 Node `170 test files / 1274 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。当前修复 snapshot仍标记 `unverified`，等待下一次 exact Gate A re-review。
+
+### 7.321 unverified：close direct recovery facts status and failed-task invariants
+
+- 第十次 exact review 对 `66c8c8a55b41460734bea78402d5e33262a7299f` fail-closed：review 请求中的 parent hash 不存在，实际 parent 为 `ccbb3f926b4455544ff0500e9302896980ed65af`；同时确认 direct DTO 允许 `running`、`waiting-feedback`、`succeeded` 的 `attempt: 0` 且缺少当前 lineage，并允许 `failedTaskIds` 与 failed/running task 集合不一致。
+- 新增 direct DTO RED 回归：三类 status 的 zero-attempt/no-lineage payload，以及 ghost/mismatched `failedTaskIds`；先观察到 4 个失败，再实现修复。
+- 抽出共享 `assertTaskAttemptInvariant`，使 source builder 与 direct DTO validator 对 `running`、`waiting-feedback`、`succeeded`、`failed` 统一要求 `attempt >= 1`；direct DTO validator 现在从 task status 派生 expected failed/running IDs，并与 canonical sorted `failedTaskIds` 做逐项等价比较。
+- 本轮未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；当前 snapshot仍为 `unverified`，第十次 reviewer verdict因 parent 参数错误与上述逻辑缺陷不能继承。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings；测试保留既有 GUI probe stderr）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.322 verified closure：direct recovery facts status and failed-task invariants
+
+- 第十一次 exact reviewer 针对 exact HEAD `d6807ede987e45ad90b7c2a947b9ad2cde16ffea`、parent `183a7cae68171908c15b82d2815f40cc737c395a` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 target 与 clean worktree一致，status/attempt/current lineage、failed-task 派生集合、membership、provenance、canonicalization、unknown-key rejection和纯 import boundary均通过。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-status-invariants-verified`，指向上述 exact code commit；该 tag 只闭合本轮纯 Gate A invariant slice。
+- reviewer 明确 durable recovery decision CAS仍在本 slice之外，未接 ProjectFile、eventBuffer、side-effect journal、controller或native host；不得把本 tag解释为 durable CAS或真实 Worker recovery E2E完成。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.323 unverified：extract Worker recovery facts DTO type owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsTypes.ts`，集中拥有 `worker-recovery-facts-v1` schema、DTO、source input及嵌套 receipt 类型；原文件仅保留兼容 import/re-export，不再重复定义类型。
+- 本轮只移动类型与模块依赖，不改变 validator、normalizer、canonical JSON、hash、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；未把类型拆分误报为 fingerprint 巨石已完全解决，后续仍需按 validation/source builder/normalization/serializer边界继续评估。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片仍标记 `unverified`，等待 exact review。
+
+### 7.324 verified closure：Worker recovery facts DTO type owner
+
+- exact reviewer 针对 `7567b6a93be738a1c302299fafb9219f655c4931`、parent `fccd342cc9ad66df68cea0cdd674b60613373795` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 DTO/schema block 已完整迁移、schema 唯一定义、facade value/type re-export兼容，fingerprint builder/validator/normalizer/canonicalizer/hash未发生语义变化，且无反向循环或 durable CAS scope creep。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-types-verified`，指向上述 exact code commit；该 tag只证明 DTO type ownership结构切片，不证明 recovery facts 巨石已完全拆完或 durable CAS已实现。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.325 unverified：extract Worker recovery facts shared rules owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsRules.ts`，集中拥有 required text/string/safe integer、UTF-8 canonical ordering、path/ref/timestamp/revision normalization、sorted/unique references和 shared task attempt invariant。
+- source `taskFact` 与 direct `validateFactsDto` 现在导入同一 `assertTaskAttemptInvariant`；canonical path/ref/order等规则不再在 fingerprint facade 内重复定义。未移动 source builder、DTO validator、DTO normalization、canonical JSON或SHA-256行为。
+- 本轮保持纯内存边界，不接 ProjectFile、eventBuffer、side-effect journal、controller、native host或durable CAS；当前 fingerprint facade仍有后续 source/DTO validation与normalization拆分工作。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.326 verified closure：Worker recovery facts shared rules owner
+
+- exact reviewer 针对 `115929998e60d05f85efd690b4954f1ec2a7e017`、parent `fae69771f055e82fd22cffe3e0391d049a3842cb` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 diff 仅包含纯 shared-rules extraction、facade imports和 append-only log，所有 moved helper唯一归属 `workerRecoveryFactsRules.ts`，taskFact与validateFactsDto共享同一 attempt invariant，原函数体和 fingerprint logic未改变，且依赖无环、公共 facade与 durable CAS scope保持不变。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-rules-verified`，指向上述 exact code commit；该 tag只闭合共享规则 owner结构切片，不证明 source/DTO validator、normalizer、canonical serializer或durable CAS已全部闭合。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.327 unverified：extract Worker recovery facts normalization owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsNormalization.ts`，集中拥有 DTO 内 task/worktree/graph/effect/receipt 的 path representation、UTF-8 ordering、reference sorting和 canonical transform；原 facade 仅调用 `normalizeFactsDto`。
+- 本轮只移动纯 DTO normalization，不改变 source builder、direct DTO validator、canonical JSON、SHA-256、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；依赖方向为 normalization → types/rules，未引入 host/store/runtime。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.328 verified closure：Worker recovery facts normalization owner
+
+- exact reviewer 针对 `f81e0abdbc5734de72a67331bd31d3eb21d158af`、parent `0ad8f23b3a63f72102d99c96c4d1111425a30723` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 `normalizeFactsDto` body及全部 path/order/inputHash/receipt-file transform未改变，新模块仅依赖 types/rules、无循环或 host/store/runtime依赖，fingerprint facade、validation、builder和 durable CAS scope不变。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-normalization-verified`，指向上述 exact code commit；该 tag只闭合 normalization owner结构切片，不证明 source/DTO validator、canonical serializer或durable CAS已全部闭合。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.329 unverified：extract Worker recovery canonical JSON owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsCanonicalJson.ts`，集中拥有 deterministic JSON value serialization、undefined/array rejection、safe-integer number encoding和UTF-8 object-key ordering；facade 保留 `canonicalizeWorkerRecoveryFactsV1` public API，仅委托 serializer。
+- 本轮未改变 DTO validator、normalization、source builder、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新模块只依赖 `workerRecoveryFactsRules.ts`，保持纯内存、无 host/store/runtime依赖。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.330 verified closure：Worker recovery facts canonical JSON owner
+
+- exact reviewer 针对 `9305aa4c8658282bd3d0bbcee0b06682a5d28514`、parent `6dddd3d48f7cad1a0827fdf30f1ac4a95a14cbb1` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 canonical serializer 行为不变、唯一 owner、rules-only dependency、public facade兼容，且 validator、normalization、builder、hash和 durable CAS scope均未改变。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-canonical-json-verified`，指向上述 exact code commit；该 tag只闭合 canonical JSON owner结构切片，不证明 source/DTO validator或 durable CAS已完成。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.331 unverified：extract Worker recovery direct DTO validator owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsDtoValidation.ts`，集中拥有 direct DTO 的 allowed-key、scalar、status/attempt、lineage、assignment/worktree、TaskGraph membership/dependency、failedTaskIds derivation和 recoverable-effect provenance validation。
+- `assertObject`/`assertKeys` 提升到 shared rules owner，source receipt validation与direct DTO validation共享同一 unknown-key/object guard；fingerprint facade 仅保留 source builder、public canonicalize/hash facade，并继续兼容 `canonicalizeWorkerRecoveryFactsV1`。
+- 本轮未改变 source builder、normalization、canonical JSON、SHA-256 output、WorkerRun/TaskGraph/SideEffect schema、ProjectFile或durable CAS；新 DTO validator 仅依赖 domain execution、types和rules，保持纯内存边界。
+- 验证：focused `1 file / 8 tests`；完整 Node `170 test files / 1278 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.332 unverified：repair DTO validator diagnostic parity and shared receipt guard
+
+- 第十一次 exact review 对 `06612355e46b3a1c2b4687d88aa6775319864458` fail-closed：确认 direct validator 与 parent 存在两个结构切片回归——`facts.run.taskGraphVersion` 的 safeInteger diagnostic field 被改成 `facts taskGraphVersion`，source `receiptFact` 仍使用 inline object guard，未复用 shared `assertObject`，且 array-shaped receipt 会落入后续 undefined.trim 错误。
+- 新增两个 RED 回归：direct owner diagnostic field parity、带 `outcome` 属性的 array-shaped source receipt必须得到 `receipt 必须是对象`；先观察到两项失败，再修复。
+- 修复 DTO validator diagnostic 为 `facts.run taskGraphVersion`；`receiptFact` 改为 `const receiptObject = assertObject(receipt, 'receipt')` 后再执行 allowed-key 校验，消除重复 guard并统一 array/null/object边界。
+- 本轮仍未接 durable CAS、ProjectFile、eventBuffer、side-effect journal、controller或native host；等待针对新 repair snapshot的 exact re-review。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.333 verified closure：Worker recovery direct DTO validator repair
+
+- exact reviewer 针对 `35a2b01d68d883640fecc979ec16ecc562a0a810`、parent `5f8d04ed69c79dcf8665a5f2004f3183ae46db15` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认两条 RED vector均命中修复路径，direct DTO validation、source/builder、normalization、canonicalization、hash、public facade、纯 import boundary和 durable-CAS scope均保持兼容。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-dto-validator-repair-verified`，指向上述 exact code commit；该 tag只闭合本轮 diagnostic/receipt guard repair，不证明 source builder已独立拆出或 durable CAS已实现。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.334 unverified：extract Worker recovery source builder owner
+
+- 从 `workerRecoveryFactsFingerprint.ts` 抽出 `src/projectControl/workerRecoveryFactsSource.ts`，集中拥有 taskFact、projectTaskFact、receiptFact、side-effect envelope/effectFact与 `buildWorkerRecoveryFactsV1`；fingerprint facade 现在仅保留 schema/type兼容导出、build兼容导出、canonicalize facade与SHA-256 hash。
+- source owner 继续使用 shared rules、execution lineage、types和object guards；未改变 source facts DTO、TaskGraph/WorkerRun/SideEffect schema、normalization、canonical JSON、direct DTO validator、ProjectFile或durable CAS行为。
+- 本轮结构结果：source builder `409` 行，fingerprint facade `37` 行；依赖方向为 source → domain/types/rules，facade → source/validator/normalization/canonical JSON，未引入 host/store/runtime副作用。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。当前结构切片标记 `unverified`，等待 exact review。
+
+### 7.335 verified closure：Worker recovery facts source builder owner
+
+- exact reviewer 针对 `58c7d2eec1b002568f6167d62bdf07b60a1dbed0`、parent `ca3c61552f75d783d8d61f0ca5e75d4ef0bfd4bc` 返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`；确认 source builder body除尾部空白外与 parent 语义一致，shared object guards、lineage/provenance、normalization、dependency checks、failed-task derivation、DTO output、exports和error behavior均兼容，且无循环、host/store/runtime依赖或 durable-CAS scope creep。
+- 创建 verified tag：`checkpoint/frontend-worker-recovery-facts-source-builder-verified`，指向上述 exact code commit；该 tag闭合 source builder owner结构切片，连同此前 types/rules/normalization/canonical JSON/DTO validation slices使该 fingerprint facade不再是事实巨石；durable CAS仍未实现。
+- 验证：focused `1 file / 10 tests`；完整 Node `170 test files / 1280 tests`；build通过（最大 chunk `1,185.75 kB`，保留既有 dynamic/static import 与大 chunk warnings）；i18n `1026/1026`；tsc、diff check通过。
+
+### 7.336 unverified：real Tauri GUI smoke and Worker E2E boundary read-back
+
+- 在当前 exact source checkpoint `212ad1db2e0064f7947df493d7489959782037f1` 启动真实 `npx tauri dev`；实测 Vite `http://localhost:1420/` ready、Rust dev profile完成编译、真实 `SlimeMold · Agent 工作流`窗口可由 Windows UIA 枚举；不是把 CLI 进程存活当作 GUI 证据。
+- 在 disposable fixture `D:/Temp/slimemold-tauri-e2e-20260920T005525Z-failure-clean` 的真实 WebView 中，先 read-back 未绑定智能体的 failure fixture，再通过当前 GUI combo 选择 `开启（离线回显）`，点击真实运行按钮；fixture `.slimemold/runs/checkpoints.json` read-back 为 `wf-failure/runId=3/status=success`，Worker node output包含离线模拟 plan，`durationMs=212`；ProjectFile 的 `runs.history`保留此前 unbound error runs。
+- 交叉 read-back 显示这次成功属于通用 Workflow checkpoint：`.slimemold/project.json` 的 `workerRuns=[]`，`events/events.jsonl` 只有 ProjectControl baseline，fixture内没有 WorkerQueue `TaskStarted/TaskSucceeded/Failed`、Evidence、Acceptance、Receipt或CleanupReceipt。因此本轮证明了真实 Tauri/WebView generic workflow与离线模拟持久 checkpoint，不证明 WorkerQueue/provider/worktree/recovery E2E，也不证明 durable CAS。
+- 本轮未删除 disposable fixture、worktree 或历史现场；停止已核对属于当前项目的 Tauri/Vite/Rust/WebView 进程并确认 `localhost:1420` 端口释放。
+
+### 7.337 unverified：real Tauri Worker recovery retry E2E and persisted worktree reset repair
+
+- 在真实 `npm run tauri dev` 的 `slime-mold.exe` 窗口中打开 `D:/Temp/slimemold-worker-e2e-failure`，重新加载后 GUI 明确显示 `WorkerRun=partial` 的 recovery capability，并提供 `确认重试新 attempt` 与 `确认跳过任务`；本轮通过 GUI 选择 retry，不把 headless projection 当作 GUI 证据。
+- GUI retry 首次暴露了一个真实恢复缺陷：旧 task 已持久化 `worktreeStatus=created`/`branchRevision`，恢复命令只清除了 worktree id/path/branch/baseRevision，导致新 attempt 入队后宿主报“缺少完整 worktree assignment”。修复 `applyWorkerRunRecoveryDecision` 在 retry 时同时清除 `worktreeStatus` 与 `branchRevision`，并新增 persisted-created-task 回归测试；先观察到 focused test RED，再修复为 GREEN。
+- 为使 disposable fixture 的 imported `approval=approved` 与事件事实一致，先备份 `.slimemold` 到 `D:/Temp/slimemold-worker-e2e-failure-before-approval-fix`，再通过事件存储追加 `BriefApproved` 与 `TaskGraphApproved`；未清理原始现场。
+- 修复后的同一 GUI retry 真实落盘 `WorkerRunRecoveryDecided(decision=retry)`、`RunQueued(nextAttempt=2)`、`TaskAttemptMarkedUnknown`；随后从 GUI 启动 Worker，落盘 attempt 2 的 `RunStarted`/`TaskStarted`，创建独立 worktree `D:/Temp/slimemold-worker-e2e-failure-workers/w-b9106efb232f38bf0b1aa0a9`，并在该 worktree 生成真实 `docs/WORKER_E2E_FAIL.txt`。
+- 宿主验收按 fixture 设计失败：`host.jsonl` 有 compile/tests/diff 三条 failed Evidence 与一条 path-policy passed Evidence，`acceptance/records.jsonl` 为 `passed=false`、`failedChecks=[compile,tests,diff]`，最终 Run 为 `partial`，没有 `RunSucceeded`；`runs/side-effects.json` 同时保留 attempt 1 的 `unknown/needs-user`（`worker-run-restarted`）与 attempt 2 的 failed receipt；这证明失败结果、Evidence、Acceptance、side-effect receipt 和 worktree provenance 被持久化，不证明成功交付。
+- GUI 截图和 read-back 证据保存在 `D:/Temp/slimemold-worker-e2e-failure/.slimemold/evidence/gui/` 与同目录持久化文件中；保留 failure worktree，未自动 cleanup。原始 fixture 在修复前的备份仍保留。
+- 验证：focused `1 file / 6 tests`；完整 Node `170 test files / 1281 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,185.80 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`git diff --check` 通过。当前代码与本轮 E2E 证据标记 `unverified`，剩余风险是宿主 fixture 的验收故意失败以及尚未执行 skip 分支。
+
+### 7.338 unverified：frontend monolith ownership slices
+
+- 在保持 `types.ts` 兼容导出的前提下，将 React Flow graph contracts（`FlowNode`/`FlowEdge`、port/edge kinds、`WorkflowNodeData`、parameter contracts及连接兼容规则）迁移到 `src/types/graph.ts`；新增 direct owner tests，并将 canvas、subgraph、workflow IO、group proxy、dev nodes和 workflow graph/store 的关键调用改为直接依赖 graph owner。
+- 将 `WorkflowState`、`RunState`、`RunProgressShape`、`ProjectSaveGuard` 从 `workflowStore.ts` 移到 `src/store/workflowStoreTypes.ts`；`engine/runtime.ts` 直接导入 state-contract owner，store facade继续提供兼容行为。
+- 将 App 中 Worker runtime composition（recovery IO、evidence read-back、worktree restore、run coordinator、transition persistence、recovery/cleanup actions）迁移到 `src/app/workerRuntime.ts`；`App.tsx` 只保留 React 生命周期、operation guard、UI事件和生命周期 controller 接线。`workerWorktreeRestore.ts` 同时成为独立的 worktree restore adapter，并有 direct tests。
+- 将 `workflowStore.ts` 的 subgraph mutations 与 group/proxy mutations 分别迁移到 `workflowSubgraphCommands.ts` 和 `workflowGroupCommands.ts`；两个 command owner 通过显式 `getState/setState/pushHistory/addLog` ports 接入 store，group owner 通过显式 focused-subgraph ports 接入 view state，未把 React hook带入 command modules。
+- 结构边界仍是增量拆分：`src/types.ts` 保留为兼容 facade，`workflowStore.ts` 仍拥有项目保存/registry/运行态等后续边界，`App.tsx` 仍拥有 UI shell与全局生命周期；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema或执行语义。
+- 相关本地 checkpoint：`f2932c9` / `checkpoint/frontend-app-worker-restore-adapter-unverified`、`021c7e9` / `checkpoint/workflow-store-state-contract-split-unverified`、`38af19f` / `checkpoint/frontend-graph-types-split-unverified`、`9438254` / `checkpoint/app-worker-runtime-split-unverified`、`f2612dc` / `checkpoint/workflow-subgraph-command-split-unverified`、`54b5fc6` / `checkpoint/workflow-group-command-split-unverified`；均为本地 unverified 回退锚点，未 push。
+- 验证：direct/frontend focused slices全部通过；完整 Node `175 test files / 1291 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。当前结构切片标记 `unverified`，尚未做 exact reviewer closure；下一阶段仍需继续收口 `workflowStore` 的 project/persistence/runtime boundaries，并拆分 `types.ts` 的 remaining agent/project/execution contracts。
+
+### 7.339 unverified：extract agent-facing type contracts owner
+
+- 从 `src/types.ts` 抽出 agent/provider/API/Vault、Role、message/tool wire、LLM response/spec 和 cost telemetry contracts 到 `src/types/agent.ts`；保留 `src/types.ts` 的 type-only compatibility re-export，未复制实现或改变公共类型名称。
+- `src/agents/*`、provider adapters、Agent/Settings/Master UI 和 Companion 已改为直接依赖 `src/types/agent.ts`；其余非 agent 类型继续通过旧 facade，保持本轮迁移边界有限。
+- 新增 `src/types/agent.test.ts`，覆盖 AgentConfig、RoleTemplate、ChatMessage、LLMResponse 和 CostRecord 的 owner contract；类型迁移未改变 ProjectFile、WorkerQueue、DomainEvent、Evidence/Acceptance/Receipt 或运行时行为。
+- 结构结果：`src/types.ts` 由 `1075` 行降至 `907` 行，新增 owner `src/types/agent.ts` 为 `198` 行；当前切片仍标记 `unverified`，尚未执行 exact reviewer closure。
+- 相关本地 checkpoint：`2751c2a` / `checkpoint/types-agent-contract-split-start`、`3afe5fd` / `checkpoint/types-agent-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 68 tests`；完整 Node `176 test files / 1292 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.340 unverified：extract orchestration type contracts owner
+
+- 从 `src/types.ts` 抽出 Artifact、Pipeline、Draft、StageLog、Orchestration 等项目级编排契约到 `src/types/orchestration.ts`；保留 `src/types.ts` type-only compatibility re-export，未改变公共名称或持久化结构。
+- `engine/pipeline.ts`、`orchestrator/*`、Orchestrator UI、ProjectControl orchestration projection/transition callers 已开始直接依赖 `src/types/orchestration.ts`；`ModuleItem` 等非 orchestration 类型仍保留从 facade 导入，保持切片边界清晰。
+- 新增 `src/types/orchestration.test.ts`，覆盖 PipelineDef、Artifact 和 Orchestration contract；本轮未改变 executor、ProjectFile、WorkerQueue、DomainEvent、Evidence/Acceptance/Receipt 运行时行为。
+- 结构结果：`src/types.ts` 由 `907` 行降至 `767` 行，新增 owner `src/types/orchestration.ts` 为 `164` 行；当前切片保持 `unverified`，未进行 exact reviewer closure。
+- 相关本地 checkpoint：`77ff937` / `checkpoint/types-orchestration-contract-split-start`、`ce9ec8f` / `checkpoint/types-orchestration-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 60 tests`；完整 Node `177 test files / 1293 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.02 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.341 unverified：extract project save controller boundary
+
+- 从 `src/store/workflowStore.ts` 抽出 `src/store/projectSaveController.ts`，由新 owner 负责项目保存队列接入、ProjectFile 写入、pending domain event flush、SaveGuard 检查、`projectDirty` 清除和稳定 `lastSavedSnapshot` 基线更新；保持原有保存 key、错误文本、保存路径和 guard 时序。
+- `workflowStore.ts` 保留 facade composition 与 Worker event-stream rehydration 的 `prepareForSave` 注入；控制器不导入 `useWorkflowStore`、`useViewStore` 或 workflow facade，不复制 Worker recovery 事实。
+- 新增 direct owner tests，覆盖成功保存、abort fail-closed、项目在 preparation 期间切换时拒绝写入；现有 `workflowStore.projectControl.test.ts`、Save As、dirty/autosave、queue 和 persistence tests 继续作为 facade/邻接边界回归。
+- 结构结果：`src/store/workflowStore.ts` 由 `1253` 行降至 `1224` 行，新增 `src/store/projectSaveController.ts` 为 `90` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
+- 相关本地 checkpoint：`57f7939` / `checkpoint/workflow-persistence-boundary-split-start`、`ecae7bb` / `checkpoint/workflow-project-save-controller-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `9 test files / 28 tests`；完整 Node `178 test files / 1296 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.66 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.342 unverified：extract save preparation adapter boundary
+
+- 从 `src/store/workflowStore.ts` 抽出 `src/store/projectSavePreparation.ts`，由新 owner 负责保存前的 Tauri event-stream read、`needs-repair` fail-closed、缺失 WorkerRun projection rehydration，以及 linked orchestration projection 更新。
+- `workflowStore.ts` 只保留 `createProjectSavePreparation` 的 composition wiring；`workflowStore` 不再直接持有 `restoreMissingWorkerRunsFromEvents` 或 `projectWorkerRunsOntoOrchestrations` 的保存前控制流。新 adapter 不依赖 `useWorkflowStore` 或 `useViewStore`，读盘入口通过可注入 `readEventStream` 保持 direct tests 可运行。
+- 新增 direct tests，覆盖 browser skip、已有 WorkerRun projection skip、缺失 projection 恢复与编排投影、event stream needs-repair 阻断；同时复跑现有 Worker rehydration 与 facade save tests。
+- 结构结果：`src/store/workflowStore.ts` 由 `1224` 行降至 `1194` 行，新增 `src/store/projectSavePreparation.ts` 为 `83` 行；本轮未改变 ProjectFile、DomainEvent、WorkerQueue、Evidence/Acceptance/Receipt schema 或执行语义。
+- 相关本地 checkpoint：`28c01e2` / `checkpoint/workflow-save-preparation-split-start`、`5c158c6` / `checkpoint/workflow-save-preparation-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 19 tests`；完整 Node `179 test files / 1300 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,187.87 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.343 unverified：repair save side-effect fencing and workflow-store type compatibility
+
+- 修复 `projectSaveController` 的 stale-I/O window：`projectFilePersistence` 新增可选 `beforeWrite/beforeFlush` hooks，普通 Save 的 Tauri adapters 在 dynamic import 完成、真实写入/flush 开始前重新执行 `ProjectSaveGuard`；项目切换或 abort 不再只在副作用之后才被发现。
+- 在 `src/store/workflowStore.ts` 恢复 `ProjectSaveGuard`、`RunProgressShape`、`RunState`、`WorkflowState` 的历史 type-only facade exports，并新增 compatibility test；未复制类型实现。
+- 新增 guard regression，模拟 adapter await 期间项目切换，确认实际写入不会发生；保留 ProjectFile persistence 原有无 callback 时的调用形状，避免无关测试/调用方变化。
+- 相关本地 checkpoint：`7a5bb46` / `checkpoint/workflow-save-guard-compat-repair-start`、`4109bee` / `checkpoint/workflow-save-guard-compat-repair-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 16 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.344 unverified：migrate production callers to direct type owners
+
+- 将 Agent/API/LLM/Cost contracts 的生产与测试调用方从兼容 `src/types.ts` 迁移到 `src/types/agent.ts`；将 Artifact/Pipeline/Orchestration/Draft contracts 的调用方迁移到 `src/types/orchestration.ts`。
+- 涉及 engine、IO、nodes、orchestrator、plugins、ProjectControl、store 及对应 direct tests；当前静态扫描确认 moved Agent 与 orchestration symbols 从 compatibility `types` path 的残留计数均为 `0`。
+- `src/types.ts` 仍保留兼容 re-export，但本轮不再有新/现有内部调用方依赖它承载这两类已迁移事实；未改变运行时、ProjectFile、DomainEvent、WorkerQueue 或 Evidence/Acceptance/Receipt 结构。
+- 相关本地 checkpoint：`086c7d7` / `checkpoint/direct-type-owner-import-migration-start`、`54f7ca5` / `checkpoint/direct-type-owner-import-migration-unverified`；均为本地回退锚点，未 push。
+- 验证：owner-focused `18 test files / 182 tests`；supplementary sandbox/type-owner `5 test files / 87 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.12 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.345 unverified：inject registry definitions into workflow command owners
+
+- 为 `workflowSubgraphCommands` 与 `workflowGroupCommands` 增加显式 `getNodeDefinitions` port；子图打包/端口推断、group proxy recompute 不再直接读取 `useRegistryStore` singleton。
+- `recomputeProxyPorts` 改为接收明确的 node definition table；`defaultParams` 保留为单独的 registry adapter。`updateGroup` 的 patch 类型收窄为 `Partial<Omit<NodeGroup, 'id'>>`，与 `WorkflowState` facade contract 对齐，禁止通过 command owner 修改 group id。
+- 更新 workflow facade wiring、direct command tests 和 group proxy tests；本轮未改变图编辑、子图、分组或持久化运行语义。
+- 相关本地 checkpoint：`2dbd778` / `checkpoint/workflow-command-registry-port-split-start`、`b92b795` / `checkpoint/workflow-command-registry-port-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 29 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.28 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.346 unverified：stabilize App Worker runtime lifetime
+
+- `App.tsx` 改用 mount-scoped `useRef` 保存 `createAppWorkerRuntime` 结果，避免每次 React render 重新组合 Worker recovery/action/cleanup controllers；Project lifecycle effect 现在消费稳定的 runtime ports。
+- 保留 store、operation guard、recovery single-flight 和 controller wiring，不改变 Worker/recovery/cleanup 行为；本轮只收口对象生命周期和 composition 可读性。
+- 相关本地 checkpoint：`333b4ac` / `checkpoint/app-runtime-lifetime-seam-start`、`6992e95` / `checkpoint/app-runtime-lifetime-seam-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 26 tests`；完整 Node `180 test files / 1302 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.33 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.347 unverified：share save preparation with Save As
+
+- `projectSaveAsController` 新增可选 `prepareForSave` port；Save As 在目录选择完成后、构建 ProjectFile 前复用 Worker event-stream preparation，避免 Save 与 Save As 的恢复前置条件分叉。
+- preparation 失败时 Save As fail-closed，记录既有 warning 文案，不构建或写入项目；prepared state 用于后续 ProjectFile 和 active workflow metadata。
+- 更新 Save As direct tests、workflowStore Save As integration test 和 shared preparation wiring；未改变普通 Save、ProjectFile schema 或 event semantics。
+- 相关本地 checkpoint：`cf09ab8` / `checkpoint/shared-save-preparation-wiring-start`、`5798c14` / `checkpoint/shared-save-preparation-wiring-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `4 test files / 17 tests`；完整 Node `180 test files / 1303 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.348 unverified：extract execution type contracts
+
+- 将 `RunNodeResult`、`RunRecord`、`LogEntry` 从高扇出的 `src/types.ts` 迁移到 `src/types/execution.ts`，该 owner 只依赖 graph status 与 agent cost contracts。
+- `src/types.ts` 保留兼容 re-export；engine checkpoint/finalizer/runtime、BeginnerExperience、workflow serialization、store contract 与相关测试改为直接依赖 execution owner。
+- 移除旧 barrel 中的重复实现，未改变运行历史、日志、checkpoint、ProjectFile schema 或执行语义。
+- 相关本地 checkpoint：`a765171` / `checkpoint/types-execution-contract-split-start`、`19023bc` / `checkpoint/types-execution-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `5 test files / 43 tests`；完整 Node `181 test files / 1304 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.349 unverified：extract capability type contract
+
+- 将 `CapabilityLevel` 从 `src/types.ts` 迁移到 `src/types/capability.ts`，为节点权限分级与插件 sandbox RPC 提供独立 owner。
+- `engine/executorHelpers`、`nodes/sdk`、plugin loader、sandbox manager/protocol 改为直接依赖 capability owner；`src/types.ts` 保留兼容 re-export，未改变 capability whitelist、节点权限裁剪或插件执行语义。
+- 新增 capability contract test；本轮只移动类型事实与 import 边界，没有放宽任何能力等级或宿主拦截规则。
+- 相关本地 checkpoint：`5e59bef` / `checkpoint/types-capability-contract-split-unverified`；另保留 `4ea1dcc` / `checkpoint/types-plugin-contract-split-start` 作为插件边界探索锚点；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 47 tests`；完整 Node `182 test files / 1305 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.350 unverified：extract plugin type contracts
+
+- 将 `PluginOccupation`、`PluginNodeMeta`、`PluginManifest`、`LoadedPlugin` 从 `src/types.ts` 迁移到 `src/types/plugin.ts`，并让 plugin loader 与 registry store 直接依赖该 owner。
+- `src/types/plugin.ts` 只依赖 capability 与 graph contracts；`src/types.ts` 保留兼容 re-export，避免继续扩大通用 barrel 的内部扇出。
+- 新增 plugin contract test；未改变 manifest 字段、plugin source/scope 取值、loader 校验、registry 生命周期或 sandbox 执行语义。
+- 相关本地 checkpoint：`1bf0d99` / `checkpoint/types-plugin-contract-owner-split-start`、`6b8ee89` / `checkpoint/types-plugin-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 38 tests`；完整 Node `183 test files / 1306 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.51 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.351 unverified：extract workflow run state commands
+
+- 将 `setRunning`、`setRunProgress`、成本日志、运行历史、checkpoint memory/persistence/snapshot/clear/restore actions 从 `workflowStore.ts` 抽到 `src/store/workflowRunStateCommands.ts`。
+- 新 owner 只通过显式 `getState`、`setState`、`updateState`、dirty suppression 与 checkpoint persistence ports 工作；facade 仅负责 composition，保留 active workflow 兼容字段同步和 checkpoint 落盘语义。
+- 新增 command owner focused tests；`workflowStore.ts` 删除约 96 行 inline run/checkpoint implementation，未改变 Worker executor、恢复、ProjectFile 或运行历史行为。
+- 相关本地 checkpoint：`f6a870d` / `checkpoint/workflow-run-state-command-split-start`、`812019c` / `checkpoint/workflow-run-state-command-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `6 test files / 37 tests`；完整 Node `184 test files / 1308 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.63 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.352 unverified：extract project metadata contracts
+
+- 将 `AssetMeta` 与 `RecentProject` 从 `src/types.ts` 迁移到 `src/types/project.ts`；`io/projectIO.ts` 保留 `RecentProject` type-only re-export，避免旧 UI/import 路径破坏。
+- AssetsPanel、engine context/runtime、内置 media/tool nodes、workflow lifecycle/serialization/store contracts 与测试改为直接依赖 project owner；通用 barrel 只保留兼容 re-export，AssetMeta/RecentProject direct root imports 残留为 `0`。
+- 新增 project metadata contract test；未改变 ProjectFile/WorkflowFile 字段、资产 scope、最近项目持久化或运行时行为。
+- 相关本地 checkpoint：`b1dcb6a` / `checkpoint/types-project-asset-contract-split-start`、`37d9b3b` / `checkpoint/types-project-asset-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 50 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.63 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npx tsc --noEmit` 通过；`git diff --check` 通过。后续 project-data command slice 在包含本轮代码的最终工作树上完成全量质量门，见 7.353。
+
+### 7.353 unverified：extract workflow project data commands
+
+- 将 workflow/project asset 与 project variable actions 从 `workflowStore.ts` 抽到 `src/store/workflowProjectDataCommands.ts`：`addAsset`、`removeAsset`、`addProjectAsset`、`removeProjectAsset`、`setProjectVariable`、`removeProjectVariable`。
+- 新 owner 只依赖显式 state ports、日志 port 和 `removeFile` port；Tauri file deletion 保留在 facade composition 的动态 port 中，保留原有删除顺序、日志文案、依赖 workflow 名称返回值和失败可观察性。
+- 新增 direct command tests，覆盖状态变更、project asset dependency discovery 和注入的文件删除 port；`workflowStore.ts` 删除约 103 行 inline project-data implementation，未改变 ProjectFile schema 或资产/变量语义。
+- 相关本地 checkpoint：`8135885` / `checkpoint/workflow-project-data-commands-start`、`daa2112` / `checkpoint/workflow-project-data-commands-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 29 tests`；完整 Node `186 test files / 1312 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.61 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.354 unverified：extract workflow registry lifecycle commands
+
+- 将 `renameWorkflow` 与 `removeWorkflow` 从 `workflowStore.ts` 接入已有 `workflowRegistryActions.ts` owner，复用 `buildRenameWorkflowState` / `buildRemoveWorkflowState`。
+- 清理 AppData workflow 的动态 I/O 改为显式 `cleanupWorkflow` port；registry owner 负责状态/激活编排，facade 负责宿主清理 wiring，保留原有 cleanup 顺序、激活结果和兼容 action 签名。
+- 新增 registry owner direct tests，保留原有 switch/new/register 覆盖；`workflowStore.ts` 删除重复 lifecycle implementation，未改变工作流重命名、删除、激活或持久化语义。
+- 相关本地 checkpoint：`52ba7a4` / `checkpoint/workflow-registry-lifecycle-command-split-start`、`018fb9c` / `checkpoint/workflow-registry-lifecycle-command-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `3 test files / 16 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.355 unverified：complete direct project and execution owner imports
+
+- 根据 exact-snapshot review 发现的 residual，`BeginnerExperience.tsx` 改为直接从 `src/types/project.ts` 导入 `RecentProject`，不再依赖 `io/projectIO` compatibility seam。
+- `workflowLifecycleState.ts` 的 `AssetMeta` 与 `RunRecord` inline compatibility imports 改为直接依赖 `types/project.ts` 与 `types/execution.ts`；当前 direct owner residual scan 为 `0`。
+- 未改变 `io/projectIO` 的兼容 re-export、ProjectFile/WorkflowFile schema、运行历史、资产或 lifecycle 行为；这是 topology repair，不是历史 target 的 retroactive verification。
+- 相关本地 checkpoint：`8f4f6f4` / `checkpoint/direct-owner-residual-repair-start`、`2035f96` / `checkpoint/direct-owner-residual-repair-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `7 test files / 54 tests`；完整 Node `186 test files / 1314 tests`；`npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.356 exact review closure：verified code anchors
+
+- `checkpoint/direct-owner-residual-repair-unverified` 的 exact target `2035f966adff091c94ff10d9fa58cb5df2b8e255`、parent `8f4f6f4e0f713ac7089f43a0dcf48b3e241230d2` 已完成 object-level review：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、无 credential literals；对应 code tag：`checkpoint/direct-owner-residual-repair-verified`。
+- `checkpoint/workflow-registry-lifecycle-command-split-unverified` 的 exact target `018fb9c1e77a33e71965215dcdcaafb153783787`、parent `52ba7a4a2872ebe87606405684fd376ea81aa6e6` 已完成 object-level review：`passed=true`、`security_concerns=[]`、`logic_errors=[]`、无 credential literals；对应 code tag：`checkpoint/workflow-registry-lifecycle-command-split-verified`。
+- 两个 verified tag 均指向 reviewer 实际审查的 code commit；本节之后的文档 commit 不继承或改变 verified code HEAD。历史 project metadata target `37d9b3b` 与 execution target `19023bc` 的 fail-closed 结果仍保持 `unverified`，不能被本轮修复追溯升级。
+- 这些 reviewer 只提供 exact Git object topology/logic evidence，未运行测试；对应 code commit 的质量门已分别在同一代码快照上完成：完整 Node `186 test files / 1314 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.357 frontend structure health review：current topology baseline
+
+- 审查锚点：`0d82932c748474d5216bbf713059a1eaa9eec6ad` / `checkpoint/frontend-structure-health-review-start`；本轮只做结构分析和文档记录，未改变生产代码。
+- 规模实测：`src` 共 `459` 个 TypeScript/TSX 文件、`1,735` 条可解析的相对 import edge；目录代码行主要集中在 `projectControl` `23,429`、`components` `13,049`、`engine` `11,108`、`store` `8,472`、`domain` `7,585`。
+- 主要巨石：`AgentPanel.tsx` `1207` 行、`WorkflowEditor.tsx` `1182` 行、`domain/workerQueue.ts` `1158` 行、`projectControl/commands.ts` `1076` 行、`engine/executor.ts` `1036` 行、`workflowStore.ts` `994` 行、`OrchestratorPanel.tsx` `993` 行；其中 `workflowStore.ts`、`AgentPanel.tsx`、`WorkflowEditor.tsx`、`OrchestratorPanel.tsx` 没有同名直接 test file。
+- Fan-in 风险：`src/types.ts` 有 `158` 个静态 fan-in，`workflowStore.ts` `66` 个，`domain/workerQueue.ts` `76` 个；当前精确 root-barrel import 仍有 production `135` 条、test `70` 条，但其中大量是尚未迁移的 Node/ProjectControl/Workflow contracts，不能把所有 root import 都误判为 bug。
+- 高风险拓扑：存在 `types.ts ↔ engine/checkpoint.ts` 的 type-only cycle（`ProjectFile.checkpoints` inline imports checkpoint，而 checkpoint 又从 root barrel 读取类型）；executor 相关模块形成约 7 节点 SCC（executor、runContext、runScheduler、runFinalizer、nodeLlmAdapter、agentDecision、agentRouter），另有 cleanup/session/dev 与 experience/harness 小型 SCC。前者应优先通过窄 runtime/context ports 解耦，而不是继续向 facade 添加 action。
+- `WorkflowState` 仍是 `317` 行、约 `165` 个 field/action-like 成员的跨域合同，同时覆盖 canvas graph、run/checkpoint、agent/role catalog、project save、workflow registry、ProjectControl、Worker Evidence/Receipt、pipeline/orchestration、history/clipboard；`workflowStore.ts` 虽已抽出多个 command owner，仍是高扇出 composition + inline graph/catalog/config setter 的混合 facade。
+- `App.tsx` 已稳定 Worker runtime 生命周期，但仍同时承担 UI shell、项目 session command、插件/全局 Agent 启动扫描、上次项目恢复与 Tauri fs/invoke、ProjectLifecycle controller 接线、全局快捷键、面板 resize 和 JSX layout；它现在更像“应用 composition root + startup coordinator + shell”，下一步应先拆 startup/recovery bootstrap 与 keyboard/resize adapters，不要再把 JSX 和宿主恢复一起移动。
+- 可维护性盲区：`App.tsx`、`WorkflowEditor.tsx`、`AgentPanel.tsx`、`OrchestratorPanel.tsx` 缺少同名 direct tests；现有测试更多覆盖下层纯函数、store actions 和 ProjectSession/Beginner paths，不能据此宣称这些大型 UI 的 interaction/React Flow/Tauri behavior 已验证。
+- 优先级建议：① 先把 `types.ts` 剩余 contracts 分成 `node/execution`、`workflow/project`、`projectControl` 三个 owner，并保留兼容 re-export；② 再拆 `WorkflowState` 的 worker/project-control projection setters，保持 facade action signatures；③ 将 executor SCC 中的 `runContext`/LLM/finalizer 依赖改成窄 port；④ 最后拆 App startup coordinator 和补大型 UI 的 direct interaction harness。按事实 owner 拆，不以继续降低单文件行数作为完成标准。
+- 基线限制：本轮是结构健康度审查，不是 GUI/Tauri E2E、运行时 cycle proof 或安全审计；历史 `unverified`/verified code tags 的语义保持不变。代码未变化，基线质量门仍为完整 Node `186/1314`、build 通过、i18n `1026/1026`、tsc 通过、diff check 通过。
+
+### 7.358 unverified：extract node runtime type contracts
+
+- 将 `ExecContext`、`InterventionRequest`、`InterventionResult`、`SandboxHandle`、`NodeExecuteFn`、`NodeRole`、`NODE_ROLE_META`、`NodeDefinition`、`NodeDefInput` 与 `createNodeDef` 从 `src/types.ts` 迁移到 `src/types/node.ts`，为 engine/nodes/plugins 建立独立 node/runtime owner。
+- `src/types.ts` 保留完整 compatibility re-export；engine、nodes、plugins、agents、相关 store/io/component 调用方和测试改为直接依赖 `src/types/node.ts`。本轮 root node-contract residual scan 为 `0`。
+- 新增 `src/types/node.test.ts`，覆盖 node definition 默认值、role 推断元数据和 `ExecContext` contract 可用性；只移动类型事实和 import 边界，未改变节点执行、能力裁剪、sandbox、intervention、插件加载或 workflow graph 行为。
+- `src/types.ts` 从 `614` 行降至 `396` 行；新增 node owner `160` 行、direct contract test `28` 行。相关本地 checkpoint：`f43e860` / `checkpoint/types-node-runtime-contract-split-start`、`03978cc` / `checkpoint/types-node-runtime-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `11 test files / 134 tests` 通过；完整 `npm run test` 最终 `187 test files / 1315 tests` 通过。首次全量运行仅 `topoSort.test.ts` 的子进程出现一次环境型 `spawnSync D:\Hermes\node\node.exe ETIMEDOUT`，独立重跑 `17/17` 后再次全量运行通过；不将首次超时误记为代码回归。
+- `npm run build` 通过（`tsc -b` 通过，最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.359 unverified：normalize node runtime type imports after exact review
+
+- 对 `03978cc` 的 3 个 exact-snapshot review 中，2 个通过；1 个 fail-closed 发现部分迁移后的 `NodeRole`、`ExecContext`、`NodeDefinition`、intervention contracts 仍使用 value-form imports。当前编译会擦除这些 type imports，但该写法在 import-preserving 转译器下不稳，作为真实 topology/compatibility 缺陷修复。
+- 在 `NodePalette`、engine tests、node context adapter test、builtin node、store tests 中统一把纯类型 imports 改为 `import type`；保留 `createNodeDef` 与 `NODE_ROLE_META` 的 runtime imports。最终 `types/node` 扫描确认 `TYPE_ONLY_VALUE_IMPORTS=0`，未改变运行时实现或公开 compatibility re-export。
+- reviewer 结论：语义 preservation review `passed=true`；compatibility/topology review `passed=true`；初始 owner review 因 value-form type imports `passed=false`，无 security concerns、无 credential additions。原 target `03978cc` 不升级为 verified；修复后新 code anchor 仍需重新 exact review。
+- 相关本地 checkpoint：`9794fa8` / `checkpoint/types-node-runtime-import-normalization-start`、`c729808` / `checkpoint/types-node-runtime-import-normalization-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `11 test files / 134 tests`；完整 `npm run test` 为 `187 test files / 1315 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。
+
+### 7.360 exact review closure：verified node import normalization
+
+- 修复后的 exact target `c729808d3c1521cb130bfeb05df1c81d5c9c85af`、parent `9794fa8858a8d436e3abd9aad6f39109a8ef78f8` 已由 3 个独立 read-only object reviewer 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`，无 credential additions，确认 12 个 import-only changes 只规范 type imports，runtime imports 与 owner/re-export topology 保持不变。
+- verified tag `checkpoint/types-node-runtime-import-normalization-verified` 已回读并指向 `c729808d3c1521cb130bfeb05df1c81d5c9c85af`。当前分支后续 docs closure commit 不继承为 verified code HEAD；reviewer 未运行测试，质量门仍以同一 code target 的真实验证记录为依据。
+
+### 7.361 unverified：extract workflow file and graph contracts
+
+- 将 `WorkflowFileNode`、`WorkflowFileEdge`、`WorkflowFile`、`WorkflowFileInMemory`、`SubgraphPort`、`SubgraphDef`、`ProxyPort`、`VirtualEdge`、`NodeGroup` 从 `src/types.ts` 迁移到 `src/types/workflow.ts`，形成 workflow persistence/graph contract owner；`ProjectFile` 暂留 root，仅直接引用 workflow owner 类型。
+- `src/types.ts` 保留 9 个 workflow contracts 的 compatibility re-export；agents、canvas、engine、io、store 生产代码及相关测试改为直接依赖 `src/types/workflow.ts`，包括 `import('../types').X` inline references；root named/inline residual scan 为 `0`，owner reverse import 为 `false`，每个 moved symbol 只有 1 个 owner definition。
+- 新增 `src/types/workflow.test.ts`，覆盖 WorkflowFile、WorkflowFileInMemory、SubgraphDef 和 NodeGroup 的组合 contract。初始纯 type import 会被 Vitest 擦除，补充 side-effect module-resolution assertion 后观察到预期 RED，再创建 owner 变为 GREEN；未改变序列化字段、子图/分组语义或 ProjectFile schema。
+- `src/types.ts` 当前约 `239` 行，workflow owner `161` 行；相关本地 checkpoint：`ef942aa` / `checkpoint/types-workflow-file-contract-split-start`、`6d7be9a` / `checkpoint/types-workflow-file-contract-split-unverified`；均为本地回退锚点，未 push。
+- 验证：focused `16 test files / 118 tests`；完整 `npm run test` 为 `188 test files / 1316 tests`；`npm run build` 通过（最大 chunk `1,188.70 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`git diff --check` 通过。exact review 尚未完成，当前保持 `unverified`。
+
+### 7.362 exact review closure：verified workflow file contracts
+
+- exact target `6d7be9a1182f9f2ee4fd64e6fd9bedf5086cfdaf`、parent `ef942aa414714f8e0fba2ca4676fb74937fda3d3` 已由 3 个独立 read-only object reviewer 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`，无 credential additions。
+- reviewer 确认 9 个 workflow/subgraph/group contracts 各只有一个 owner，root named/inline residual 为 `0`，无 reverse owner import、malformed import 或 duplicate declaration；WorkflowFile 与 ProjectFile schema 保持不变。reviewer 未运行测试，质量门来自同一 code target。
+- verified tag `checkpoint/types-workflow-file-contract-split-verified` 已回读并指向 `6d7be9a1182f9f2ee4fd64e6fd9bedf5086cfdaf`；当前分支后续 docs closure commit 不继承为 verified code HEAD。
+
+### 7.363 unverified：complete module topology closure slices
+
+- 连续完成剩余 type-owner 与 facade topology slices：新增 `src/types/projectFile.ts`、`src/types/dispatch.ts`、`src/types/conflict.ts`；`src/types.ts` 保留 compatibility re-export，`ProjectFile` schema 与 checkpoint/worker queue type boundary 未改变。
+- `workflowStore.ts` 的 Worker/ProjectControl projection setters 与 Agent/Role/global-agent catalog actions 分别迁移到 `workflowProjectionCommands.ts`、`workflowCatalogCommands.ts`；随后将 `WorkflowCatalogState`、`WorkflowProjectionState` 提升为独立 field owners，`WorkflowState` 通过 interface inheritance 保留完整 action/state surface。`workflowStore.ts` 当前为 `904` 行，`WorkflowState` contract 为 `333` 行。
+- executor 只为共享 run contract 的反向 type edge 新增 `engine/runTypes.ts`，`runContext.ts → executor.ts` 依赖消失；App 的 project startup restore、global shortcuts、panel resize 分别迁移到 `src/app/projectStartup.ts`、`globalShortcuts.ts`、`panelResize.ts`，React shell 只保留 composition ports。
+- 将 32 个 production caller 的 graph imports 直接归属 `src/types/graph.ts`；静态扫描确认 production `src/types.ts` importer 为 `0`，非 graph inline contracts 已保持在其真实 owners。
+- 将 `HarnessEvents` 提升到 `agents/harnessTypes.ts`，将 `AcceptanceRecord`、`AcceptancePersistence`、`CleanupApproval` 提升到 `dev/sessionContracts.ts`；`experienceSink` 与 `workerCleanup` 不再反向依赖 harness/session implementation。注释剥离后的 production graph 实测 `286` 个文件、`1274` 条 relative edges、`0` 个 multi-node SCC。
+- 相关 code targets 与本地 unverified anchors：`085317c` / `checkpoint/types-project-file-control-contracts-unverified`、`a08d89f` / `checkpoint/workflow-projection-command-split-unverified`、`493c9b7` / `checkpoint/executor-context-port-split-unverified`、`4b0d4d5` / `checkpoint/app-startup-bootstrap-split-unverified`、`63828f0` / `checkpoint/app-global-shortcuts-split-unverified`、`32e1272` / `checkpoint/app-panel-resize-split-unverified`、`a77d970` / `checkpoint/workflow-catalog-command-split-unverified`、`8ea96a6` / `checkpoint/types-graph-direct-owner-normalization-unverified`、`2eabc74` / `checkpoint/shared-runtime-contract-cycle-split-unverified`、`ae5b88f` / `checkpoint/workflow-state-projection-contract-split-unverified`；均为本地回退锚点，未 push。
+- 分阶段真实验证：project/control `191 test files / 1319 tests`；projection `192/1321`；run contract `193/1322`；startup `194/1324`；shortcuts `195/1326`；resize `196/1327`；catalog/graph `197/1329`；shared contracts `199/1331`；最终 state-owner target `201 test files / 1333 tests`。最终 target 的 `npm run build` 通过，最大 chunk `1,190.18 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+- 当前所有上述新 anchors 保持 `unverified`，exact reviewer closure 尚未追加；reviewer 不运行测试，不能用本段质量门替代 object-level review。未改变 Worker/recovery、ProjectFile、DomainEvent、Evidence/Acceptance/Receipt、Tauri 或 workflow persistence schema；未新增或保留 credential values。
+
+### 7.364 exact review closure：verified WorkflowState projection owners
+
+- exact target `ae5b88fb2c081054630d8bc450a7530c88544020`、parent `b665bb1fbe515cdaa0a8a7298631ecb7db51b38a` 已由 read-only object reviewer 审查并返回 `passed=true`；`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`、`working_tree_clean=true`。
+- reviewer 确认 catalog/projection fields 各自只有一个 owner，`WorkflowState` 保持合并后的公开 shape，route cleanup 使用预期的 catalog/projection command-state intersection，owner modules 无 reverse facade import，diff 无 runtime behavior change。
+- verified tag `checkpoint/workflow-state-projection-contract-split-verified` 已创建并回读，指向 exact code target `ae5b88f`；后续 docs-only commit 不继承为 verified code HEAD。reviewer 未运行测试。
+- 同一 code target 的真实质量门：完整 `201 test files / 1333 tests`；`npm run build` 通过，最大 chunk `1,190.18 kB`；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+
+### 7.365 exact review closure：module topology verified anchors
+
+- clean fixed-object review 已闭合并创建 verified tags：
+  - `checkpoint/types-project-file-control-contracts-verified` → `085317c`；
+  - `checkpoint/workflow-projection-command-split-verified` → `a08d89f`；
+  - `checkpoint/workflow-state-projection-contract-split-verified` → `ae5b88f`；
+  - `checkpoint/executor-context-port-compat-test-verified` → `acf7751`；
+  - `checkpoint/app-startup-bootstrap-split-verified` → `4b0d4d5`；
+  - `checkpoint/app-global-shortcuts-split-verified` → `63828f0`；
+  - `checkpoint/workflow-catalog-command-split-verified` → `a77d970`；
+  - `checkpoint/shared-runtime-contract-cycle-split-verified` → `2eabc74`；
+  - `checkpoint/direct-agent-owner-residual-repair-verified` → `9638006`；
+  - `checkpoint/app-panel-resize-final-verified` → `9e1fae6`。
+- 每个 verified tag 均指向 reviewer 实际审查的 code object；后续 docs-only commits 不继承为 verified code HEAD。reviewers 只执行 Git object review，不运行测试；测试/build/i18n/tsc/diff evidence 来自对应 code target 或其明确记录。
+- `checkpoint/types-graph-direct-owner-normalization-unverified` → `8ea96a6` 保持 unverified：exact review 发现当时 `openai.ts` 仍有 `import('../../types').ToolCall` residual。该 residual 已由 `9638006` 单独修复并 verified，但原 graph normalization target 不追溯升级。
+- panel resize 的后续 repair anchors `fbdccc7`、`2b20e26`、`955c642`、`5f5b5f0`、`9e1fae6` 中，只有最终 clean exact-approved target `9e1fae6` 被 verified；此前 target 的 dirty/logic fail-closed verdict 保持原状。
+- 最终已验证的拓扑事实：production direct importers of `src/types.ts` 为 `0`；注释剥离后的 production relative graph 实测为 `288` files / `1289` edges / `0` multi-node SCC；`workflowStore.ts` `904` 行，`WorkflowState` contract `333` 行，catalog/projection fields 各有独立 owner；App startup/shortcut/resize、executor run contract、shared runtime contracts均通过窄 ports或shared owner收口。
+- 最终代码质量门（最终 panel target）：完整 `201 test files / 1339 tests`；`npm run build` 通过，最大 chunk `1,191.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。未改变 Worker/recovery、ProjectFile、DomainEvent、Evidence/Acceptance/Receipt、Tauri 或 workflow persistence schema；未保留 credential values。
+
+### 7.366 exact review closure：AgentPanel direct harness
+
+- 新增 `src/components/AgentPanel.test.tsx`，覆盖三条最小 vertical paths：真实 Zustand catalog action 的 Agent 字段编辑与 DOM read-back；deferred Ollama model pull 的 loading、base URL 参数、失败提示与 loading cleanup；embedded/sidebar 根节点、modal overlay 边界与编辑 drawer 结构。
+- 测试 fixture 使用真实 `useWorkflowStore`，通过 `closeProject` 的 dirty suppression/lifecycle cleanup、完整安全 state replacement、`projectDirty` 二次 baseline reset、`slime-mold-workflow`/`sm.lastSession` 清理和 fake-timer teardown 隔离测试；不调用真实网络、Tauri、Codex OAuth 或 credential store，不保存 credential values。
+- exact target `5a9e6363d0ebe620d51d8459184211518a99af84`、parent `9e99a4dff183c083ffe293fa681e5c15412d10a7` 已由 3 个独立 read-only object reviewers 审查，全部 `passed=true`；`security_concerns=[]`、`logic_errors=[]`、`working_tree_clean=true`。reviewers 未运行测试，质量门来自同一 code target。
+- verified tag `checkpoint/agent-panel-direct-harness-verified` 已创建并回读，明确指向 `5a9e636`；后续 docs-only closure commit 不继承为 verified code HEAD。此前 `dd653bb`、`bc778f9`、`9e99a4d` 等 repair anchors 保持原 unverified 状态，不追溯升级。
+- 同一 code target 的真实质量门：focused `3 tests passed`；完整 `202 test files / 1342 tests`；`npm run build` 通过，最大 chunk `1,191.19 kB`，保留既有 dynamic/static import 与大 chunk warnings；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。
+- 本轮只建立 direct-test evidence，没有声称 `AgentPanel` 已完成模块拆分；下一刀仍按已确认顺序进入纯 agent pool/scope projection owner，再处理 credential/protocol leaf 与 list/editor panes。
+
+### 7.367 partial-fail：formal Tauri Worker E2E acceptance and restart boundary
+
+- 在仓库外 disposable fixture `D:/Temp/sm-tauri-acceptance-20260922-v2` 与独立 Worker 根 `D:/Temp/sm-tauri-acceptance-20260922-v2-workers` 通过真实 Tauri GUI 完成 WorkerQueue 验收；同一 `runId/taskId/taskExecutionId` 产生 4 个 `TaskFailed`/`Acceptance.passed=false` retry attempt，attempt-5 产生 `TaskSucceeded`、`RunSucceeded`、4 条 passed Host Evidence、`Acceptance.passed=true` 和真实 `docs/WORKER_E2E_OK.txt` read-back。
+- ProjectFile、47 行 events JSONL、20 行 host Evidence、5 行 Acceptance JSONL、Git worktree list/status 与 fresh GUI capture 已逐层核对；成功 worktree 和 4 个历史失败 worktree 均保留。v2 早期 clean baseline 曾因 GUI 操作和模板 events 复制被消耗，报告明确将前 12 行 setup facts 排除在 Worker runtime chain 外。
+- 真实关闭、Tauri 重启和再次 GUI 打开确认 ProjectFile/UI success projection 可恢复；但 fresh GUI 底部日志记录 `Worker worktree 未能从 git 恢复登记：task-create-worker-marker`。native `dev_restore_worktree` 当前要求新 host generation 已有 trusted target registration，restart live worktree recovery 因此 fail-closed；不能把 ProjectFile/UI 恢复写成完整 Worker recovery。
+- 因 restart host registration 未闭合，本轮没有生成 cleanup proposal、没有用户批准、没有 `CleanupReceipt`/`TaskCleaned`，没有删除任何 worktree；durable recovery decision CAS 仍处于 design gate。完整报告：`docs/verification/TAURI_WORKER_E2E_REPORT_20260922.md`。
+- Windows/host 修复已固化为本地 checkpoint `e84492635cee9d2b6e332c0939d396b95e188427`，tag 为 `checkpoint/tauri-worker-e2e-evidence-repair-20260922`，未 push/merge。修复包含 `.cmd` 空格路径 launcher regression、WebView 无 Node `process` 时的 Windows detection、host diff 错误保留。
+- 验证：focused Vitest `2 files / 29 tests`；完整 `npm run test -- --reporter=dot` 为 `202 test files / 1344 tests`；`cargo fmt --manifest-path src-tauri/Cargo.toml --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml dev_exec -- --nocapture` 为 `33 passed / 0 failed / 70 filtered`；`npm run build`、`npm run i18n:check`（`1026/1026`）、`npx tsc --noEmit`、`git diff --check` 均通过。构建保留既有 dynamic/static import 与大 chunk warnings；本轮完整 formal acceptance 仍为 partial-fail，exact reviewer 尚未闭合。
+
+### 7.368 fix：修复 Ubuntu CI 暴露的跨平台 Worker 路径规范化
+
+- PR #1 的 GitHub CI run `35771226554` 在 Ubuntu 上真实失败：`202` 个测试文件中 `198` 个通过、`5` 个失败、`1339/1344` 个测试通过。失败集中在 `evidencePathFor`、`WorktreeManager`、`DevSession` restore 和结构化 patch parent directory；不是把红灯归类为环境噪声。
+- 根因是 Node `path.resolve` 在 POSIX runner 上会把 `C:/...`、`D:/...` 当作相对路径，导致 Windows 路径被拼到 runner checkout 目录；同时 `pathComparisonKey` 在 Windows 主机上未把 native 反斜杠转换为统一分隔符，破坏 worktree scope/overlap 比较。
+- `src/dev/path-utils.ts` 现在对 Windows drive/UNC 路径使用纯前端 `resolveWeb`，对 native resolve 结果统一转换 `/`；新增 `src/dev/path-utils.test.ts` 覆盖 Windows absolute path、大小写不敏感比较和 overlap。`src/nodes/dev/index.test.ts` 的 fake host 注入 `mkdir`，避免测试尝试向 `/repo-workers` 写入真实目录。
+- 验证：focused Vitest `5 files / 70 tests`；完整 `npm run test -- --reporter=dot` 为 `203 test files / 1346 tests`；`npm run build` 通过；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml dev_exec -- --nocapture` 为 `33 passed / 0 failed / 70 filtered`。
+- 本轮只修复 CI 暴露的路径与测试隔离问题，不改变 formal Tauri Worker E2E 结论；restart live worktree recovery、Cleanup/`CleanupReceipt`/`TaskCleaned` 和 durable recovery CAS 仍未闭合，不能写成 formal acceptance passed。

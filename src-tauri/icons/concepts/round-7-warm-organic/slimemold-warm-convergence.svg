@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Warm Convergence</title>
+  <desc id="desc">An original warm organic mark: several rounded probes gather into one longer reinforced direction.</desc>
+  <g fill="none" stroke="#c96442" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M178 770C270 702 317 637 390 579C459 524 531 521 595 464C662 404 711 314 846 245" stroke-width="126"/>
+    <path d="M438 548C393 487 356 419 372 311" stroke-width="64"/>
+    <path d="M526 548C598 581 671 634 742 721" stroke-width="52"/>
+    <path d="M333 642C286 628 242 602 207 557" stroke-width="42" opacity=".34"/>
+  </g>
+  <path d="M216 764C290 699 339 641 400 595C461 551 532 543 603 481C670 423 727 330 831 272" fill="none" stroke="#e08a66" stroke-linecap="round" stroke-linejoin="round" stroke-width="18" opacity=".66"/>
+</svg>

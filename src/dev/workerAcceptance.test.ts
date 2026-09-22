@@ -16,6 +16,7 @@ type TestHost = Omit<AcceptanceHost, 'service' | 'recordAcceptance' | 'persistAc
 };
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   orchestrationId: 'orch-1',
   task: {
@@ -88,8 +89,8 @@ describe('createDevWorkerAcceptance', () => {
         attemptId: lease.attemptId,
       }),
     ]));
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['npm', 'run', 'build'], { cwd: lease.assignment.path });
-    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['npm', 'run', 'test'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
     expect(deps.service.gitDiff).toHaveBeenCalledWith('base-1', { cwd: lease.assignment.path });
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
       acceptanceId: 'acceptance-1',
@@ -117,12 +118,110 @@ describe('createDevWorkerAcceptance', () => {
     expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({ stageId: 'verify' }));
   });
 
+  it('uses the approved task scope for a disposable target instead of the host repository policy', async () => {
+    const deps = host({
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tests ok', stderr: '', durationMs: 10 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => [
+          'package.json',
+          'server.mjs',
+          'public/index.html',
+          'src/main.js',
+        ]),
+      },
+    });
+    const scopedLease: WorkerTaskLease = {
+      ...lease,
+      task: {
+        ...lease.task,
+        scope: ['public/index.html', 'src/main.*', '本地 HTTP server 配置'],
+      },
+    };
+
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost, {
+      taskScopePolicy: true,
+    }).evaluate({ lease: scopedLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(true);
+    expect(deps.service.testRun).toHaveBeenCalledTimes(2);
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(1, ['node', '--check', 'src/main.js'], { cwd: lease.assignment.path, pathPolicy: expect.any(Object) });
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(2, ['node', '--check', 'server.mjs'], { cwd: lease.assignment.path, pathPolicy: expect.any(Object) });
+  });
+
+  it('uses a scoped TypeScript check for an isolated TypeScript task', async () => {
+    const deps = host({
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tsc ok', stderr: '', durationMs: 10 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['src/game/engine.ts', 'src/game/rules.ts']),
+      },
+    });
+    const scopedLease: WorkerTaskLease = {
+      ...lease,
+      task: { ...lease.task, scope: ['src/game/engine.ts', 'src/game/rules.ts'] },
+    };
+
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost, {
+      taskScopePolicy: true,
+    }).evaluate({ lease: scopedLease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(true);
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(
+      1,
+      ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
+      { cwd: lease.assignment.path, pathPolicy: expect.any(Object) },
+    );
+    expect(deps.service.testRun).toHaveBeenNthCalledWith(
+      2,
+      ['tsc', '--noEmit', '--target', 'es2020', 'src/game/engine.ts', 'src/game/rules.ts'],
+      { cwd: lease.assignment.path, pathPolicy: expect.any(Object) },
+    );
+  });
+
+  it('rejects protected changes before executing the host build/test oracle', async () => {
+    const deps = host({
+      policy: {
+        allowedPaths: ['src', 'package.json'],
+        protectedPaths: ['package.json'],
+        requireApprovalFor: [],
+        autoTest: true,
+        autoCommit: false,
+        autoPush: false,
+      },
+      service: {
+        testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'should not run', stderr: '', durationMs: 1 })),
+        gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
+        gitChangedFiles: vi.fn(async () => ['package.json']),
+      },
+    });
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost).evaluate({
+      lease,
+      response: { text: '模型报告已完成' },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.failureReason).toContain('受保护');
+    expect(deps.service.testRun).not.toHaveBeenCalled();
+    expect(result.evidenceIds).toHaveLength(1);
+    expect(result.acceptanceId).toBe('acceptance-1');
+    expect(deps.collector.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'path-policy', status: 'failed' }),
+    ]));
+    expect(deps.recordAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+      passed: false,
+      failedChecks: ['path-policy'],
+    }));
+  });
+
   it('fails when tests fail or protected paths changed, regardless of model text', async () => {
     const deps = host({
       service: {
         testRun: vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: 'failed', durationMs: 10 })),
         gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
-        gitChangedFiles: vi.fn(async () => ['src/store/workflowStore.ts']),
+        gitChangedFiles: vi.fn()
+          .mockResolvedValueOnce(['src/feature.ts'])
+          .mockResolvedValueOnce(['src/store/workflowStore.ts']),
       },
     });
     const acceptance = createDevWorkerAcceptance(deps as unknown as AcceptanceHost);
@@ -147,13 +246,31 @@ describe('createDevWorkerAcceptance', () => {
     expect(result.failureReason).toContain('diff');
   });
 
+  it('persists the host diff failure detail instead of collapsing it into a no-op', async () => {
+    const deps = host({ service: {
+      testRun: vi.fn(async () => ({ exitCode: 0, stdout: 'tests ok', stderr: '', durationMs: 10 })),
+      gitDiff: vi.fn(async () => ({ exitCode: -1, stdout: '', stderr: 'path policy rejected', durationMs: 1 })),
+      gitChangedFiles: vi.fn(async () => ['src/marker.ts']),
+    } });
+    const result = await createDevWorkerAcceptance(deps as unknown as AcceptanceHost).evaluate({ lease, response: { text: '完成' } });
+
+    expect(result.passed).toBe(false);
+    expect(deps.collector.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'diff',
+        status: 'failed',
+        summary: expect.stringContaining('path policy rejected'),
+      }),
+    ]));
+  });
+
   it('requires the host compile check before accepting a Worker result', async () => {
     const deps = host({
       service: {
         testRun: vi.fn(async (command: string[]) => ({
-          exitCode: command[2] === 'build' ? 1 : 0,
-          stdout: command[2] === 'build' ? '' : 'tests ok',
-          stderr: command[2] === 'build' ? 'compile failed' : '',
+          exitCode: command[0] === 'tsc' ? 1 : 0,
+          stdout: command[0] === 'tsc' ? '' : 'tests ok',
+          stderr: command[0] === 'tsc' ? 'compile failed' : '',
           durationMs: 10,
         })),
         gitDiff: vi.fn(async () => ({ exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 })),
@@ -166,7 +283,7 @@ describe('createDevWorkerAcceptance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.failureReason).toContain('compile');
-    expect(deps.service.testRun).toHaveBeenCalledWith(['npm', 'run', 'build'], { cwd: lease.assignment.path });
+    expect(deps.service.testRun).toHaveBeenCalledWith(['tsc', '--noEmit', '--target', 'es2020', 'src/feature.ts'], { cwd: lease.assignment.path });
   });
 
   it('rejects a forged lease lineage before running host checks', async () => {

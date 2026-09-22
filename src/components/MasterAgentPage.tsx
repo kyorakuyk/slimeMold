@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
@@ -31,15 +31,18 @@ const protocolLabel: Record<AgentConfig['protocol'], string> = {
   anthropic: 'Anthropic',
   ollama: 'Ollama local',
   codex: 'OpenAI Codex (ChatGPT plan)',
+  antigravity: 'Antigravity CLI (interactive)',
 };
 
 function mergeCandidates(globalAgents: AgentConfig[], projectAgents: AgentConfig[]): AgentCandidate[] {
-  const projectIds = new Set(projectAgents.map((agent) => agent.id));
+  const usableGlobalAgents = globalAgents.filter((agent) => agent.protocol !== 'antigravity');
+  const usableProjectAgents = projectAgents.filter((agent) => agent.protocol !== 'antigravity');
+  const projectIds = new Set(usableProjectAgents.map((agent) => agent.id));
   return [
-    ...globalAgents
+    ...usableGlobalAgents
       .filter((agent) => !projectIds.has(agent.id))
       .map((agent) => ({ agent, scope: 'global' as const })),
-    ...projectAgents.map((agent) => ({ agent, scope: 'project' as const })),
+    ...usableProjectAgents.map((agent) => ({ agent, scope: 'project' as const })),
   ];
 }
 

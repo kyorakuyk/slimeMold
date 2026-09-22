@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveAgentForCategory, buildConstructionWorkflow } from './builder';
-import type { AgentRouteTable } from '../types';
+import type { AgentRouteTable } from '../types/dispatch';
 
 const agents = [{ id: 'agent-cheap' }, { id: 'agent-strong' }, { id: 'agent-fallback' }];
 

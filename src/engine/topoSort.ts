@@ -125,8 +125,13 @@ export function topoStages(
   // 迭代至稳定：仅当 control 边为「正向」（target 已在 source 之后，需进一步保证严格晚于）时抬高。
   // 回流边（target 已在 source 之前，如 council.backflow → architect.goal）跳过——否则与 data 边
   // a→b→c 互相追逐导致死循环；回流边语义是「断点」，architect 先跑、council 后跑，backflow 属异步重派。
+  // loopGate 的 data 下游允许回流到 gate 本身，因此传播时不能再次抬高 gate；
+  // 上限则作为多个相互回流 gate 的 fail-closed 保险，避免渲染线程无限循环。
   let changed = true;
-  while (changed) {
+  let iterations = 0;
+  const maxIterations = Math.max(1, nodeIds.length * Math.max(1, controlEdges.length));
+  while (changed && iterations < maxIterations) {
+    iterations++;
     changed = false;
     for (const e of controlEdges) {
       const fs = stageOf.get(e.source);
@@ -139,7 +144,7 @@ export function topoStages(
         const seen = new Set<string>();
         while (stack.length > 0) {
           const cur = stack.pop()!;
-          if (seen.has(cur)) continue;
+          if (seen.has(cur) || cur === e.source) continue;
           seen.add(cur);
           const curS = stageOf.get(cur) ?? 0;
           if (curS < need) {
@@ -156,7 +161,7 @@ export function topoStages(
       const seen = new Set<string>();
       while (stack.length > 0) {
         const cur = stack.pop()!;
-        if (seen.has(cur)) continue;
+        if (seen.has(cur) || cur === e.source) continue;
         seen.add(cur);
         const curS = stageOf.get(cur) ?? 0;
         if (curS < need) {
@@ -166,6 +171,12 @@ export function topoStages(
         for (const nxt of adjacency.get(cur) ?? []) stack.push(nxt);
       }
     }
+  }
+
+  if (changed) {
+    // A control/data constraint cycle has no finite stage projection. Do not return a
+    // partial plan that could be executed in an arbitrary order.
+    return { stages: [], cyclic: [...nodeIds] };
   }
 
   const maxStage = nodeIds.reduce((m, id) => Math.max(m, stageOf.get(id) ?? 0), -1);

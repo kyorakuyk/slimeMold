@@ -11,10 +11,10 @@
  * 单例：headless/CI 启动时 initDevSession()；GUI（WebView）不初始化——dev 节点调用即抛错
  * （node:child_process shim + fail-closed registry 双重兜底）。
  */
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 import { defaultDevPolicy, type SelfDevelopmentPolicy } from './policy';
 import { createNodeDevService, type DevCapabilityService, type WorktreeRegistry } from './capabilities';
-import { WorktreeManager, createNodeGitRunner, type DevGitRunner } from './worktree';
+import { WorktreeManager, createNodeGitRunner, type DevGitRunner, type WorktreeIdentityReader, type WorktreePathVerifier } from './worktree';
 import {
   assertEvidenceOutsideWorktree,
   EvidenceCollector,
@@ -32,6 +32,8 @@ import {
   cleanupBindingFingerprint,
   type WorkerCleanupProposalReady,
 } from '../projectControl/workerCleanup';
+import type { AcceptancePersistence, AcceptanceRecord, CleanupApproval } from './sessionContracts';
+export type { AcceptancePersistence, AcceptanceRecord, CleanupApproval } from './sessionContracts';
 
 /**
  * 宿主登记的真实执行结果（P0/P1 审计修复）：
@@ -59,26 +61,7 @@ export interface HostResultRecord {
   attemptId?: string;
 }
 
-/** 确定性验收记录（cleanup 确认门校验）。 */
-export interface AcceptanceRecord {
-  acceptanceId: string;
-  orchestrationId: string;
-  stageId: string;
-  worktreePath: string;
-  passed: boolean;
-  failedChecks: string[];
-  at: string;
-  /** 当前 Worker execution lineage；旧 acceptance 可没有这些字段。 */
-  runId?: string;
-  taskId?: string;
-  taskExecutionId?: string;
-  attemptId?: string;
-}
-
-export interface AcceptancePersistence {
-  append(record: AcceptanceRecord): Promise<void>;
-  load(): Promise<AcceptanceRecord[]>;
-}
+/** Acceptance JSONL validation and persistence stay implemented by this session owner. */
 
 export function createHostAcceptanceStoreWithFs(
   acceptanceRoot: string,
@@ -177,35 +160,14 @@ function isAcceptanceRecord(value: unknown): value is AcceptanceRecord {
   }
 }
 
-/**
- * 宿主清理审批（P1：一次性 + 绑定版本/状态/验收）。
- * cleanup 确认门校验（全部满足才允许清理）：
- * - 审批存在且未 consumed；
- * - 若绑定 baseRevision：当前 worktree 基线一致；
- * - 若绑定 stateSignature：当前 worktree 状态签名一致（防 worktree 被再次修改后清理）；
- * - 若绑定 acceptanceId：对应验收记录存在且 passed、worktreePath 一致。
- */
-export interface CleanupApproval {
-  worktreePath: string;
-  worktreeId?: string;
-  branch?: string;
-  branchRevision?: string;
-  branchRevisionRequired?: boolean;
-  runId?: string;
-  taskId?: string;
-  taskExecutionId?: string;
-  attemptId?: string;
-  attempt?: number;
-  baseRevision?: string;
-  stateSignature?: string;
-  acceptanceId?: string;
-  /** 绑定的验收所属任务/阶段（cleanup 校验 acceptance 三元组） */
-  orchestrationId?: string;
-  stageId?: string;
-  taskStatus?: 'succeeded';
-  cleanupStatus?: 'active';
-  approvedAt: string;
-  consumed: boolean;
+/** Cleanup approval behavior stays implemented by this session owner. */
+
+function cloneAcceptanceRecord(record: AcceptanceRecord): AcceptanceRecord {
+  return { ...record, failedChecks: [...record.failedChecks] };
+}
+
+function cloneCleanupApproval(approval: CleanupApproval): CleanupApproval {
+  return { ...approval };
 }
 
 export interface DevSession {
@@ -317,6 +279,43 @@ function requireHostGeneration(generation: number | undefined): number {
   return generation;
 }
 
+const createNodeWorktreePathVerifier = (): WorktreePathVerifier => async (path, mustExist) => {
+  const { lstat, realpath } = await import('node:fs/promises');
+  const normalized = normalizeAbsolutePath(path);
+  const parent = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
+  let realParent: string;
+  try {
+    realParent = await realpath(parent);
+  } catch {
+    return false;
+  }
+  if (pathComparisonKey(realParent) !== pathComparisonKey(parent)) return false;
+  try {
+    const metadata = await lstat(normalized);
+    if (!mustExist) return false;
+    if (metadata.isSymbolicLink()) return false;
+    const realTarget = await realpath(normalized);
+    return pathComparisonKey(realTarget) === pathComparisonKey(normalized);
+  } catch (error) {
+    if (!mustExist && typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return true;
+    }
+    return false;
+  }
+};
+
+const createNodeWorktreeIdentityReader = (): WorktreeIdentityReader => async (path, mustExist) => {
+  const { lstat } = await import('node:fs/promises');
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return null;
+    return `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+  } catch (error) {
+    if (!mustExist && typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return null;
+    return null;
+  }
+};
+
 export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   const requestedBaseRepoPath = opts.baseRepoPath ?? process.cwd();
   const env: 'node' | 'tauri' = opts.env ?? 'node';
@@ -337,12 +336,23 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   // Tauri（GUI）下的命令/文件/路径通道：全部走 Rust 宿主（dev_exec / dev_read_file / dev_write_file）。
   // tauri-run 顶层无 @tauri-apps 运行时依赖（invoke 均延迟 import），静态 import 对浏览器构建安全。
   const tauriDeps = env === 'tauri' ? createTauriDeps(hostGeneration!) : undefined;
+  const ensureWorktreeParent = tauriDeps?.mkdir ?? (async (path: string) => {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(path, { recursive: true });
+  });
   const manager = new WorktreeManager(
     opts.gitRunner ?? (env === 'tauri' ? createTauriGitRunner(hostGeneration!) : createNodeGitRunner()),
     baseRepoPath,
+    ensureWorktreeParent,
+    env === 'node' && !opts.gitRunner ? createNodeWorktreePathVerifier() : undefined,
+    env === 'node' && !opts.gitRunner ? createNodeWorktreeIdentityReader() : undefined,
   );
   // manager 实现 WorktreeRegistry（isTracked），service 的 cwd fail-closed 依赖它
-  const registry: WorktreeRegistry = { isTracked: (cwd) => manager.isTracked(cwd) };
+  const registry: WorktreeRegistry = {
+    isTracked: (cwd) => manager.isTracked(cwd),
+    isTrackedOrChild: (cwd) => manager.isTrackedOrChild(cwd),
+    verifyCwd: env === 'node' ? (cwd) => manager.verifyCwd(cwd) : undefined,
+  };
   const service = env === 'tauri'
     ? createNodeDevService(policy, tauriDeps!, registry, 'tauri')
     : createNodeDevService(policy, {}, registry);
@@ -358,17 +368,25 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
 
   // Tauri 下：worktree 创建/清理同步 Rust 登记态（dev_register_worktree / dev_unregister_worktree），
   // 使 dev_exec/dev_read_file/dev_write_file 的 cwd/路径归属校验能识别该 worktree。
-  const syncRust = async (fn: 'register' | 'register-orphan' | 'unregister', path: string, branch?: string): Promise<void> => {
+  const syncRust = async (
+    fn: 'register' | 'restore' | 'register-orphan' | 'unregister',
+    path: string,
+    branch?: string,
+    branchRevision?: string,
+  ): Promise<void> => {
     if (env !== 'tauri') return;
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke(fn === 'register'
       ? 'dev_register_worktree'
-      : fn === 'register-orphan'
-        ? 'dev_register_orphan_worktree'
-        : 'dev_unregister_worktree', {
+      : fn === 'restore'
+        ? 'dev_restore_worktree'
+        : fn === 'register-orphan'
+          ? 'dev_register_orphan_worktree'
+          : 'dev_unregister_worktree', {
       path,
       generation: hostGeneration,
       ...(branch ? { branch } : {}),
+      ...(branchRevision ? { branchRevision } : {}),
     });
   };
   // Host registration is a separate side effect from Git cleanup. Keep its
@@ -410,14 +428,14 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     if (info.status === 'registration-pending') return true;
     if (info.status === 'orphaned') {
       try {
-        await syncRust('register-orphan', info.path, info.branch);
+        await syncRust('register-orphan', info.path, info.branch, info.branchRevision);
         return true;
       } catch {
         return false;
       }
     }
     try {
-      await syncRust('register', info.path);
+      await syncRust('restore', info.path, info.branch);
       registeredWorktrees.add(info.id);
       return true;
     } catch {
@@ -491,8 +509,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       if (!isAcceptanceRecord(rec)) {
         throw new Error('验收记录格式或 lineage 无效');
       }
-      acceptanceStore.set(rec.acceptanceId, rec);
-      return rec;
+      const stored = cloneAcceptanceRecord(rec);
+      acceptanceStore.set(rec.acceptanceId, stored);
+      return cloneAcceptanceRecord(stored);
     },
     async persistAcceptance(rec) {
       const current = acceptanceStore.get(rec.acceptanceId);
@@ -504,7 +523,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         throw new Error('AcceptancePersistence 未配置，拒绝把验收当作 durable 事实');
       }
       try {
-        await acceptancePersistence.append({ ...rec });
+        await acceptancePersistence.append(cloneAcceptanceRecord(rec));
         const persisted = (await acceptancePersistence.load()).find((item) => item.acceptanceId === rec.acceptanceId);
         if (!persisted || JSON.stringify(persisted) !== JSON.stringify(rec)) {
           acceptanceStore.delete(rec.acceptanceId);
@@ -525,19 +544,20 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
         if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
           throw new Error(`Acceptance ID 内容冲突：${record.acceptanceId}`);
         }
-        next.set(record.acceptanceId, { ...record });
+        next.set(record.acceptanceId, cloneAcceptanceRecord(record));
       }
       acceptanceStore.clear();
       for (const [id, record] of next) acceptanceStore.set(id, record);
     },
     getAcceptance(acceptanceId) {
-      return acceptanceStore.get(acceptanceId);
+      const record = acceptanceStore.get(acceptanceId);
+      return record ? cloneAcceptanceRecord(record) : undefined;
     },
     listAcceptances() {
-      return [...acceptanceStore.values()].map((item) => ({ ...item }));
+      return [...acceptanceStore.values()].map(cloneAcceptanceRecord);
     },
     listCleanupApprovals() {
-      return [...approvedCleanups.values()].map((item) => ({ ...item }));
+      return [...approvedCleanups.values()].map(cloneCleanupApproval);
     },
     async computeWorktreeSignature(path) {
       // worktree 当前状态指纹：changedFiles（排序）+ diff 文本 + **untracked 文件内容哈希**
@@ -602,14 +622,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       return !!a && !a.consumed;
     },
     getCleanupApproval(path) {
-      return approvedCleanups.get(pathComparisonKey(path));
+      const approval = approvedCleanups.get(pathComparisonKey(path));
+      return approval ? cloneCleanupApproval(approval) : undefined;
     },
     consumeCleanup(path) {
       const key = pathComparisonKey(path);
       const a = approvedCleanups.get(key);
       if (a) {
         trustedCleanupBindings.delete(cleanupBindingFingerprint(a));
-        approvedCleanups.set(key, { ...a, consumed: true });
+        approvedCleanups.set(key, cloneCleanupApproval({ ...a, consumed: true }));
       }
     },
     async forceCleanup(path, reason) {
@@ -633,9 +654,9 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
           approvedCleanups.set(key, { ...approval, consumed: true });
           return false;
         };
-        if (!expectedFingerprint?.trim()
-          || !trustedCleanupBindings.has(expectedFingerprint)
-          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return false;
+        if (!expectedFingerprint?.trim()) return false;
+        if (!trustedCleanupBindings.has(expectedFingerprint)
+          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return rejectCleanup();
         if (approval.taskStatus !== 'succeeded'
           || approval.cleanupStatus !== 'active'
           || approval.branchRevisionRequired !== true

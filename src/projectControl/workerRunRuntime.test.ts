@@ -172,6 +172,35 @@ describe('rehydrateWorkerRunRegistry', () => {
     });
   });
 
+  it('exposes a partial run with failed tasks as an explicit recovery instead of silently parking it', () => {
+    const taskExecutionId = 'task-execution:run-1:task-1';
+    const registry = rehydrateWorkerRunRegistry({
+      projectId: 'project-1',
+      taskGraphs: [graph()],
+      runs: [run({
+        status: 'partial',
+        tasks: {
+          'task-1': {
+            taskId: 'task-1',
+            taskExecutionId,
+            status: 'failed',
+            attempt: 1,
+            currentAttemptId: `${taskExecutionId}:attempt-1`,
+            evidenceIds: [],
+            error: 'host acceptance failed',
+            updatedAt: '2026-09-01T00:02:00.000Z',
+          },
+        },
+      })],
+    });
+
+    expect(registry.queues.size).toBe(0);
+    expect(registry.recoveries[0]).toMatchObject({
+      runId: 'run-1',
+      reason: 'failed-tasks',
+    });
+  });
+
   it('runs a restored queue only when explicitly requested and forwards state/events updates', async () => {
     installWorkerRunRuntime({
       projectId: 'project-1',
@@ -191,7 +220,7 @@ describe('rehydrateWorkerRunRegistry', () => {
             baseRevision: 'base-1',
           }),
         },
-        executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-1'] }) },
+        executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' }) },
       },
       ({ state: nextState, events }) => {
         updates.push({ status: nextState.status, eventTypes: events.map((event) => event.eventType) });

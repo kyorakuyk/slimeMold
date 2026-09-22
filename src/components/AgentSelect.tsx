@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Check, Search, X } from 'lucide-react';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 import { useT } from '../i18n/useT';
 
 /**

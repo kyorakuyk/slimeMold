@@ -151,6 +151,12 @@ function decodeRecord(value: unknown): SideEffectRecord {
   if (value.attemptId !== undefined && (typeof value.attemptId !== 'string' || !value.attemptId.trim())) {
     throw new Error('attemptId 无效');
   }
+  if (value.orchestrationId !== undefined && (typeof value.orchestrationId !== 'string' || !value.orchestrationId.trim())) {
+    throw new Error('orchestrationId 无效');
+  }
+  if (value.acceptanceStageId !== undefined && (typeof value.acceptanceStageId !== 'string' || !value.acceptanceStageId.trim())) {
+    throw new Error('acceptanceStageId 无效');
+  }
   if (!isStatus(value.status)) throw new Error('status 无效');
   if (!isRecovery(value.recovery)) throw new Error('recovery 无效');
   if (value.unknownReason !== undefined && typeof value.unknownReason !== 'string') {
@@ -171,6 +177,8 @@ function decodeRecord(value: unknown): SideEffectRecord {
     ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}),
     ...(typeof value.taskExecutionId === 'string' ? { taskExecutionId: value.taskExecutionId } : {}),
     ...(typeof value.attemptId === 'string' ? { attemptId: value.attemptId } : {}),
+    ...(typeof value.orchestrationId === 'string' ? { orchestrationId: value.orchestrationId } : {}),
+    ...(typeof value.acceptanceStageId === 'string' ? { acceptanceStageId: value.acceptanceStageId } : {}),
     status: value.status,
     recovery: value.recovery,
     ...(receipt ? { receipt } : {}),

@@ -9,7 +9,11 @@ import { resolve } from 'node:path';
 
 /** 规范化绝对路径：resolve 解析 . / .. 后统一 POSIX 分隔符、去尾部 /。 */
 export function normalizeAbsolutePath(p: string): string {
-  return resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = p.replace(/\\/g, '/');
+  const resolved = isWindowsPath(normalized)
+    ? resolveWeb(normalized, '.')
+    : resolve(normalized);
+  return resolved.replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
 function isWindowsPath(p: string): boolean {

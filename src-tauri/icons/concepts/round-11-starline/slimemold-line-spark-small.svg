@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Line Spark Small</title>
+  <desc id="desc">A small-size version of an original rounded-line mark with six clear strokes and open negative space.</desc>
+  <g fill="none" stroke="#b56f4f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M497 469C480 410 477 334 483 253" stroke-width="78"/>
+    <path d="M523 470C569 418 632 371 734 337" stroke-width="83"/>
+    <path d="M551 496C635 487 728 499 821 534" stroke-width="71"/>
+    <path d="M548 527C603 578 646 640 674 718" stroke-width="66"/>
+    <path d="M513 550C515 630 492 711 445 789" stroke-width="78"/>
+    <path d="M479 535C410 549 330 579 246 620" stroke-width="68"/>
+  </g>
+</svg>

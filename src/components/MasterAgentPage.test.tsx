@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 
 const mocks = vi.hoisted(() => {

@@ -1,4 +1,4 @@
-import { createNodeDef, type NodeDefinition } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
 import { evalExpr } from '../../engine/expr';
 import { SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 import { isTruthy, checkJsonSchema } from '../builtinHelpers';

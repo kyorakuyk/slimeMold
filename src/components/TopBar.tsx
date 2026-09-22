@@ -41,7 +41,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';

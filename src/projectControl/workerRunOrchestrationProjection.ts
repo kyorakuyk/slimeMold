@@ -1,11 +1,22 @@
-import type { Orchestration, OrchestrationStatus, StageLog } from '../types';
+import type { Orchestration, OrchestrationStatus, StageLog } from '../types/orchestration';
 import type { WorkerQueueTask, WorkerRunQueueState } from '../domain/workerQueue';
+import { workerRunSuccessIsValid, hasWorkerSuccessProvenance } from '../domain/workerSuccess';
 
 function orchestrationStatusFor(
-  runStatus: WorkerRunQueueState['status'],
+  run: WorkerRunQueueState,
   current: OrchestrationStatus,
+  expectedTaskIds: readonly string[] = [],
 ): OrchestrationStatus {
-  switch (runStatus) {
+  if (run.status === 'succeeded') {
+    const runTaskIds = Object.keys(run.tasks);
+    const coversExpectedTasks = expectedTaskIds.length === 0
+      || (runTaskIds.length === expectedTaskIds.length
+        && expectedTaskIds.every((taskId) => Object.prototype.hasOwnProperty.call(run.tasks, taskId)));
+    if (!workerRunSuccessIsValid(Object.values(run.tasks)) || !coversExpectedTasks) {
+      return current === 'done' ? 'failed' : current;
+    }
+  }
+  switch (run.status) {
     case 'queued':
       return current === 'awaiting-confirm' ? current : 'ready';
     case 'running':
@@ -28,7 +39,9 @@ function stageTaskStatus(tasks: WorkerQueueTask[]): StageLog['status'] | null {
   if (tasks.some((task) => task.status === 'running')) return 'running';
   if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'failed';
   if (tasks.some((task) => task.status === 'cancelled')) return 'cancelled';
-  if (tasks.every((task) => task.status === 'succeeded')) return 'success';
+  if (tasks.every((task) => task.status === 'succeeded')) {
+    return tasks.every(hasWorkerSuccessProvenance) ? 'success' : 'pending';
+  }
   return 'pending';
 }
 
@@ -37,7 +50,17 @@ function stageLogFor(
   taskIds: readonly string[] | undefined,
   run: WorkerRunQueueState,
 ): StageLog {
-  const tasks = (taskIds ?? [])
+  const expectedTaskIds = taskIds ?? [];
+  const missingTaskIds = expectedTaskIds.filter((taskId) => !run.tasks[taskId]);
+  if (missingTaskIds.length > 0) {
+    return {
+      ...log,
+      status: 'pending',
+      runId: run.runId,
+      error: `Worker Run 缺少 Stage Task：${missingTaskIds.join(', ')}`,
+    };
+  }
+  const tasks = expectedTaskIds
     .map((taskId) => run.tasks[taskId])
     .filter((task): task is WorkerQueueTask => !!task);
   const status = stageTaskStatus(tasks);
@@ -69,6 +92,7 @@ export function projectWorkerRunOntoOrchestration(
           runId: undefined,
           error: undefined,
         })));
+  const expectedTaskIds = [...new Set(stages.flatMap((stage) => stage.taskIds ?? []))];
   const stageLogs = templateLogs.map((log) => {
     const stage = stages.find((item) => item.id === log.stageId);
     return stageLogFor(log, stage?.taskIds, run);
@@ -80,7 +104,7 @@ export function projectWorkerRunOntoOrchestration(
   };
   return {
     ...orchestration,
-    status: orchestrationStatusFor(run.status, orchestration.status),
+    status: orchestrationStatusFor(run, orchestration.status, expectedTaskIds),
     updatedAt: run.updatedAt,
     runIds: [...new Set([...orchestration.runIds, run.runId])],
     stageLogs,
@@ -103,6 +127,28 @@ export function projectWorkerRunsOntoOrchestrations(
   );
 }
 
+export function suppressInvalidWorkerRunProjection(
+  orchestrations: readonly Orchestration[],
+  reason: string,
+): Orchestration[] {
+  const suppressLogs = (logs: readonly StageLog[]): StageLog[] => logs.map((log) => (
+    log.status === 'success'
+      ? { ...log, status: 'pending' as const, error: reason }
+      : log
+  ));
+  return orchestrations.map((orchestration) => ({
+    ...orchestration,
+    status: orchestration.status === 'done' ? 'failed' : orchestration.status,
+    stageLogs: suppressLogs(orchestration.stageLogs),
+    ...(orchestration.stageLogsByRun
+      ? {
+          stageLogsByRun: Object.fromEntries(
+            Object.entries(orchestration.stageLogsByRun).map(([runId, logs]) => [runId, suppressLogs(logs)]),
+          ),
+        }
+      : {}),
+  }));
+}
 export function selectLatestWorkerRun(
   runs: readonly WorkerRunQueueState[],
   orchestrationId: string,

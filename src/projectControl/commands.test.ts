@@ -4,11 +4,21 @@ import {
   approveArchitectureCommand,
   approveBriefCommand,
   approveTaskGraphCommand,
+  approveProjectPlanCommand,
+  createIssueCommand,
+  dispatchDepartmentWorkPackageCommand,
   linkOrchestrationCommand,
   generateTaskGraphCommand,
+  proposeProjectPlanCommand,
+  reviseTaskGraphCommand,
   startProjectSessionCommand,
+  transitionIssueCommand,
 } from './commands';
-import type { ProjectControlSnapshot } from './types';
+import type { ProjectControlSnapshot, ProjectPlan } from './types';
+import { createDepartmentWorkPackage } from './projectPlanning';
+import { createIssue } from './issue';
+import { parseProjectControlSnapshot, serializeProjectControlSnapshot } from './persistence';
+import { buildTaskGraphProjection, taskIssueId } from './taskGraphProjection';
 
 function architectureSnapshot(approval: 'draft' | 'approved' = 'draft'): ProjectControlSnapshot {
   return {
@@ -56,6 +66,82 @@ function architectureSnapshot(approval: 'draft' | 'approved' = 'draft'): Project
   };
 }
 
+const projectPlan: ProjectPlan = {
+  version: 1,
+  id: 'project-plan-1',
+  projectId: 'project-1',
+  sessionId: 'session-1',
+  planVersion: 1,
+  requirementsRef: { id: 'requirements-1', version: 1 },
+  solutionRef: { id: 'solution-1', version: 1 },
+  feasibilityRef: { id: 'feasibility-1', version: 1 },
+  milestonePlanRef: { id: 'milestones-1', version: 1 },
+  departmentCharterRefs: [{ id: 'charter-1', version: 1 }],
+  feasibilityStatus: 'feasible',
+  blockingQuestionCount: 0,
+  approval: 'draft',
+  createdAt: '2026-09-12T09:05:00.000Z',
+  updatedAt: '2026-09-12T09:05:00.000Z',
+};
+
+describe('Project planning commands', () => {
+  it('persists proposal and approval facts, and blocks dispatch before approval', () => {
+    const proposed = proposeProjectPlanCommand({
+      snapshot: architectureSnapshot(),
+      plan: projectPlan,
+      now: '2026-09-12T09:06:00.000Z',
+    });
+    expect(proposed.snapshot.projectPlans).toEqual([projectPlan]);
+    expect(proposed.events.map((event) => event.eventType)).toEqual(['ProjectPlanProposed']);
+
+    const approvedPlan = {
+      ...projectPlan,
+      approval: 'approved' as const,
+      approvedBy: 'user',
+      approvedAt: '2026-09-12T09:07:00.000Z',
+      updatedAt: '2026-09-12T09:07:00.000Z',
+    };
+    const packageFromApprovedPlan = createDepartmentWorkPackage({
+      plan: approvedPlan,
+      id: 'work-package-1',
+      departmentCharterId: 'charter-1',
+      taskGraphId: 'task-graph-1',
+      milestoneIds: ['milestone-1'],
+      scope: ['src/feature/**'],
+      nonGoals: ['不修改部署'],
+      dependencies: [],
+      acceptanceCriteria: ['模块测试通过'],
+      now: '2026-09-12T09:08:00.000Z',
+    });
+    expect(() => dispatchDepartmentWorkPackageCommand({
+      snapshot: proposed.snapshot,
+      workPackage: packageFromApprovedPlan,
+      now: '2026-09-12T09:08:00.000Z',
+    })).toThrow(/批准/);
+
+    const approved = approveProjectPlanCommand({
+      snapshot: proposed.snapshot,
+      planId: 'project-plan-1',
+      approvedBy: 'user',
+      now: '2026-09-12T09:07:00.000Z',
+    });
+    expect(approved.snapshot.projectPlans?.[0]).toMatchObject({ approval: 'approved' });
+    const dispatched = dispatchDepartmentWorkPackageCommand({
+      snapshot: approved.snapshot,
+      workPackage: packageFromApprovedPlan,
+      now: '2026-09-12T09:08:00.000Z',
+    });
+    expect(dispatched.snapshot.departmentWorkPackages).toEqual([packageFromApprovedPlan]);
+    expect(dispatched.events.map((event) => event.eventType)).toEqual(['DepartmentWorkPackageDispatched']);
+
+    const roundTrip = parseProjectControlSnapshot(
+      serializeProjectControlSnapshot(dispatched.snapshot),
+    );
+    expect(roundTrip.projectPlans).toEqual(approved.snapshot.projectPlans);
+    expect(roundTrip.departmentWorkPackages).toEqual([packageFromApprovedPlan]);
+  });
+});
+
 describe('startProjectSessionCommand', () => {
   it('creates one project session, one source issue, and ordered domain events', () => {
     const result = startProjectSessionCommand({
@@ -93,6 +179,81 @@ describe('startProjectSessionCommand', () => {
     expect(result.events.every((event) => event.actor === 'user' && event.correlationId === 'session-1')).toBe(true);
   });
 
+  it('creates an Issue projection and IssueCreated fact through one command', () => {
+    const started = startProjectSessionCommand({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      issueId: 'issue-1',
+      projectName: '项目',
+      goal: '目标',
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const issue = createIssue({
+      id: 'issue-2',
+      projectId: null,
+      type: 'bug',
+      title: '发现问题',
+      description: '需要修复',
+      createdAt: '2026-09-01T00:01:00.000Z',
+    });
+    const result = createIssueCommand({
+      snapshot: started.snapshot,
+      projectId: 'project-1',
+      issue,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+
+    expect(result.snapshot.issues).toEqual([issue, ...started.snapshot.issues]);
+    expect(result.events).toEqual([expect.objectContaining({
+      streamId: 'project-1',
+      aggregateType: 'Issue',
+      aggregateId: 'issue-2',
+      eventType: 'IssueCreated',
+      payload: expect.objectContaining({ issueId: 'issue-2', projectId: null, issueType: 'bug' }),
+    })]);
+  });
+
+  it('routes Issue status changes through one command and auditable fact', () => {
+    const started = startProjectSessionCommand({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      issueId: 'issue-1',
+      projectName: '项目',
+      goal: '目标',
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const result = transitionIssueCommand({
+      snapshot: started.snapshot,
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:01:00.000Z',
+    });
+
+    expect(result.snapshot.issues[0].status).toBe('triaging');
+    expect(result.events).toEqual([expect.objectContaining({
+      eventType: 'IssueStatusChanged',
+      aggregateId: 'issue-1',
+      payload: expect.objectContaining({ from: 'inbox', to: 'triaging', issueId: 'issue-1' }),
+    })]);
+    const unassigned = transitionIssueCommand({
+      snapshot: {
+        ...started.snapshot,
+        issues: started.snapshot.issues.map((issue) => ({ ...issue, projectId: null })),
+      },
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:02:00.000Z',
+    });
+    expect(unassigned.events[0].streamId).toBe('project-1');
+    expect(() => transitionIssueCommand({
+      snapshot: started.snapshot,
+      projectId: 'project-2',
+      issueId: 'issue-1',
+      status: 'triaging',
+      now: '2026-09-01T00:03:00.000Z',
+    })).toThrow(/不属于当前项目/);
+  });
   it('rejects an empty goal before creating any state or event', () => {
     expect(() => startProjectSessionCommand({
       projectId: 'project-1',
@@ -235,9 +396,18 @@ describe('startProjectSessionCommand', () => {
       tasks: [expect.objectContaining({ id: 'task-1', status: 'proposed' })],
     });
     expect(result.snapshot.sessions[0].taskGraphId).toBe('task-graph-1');
+    expect(result.snapshot.issues).toEqual([
+      expect.objectContaining({
+        id: taskIssueId('task-graph-1', 'task-1'),
+        projectId: 'project-1',
+        status: 'proposed',
+        relatedTaskIds: ['task-1'],
+      }),
+    ]);
     expect(result.events.map((event) => event.eventType)).toEqual([
       'TaskGraphProposed',
       'SessionTaskGraphLinked',
+      'IssueCreated',
     ]);
   });
 
@@ -256,11 +426,98 @@ describe('startProjectSessionCommand', () => {
     });
 
     expect(result.snapshot.taskGraphs?.[0]).toMatchObject({ approval: 'approved' });
+    expect(result.snapshot.issues).toEqual([
+      expect.objectContaining({
+        id: taskIssueId('task-graph-1', 'task-1'),
+        status: 'approved',
+        relatedTaskIds: ['task-1'],
+      }),
+    ]);
     expect(result.snapshot.sessions[0].status).toBe('ready');
     expect(result.events.map((event) => event.eventType)).toEqual([
       'TaskGraphApproved',
       'SessionStatusChanged',
+      'IssueStatusChanged',
     ]);
+  });
+
+  it('creates a new TaskGraph revision through a command and supersedes the old graph', () => {
+    const draft = generateTaskGraphCommand({
+      snapshot: architectureSnapshot('approved'),
+      sessionId: 'session-1',
+      id: 'task-graph-1',
+      now: '2026-09-01T00:03:00.000Z',
+    });
+    const approved = approveTaskGraphCommand({
+      snapshot: draft.snapshot,
+      sessionId: 'session-1',
+      approvedBy: 'user',
+      now: '2026-09-01T00:04:00.000Z',
+    });
+    const result = reviseTaskGraphCommand({
+      snapshot: approved.snapshot,
+      sessionId: 'session-1',
+      sourceTaskGraphId: 'task-graph-1',
+      id: 'task-graph-2',
+      now: '2026-09-01T00:05:00.000Z',
+      changes: [{ taskId: 'task-1', title: '实现修订任务' }],
+    });
+
+    expect(result.snapshot.taskGraphs).toEqual([
+      expect.objectContaining({ id: 'task-graph-1', approval: 'superseded', supersededBy: 'task-graph-2' }),
+      expect.objectContaining({ id: 'task-graph-2', approval: 'draft', revisionOf: 'task-graph-1', graphVersion: 2 }),
+    ]);
+    expect(result.snapshot.sessions[0]).toMatchObject({ status: 'plan-review', taskGraphId: 'task-graph-2' });
+    expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: taskIssueId('task-graph-2', 'task-1'), title: '实现修订任务' }),
+    ]));
+    expect(result.events.map((event) => event.eventType)).toEqual([
+      'TaskGraphSuperseded',
+      'TaskGraphRevisionCreated',
+      'SessionTaskGraphLinked',
+      'IssueCreated',
+    ]);
+  });
+
+  it('restores revision history and canonical Issue/DAG projection after persistence round-trip', () => {
+    const draft = generateTaskGraphCommand({
+      snapshot: architectureSnapshot('approved'),
+      sessionId: 'session-1',
+      id: 'task-graph-1',
+      now: '2026-09-01T00:03:00.000Z',
+    });
+    const approved = approveTaskGraphCommand({
+      snapshot: draft.snapshot,
+      sessionId: 'session-1',
+      approvedBy: 'user',
+      now: '2026-09-01T00:04:00.000Z',
+    });
+    const revised = reviseTaskGraphCommand({
+      snapshot: approved.snapshot,
+      sessionId: 'session-1',
+      sourceTaskGraphId: 'task-graph-1',
+      id: 'task-graph-2',
+      now: '2026-09-01T00:05:00.000Z',
+      changes: [{ taskId: 'task-1', title: '重启后仍可追溯' }],
+    });
+    const restored = parseProjectControlSnapshot(serializeProjectControlSnapshot(revised.snapshot));
+    const restoredGraph = restored.taskGraphs?.find((graph) => graph.id === 'task-graph-2');
+    expect(restored.taskGraphs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'task-graph-1', approval: 'superseded' }),
+      expect.objectContaining({ id: 'task-graph-2', revisionOf: 'task-graph-1' }),
+    ]));
+    expect(restoredGraph).toBeDefined();
+    const projection = buildTaskGraphProjection({
+      graph: restoredGraph!,
+      issues: restored.issues,
+      execution: { lastSequence: 0, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} },
+    });
+    expect(projection.graphId).toBe('task-graph-2');
+    expect(projection.nodes[0]).toMatchObject({
+      taskId: 'task-1',
+      issueId: taskIssueId('task-graph-2', 'task-1'),
+      title: '重启后仍可追溯',
+    });
   });
 
   it('links an execution orchestration to the session without starting it', () => {

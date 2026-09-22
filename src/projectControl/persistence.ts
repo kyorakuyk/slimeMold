@@ -1,9 +1,11 @@
 import type {
   Decision,
+  DepartmentWorkPackage,
   ProjectArchitecture,
   ProjectBrief,
   ProjectControlSnapshot,
   ProjectIssue,
+  ProjectPlan,
   ProjectSession,
   ProjectTaskGraph,
 } from './types';
@@ -128,6 +130,55 @@ function isProjectTaskGraph(value: unknown): value is ProjectTaskGraph {
   );
 }
 
+function isPlanningReference(value: unknown): value is { id: string; version: number } {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.version === 'number';
+}
+
+function isProjectPlan(value: unknown): value is ProjectPlan {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === CURRENT_VERSION &&
+    typeof value.id === 'string' &&
+    typeof value.projectId === 'string' &&
+    typeof value.sessionId === 'string' &&
+    typeof value.planVersion === 'number' &&
+    isPlanningReference(value.requirementsRef) &&
+    isPlanningReference(value.solutionRef) &&
+    isPlanningReference(value.feasibilityRef) &&
+    isPlanningReference(value.milestonePlanRef) &&
+    Array.isArray(value.departmentCharterRefs) &&
+    value.departmentCharterRefs.every(isPlanningReference) &&
+    typeof value.feasibilityStatus === 'string' &&
+    typeof value.blockingQuestionCount === 'number' &&
+    typeof value.approval === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string'
+  );
+}
+
+function isDepartmentWorkPackage(value: unknown): value is DepartmentWorkPackage {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === CURRENT_VERSION &&
+    typeof value.id === 'string' &&
+    typeof value.projectId === 'string' &&
+    typeof value.planId === 'string' &&
+    typeof value.planVersion === 'number' &&
+    typeof value.departmentCharterId === 'string' &&
+    typeof value.taskGraphId === 'string' &&
+    Array.isArray(value.milestoneIds) &&
+    Array.isArray(value.scope) &&
+    Array.isArray(value.nonGoals) &&
+    Array.isArray(value.dependencies) &&
+    Array.isArray(value.acceptanceCriteria) &&
+    typeof value.status === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string'
+  );
+}
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -173,6 +224,12 @@ export function parseProjectControlSnapshot(input: unknown): ProjectControlSnaps
   const taskGraphs = Array.isArray(value.taskGraphs)
     ? value.taskGraphs.filter(isProjectTaskGraph).map(clone)
     : undefined;
+  const projectPlans = Array.isArray(value.projectPlans)
+    ? value.projectPlans.filter(isProjectPlan).map(clone)
+    : undefined;
+  const departmentWorkPackages = Array.isArray(value.departmentWorkPackages)
+    ? value.departmentWorkPackages.filter(isDepartmentWorkPackage).map(clone)
+    : undefined;
   const activeSessionId =
     typeof value.activeSessionId === 'string' && sessions.some((session) => session.id === value.activeSessionId)
       ? value.activeSessionId
@@ -193,5 +250,7 @@ export function parseProjectControlSnapshot(input: unknown): ProjectControlSnaps
     issues,
   };
   if (taskGraphs) snapshot.taskGraphs = taskGraphs;
+  if (projectPlans) snapshot.projectPlans = projectPlans;
+  if (departmentWorkPackages) snapshot.departmentWorkPackages = departmentWorkPackages;
   return snapshot;
 }

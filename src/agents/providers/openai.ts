@@ -1,5 +1,5 @@
 import { httpFetch } from '../../platform/env';
-import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec, ContentPart } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec, ContentPart } from '../../types/agent';
 import { forEachSSEData } from '../streamSSE';
 
 /**
@@ -181,7 +181,7 @@ export async function chatOpenAI(
 }
 
 /** 把 OpenAI 非流式 tool_calls 片段解析为统一 ToolCall[] */
-function parseToolCalls(raw: any[] | undefined): import('../../types').ToolCall[] | undefined {
+function parseToolCalls(raw: any[] | undefined): import('../../types/agent').ToolCall[] | undefined {
   if (!raw || !raw.length) return undefined;
   return raw
     .map((tc) => ({

@@ -4,14 +4,16 @@ import {
   type DomainProjection,
   type SideEffectRecord,
 } from '../domain/contracts';
-import { resolveWorkerAcceptanceStageId, type WorkerRunQueueState } from '../domain/workerQueue';
+import { resolveWorkerAcceptanceStageId, restoreWorkerRunQueue, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { AcceptanceRecord } from '../dev/session';
 import { pathComparisonKey } from '../dev/path-utils';
 
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
+import { hasWorkerSuccessProvenance, normalizeWorkerSuccessProvenance, workerRunSuccessIsValid } from '../domain/workerSuccess';
 import { workerCleanupEffectKey } from './workerCleanup';
+import { isArtifactDeliveryReceiptShape } from './workerDelivery';
 
 export type WorkerRunConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -198,6 +200,18 @@ export function auditWorkerRunConsistency(input: {
     return { ok: false, projection, issues };
   }
 
+  const evidenceById = new Map<string, EvidenceRecord>();
+  for (const record of input.evidence ?? []) {
+    if (evidenceById.has(record.id)) {
+      issues.push(issue(
+        'evidence-lineage-drift',
+        `Evidence id 重复，拒绝静默覆盖：${record.id}`,
+        { runId: record.runId, taskId: record.taskId },
+      ));
+      continue;
+    }
+    evidenceById.set(record.id, record);
+  }
   const runsById = new Map(input.runs.map((run) => [run.runId, run]));
   const graphIds = new Set<string>();
   const duplicateGraphIds = new Set<string>();
@@ -235,6 +249,47 @@ export function auditWorkerRunConsistency(input: {
         `Worker Run 关联的 TaskGraph 未获批准：${run.taskGraphId}`,
         { runId: run.runId },
       ));
+    }
+    if (input.taskGraphs !== undefined) {
+      if (!taskGraph) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `Worker Run 缺少用于 restore validation 的 TaskGraph：${run.taskGraphId}`,
+          { runId: run.runId },
+        ));
+      } else {
+        try {
+          restoreWorkerRunQueue({ taskGraph, state: run });
+        } catch (cause) {
+          issues.push(issue(
+            'control-state-drift',
+            `Worker Run restore validation 失败：${cause instanceof Error ? cause.message : String(cause)}`,
+            { runId: run.runId },
+          ));
+        }
+      }
+    }
+    if (run.status === 'succeeded') {
+      if (!workerRunSuccessIsValid(Object.values(run.tasks))) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `succeeded Worker Run 缺少非空且完整的 success provenance：${run.runId}`,
+          { runId: run.runId },
+        ));
+      }
+      if (taskGraph) {
+        const graphTaskIds = taskGraph.tasks.map((task) => task.id);
+        const runTaskIds = Object.keys(run.tasks);
+        const complete = runTaskIds.length === graphTaskIds.length
+          && graphTaskIds.every((taskId) => Object.prototype.hasOwnProperty.call(run.tasks, taskId));
+        if (!complete) {
+          issues.push(issue(
+            'task-status-drift',
+            `succeeded Worker Run 未覆盖批准 TaskGraph 的全部任务：${run.runId}`,
+            { runId: run.runId },
+          ));
+        }
+      }
     }
     const replayedRun = projection.runs[run.runId];
     if (!replayedRun) {
@@ -391,7 +446,6 @@ export function auditWorkerRunConsistency(input: {
       }
 
       if (input.evidence) {
-        const evidenceById = new Map(input.evidence.map((record) => [record.id, record]));
         for (const evidenceId of task.evidenceIds) {
           const record = evidenceById.get(evidenceId);
           const expectedOrchestrationId = run.orchestrationId ?? run.runId;
@@ -413,10 +467,18 @@ export function auditWorkerRunConsistency(input: {
           }
         }
       }
+      if (task.status === 'succeeded' && !hasWorkerSuccessProvenance(task)) {
+        issues.push(issue(
+          'acceptance-lineage-drift',
+          `succeeded Worker Task 缺少有效 Evidence/Acceptance provenance：${taskId}`,
+          { runId: run.runId, taskId },
+        ));
+      }
       if (input.acceptances && task.acceptanceId) {
         const acceptance = input.acceptances.find((record) => record.acceptanceId === task.acceptanceId);
         const acceptanceScopeMatches = !!acceptance
           && acceptance.passed === (task.status === 'succeeded')
+          && (task.status !== 'succeeded' || acceptance.failedChecks.length === 0)
           && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
           && acceptance.stageId === expectedAcceptanceStageId
           && (!task.worktreePath
@@ -472,6 +534,39 @@ export function auditWorkerRunConsistency(input: {
           { runId: run.runId, taskId: effectTaskId },
         ));
       }
+      const isArtifactDelivery = effect.kind === 'artifact-delivery'
+        || effect.idempotencyKey.startsWith('artifact-delivery:');
+      if (isArtifactDelivery) {
+        const candidateId = effect.idempotencyKey.startsWith('artifact-delivery:')
+          ? effect.idempotencyKey.slice('artifact-delivery:'.length)
+          : '';
+        const acceptance = input.acceptances?.find((record) => record.acceptanceId === task.acceptanceId);
+        const deliveryReceiptMatches = !!task.acceptanceId
+          && !!acceptance
+          && acceptance.passed
+          && acceptance.failedChecks.length === 0
+          && isArtifactDeliveryReceiptShape(effect, {
+            candidateId,
+            acceptanceId: task.acceptanceId,
+          });
+        const deliveryUnknownMatches = effect.status === 'unknown'
+          && effect.recovery === 'needs-user'
+          && effect.receipt === undefined
+          && effect.kind === 'artifact-delivery'
+          && !!candidateId
+          && effect.target.trim().length > 0
+          && effect.inputHash.trim().length > 0;
+        const deliveryLifecycleMatches = currentLineageMatches
+          && (deliveryReceiptMatches || deliveryUnknownMatches);
+        if (!deliveryLifecycleMatches) {
+          issues.push(issue(
+            'side-effect-lineage-drift',
+            `artifact-delivery receipt 与当前任务不一致：${effect.idempotencyKey}`,
+            { runId: run.runId, taskId: effectTaskId },
+          ));
+        }
+        continue;
+      }
       const isCleanup = effect.idempotencyKey.startsWith('cleanup:');
       const expectedTarget = isCleanup ? task.worktreePath : task.worktreeId;
       const expectedInputHash = isCleanup
@@ -492,10 +587,48 @@ export function auditWorkerRunConsistency(input: {
       const inputHashMatches = isCleanup && effect.status === 'unknown' && effect.recovery === 'needs-user'
         ? !!task.baseRevision && effect.inputHash.startsWith(`${task.baseRevision}:`)
         : expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
+      let receiptSuccessProvenanceMatches = true;
+      if (!isCleanup && effect.status === 'receipt' && effect.receipt?.outcome === 'succeeded') {
+        try {
+          const success = normalizeWorkerSuccessProvenance(effect.receipt.evidenceIds, effect.receipt.acceptanceId);
+          const expectedStageId = resolveWorkerAcceptanceStageId(effectTaskId, task.acceptanceStageId);
+          const evidenceMatches = input.evidence !== undefined && success.evidenceIds.every((evidenceId) => {
+            const record = evidenceById.get(evidenceId);
+            return !!record
+              && record.capturedBy === 'host'
+              && record.status === 'passed'
+              && record.orchestrationId === (run.orchestrationId ?? run.runId)
+              && record.runId === run.runId
+              && record.taskId === effectTaskId
+              && record.stageId === expectedStageId
+              && (!task.worktreePath
+                || (record.worktreePath !== undefined
+                  && pathComparisonKey(record.worktreePath) === pathComparisonKey(task.worktreePath)))
+              && (!task.baseRevision || record.baseRevision === task.baseRevision)
+              && recordMatchesTaskLineage(record, expectedLineage, true);
+          });
+          const acceptanceMatches = input.acceptances !== undefined
+            && input.acceptances.filter((record) => record.acceptanceId === success.acceptanceId).length === 1
+            && (() => {
+              const acceptance = input.acceptances!.find((record) => record.acceptanceId === success.acceptanceId)!;
+              return acceptance.passed
+                && acceptance.failedChecks.length === 0
+                && acceptance.orchestrationId === (run.orchestrationId ?? run.runId)
+                && acceptance.stageId === expectedStageId
+                && (!task.worktreePath
+                  || pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(task.worktreePath))
+                && recordMatchesTaskLineage(acceptance, expectedLineage, true);
+            })();
+          receiptSuccessProvenanceMatches = evidenceMatches && acceptanceMatches;
+        } catch {
+          receiptSuccessProvenanceMatches = false;
+        }
+      }
       const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
         && expectedTarget !== undefined
         && effect.target === expectedTarget
         && inputHashMatches
+        && receiptSuccessProvenanceMatches
         && (effect.status !== 'receipt'
           || (effect.receipt?.outcome !== undefined && effect.receipt.receiptId === `${effect.idempotencyKey}:receipt`));
       if (!lifecycleMatches) {

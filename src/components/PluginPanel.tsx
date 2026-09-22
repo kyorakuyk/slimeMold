@@ -12,7 +12,7 @@ import { isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
-import type { NodeDefinition } from '../types';
+import type { NodeDefinition } from '../types/node';
 
 /** 步骤 13 阶段 D：提取「提权徽标」判定为纯函数，便于单测。能力高于 io 的节点视为已提权，面板标红。 */
 export function getEscalatedDefs(defs: NodeDefinition[]): NodeDefinition[] {

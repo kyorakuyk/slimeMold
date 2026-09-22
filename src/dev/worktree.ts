@@ -90,20 +90,33 @@ export interface WorktreeInfo {
   baseRevision: string;
   /** Branch tip captured immediately before worktree removal; required for CAS branch retry. */
   branchRevision?: string;
+  /** Host/runtime stable object identity captured at creation. */
+  targetIdentity?: string;
   createdAt: string;
   status: WorktreeStatus;
 }
 
+export type WorktreePathVerifier = (path: string, mustExist: boolean) => Promise<boolean>;
+export type WorktreeIdentityReader = (path: string, mustExist: boolean) => Promise<string | null>;
+
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
+  private lastCreateError: string | null = null;
 
   constructor(
     private readonly runner: DevGitRunner,
     private readonly baseRepoPath: string,
+    private readonly ensureParentDirectory?: (path: string) => Promise<void>,
+    private readonly verifyPathIdentity?: WorktreePathVerifier,
+    private readonly readPathIdentity?: WorktreeIdentityReader,
   ) {}
 
   getBaseRepoPath(): string {
     return this.baseRepoPath;
+  }
+
+  getLastCreateError(): string | null {
+    return this.lastCreateError;
   }
 
   /**
@@ -111,25 +124,84 @@ export class WorktreeManager {
    * baseRepoPath 非 git 仓库或 git 不可用 → 返回 null（调用方应拒绝自举任务而非降级）。
    */
   async create(id: string, path: string, opts?: { branch?: string; signal?: AbortSignal }): Promise<WorktreeInfo | null> {
-    if (opts?.signal?.aborted) return null;
-    if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) return null;
+    this.lastCreateError = null;
+    if (opts?.signal?.aborted) {
+      this.lastCreateError = 'signal aborted';
+      return null;
+    }
+    if (opts?.branch && !isWorkerScopedTarget(this.baseRepoPath, path, opts.branch)) {
+      this.lastCreateError = `worker scope rejected: ${path}`;
+      return null;
+    }
+    if (opts?.branch?.startsWith('worker/') && this.ensureParentDirectory) {
+      const normalizedPath = normalizeAbsolutePath(path);
+      const parent = normalizedPath.slice(0, normalizedPath.lastIndexOf('/')) || '/';
+      try {
+        await this.ensureParentDirectory(parent);
+      } catch {
+        // Git worktree add remains the final authority; a host mkdir probe may
+        // be unavailable in older adapters, while Git still succeeds when the
+        // parent already exists.
+      }
+    }
+    if (this.verifyPathIdentity && !(await this.verifyPathIdentity(path, false))) {
+      this.lastCreateError = `worktree target identity rejected: ${path}`;
+      return null;
+    }
     const rev = await this.runner.git(['rev-parse', 'HEAD'], this.baseRepoPath);
-    if (rev.exitCode !== 0) return null;
-    if (opts?.signal?.aborted) return null;
+    if (rev.exitCode !== 0) {
+      this.lastCreateError = `git rev-parse HEAD failed: ${rev.stderr.trim() || `exit ${rev.exitCode}`}`;
+      return null;
+    }
+    if (opts?.signal?.aborted) {
+      this.lastCreateError = 'signal aborted';
+      return null;
+    }
     const baseRevision = rev.stdout.trim();
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
-    if (!isSafeBranchName(branch)) return null;
-    const add = await this.runner.git(['worktree', 'add', '-q', path, '-b', branch, 'HEAD'], this.baseRepoPath);
-    if (add.exitCode !== 0) return null;
+    if (!isSafeBranchName(branch)) {
+      this.lastCreateError = `unsafe branch: ${branch}`;
+      return null;
+    }
+    let addArgs: string[] = ['worktree', 'add', '-q', path, '-b', branch, 'HEAD'];
+    if (opts?.branch) {
+      const branchProbe = await this.runner.git(
+        ['show-ref', '--verify', `refs/heads/${branch}`],
+        this.baseRepoPath,
+      );
+      if (branchProbe.exitCode === 0 && branchProbe.stdout.trim()) {
+        const branchTip = await this.runner.git(['rev-parse', branch], this.baseRepoPath);
+        if (branchTip.exitCode !== 0 || branchTip.stdout.trim() !== baseRevision) {
+          this.lastCreateError = `existing branch tip mismatch: ${branch}`;
+          return null;
+        }
+        addArgs = ['worktree', 'add', '-q', path, branch];
+      }
+    }
+    const add = await this.runner.git(addArgs, this.baseRepoPath);
+    if (add.exitCode !== 0) {
+      this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
+      return null;
+    }
+    const targetIdentity = this.readPathIdentity
+      ? await this.readPathIdentity(path, true)
+      : undefined;
     const info: WorktreeInfo = {
       id,
       path,
       branch,
       baseRevision,
+      ...(targetIdentity ? { targetIdentity } : {}),
       createdAt: new Date().toISOString(),
       status: 'created',
     };
     this.infos.set(id, info);
+    if (this.readPathIdentity && !targetIdentity) {
+      this.lastCreateError = `worktree target identity unavailable: ${path}`;
+      const rolledBack = await this.cleanupCreated(info);
+      if (rolledBack) this.forget(id);
+      return null;
+    }
     if (opts?.signal?.aborted) {
       const rolledBack = await this.cleanupCreated(info);
       if (rolledBack) this.forget(id);
@@ -169,6 +241,12 @@ export class WorktreeManager {
     const base = normalizeAbsolutePath(this.baseRepoPath);
     if (pathComparisonKey(path) === pathComparisonKey(base)) return false;
     if (!isWorkerScopedTarget(base, path, info.branch)) return false;
+    if (this.verifyPathIdentity && info.status === 'created' && !(await this.verifyPathIdentity(path, true))) return false;
+    if (this.readPathIdentity && info.status === 'created') {
+      if (!info.targetIdentity) return false;
+      const currentIdentity = await this.readPathIdentity(path, true);
+      if (currentIdentity !== info.targetIdentity) return false;
+    }
 
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
@@ -224,6 +302,38 @@ export class WorktreeManager {
     return [...this.infos.values()].some(
       (i) => i.status === 'created' && pathComparisonKey(i.path) === p,
     );
+  }
+
+  isTrackedOrChild(path: string): boolean {
+    const p = pathComparisonKey(path);
+    return [...this.infos.values()].some((i) => {
+      if (i.status !== 'created') return false;
+      const root = pathComparisonKey(i.path);
+      return p === root || p.startsWith(`${root}/`);
+    });
+  }
+
+  async verifyCwd(path: string): Promise<boolean> {
+    const { realpath } = await import('node:fs/promises');
+    let candidate: string;
+    try {
+      candidate = await realpath(path);
+    } catch {
+      return false;
+    }
+    const candidateKey = pathComparisonKey(candidate);
+    for (const info of this.infos.values()) {
+      if (info.status !== 'created') continue;
+      let root: string;
+      try {
+        root = await realpath(info.path);
+      } catch {
+        continue;
+      }
+      const rootKey = pathComparisonKey(root);
+      if (candidateKey === rootKey || candidateKey.startsWith(`${rootKey}/`)) return true;
+    }
+    return false;
   }
 
   forget(id: string): void {
@@ -295,6 +405,10 @@ export class WorktreeManager {
     if (!branchRevision) return false;
     if (expectedBranchRevision && await this.readBranchRevision(info.branch) !== expectedBranchRevision) return false;
     if (signal?.aborted) return false;
+    if (this.readPathIdentity) {
+      const currentIdentity = await this.readPathIdentity(info.path, true);
+      if (info.targetIdentity ? currentIdentity !== info.targetIdentity : currentIdentity !== null) return false;
+    } else if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
     if (expectedBranchRevision && this.runner.cleanupWorktree) {
       const cleanup = await this.runner.cleanupWorktree(
         info.path,
@@ -316,6 +430,10 @@ export class WorktreeManager {
       return false;
     }
     if (rm.exitCode !== 0) return false;
+    if (this.readPathIdentity && await this.readPathIdentity(info.path, true) !== null) {
+      this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
+      return false;
+    }
     if (!(await this.deleteBranchAtRevision(info.branch, branchRevision))) {
       this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
       return false;
@@ -346,6 +464,10 @@ export class WorktreeManager {
       const currentRevision = await this.readBranchRevision(info.branch);
       if (opts.signal?.aborted) return false;
       if (currentRevision !== info.branchRevision) return false;
+      if (this.readPathIdentity) {
+        const currentIdentity = await this.readPathIdentity(info.path, true);
+        if (info.targetIdentity ? currentIdentity !== info.targetIdentity : currentIdentity !== null) return false;
+      } else if (this.verifyPathIdentity && !(await this.verifyPathIdentity(info.path, true))) return false;
       if (this.runner.cleanupWorktree) {
         const cleanup = await this.runner.cleanupWorktree(
           info.path,

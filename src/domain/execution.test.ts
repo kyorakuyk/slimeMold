@@ -54,10 +54,12 @@ describe('execution identity', () => {
       .not.toBe(identity);
   });
 
-  it('rejects identities that would exceed the worker basename limit', () => {
+  it('compresses long canonical identities into a bounded worker basename', () => {
     const taskExecutionId = createTaskExecutionId('r'.repeat(180), 'task-1');
     const attemptId = createAttemptId(taskExecutionId, 1);
+    const identity = workerIdentitySegment(attemptId);
 
-    expect(() => workerIdentitySegment(attemptId)).toThrow(/过长|长度|length/i);
+    expect(identity).toMatch(/^w-[0-9a-f]+$/);
+    expect(identity.length).toBeLessThanOrEqual(200);
   });
 });

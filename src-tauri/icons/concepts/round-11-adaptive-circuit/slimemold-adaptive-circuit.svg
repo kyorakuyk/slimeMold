@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Adaptive Circuit</title>
+  <desc id="desc">A clean vector circuit icon with a central integrated circuit, restrained terminals, pruned traces and one reinforced adaptive route.</desc>
+  <rect width="1024" height="1024" rx="224" fill="#0c1418"/>
+  <rect x="72" y="72" width="880" height="880" rx="188" fill="#14242a" stroke="#2d444b" stroke-width="8"/>
+  <path d="M118 838 818 168" fill="none" stroke="#20343b" stroke-width="5" opacity=".72"/>
+  <path d="M200 904 892 246" fill="none" stroke="#20343b" stroke-width="5" opacity=".48"/>
+  <g fill="none" stroke="#58737a" stroke-linecap="round" stroke-linejoin="round" stroke-width="17" opacity=".85">
+    <path d="M198 238H270V338H350"/>
+    <path d="M674 686H754V786H826"/>
+  </g>
+  <g fill="none" stroke="#6b858a" stroke-linecap="round" stroke-linejoin="round" stroke-width="13" opacity=".48">
+    <path d="M198 786H270V688H350" stroke-dasharray="8 18"/>
+    <path d="M674 338H754V238H826" stroke-dasharray="8 18"/>
+  </g>
+  <path d="M198 786H270V618H350V560H388" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/>
+  <path d="M636 466H700V300H826" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/>
+  <path d="M198 786H270V618H350V560" fill="none" stroke="#efffc8" stroke-linecap="round" stroke-width="7" opacity=".9"/>
+  <path d="M636 466H700V300H826" fill="none" stroke="#efffc8" stroke-linecap="round" stroke-width="7" opacity=".9"/>
+  <rect x="368" y="372" width="288" height="288" rx="58" fill="#0a1013" opacity=".8" transform="translate(0 16)"/>
+  <g fill="none" stroke="#e5b76a" stroke-linecap="round" stroke-width="20">
+    <path d="M418 372V338M466 372V328M514 372V332M562 372V326M610 372V338"/>
+    <path d="M418 660V694M466 660V704M514 660V700M562 660V706M610 660V694"/>
+    <path d="M368 422H334M368 470H324M368 518H328M368 566H322M368 614H334"/>
+    <path d="M656 422H690M656 470H700M656 518H696M656 566H702M656 614H690"/>
+  </g>
+  <rect x="368" y="356" width="288" height="288" rx="58" fill="#c28a4e" stroke="#efc77d" stroke-width="10"/>
+  <rect x="424" y="412" width="176" height="176" rx="30" fill="#172a31" stroke="#e8bb70" stroke-width="8"/>
+  <path d="M458 500H494V466H530V500H566M494 500V536H530V500M530 536H566" fill="none" stroke="#c8f36a" stroke-linecap="square" stroke-linejoin="miter" stroke-width="18"/>
+  <path d="M458 500H494V466H530V500H566M494 500V536H530V500" fill="none" stroke="#f3ffd3" stroke-linecap="square" stroke-width="5" opacity=".82"/>
+  <g stroke-linejoin="round">
+    <rect x="106" y="198" width="92" height="76" rx="20" fill="#273c43" stroke="#739198" stroke-width="8"/>
+    <rect x="106" y="748" width="92" height="76" rx="20" fill="#c8f36a" stroke="#f0ffca" stroke-width="8"/>
+    <rect x="826" y="198" width="92" height="76" rx="20" fill="#c8f36a" stroke="#f0ffca" stroke-width="8"/>
+    <rect x="826" y="748" width="92" height="76" rx="20" fill="#273c43" stroke="#739198" stroke-width="8" opacity=".74"/>
+  </g>
+  <g fill="#112027">
+    <rect x="136" y="222" width="32" height="28" rx="8"/>
+    <rect x="136" y="772" width="32" height="28" rx="8"/>
+    <rect x="856" y="222" width="32" height="28" rx="8"/>
+    <rect x="856" y="772" width="32" height="28" rx="8" opacity=".66"/>
+  </g>
+</svg>

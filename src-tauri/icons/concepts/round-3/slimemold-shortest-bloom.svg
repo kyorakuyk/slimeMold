@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Shortest Bloom</title>
+  <desc id="desc">A living slime mold tests several paths, retracts weaker trails and reinforces the shortest path to a resource.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M182 746C262 586 343 276 570 235c94-17 171 5 241 31" fill="none" stroke="#59636c" stroke-linecap="round" stroke-linejoin="round" stroke-width="26" opacity=".48"/>
+  <path d="M182 746C340 850 573 885 708 671c70-111 91-262 120-396" fill="none" stroke="#59636c" stroke-linecap="round" stroke-linejoin="round" stroke-width="26" opacity=".42"/>
+  <path d="M182 746C292 721 373 612 484 571c121-45 165-181 236-258" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="72"/>
+  <path d="M182 746C292 721 373 612 484 571c121-45 165-181 236-258" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-linejoin="round" stroke-width="14" opacity=".88"/>
+  <path d="M226 713c28-75 46-125 77-169M231 776c53 21 91 33 143 41" fill="none" stroke="#8fae4d" stroke-linecap="round" stroke-width="23" opacity=".78"/>
+  <path d="M118 784c-21-34-12-80 19-105 25-20 26-58 65-67 36-8 58 21 84 41 32 24 71 22 83 59 13 42-16 81-57 94-37 12-63-3-94 6-38 11-78 5-100-28Z" fill="#c8f36a"/>
+  <circle cx="182" cy="746" r="23" fill="#121416"/>
+  <circle cx="838" cy="266" r="56" fill="#dfe8ee"/>
+  <circle cx="838" cy="266" r="21" fill="#121416"/>
+  <circle cx="570" cy="235" r="13" fill="#69747b" opacity=".75"/>
+  <circle cx="708" cy="671" r="13" fill="#69747b" opacity=".65"/>
+</svg>

@@ -11,7 +11,7 @@
  *   - params 固定用节点默认参数（工具场景下通常不需要用户调参）
  */
 
-import type { NodeDefinition, ExecContext } from '../types';
+import type { NodeDefinition, ExecContext } from '../types/node';
 import type { ToolDefinition } from '../agents/toolRegistry';
 
 /**

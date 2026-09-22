@@ -5,6 +5,8 @@
  * resolveIntervention 放行 → 节点以用户结果完成 → 运行成功。
  * 以及：stopWorkflow 后待接管请求被取消（挂起不泄漏）。
  */
+import type { NodeDefinition } from '../types/node';
+import type { ExecContext } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -13,7 +15,7 @@ import { runWorkflow, stopWorkflow } from './executor';
 import { clearCache, beginRun } from './nodeCache';
 import { getRunBus, resetRunBus, type RunEvent } from './runEvents';
 import { resetInterventions, resolveIntervention, getPendingInterventions } from './intervention';
-import type { FlowNode, FlowEdge, NodeDefinition, ExecContext } from '../types';
+import type { FlowNode, FlowEdge } from '../types';
 
 type GateExec = (
   inputs: Record<string, unknown>,

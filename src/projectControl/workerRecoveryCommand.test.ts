@@ -146,6 +146,73 @@ describe('recoverWorkerRunCommand', () => {
     });
   });
 
+  it('clears the previous worktree lifecycle before retrying a persisted created task', () => {
+    const persistedState: WorkerRunQueueState = {
+      ...state,
+      tasks: {
+        ...state.tasks,
+        'task-1': {
+          ...state.tasks['task-1'],
+          worktreeStatus: 'created',
+          branchRevision: 'old-branch-tip',
+        },
+      },
+    };
+
+    const result = recoverWorkerRunCommand({
+      projectId: 'project-1',
+      state: persistedState,
+      taskGraph: graph,
+      journal: unknownJournal,
+      decision: 'retry',
+      reason: '确认旧 worktree 不能复用',
+      decisionId: 'recovery-decision-created-worktree',
+      now: '2026-09-01T00:04:00.000Z',
+    });
+
+    expect(result.state.tasks['task-1']).toMatchObject({
+      status: 'queued',
+      pendingAttempt: 2,
+    });
+    expect(result.state.tasks['task-1'].worktreeId).toBeUndefined();
+    expect(result.state.tasks['task-1'].worktreeStatus).toBeUndefined();
+    expect(result.state.tasks['task-1'].branchRevision).toBeUndefined();
+  });
+
+  it('retries a terminal failed task even when claim produced no side-effect record', () => {
+    const failedState: WorkerRunQueueState = {
+      ...state,
+      status: 'partial',
+      tasks: {
+        ...state.tasks,
+        'task-1': {
+          ...state.tasks['task-1'],
+          status: 'failed',
+          error: 'side-effect claim failed before journal write',
+          evidenceIds: [],
+          acceptanceId: undefined,
+        },
+      },
+    };
+    const result = recoverWorkerRunCommand({
+      projectId: 'project-1',
+      state: failedState,
+      taskGraph: graph,
+      journal: { schemaVersion: 1, entries: [] },
+      decision: 'retry',
+      reason: '确认失败发生在副作用账本写入之前',
+      decisionId: 'recovery-decision-no-effect',
+      now: '2026-09-01T00:05:00.000Z',
+    });
+
+    expect(result.state.status).toBe('queued');
+    expect(result.state.tasks['task-1']).toMatchObject({ status: 'queued', pendingAttempt: 2 });
+    expect(result.events[0]).toMatchObject({
+      eventType: 'WorkerRunRecoveryDecided',
+      payload: { decision: 'retry', effectKeys: [], taskIds: ['task-1'] },
+    });
+  });
+
   it('records skip as failed/blocked facts and leaves inspect as a non-mutating decision', () => {
     const skipped = recoverWorkerRunCommand({
       projectId: 'project-1',
@@ -208,16 +275,19 @@ describe('recoverWorkerRunCommand', () => {
       decisionId: 'recovery-wrong-project',
       now: '2026-09-01T00:04:00.000Z',
     })).toThrow(/不属于当前项目/);
-    expect(() => recoverWorkerRunCommand({
+    const interrupted = recoverWorkerRunCommand({
       projectId: 'project-1',
       state,
       taskGraph: graph,
       journal: { schemaVersion: 1, entries: [] },
       decision: 'retry',
-      reason: '没有 effect',
+      reason: '重启后恢复未闭合 lease',
       decisionId: 'recovery-no-effect',
       now: '2026-09-01T00:04:00.000Z',
-    })).toThrow(/待核对的副作用/);
+    });
+    expect(interrupted.state.status).toBe('queued');
+    expect(interrupted.state.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1 });
+    expect(interrupted.events.map((event) => event.eventType)).toContain('TaskAttemptMarkedUnknown');
 
     const partial = {
       ...unknownJournal.entries[0],

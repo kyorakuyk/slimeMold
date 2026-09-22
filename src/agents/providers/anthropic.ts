@@ -1,5 +1,5 @@
 import { httpFetch } from '../../platform/env';
-import type { AgentConfig, ChatMessage, LLMResponse } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../../types/agent';
 import { forEachSSEData } from '../streamSSE';
 
 /** Anthropic Messages API */

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AcceptanceRecord } from '../dev/session';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
-import { buildWorkerCleanupProposal } from './workerCleanup';
+import { buildWorkerCleanupProposal, buildWorkerCleanupProposalSafely } from './workerCleanup';
 
 function run(): WorkerRunQueueState {
   return {
@@ -83,6 +83,25 @@ describe('worker cleanup proposal', () => {
       cleanupStatus: 'active',
     });
     expect(computeWorktreeSignature).toHaveBeenCalledWith('C:/project-workers/run-1/task-1');
+  });
+
+  it('surfaces cleanup host preparation errors as a blocked proposal', async () => {
+    const proposal = await buildWorkerCleanupProposalSafely({
+      run: run(),
+      task: run().tasks['task-1'],
+      acceptance: acceptance(),
+      computeWorktreeSignature: vi.fn(async () => {
+        throw new Error('git status read failed');
+      }),
+      sideEffects: [],
+    });
+
+    expect(proposal).toEqual({
+      status: 'blocked',
+      runId: 'run-1',
+      taskId: 'task-1',
+      reason: expect.stringMatching(/git status read failed/),
+    });
   });
 
   it('binds cleanup to the Acceptance stage when it differs from the task id', async () => {

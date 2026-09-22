@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Terrain</title>
+  <desc id="desc">A slime mold finds an efficient route through a field of obstacles, leaving weaker alternatives behind.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <circle cx="398" cy="304" r="86" fill="#252b30" stroke="#4f5861" stroke-width="18"/>
+  <rect x="522" y="450" width="170" height="108" rx="54" fill="#252b30" stroke="#4f5861" stroke-width="18"/>
+  <circle cx="365" cy="714" r="94" fill="#252b30" stroke="#4f5861" stroke-width="18"/>
+  <path d="M154 520C256 407 300 191 486 188c153-2 113 197 252 254 88 35 109-35 133-83" fill="none" stroke="#5b646d" stroke-linecap="round" stroke-linejoin="round" stroke-width="24" opacity=".48"/>
+  <path d="M154 520C249 636 260 845 443 828c159-14 107-224 218-281 84-43 132 26 210 100" fill="none" stroke="#5b646d" stroke-linecap="round" stroke-linejoin="round" stroke-width="24" opacity=".44"/>
+  <path d="M154 520C244 520 267 521 311 520c75-2 105-75 161-82 71-9 82 70 135 81 80 17 115-2 161-15" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="70"/>
+  <path d="M185 520c45 0 69-3 109-2M672 504c42 0 75 0 105-8" fill="none" stroke="#e5f7b7" stroke-linecap="round" stroke-width="18" opacity=".9"/>
+  <path d="M106 520c0-36 22-62 55-62 34 0 51 28 51 62s-17 62-51 62c-33 0-55-26-55-62Z" fill="#c8f36a"/>
+  <circle cx="870" cy="488" r="48" fill="#dfe8ee"/>
+  <circle cx="870" cy="488" r="18" fill="#121416"/>
+</svg>

@@ -262,7 +262,7 @@
   <string name="orchestrator.empty">暂无编排</string>
   <string name="orchestrator.emptyHint">输入目标并点击「生成草案」，Orchestrator 会把它分解为多阶段工作流。</string>
   <string name="orchestrator.back">返回列表</string>
-  <string name="orchestrator.bindLocked">执行中/已结束，阶段绑定已锁定</string>
+  <string name="orchestrator.bindLocked">阶段绑定已锁定</string>
   <string name="orchestrator.prepare">固化工作流</string>
   <string name="orchestrator.prepareHint">为每个阶段创建/校验工作流并生成真实 wfId，可打开编辑；运行前建议先固化</string>
   <string name="orchestrator.confirm">确认草案</string>
@@ -314,6 +314,7 @@
   <string name="orchestrator.worker.cleanup.approveAction">批准清理</string>
   <string name="orchestrator.worker.cleanup.executeAction">执行清理</string>
   <string name="orchestrator.worker.cleanup.blocked">暂不可清理</string>
+  <string name="orchestrator.worker.cleanup.unavailable">清理提案尚未生成，宿主状态需要复查</string>
   <string name="orchestrator.worker.recovery.retryAction">确认重试新 attempt</string>
   <string name="orchestrator.worker.recovery.skipAction">确认跳过任务</string>
   <string name="orchestrator.worker.status.queued">已入队</string>
@@ -329,4 +330,20 @@
   <string name="orchestrator.worker.task.failed">失败</string>
   <string name="orchestrator.worker.task.blocked">阻塞</string>
   <string name="orchestrator.worker.task.cancelled">取消</string>
+  <string name="orchestrator.taskGraph.title">任务图 DAG</string>
+  <string name="orchestrator.taskGraph.version">图版本 {{version}}</string>
+  <string name="orchestrator.taskGraph.run">运行 {{runId}}</string>
+  <string name="orchestrator.taskGraph.issue">Issue</string>
+  <string name="orchestrator.taskGraph.evidence">Evidence</string>
+  <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
+  <string name="orchestrator.taskGraph.edge">任务依赖</string>
+  <string name="orchestrator.taskGraph.revise">创建任务图 revision</string>
+  <string name="orchestrator.taskGraph.selectedTask">选中任务</string>
+  <string name="orchestrator.taskGraph.noneSelected">请先点击 DAG 节点</string>
+  <string name="orchestrator.taskGraph.titlePlaceholder">新标题（留空表示不修改）</string>
+  <string name="orchestrator.taskGraph.dependsOnPlaceholder">依赖 task id，逗号分隔（留空表示无依赖）</string>
+  <string name="orchestrator.taskGraph.applyRevision">生成新 revision</string>
+  <string name="orchestrator.taskGraph.selectTask">请先选择一个 TaskGraph 节点</string>
+  <string name="orchestrator.taskGraph.revisionUnavailable">当前 TaskGraph revision 不可编辑</string>
+  <string name="orchestrator.taskGraph.revisionEmpty">至少修改标题或依赖关系</string>
 </resources>

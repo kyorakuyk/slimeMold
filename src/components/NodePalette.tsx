@@ -1,3 +1,4 @@
+import type { NodeRole } from '../types/node';
 import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { ChevronRight, ChevronDown, Search, Boxes, Trash2, Pencil } from 'lucide-react';
@@ -6,8 +7,8 @@ import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { CATEGORY_ORDER } from '../nodes/builtin';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import type { NodeDefinition, NodeRole } from '../types';
-import { NODE_ROLE_META } from '../types';
+import type { NodeDefinition } from '../types/node';
+import { NODE_ROLE_META } from '../types/node';
 import { useT } from '../i18n/useT';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
@@ -98,7 +99,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
     return ordered;
-  }, [defs, query]);
+  }, [defs, query, roleFilter]);
 
   // 项目内已打包的子图，按名称/描述参与同一个搜索框过滤
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
@@ -119,8 +120,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
     <div className="relative mt-2">
       <Search
         size={13}
-        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2"
-        style={{ color: 'var(--sm-ink-faint)' }}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm-ink-faint"
       />
       <input
         className="sm-palette-search w-full pl-7"
@@ -173,22 +173,22 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
 
   return (
     <aside
-      className="flex h-full min-h-0 flex-col"
-      style={width ? { width, background: 'var(--sm-bg-soft)', borderColor: 'var(--sm-line)', borderRight: '1px solid var(--sm-line)' } : undefined}
+      className={`flex h-full min-h-0 flex-col ${width ? 'border-r border-sm-line bg-sm-bg-soft' : ''}`}
+      style={width ? { width } : undefined}
     >
       {!embedded && (
-        <div className="border-b px-3 py-2.5" style={{ borderColor: 'var(--sm-line)' }}>
-          <h2 className="text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
+        <div className="border-b border-sm-line px-3 py-2.5">
+          <h2 className="text-[13px] font-semibold text-sm-ink">
             {t('title')}
           </h2>
           {searchBox}
           {roleFilterBar}
         </div>
       )}
-      {embedded && <div className="border-b px-2 py-1.5" style={{ borderColor: 'var(--sm-line)' }}>{searchBox}</div>}
+      {embedded && <div className="border-b border-sm-line px-2 py-1.5">{searchBox}</div>}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {groups.length === 0 && subgraphList.length === 0 && (
-          <p className="px-1 py-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+          <p className="px-1 py-3 text-[11px] text-sm-ink-faint">
             {t('search.empty')}
           </p>
         )}
@@ -226,7 +226,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       }
                       className="sm-palette-item cursor-grab select-none"
                     >
-                      <p className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sm-ink)' }}>
+                      <p className="flex items-center gap-1.5 text-[13px] text-sm-ink">
                         {roleMeta && (
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full"
@@ -237,7 +237,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                         <span className="truncate">{def.name}</span>
                       </p>
                       {def.description && (
-                        <p className="mt-0.5 line-clamp-1 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                        <p className="mt-0.5 line-clamp-1 text-[11px] text-sm-ink-faint">
                           {def.description}
                         </p>
                       )}
@@ -275,18 +275,16 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                     className="sm-palette-item group/sg relative select-none"
                   >
                     <p
-                      className="flex items-center gap-1.5 pr-5 text-[13px]"
-                      style={{ color: 'var(--sm-ink)' }}
+                      className="flex items-center gap-1.5 pr-5 text-[13px] text-sm-ink"
                     >
-                      <Boxes size={12} style={{ color: 'var(--sm-ink-faint)' }} />
+                      <Boxes size={12} className="text-sm-ink-faint" />
                       <span className="truncate">{sg.name}</span>
                     </p>
-                    <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+                    <p className="mt-0.5 text-[11px] text-sm-ink-faint">
                       {t('sg.steps', { count: sg.nodes.length, ins: sg.inputs.length, outs: sg.outputs.length })}
                     </p>
                     <button
-                      className="absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
-                      style={{ color: 'var(--sm-ink-faint)' }}
+                      className="absolute right-1.5 top-1.5 rounded p-1 text-sm-ink-faint opacity-0 transition-opacity hover:bg-sm-bg group-hover/sg:opacity-100"
                       title={t('sg.rename')}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -296,8 +294,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                       <Pencil size={12} />
                     </button>
                     <button
-                      className="absolute right-8 top-1.5 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--sm-bg)] group-hover/sg:opacity-100"
-                      style={{ color: 'var(--sm-ink-faint)' }}
+                      className="absolute right-8 top-1.5 rounded p-1 text-sm-ink-faint opacity-0 transition-opacity hover:bg-sm-bg group-hover/sg:opacity-100"
                       title={t('sg.delete')}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -326,8 +323,8 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       </div>
       {dragGhost && (
         <div
-          className="pointer-events-none fixed z-[9999] rounded border border-[var(--sm-ink-faint)] bg-[var(--sm-surface)] px-2 py-1 text-[12px] shadow-lg"
-          style={{ left: dragGhost.x + 12, top: dragGhost.y + 12, color: 'var(--sm-ink)' }}
+          className="pointer-events-none fixed z-drag rounded border border-sm-line bg-sm-bg px-2 py-1 text-[12px] text-sm-ink shadow-lg"
+          style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
         >
           {dragGhost.label}
         </div>

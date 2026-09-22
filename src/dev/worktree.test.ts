@@ -37,6 +37,47 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(calls).toContainEqual(['worktree', 'add', '-q', target, '-b', info!.branch, 'HEAD']);
   });
 
+  it('create：worker branch 先创建 sibling worker parent directory', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'show-ref') return { exitCode: 1, stdout: '', stderr: '', durationMs: 1 };
+      return ok();
+    });
+    const ensureParent = vi.fn(async () => {});
+    const manager = new WorktreeManager({ git }, 'D:/Temp/repo', ensureParent);
+
+    const info = await manager.create('worker-1', 'D:/Temp/repo-workers/worker-1', {
+      branch: 'worker/worker-1',
+    });
+
+    expect(info?.status).toBe('created');
+    expect(ensureParent).toHaveBeenCalledWith('D:/Temp/repo-workers');
+    expect(calls.at(-1)).toEqual([
+      'worktree', 'add', '-q', 'D:/Temp/repo-workers/worker-1', '-b', 'worker/worker-1', 'HEAD',
+    ]);
+  });
+
+  it('create：base tip 一致的 orphan worker branch 使用已有 branch 接管 worktree', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('abc123\n');
+      if (args[0] === 'show-ref') return ok('abc123 refs/heads/worker/orphan-1\n');
+      if (args[0] === 'rev-parse' && args[1] === 'worker/orphan-1') return ok('abc123\n');
+      return ok();
+    });
+    const manager = new WorktreeManager({ git }, 'D:/Temp/repo');
+
+    const info = await manager.create('orphan-1', 'D:/Temp/repo-workers/orphan-1', {
+      branch: 'worker/orphan-1',
+    });
+
+    expect(info?.branch).toBe('worker/orphan-1');
+    expect(calls).toContainEqual(['worktree', 'add', '-q', 'D:/Temp/repo-workers/orphan-1', 'worker/orphan-1']);
+  });
+
   it('workerBranchForPath：与 Git/Rust branch 组件规则一致', () => {
     expect(workerBranchForPath('D:/Temp/repo-workers/mvp-gui-success-wt/')).toBe('worker/mvp-gui-success-wt');
     const windowsPath = ['D:', 'Temp', 'repo-workers', 'mvp-gui-success-wt', ''].join(String.fromCharCode(92));
@@ -139,6 +180,8 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(() => m.assertTracked('/repo')).toThrow(/不属于任何已登记的 worktree/);
     // P1（审计）：resolve 规范化后，折返路径也判定为同一 worktree（合法放行，防误拒）
     expect(m.isTracked('/wt/t1/../t1')).toBe(true);
+    expect(m.isTrackedOrChild('/wt/t1/src')).toBe(true);
+    expect(m.isTrackedOrChild('/wt/t1-sibling/src')).toBe(false);
     expect(m.isTracked('C:/wt/t1')).toBe(false); // 不同盘符 ≠ 匹配
 
     // 审计确认门：未显式 confirm 拒绝清理（防误删未提交改动）

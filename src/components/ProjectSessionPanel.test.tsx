@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
+import type { ProjectControlSnapshot, ProjectSession, ProjectTaskGraph } from '../projectControl/types';
 import type { MasterTurnResult } from '../projectControl/master';
 import { clearProjectEventBuffer, getPendingProjectEvents } from '../projectControl/eventBuffer';
 import { clearWorkerRunRuntime, getActiveWorkerRunRuntime } from '../projectControl/workerRunRuntime';
@@ -578,7 +578,73 @@ describe('ProjectSessionPanel', () => {
       }),
     ]);
     expect(getActiveWorkerRunRuntime()?.queues.size).toBe(1);
-    expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/));
+    expect(onRunWorker).toHaveBeenCalledWith(expect.stringMatching(/^run-/), 'codex');
+  });
+
+  it('can start a persisted queued Worker Run after the project is reopened', async () => {
+    const onRunWorker = vi.fn(async () => {});
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-queued'],
+    }];
+    mocks.store.workerRuns = [{
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-queued',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'task-graph-1',
+      taskGraphVersion: 1,
+      status: 'queued',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {},
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-queued',
+      projectId: 'project-1',
+      reason: 'unfinished-worker-lease',
+      message: '旧内存 recovery 不应遮蔽 queued Run',
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-1' }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+        />,
+      );
+    });
+
+    const startButton = container.querySelector('[data-testid="beginner-session-start-worker"]') as HTMLButtonElement;
+    expect(startButton).not.toBeNull();
+    const runtimeSelect = container.querySelector('.sm-beginner-worker-runtime select') as HTMLSelectElement;
+    expect(runtimeSelect).not.toBeNull();
+    await act(async () => {
+      runtimeSelect.value = 'antigravity';
+      runtimeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => {
+      startButton.click();
+    });
+    expect(onRunWorker).toHaveBeenCalledWith('run-queued', 'antigravity');
   });
 
   it('shows a failed Worker Run as the next recovery action', async () => {
@@ -620,6 +686,33 @@ describe('ProjectSessionPanel', () => {
       reason: 'unfinished-worker-lease',
       message: '检测到未闭合 Worker lease',
     }];
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'task-graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [{
+        version: 1,
+        id: 'task-1',
+        architectureId: 'architecture-1',
+        title: 'Task 1',
+        description: 'Task 1',
+        moduleId: 'module-1',
+        scope: [],
+        dependsOn: [],
+        acceptanceCriteria: [],
+        category: 'logic',
+        status: 'approved',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
     mocks.store.projectControl = {
       version: 1,
       activeSessionId: 'session-1',
@@ -628,7 +721,7 @@ describe('ProjectSessionPanel', () => {
       briefs: [],
       architectures: [],
       issues: [],
-      taskGraphs: [],
+      taskGraphs: [taskGraph],
     } as ProjectControlSnapshot;
 
     await act(async () => {
@@ -654,6 +747,203 @@ describe('ProjectSessionPanel', () => {
       (container.querySelector('[data-testid="beginner-session-worker-retry"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String));
+    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-1', 'retry', expect.any(String), 'codex');
+  });
+
+  it('forwards the selected runtime when a mounted queued session enters recovery', async () => {
+    const onRunWorker = vi.fn();
+    const onRecoverWorkerRun = vi.fn();
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'task-graph-runtime',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [{
+        version: 1,
+        id: 'task-1',
+        architectureId: 'architecture-1',
+        title: 'Task 1',
+        description: 'Task 1',
+        moduleId: 'module-1',
+        scope: [],
+        dependsOn: [],
+        acceptanceCriteria: [],
+        category: 'logic',
+        status: 'approved',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      }],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const queuedRun = {
+      version: 1 as const,
+      projectId: 'project-1',
+      runId: 'run-runtime',
+      orchestrationId: 'orch-runtime',
+      taskGraphId: taskGraph.id,
+      taskGraphVersion: taskGraph.graphVersion,
+      status: 'queued' as const,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'queued' as const,
+          attempt: 0,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        },
+      },
+    };
+    mocks.store.orchestrations = [{
+      id: 'orch-runtime',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-runtime'],
+    }];
+    mocks.store.workerRuns = [queuedRun];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-runtime', taskGraphId: taskGraph.id }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [taskGraph],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+    const runtimeSelect = container.querySelector('.sm-beginner-worker-runtime select') as HTMLSelectElement;
+    expect(runtimeSelect).not.toBeNull();
+    await act(async () => {
+      runtimeSelect.value = 'antigravity';
+      runtimeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    mocks.store.workerRuns = [{
+      ...queuedRun,
+      status: 'partial',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          ...queuedRun.tasks['task-1'],
+          status: 'failed',
+          attempt: 1,
+          error: 'failed',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-runtime',
+      projectId: 'project-1',
+      reason: 'failed-tasks',
+      message: '存在失败任务',
+    }];
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRunWorker={onRunWorker}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+
+    const retry = container.querySelector('[data-testid="beginner-session-worker-retry"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    await act(async () => {
+      retry.click();
+      await Promise.resolve();
+    });
+    expect(onRecoverWorkerRun).toHaveBeenCalledWith('run-runtime', 'retry', expect.any(String), 'antigravity');
+  });
+
+  it('hides recovery actions when the current TaskGraph is unavailable', async () => {
+    const onRecoverWorkerRun = vi.fn();
+    mocks.store.orchestrations = [{
+      id: 'orch-1',
+      goal: '目标',
+      status: 'ready',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      draft: { stages: [], edges: [] },
+      stageLogs: [],
+      runIds: ['run-1'],
+    }];
+    mocks.store.workerRuns = [{
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      orchestrationId: 'orch-1',
+      taskGraphId: 'missing-graph',
+      taskGraphVersion: 1,
+      status: 'partial',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'failed',
+          attempt: 1,
+          evidenceIds: [],
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    }];
+    mocks.store.workerRunRecoveries = [{
+      runId: 'run-1',
+      projectId: 'project-1',
+      reason: 'failed-tasks',
+      message: '存在失败任务',
+    }];
+    mocks.store.projectControl = {
+      version: 1,
+      activeSessionId: 'session-1',
+      sessions: [{ ...mocks.session, status: 'executing', orchestrationId: 'orch-1', taskGraphId: 'missing-graph' }],
+      decisions: [],
+      briefs: [],
+      architectures: [],
+      issues: [],
+      taskGraphs: [],
+    } as ProjectControlSnapshot;
+
+    await act(async () => {
+      root.render(
+        <ProjectSessionPanel
+          sessionId="session-1"
+          onBackHome={vi.fn()}
+          onOpenAdvanced={vi.fn()}
+          onRecoverWorkerRun={onRecoverWorkerRun}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="beginner-session-worker-recovery"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="beginner-session-worker-retry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="beginner-session-worker-skip"]')).toBeNull();
+    expect(onRecoverWorkerRun).not.toHaveBeenCalled();
   });
 });

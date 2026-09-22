@@ -9,24 +9,13 @@
  * 本文件不 import `useWorkflowStore` / `useRegistryStore`，也不触碰任何运行态，
  * 仅依赖 `../types` 与 `../engine/pipeline` 的类型，可在 node 测试环境下直接 import。
  */
-import type {
-  AgentConfig,
-  AssetMeta,
-  FlowEdge,
-  FlowNode,
-  NodeGroup,
-  NodeStatus,
-  Orchestration,
-  ProjectFile,
-  RoleTemplate,
-  SubgraphDef,
-  RunRecord,
-  WorkflowFile,
-  WorkflowFileEdge,
-  WorkflowFileInMemory,
-  WorkflowFileNode,
-  WorkflowNodeData,
-} from '../types';
+import type { AgentConfig, RoleTemplate } from '../types/agent';
+import type { Orchestration } from '../types/orchestration';
+import type { RunRecord } from '../types/execution';
+import type { AssetMeta } from '../types/project';
+import type { NodeGroup, SubgraphDef, WorkflowFile, WorkflowFileEdge, WorkflowFileInMemory, WorkflowFileNode } from '../types/workflow';
+import type { ProjectFile } from '../types/projectFile';
+import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types/graph';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 
@@ -139,11 +128,13 @@ export function serializeCurrent(
   keepAssets?: AssetMeta[],
   /** 稳定模式：savedAt 用固定占位，避免时间戳使快照逐次刷新（脏检测用） */
   stable = false,
+  /** 可选的外部时间戳；用于保持调用方的时间采样顺序，缺省时沿用当前时间语义 */
+  savedAt?: string,
 ): WorkflowFileInMemory {
   return {
     version: 1,
     name: s.workflowName || '未命名工作流',
-    savedAt: stable ? '' : new Date().toISOString(),
+    savedAt: savedAt ?? (stable ? '' : new Date().toISOString()),
     // 方案 P：内存态直接持有运行态 FlowNode，无需再拍平/还原
     nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } })),
     edges: s.edges,
@@ -182,9 +173,9 @@ export function buildProjectFile(
     runHistory: RunRecord[];
     checkpoints?: Record<string, import('../engine/checkpoint').RunCheckpoint>;
     checkpointHistory?: Record<string, import('../engine/checkpoint').RunCheckpoint[]>;
-    artifacts: import('../types').ProjectArtifacts;
-    agentRouteTable: import('../types').AgentRouteTable;
-    pipelines: import('../types').PipelineDef[];
+    artifacts: import('../types/orchestration').ProjectArtifacts;
+    agentRouteTable: import('../types/dispatch').AgentRouteTable;
+    pipelines: import('../types/orchestration').PipelineDef[];
     orchestrations?: Orchestration[];
     workerRuns?: import('../domain/workerQueue').WorkerRunQueueState[];
     projectControl?: ProjectControlSnapshot;

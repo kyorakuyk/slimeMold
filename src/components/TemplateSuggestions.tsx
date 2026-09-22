@@ -3,7 +3,7 @@ import { History, Lightbulb, Sparkles, Plus, ChevronDown, ChevronRight } from 'l
 import { useWorkflowStore } from '../store/workflowStore';
 import { getNodeDef } from '../store/registryStore';
 import { useT } from '../i18n/useT';
-import type { FlowNode, FlowEdge } from '../types';
+import type { FlowNode, FlowEdge } from '../types/graph';
 
 /** 一条历史推荐模板：从多次成功运行中挖掘出的高频节点链 */
 interface SuggestTemplate {

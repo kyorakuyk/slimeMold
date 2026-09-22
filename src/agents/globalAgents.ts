@@ -1,5 +1,5 @@
 import { isTauri } from '../platform/env';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 /**
  * 全局通用智能体（应用级，跨项目共享）。

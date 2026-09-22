@@ -16,7 +16,8 @@
  * 设计原则：纯函数、零 store / React 依赖，可在 jsdom 下直接单测；不改变「显式绑定有效」的
  * 既有行为——显式 agentId 存在时就是它，本层只在缺失/失效时兜底与记录。
  */
-import type { AgentConfig, AgentRouteTable } from '../types';
+import type { AgentConfig } from '../types/agent';
+import type { AgentRouteTable } from '../types/dispatch';
 import type { RunContext } from '../engine/runContext';
 import { scoreCandidates, type CandidateScore, type ScoringWeights } from './routerScoring';
 

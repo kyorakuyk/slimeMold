@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold One Gesture</title>
+  <desc id="desc">A small-size-first rounded line mark that folds a short probe into one continuous living gesture.</desc>
+  <g fill="none" stroke="#b56f4f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M189 704C243 638 321 596 403 576C483 557 535 520 564 461C594 400 618 319 694 282C762 249 830 280 837 336C844 391 790 426 734 420C678 414 638 442 632 486C626 533 665 568 718 594C767 618 797 659 785 706C771 760 707 780 653 748C607 721 570 686 523 694C473 703 439 757 389 769C322 785 258 753 229 710" stroke-width="94"/>
+    <path d="M416 571C384 548 368 518 374 486C381 452 403 427 428 429" stroke-width="36" opacity=".52"/>
+  </g>
+</svg>

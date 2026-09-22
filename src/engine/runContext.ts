@@ -12,7 +12,7 @@
  * - 纯类型 + 工厂函数，零 store 依赖，便于在 headless / 测试中使用。
  */
 import type { RunResources } from './runResources';
-import type { RunOptions } from './executor';
+import type { RunOptions } from './runTypes';
 
 /** 一次运行的执行策略（由 RunOptions 归一而来，仅保留运行期关心的维度）。 */
 export interface ExecutionPolicy {

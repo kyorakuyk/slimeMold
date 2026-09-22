@@ -1,4 +1,8 @@
-import type { AgentConfig, ProjectFile, WorkflowFile } from '../types';
+import type { RecentProject } from '../types/project';
+export type { RecentProject } from '../types/project';
+import type { AgentConfig } from '../types/agent';
+import type { WorkflowFile } from '../types/workflow';
+import type { ProjectFile } from '../types/projectFile';
 import { isTauri, pickProjectFile, showSaveDirDialog } from '../platform/env';
 import type { RunCheckpoint } from '../engine/checkpoint';
 
@@ -39,11 +43,7 @@ const LEGACY_EXT = '.smproj';
 // 运行历史（可选，落盘到 .slimemold/runs/history.json；类型层宽松处理，避免与主类型耦合）
 type RunHistory = { history: unknown[] };
 
-export interface RecentProject {
-  path: string; // 项目根目录（磁盘真相）
-  name: string;
-  openedAt: string;
-}
+
 
 const RECENT_KEY = 'sm.recentProjects';
 const RECENT_MAX = 12;
@@ -246,7 +246,7 @@ async function saveProjectFileUnlocked(file: ProjectFile, existingRoot?: string)
       version: 1;
       agents: AgentConfig[];
       defaultAgentId: string | null;
-      agentRouteTable?: import('../types').AgentRouteTable;
+      agentRouteTable?: import('../types/dispatch').AgentRouteTable;
     } = {
       version: 1,
       agents: file.agents ?? [],
@@ -417,7 +417,7 @@ async function loadFromDir(root: string): Promise<ProjectFile | null> {
         const raw = JSON.parse(await readTextTauri(agentsPath)) as {
           agents?: AgentConfig[];
           defaultAgentId?: string | null;
-          agentRouteTable?: import('../types').AgentRouteTable;
+          agentRouteTable?: import('../types/dispatch').AgentRouteTable;
         };
         if (Array.isArray(raw.agents)) {
           agents = raw.agents;

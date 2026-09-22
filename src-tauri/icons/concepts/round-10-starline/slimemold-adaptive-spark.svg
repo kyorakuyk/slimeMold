@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Adaptive Spark</title>
+  <desc id="desc">An original asymmetrical rounded-line burst with a slightly favored growth direction.</desc>
+  <g fill="none" stroke="#b56f4f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M492 471C474 410 474 328 490 215" stroke-width="68"/>
+    <path d="M525 470C568 413 634 354 753 295" stroke-width="82"/>
+    <path d="M554 505C640 493 735 512 838 563" stroke-width="62"/>
+    <path d="M548 540C606 588 651 651 686 756" stroke-width="58"/>
+    <path d="M508 556C504 632 469 716 392 813" stroke-width="72"/>
+    <path d="M475 540C400 555 318 598 215 665" stroke-width="59"/>
+    <path d="M461 502C405 471 349 421 299 336" stroke-width="54"/>
+    <path d="M518 467C538 440 559 421 583 408" stroke-width="31" opacity=".58"/>
+  </g>
+</svg>

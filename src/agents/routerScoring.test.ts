@@ -12,7 +12,7 @@ import {
   scoreCandidates,
   DEFAULT_SCORING_WEIGHTS,
 } from './routerScoring';
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 const ag = (id: string, model: string): AgentConfig =>
   ({ id, name: id, protocol: 'openai', baseUrl: 'http://x', model } as AgentConfig);

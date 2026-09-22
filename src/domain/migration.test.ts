@@ -152,6 +152,35 @@ describe('synthetic v1 project-control baseline migration', () => {
     });
   });
 
+  it('rejects migrating a succeeded Worker snapshot without Acceptance provenance', () => {
+    const invalidRun: WorkerRunQueueState = {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-invalid-success',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'succeeded',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          status: 'succeeded',
+          attempt: 1,
+          evidenceIds: ['evidence-1'],
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    };
+
+    expect(() => createSyntheticBaselineEvents({
+      projectId: 'project-1',
+      snapshot,
+      workerRuns: [invalidRun],
+      now: '2026-09-01T00:02:00.000Z',
+    })).toThrow(/provenance|Acceptance|acceptance/);
+  });
+
   it('writes a baseline batch once and refuses to overwrite a non-migration event stream', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new EventStreamRepository(adapter, 'project-root');

@@ -1,5 +1,9 @@
-import { createNodeDef, type NodeDefinition, type ModuleItem, type TaskItem, type ChatMessage } from '../../types';
+import { createNodeDef } from '../../types/node';
+import type { NodeDefinition } from '../../types/node';
+import type { ModuleItem, TaskItem } from '../../types/dispatch';
+import type { ChatMessage } from '../../types/agent';
 import { useWorkflowStore } from '../../store/workflowStore';
+import { resolveActiveWorkflowWorkspaceDir } from '../../store/workflowRegistryState';
 import { findRole, resolveRoleSystem } from '../../agents/agentManager';
 import { mergeAgentPool } from '../../agents/globalAgents';
 import { getArtifact, publishArtifactFromNode, type ArtifactKind } from '../../engine/pipeline';
@@ -640,10 +644,8 @@ async function writeDeliverableToDisk(relPath: string, content: string): Promise
   const { isTauri } = await import('../../platform/env');
   if (!isTauri) return null; // 浏览器无真实文件系统
   const st = useWorkflowStore.getState();
-  let root: string | null = null;
-  if (st.workspaceDir) {
-    root = st.workspaceDir;
-  } else if (st.projectPath) {
+  let root: string | null = resolveActiveWorkflowWorkspaceDir(st);
+  if (!root && st.projectPath) {
     root = st.projectPath;
   }
   const fs = await import('@tauri-apps/plugin-fs');

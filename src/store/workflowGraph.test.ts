@@ -5,8 +5,10 @@
  * remapPasted（id 映射 + 位置偏移）、snapshotPush/Undo/Redo（历史栈）、
  * classifyConnection（连线决策）、expandSubgraphInstance（子图展开）。
  */
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect } from 'vitest';
-import type { FlowNode, FlowEdge, NodeDefinition, PortDef, SubgraphDef } from '../types';
+import type { SubgraphDef } from '../types/workflow';
+import type { FlowNode, FlowEdge, PortDef } from '../types';
 import {
   classifyConnection,
   expandSubgraphInstance,

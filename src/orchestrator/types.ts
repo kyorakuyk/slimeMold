@@ -1,5 +1,5 @@
 /**
- * H3 Orchestrator 类型（re-export 自 ../types，避免 store ⇄ orchestrator 循环依赖）。
+ * H3 Orchestrator 类型（re-export 自 ../types/orchestration，避免 store ⇄ orchestrator 循环依赖）。
  *
  * 核心原则：Orchestrator 只生成「工作流草案」，绝不静默修改用户工作流——
  * confirmDraft 是唯一允许把草案落成 pipeline 的入口。
@@ -13,7 +13,7 @@ export type {
   OrchestrationStatus,
   PipelineDraft,
   StageLog,
-} from '../types';
+} from '../types/orchestration';
 
 /** 编排请求（用户目标） */
 export interface OrchestratorRequest {

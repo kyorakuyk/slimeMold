@@ -11,16 +11,10 @@
  *  - 输入：某节点的 input handle 在子图内部没有入边 -> 提升为子图输入
  *  - 输出：某节点的 output handle 在子图内部没有出边 -> 提升为子图输出
  */
-import type {
-  FlowEdge,
-  FlowNode,
-  NodeDefinition,
-  PortDef,
-  SubgraphDef,
-  SubgraphPort,
-  WorkflowFileEdge,
-  WorkflowFileNode,
-} from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { SubgraphDef, SubgraphPort, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types/graph';
+import type { PortDef } from '../types/graph';
 
 /** 子图引用节点的类型 id */
 export const SUBGRAPH_REF_TYPE = 'subgraph.ref';

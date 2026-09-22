@@ -33,7 +33,7 @@ import {
   removeEndpoint,
 } from '../agents/credentialStore';
 import { isTauri } from '../platform/env';
-import type { ApiVault, Protocol } from '../types';
+import type { ApiVault, Protocol } from '../types/agent';
 import AgentPanel from './AgentPanel';
 import PluginPanel from './PluginPanel';
 import { RouteTableEditor } from './RouteTableEditor';
@@ -288,7 +288,7 @@ function AgentSection() {
   const globalMasterAgentId = useViewStore((s) => s.globalMasterAgentId);
   const setGlobalMasterAgent = useViewStore((s) => s.setGlobalMasterAgent);
   const globalMasterAgents = globalAgents.filter(
-    (agent) => agent.enabled !== false || agent.id === globalMasterAgentId,
+    (agent) => agent.protocol !== 'antigravity' && (agent.enabled !== false || agent.id === globalMasterAgentId),
   );
 
   return (
@@ -321,7 +321,7 @@ function AgentSection() {
         )}
       </section>
       {/* 全屏撑满，让 AgentPanel 内部 flex/min-h-0 正确建立滚动约束（智能体列表 + 编辑表单各自滚动） */}
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1">
         <AgentPanel embedded />
       </div>
     </div>
@@ -337,7 +337,7 @@ function ModelSection() {
   const setDefaultAgent = useWorkflowStore((s) => s.setDefaultAgent);
   const agentPool = useMemo(() => {
     const projectIds = new Set(agents.map((agent) => agent.id));
-    return [...globalAgents.filter((agent) => !projectIds.has(agent.id)), ...agents];
+    return [...globalAgents.filter((agent) => agent.protocol !== 'antigravity' && !projectIds.has(agent.id)), ...agents.filter((agent) => agent.protocol !== 'antigravity')];
   }, [agents, globalAgents]);
 
   return (

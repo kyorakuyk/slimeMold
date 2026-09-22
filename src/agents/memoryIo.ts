@@ -9,7 +9,7 @@
  */
 
 import { appendProjectText, writeProjectText } from '@/platform/env';
-import type { SubgraphDef } from '@/types';
+import type { SubgraphDef } from '@/types/workflow';
 
 /** 记忆文件相对路径（位于项目根 .slimemold 目录下） */
 export const MEMORY_REL = '.slimemold/memory.md';

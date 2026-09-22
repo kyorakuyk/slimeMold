@@ -11,6 +11,25 @@ export default {
         err: '#d9534f',
         warn: '#e0a800',
         line: '#e6e6e6',
+        sm: {
+          bg: { DEFAULT: 'var(--sm-bg)', soft: 'var(--sm-bg-soft)', deep: 'var(--sm-bg-deep)' },
+          ink: { DEFAULT: 'var(--sm-ink)', soft: 'var(--sm-ink-soft)', faint: 'var(--sm-ink-faint)' },
+          line: 'var(--sm-line)',
+          accent: { DEFAULT: 'var(--sm-accent)', soft: 'var(--sm-accent-soft)' },
+          ok: 'var(--sm-ok)',
+          err: 'var(--sm-err)',
+          run: 'var(--sm-run)',
+          edge: 'var(--sm-edge)',
+          canvas: { DEFAULT: 'var(--sm-canvas)', grid: 'var(--sm-canvas-grid)' },
+          panel: 'var(--sm-panel)',
+        }
+      },
+      zIndex: {
+        dropdown: '100',
+        modal: '200',
+        overlay: '300',
+        drag: '10000',
+        fatal: '99999',
       },
       fontFamily: {
         app: [

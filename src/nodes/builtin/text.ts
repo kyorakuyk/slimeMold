@@ -1,4 +1,4 @@
-import { createNodeDef, type NodeDefinition } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
 import { renderTemplate } from '../builtinHelpers';
 
 const template: NodeDefinition = {

@@ -7,7 +7,7 @@
  *   但运行时调用会 reject，由调用方捕获并返回明确错误）。
  */
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { pathComparisonKey } from './path-utils';
 
 export interface CommandResult {
@@ -15,6 +15,8 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  /** Host-side spawn/capture/cleanup failed after the command may have started. */
+  unknownEffects?: boolean;
 }
 
 /** 常见凭据/密钥环境变量名（执行子命令时剥离，防止开发节点读取宿主凭据）。 */
@@ -60,6 +62,39 @@ export function sanitizeEnv(env: Record<string, string | undefined> = process.en
   return out;
 }
 
+function isAbsoluteWindowsPath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function trustedWindowsPath(candidate: string): string | null {
+  if (!isAbsoluteWindowsPath(candidate) || !existsSync(candidate)) return null;
+  try {
+    const stat = lstatSync(candidate);
+    if (stat.isSymbolicLink()) return null;
+    const real = realpathSync(candidate);
+    if (pathComparisonKey(real) !== pathComparisonKey(candidate)) return null;
+    return real;
+  } catch {
+    return null;
+  }
+}
+
+function trustedComSpec(): string {
+  if (!process.env.SystemRoot) throw new Error('未找到可信的 Windows SystemRoot');
+  const expected = trustedWindowsPath(`${process.env.SystemRoot}\\System32\\cmd.exe`);
+  if (!expected || !/\\cmd\.exe$/i.test(expected)) {
+    throw new Error('未找到可信的 Windows ComSpec');
+  }
+  const configured = process.env.ComSpec;
+  if (configured) {
+    const trustedConfigured = trustedWindowsPath(configured);
+    if (trustedConfigured && pathComparisonKey(trustedConfigured) !== pathComparisonKey(expected)) {
+      throw new Error('ComSpec 不匹配 SystemRoot\\System32\\cmd.exe');
+    }
+  }
+  return expected;
+}
+
 function resolveCommandShim(cmd: string): string {
   if (process.platform !== 'win32' || /[\\/]/.test(cmd) || /\.(?:cmd|bat|exe|com)$/i.test(cmd)) return cmd;
   const pathValue = process.env.PATH ?? '';
@@ -68,7 +103,8 @@ function resolveCommandShim(cmd: string): string {
     const base = dir.replace(/[\\/]+$/, '');
     for (const extension of extensions) {
       const candidate = `${base}\\${cmd}${extension}`;
-      if (existsSync(candidate)) return candidate;
+      const trusted = trustedWindowsPath(candidate);
+      if (trusted) return trusted;
     }
   }
   return cmd;
@@ -101,11 +137,23 @@ export function runCommand(
   return new Promise((resolveResult) => {
     const start = Date.now();
     const executable = resolveCommandShim(cmd);
-    const shim = isWindowsShim(executable);
-    if (shim) assertSafeWindowsShimArgs([executable, ...args]);
-    const command = shim ? (process.env.ComSpec || 'cmd.exe') : executable;
+    const trustedExecutable = process.platform === 'win32'
+      ? trustedWindowsPath(executable)
+      : executable;
+    if (!trustedExecutable) {
+      resolveResult({
+        exitCode: -1,
+        stdout: '',
+        stderr: `拒绝执行未绑定的 Windows 程序：${executable}`,
+        durationMs: Date.now() - start,
+      });
+      return;
+    }
+    const shim = isWindowsShim(trustedExecutable);
+    if (shim) assertSafeWindowsShimArgs([trustedExecutable, ...args]);
+    const command = shim ? trustedComSpec() : trustedExecutable;
     const commandArgs = shim
-      ? ['/d', '/s', '/c', `"${[executable, ...args].map(quoteWindowsShimArg).join(' ')}"`]
+      ? ['/d', '/s', '/c', `"${[trustedExecutable, ...args].map(quoteWindowsShimArg).join(' ')}"`]
       : args;
     execFile(
       command,
@@ -124,36 +172,55 @@ export function runCommand(
           return;
         }
         // execFile 错误可能带 code（数字退出码 / ENOENT 等字符串）
-        const code = typeof (err as { code?: unknown }).code === 'number'
-          ? ((err as { code: number }).code)
-          : 1;
+        const rawCode = (err as { code?: unknown }).code;
+        const code = typeof rawCode === 'number' ? rawCode : 1;
+        const spawnFailed = rawCode === 'ENOENT' || rawCode === 'EACCES' || rawCode === 'EPERM';
         resolveResult({
           exitCode: code,
           stdout: (stdout ?? '') as string,
           stderr: ((stderr ?? '') as string) || String(err.message ?? err),
           durationMs,
+          unknownEffects: !spawnFailed && typeof rawCode !== 'number',
         });
       },
     );
   });
 }
 
+export async function assertNoMultipleHardlinks(absPath: string): Promise<void> {
+  const { stat } = await import('node:fs/promises');
+  try {
+    const info = await stat(absPath);
+    if (info.isFile() && info.nlink > 1) {
+      throw new Error(`拒绝操作 hardlink 文件：${absPath}`);
+    }
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+}
+
 /** 读取文本文件（动态 import，仅 Node 环境可用）。 */
 export async function readTextFile(absPath: string): Promise<string> {
-  const { readFile } = await import('node:fs/promises');
-  return readFile(absPath, 'utf8');
+    await assertNoMultipleHardlinks(absPath);
+    const { readFile } = await import('node:fs/promises');
+    return readFile(absPath, 'utf8');
 }
 
 /** 写入文本文件（动态 import，仅 Node 环境可用）。 */
 export async function writeTextFile(absPath: string, content: string): Promise<void> {
-  const { writeFile } = await import('node:fs/promises');
-  await writeFile(absPath, content, 'utf8');
+    await assertNoMultipleHardlinks(absPath);
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(absPath, content, 'utf8');
 }
 
 /** 解析相对路径到绝对路径（防 ../ 逃逸：结果必须仍以 root 为前缀；仅 Node 环境可用）。 */
 export async function resolveInside(root: string, relPath: string): Promise<string> {
   const { resolve, dirname, basename, join } = await import('node:path');
-  const { realpath } = await import('node:fs/promises');
+  const { realpath, lstat } = await import('node:fs/promises');
+  if (process.platform === 'win32' && relPath.includes(':')) {
+    throw new Error(`拒绝 Windows ADS/stream 路径：${relPath}`);
+  }
   const abs = resolve(root, relPath);
   const rootNorm = resolve(root);
   const absKey = pathComparisonKey(abs);
@@ -166,6 +233,13 @@ export async function resolveInside(root: string, relPath: string): Promise<stri
     realAbs = await realpath(abs);
   } catch (error) {
     if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error;
+    const entry = await lstat(abs).catch((lstatError: unknown) => {
+      if (typeof lstatError === 'object' && lstatError !== null && 'code' in lstatError && lstatError.code === 'ENOENT') return null;
+      throw lstatError;
+    });
+    if (entry?.isSymbolicLink()) {
+      throw new Error(`拒绝解析 broken symlink：${relPath}`);
+    }
     const realParent = await realpath(dirname(abs));
     realAbs = join(realParent, basename(abs));
   }

@@ -181,6 +181,11 @@
   <string name="session.workerRunQueuedHint">The plan approval is recorded; each task will run in its own worktree and be host-verified.</string>
   <string name="session.workerRun.queued">Worker queued for execution</string>
   <string name="session.workerRun.queuedHint">The plan approval is recorded; each task will run in its own worktree and be host-verified.</string>
+  <string name="session.workerRun.start">Start Worker</string>
+  <string name="session.workerRuntime.label">Worker Runtime</string>
+  <string name="session.workerRuntime.codex">Codex subscription (headless)</string>
+  <string name="session.workerRuntime.antigravity">Antigravity (interactive)</string>
+  <string name="session.workerRuntime.antigravityHint">Complete the Agent work in Antigravity; the result still requires an MCP report and host acceptance.</string>
   <string name="session.workerRun.running">Worker is building</string>
   <string name="session.workerRun.runningHint">The Worker is running in an isolated worktree; only host acceptance and Evidence determine success.</string>
   <string name="session.workerRun.succeeded">Worker completed</string>
@@ -236,6 +241,8 @@
   <string name="issue.approve">Approve for queue</string>
   <string name="issue.queue">Queue it</string>
   <string name="issue.triage">Ask the master to triage</string>
+  <string name="issue.taskLink">Linked task</string>
+  <string name="issue.evidenceCount">{{count}} evidence</string>
 
   <string name="masterAgent.back">Back to project</string>
   <string name="masterAgent.openAdvanced">Open advanced configuration</string>

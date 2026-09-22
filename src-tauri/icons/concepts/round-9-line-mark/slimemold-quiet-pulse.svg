@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Quiet Pulse</title>
+  <desc id="desc">A small-size-first organic line mark built from one calm asymmetric pulse and a returning trace.</desc>
+  <g fill="none" stroke="#a96d4d" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M194 691C254 625 326 589 403 575C483 560 536 524 563 464C591 402 614 317 691 282C758 252 825 283 833 335C842 390 789 427 732 421C675 416 635 445 630 489C625 535 663 566 716 592C765 616 794 659 782 704C766 761 700 779 647 747C603 720 568 686 523 693C472 701 442 754 391 766C322 782 255 753 232 707" stroke-width="94"/>
+    <path d="M415 570C383 545 369 516 375 485" stroke-width="36" opacity=".42"/>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLMToolSpec } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse, Protocol, RoleTemplate, LLMToolSpec } from '../types/agent';
 import { chatOpenAI } from './providers/openai';
 import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';
@@ -79,6 +79,10 @@ export function resolveRoleSystem(
   return role?.system?.trim() ?? '';
 }
 
+const chatAntigravity = async (): Promise<LLMResponse> => {
+  throw new Error('Antigravity CLI 仅作为 TaskGraph Worker Runtime 使用，请从项目 Worker Run 选择 Antigravity。');
+};
+
 const providers: Record<
   Protocol,
   (
@@ -93,6 +97,7 @@ const providers: Record<
   anthropic: chatAnthropic,
   ollama: chatOllama,
   codex: chatCodex,
+  antigravity: chatAntigravity,
 };
 
 /** 多协议路由：按 agent.protocol 分发到对应 provider。
@@ -134,6 +139,11 @@ export const protocolDefaults: Record<
   codex: {
     label: 'OpenAI Codex（ChatGPT 订阅）',
     baseUrl: 'codex://local',
+    model: '',
+  },
+  antigravity: {
+    label: 'Antigravity CLI（交互式）',
+    baseUrl: 'antigravity://local',
     model: '',
   },
 };
@@ -198,6 +208,14 @@ export const providerPresets: ProviderPreset[] = [
     name: 'OpenAI Codex（ChatGPT 订阅）',
     protocol: 'codex',
     baseUrl: 'codex://local',
+    defaultModel: '',
+    editableBaseUrl: false,
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity CLI（交互式）',
+    protocol: 'antigravity',
+    baseUrl: 'antigravity://local',
     defaultModel: '',
     editableBaseUrl: false,
   },
@@ -312,7 +330,7 @@ export async function fetchModelsByProtocol(
   apiKey?: string,
   proxyUrl?: string,
 ): Promise<string[]> {
-  if (protocol === 'codex') return [];
+  if (protocol === 'codex' || protocol === 'antigravity') return [];
   if (protocol === 'anthropic') {
     return fetchAnthropicModels(baseUrl, apiKey, proxyUrl);
   }
@@ -343,6 +361,14 @@ export async function probeAgent(
 ): Promise<ProbeResult> {
   const base = (config.baseUrl || '').replace(/\/+$/, '');
   const proxied = !!proxyUrl?.trim();
+  if (config.protocol === 'antigravity') {
+    return {
+      ok: true,
+      stage: 'ok',
+      message: 'Antigravity CLI 配置已登记；真实可用性由 Worker 启动和 Host Acceptance 验证',
+      proxied: false,
+    };
+  }
   // 本地代理转发（参考 cc-switch 路由）：经该代理出口做连通性探测，
   // 代理通 + 目标可达 → 证明整条链路（含代理）可用。
   const proxyOpt = proxied ? { proxy: proxyUrl!.trim() } : {};
@@ -479,5 +505,6 @@ export function createAgent(protocol: Protocol, presetId?: string): AgentConfig 
     model: preset ? preset.defaultModel : d.model,
     temperature: 0.7,
     providerId: presetId,
+    ...(protocol === 'antigravity' ? { runtimeMode: 'agent' as const } : {}),
   };
 }

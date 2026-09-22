@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Quiet Pruning</title>
+  <desc id="desc">A compact living body keeps one calm route while shorter, weaker probes retract around it.</desc>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M194 702C266 660 312 617 371 574C444 521 505 518 571 471C642 420 704 326 840 276" stroke="#c96442" stroke-width="132"/>
+    <path d="M423 552C378 505 327 451 331 366" stroke="#c96442" stroke-width="58"/>
+    <path d="M509 548C569 575 629 601 680 655" stroke="#c96442" stroke-width="48"/>
+    <path d="M348 579C308 567 279 548 255 516" stroke="#c96442" stroke-width="34" opacity=".3"/>
+    <path d="M406 485C385 452 376 425 380 397" stroke="#c96442" stroke-width="26" opacity=".26"/>
+  </g>
+  <path d="M240 691C304 652 347 612 397 576C463 529 523 528 584 484C651 436 713 347 823 300" fill="none" stroke="#e08a66" stroke-linecap="round" stroke-width="17" opacity=".68"/>
+  <path d="M190 742C239 715 272 690 304 658C335 627 360 606 397 579C463 531 524 528 585 484C650 437 710 350 823 300" fill="none" stroke="#7c3f2d" stroke-linecap="round" stroke-width="22" opacity=".2" transform="translate(0 15)"/>
+</svg>

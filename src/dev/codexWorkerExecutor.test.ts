@@ -25,6 +25,7 @@ const task: ProjectTask = {
 };
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   task,
   assignment: {
@@ -46,6 +47,12 @@ describe('Codex Worker executor', () => {
     expect(prompt).toContain('npm run test 通过');
     expect(prompt).toContain('不要 push、merge、release 或删除远程资源');
     expect(prompt).toContain('C:/worktrees/task-1');
+    const dependencyPrompt = buildCodexWorkerPrompt({
+      ...lease,
+      dependencyArtifacts: [{ taskId: 'task-0', attempt: 1, path: 'C:/worktrees/task-0', branchRevision: 'abc123' }],
+    });
+    expect(dependencyPrompt).toContain('task-0 attempt=1 path=C:/worktrees/task-0 revision=abc123');
+    expect(dependencyPrompt).toContain('只读参考');
   });
 
   it('requires host acceptance before returning succeeded with evidence ids', async () => {
@@ -54,7 +61,11 @@ describe('Codex Worker executor', () => {
       expect(input.model).toBe('gpt-worker');
       return { text: '已完成修改' };
     });
-    const evaluate = vi.fn(async () => ({ passed: true, evidenceIds: ['evidence-test', 'evidence-diff'] }));
+    const evaluate = vi.fn(async () => ({
+      passed: true,
+      evidenceIds: ['evidence-test', 'evidence-diff'],
+      acceptanceId: 'acceptance-1',
+    }));
     const executor = createCodexWorkerExecutor({
       invoker: { execute },
       model: 'gpt-worker',
@@ -64,9 +75,23 @@ describe('Codex Worker executor', () => {
     await expect(executor.execute(lease)).resolves.toEqual({
       status: 'succeeded',
       evidenceIds: ['evidence-test', 'evidence-diff'],
+      acceptanceId: 'acceptance-1',
     });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a passed host verdict without a durable Acceptance ID', async () => {
+    const executor = createCodexWorkerExecutor({
+      invoker: { execute: async () => ({ text: '已完成修改' }) },
+      acceptance: { evaluate: async () => ({ passed: true, evidenceIds: ['evidence-only'] }) },
+    });
+
+    await expect(executor.execute(lease)).resolves.toEqual({
+      status: 'failed',
+      evidenceIds: ['evidence-only'],
+      error: '宿主验收通过但缺少 Acceptance ID',
+    });
   });
 
   it('returns failed when host acceptance rejects the model result', async () => {
@@ -97,7 +122,7 @@ describe('Codex Worker executor', () => {
     });
     const evaluate = vi.fn(async (input: { lease: WorkerTaskLease; response: { text: string }; signal?: AbortSignal }) => {
       expect(input.signal).toBe(controller.signal);
-      return { passed: true, evidenceIds: ['evidence-cancel-aware'] };
+      return { passed: true, evidenceIds: ['evidence-cancel-aware'], acceptanceId: 'acceptance-cancel-aware' };
     });
     const executor = createCodexWorkerExecutor({
       invoker: { execute },

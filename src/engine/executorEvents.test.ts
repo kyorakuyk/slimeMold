@@ -7,6 +7,7 @@
  *
  * 隔离策略：与 executorLifecycle 一致——独立 wfId + beforeEach 重置总线（resetRunBus）。
  */
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -14,7 +15,7 @@ import { registerBuiltins } from '../nodes/builtin';
 import { runWorkflow, stopWorkflow } from './executor';
 import { clearCache, beginRun } from './nodeCache';
 import { getRunBus, resetRunBus, type RunEvent } from './runEvents';
-import type { FlowNode, FlowEdge, NodeDefinition } from '../types';
+import type { FlowNode, FlowEdge } from '../types';
 
 /** 注册一个纯计算测试节点（无 LLM/IO 依赖，避免网络调用）。 */
 function registerGateNode(typeId: string, opts: { delayMs?: number; output?: Record<string, unknown> } = {}) {

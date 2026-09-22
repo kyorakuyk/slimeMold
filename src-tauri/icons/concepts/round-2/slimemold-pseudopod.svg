@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Pseudopod</title>
+  <desc id="desc">A living amoeba sends out searching pseudopods while one successful tendril reaches the nearest target.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M358 564C248 492 186 376 225 282c38-92 140-72 186 4 47 77 102 91 174 70 82-25 173-1 205 68 32 70-17 154-110 165-92 11-150 63-203 112-60 56-159 66-214 8-55-58-22-113 95-145Z" fill="#252b30" stroke="#647078" stroke-linejoin="round" stroke-width="20" opacity=".9"/>
+  <path d="M375 527C280 474 240 411 260 345M382 544C283 575 218 628 187 716M404 568C341 661 332 748 386 824" fill="none" stroke="#647078" stroke-linecap="round" stroke-width="34" opacity=".5"/>
+  <path d="M420 514C525 438 601 364 689 250c40-52 86-65 145-34" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="72"/>
+  <path d="M418 525C503 507 572 503 642 541" fill="none" stroke="#8da94c" stroke-linecap="round" stroke-width="26" opacity=".8"/>
+  <path d="M366 453c-15 40-9 89 30 119 43 34 105 32 149 2 46-31 60-89 30-135-28-42-80-53-129-43-38 8-67 25-80 57Z" fill="#c8f36a"/>
+  <circle cx="834" cy="215" r="45" fill="#dfe8ee"/>
+  <circle cx="834" cy="215" r="17" fill="#121416"/>
+  <circle cx="265" cy="344" r="13" fill="#9fb5bd"/>
+  <circle cx="187" cy="716" r="13" fill="#9fb5bd"/>
+  <circle cx="386" cy="824" r="13" fill="#9fb5bd"/>
+</svg>

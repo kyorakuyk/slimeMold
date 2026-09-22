@@ -1,5 +1,5 @@
 import { isTauri } from '../platform/env';
-import type { ApiEndpoint, ApiVault, Protocol, Vendor } from '../types';
+import type { ApiEndpoint, ApiVault, Protocol, Vendor } from '../types/agent';
 
 /**
  * API 接入点存储封装（路线 A）。

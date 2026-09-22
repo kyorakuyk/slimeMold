@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Perspective Bloom</title>
+  <desc id="desc">A living slime mold grows from the foreground, tests receding routes and reinforces one shortest path toward a distant nutrient source.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#101315"/>
+  <path d="M96 874 842 248 992 874 224 1024Z" fill="#1a2023"/>
+  <path d="M96 874 842 248M224 1024 842 248M992 874 842 248" fill="none" stroke="#3b454b" stroke-linecap="round" stroke-width="12" opacity=".5"/>
+  <path d="M165 792C284 615 363 371 567 287c96-39 190-34 270-18" fill="none" stroke="#5b646b" stroke-linecap="round" stroke-width="24" stroke-dasharray="8 19" opacity=".38"/>
+  <path d="M185 811C371 887 595 834 710 647c64-104 97-254 127-378" fill="none" stroke="#5b646b" stroke-linecap="round" stroke-width="24" stroke-dasharray="8 19" opacity=".36"/>
+  <path d="M217 756C326 739 398 646 496 602c118-53 151-174 221-263 36-46 78-73 122-76" fill="none" stroke="#668138" stroke-linecap="round" stroke-linejoin="round" stroke-width="105" opacity=".72" transform="translate(0 21)"/>
+  <path d="M217 756C326 739 398 646 496 602c118-53 151-174 221-263 36-46 78-73 122-76" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="82"/>
+  <path d="M217 756C326 739 398 646 496 602c118-53 151-174 221-263 36-46 78-73 122-76" fill="none" stroke="#eff9c8" stroke-linecap="round" stroke-width="13" opacity=".88"/>
+  <path d="M181 785c-22-42-11-88 23-112 28-20 33-59 77-68 42-9 65 22 94 45 34 27 75 30 86 69 12 44-18 88-62 103-39 13-70-3-105 9-46 15-88-5-113-46Z" fill="#6d8a3d" transform="translate(0 18)"/>
+  <path d="M181 765c-22-42-11-88 23-112 28-20 33-59 77-68 42-9 65 22 94 45 34 27 75 30 86 69 12 44-18 88-62 103-39 13-70-3-105 9-46 15-88-5-113-46Z" fill="#c8f36a"/>
+  <path d="M252 700c27-32 59-51 95-59M261 787c40 12 76 10 111-8" fill="none" stroke="#91ad4d" stroke-linecap="round" stroke-width="20" opacity=".82"/>
+  <circle cx="172" cy="804" r="34" fill="#dfe8ee"/>
+  <circle cx="172" cy="804" r="14" fill="#101315"/>
+  <circle cx="856" cy="245" r="48" fill="#dfe8ee"/>
+  <circle cx="856" cy="245" r="18" fill="#101315"/>
+</svg>

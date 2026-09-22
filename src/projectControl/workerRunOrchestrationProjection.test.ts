@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from './workerRunOrchestrationProjection';
+import { projectWorkerRunOntoOrchestration, projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun, suppressInvalidWorkerRunProjection } from './workerRunOrchestrationProjection';
 
 function orchestration(): Orchestration {
   return {
@@ -60,6 +60,7 @@ function run(
         status: taskStatus,
         attempt: status === 'queued' ? 0 : 1,
         evidenceIds: taskStatus === 'succeeded' ? ['ev-1'] : [],
+        acceptanceId: taskStatus === 'succeeded' ? 'acceptance-1' : undefined,
         error,
         updatedAt: '2026-09-01T00:01:00.000Z',
       },
@@ -85,6 +86,51 @@ describe('Worker Run → Orchestration projection', () => {
     expect(projected.stageLogs.every((log) => log.runId === 'run-1')).toBe(true);
   });
 
+  it('does not project an invalid succeeded run as done', () => {
+    const valid = run('succeeded', 'succeeded');
+    const invalid = {
+      ...valid,
+      tasks: {
+        'task-1': { ...valid.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const projected = projectWorkerRunOntoOrchestration(orchestration(), invalid);
+
+    expect(projected.status).not.toBe('done');
+    expect(projected.stageLogs.every((log) => log.status !== 'success')).toBe(true);
+  });
+
+
+  it('downgrades an already-done orchestration when a newer succeeded run lacks provenance', () => {
+    const valid = run('succeeded', 'succeeded');
+    const invalid = {
+      ...valid,
+      runId: 'run-newer-invalid',
+      updatedAt: '2026-09-01T00:02:00.000Z',
+      tasks: {
+        'task-1': { ...valid.tasks['task-1'], acceptanceId: undefined },
+      },
+    };
+    const current = { ...orchestration(), status: 'done' as const };
+    const projected = projectWorkerRunOntoOrchestration(current, invalid);
+
+    expect(projected.status).not.toBe('done');
+  });
+  it('does not complete an orchestration when a succeeded run omits a staged task', () => {
+    const current = orchestration();
+    current.draft = {
+      ...current.draft!,
+      stages: current.draft!.stages.map((stage) => ({
+        ...stage,
+        taskIds: [...(stage.taskIds ?? []), 'task-2'],
+      })),
+    };
+    current.stageLogs = current.stageLogs.map((log) => ({ ...log, status: 'success' as const }));
+    const projected = projectWorkerRunOntoOrchestration(current, run('succeeded', 'succeeded'));
+
+    expect(projected.status).not.toBe('done');
+    expect(projected.stageLogs.every((log) => log.status !== 'success')).toBe(true);
+  });
   it('projects a failed Worker task as a failed orchestration with the real error', () => {
     const projected = projectWorkerRunOntoOrchestration(
       orchestration(),
@@ -97,6 +143,21 @@ describe('Worker Run → Orchestration projection', () => {
     expect(projected.stageLogs.every((log) => log.error === '宿主验收失败：tests')).toBe(true);
   });
 
+  it('suppresses completed orchestration projection when Worker facts are invalid', () => {
+    const current = orchestration();
+    current.status = 'done';
+    current.stageLogs = current.stageLogs.map((log) => ({ ...log, status: 'success' as const }));
+    current.stageLogsByRun = {
+      'run-1': current.stageLogs,
+    };
+
+    const [suppressed] = suppressInvalidWorkerRunProjection([current], 'Worker facts invalid');
+
+    expect(suppressed.status).toBe('failed');
+    expect(suppressed.stageLogs.every((log) => log.status === 'pending')).toBe(true);
+    expect(suppressed.stageLogs.every((log) => log.error === 'Worker facts invalid')).toBe(true);
+    expect(suppressed.stageLogsByRun?.['run-1']?.every((log) => log.status === 'pending')).toBe(true);
+  });
   it('keeps stage logs isolated for multiple runs of one orchestration', () => {
     const first = run('succeeded', 'succeeded');
     const second = {

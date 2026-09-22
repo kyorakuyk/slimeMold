@@ -13,7 +13,8 @@
  * 管「工具（ToolDefinition）」。节点是图上的可见单元；工具是 LLM 可调用的能力原语。
  */
 
-import type { LLMToolSpec, ExecContext } from '../types';
+import type { LLMToolSpec } from '../types/agent';
+import type { ExecContext } from '../types/node';
 
 /** 工具执行上下文：复用节点 execute 的 ctx 契约的精简子集（避免引入整张图依赖） */
 export interface ToolContext {

@@ -43,6 +43,15 @@ describe('Semaphore', () => {
     release();
   });
 
+  it('已有可用 permit 时，已中止 signal 仍不得获得 permit', async () => {
+    const sem = new Semaphore(1);
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(sem.acquire(ctrl.signal)).rejects.toThrow('Aborted');
+    const release = await sem.acquire();
+    release();
+  });
+
   it('acquire 阻塞期间 signal 中止 reject AbortError', async () => {
     const sem = new Semaphore(1);
     const release = await sem.acquire();
@@ -51,6 +60,23 @@ describe('Semaphore', () => {
     ctrl.abort();
     await expect(p).rejects.toThrow('Aborted');
     release();
+  });
+
+  it('取消的排队者不会吞掉 release，后续等待者仍能获得许可', async () => {
+    const sem = new Semaphore(1);
+    const release = await sem.acquire();
+    const cancelled = new AbortController();
+    const cancelledAcquire = sem.acquire(cancelled.signal);
+    cancelled.abort();
+    await expect(cancelledAcquire).rejects.toThrow('Aborted');
+
+    const nextAcquire = sem.acquire();
+    release();
+    await expect(Promise.race([
+      nextAcquire.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+    ])).resolves.toBe(true);
+    (await nextAcquire)();
   });
 });
 

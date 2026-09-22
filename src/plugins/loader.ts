@@ -1,12 +1,8 @@
-import type {
-  CapabilityLevel,
-  LoadedPlugin,
-  NodeDefinition,
-  NodeExecuteFn,
-  PluginManifest,
-  PluginOccupation,
-} from '../types';
-import { createNodeDef } from '../types';
+import type { NodeExecuteFn } from '../types/node';
+import type { CapabilityLevel } from '../types/capability';
+import type { LoadedPlugin, PluginManifest, PluginOccupation } from '../types/plugin';
+import type { NodeDefinition } from '../types/node';
+import { createNodeDef } from '../types/node';
 import { OCCUPATION_CAPABILITY, capabilityOfClass } from '../nodes/sdk';
 import { createSandboxedNodeExecute, sandboxManager } from './sandbox';
 

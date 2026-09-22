@@ -8,16 +8,12 @@
  * 后续步骤可把更多 store 访问收口到该接口（或提供测试桩 / 无头实现），从而让 executor 不依赖具体 store。
  * 当前阶段：工厂实现仍委托 store，行为完全等价，仅建立接缝、零回归。
  */
-import type {
-  AssetMeta,
-  CostRecord,
-  FlowEdge,
-  LogEntry,
-  NodeStatus,
-  RunRecord,
-  WorkflowNodeData,
-} from '../types';
-import { useWorkflowStore, type RunProgressShape } from '../store/workflowStore';
+import type { CostRecord } from '../types/agent';
+import type { LogEntry, RunRecord } from '../types/execution';
+import type { AssetMeta } from '../types/project';
+import type { FlowEdge, NodeStatus, WorkflowNodeData } from '../types/graph';
+import { useWorkflowStore } from '../store/workflowStore';
+import type { RunProgressShape } from '../store/workflowStoreTypes';
 
 /**
  * 执行引擎对外输出的运行时动作（聚焦「输出」侧，便于解耦与测试替身）。

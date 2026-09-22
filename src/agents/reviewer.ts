@@ -13,7 +13,7 @@
  * 复用：prompts.buildReviewPrompt + harness.runAgentLoop（共用 AgentHarness）。
  */
 
-import type { AgentConfig, ChatMessage } from '../types';
+import type { AgentConfig, ChatMessage } from '../types/agent';
 import { runAgentLoop } from './harness';
 import { buildReviewPrompt, type ReviewContext, type ReviewKind } from './prompts';
 import { commitMemory, commitSkillDraft, extractMemoryList, extractSkillJson } from './memoryIo';

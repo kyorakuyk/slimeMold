@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Frontier</title>
+  <desc id="desc">A close foreground plasmodium pushes several tendrils into depth, pruning weak probes and keeping a reinforced route to a distant nutrient.</desc>
+  <defs>
+    <radialGradient id="body" cx="32%" cy="24%" r="80%">
+      <stop offset="0" stop-color="#eff9c8"/>
+      <stop offset="0.3" stop-color="#c8f36a"/>
+      <stop offset="1" stop-color="#718a3d"/>
+    </radialGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#dbff88"/>
+      <stop offset="1" stop-color="#8db448"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="256" fill="#0f1214"/>
+  <path d="M92 896 846 204 992 896 218 1024Z" fill="#182023"/>
+  <path d="M92 896 846 204M218 1024 846 204M992 896 846 204" fill="none" stroke="#414b51" stroke-linecap="round" stroke-width="10" opacity=".56"/>
+  <path d="M132 906Q490 764 956 602M170 972Q516 844 975 736" fill="none" stroke="#3d464c" stroke-width="8" opacity=".44"/>
+  <path d="M358 596C419 470 438 355 404 257" fill="none" stroke="#68737a" stroke-linecap="round" stroke-width="32" stroke-dasharray="8 21" opacity=".5"/>
+  <path d="M383 634C499 615 608 658 701 758" fill="none" stroke="#68737a" stroke-linecap="round" stroke-width="32" stroke-dasharray="8 21" opacity=".44"/>
+  <path d="M388 576C485 493 580 405 695 300c47-43 90-52 140-34" fill="none" stroke="#668039" stroke-linecap="round" stroke-width="122" opacity=".76" transform="translate(0 22)"/>
+  <path d="M388 576C485 493 580 405 695 300c47-43 90-52 140-34" fill="none" stroke="url(#tube)" stroke-linecap="round" stroke-linejoin="round" stroke-width="96"/>
+  <path d="M388 576C485 493 580 405 695 300c47-43 90-52 140-34" fill="none" stroke="#f3ffd5" stroke-linecap="round" stroke-width="12" opacity=".9"/>
+  <path d="M281 544c-33 44-27 105 18 150 53 53 142 57 198 10 60-50 64-131 14-185-45-48-117-54-179-27-22 10-39 26-51 52Z" fill="#667f3b" transform="translate(0 20)"/>
+  <path d="M281 524c-33 44-27 105 18 150 53 53 142 57 198 10 60-50 64-131 14-185-45-48-117-54-179-27-22 10-39 26-51 52Z" fill="url(#body)"/>
+  <circle cx="404" cy="257" r="16" fill="#68737a"/>
+  <circle cx="701" cy="758" r="16" fill="#68737a"/>
+  <circle cx="848" cy="266" r="46" fill="#dfe8ee"/>
+  <circle cx="848" cy="266" r="18" fill="#0f1214"/>
+</svg>

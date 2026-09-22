@@ -15,6 +15,7 @@ export type WorkerRunRecoveryReason =
   | 'task-graph-version-mismatch'
   | 'duplicate-run'
   | 'unfinished-worker-lease'
+  | 'failed-tasks'
   | 'invalid-state'
   | 'event-stream-invalid'
   | 'event-stream-drift'
@@ -126,6 +127,17 @@ export function rehydrateWorkerRunRegistry(
         run,
         'unfinished-worker-lease',
         '检测到未闭合 Worker lease，等待副作用账本核对后才能恢复',
+      ));
+      continue;
+    }
+    const failedTaskIds = Object.values(run.tasks)
+      .filter((task) => task.status === 'failed')
+      .map((task) => task.taskId);
+    if (['partial', 'queued', 'blocked'].includes(run.status) && failedTaskIds.length > 0) {
+      recoveries.push(recovery(
+        run,
+        'failed-tasks',
+        `检测到 ${failedTaskIds.length} 个失败 Task，必须选择 retry 或 skip 后才能继续`,
       ));
       continue;
     }

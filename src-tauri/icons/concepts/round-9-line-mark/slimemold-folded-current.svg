@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Folded Current</title>
+  <desc id="desc">A continuous rounded line folds a short probe back into a longer organic current.</desc>
+  <path d="M178 702C213 633 285 590 367 571C449 552 503 514 532 449C563 380 571 302 636 260C700 219 786 236 814 293C842 349 802 405 739 413C676 421 642 455 650 503C659 556 721 581 770 613C820 645 835 705 802 749C766 798 691 792 641 753C593 716 555 684 510 700C463 716 431 778 369 786C305 795 253 763 247 713" fill="none" stroke="#a96d4d" stroke-width="108" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M383 565C344 529 327 483 340 442C353 402 385 377 420 383C451 388 468 416 458 443C448 470 422 484 411 511C402 534 413 550 430 571" fill="none" stroke="#a96d4d" stroke-width="48" stroke-linecap="round" opacity=".36"/>
+</svg>

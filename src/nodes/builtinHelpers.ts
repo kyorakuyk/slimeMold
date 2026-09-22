@@ -9,7 +9,7 @@
  * 本文件不 import `useWorkflowStore` / `useRegistryStore`，也不触碰任何运行态，
  * 仅依赖 `../types` 的基础类型，便于在 node 测试环境下直接 import。
  */
-import type { ModuleItem, TaskItem } from '../types';
+import type { ModuleItem, TaskItem } from '../types/dispatch';
 
 /** 根据文件名推断资产类型，用于左侧「资产」面板的预览 */
 export function inferAssetKind(filename: string): string {

@@ -1,7 +1,7 @@
 import { memo, useState, useContext } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Boxes, Copy, RotateCcw, StepForward, Ungroup, Check, AlertTriangle, Loader2, ChevronDown, ChevronRight, ArrowRightLeft, VolumeX, Play, type LucideIcon } from 'lucide-react';
-import type { FlowNode, NodeStatus } from '../../types';
+import type { FlowNode, NodeStatus } from '../../types/graph';
 import { useRegistryStore } from '../../store/registryStore';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { useViewStore } from '../../store/viewStore';

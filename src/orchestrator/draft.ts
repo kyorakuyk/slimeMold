@@ -7,9 +7,11 @@
  * - 阶段模板先硬编码（MVP），H3d 再接入 LLM 生成。
  */
 
-import type { AgentConfig, AgentRouteTable, ArtifactKind } from '../types';
+import type { AgentConfig } from '../types/agent';
+import type { AgentRouteTable } from '../types/dispatch';
+import type { ArtifactKind, PipelineDraft } from '../types/orchestration';
 import { decideAgentCall } from '../agents/agentDecision';
-import type { OrchestratorRequest, PipelineDraft } from './types';
+import type { OrchestratorRequest } from './types';
 
 /** 阶段模板：把任意目标映射为「计划 → 实施 → 验收」三段（MVP 硬编码） */
 const STAGE_TEMPLATE: Array<{

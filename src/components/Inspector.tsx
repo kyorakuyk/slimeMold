@@ -6,7 +6,7 @@ import { useViewStore } from '../store/viewStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { alertDialog, isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
-import type { ParamDef } from '../types';
+import type { ParamDef } from '../types/graph';
 import { useT } from '../i18n/useT';
 import { AgentSelect } from './AgentSelect';
 import { mergeAgentPool } from '../agents/globalAgents';

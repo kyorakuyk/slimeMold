@@ -8,7 +8,7 @@
  *
  * 设计原则：纯函数，不持有 store；dirtySet/force/loopVarsState 作为可变容器传入。
  */
-import type { FlowNode } from '../types';
+import type { FlowNode } from '../types/graph';
 
 /** 每轮循环的循环体信息：gateId → 循环体节点 id 集合（来自 runPlan 的 loopBodyOf）。 */
 export type LoopBodies = Map<string, Set<string>>;
@@ -33,7 +33,7 @@ export function prepareLoopRound(args: {
   dirtySet: Set<string>;
   force: Set<string>;
   loopVarsState: Record<string, number>;
-  strike: (typeId: string) => void;
+  strike: (nodeId: string, typeId: string) => void;
 }): void {
   const { round, loopBodies, loopVarOf, nodeById, dirtySet, force, loopVarsState, strike } = args;
   if (round <= 0) return;
@@ -41,11 +41,11 @@ export function prepareLoopRound(args: {
     // loopGate 自身每轮强制重算（见上方注释：防缓存命中吞掉分支上报）
     dirtySet.add(gid);
     force.add(gid);
-    strike(nodeById.get(gid)?.data.typeId ?? '');
+    strike(gid, nodeById.get(gid)?.data.typeId ?? '');
     for (const bid of body) {
       dirtySet.add(bid);
       force.add(bid);
-      strike(nodeById.get(bid)?.data.typeId ?? '');
+      strike(bid, nodeById.get(bid)?.data.typeId ?? '');
     }
     const lv = loopVarOf.get(gid);
     if (lv) loopVarsState[lv] = round;

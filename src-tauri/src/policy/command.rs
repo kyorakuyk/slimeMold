@@ -1,0 +1,675 @@
+#[cfg(test)]
+use serde::Deserialize;
+
+const MAX_COMMAND_ARGS: usize = 256;
+const MAX_COMMAND_TOKEN_BYTES: usize = 4096;
+const MAX_COMMAND_TOTAL_BYTES: usize = 32768;
+
+fn is_bounded_command(command: &[String]) -> bool {
+    if command.is_empty() || command.len() > MAX_COMMAND_ARGS {
+        return false;
+    }
+    let mut total_bytes = 0usize;
+    for token in command {
+        if token.len() > MAX_COMMAND_TOKEN_BYTES {
+            return false;
+        }
+        total_bytes = match total_bytes.checked_add(token.len()) {
+            Some(total) if total <= MAX_COMMAND_TOTAL_BYTES => total,
+            _ => return false,
+        };
+    }
+    true
+}
+
+#[cfg(test)]
+#[derive(Debug, Deserialize)]
+struct PolicyVector {
+    command: Vec<String>,
+    accepted: bool,
+    #[serde(rename = "intentKind")]
+    intent_kind: Option<String>,
+    #[allow(dead_code)]
+    name: String,
+}
+
+fn is_safe_git_ref(value: &str) -> bool {
+    if value.is_empty()
+        || !value.is_ascii()
+        || value == "@"
+        || value.contains("..")
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        || value.chars().any(|c| {
+            c.is_ascii_control()
+                || c.is_ascii_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
+    {
+        return false;
+    }
+    value.split('/').all(|part| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !part.starts_with('.')
+            && !part.ends_with('.')
+            && !part.to_ascii_lowercase().ends_with(".lock")
+    })
+}
+
+fn safe_revision(value: &str) -> bool {
+    if value == "HEAD"
+        || (matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        return true;
+    }
+    if value.starts_with("refs/heads/") || value.starts_with("refs/tags/") {
+        return value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+            && is_safe_git_ref(value);
+    }
+    if ["feature/", "bugfix/", "hotfix/", "release/", "worker/"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+    {
+        let leaf = value.rsplit('/').next().unwrap_or_default();
+        return is_safe_git_ref(value) && !leaf.is_empty() && !leaf.contains('.');
+    }
+    !value.is_empty()
+        && value
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains('.')
+        && !value.ends_with('-')
+        && !value.ends_with('_')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+fn is_windows_device_name(component: &str) -> bool {
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "AUX"
+            | "CLOCK$"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "CON"
+            | "CONIN$"
+            | "CONOUT$"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "NUL"
+            | "PRN"
+    )
+}
+
+fn safe_path(value: &str) -> bool {
+    let normalized = value.replace('\\', "/");
+    let comparable = normalized.to_ascii_lowercase();
+    let components: Vec<&str> = normalized.split('/').collect();
+    if normalized.is_empty()
+        || !normalized.is_ascii()
+        || normalized.chars().any(|c| c.is_ascii_control())
+        || normalized.starts_with('-')
+        || normalized.starts_with('/')
+        || normalized.starts_with('\\')
+        || normalized.contains(":")
+        || normalized.contains("..")
+        || components.iter().any(|part| {
+            part.is_empty()
+                || *part == "."
+                || *part == ".."
+                || part.ends_with('.')
+                || part.ends_with(' ')
+                || is_windows_device_name(part)
+        })
+        || normalized.contains('*')
+        || normalized.contains('?')
+        || normalized.contains('[')
+        || normalized.contains(']')
+        || normalized.chars().all(|c| matches!(c, '.' | '/'))
+    {
+        return false;
+    }
+    [
+        "package.json",
+        "package-lock.json",
+        "vitest.config.ts",
+        "scripts",
+        "tests",
+        "src/store/workflowStore.ts",
+        "src/engine/executor.ts",
+        "src/orchestrator",
+        "src/plugins/sandbox",
+        "src-tauri/capabilities",
+        ".git",
+        ".slimemold",
+    ]
+    .iter()
+    .all(|root| {
+        let comparable_root = root.to_ascii_lowercase();
+        comparable != comparable_root
+            && !comparable.starts_with(&format!("{comparable_root}/"))
+            && !comparable_root.starts_with(&format!("{comparable}/"))
+    })
+}
+
+fn is_safe_find_value(predicate: &str, value: &str) -> bool {
+    if value.is_empty() || value.starts_with('-') || value.chars().any(|c| c.is_ascii_control()) {
+        return false;
+    }
+    match predicate {
+        "-maxdepth" | "-mindepth" => value.chars().all(|c| c.is_ascii_digit()),
+        "-type" => matches!(value, "b" | "c" | "d" | "f" | "l" | "p" | "s"),
+        _ => true,
+    }
+}
+
+fn parse_find_primary(predicates: &[String], start: usize) -> Option<usize> {
+    let mut index = start;
+    let mut unary_depth = 0;
+    while matches!(
+        predicates.get(index).map(String::as_str),
+        Some("-not" | "!")
+    ) {
+        unary_depth += 1;
+        if unary_depth > 128 {
+            return None;
+        }
+        index += 1;
+    }
+    let predicate = predicates.get(index)?.as_str();
+    if matches!(
+        predicate,
+        "-mount" | "-xdev" | "-prune" | "-print" | "-print0" | "-ls" | "-quit"
+    ) {
+        return Some(index + 1);
+    }
+    if matches!(
+        predicate,
+        "-name"
+            | "-iname"
+            | "-path"
+            | "-ipath"
+            | "-type"
+            | "-maxdepth"
+            | "-mindepth"
+            | "-printf"
+            | "-regex"
+            | "-iregex"
+    ) && predicates
+        .get(index + 1)
+        .is_some_and(|value| is_safe_find_value(predicate, value))
+    {
+        return Some(index + 2);
+    }
+    None
+}
+
+fn are_find_predicates_safe(predicates: &[String]) -> bool {
+    let mut index = match parse_find_primary(predicates, 0) {
+        Some(index) => index,
+        None => return false,
+    };
+    while index < predicates.len() {
+        if matches!(predicates[index].as_str(), "-o" | "-or" | "-a" | "-and") {
+            index = match parse_find_primary(predicates, index + 1) {
+                Some(index) => index,
+                None => return false,
+            };
+            continue;
+        }
+        index = match parse_find_primary(predicates, index) {
+            Some(index) => index,
+            None => return false,
+        };
+    }
+    true
+}
+
+fn is_safe_read_operand(command: &str, path: &str) -> bool {
+    safe_path(path) && !(command == "tail" && path.starts_with('+'))
+}
+
+fn is_safe_script_path(script: &str) -> bool {
+    script
+        .strip_prefix("scripts/")
+        .map(|relative| safe_path(&format!("src/{relative}")))
+        .unwrap_or(false)
+}
+
+fn is_safe_typecheck(command: &[String]) -> bool {
+    (command.len() == 2 && command[0] == "tsc" && matches!(command[1].as_str(), "--noEmit" | "-b"))
+        || (command.len() == 3
+            && command[0] == "node"
+            && command[1] == "--check"
+            && is_safe_script_path(&command[2]))
+}
+
+fn hardened_git_diff_pathspec_safe(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value.chars().any(|c| c.is_ascii_control())
+        && !value.starts_with(':')
+        && !value.contains('*')
+        && !value.contains('?')
+        && !value.contains('[')
+        && !value.contains(']')
+}
+
+pub(crate) fn hardened_git_diff_is_supported(command: &[String]) -> bool {
+    if !is_bounded_command(command)
+        || command.len() < 8
+        || command[0] != "git"
+        || command[1] != "--no-pager"
+        || command[2] != "diff"
+        || command[3] != "--no-ext-diff"
+        || command[4] != "--no-textconv"
+    {
+        return false;
+    }
+    if command[5] == "--name-only" {
+        return command.len() == 8 && safe_revision(&command[6]) && command[7] == "--";
+    }
+    safe_revision(&command[5])
+        && command[6] == "--"
+        && command[7..]
+            .iter()
+            .all(|path| hardened_git_diff_pathspec_safe(path))
+}
+
+pub(crate) fn command_is_supported(command: &[String]) -> bool {
+    if !is_bounded_command(command) {
+        return false;
+    }
+    if is_safe_typecheck(command) {
+        return true;
+    }
+    if matches!(
+        command.first().map(String::as_str),
+        Some("ls" | "cat" | "head" | "tail")
+    ) {
+        return command.len() > 1
+            && command[1..]
+                .iter()
+                .all(|path| is_safe_read_operand(command[0].as_str(), path));
+    }
+    if command.len() == 5
+        && command[0] == "git"
+        && command[1] == "diff"
+        && command[2] == "--name-only"
+        && command[4] == "--"
+    {
+        return safe_revision(&command[3]);
+    }
+    if command.len() >= 5 && command[0] == "git" && command[1] == "diff" {
+        return command[3] == "--"
+            && safe_revision(&command[2])
+            && command[4..].iter().all(|path| safe_path(path));
+    }
+    if command.first().map(String::as_str) == Some("grep") {
+        let mut index = 1;
+        let mut pattern: Option<&str> = None;
+        while index < command.len() {
+            let argument = &command[index];
+            if argument == "--" {
+                pattern = command.get(index + 1).map(String::as_str);
+                index += 2;
+                break;
+            }
+            if matches!(argument.as_str(), "-e" | "--regexp") {
+                let Some(value) = command.get(index + 1) else {
+                    return false;
+                };
+                if value.is_empty()
+                    || value.starts_with('-')
+                    || value.chars().any(|c| c.is_ascii_control())
+                {
+                    return false;
+                }
+                pattern = Some(value);
+                index += 2;
+                break;
+            }
+            if argument.starts_with('-') {
+                if !matches!(
+                    argument.as_str(),
+                    "-n" | "--line-number"
+                        | "-i"
+                        | "--ignore-case"
+                        | "-F"
+                        | "--fixed-strings"
+                        | "-v"
+                        | "--invert-match"
+                ) {
+                    return false;
+                }
+                index += 1;
+            } else {
+                pattern = Some(argument);
+                index += 1;
+                break;
+            }
+        }
+        return pattern.is_some_and(|value| {
+            !value.is_empty() && !value.chars().any(|c| c.is_ascii_control())
+        }) && index < command.len()
+            && command[index..].iter().all(|path| safe_path(path));
+    }
+    if command.first().map(String::as_str) == Some("find") {
+        let forbidden = [
+            "-L",
+            "-H",
+            "-follow",
+            "-files0-from",
+            "--files0-from",
+            "-delete",
+            "-exec",
+            "-execdir",
+            "-ok",
+            "-okdir",
+            "-fls",
+            "-fprint",
+            "-fprint0",
+        ];
+        if command.iter().any(|argument| {
+            forbidden
+                .iter()
+                .any(|option| argument == option || argument.starts_with(&format!("{option}=")))
+        }) {
+            return false;
+        }
+        let mut index = 1;
+        if command.get(index).map(String::as_str) == Some("-P") {
+            index += 1;
+        }
+        let root_start = index;
+        while index < command.len() && !command[index].starts_with('-') && command[index] != "!" {
+            index += 1;
+        }
+        if index == root_start
+            || !command[root_start..index]
+                .iter()
+                .all(|root| safe_path(root))
+        {
+            return false;
+        }
+        return are_find_predicates_safe(&command[index..]);
+    }
+    if command.first().map(String::as_str) == Some("tsx") {
+        let Some(script) = command.get(1) else {
+            return false;
+        };
+        return is_safe_script_path(script)
+            && command[2..].iter().all(|arg| arg == "--reporter=dot");
+    }
+    false
+}
+
+pub(crate) fn command_intent_kind(command: &[String]) -> Option<&'static str> {
+    if !command_is_supported(command) {
+        return None;
+    }
+    if is_safe_typecheck(command)
+        || matches!(
+            command.first().map(String::as_str),
+            Some("ls" | "cat" | "head" | "tail")
+        )
+    {
+        return if is_safe_typecheck(command) {
+            Some("typecheck")
+        } else {
+            Some("read-files")
+        };
+    }
+    if command.len() == 5
+        && command[0] == "git"
+        && command[2] == "--name-only"
+        && command[4] == "--"
+    {
+        return Some("git-names-only");
+    }
+    if command.first().map(String::as_str) == Some("git") {
+        return Some("git-diff-scoped");
+    }
+    if command.first().map(String::as_str) == Some("grep") {
+        return Some("grep-files");
+    }
+    if command.first().map(String::as_str) == Some("find") {
+        return Some("find");
+    }
+    if command.first().map(String::as_str) == Some("tsx") {
+        return Some("tsx-script");
+    }
+    None
+}
+
+pub(crate) fn git_diff_execution_args(command: &[String]) -> Option<Vec<String>> {
+    if !command_is_supported(command) {
+        return None;
+    }
+    if command.len() == 5
+        && command[0] == "git"
+        && command[1] == "diff"
+        && command[2] == "--name-only"
+        && command[4] == "--"
+    {
+        return Some(vec![
+            "git".into(),
+            "--no-pager".into(),
+            "diff".into(),
+            "--no-ext-diff".into(),
+            "--no-textconv".into(),
+            "--name-only".into(),
+            command[3].clone(),
+            "--".into(),
+        ]);
+    }
+    if command.len() >= 5 && command[0] == "git" && command[1] == "diff" && command[3] == "--" {
+        let mut args = vec![
+            "git".into(),
+            "--no-pager".into(),
+            "diff".into(),
+            "--no-ext-diff".into(),
+            "--no-textconv".into(),
+            command[2].clone(),
+            "--".into(),
+        ];
+        args.extend(command[4..].iter().cloned());
+        return Some(args);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rust_acceptance_matches_shared_policy_vectors() {
+        let raw = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/dev/command-policy-vectors.json"
+        ));
+        let vectors: Vec<PolicyVector> =
+            serde_json::from_str(raw).expect("valid command policy vectors");
+        for vector in vectors {
+            assert_eq!(
+                command_is_supported(&vector.command),
+                vector.accepted,
+                "{}",
+                vector.name
+            );
+            assert_eq!(
+                command_intent_kind(&vector.command),
+                vector.intent_kind.as_deref(),
+                "intent: {}",
+                vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_excessive_find_unary_depth_without_recursion() {
+        let mut command = vec!["find".to_string(), "src/components".to_string()];
+        command.extend(std::iter::repeat_n("!".to_string(), 129));
+        command.extend(["-name".to_string(), "*.tsx".to_string()]);
+        assert!(!command_is_supported(&command));
+    }
+
+    #[test]
+    fn accepts_only_hardened_git_diff_invocations() {
+        let scoped = vec![
+            "git",
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+            "--",
+            "C:/repo/wt/src/components/App.tsx",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert!(hardened_git_diff_is_supported(&scoped));
+        let names = vec![
+            "git",
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "HEAD",
+            "--",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert!(hardened_git_diff_is_supported(&names));
+        let wrong_ext_diff = scoped
+            .iter()
+            .map(|value| value.replace("--no-ext-diff", "--ext-diff"))
+            .collect::<Vec<_>>();
+        assert!(!hardened_git_diff_is_supported(&wrong_ext_diff));
+        let bracket_alias = scoped
+            .iter()
+            .map(|value| value.replace("src/components/App.tsx", "package[.]json"))
+            .collect::<Vec<_>>();
+        assert!(!hardened_git_diff_is_supported(&bracket_alias));
+        for magic in [
+            ":(icase)package.json",
+            ":(top)package.json",
+            ":/package.json",
+            ":!package.json",
+            ":^package.json",
+            ":(attr:filter=lfs)package.json",
+            ":(literal)package.json",
+        ] {
+            let magic_path = scoped
+                .iter()
+                .map(|value| value.replace("C:/repo/wt/src/components/App.tsx", magic))
+                .collect::<Vec<_>>();
+            assert!(
+                !hardened_git_diff_is_supported(&magic_path),
+                "must reject Git pathspec magic: {magic}"
+            );
+        }
+    }
+
+    #[test]
+    fn builds_config_independent_git_diff_args() {
+        let scoped = vec![
+            "git".to_string(),
+            "diff".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+            "src/components".to_string(),
+        ];
+        assert_eq!(
+            git_diff_execution_args(&scoped).unwrap(),
+            vec![
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "HEAD",
+                "--",
+                "src/components"
+            ]
+        );
+        let names = vec![
+            "git".to_string(),
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+        ];
+        assert_eq!(
+            git_diff_execution_args(&names).unwrap(),
+            vec![
+                "git",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "HEAD",
+                "--"
+            ]
+        );
+    }
+
+    #[test]
+    fn enforces_exact_command_input_budgets() {
+        assert!(command_is_supported(&vec![
+            "cat".to_string(),
+            "x".repeat(4096)
+        ]));
+        assert!(!command_is_supported(&vec![
+            "cat".to_string(),
+            "x".repeat(4097)
+        ]));
+
+        let mut total_at_limit = vec!["cat".to_string()];
+        total_at_limit.extend(std::iter::repeat_n("x".repeat(4096), 7));
+        total_at_limit.push("x".repeat(4093));
+        assert!(command_is_supported(&total_at_limit));
+
+        let mut total_over_limit = vec!["cat".to_string()];
+        total_over_limit.extend(std::iter::repeat_n("x".repeat(4096), 7));
+        total_over_limit.push("x".repeat(4094));
+        assert!(!command_is_supported(&total_over_limit));
+
+        let mut many_args = vec!["cat".to_string()];
+        many_args.extend(std::iter::repeat_n("x".to_string(), 256));
+        assert!(!command_is_supported(&many_args));
+    }
+}

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Line Convergence</title>
+  <desc id="desc">An original line-based organic mark with a strong continuous growth trace and two restrained exploratory probes.</desc>
+  <g fill="none" stroke="#a96d4d" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 742C250 687 312 626 389 578C459 535 529 526 589 469C655 407 712 314 850 240" stroke-width="112"/>
+    <path d="M443 550C400 497 365 431 377 345" stroke-width="58"/>
+    <path d="M535 548C592 588 644 647 675 724" stroke-width="46" opacity=".42"/>
+    <path d="M342 621C299 610 260 585 234 547" stroke-width="34" opacity=".26"/>
+  </g>
+</svg>

@@ -29,6 +29,7 @@ import {
 import { recordProjectEvents } from '../projectControl/eventBuffer';
 import { enqueueWorkerRunCommand } from '../projectControl/workerRun';
 import { installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
+import { projectWorkerRecoveryActions } from '../projectControl/workerRecoveryCapabilityProjection';
 import type { WorkerRunRecoveryDecision } from '../projectControl/workerSideEffects';
 import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
@@ -36,6 +37,7 @@ import { projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from '../p
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
 import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 
 interface ProjectSessionPanelProps {
   sessionId: string;
@@ -43,8 +45,8 @@ interface ProjectSessionPanelProps {
   onOpenAdvanced: () => void;
   onOpenIssues?: () => void;
   onOpenMasterAgent?: () => void;
-  onRunWorker?: (runId: string) => Promise<void> | void;
-  onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string) => Promise<void> | void;
+  onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>, reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
 }
 
 function controlId(prefix: string): string {
@@ -102,6 +104,7 @@ export default function ProjectSessionPanel({
   const workerRuns = useWorkflowStore((state) => state.workerRuns);
   const projectControl = useWorkflowStore((state) => state.projectControl);
   const workerRunRecoveries = useWorkflowStore((state) => state.workerRunRecoveries ?? []);
+  const workerRunSideEffects = useWorkflowStore((state) => state.workerRunSideEffects ?? []);
   const globalMasterAgentId = useViewStore((state) => state.globalMasterAgentId);
 
   const session = findSession(projectControl, sessionId);
@@ -121,8 +124,18 @@ export default function ProjectSessionPanel({
     ? selectLatestWorkerRun(workerRuns, session.orchestrationId)
     : null;
   const currentWorkerRunRecovery = currentWorkerRun
+    && (currentWorkerRun.status !== 'queued'
+      || Object.values(currentWorkerRun.tasks).some((task) => ['failed', 'running', 'blocked', 'waiting-feedback'].includes(task.status)))
     ? workerRunRecoveries.find((item) => item.runId === currentWorkerRun.runId) ?? null
     : null;
+  const currentWorkerRecoveryActions = currentWorkerRun && currentWorkerRunRecovery
+    ? projectWorkerRecoveryActions({
+      run: currentWorkerRun,
+      recovery: currentWorkerRunRecovery,
+      taskGraph: currentTaskGraph,
+      sideEffects: workerRunSideEffects,
+    })
+    : [];
   const workerRunCopy = currentWorkerRunRecovery
     ? {
         title: t('session.workerRun.recovery'),
@@ -138,6 +151,8 @@ export default function ProjectSessionPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [workerStartBusy, setWorkerStartBusy] = useState(false);
+  const [workerRuntime, setWorkerRuntime] = useState<'codex' | 'antigravity'>('codex');
   const [streamingText, setStreamingText] = useState('');
   const [localResponse, setLocalResponse] = useState<MasterResponse | null>(null);
   const initialTurnStarted = useRef(false);
@@ -217,20 +232,31 @@ export default function ProjectSessionPanel({
   };
 
   const handleWorkerRecovery = (decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>) => {
-    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy) return;
+    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy || !currentWorkerRecoveryActions.includes(decision)) return;
     const runId = currentWorkerRun.runId;
     const reason = `用户在项目驾驶舱选择 ${decision}`;
     setRecoveryBusy(true);
     setError(null);
     void (async () => {
       try {
-        await onRecoverWorkerRun(runId, decision, reason);
+        await onRecoverWorkerRun(runId, decision, reason, workerRuntime);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         setRecoveryBusy(false);
       }
     })();
+  };
+
+  const handleStartQueuedWorker = () => {
+    if (!onRunWorker || !currentWorkerRun || currentWorkerRun.status !== 'queued' || currentWorkerRunRecovery || workerStartBusy) return;
+    setWorkerStartBusy(true);
+    setError(null);
+    void Promise.resolve(onRunWorker(currentWorkerRun.runId, workerRuntime))
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => setWorkerStartBusy(false));
   };
 
   const handleApproveBrief = async () => {
@@ -453,7 +479,7 @@ export default function ProjectSessionPanel({
         sensitivity: 'normal',
       }, ...queued.events]);
       if (onRunWorker) {
-        void Promise.resolve(onRunWorker(queued.state.runId)).catch((cause) => {
+        void Promise.resolve(onRunWorker(queued.state.runId, workerRuntime)).catch((cause) => {
           setError(cause instanceof Error ? cause.message : String(cause));
         });
       }
@@ -496,6 +522,31 @@ export default function ProjectSessionPanel({
               <button type="button" className="sm-beginner-text-button" onClick={onOpenIssues}>
                 {t('session.openIssues')} <ArrowRight size={14} />
               </button>
+            )}
+            {currentWorkerRun?.status === 'queued' && !currentWorkerRunRecovery && onRunWorker && (
+              <>
+                <label className="sm-beginner-worker-runtime" title={workerRuntime === 'antigravity' ? t('session.workerRuntime.antigravityHint') : undefined}>
+                  <span>{t('session.workerRuntime.label')}</span>
+                  <select
+                    aria-label={t('session.workerRuntime.label')}
+                    value={workerRuntime}
+                    onChange={(event) => setWorkerRuntime(event.target.value as 'codex' | 'antigravity')}
+                    disabled={workerStartBusy}
+                  >
+                    <option value="codex">{t('session.workerRuntime.codex')}</option>
+                    <option value="antigravity">{t('session.workerRuntime.antigravity')}</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  data-testid="beginner-session-start-worker"
+                  className="sm-beginner-text-button"
+                  disabled={workerStartBusy}
+                  onClick={handleStartQueuedWorker}
+                >
+                  {workerStartBusy ? t('session.thinking') : t('session.workerRun.start')} <ArrowRight size={14} />
+                </button>
+              </>
             )}
             <button type="button" className="sm-beginner-text-button" onClick={onOpenAdvanced}>
               {t('session.openAdvanced')} <ArrowRight size={14} />
@@ -725,29 +776,33 @@ export default function ProjectSessionPanel({
                   <strong>{t('session.workerRun.recoveryChoices')}</strong>
                   <ul>
                     <li>{t('session.workerRun.recovery.inspect')}</li>
-                    <li>{t('session.workerRun.recovery.retry')}</li>
-                    <li>{t('session.workerRun.recovery.skip')}</li>
+                    {currentWorkerRecoveryActions.includes('retry') && <li>{t('session.workerRun.recovery.retry')}</li>}
+                    {currentWorkerRecoveryActions.includes('skip') && <li>{t('session.workerRun.recovery.skip')}</li>}
                   </ul>
-                  {onRecoverWorkerRun && (
+                  {onRecoverWorkerRun && currentWorkerRecoveryActions.length > 0 && (
                     <div className="sm-beginner-session-recovery-actions">
-                      <button
-                        type="button"
-                        data-testid="beginner-session-worker-retry"
-                        className="sm-beginner-small-button"
-                        disabled={recoveryBusy}
-                        onClick={() => handleWorkerRecovery('retry')}
-                      >
-                        {t('session.workerRun.recovery.retryAction')}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="beginner-session-worker-skip"
-                        className="sm-beginner-small-button"
-                        disabled={recoveryBusy}
-                        onClick={() => handleWorkerRecovery('skip')}
-                      >
-                        {t('session.workerRun.recovery.skipAction')}
-                      </button>
+                      {currentWorkerRecoveryActions.includes('retry') && (
+                        <button
+                          type="button"
+                          data-testid="beginner-session-worker-retry"
+                          className="sm-beginner-small-button"
+                          disabled={recoveryBusy}
+                          onClick={() => handleWorkerRecovery('retry')}
+                        >
+                          {t('session.workerRun.recovery.retryAction')}
+                        </button>
+                      )}
+                      {currentWorkerRecoveryActions.includes('skip') && (
+                        <button
+                          type="button"
+                          data-testid="beginner-session-worker-skip"
+                          className="sm-beginner-small-button"
+                          disabled={recoveryBusy}
+                          onClick={() => handleWorkerRecovery('skip')}
+                        >
+                          {t('session.workerRun.recovery.skipAction')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

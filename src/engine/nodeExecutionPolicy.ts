@@ -10,7 +10,7 @@
  * 缓存键计算所需函数（collectInputs / cacheKey / getCached）作为参数注入，保持零 store 依赖。
  * isBranchPruned 本地实现（与 graphAlgo 一致），避免本模块反向依赖 graphAlgo。
  */
-import type { FlowEdge, FlowNode, NodeStatus } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types/graph';
 import type { NodeExecutionMode } from './graphAlgo';
 
 /** 节点定义（决策所需最小子集）。 */
@@ -25,6 +25,7 @@ export interface CacheHooks {
   collectInputs: (id: string, edges: FlowEdge[], outputsMap: Map<string, Record<string, unknown>>) => Record<string, unknown>;
   cacheKey: (typeId: string, params: Record<string, unknown>, upstream: Record<string, unknown>, scope: string) => string;
   getCached: (key: string) => Record<string, unknown> | null;
+  getCachedBranches?: (key: string) => string[] | undefined;
 }
 
 /** decideNodeExecution 输入。 */
@@ -53,10 +54,10 @@ export type NodeDecision =
   | { kind: 'missing-def'; typeId: string }
   | { kind: 'bypass'; outputs: Record<string, unknown> }
   | { kind: 'mute' }
-  | { kind: 'incremental-skip'; prevStatus?: NodeStatus }
+  | { kind: 'incremental-skip'; prevStatus?: NodeStatus; branches?: string[] }
   | { kind: 'pruned' }
   | { kind: 'cut' }
-  | { kind: 'cached'; outputs: Record<string, unknown> }
+  | { kind: 'cached'; outputs: Record<string, unknown>; branches?: string[] }
   | { kind: 'execute' };
 
 /** 前置决策（纯函数）。 */
@@ -88,8 +89,14 @@ export function decideNodeExecution(input: NodeExecutionDecisionInput): NodeDeci
       return { kind: 'bypass', outputs: bypassOutputs(id, def, incoming, outputsMap) };
     case 'mute':
       return { kind: 'mute' };
-    case 'incremental-skip':
-      return { kind: 'incremental-skip', prevStatus: mode.prevStatus };
+    case 'incremental-skip': {
+      const upstreamOutputs = isolated ? {} : cacheHooks.collectInputs(id, edges, outputsMap);
+      const key = cacheHooks.cacheKey(node.data.typeId, node.data.params ?? {}, upstreamOutputs, cacheScope);
+      const branches = cacheHooks.getCachedBranches?.(key);
+      return branches === undefined
+        ? { kind: 'incremental-skip', prevStatus: mode.prevStatus }
+        : { kind: 'incremental-skip', prevStatus: mode.prevStatus, branches };
+    }
     case 'execute':
       break; // 继续②
   }
@@ -110,7 +117,11 @@ export function decideNodeExecution(input: NodeExecutionDecisionInput): NodeDeci
     const key = cacheHooks.cacheKey(node.data.typeId, node.data.params ?? {}, upstreamOutputs, cacheScope);
     const cached = cacheHooks.getCached(key);
     if (cached) {
-      return { kind: 'cached', outputs: cached };
+      return {
+        kind: 'cached',
+        outputs: cached,
+        branches: cacheHooks.getCachedBranches?.(key),
+      };
     }
   }
 

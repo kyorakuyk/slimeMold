@@ -9,11 +9,14 @@ import {
   buildWorkerRunRecoveryPlan,
   createWorkerSideEffectRecorder,
   createWorkerEvidenceVerifier,
+  createPersistedWorkerAcceptanceVerifier,
+  createPersistedWorkerSideEffectRecorder,
   decideWorkerRunRecovery,
   applyWorkerRunRecoveryDecision,
 } from './workerSideEffects';
 
 const lease: WorkerTaskLease = {
+  projectId: 'project-1',
   runId: 'run-1',
   orchestrationId: 'orch-1',
   task: {
@@ -45,6 +48,7 @@ const lease: WorkerTaskLease = {
 const succeeded: WorkerExecutionResult = {
   status: 'succeeded',
   evidenceIds: ['evidence-1'],
+  acceptanceId: 'acceptance-1',
 };
 
 describe('worker side-effect recorder', () => {
@@ -58,6 +62,11 @@ describe('worker side-effect recorder', () => {
         expect(record.taskExecutionId).toBe(lease.taskExecutionId);
         expect(record.attemptId).toBe(lease.attemptId);
         expect(evidenceIds).toEqual(['evidence-1']);
+      },
+      async ({ record, acceptanceId }) => {
+        expect(record.taskExecutionId).toBe(lease.taskExecutionId);
+        expect(record.attemptId).toBe(lease.attemptId);
+        expect(acceptanceId).toBe('acceptance-1');
       },
     );
 
@@ -250,7 +259,10 @@ describe('worker side-effect recorder', () => {
     const recorder = createWorkerSideEffectRecorder(repository);
     const started = await recorder.start(lease);
 
-    await expect(recorder.complete(started, { status: 'succeeded' })).rejects.toThrow(/Evidence/);
+    await expect(recorder.complete(started, {
+      status: 'succeeded',
+      acceptanceId: 'acceptance-1',
+    })).rejects.toThrow(/Evidence/);
   });
 
   it('rejects a succeeded receipt when no host Evidence verifier is configured', async () => {
@@ -262,7 +274,39 @@ describe('worker side-effect recorder', () => {
     await expect(recorder.complete(started, {
       status: 'succeeded',
       evidenceIds: ['evidence-1'],
+      acceptanceId: 'acceptance-1',
     })).rejects.toThrow(/Evidence verifier/);
+  });
+
+  it('rejects a succeeded receipt without Acceptance provenance', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, {
+      status: 'succeeded',
+      evidenceIds: ['evidence-1'],
+    })).rejects.toThrow(/Acceptance|acceptance/);
+  });
+
+  it('rejects a succeeded receipt with an unverified Acceptance id', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(
+      repository,
+      () => '2026-09-01T00:01:00.000Z',
+      async () => {},
+      async ({ acceptanceId }) => {
+        if (acceptanceId !== 'acceptance-1') throw new Error('Acceptance provenance mismatch');
+      },
+    );
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, {
+      ...succeeded,
+      acceptanceId: 'acceptance-forged',
+    })).rejects.toThrow(/Acceptance/);
   });
 
   it('verifies persisted host Evidence against the Worker assignment before success', async () => {
@@ -271,7 +315,7 @@ describe('worker side-effect recorder', () => {
     const evidence = {
       id: 'evidence-1',
       orchestrationId: 'orch-1',
-      stageId: 'stage-1',
+      stageId: 'task-1',
       kind: 'test' as const,
       status: 'passed' as const,
       summary: 'host test passed',
@@ -288,6 +332,9 @@ describe('worker side-effect recorder', () => {
       repository,
       () => '2026-09-01T00:02:00.000Z',
       createWorkerEvidenceVerifier({ loadPersisted: async () => [evidence] }),
+      async ({ acceptanceId }) => {
+        if (acceptanceId !== 'acceptance-1') throw new Error('Acceptance provenance mismatch');
+      },
     );
     const started = await recorder.start(lease);
 
@@ -297,6 +344,71 @@ describe('worker side-effect recorder', () => {
     });
   });
 
+  it('builds the verifier from the durable Evidence persistence adapter', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const evidence = {
+      id: 'evidence-1',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      kind: 'test' as const,
+      status: 'passed' as const,
+      summary: 'host test passed',
+      capturedBy: 'host' as const,
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+      worktreePath: lease.assignment.path,
+      baseRevision: lease.assignment.baseRevision,
+      createdAt: '2026-09-01T00:01:00.000Z',
+    };
+    const recorder = createPersistedWorkerSideEffectRecorder(
+      repository,
+      {
+        load: async () => [evidence],
+      },
+      () => '2026-09-01T00:02:00.000Z',
+      async ({ acceptanceId }) => {
+        if (acceptanceId !== 'acceptance-1') throw new Error('Acceptance provenance mismatch');
+      },
+    );
+    const started = await recorder.start(lease);
+
+    await expect(recorder.complete(started, succeeded)).resolves.toMatchObject({
+      status: 'receipt',
+      receipt: { outcome: 'succeeded', evidenceIds: ['evidence-1'] },
+    });
+  });
+  it('verifies persisted Acceptance lineage and rejects forged ids', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new SideEffectJournalRepository(adapter, 'project-root');
+    const recorder = createWorkerSideEffectRecorder(repository);
+    const started = await recorder.start(lease);
+    const acceptance = {
+      acceptanceId: 'acceptance-1',
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      worktreePath: lease.assignment.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:01:00.000Z',
+      runId: lease.runId,
+      taskId: lease.task.id,
+      taskExecutionId: lease.taskExecutionId,
+      attemptId: lease.attemptId,
+    };
+    const verifier = createPersistedWorkerAcceptanceVerifier({
+      load: async () => [acceptance],
+    });
+
+    await expect(verifier({ record: started, acceptanceId: 'acceptance-1' })).resolves.toBeUndefined();
+    await expect(verifier({ record: started, acceptanceId: 'acceptance-forged' })).rejects.toThrow(/Acceptance/);
+    const forgedScopeVerifier = createPersistedWorkerAcceptanceVerifier({
+      load: async () => [{ ...acceptance, orchestrationId: 'orch-forged', stageId: 'stage-forged' }],
+    });
+    await expect(forgedScopeVerifier({ record: started, acceptanceId: 'acceptance-1' })).rejects.toThrow(/Acceptance/);
+  });
   it('does not let a late completion promote a recovered unknown effect', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const repository = new SideEffectJournalRepository(adapter, 'project-root');
@@ -717,5 +829,76 @@ describe('worker side-effect recorder', () => {
     expect(skipped.tasks['task-1']).toMatchObject({ status: 'failed' });
     expect(skipped.tasks['task-2']).toMatchObject({ status: 'blocked' });
     expect(started.idempotencyKey).toBe(`worker-execution:${lease.attemptId}`);
+  });
+
+  it('retries a failed task without a side-effect record and releases blocked descendants', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const dependentTask = {
+      ...lease.task,
+      id: 'task-2',
+      title: '依赖任务',
+      dependsOn: ['task-1'],
+    };
+    const taskGraph: ProjectTaskGraph = {
+      version: 1,
+      id: 'graph-1',
+      sessionId: 'session-1',
+      architectureId: 'architecture-1',
+      graphVersion: 1,
+      tasks: [lease.task, dependentTask],
+      approval: 'approved',
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const state = {
+      version: 1 as const,
+      projectId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'partial' as const,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:01:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          taskExecutionId,
+          taskDefinitionVersion: 1 as const,
+          status: 'failed' as const,
+          attempt: 1,
+          currentAttemptId: createAttemptId(taskExecutionId, 1),
+          evidenceIds: [],
+          error: 'claim failed before side-effect journal entry',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+        'task-2': {
+          taskId: 'task-2',
+          taskExecutionId: createTaskExecutionId('run-1', 'task-2'),
+          taskDefinitionVersion: 1 as const,
+          status: 'blocked' as const,
+          attempt: 0,
+          evidenceIds: [],
+          error: '依赖任务未成功完成：task-1',
+          updatedAt: '2026-09-01T00:01:00.000Z',
+        },
+      },
+    };
+    const plan = buildWorkerRunRecoveryPlan('run-1', { schemaVersion: 1, entries: [] }, ['task-1']);
+
+    expect(plan).toMatchObject({ requiresUser: true, failedTaskIds: ['task-1'] });
+    const retried = applyWorkerRunRecoveryDecision({
+      plan,
+      state,
+      taskGraph,
+      decision: 'retry',
+      reason: '失败发生在 side-effect claim 前，确认可创建新 attempt',
+      now: '2026-09-01T00:02:00.000Z',
+    });
+
+    expect(retried.status).toBe('queued');
+    expect(retried.tasks['task-1']).toMatchObject({ status: 'queued', attempt: 1, pendingAttempt: 2 });
+    expect(retried.tasks['task-2']).toMatchObject({ status: 'queued', attempt: 0, pendingAttempt: 1 });
   });
 });

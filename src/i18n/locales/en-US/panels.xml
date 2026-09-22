@@ -262,7 +262,7 @@
   <string name="orchestrator.empty">No orchestrations yet</string>
   <string name="orchestrator.emptyHint">Enter a goal and click "Generate draft" — the Orchestrator splits it into a multi-stage workflow.</string>
   <string name="orchestrator.back">Back to list</string>
-  <string name="orchestrator.bindLocked">Running/Finished — stage bindings are locked</string>
+  <string name="orchestrator.bindLocked">Stage bindings locked</string>
   <string name="orchestrator.prepare">Materialize workflows</string>
   <string name="orchestrator.prepareHint">Create/validate a workflow per stage and expose its real wfId so you can edit it; recommended before running</string>
   <string name="orchestrator.confirm">Confirm draft</string>
@@ -314,6 +314,7 @@
   <string name="orchestrator.worker.cleanup.approveAction">Approve cleanup</string>
   <string name="orchestrator.worker.cleanup.executeAction">Execute cleanup</string>
   <string name="orchestrator.worker.cleanup.blocked">Cleanup blocked</string>
+  <string name="orchestrator.worker.cleanup.unavailable">Cleanup proposal not generated; host state needs review</string>
   <string name="orchestrator.worker.recovery.retryAction">Confirm new-attempt retry</string>
   <string name="orchestrator.worker.recovery.skipAction">Confirm skip</string>
   <string name="orchestrator.worker.status.queued">Queued</string>
@@ -329,4 +330,20 @@
   <string name="orchestrator.worker.task.failed">Failed</string>
   <string name="orchestrator.worker.task.blocked">Blocked</string>
   <string name="orchestrator.worker.task.cancelled">Cancelled</string>
+  <string name="orchestrator.taskGraph.title">Task graph DAG</string>
+  <string name="orchestrator.taskGraph.version">Graph v{{version}}</string>
+  <string name="orchestrator.taskGraph.run">Run {{runId}}</string>
+  <string name="orchestrator.taskGraph.issue">Issue</string>
+  <string name="orchestrator.taskGraph.evidence">Evidence</string>
+  <string name="orchestrator.taskGraph.acceptance">Acceptance</string>
+  <string name="orchestrator.taskGraph.edge">Task dependencies</string>
+  <string name="orchestrator.taskGraph.revise">Create task graph revision</string>
+  <string name="orchestrator.taskGraph.selectedTask">Selected task</string>
+  <string name="orchestrator.taskGraph.noneSelected">Select a DAG node first</string>
+  <string name="orchestrator.taskGraph.titlePlaceholder">New title (blank keeps current)</string>
+  <string name="orchestrator.taskGraph.dependsOnPlaceholder">Dependency task IDs, comma-separated (blank means none)</string>
+  <string name="orchestrator.taskGraph.applyRevision">Create revision</string>
+  <string name="orchestrator.taskGraph.selectTask">Select a TaskGraph node first</string>
+  <string name="orchestrator.taskGraph.revisionUnavailable">The current TaskGraph revision is not editable</string>
+  <string name="orchestrator.taskGraph.revisionEmpty">Change a title or dependency before creating a revision</string>
 </resources>

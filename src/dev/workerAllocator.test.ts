@@ -56,8 +56,9 @@ describe('createWorktreeAllocator', () => {
       { branch: expect.stringMatching(/^worker\/w-[0-9a-f]+$/) },
     );
     expect(assignment.branch).not.toContain('%');
-    expect(assignment.branch.slice('worker/'.length)).toBe('w-7461736b2d657865637574696f6e3a72756e2532466f6e653a7461736b2532466f6e653a617474656d70742d32');
     const identity = assignment.branch.slice('worker/'.length);
+    expect(identity).toMatch(/^w-[0-9a-f]+$/);
+    expect(identity.length).toBeLessThanOrEqual(200);
     expect(assignment).toEqual({
       worktreeId: `worker-${identity}`,
       path: 'C:/projects/worktrees/task/one/2',

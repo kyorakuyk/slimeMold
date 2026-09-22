@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlimeMold · TaskGraph Delegation and Claim</title>
+<style>
+  :root { --bg:#070b12; --panel:#0d1420; --line:#2a3a50; --text:#e8eef7; --muted:#8fa1b8; --cyan:#55d8ff; --green:#63e6a1; --violet:#b69cff; --amber:#f3c86b; --rose:#ff8299; --orange:#ffad6d; }
+  *{box-sizing:border-box} body{margin:0;padding:28px;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}.wrap{max-width:1780px;margin:auto}
+  .eyebrow{margin:0 0 9px;color:var(--cyan);font-size:12px;letter-spacing:.16em}.title{margin:0 0 8px;font-size:28px;font-weight:650}.sub{margin:0 0 22px;color:var(--muted);font-size:13px;line-height:1.7;max-width:1300px}
+  .frame{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#09111c;box-shadow:0 18px 60px #0008}svg{display:block;width:100%;height:auto;background:#09111c}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}.card{min-height:120px;padding:15px 17px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.card h3{margin:0 0 9px;font-size:13px}.card p{margin:0;color:var(--muted);font-size:12px;line-height:1.65}.ok{color:var(--green)}.warn{color:var(--amber)}.note{color:var(--rose)}.foot{margin-top:14px;color:#60738b;font-size:11px;line-height:1.6}@media(max-width:900px){body{padding:14px}.title{font-size:22px}.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="eyebrow">SLIMEMOLD / CONTROL PLANE DESIGN INTENT</p>
+<h1 class="title">分封、派发与结构性认领 · TaskGraph Worker</h1>
+<p class="sub">这不是“把 2048 写出来”的流程图，而是 SlimeMold 要验证的元级 Harness：上层角色把意图逐层编译成边界收缩的 Work Package；下层 Worker 只能认领已满足依赖的 Task；结果必须以 Progress / Evidence / Acceptance 向上回流。下半部分是 Fourfold 的真实 13 Task 投影，四个 Work Package 只是解释性分组，不是第二套任务系统。</p>
+<div class="frame">
+<svg viewBox="0 0 1800 1710" role="img" aria-labelledby="title desc">
+<title id="title">SlimeMold hierarchical TaskGraph delegation and claim diagram</title>
+<desc id="desc">Target hierarchy from Master to Worker and Specialist, mapped to the actual Fourfold TaskGraph dependency projection, with ContextPack, Evidence and Antigravity runtime adapter.</desc>
+<defs>
+<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#182638" stroke-width=".65"/></pattern>
+<marker id="a-cyan" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#55d8ff"/></marker>
+<marker id="a-green" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#63e6a1"/></marker>
+<marker id="a-violet" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#b69cff"/></marker>
+<marker id="a-amber" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#f3c86b"/></marker>
+<marker id="a-rose" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#ff8299"/></marker>
+</defs>
+<rect width="1800" height="1710" fill="url(#grid)"/><rect x="20" y="20" width="1760" height="1670" rx="14" fill="none" stroke="#23344b"/>
+<!-- heading -->
+<circle cx="54" cy="58" r="6" fill="#63e6a1"/><text x="72" y="65" fill="#e8eef7" font-size="19" font-weight="650">Hierarchical delegation → bounded claim → evidence return</text><text x="72" y="89" fill="#8fa1b8" font-size="12">Fourfold actual snapshot · TaskGraph v1 · 13 Tasks · RunSucceeded seq 563</text>
+<g transform="translate(1330,40)"><rect width="390" height="64" rx="9" fill="#0d1420" stroke="#2a3a50"/><circle cx="18" cy="21" r="5" fill="#55d8ff"/><text x="31" y="25" fill="#8fa1b8" font-size="11">control / delegation</text><circle cx="157" cy="21" r="5" fill="#63e6a1"/><text x="170" y="25" fill="#8fa1b8" font-size="11">durable / succeeded</text><circle cx="18" cy="45" r="5" fill="#b69cff"/><text x="31" y="49" fill="#8fa1b8" font-size="11">context / artifact</text><circle cx="157" cy="45" r="5" fill="#f3c86b"/><text x="170" y="49" fill="#8fa1b8" font-size="11">target design</text><circle cx="300" cy="45" r="5" fill="#ff8299"/><text x="313" y="49" fill="#8fa1b8" font-size="11">separate path</text></g>
+<!-- target hierarchy -->
+<rect x="45" y="125" width="1710" height="265" rx="12" fill="#0b1420" stroke="#f3c86b" stroke-dasharray="8 6"/>
+<text x="70" y="157" fill="#f3c86b" font-size="12" letter-spacing="1">TARGET CONTROL MODEL / DESIGN INTENT</text><text x="1730" y="157" text-anchor="end" fill="#7e8fa7" font-size="10">部分角色尚未作为独立 durable aggregate 落地</text>
+<g text-anchor="middle">
+  <g><rect x="75" y="194" width="235" height="86" rx="9" fill="#10283a" stroke="#55d8ff"/><text x="192" y="220" fill="#e8eef7" font-size="14">Master / CEO</text><text x="192" y="243" fill="#8fa1b8" font-size="10">目标、批准、最终决策</text><text x="192" y="262" fill="#55d8ff" font-size="10">Decision / Plan Revision</text></g>
+  <g><rect x="370" y="194" width="235" height="86" rx="9" fill="#10283a" stroke="#55d8ff"/><text x="487" y="220" fill="#e8eef7" font-size="14">Project Delivery Architect</text><text x="487" y="243" fill="#8fa1b8" font-size="10">需求、架构、里程碑</text><text x="487" y="262" fill="#55d8ff" font-size="10">Work Package / Acceptance</text></g>
+  <g><rect x="665" y="194" width="235" height="86" rx="9" fill="#10283a" stroke="#55d8ff"/><text x="782" y="220" fill="#e8eef7" font-size="14">Department Head</text><text x="782" y="243" fill="#8fa1b8" font-size="10">子图所有权、预算、策略</text><text x="782" y="262" fill="#55d8ff" font-size="10">Delegate / Review</text></g>
+  <g><rect x="960" y="194" width="235" height="86" rx="9" fill="#10283a" stroke="#55d8ff"/><text x="1077" y="220" fill="#e8eef7" font-size="14">Module Lead</text><text x="1077" y="243" fill="#8fa1b8" font-size="10">拆解、边界、依赖</text><text x="1077" y="262" fill="#55d8ff" font-size="10">Task / ContextPack</text></g>
+  <g><rect x="1255" y="194" width="235" height="86" rx="9" fill="#102d28" stroke="#63e6a1"/><text x="1372" y="220" fill="#e8eef7" font-size="14">Worker / IC</text><text x="1372" y="243" fill="#8fa1b8" font-size="10">认领一个 bounded Task</text><text x="1372" y="262" fill="#63e6a1" font-size="10">Worktree / Attempt</text></g>
+  <g><rect x="1550" y="194" width="170" height="86" rx="9" fill="#102d28" stroke="#63e6a1"/><text x="1635" y="220" fill="#e8eef7" font-size="14">Specialist</text><text x="1635" y="243" fill="#8fa1b8" font-size="10">测试 / 安全 / 复核</text><text x="1635" y="262" fill="#63e6a1" font-size="10">Evidence / Verdict</text></g>
+</g>
+<g fill="none" stroke="#55d8ff" stroke-width="2" marker-end="url(#a-cyan)"><path d="M310 237H370"/><path d="M605 237H665"/><path d="M900 237H960"/><path d="M1195 237H1255"/><path d="M1490 237H1550"/></g>
+<g fill="none" stroke="#63e6a1" stroke-width="1.5" stroke-dasharray="7 6" marker-end="url(#a-green)"><path d="M1635 280C1635 330 1480 344 1372 344"/><path d="M1372 280C1372 330 1100 350 782 350"/></g>
+<text x="1470" y="333" fill="#63e6a1" font-size="10">ProgressCapsule / Evidence 上行</text>
+<!-- Envelope -->
+<rect x="75" y="315" width="1415" height="48" rx="8" fill="#111b2c" stroke="#b69cff"/>
+<text x="98" y="345" fill="#b69cff" font-size="11">每次下行收缩权限与上下文：</text><text x="305" y="345" fill="#8fa1b8" font-size="11">Goal → WorkPackage → Task → ContextPack → Worktree → Attempt；不传完整对话，不授予全局写入。</text>
+<!-- Actual graph -->
+<rect x="45" y="420" width="1710" height="725" rx="12" fill="#09121d" stroke="#2a3a50"/>
+<text x="70" y="452" fill="#63e6a1" font-size="12" letter-spacing="1">ACTUAL FOURFOLD TASKGRAPH PROJECTION / DURABLE SNAPSHOT</text>
+<text x="1730" y="452" text-anchor="end" fill="#8fa1b8" font-size="10">derived work-package grouping · canonical source remains projectControl.taskGraphs[0].tasks</text>
+<!-- group headers -->
+<g text-anchor="middle" font-size="12"><rect x="75" y="478" width="380" height="43" rx="8" fill="#10283a" stroke="#55d8ff"/><text x="265" y="505" fill="#e8eef7">Platform / Bootstrap</text><rect x="485" y="478" width="380" height="43" rx="8" fill="#102d28" stroke="#63e6a1"/><text x="675" y="505" fill="#e8eef7">Core Logic / Session</text><rect x="895" y="478" width="380" height="43" rx="8" fill="#241d3b" stroke="#b69cff"/><text x="1085" y="505" fill="#e8eef7">Product UI / Interaction</text><rect x="1305" y="478" width="400" height="43" rx="8" fill="#2b2417" stroke="#f3c86b"/><text x="1505" y="505" fill="#e8eef7">Quality / Delivery</text></g>
+<!-- task boxes -->
+<g font-size="11">
+  <g><rect x="75" y="548" width="175" height="70" rx="8" fill="#10283a" stroke="#55d8ff"/><text x="91" y="574" fill="#e8eef7">task_scaffold</text><text x="91" y="594" fill="#8fa1b8" font-size="10">infra · no deps</text><text x="91" y="610" fill="#63e6a1" font-size="10">S · Worktree + Acceptance</text></g>
+  <g><rect x="280" y="548" width="175" height="70" rx="8" fill="#10283a" stroke="#55d8ff"/><text x="296" y="574" fill="#e8eef7">task_storage</text><text x="296" y="594" fill="#8fa1b8" font-size="10">data · no deps</text><text x="296" y="610" fill="#63e6a1" font-size="10">S · versioned local save</text></g>
+  <g><rect x="75" y="650" width="380" height="70" rx="8" fill="#10283a" stroke="#55d8ff"/><text x="91" y="676" fill="#e8eef7">task_bootstrap_restore</text><text x="91" y="696" fill="#8fa1b8" font-size="10">depends: scaffold, storage, session, view, input, dialogs</text><text x="91" y="712" fill="#63e6a1" font-size="10">S · startup restore + safe fallback</text></g>
+
+  <g><rect x="485" y="548" width="175" height="70" rx="8" fill="#102d28" stroke="#63e6a1"/><text x="501" y="574" fill="#e8eef7">task_engine</text><text x="501" y="594" fill="#8fa1b8" font-size="10">logic · no deps</text><text x="501" y="610" fill="#63e6a1" font-size="10">S · four-way merge rules</text></g>
+  <g><rect x="685" y="548" width="175" height="70" rx="8" fill="#102d28" stroke="#63e6a1"/><text x="701" y="574" fill="#e8eef7">task_random</text><text x="701" y="594" fill="#8fa1b8" font-size="10">logic · no deps</text><text x="701" y="610" fill="#63e6a1" font-size="10">S · deterministic spawn</text></g>
+  <g><rect x="485" y="650" width="375" height="70" rx="8" fill="#102d28" stroke="#63e6a1"/><text x="501" y="676" fill="#e8eef7">task_session</text><text x="501" y="696" fill="#8fa1b8" font-size="10">depends: engine, random, storage</text><text x="501" y="712" fill="#63e6a1" font-size="10">S · score / undo / high score / win-continue</text></g>
+
+  <g><rect x="895" y="548" width="175" height="70" rx="8" fill="#241d3b" stroke="#b69cff"/><text x="911" y="574" fill="#e8eef7">task_view</text><text x="911" y="594" fill="#8fa1b8" font-size="10">ui · scaffold + session</text><text x="911" y="610" fill="#63e6a1" font-size="10">S · board / stats / status</text></g>
+  <g><rect x="1080" y="548" width="195" height="70" rx="8" fill="#241d3b" stroke="#b69cff"/><text x="1096" y="574" fill="#e8eef7">task_input</text><text x="1096" y="594" fill="#8fa1b8" font-size="10">ui · session + view</text><text x="1096" y="610" fill="#63e6a1" font-size="10">S · Arrow / WASD</text></g>
+  <g><rect x="895" y="650" width="380" height="70" rx="8" fill="#241d3b" stroke="#b69cff"/><text x="911" y="676" fill="#e8eef7">task_dialogs</text><text x="911" y="696" fill="#8fa1b8" font-size="10">ui · session + view</text><text x="911" y="712" fill="#63e6a1" font-size="10">S · win / game-over / confirmation</text></g>
+
+  <g><rect x="1305" y="548" width="185" height="70" rx="8" fill="#2b2417" stroke="#f3c86b"/><text x="1321" y="574" fill="#e8eef7">task_unit_tests</text><text x="1321" y="594" fill="#8fa1b8" font-size="10">engine + random + session</text><text x="1321" y="610" fill="#63e6a1" font-size="10">S · deterministic cases</text></g>
+  <g><rect x="1510" y="548" width="195" height="70" rx="8" fill="#2b2417" stroke="#f3c86b"/><text x="1526" y="574" fill="#e8eef7">task_integration_tests</text><text x="1526" y="594" fill="#8fa1b8" font-size="10">depends: bootstrap</text><text x="1526" y="610" fill="#63e6a1" font-size="10">S · persistence / interaction</text></g>
+  <g><rect x="1305" y="650" width="185" height="70" rx="8" fill="#2b2417" stroke="#f3c86b"/><text x="1321" y="676" fill="#e8eef7">task_browser_acceptance</text><text x="1321" y="696" fill="#8fa1b8" font-size="10">depends: integration</text><text x="1321" y="712" fill="#63e6a1" font-size="10">S · Chrome/CDP + offline</text></g>
+  <g><rect x="1510" y="650" width="195" height="70" rx="8" fill="#2b2417" stroke="#f3c86b"/><text x="1526" y="676" fill="#e8eef7">task_docs</text><text x="1526" y="696" fill="#8fa1b8" font-size="10">depends: browser</text><text x="1526" y="712" fill="#63e6a1" font-size="10">S · README / acceptance</text></g>
+</g>
+<!-- dependency arrows -->
+<g fill="none" stroke="#b69cff" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#a-violet)">
+ <path d="M572 618V650"/><path d="M772 618C772 637 700 642 660 650"/><path d="M368 618C420 640 525 645 580 650"/>
+ <path d="M162 618V650"/><path d="M455 684C600 730 840 730 895 584"/>
+ <path d="M860 684H895"/><path d="M1070 618C1070 635 1030 640 1010 650"/>
+ <path d="M1275 684H1305"/><path d="M1490 684H1510"/>
+</g>
+<text x="88" y="770" fill="#b69cff" font-size="11">认领规则：只有依赖 Task 的 durable status=succeeded，才能释放下游 lease；成功 Worktree 通过只读 dependencyArtifacts 进入下游 ContextPack。</text>
+<!-- handoff loop -->
+<rect x="75" y="810" width="1630" height="280" rx="11" fill="#0c1826" stroke="#2a3a50"/>
+<text x="100" y="843" fill="#55d8ff" font-size="12" letter-spacing="1">STRUCTURED CLAIM / REPORT LOOP</text>
+<g text-anchor="middle">
+ <g><rect x="110" y="880" width="220" height="105" rx="9" fill="#10283a" stroke="#55d8ff"/><text x="220" y="909" fill="#e8eef7" font-size="13">1 · 分封</text><text x="220" y="934" fill="#8fa1b8" font-size="10">WorkPackage / scope</text><text x="220" y="953" fill="#8fa1b8" font-size="10">acceptance / budget</text><text x="220" y="972" fill="#55d8ff" font-size="10">DelegationRequest</text></g>
+ <g><rect x="390" y="880" width="220" height="105" rx="9" fill="#102d28" stroke="#63e6a1"/><text x="500" y="909" fill="#e8eef7" font-size="13">2 · 认领</text><text x="500" y="934" fill="#8fa1b8" font-size="10">dependency satisfied</text><text x="500" y="953" fill="#8fa1b8" font-size="10">TaskExecution + Attempt</text><text x="500" y="972" fill="#63e6a1" font-size="10">ClaimLease</text></g>
+ <g><rect x="670" y="880" width="220" height="105" rx="9" fill="#241d3b" stroke="#b69cff"/><text x="780" y="909" fill="#e8eef7" font-size="13">3 · 收缩</text><text x="780" y="934" fill="#8fa1b8" font-size="10">minimum ContextPack</text><text x="780" y="953" fill="#8fa1b8" font-size="10">RO dependency artifacts</text><text x="780" y="972" fill="#b69cff" font-size="10">ContextPack</text></g>
+ <g><rect x="950" y="880" width="220" height="105" rx="9" fill="#102d28" stroke="#63e6a1"/><text x="1060" y="909" fill="#e8eef7" font-size="13">4 · 施工</text><text x="1060" y="934" fill="#8fa1b8" font-size="10">current Worktree only</text><text x="1060" y="953" fill="#8fa1b8" font-size="10">Codex / Antigravity adapter</text><text x="1060" y="972" fill="#63e6a1" font-size="10">ProgressCapsule</text></g>
+ <g><rect x="1230" y="880" width="220" height="105" rx="9" fill="#2b2417" stroke="#f3c86b"/><text x="1340" y="909" fill="#e8eef7" font-size="13">5 · 取证</text><text x="1340" y="934" fill="#8fa1b8" font-size="10">diff / tests / policy</text><text x="1340" y="953" fill="#8fa1b8" font-size="10">Acceptance + Evidence</text><text x="1340" y="972" fill="#f3c86b" font-size="10">Verdict</text></g>
+ <g><rect x="1510" y="880" width="170" height="105" rx="9" fill="#102d28" stroke="#63e6a1"/><text x="1595" y="909" fill="#e8eef7" font-size="13">6 · 回流</text><text x="1595" y="934" fill="#8fa1b8" font-size="10">release downstream</text><text x="1595" y="953" fill="#8fa1b8" font-size="10">or FeedbackRequest</text><text x="1595" y="972" fill="#63e6a1" font-size="10">DomainEvent</text></g>
+</g>
+<g fill="none" stroke="#55d8ff" stroke-width="2" marker-end="url(#a-cyan)"><path d="M330 932H390"/><path d="M610 932H670"/><path d="M890 932H950"/><path d="M1170 932H1230"/><path d="M1450 932H1510"/></g>
+<path d="M1595 985C1595 1045 1210 1055 220 1045C135 1045 130 1010 220 985" fill="none" stroke="#63e6a1" stroke-width="1.6" stroke-dasharray="7 6" marker-end="url(#a-green)"/>
+<text x="840" y="1067" text-anchor="middle" fill="#63e6a1" font-size="11">向上不是聊天转发，而是结构化 ProgressCapsule / Evidence / FeedbackRequest</text>
+<!-- Runtime adapters -->
+<rect x="75" y="1170" width="800" height="365" rx="12" fill="#0b1420" stroke="#2a3a50"/>
+<text x="100" y="1203" fill="#55d8ff" font-size="12" letter-spacing="1">RUNTIME ADAPTERS / EXECUTION IS PLUGGABLE</text>
+<g><rect x="110" y="1240" width="310" height="160" rx="10" fill="#102d28" stroke="#63e6a1"/><text x="265" y="1270" text-anchor="middle" fill="#e8eef7" font-size="14">Official Codex Worker</text><text x="265" y="1296" text-anchor="middle" fill="#8fa1b8" font-size="10">现有已验证路径</text><text x="265" y="1320" text-anchor="middle" fill="#8fa1b8" font-size="10">codex_worker_exec</text><text x="265" y="1342" text-anchor="middle" fill="#8fa1b8" font-size="10">Host Acceptance 仍在外层</text><text x="265" y="1373" text-anchor="middle" fill="#63e6a1" font-size="11">RunSucceeded 13/13</text></g>
+<g><rect x="475" y="1240" width="365" height="160" rx="10" fill="#2b2417" stroke="#f3c86b" stroke-dasharray="7 5"/><text x="657" y="1270" text-anchor="middle" fill="#e8eef7" font-size="14">Antigravity Runtime Adapter</text><text x="657" y="1296" text-anchor="middle" fill="#8fa1b8" font-size="10">可接入，但尚未纳入 Worker Runtime</text><text x="657" y="1320" text-anchor="middle" fill="#8fa1b8" font-size="10">MCP stdio / workspace .agents</text><text x="657" y="1342" text-anchor="middle" fill="#8fa1b8" font-size="10">IDE chat --mode agent</text><text x="657" y="1373" text-anchor="middle" fill="#f3c86b" font-size="11">Acceptance / receipt 不可旁路</text></g>
+<path d="M420 1320H475" fill="none" stroke="#f3c86b" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#a-amber)"/>
+<text x="460" y="1308" text-anchor="middle" fill="#f3c86b" font-size="10">same lease</text>
+<!-- separate canvas -->
+<rect x="925" y="1170" width="780" height="365" rx="12" fill="#24131d" stroke="#ff8299" stroke-dasharray="8 6"/>
+<text x="950" y="1203" fill="#ff8299" font-size="12" letter-spacing="1">SEPARATE LEGACY / GENERIC WORKFLOW CANVAS</text>
+<text x="950" y="1240" fill="#e8eef7" font-size="14">节点图 ≠ 分封控制面</text><text x="950" y="1270" fill="#8fa1b8" font-size="10">agentId / Ollama / node status / coord.council</text><text x="950" y="1292" fill="#8fa1b8" font-size="10">它可以作为能力/子流程，但不能直接决定 TaskSucceeded</text>
+<g><rect x="950" y="1320" width="290" height="130" rx="9" fill="#301922" stroke="#ff8299"/><text x="1095" y="1350" text-anchor="middle" fill="#ff8299" font-size="13">禁止跨越的边界</text><text x="1095" y="1375" text-anchor="middle" fill="#8fa1b8" font-size="10">node error → recovery fact</text><text x="1095" y="1396" text-anchor="middle" fill="#8fa1b8" font-size="10">node success → still needs acceptance</text><text x="1095" y="1417" text-anchor="middle" fill="#8fa1b8" font-size="10">graph view → projection only</text></g>
+<g><rect x="1280" y="1320" width="390" height="130" rx="9" fill="#301922" stroke="#ff8299"/><text x="1475" y="1350" text-anchor="middle" fill="#e8eef7" font-size="13">为何上一张图不够</text><text x="1475" y="1375" text-anchor="middle" fill="#8fa1b8" font-size="10">只画了执行调用，没有画：</text><text x="1475" y="1396" text-anchor="middle" fill="#8fa1b8" font-size="10">谁分封、谁认领、权限如何收缩、</text><text x="1475" y="1417" text-anchor="middle" fill="#8fa1b8" font-size="10">谁向上回流、失败如何重新归属</text></g>
+<!-- footer -->
+<text x="75" y="1645" fill="#60738b" font-size="10">Canonical source: ProjectControl / TaskGraph / WorkerQueue / Attempt / Worktree / Evidence / Acceptance / Receipt · hierarchy above is design intent; Fourfold boxes below are actual TaskGraph projection.</text>
+</svg>
+</div>
+<div class="cards">
+<div class="card"><h3>验证的设计意图</h3><p><span class="ok">已在本图显式表达：</span>计划批准、层级分封、依赖释放、ContextPack 收缩、Worktree/Attempt 隔离、Acceptance 取证和 Evidence 上行。</p></div>
+<div class="card"><h3>当前实现边界</h3><p><span class="warn">Fourfold Run 已验证：</span>TaskGraph、WorkerQueue、Worktree、Codex、Host Acceptance、Evidence、Recovery、Delivery。Master→Department Head→Module Lead 的组织对象仍主要是目标设计。</p></div>
+<div class="card"><h3>Antigravity 接入位置</h3><p><span class="note">不是替换控制面：</span>Antigravity 应成为 Worker Runtime Adapter；通过 workspace MCP 暴露受控上下文与回报工具，Acceptance/Receipt/Recovery 仍由 SlimeMold 掌握。</p></div>
+</div>
+<p class="foot">SlimeMold · TaskGraph delegation and claim projection · self-contained HTML/SVG · no external dependency or credential.</p>
+</div>
+</body>
+</html>

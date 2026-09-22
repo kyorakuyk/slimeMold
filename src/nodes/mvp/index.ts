@@ -1,5 +1,5 @@
-import type { ExecContext, NodeDefinition } from '../../types';
-import { createNodeDef } from '../../types';
+import type { ExecContext, NodeDefinition } from '../../types/node';
+import { createNodeDef } from '../../types/node';
 import { createTypeScriptMvpScaffold } from '../../domain/model/artifact';
 
 function textValue(inputs: Record<string, unknown>, params: Record<string, unknown>, key: string): string {

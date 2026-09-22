@@ -14,7 +14,7 @@
  * 设计原则：纯函数、零 store / React 依赖；无评分上下文时调用方可完全跳过本模块，
  * 保持原「固定顺序」行为（向后兼容）。
  */
-import type { AgentConfig } from '../types';
+import type { AgentConfig } from '../types/agent';
 
 /** 模型价格（USD / 1M tokens）。 */
 export interface ModelPrice {

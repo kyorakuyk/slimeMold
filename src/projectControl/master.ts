@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse } from '../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../types/agent';
 import { chatWithAgent } from '../agents/agentManager';
 import type {
   ArchitectureInterface,

@@ -20,6 +20,7 @@ export interface WorktreeCreator {
     path: string,
     options?: { branch?: string; signal?: AbortSignal },
   ): Promise<WorktreeInfo | null>;
+  getLastCreateError?: () => string | null;
 }
 
 export type WorkerWorktreePathFactory = (input: {
@@ -73,7 +74,8 @@ export function createWorktreeAllocator(
         const info = await creator.create(worktreeId, path, { branch, signal });
         if (signal?.aborted) throw new Error('Worker worktree 分配已取消');
         if (!info || info.status !== 'created') {
-          throw new Error(`创建 worktree 失败：${worktreeId}`);
+          const detail = creator.getLastCreateError?.();
+          throw new Error(`创建 worktree 失败：${worktreeId}${detail ? `（${detail}）` : ''}`);
         }
         if (
           info.id !== worktreeId

@@ -32,7 +32,7 @@ import {
   type OrchestrationDeps,
 } from './run';
 import { useWorkflowStore } from '../store/workflowStore';
-import type { Orchestration } from '../types';
+import type { Orchestration } from '../types/orchestration';
 import type { OrchestratorRequest } from './types';
 
 const agent = {

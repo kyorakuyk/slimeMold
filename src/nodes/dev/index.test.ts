@@ -64,10 +64,10 @@ function fakeSession(opts: {
         if (args[0] === 'status' && opts.failGitStatus) {
           return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository', durationMs: 1 };
         }
-        if (args[0] === 'diff' && args.includes('--name-only')) {
+        if (args[1] === 'diff' && args.includes('--name-only')) {
           return { exitCode: 0, stdout: 'docs/new.md\n', stderr: '', durationMs: 1 };
         }
-        if (args[0] === 'diff') {
+        if (args[1] === 'diff') {
           if (opts.failGitDiff) return { exitCode: 128, stdout: 'stale diff', stderr: 'fatal: not a repository', durationMs: 1 };
           return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
         }
@@ -86,6 +86,7 @@ function fakeSession(opts: {
       const rel = relFromWorker(abs);
       files.set(rel ?? abs, content);
     },
+    mkdir: async () => {},
     resolveInside: async (root, rel) => (await import('node:path')).resolve(root, rel),
     relativePath: async (root, abs) => (await import('node:path')).relative(root, abs).replace(/\\/g, '/'),
   };

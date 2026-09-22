@@ -1,4 +1,4 @@
-import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse, LLMToolSpec } from '../../types/agent';
 import { isTauri } from '../../platform/env';
 
 interface CodexAuthStatus {
@@ -105,6 +105,14 @@ export async function chatCodex(
   };
 }
 
+/** 为当前session/worktree申请一次性、宿主持有的Codex Worker lease。 */
+export async function prepareCodexWorker(cwd: string, generation: number): Promise<string> {
+  if (!isTauri) throw new Error('Codex Worker 需要 SlimeMold 桌面版。');
+  if (!cwd.trim()) throw new Error('Codex Worker worktree 路径不能为空。');
+  if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error('Codex Worker session generation 无效。');
+  return invokeRaw<string>('codex_worker_prepare', { cwd, generation });
+}
+
 /** 在 Rust 登记的独立 worktree 内调用可写 Codex Worker。 */
 export async function codexWorkerExec(
   prompt: string,
@@ -140,7 +148,8 @@ export async function codexWorkerExec(
 }
 
 /** 请求宿主终止一个由当前前端 operation id 注册的 Codex Worker child。 */
-export async function cancelCodexWorker(operationId: string): Promise<void> {
+export async function cancelCodexWorker(operationId: string, generation: number): Promise<void> {
   if (!isTauri || !operationId.trim()) return;
-  await invokeRaw<void>('codex_worker_cancel', { operationId });
+  if (!Number.isSafeInteger(generation) || generation <= 0) return;
+  await invokeRaw<void>('codex_worker_cancel', { operationId, generation });
 }

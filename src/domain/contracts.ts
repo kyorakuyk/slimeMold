@@ -5,6 +5,10 @@ import {
   type AttemptId,
   type TaskExecutionId,
 } from './execution';
+import {
+  hasWorkerSuccessProvenance,
+  workerRunSuccessIsValid,
+} from './workerSuccess';
 
 export type ExecutionObjective = 'cost-first' | 'quality-first' | 'speed-first' | 'balanced';
 export type SandboxMode = 'workspace-write' | 'danger-full-access';
@@ -33,7 +37,7 @@ export interface DomainEvent<TPayload = unknown> {
   synthetic?: boolean;
 }
 
-export type TaskProjectionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
+export type TaskProjectionStatus = 'queued' | 'running' | 'waiting-feedback' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
 export type RunProjectionStatus = 'queued' | 'running' | 'partial' | 'blocked' | 'failed' | 'cancelled' | 'succeeded';
 
 export interface TaskExecutionProjection {
@@ -46,6 +50,7 @@ export interface TaskExecutionProjection {
   pendingAttempt?: number;
   evidenceIds?: string[];
   acceptanceId?: string;
+  feedbackId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
   error?: string;
@@ -65,6 +70,7 @@ export interface AttemptRecord {
   baseRevision?: string;
   evidenceIds?: string[];
   acceptanceId?: string;
+  feedbackId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
   error?: string;
@@ -78,6 +84,7 @@ export interface DomainProjection {
     runId?: string;
     evidenceIds?: string[];
     acceptanceId?: string;
+    feedbackId?: string;
     cleanupStatus?: 'cleaned';
     cleanupReceiptId?: string;
   }>;
@@ -170,7 +177,10 @@ function payloadAttempt(payload: EventPayload): number | undefined {
 
 function payloadEvidenceIds(payload: EventPayload): string[] | undefined {
   if (!Array.isArray(payload.evidenceIds)) return undefined;
-  return payload.evidenceIds.filter((id): id is string => typeof id === 'string');
+  if (payload.evidenceIds.some((id) => typeof id !== 'string')) {
+    throw new Error('Evidence ids 必须全部是字符串');
+  }
+  return [...payload.evidenceIds] as string[];
 }
 
 function taskIdFor(event: DomainEvent, payload: EventPayload): string | undefined {
@@ -205,6 +215,7 @@ function taskLineageFor(
   const isAttemptLifecycleEvent = event.eventType === 'TaskStarted'
     || event.eventType === 'TaskSucceeded'
     || event.eventType === 'TaskFailed'
+    || event.eventType === 'TaskFeedbackRequested'
     || event.eventType === 'TaskAttemptMarkedUnknown'
     || event.eventType === 'TaskCleaned';
   const execution = projection.taskExecutions[taskExecutionId];
@@ -234,13 +245,15 @@ function taskLineageFor(
 function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<TaskExecutionProjection> {
   const evidenceIds = payloadEvidenceIds(payload);
   const acceptanceId = payloadText(payload, 'acceptanceId');
+  const feedbackId = payloadText(payload, 'feedbackId');
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
+    ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
-    ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
+    ...(eventType === 'TaskCleaned'
       ? { cleanupStatus: 'cleaned' as const }
       : {}),
     ...(receiptId ? { cleanupReceiptId: receiptId } : {}),
@@ -250,6 +263,7 @@ function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<T
 function attemptPatch(payload: EventPayload, eventType: string): Partial<AttemptRecord> {
   const evidenceIds = payloadEvidenceIds(payload);
   const acceptanceId = payloadText(payload, 'acceptanceId');
+  const feedbackId = payloadText(payload, 'feedbackId');
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
@@ -259,8 +273,9 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(typeof payload.baseRevision === 'string' ? { baseRevision: payload.baseRevision } : {}),
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
+    ...(feedbackId ? { feedbackId } : {}),
     ...(error ? { error } : {}),
-    ...(eventType === 'TaskCleaned' || payload.cleanupStatus === 'cleaned'
+    ...(eventType === 'TaskCleaned'
       ? { cleanupStatus: 'cleaned' as const }
       : {}),
     ...(receiptId ? { cleanupReceiptId: receiptId } : {}),
@@ -276,19 +291,34 @@ function applyLegacyTaskProjection(
   payload: EventPayload,
 ): void {
   const base = { status, ...(runId ? { runId } : {}) };
-  if (eventType === 'TaskSucceeded' || eventType === 'TaskFailed') {
+  if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
+    evidenceIds: payloadEvidenceIds(payload),
+    acceptanceId: payloadText(payload, 'acceptanceId'),
+  })) {
+    throw new Error(`TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${taskId}`);
+  }
+  if (eventType === 'TaskSucceeded' || eventType === 'TaskFailed' || eventType === 'TaskFeedbackRequested') {
     const evidenceIds = payloadEvidenceIds(payload);
     const acceptanceId = payloadText(payload, 'acceptanceId');
+    const feedbackId = payloadText(payload, 'feedbackId');
     projection.tasks[taskId] = {
       ...base,
       ...(evidenceIds !== undefined ? { evidenceIds } : {}),
       ...(acceptanceId ? { acceptanceId } : {}),
+      ...(feedbackId ? { feedbackId } : {}),
     };
     return;
   }
   if (eventType === 'TaskCleaned') {
     const previous = projection.tasks[taskId];
+    if (!runId || previous?.runId !== runId) {
+      throw new Error(`TaskCleaned 的 runId 与先前 Task success 不一致：${taskId}`);
+    }
+    if (!previous || previous.status !== 'succeeded' || !hasWorkerSuccessProvenance(previous)) {
+      throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Task：${taskId}`);
+    }
     const receiptId = payloadText(payload, 'receiptId');
+    if (!receiptId) throw new Error(`TaskCleaned 缺少 cleanup receipt：${taskId}`);
     projection.tasks[taskId] = {
       ...base,
       ...(previous?.evidenceIds ? { evidenceIds: previous.evidenceIds } : {}),
@@ -336,6 +366,25 @@ function applyTaskLineageProjection(
   const isCompletion = eventType === 'TaskSucceeded'
     || eventType === 'TaskFailed'
     || eventType === 'TaskCleaned';
+  if (payload.cleanupStatus === 'cleaned' && eventType !== 'TaskCleaned') {
+    throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${lineage.taskExecutionId}`);
+  }
+  if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
+    evidenceIds: payloadEvidenceIds(payload),
+    acceptanceId: payloadText(payload, 'acceptanceId'),
+  })) {
+    throw new Error(`TaskSucceeded 缺少有效 Evidence/Acceptance provenance：${lineage.taskExecutionId}`);
+  }
+  if (
+    strictAttemptLifecycle
+    && eventType === 'TaskCleaned'
+    && (!previous
+      || !previousAttempt
+      || previousAttempt.status !== 'succeeded'
+      || !hasWorkerSuccessProvenance(previousAttempt))
+  ) {
+    throw new Error(`TaskCleaned 只能清理已有有效 success provenance 的 Attempt：${lineage.attemptId ?? lineage.taskExecutionId}`);
+  }
   if (eventType === 'TaskAttemptMarkedUnknown') {
     if (!previousAttempt || previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running') {
       throw new Error(`只能把当前 running Attempt 标记 unknown：${lineage.attemptId ?? '<missing>'}`);
@@ -362,7 +411,18 @@ function applyTaskLineageProjection(
   }
 
   if (nextAttempt !== undefined) {
-    if (maxAttempt < 1 || nextAttempt !== maxAttempt + 1) {
+    if (previous?.pendingAttempt === nextAttempt) {
+      if (previous) {
+        projection.taskExecutions[lineage.taskExecutionId] = {
+          ...previous,
+          status: 'queued',
+          currentAttemptId: undefined,
+          pendingAttempt: nextAttempt,
+        };
+      }
+      return;
+    }
+    if (nextAttempt !== maxAttempt + 1) {
       throw new Error(`nextAttempt 不是连续的下一次 attempt：期望 ${maxAttempt + 1}，实际 ${nextAttempt}`);
     }
     if (previous?.pendingAttempt !== undefined) {
@@ -395,6 +455,13 @@ function applyTaskLineageProjection(
   }
 
   if (previousAttempt) {
+    if (eventType === 'TaskFeedbackRequested'
+      && (previous?.currentAttemptId !== lineage.attemptId || previousAttempt.status !== 'running')) {
+      throw new Error(`反馈请求只能来自当前 running Attempt：${lineage.attemptId}`);
+    }
+    if (eventType === 'TaskFeedbackRequested' && previousAttempt.status === 'waiting-feedback') {
+      throw new Error(`Attempt 已在等待反馈：${lineage.attemptId}`);
+    }
     if (eventType === 'TaskStarted' && (previousAttempt.status === 'running' || isTerminalAttemptStatus(previousAttempt.status) || previousAttempt.status === 'unknown')) {
       throw new Error(`Attempt 不能重复启动或从终态 reopen：${lineage.attemptId}`);
     }
@@ -426,6 +493,7 @@ function applyTaskLineageProjection(
       ? {
           evidenceIds: undefined,
           acceptanceId: undefined,
+          feedbackId: undefined,
           cleanupStatus: undefined,
           cleanupReceiptId: undefined,
           error: undefined,
@@ -436,7 +504,7 @@ function applyTaskLineageProjection(
     ...(lineage.attemptId ? { currentAttemptId: lineage.attemptId } : {}),
     ...taskExecutionPatch(payload, eventType),
   };
-  if (eventType === 'TaskStarted') delete nextExecution.pendingAttempt;
+  if (eventType === 'TaskStarted' || eventType === 'TaskBlocked' || isCompletion) delete nextExecution.pendingAttempt;
   projection.taskExecutions[lineage.taskExecutionId] = nextExecution;
 
   if (!lineage.attemptId || lineage.attempt === undefined) return;
@@ -545,6 +613,18 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
     }
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
     const payload = payloadRecord(event.payload);
+    if (payload.worktreeStatus !== undefined
+      && !['created', 'cleaned', 'orphaned', 'registration-pending'].includes(payload.worktreeStatus as string)) {
+      throw new Error(`worktreeStatus 无效：${event.eventId}`);
+    }
+    if (payload.cleanupStatus === 'cleaned' && event.eventType !== 'TaskCleaned') {
+      throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${event.eventId}`);
+    }
+    if (event.eventType === 'TaskCleaned') {
+      const runId = payloadIdentityText(payload, 'runId');
+      const taskId = taskIdFor(event, payload);
+      if (!runId || !taskId) throw new Error(`TaskCleaned 缺少 run/task lineage：${event.eventId}`);
+    }
     const payloadRunId = payloadIdentityText(payload, 'runId');
     if (event.aggregateType === 'Run' && payloadRunId && payloadRunId !== event.aggregateId) {
       throw new Error(`Run aggregateId 与 runId 不一致：${event.eventId}`);
@@ -574,9 +654,18 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
       case 'RunCancelled':
         projection.runs[event.aggregateId] = { status: 'cancelled' };
         break;
-      case 'RunSucceeded':
+      case 'RunSucceeded': {
+        const taskExecutions = Object.values(projection.taskExecutions)
+          .filter((task) => task.runId === event.aggregateId);
+        const legacyTasks = Object.values(projection.tasks)
+          .filter((task) => task.runId === event.aggregateId);
+        const terminalTasks = taskExecutions.length > 0 ? taskExecutions : legacyTasks;
+        if (terminalTasks.length === 0 || !workerRunSuccessIsValid(terminalTasks)) {
+          throw new Error(`RunSucceeded 缺少完整 Worker success provenance：${event.aggregateId}`);
+        }
         projection.runs[event.aggregateId] = { status: 'succeeded' };
         break;
+      }
       case 'TaskQueued':
         applyTaskEvent(projection, event, 'queued');
         break;
@@ -588,6 +677,9 @@ export function replayDomainEvents(events: readonly DomainEvent[]): DomainProjec
         break;
       case 'TaskStarted':
         applyTaskEvent(projection, event, 'running');
+        break;
+      case 'TaskFeedbackRequested':
+        applyTaskEvent(projection, event, 'waiting-feedback');
         break;
       case 'TaskSucceeded':
         applyTaskEvent(projection, event, 'succeeded');
@@ -864,6 +956,8 @@ export interface SideEffectRecord {
   taskId?: string;
   taskExecutionId?: TaskExecutionId;
   attemptId?: AttemptId;
+  orchestrationId?: string;
+  acceptanceStageId?: string;
   status: SideEffectStatus;
   recovery: SideEffectRecovery;
   receipt?: SideEffectReceipt;

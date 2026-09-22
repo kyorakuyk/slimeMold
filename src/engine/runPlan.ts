@@ -1,4 +1,5 @@
-import type { FlowEdge, FlowNode, SubgraphDef } from '../types';
+import type { SubgraphDef } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import { flattenSubgraphs } from './subgraph';
 import { topoStages } from './topoSort';
 import { collectReachable } from './graphAlgo';

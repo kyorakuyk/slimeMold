@@ -35,9 +35,10 @@ import {
   pushRecentProject,
   removeRecentProject,
   saveLastSession,
-  type RecentProject,
 } from '../io/projectIO';
-import type { RunRecord } from '../types';
+import type { RecentProject } from '../types/project';
+import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
+import type { RunRecord } from '../types/execution';
 import { useT } from '../i18n/useT';
 import slimeMoldIcon from '../assets/slimemold-dense-ic-state.svg';
 import ProjectSessionPanel from './ProjectSessionPanel';
@@ -48,8 +49,8 @@ interface BeginnerExperienceProps {
   onOpenAdvanced: () => void;
   onNewProject: () => void;
   onStartProjectSession: (goal: string) => void;
-  onRunWorker?: (runId: string) => Promise<void> | void;
-  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string) => Promise<void> | void;
+  onRunWorker?: (runId: string, runtime?: 'codex' | 'antigravity') => Promise<void> | void;
+  onRecoverWorkerRun?: (runId: string, decision: 'retry' | 'skip', reason: string, runtime?: WorkerRuntime) => Promise<void> | void;
 }
 
 type BeginnerPage = 'home' | 'project' | 'session' | 'issues' | 'master-agent';

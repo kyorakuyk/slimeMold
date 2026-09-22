@@ -23,11 +23,11 @@ const BASE_LANG = 'zh-CN';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
-/** 递归收集一个 XML 对象里所有 <string name="..."> 的 name 值（嵌套亦兼容）。 */
-function collectStringNames(node: unknown, out: Set<string>): void {
+/** 递归收集一个 XML 对象里所有 <string name="..."> 的 name 值（嵌套亦兼容），并记录重复 key。 */
+function collectStringNames(node: unknown, out: Set<string>, duplicates: Set<string>): void {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) {
-    for (const item of node) collectStringNames(item, out);
+    for (const item of node) collectStringNames(item, out, duplicates);
     return;
   }
   const obj = node as Record<string, unknown>;
@@ -36,26 +36,34 @@ function collectStringNames(node: unknown, out: Set<string>): void {
     for (const s of strings) {
       if (s && typeof s === 'object') {
         const name = (s as Record<string, unknown>)['@_name'];
-        if (typeof name === 'string') out.add(name);
+        if (typeof name === 'string') {
+          if (out.has(name)) duplicates.add(name);
+          out.add(name);
+        }
       }
     }
   }
   for (const key of Object.keys(obj)) {
     if (key === 'string') continue;
-    collectStringNames(obj[key], out);
+    collectStringNames(obj[key], out, duplicates);
   }
 }
 
-/** 读取一个语言目录，返回该语言所有 key 的扁平集合。 */
-function loadLangKeys(langDir: string): Set<string> {
+/** 读取一个语言目录，返回该语言所有 key 的扁平集合和重复 key。 */
+function loadLangKeys(langDir: string): { keys: Set<string>; duplicates: Set<string> } {
   const keys = new Set<string>();
+  const duplicates = new Set<string>();
   const files = readdirSync(langDir).filter((f) => f.endsWith('.xml'));
   for (const f of files) {
     const raw = readFileSync(join(langDir, f), 'utf-8');
     const parsed = parser.parse(raw);
-    collectStringNames(parsed, keys);
+    const fileKeys = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    collectStringNames(parsed, fileKeys, fileDuplicates);
+    for (const key of fileKeys) keys.add(key);
+    for (const key of fileDuplicates) duplicates.add(`${f}:${key}`);
   }
-  return keys;
+  return { keys, duplicates };
 }
 
 function main(): number {
@@ -73,19 +81,28 @@ function main(): number {
     return 1;
   }
 
-  const baseKeys = loadLangKeys(join(LOCALES_DIR, BASE_LANG));
-  console.log(`[check-i18n] 基准语言 ${BASE_LANG} 共 ${baseKeys.size} 个 key`);
-  console.log(`[check-i18n] 检测到语言: ${langs.join(', ')}\n`);
-
+  const baseResult = loadLangKeys(join(LOCALES_DIR, BASE_LANG));
+  const baseKeys = baseResult.keys;
   let hasError = false;
+  console.log(`[check-i18n] 基准语言 ${BASE_LANG} 共 ${baseKeys.size} 个 key`);
+  if (baseResult.duplicates.size > 0) {
+    hasError = true;
+    console.log(`✗ ${BASE_LANG} 存在重复 key: ${[...baseResult.duplicates].sort().join(', ')}`);
+  }
+  console.log(`[check-i18n] 检测到语言: ${langs.join(', ')}\n`);
 
   for (const lang of langs) {
     if (lang === BASE_LANG) continue;
-    const keys = loadLangKeys(join(LOCALES_DIR, lang));
+    const langResult = loadLangKeys(join(LOCALES_DIR, lang));
+    const keys = langResult.keys;
     const missing = [...baseKeys].filter((k) => !keys.has(k)).sort();
     const extra = [...keys].filter((k) => !baseKeys.has(k)).sort();
 
-    if (missing.length === 0 && extra.length === 0) {
+    if (langResult.duplicates.size > 0) {
+      hasError = true;
+      console.log(`✗ ${lang} 存在重复 key: ${[...langResult.duplicates].sort().join(', ')}`);
+    }
+    if (missing.length === 0 && extra.length === 0 && langResult.duplicates.size === 0) {
       console.log(`✓ ${lang}  对齐 (${keys.size} keys)`);
       continue;
     }

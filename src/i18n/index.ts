@@ -104,7 +104,7 @@ i18n.use(initReactI18next).init({
   fallbackLng,
   defaultNS: 'ui',
   // 基础组件使用默认 ui namespace，但状态栏/检查器等 key 位于各自 XML namespace。
-  fallbackNS: ['statusbar', 'inspector', 'panels', 'modals', 'agents', 'settings'],
+  fallbackNS: ['statusbar', 'inspector', 'panels', 'modals', 'agents', 'settings', 'nodepalette'],
   // 初始语言：持久化的 locale（viewStore 会调用 changeLanguage）；无则从浏览器取，再回退到 fallbackLng
   lng: fallbackLng,
   // XML 中的 key 使用 `topbar.file` 这种扁平命名；不要让 i18next 把 `.` 当作嵌套对象路径。

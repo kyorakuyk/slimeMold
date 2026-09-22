@@ -10,6 +10,7 @@ authority: contract
 
 > 本文记录 2026-08-31 形成的产品方向决策，以及随后完成的最小控制面实现。它不是完整自治能力的声明。
 > 当前 SlimeMold 已经具备项目驾驶舱、项目会话、受限主控 question/Brief/architecture 协议、Task Graph、Issue 四栏看板、H3 Orchestrator 草案和 H4 受控开发基础；真实模型验收、完整计划编译、漂移检测和长期运维仍需实现。
+> 跨阶段的替代方案、取舍理由和决策状态见 [`SLIMEMOLD_ARCHITECTURE_DECISIONS.md`](SLIMEMOLD_ARCHITECTURE_DECISIONS.md)；本文以当前控制面数据模型、状态和权限契约为准。
 
 ## 1. 问题与产品判断
 

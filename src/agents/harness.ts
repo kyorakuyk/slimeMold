@@ -12,11 +12,14 @@
  * 通过 opts.events 把事件推给调用方（节点接 ctx.setPartial + ctx.logger，审查 Agent 接日志）。
  */
 
-import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart, ExecContext } from '../types';
+import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart } from '../types/agent';
+import type { ExecContext } from '../types/node';
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';
 import type { ExperienceSink } from './experienceSink';
+import type { HarnessEvents } from './harnessTypes';
+export type { HarnessEvents } from './harnessTypes';
 
 /* ----------------------------- 错误边界（#5） ----------------------------- */
 
@@ -44,25 +47,6 @@ export function classifyError(e: unknown): HarnessError {
 }
 
 /* ----------------------------- 可观测事件（#4） ----------------------------- */
-
-export interface HarnessEvents {
-  /** 模型开始思考（拿到第一轮响应前/时触发） */
-  onThinking?: (info: { round: number; model: string }) => void;
-  /** 工具调用发生（含入参与执行结果） */
-  onToolCall?: (info: {
-    round: number;
-    name: string;
-    args: Record<string, unknown>;
-    result?: unknown;
-    error?: string;
-  }) => void;
-  /** 最终文本输出（流式逐段或整段） */
-  onOutput?: (text: string, done: boolean) => void;
-  /** 日志（供 StatusBar / 文件日志） */
-  onLog?: (level: 'info' | 'warn' | 'error', msg: string) => void;
-  /** nudge：连续多轮未产生沉淀（无工具调用 / 未达成有效输出）时提示复盘（#6） */
-  onNudge?: (info: { rounds: number; reason: string }) => void;
-}
 
 /* ----------------------------- loop 配置 ----------------------------- */
 

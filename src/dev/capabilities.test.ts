@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtemp, rm, writeFile, mkdir, link } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import { applyUnifiedPatch, createNodeDevService, type NodeDevDeps } from './capabilities';
 import { defaultDevPolicy } from './policy';
 import type { CommandResult } from './node-run';
@@ -51,7 +54,7 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       if (cmd === 'git' && args[0] === 'status') {
         return { exitCode: 0, stdout: ' M src/components/A.tsx\n', stderr: '', durationMs: 1 };
       }
-      if (cmd === 'git' && args[0] === 'diff') {
+      if (cmd === 'git' && (args[0] === 'diff' || args[1] === 'diff')) {
         return { exitCode: 0, stdout: 'diff --git a/src/components/A.tsx b/src/components/A.tsx\n', stderr: '', durationMs: 1 };
       }
       if (cmd === 'npm' && args[0] === 'run') {
@@ -116,6 +119,8 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['git', 'log', '--oneline', '-n', '5', '--output=/tmp/pwn'],
       ['npm', 'run', 'test', '--', '--coverage'],
       ['npm', 'run', 'build', '--extra'],
+      ['cat', '--files0-from=/outside/list'],
+      ['head', '--files0-from=/outside/list'],
       ['cat', '/etc/passwd'],
       ['cat', '../secret'],
       // P1：shell 路径参数越权——相对路径读受保护代码
@@ -130,19 +135,35 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       ['grep', '--recursive', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--directories=recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '-d', 'recurse', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['git', 'diff', '/etc/passwd'],
+      ['git', 'diff', '../outside'],
+      ['git', 'diff', 'src/orchestrator/run.ts'],
       ['grep', '--file=/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--exclude-from=/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '-f/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--file=C:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['grep', '--exclude-from=C:/outside/excludes', 'src/components/A.tsx', 'src/components/A.tsx'],
-      ['grep', '-ifC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
+      ['grep', '--', '--', '/etc/passwd'],
+      ['grep', 'needle', '*.tsx'],
+      ['find', '-follow', 'src/components', '-name', '*.ts'],
+      ['find', '-files0-from=/outside/list', '-name', '*.ts'],
+      ['find', '--files0-from=/outside/list', '-name', '*.ts'],
+      ['grep', '--directories', 'recurse', '.'],
+      ['grep', '-d', 'recurse', '.'],
+      ['grep', '-ir', 'secret', 'src/components/A.tsx'],
+      ['grep', '-iR', 'secret', 'src/components/A.tsx'],
+      ['git', 'diff', 'package.json'],
+      ['git', 'diff', '--name-only', 'package.json'],
+      ['git', 'diff', '.'],
       ['grep', '-FfC:/outside/patterns', 'src/components/A.tsx', 'src/components/A.tsx'],
       ['tsx', 'scripts/headless-run.ts', '--eval', 'x'],
+      ['tsx', 'scripts/../src/components/A.tsx'],
+      ['cat', 'package.json:review'],
     ]) {
       const r = await svc.shellRun(bad, ctx);
       expect(r.exitCode).toBe(-1);
       // 命令被白名单拒 或 路径参数被越权守卫拒
-      expect(r.stderr).toMatch(/白名单|路径参数越权/);
+      expect(r.stderr).toMatch(/白名单|路径参数越权|命令参数不安全|Git diff grammar/);
     }
     // 只读命令放行（allowed 内路径可通过 shell 读取）
     const ok1 = await svc.shellRun(['git', 'status', '--porcelain'], ctx);
@@ -156,11 +177,29 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     // grep 允许路径在 allowed 内
     const ok5 = await svc.shellRun(['grep', 'secret', 'src/components/A.tsx'], ctx);
     expect(ok5.exitCode).toBe(0);
+    const grepWithOptions = await svc.shellRun(['grep', '-n', '--', 'secret', 'src/components/A.tsx'], ctx);
+    expect(grepWithOptions.exitCode).toBe(0);
+    const findWithDepthOption = await svc.shellRun(['find', '-P', 'src/components', '-name', '*.tsx'], ctx);
+    expect(findWithDepthOption.exitCode).toBe(0);
+    const gitHead = await svc.shellRun(['git', 'diff', 'HEAD'], ctx);
+    expect(gitHead.exitCode).toBe(-1);
+    const gitSha = await svc.shellRun(['git', 'diff', '0123456789abcdef0123456789abcdef01234567'], ctx);
+    expect(gitSha.exitCode).toBe(-1);
+    const gitScoped = await svc.shellRun(['git', 'diff', 'HEAD', '--', 'src/components/A.tsx'], ctx);
+    expect(gitScoped.exitCode).toBe(0);
+    const gitRoot = await svc.shellRun(['git', 'diff', '.'], ctx);
+    expect(gitRoot.exitCode).toBe(-1);
+    const tsx = await svc.testRun(['tsx', 'scripts/headless-run.ts'], ctx);
+    expect(tsx.exitCode).toBe(0);
     // 测试白名单：tsc --noEmit 放行，tsc 无参数拒
     const t1 = await svc.testRun(['tsc', '--noEmit'], ctx);
     expect(t1.exitCode).toBe(0);
     const t2 = await svc.testRun(['tsc'], ctx);
     expect(t2.exitCode).toBe(-1);
+    const nodeCheck = await svc.testRun(['node', '--check', 'src/components/A.tsx'], ctx);
+    expect(nodeCheck.exitCode).toBe(0);
+    const nodeEscape = await svc.testRun(['node', '--check', 'src/orchestrator/run.ts'], ctx);
+    expect(nodeEscape.exitCode).toBe(-1);
   });
 
   it('grep 外部文件选项在允许 pattern 下也不会调用 runner', async () => {
@@ -231,13 +270,28 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
     await expect(svc.gitDiff('--output=/tmp/out', ctx)).rejects.toThrow(/baseRef|Git/);
   });
 
-  it('gitChangedFiles：合并 tracked diff 与 untracked', async () => {
+  it('Tauri/browser path guard does not assume a Node process global', async () => {
+    vi.stubGlobal('process', undefined);
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
+    try {
+      const svc = createNodeDevService(defaultDevPolicy, fakeDeps, registry);
+      const result = await svc.shellRun(['cat', 'src/components/A.tsx:stream'], ctx);
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toContain('ADS/stream');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('gitChangedFiles：按指定 baseRef 合并 tracked diff 与 untracked', async () => {
+    const diffArgs: string[][] = [];
     const svc = createNodeDevService(
       defaultDevPolicy,
       {
         ...fakeDeps,
         runCommand: async (cmd, args, _cwd) => {
-          if (cmd === 'git' && args[0] === 'diff') {
+          if (cmd === 'git' && args[1] === 'diff') {
+            diffArgs.push(args);
             return { exitCode: 0, stdout: 'src/components/A.tsx\n', stderr: '', durationMs: 1 };
           }
           if (cmd === 'git' && args[0] === 'ls-files') {
@@ -248,9 +302,58 @@ describe('H4 createNodeDevService（注入 fake deps）', () => {
       },
       registry,
     );
-    const filesChanged = await svc.gitChangedFiles(ctx);
+    const filesChanged = await svc.gitChangedFiles(ctx, 'base-revision');
+    expect(diffArgs).toEqual([['--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--name-only', 'base-revision', '--']]);
     expect(filesChanged).toContain('src/components/A.tsx');
     expect(filesChanged).toContain('docs/new.md');
+  });
+
+  it('direct gitDiff 仅返回非保护路径范围，并拒绝路径伪装成 revision', async () => {
+    const calls: string[][] = [];
+    const svc = createNodeDevService(
+      defaultDevPolicy,
+      {
+        ...fakeDeps,
+        runCommand: async (_cmd, args) => {
+          calls.push(args);
+          return { exitCode: 0, stdout: 'diff', stderr: '', durationMs: 1 };
+        },
+      },
+      registry,
+    );
+    await svc.gitDiff('HEAD', ctx);
+    expect(calls[0]).toEqual([
+      '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--',
+      resolve(ctx.cwd, 'src/components'),
+      resolve(ctx.cwd, 'src/nodes'),
+      resolve(ctx.cwd, 'docs'),
+    ]);
+    await expect(svc.gitDiff('package.json', ctx)).rejects.toThrow(/Git baseRef/);
+    await expect(svc.gitDiff('feature/../src/orchestrator', ctx)).rejects.toThrow(/Git baseRef/);
+  });
+
+  it('shell file operands reject hardlinks before the runner sees them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slimemold-shell-hardlink-'));
+    try {
+      const allowed = join(root, 'allowed');
+      await mkdir(allowed);
+      const outside = join(root, 'outside.txt');
+      const hardlink = join(allowed, 'linked.txt');
+      await writeFile(outside, 'outside-secret');
+      await link(outside, hardlink);
+      const shellPolicy = { ...defaultDevPolicy, allowedPaths: ['allowed'], protectedPaths: [] };
+      const runCommand = async () => ({ exitCode: 0, stdout: 'outside-secret', stderr: '', durationMs: 1 });
+      const shell = createNodeDevService(
+        shellPolicy,
+        { runCommand, resolveInside: async (base, rel) => resolve(base, rel), relativePath: async (base, abs) => (await import('node:path')).relative(base, abs) },
+        { isTracked: (cwd) => cwd === root },
+      );
+      const result = await shell.shellRun(['cat', 'allowed/linked.txt'], { cwd: root });
+      expect(result.exitCode).toBe(-1);
+      expect(result.stderr).toMatch(/hardlink|路径参数越权/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('P0 cwd 信任：未配置 registry fail-closed；未登记 cwd 拒绝；登记 cwd 放行', async () => {

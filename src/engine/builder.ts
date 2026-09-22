@@ -10,7 +10,8 @@
  * - 暂不依赖 14.B 的 `pipeline.handoff`/`receive`（尚未实现），末端用 `output.text` 占位交付。
  */
 
-import type { AgentRouteTable, ModuleItem, WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types';
+import type { WorkflowFile, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
+import type { AgentRouteTable, ModuleItem } from '../types/dispatch';
 import { FALLBACK_CATEGORY } from '../agents/agentRouter';
 
 let _seq = 0;

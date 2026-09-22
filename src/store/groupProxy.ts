@@ -1,19 +1,14 @@
 // 节点 / 分组创建期的纯辅助计算。
 // 这些函数只依赖 registry store 单例（节点定义注册中心），不依赖 workflow store，
 // 因而可独立测试、避免 workflowStore 进一步膨胀为上帝模块。
-// 注意：recomputeProxyPorts / defaultParams 内部读取 useRegistryStore.getState()，
-// 测试时需先通过 registryStore.register(...) 桩入节点定义。
+// `recomputeProxyPorts` receives node definitions through its caller; `defaultParams` remains a thin registry adapter.
+// Tests for the pure port projection pass an explicit definition table.
 
-import type {
-  FlowEdge,
-  FlowNode,
-  NodeGroup,
-  PortType,
-  ProxyPort,
-  SubgraphDef,
-  VirtualEdge,
-} from '../types';
-import { useRegistryStore, getNodeDef } from './registryStore';
+import type { NodeDefinition } from '../types/node';
+import type { NodeGroup, ProxyPort, SubgraphDef, VirtualEdge } from '../types/workflow';
+import type { FlowEdge, FlowNode } from '../types/graph';
+import type { PortType } from '../types/graph';
+import { getNodeDef } from './registryStore';
 
 /** 组框预设配色（创建时轮换取用） */
 export const GROUP_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
@@ -30,8 +25,8 @@ export function recomputeProxyPorts(
   _sg: SubgraphDef,
   nodes: FlowNode[],
   _edges: FlowEdge[],
+  defs: Record<string, NodeDefinition>,
 ): NodeGroup {
-  const defs = useRegistryStore.getState().defs;
   const memberSet = new Set(group.nodeIds);
 
   // 聚合：type -> 内部端口列表

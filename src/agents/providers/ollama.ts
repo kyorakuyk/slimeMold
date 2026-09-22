@@ -1,5 +1,5 @@
 import { httpFetch } from '../../platform/env';
-import type { AgentConfig, ChatMessage, LLMResponse } from '../../types';
+import type { AgentConfig, ChatMessage, LLMResponse } from '../../types/agent';
 
 /** Ollama 本地模型协议（本地模型通常不返回 token 用量，usage 为 undefined） */
 export async function chatOllama(

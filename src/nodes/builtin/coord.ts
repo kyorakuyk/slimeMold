@@ -1,4 +1,6 @@
-import { createNodeDef, type NodeDefinition, type FilePatch, type MergeResult, type CouncilVerdict, type ExecContext } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
+import type { ExecContext } from '../../types/node';
+import type { FilePatch, MergeResult, CouncilVerdict } from '../../types/conflict';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { publishArtifactFromNode } from '../../engine/pipeline';
 

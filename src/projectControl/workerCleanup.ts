@@ -1,4 +1,4 @@
-import type { AcceptanceRecord, CleanupApproval } from '../dev/session';
+import type { AcceptanceRecord, CleanupApproval } from '../dev/sessionContracts';
 import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
 import { resolveWorkerAcceptanceStageId, type WorkerQueueTask, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { SideEffectRecord } from '../domain/contracts';
@@ -273,6 +273,18 @@ export async function buildWorkerCleanupProposal(
     taskStatus: 'succeeded',
     cleanupStatus: 'active',
   };
+}
+
+/** Convert host-side proposal preparation failures into visible, non-destructive UI state. */
+export async function buildWorkerCleanupProposalSafely(
+  input: BuildWorkerCleanupProposalInput,
+): Promise<WorkerCleanupProposal> {
+  try {
+    return await buildWorkerCleanupProposal(input);
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return blocked(input.run.runId, input.task.taskId, `Cleanup 提案准备失败：${message}`);
+  }
 }
 
 /** Record a one-shot host approval bound to the proposal fingerprint. */

@@ -1,4 +1,5 @@
-import { createNodeDef, type NodeDefinition, type AssetMeta } from '../../types';
+import { createNodeDef, type NodeDefinition } from '../../types/node';
+import type { AssetMeta } from '../../types/project';
 import { httpFetch, isTauri } from '../../platform/env';
 import { evalExpr } from '../../engine/expr';
 import { inferFilename } from '../builtinHelpers';

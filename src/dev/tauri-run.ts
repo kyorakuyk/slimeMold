@@ -58,16 +58,23 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },
-    cleanupWorktree: async (path, branch, branchRevision, cwd) => {
+    cleanupWorktree: async (path, branch, branchRevision, _cwd) => {
       try {
+        const approvalToken = await call<string>('dev_approve_cleanup', {
+          path,
+          branch,
+          branchRevision,
+          generation: sessionGeneration,
+        });
         await call<void>('dev_cleanup_worktree', {
           path,
           branch,
           branchRevision,
-          cwd,
+          approvalToken,
           generation: sessionGeneration,
         });
         return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
@@ -77,6 +84,7 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },
@@ -101,6 +109,7 @@ export function createTauriDeps(generation: number): NodeDevDeps {
           stdout: '',
           stderr: e instanceof Error ? e.message : String(e),
           durationMs: 0,
+          unknownEffects: true,
         };
       }
     },
@@ -125,7 +134,10 @@ export function createTauriDeps(generation: number): NodeDevDeps {
       return abs;
     },
     relativePath: async (root, abs) => relativeWeb(root, abs),
+    // WebView shims do not expose node:fs/promises.stat; Rust dev_exec performs the authoritative hardlink check.
+    assertNoMultipleHardlinks: async () => {},
   };
+
 }
 
 /** Tauri 证据 JSONL 持久化（plugin-fs 落盘；仅 GUI 用，宿主固定路径在 worktree 外）。 */

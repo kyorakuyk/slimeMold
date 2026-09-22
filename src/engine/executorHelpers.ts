@@ -2,14 +2,11 @@
 // 这些函数只依赖输入参数与类型，不触碰 store 单例 / IO / 运行态，可独立测试。
 // 与调度主流程（runWorkflow）解耦，使 executor.ts 从「上帝模块」进一步瘦身。
 
-import type {
-  CapabilityLevel,
-  CostRecord,
-  ExecContext,
-  FlowEdge,
-  NodeDefinition,
-  NodeUsageStat,
-} from '../types';
+import type { NodeDefinition } from '../types/node';
+import type { CostRecord } from '../types/agent';
+import type { CapabilityLevel } from '../types/capability';
+import type { ExecContext } from '../types/node';
+import type { FlowEdge, NodeUsageStat } from '../types/graph';
 
 /** 按节点定义推导其能力等级（单一真相源：minCapability 优先，否则按 typeId 前缀推断）。 */
 export function resolveCapability(def: NodeDefinition): CapabilityLevel {

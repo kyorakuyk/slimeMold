@@ -1,5 +1,6 @@
+import type { NodeDefinition } from '../types/node';
 import { describe, it, expect } from 'vitest';
-import type { FlowEdge, FlowNode, NodeDefinition, NodeStatus } from '../types';
+import type { FlowEdge, FlowNode, NodeStatus } from '../types';
 import {
   collectReachable,
   computeDownstream,

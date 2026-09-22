@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Route</title>
+  <desc id="desc">A compact organic route with a branch and four workflow nodes.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#15171a"/>
+  <path d="M236 716C236 558 307 432 430 401c111-28 190 57 190 158 0 92 62 135 174-229" fill="none" stroke="#2997ff" stroke-linecap="round" stroke-linejoin="round" stroke-width="68"/>
+  <path d="M430 401c38-74 96-128 182-164" fill="none" stroke="#8fcaff" stroke-linecap="round" stroke-width="34"/>
+  <circle cx="236" cy="716" r="56" fill="#f5f7fa"/>
+  <circle cx="430" cy="401" r="68" fill="#2997ff"/>
+  <circle cx="612" cy="559" r="54" fill="#15171a" stroke="#f5f7fa" stroke-width="22"/>
+  <circle cx="794" cy="330" r="54" fill="#f5f7fa"/>
+  <circle cx="612" cy="237" r="42" fill="#2997ff"/>
+</svg>

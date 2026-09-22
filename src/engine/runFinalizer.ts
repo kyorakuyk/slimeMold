@@ -13,7 +13,9 @@
  * 设计原则：纯函数 + 显式输入对象，不直接持有 runWorkflow 的闭包；
  * 输出为 Promise<void>（checkpoint 落盘需 await）。所有副作用经 useWorkflowStore / rt / 事件总线。
  */
-import type { CostRecord, FlowNode, RunRecord } from '../types';
+import type { CostRecord } from '../types/agent';
+import type { RunRecord } from '../types/execution';
+import type { FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
 import { ownerRefId } from './subgraph';
 import { buildCheckpoint } from './checkpoint';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectArchitecture } from './types';
-import { approveTaskGraph, createTaskGraphFromArchitecture } from './taskGraph';
+import { approveTaskGraph, createTaskGraphFromArchitecture, reviseTaskGraph } from './taskGraph';
 
 const architecture: ProjectArchitecture = {
   version: 1,
@@ -71,6 +71,61 @@ describe('ProjectTaskGraph', () => {
     expect(graph.approval).toBe('draft');
     expect(approved).toMatchObject({ approval: 'approved', approvedBy: 'user' });
     expect(approved.tasks.every((task) => task.status === 'approved')).toBe(true);
+  });
+
+  it('creates a new draft graph revision without mutating the approved graph', () => {
+    const graph = createTaskGraphFromArchitecture({
+      id: 'task-graph-1',
+      architecture,
+      now: '2026-08-31T06:01:00.000Z',
+    });
+    const approved = approveTaskGraph(graph, 'user', '2026-08-31T06:02:00.000Z');
+    const revised = reviseTaskGraph({
+      graph: approved,
+      id: 'task-graph-2',
+      now: '2026-08-31T06:03:00.000Z',
+      changes: [{ taskId: 'ledger-model', title: '实现可审计模型' }],
+    });
+
+    expect(approved).toMatchObject({ id: 'task-graph-1', graphVersion: 1, approval: 'approved' });
+    expect(revised).toMatchObject({
+      id: 'task-graph-2',
+      revisionOf: 'task-graph-1',
+      graphVersion: 2,
+      approval: 'draft',
+    });
+    expect(revised.tasks[0]).toMatchObject({ id: 'ledger-model', title: '实现可审计模型', status: 'proposed' });
+    expect(revised.tasks[0].issueId).toBeUndefined();
+  });
+
+  it('rejects a revision that introduces an unknown dependency or cycle', () => {
+    const graph = createTaskGraphFromArchitecture({
+      id: 'task-graph-1',
+      architecture,
+      now: '2026-08-31T06:01:00.000Z',
+    });
+    const twoTasks = {
+      ...graph,
+      tasks: [
+        graph.tasks[0],
+        { ...graph.tasks[0], id: 'ledger-view', title: '实现视图' },
+      ],
+    };
+    expect(() => reviseTaskGraph({
+      graph: twoTasks,
+      id: 'task-graph-2',
+      now: '2026-08-31T06:03:00.000Z',
+      changes: [{ taskId: 'ledger-model', dependsOn: ['missing-task'] }],
+    })).toThrow(/依赖不存在/);
+    expect(() => reviseTaskGraph({
+      graph: twoTasks,
+      id: 'task-graph-2',
+      now: '2026-08-31T06:03:00.000Z',
+      changes: [
+        { taskId: 'ledger-model', dependsOn: ['ledger-view'] },
+        { taskId: 'ledger-view', dependsOn: ['ledger-model'] },
+      ],
+    })).toThrow(/环路/);
   });
 
   it('rejects compiling an architecture that is not approved', () => {

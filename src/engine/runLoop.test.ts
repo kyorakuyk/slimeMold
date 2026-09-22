@@ -54,12 +54,12 @@ describe('prepareLoopRound 循环变量注入', () => {
       dirtySet: dirty,
       force,
       loopVarsState: vars,
-      strike: (t) => struck.push(t),
+      strike: (nodeId, typeId) => struck.push(`${nodeId}:${typeId}`),
     });
     // loopGate 自身每轮必须强制重算（cacheKey 不含循环变量，命中缓存会吞掉分支上报导致循环误停）
     expect(dirty).toEqual(new Set(['gate1', 'a', 'b']));
     expect(force).toEqual(new Set(['gate1', 'a', 'b']));
-    expect(struck).toEqual(['flow.loopGate', 'type.a', 'type.b']);
+    expect(struck).toEqual(['gate1:flow.loopGate', 'a:type.a', 'b:type.b']);
     expect(vars.i).toBe(2);
   });
 

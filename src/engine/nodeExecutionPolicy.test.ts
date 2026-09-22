@@ -88,6 +88,21 @@ describe('decideNodeExecution 前置决策', () => {
     expect(d).toEqual({ kind: 'incremental-skip', prevStatus: 'success' });
   });
 
+  it('incremental-skip：恢复缓存中的分支 handles', () => {
+    const d = decideNodeExecution(base('gate', {
+      mode: { kind: 'incremental-skip', prevStatus: 'success' } as NodeExecutionMode,
+      cacheHooks: {
+        ...cacheHooks,
+        getCachedBranches: (key: string) => {
+          expect(key).toBe('k-wfA:gate');
+          return ['pass'];
+        },
+      },
+      cacheScope: 'wfA:gate',
+    }));
+    expect(d).toEqual({ kind: 'incremental-skip', prevStatus: 'success', branches: ['pass'] });
+  });
+
   it('pruned：所有入边来自未激活分支', () => {
     const branchState = new Map<string, Set<string | undefined>>();
     branchState.set('src', new Set()); // 空集合 = 全屏蔽

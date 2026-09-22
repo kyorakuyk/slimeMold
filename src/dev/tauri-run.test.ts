@@ -52,14 +52,22 @@ describe('createTauriDeps.resolveInside（逃逸判定）', () => {
     await expect(deps.resolveInside!('/repo/wt', '../../secret.ts')).rejects.toThrow(/逃逸/);
   });
 
-  it('passes the Rust session generation with host command calls', async () => {
+  it('uses the hardened Git diff argv and defers hardlink authority to Rust', async () => {
     invoke.mockClear();
     const deps = createTauriDeps(17);
-
     await deps.runCommand!('pwd', [], '/repo/wt');
-
     expect(invoke).toHaveBeenCalledWith('dev_exec', {
       args: ['pwd'],
+      cwd: '/repo/wt',
+      generation: 17,
+    });
+    invoke.mockClear();
+    await deps.assertNoMultipleHardlinks!('/repo/wt/src/a.ts');
+    await deps.runCommand!('git', [
+      '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', '/repo/wt/src/a.ts',
+    ], '/repo/wt');
+    expect(invoke).toHaveBeenCalledWith('dev_exec', {
+      args: ['git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', '/repo/wt/src/a.ts'],
       cwd: '/repo/wt',
       generation: 17,
     });

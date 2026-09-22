@@ -9,7 +9,8 @@
  * 与 AgentRouter 决策（agents/agentDecision.ts）分离：本函数只管「拿到候选后怎么调」，
  * 不涉及「选谁」。事件/日志经注入回调，不直接依赖 store。
  */
-import type { AgentConfig, ChatMessage, CostRecord, SandboxHandle } from '../types';
+import type { AgentConfig, ChatMessage, CostRecord } from '../types/agent';
+import type { SandboxHandle } from '../types/node';
 import { runAgentLoop } from '../agents/harness';
 import { getChannel } from '../agents/llmChannel';
 import { withRetry, type Semaphore } from './rateLimiter';

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Convergence</title>
+  <desc id="desc">A living slime mold explores several routes and reinforces one efficient path between two food sources.</desc>
+  <rect width="1024" height="1024" rx="256" fill="#121416"/>
+  <path d="M174 768C258 636 292 440 450 346c108-64 206-73 382-88" fill="none" stroke="#4f5861" stroke-linecap="round" stroke-width="28" opacity=".48"/>
+  <path d="M174 768C332 812 455 790 558 650c77-104 128-272 274-392" fill="none" stroke="#65707a" stroke-linecap="round" stroke-width="24" opacity=".44"/>
+  <path d="M174 768C248 700 326 586 432 548c103-37 157 34 231-39 51-50 95-126 157-251" fill="none" stroke="#c8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="64"/>
+  <path d="M229 710C276 623 300 544 353 480M252 735C362 705 423 689 486 622" fill="none" stroke="#9dbf54" stroke-linecap="round" stroke-width="22" opacity=".8"/>
+  <path d="M132 785c-19-38-3-84 34-105 23-14 39-44 75-39 34 5 45 33 72 45 39 17 48 57 32 91-18 38-56 43-87 42-34-1-61 17-88-4-15-11-26-18-38-30Z" fill="#c8f36a"/>
+  <circle cx="174" cy="768" r="22" fill="#121416"/>
+  <circle cx="820" cy="248" r="50" fill="#dfe8ee"/>
+  <circle cx="820" cy="248" r="20" fill="#121416"/>
+  <circle cx="431" cy="548" r="24" fill="#dfe8ee"/>
+  <circle cx="431" cy="548" r="10" fill="#121416"/>
+</svg>

@@ -31,7 +31,7 @@ import SubgraphEditor from './SubgraphEditor';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { arePortsCompatible, type PortDef, type FlowNode, type FlowEdge, type NodeStatus, type EdgeKind } from '../types';
+import { arePortsCompatible, type EdgeKind, type FlowEdge, type FlowNode, type NodeStatus, type PortDef } from '../types/graph';
 import { wouldCreateCycle } from '../engine/topoSort';
 import { NamePrompt } from '../components/NamePrompt';
 import { NodePickerModal, type PickPayload } from '../components/NodePickerModal';
@@ -39,6 +39,7 @@ import JobBoard from '../components/JobBoard';
 import Companion from '../components/Companion';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
 import { CanvasWfIdContext } from './canvasWfId';
+import { projectStyledEdges } from './workflowEdgeProjection';
 
 const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
 const edgeTypes = { kind: KindEdge };
@@ -317,15 +318,6 @@ function WorkflowEditorInner({
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
 
   // 数据流向可视化：连线颜色跟随「源端口类型」（ComfyUI 风格）
-  const PORT_COLOR_VAR: Record<string, string> = {
-    text: 'var(--pt-text)',
-    number: 'var(--pt-number)',
-    boolean: 'var(--pt-boolean)',
-    list: 'var(--pt-list)',
-    json: 'var(--pt-json)',
-    image: 'var(--pt-image)',
-    any: 'var(--sm-edge)',
-  };
   // 端口解析信号：仅当节点的「类型 + 参数」变化时才变。
   // 拖拽只改 position，此 key 不变 -> outsByNode/styledEdges 在拖拽时不重算，
   // 否则每帧全量 resolvePorts + 生成全新 edges 数组会让 React Flow 反复重测，多次拖拽后卡死。
@@ -343,31 +335,10 @@ function WorkflowEditorInner({
     }
     return map;
   }, [portSig, nodes, allDefs, subgraphs]);
-  const styledEdges = useMemo(() => {
-    // 按节点实例解析端口（子图节点的端口是动态的）
-    return edges.map((e): Edge => {
-      // 折叠组成员端点重定向到分组代理节点（外部多对一）
-      let src = e.source;
-      let srcH = e.sourceHandle ?? undefined;
-      let tgt = e.target;
-      let tgtH = e.targetHandle ?? undefined;
-      const sm = memberToProxy.get(e.source);
-      if (sm && sm.type === 'output') {
-        src = sm.nodeId;
-        srcH = sm.handle;
-      }
-      const tm = memberToProxy.get(e.target);
-      if (tm && tm.type === 'input') {
-        tgt = tm.nodeId;
-        tgtH = tm.handle;
-      }
-      const outs = outsByNode[src] ?? [];
-      const out = outs.find((o) => o.id === (srcH ?? outs[0]?.id));
-      const pt = out?.type ?? 'any';
-      const colorVar = PORT_COLOR_VAR[pt] ?? 'var(--sm-edge)';
-      return { ...e, source: src, sourceHandle: srcH, target: tgt, targetHandle: tgtH, style: { ...(e.style ?? {}), ['--edge-color']: colorVar } } as Edge;
-    });
-  }, [edges, outsByNode, memberToProxy]);
+  const styledEdges = useMemo(
+    () => projectStyledEdges(edges, outsByNode, memberToProxy),
+    [edges, outsByNode, memberToProxy],
+  );
 
   const showGrid = useViewStore((s) => s.showGrid);
   const showMinimap = useViewStore((s) => s.showMinimap);

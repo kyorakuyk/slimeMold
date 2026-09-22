@@ -18,10 +18,13 @@ const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =
     throw new Error('transient register failure');
   }
   if (command === 'dev_register_worktree') return undefined;
+  if (command === 'dev_restore_worktree') return undefined;
   if (command === 'dev_unregister_worktree' && hostState.rejectUnregister) {
     throw new Error('transient unregister failure');
   }
   if (command === 'dev_register_orphan_worktree') return undefined;
+  if (command === 'dev_approve_cleanup') return 'native-cleanup-token';
+  if (command === 'dev_cleanup_worktree') return undefined;
   if (command === 'dev_unregister_worktree') return undefined;
   throw new Error(`unexpected command: ${command}`);
 }));
@@ -200,7 +203,8 @@ describe('DevSession Tauri orphan cleanup', () => {
     session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
     await expect(session.confirmAndCleanup(info!.path, undefined, retryFingerprint)).resolves.toBe(true);
     expect(session.manager.get(info!.id)?.status).toBe('cleaned');
-    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenCalledTimes(4);
+    expect(invoke.mock.calls.filter(([command]) => command === 'dev_create_dir')).toHaveLength(1);
     expect(invoke.mock.calls.filter(([command]) => command === 'dev_unregister_worktree')).toHaveLength(2);
   });
 
@@ -237,6 +241,47 @@ describe('DevSession Tauri orphan cleanup', () => {
     expect(session.manager.get('worker-id')).toBeUndefined();
   });
 
+  it('restores a live worktree through the dedicated host restore gate', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'list' && args[2] === '--porcelain') {
+        return ok([
+          'worktree /repo',
+          'HEAD base-1',
+          'branch refs/heads/main',
+          '',
+          'worktree /repo-workers/live-worker',
+          `HEAD ${TIP_OID}`,
+          'branch refs/heads/worker/live-worker',
+          '',
+        ].join('\n'));
+      }
+      return ok();
+    });
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 3,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+    const info = {
+      id: 'live-worker',
+      path: '/repo-workers/live-worker',
+      branch: 'worker/live-worker',
+      baseRevision: 'base-1',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'created' as const,
+    };
+
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('dev_restore_worktree', {
+      path: info.path,
+      branch: info.branch,
+      generation: 3,
+    });
+    expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
+    expect(session.manager.isTracked(info.path)).toBe(true);
+  });
+
   it('restores an orphaned branch lineage without registering a deleted worktree', async () => {
     const git = vi.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
@@ -259,6 +304,12 @@ describe('DevSession Tauri orphan cleanup', () => {
     };
 
     await expect(session.manager.restore(info)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('dev_register_orphan_worktree', {
+      path: info.path,
+      branch: info.branch,
+      branchRevision: TIP_OID,
+      generation: 1,
+    });
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());
     await expect(session.manager.cleanup(info.id, { confirm: true, branchRevision: info.branchRevision })).resolves.toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('dev_unregister_worktree', expect.anything());

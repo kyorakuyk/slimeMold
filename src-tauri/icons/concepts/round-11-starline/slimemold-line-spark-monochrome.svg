@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SlimeMold Line Spark Monochrome</title>
+  <desc id="desc">A monochrome currentColor-ready version of the SlimeMold rounded-line mark.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="70">
+    <path d="M496 468C474 405 470 331 478 236"/>
+    <path d="M522 469C565 415 628 363 731 325"/>
+    <path d="M549 494C632 482 721 495 814 532"/>
+    <path d="M548 526C603 576 648 636 680 731"/>
+    <path d="M514 550C516 629 497 708 444 797"/>
+    <path d="M480 536C413 548 334 578 238 626"/>
+  </g>
+</svg>

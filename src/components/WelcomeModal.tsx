@@ -15,7 +15,7 @@ import {
   clearRecentProjects,
   saveLastSession,
 } from '../io/projectIO';
-import type { ProjectFile } from '../types';
+import type { ProjectFile } from '../types/projectFile';
 import { useT } from '../i18n/useT';
 
 export default function WelcomeModal({ onClose, onNewProject }: { onClose: () => void; onNewProject: () => void }) {

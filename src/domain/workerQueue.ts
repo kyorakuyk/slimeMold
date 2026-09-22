@@ -6,6 +6,8 @@ import {
   type TaskProjectionStatus,
 } from './contracts';
 import type { ProjectTask, ProjectTaskGraph } from '../projectControl/types';
+import { createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
+import { normalizeWorkerSuccessProvenance, workerRunSuccessIsValid } from './workerSuccess';
 import {
   createAttemptId,
   createTaskExecutionId,
@@ -21,6 +23,16 @@ export interface WorkerWorktreeAssignment {
   baseRevision: string;
 }
 
+export interface WorkerDependencyArtifact {
+  taskId: string;
+  attempt: number;
+  worktreeId?: string;
+  path: string;
+  branch?: string;
+  baseRevision?: string;
+  branchRevision?: string;
+}
+
 export interface WorkerWorktreeAllocator {
   allocate(input: {
     projectId: string;
@@ -34,6 +46,7 @@ export interface WorkerWorktreeAllocator {
 }
 
 export interface WorkerTaskLease {
+  projectId: string;
   runId: string;
   orchestrationId?: string;
   task: ProjectTask;
@@ -41,11 +54,15 @@ export interface WorkerTaskLease {
   attempt: number;
   taskExecutionId: TaskExecutionId;
   attemptId: AttemptId;
+  contextPack?: ContextPack;
+  /** Read-only references to successful dependency worktrees. */
+  dependencyArtifacts?: readonly WorkerDependencyArtifact[];
 }
 
 export interface WorkerExecutionResult {
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'waiting-feedback';
   error?: string;
+  feedbackRequest?: FeedbackRequest;
   evidenceIds?: string[];
   acceptanceId?: string;
 }
@@ -90,6 +107,9 @@ export interface WorkerQueueTask {
   branchRevision?: string;
   cleanupStateSignature?: string;
   evidenceIds: string[];
+  contextPackId?: string;
+  contextPackVersion?: number;
+  feedbackId?: string;
   acceptanceId?: string;
   cleanupStatus?: 'cleaned';
   cleanupReceiptId?: string;
@@ -115,12 +135,16 @@ export interface CreateWorkerRunQueueInput {
   runId: string;
   orchestrationId?: string;
   taskGraph: ProjectTaskGraph;
+  contextPacks?: readonly ContextPack[];
+  requireContextPack?: boolean;
   now: string;
 }
 
 export interface RestoreWorkerRunQueueInput {
   taskGraph: ProjectTaskGraph;
   state: WorkerRunQueueState;
+  contextPacks?: readonly ContextPack[];
+  requireContextPack?: boolean;
 }
 
 export interface RunWorkerQueueOptions {
@@ -168,6 +192,41 @@ function cloneTask(task: ProjectTask): ProjectTask {
   };
 }
 
+function cloneContextPack(pack: ContextPack): ContextPack {
+  return createContextPack(pack);
+}
+
+function contextPackMap(
+  projectId: string,
+  runId: string,
+  taskGraph: ProjectTaskGraph,
+  packs: readonly ContextPack[],
+): ReadonlyMap<string, ContextPack> {
+  const byTask = new Map<string, ContextPack>();
+  for (const pack of packs) {
+    const normalized = cloneContextPack(pack);
+    if (normalized.projectId !== projectId) {
+      throw new Error(`ContextPack 不属于当前 project：${normalized.contextPackId}`);
+    }
+    if (!taskGraph.tasks.some((task) => task.id === normalized.taskId)) {
+      throw new Error(`ContextPack 绑定了不存在的 Task：${normalized.taskId}`);
+    }
+    const expectedTaskExecutionId = createTaskExecutionId(runId, normalized.taskId);
+    if (normalized.taskExecutionId !== expectedTaskExecutionId) {
+      throw new Error(`ContextPack 与 run/task execution lineage 不一致：${normalized.contextPackId}`);
+    }
+    const parsedAttempt = parseAttemptId(normalized.attemptId);
+    if (parsedAttempt.taskExecutionId !== expectedTaskExecutionId) {
+      throw new Error(`ContextPack 与 task execution/attempt 不一致：${normalized.contextPackId}`);
+    }
+    if (byTask.has(normalized.taskId)) {
+      throw new Error(`同一 Task 不能绑定多个 ContextPack：${normalized.taskId}`);
+    }
+    byTask.set(normalized.taskId, normalized);
+  }
+  return byTask;
+}
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -185,11 +244,16 @@ function taskState(
   now: string,
   taskDefinitionVersion: 1,
   acceptanceStageId?: string,
+  contextPack?: ContextPack,
 ): WorkerQueueTask {
   return {
     taskId,
     ...(acceptanceStageId === undefined ? {} : { acceptanceStageId }),
     taskDefinitionVersion,
+    ...(contextPack ? {
+      contextPackId: contextPack.contextPackId,
+      contextPackVersion: contextPack.contextVersion,
+    } : {}),
     taskExecutionId: createTaskExecutionId(runId, taskId),
     status: 'queued',
     attempt: 0,
@@ -211,15 +275,24 @@ function normalizeQueueTask(
   if (!acceptanceStageId) {
     throw new Error(`Worker Task acceptanceStageId 无效：${task.taskId}`);
   }
+  if (!['queued', 'running', 'waiting-feedback', 'succeeded', 'failed', 'blocked', 'cancelled'].includes(task.status)) {
+    throw new Error(`Worker Task status 无效：${task.taskId}`);
+  }
   if (task.taskExecutionId && task.taskExecutionId !== expected) {
     throw new Error(`Worker Task lineage 与 Run/task 不一致：${task.taskId}`);
   }
   if (!Number.isSafeInteger(task.attempt) || task.attempt < 0) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
   }
-  if ((task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
+  if ((task.status === 'running' || task.status === 'waiting-feedback' || task.status === 'succeeded' || task.status === 'failed')
     && task.attempt < 1) {
     throw new Error(`Worker Task 的 attempt 无效：${task.taskId}`);
+  }
+  if (task.status === 'waiting-feedback' && !task.feedbackId?.trim()) {
+    throw new Error(`waiting-feedback Worker Task 缺少 feedbackId：${task.taskId}`);
+  }
+  if (task.status !== 'waiting-feedback' && task.feedbackId !== undefined) {
+    throw new Error(`非 waiting-feedback Worker Task 不能携带 feedbackId：${task.taskId}`);
   }
   if (task.worktreeStatus !== undefined
     && !['created', 'cleaned', 'orphaned', 'registration-pending'].includes(task.worktreeStatus)) {
@@ -228,6 +301,18 @@ function normalizeQueueTask(
   if ((task.worktreeStatus === 'orphaned' || task.worktreeStatus === 'registration-pending')
     && !task.branchRevision?.trim()) {
     throw new Error(`Worker Task ${task.worktreeStatus} 缺少 branchRevision：${task.taskId}`);
+  }
+  const hasWorktreeAssignment = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision]
+    .every((value) => typeof value === 'string' && value.trim().length > 0);
+  const hasAnyWorktreeAssignment = [task.worktreeId, task.worktreePath, task.branch, task.baseRevision]
+    .some((value) => value !== undefined);
+  if (task.worktreeStatus !== undefined
+    && ['created', 'orphaned', 'registration-pending'].includes(task.worktreeStatus)
+    && !hasWorktreeAssignment) {
+    throw new Error(`Worker Task ${task.worktreeStatus} 缺少完整 worktree assignment：${task.taskId}`);
+  }
+  if (task.worktreeStatus === undefined && hasAnyWorktreeAssignment && !hasWorktreeAssignment) {
+    throw new Error(`Worker Task worktree assignment 不完整：${task.taskId}`);
   }
   if (task.cleanupStatus !== undefined) {
     if (task.cleanupStatus !== 'cleaned') {
@@ -240,14 +325,9 @@ function normalizeQueueTask(
   if (task.worktreeStatus === 'cleaned' && task.cleanupStatus !== 'cleaned') {
     throw new Error(`Worker Task cleaned 状态缺少 cleanup receipt：${task.taskId}`);
   }
+  let normalizedSuccess: ReturnType<typeof normalizeWorkerSuccessProvenance> | undefined;
   if (task.status === 'succeeded') {
-    if (!Array.isArray(task.evidenceIds) || task.evidenceIds.length === 0) {
-      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${task.taskId}`);
-    }
-    const evidenceIds = task.evidenceIds.map((id) => requiredText(id, 'Evidence id'));
-    if (new Set(evidenceIds).size !== evidenceIds.length) {
-      throw new Error(`succeeded Worker Task 的 Evidence ids 重复：${task.taskId}`);
-    }
+    normalizedSuccess = normalizeWorkerSuccessProvenance(task.evidenceIds, task.acceptanceId);
   }
   if (task.pendingAttempt !== undefined) {
     if (!Number.isSafeInteger(task.pendingAttempt) || task.pendingAttempt !== task.attempt + 1 || task.status !== 'queued') {
@@ -262,12 +342,16 @@ function normalizeQueueTask(
     }
   }
   const currentAttemptId = task.currentAttemptId
-    ?? (task.status === 'running' && task.attempt > 0
+    ?? ((task.status === 'running' || task.status === 'waiting-feedback') && task.attempt > 0
       ? createAttemptId(expected, task.attempt)
       : undefined);
   return cloneQueueTask({
     ...task,
     ...(task.acceptanceStageId === undefined ? {} : { acceptanceStageId }),
+    ...(normalizedSuccess ? {
+      evidenceIds: normalizedSuccess.evidenceIds,
+      acceptanceId: normalizedSuccess.acceptanceId,
+    } : {}),
     taskExecutionId: expected,
     currentAttemptId,
   });
@@ -306,17 +390,28 @@ function validateGraph(taskGraph: ProjectTaskGraph): void {
 
 export class WorkerTaskQueue {
   private readonly tasksById: ReadonlyMap<string, ProjectTask>;
+  private readonly contextPacksByTask: ReadonlyMap<string, ContextPack>;
+  private readonly requireContextPack: boolean;
   private state: WorkerRunQueueState;
   private events: DomainEvent[] = [];
+  private eventHistory: DomainEvent[] = [];
+  private nextSequence = 1;
+  private readonly aggregateVersions = new Map<string, number>();
+  private runStartedEmitted = false;
   private readonly claiming = new Set<string>();
 
   constructor(
     private readonly taskGraph: ProjectTaskGraph,
     initialState: WorkerRunQueueState,
     emitInitialEvents = false,
+    contextPacks: readonly ContextPack[] = [],
+    requireContextPack = false,
   ) {
     validateGraph(taskGraph);
     this.tasksById = new Map(taskGraph.tasks.map((task) => [task.id, task]));
+    this.contextPacksByTask = contextPackMap(initialState.projectId, initialState.runId, taskGraph, contextPacks);
+    this.requireContextPack = requireContextPack
+      || Object.values(initialState.tasks).some((task) => task.contextPackId !== undefined);
     this.state = {
       ...initialState,
       tasks: Object.fromEntries(
@@ -332,17 +427,48 @@ export class WorkerTaskQueue {
           if (!expectedStageId || persistedStageId !== expectedStageId) {
             throw new Error(`Worker Task acceptance stage 与 TaskGraph 不一致：${id}`);
           }
-          return [id, normalizeQueueTask(
+          const contextPack = this.contextPacksByTask.get(id);
+          if (this.requireContextPack && !contextPack) {
+            throw new Error(`hierarchical Worker 缺少 ContextPack：${id}`);
+          }
+          if (task.contextPackId !== undefined
+            && (!contextPack || task.contextPackId !== contextPack.contextPackId
+              || task.contextPackVersion !== contextPack.contextVersion)) {
+            throw new Error(`Worker Task ContextPack binding 不一致：${id}`);
+          }
+          if (contextPack) {
+            const expectedContextAttempt = task.status === 'queued'
+              ? (task.pendingAttempt ?? task.attempt + 1)
+              : task.attempt;
+            if (expectedContextAttempt > 0
+              && task.status !== 'blocked'
+              && task.status !== 'cancelled'
+              && contextPack.attemptId !== createAttemptId(
+                contextPack.taskExecutionId,
+                expectedContextAttempt,
+              )) {
+              throw new Error(`ContextPack 与 Worker attempt 不一致：${id}`);
+            }
+          }
+          const normalized = normalizeQueueTask(
             {
               ...task,
               acceptanceStageId: expectedStageId,
               taskDefinitionVersion: task.taskDefinitionVersion ?? taskDefinition?.version,
             },
             initialState.runId,
-          )] as const;
+          );
+          return [id, {
+            ...normalized,
+            ...(contextPack ? {
+              contextPackId: contextPack.contextPackId,
+              contextPackVersion: contextPack.contextVersion,
+            } : {}),
+          }] as const;
         }),
       ),
     };
+    this.runStartedEmitted = initialState.status !== 'queued';
     this.validateState();
     if (emitInitialEvents) {
       this.emitRun('RunCreated', {
@@ -417,6 +543,26 @@ export class WorkerTaskQueue {
     const attempt = current.pendingAttempt ?? current.attempt + 1;
     const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
+    const contextPack = this.contextPacksByTask.get(taskId);
+    const dependencyArtifacts = task.dependsOn.flatMap((dependencyId): WorkerDependencyArtifact[] => {
+      const dependency = this.state.tasks[dependencyId];
+      if (!dependency || dependency.status !== 'succeeded' || !dependency.worktreePath) return [];
+      return [{
+        taskId: dependencyId,
+        attempt: dependency.attempt,
+        ...(dependency.worktreeId ? { worktreeId: dependency.worktreeId } : {}),
+        path: dependency.worktreePath,
+        ...(dependency.branch ? { branch: dependency.branch } : {}),
+        ...(dependency.baseRevision ? { baseRevision: dependency.baseRevision } : {}),
+        ...(dependency.branchRevision ? { branchRevision: dependency.branchRevision } : {}),
+      }];
+    });
+    if (this.requireContextPack && !contextPack) {
+      throw new Error(`hierarchical Worker claim 缺少 ContextPack：${taskId}`);
+    }
+    if (contextPack && contextPack.attemptId !== attemptId) {
+      throw new Error(`ContextPack 与当前 claim Attempt 不一致：${taskId}`);
+    }
     this.claiming.add(taskId);
     try {
       const assignment = await allocator.allocate({
@@ -438,7 +584,6 @@ export class WorkerTaskQueue {
         throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用`);
       }
       const now = new Date().toISOString();
-      const wasRunning = this.state.status === 'running';
       this.state = {
         ...this.state,
         status: 'running',
@@ -463,7 +608,7 @@ export class WorkerTaskQueue {
           },
         },
       };
-      if (!wasRunning) {
+      if (!this.runStartedEmitted) {
         this.emitRun('RunStarted', { runId: this.state.runId }, now);
       }
       this.emitTask('TaskStarted', taskId, {
@@ -480,6 +625,7 @@ export class WorkerTaskQueue {
         attempt,
       }, now);
       return {
+        projectId: this.state.projectId,
         runId: this.state.runId,
         orchestrationId: this.state.orchestrationId,
         task: cloneTask(task),
@@ -487,12 +633,13 @@ export class WorkerTaskQueue {
         attempt,
         taskExecutionId,
         attemptId,
+        ...(contextPack ? { contextPack: cloneContextPack(contextPack) } : {}),
+        ...(dependencyArtifacts.length > 0 ? { dependencyArtifacts } : {}),
       };
     } catch (cause) {
       if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
       const message = `worktree 分配失败：${errorMessage(cause)}`;
-      const wasRunning = this.state.status === 'running';
       this.state = {
         ...this.state,
         status: 'running',
@@ -510,7 +657,7 @@ export class WorkerTaskQueue {
           },
         },
       };
-      if (!wasRunning) {
+      if (!this.runStartedEmitted) {
         this.emitRun('RunStarted', { runId: this.state.runId }, now);
       }
       this.emitTask('TaskStarted', taskId, {
@@ -561,10 +708,7 @@ export class WorkerTaskQueue {
     expectedAttemptId: AttemptId,
   ): void {
     const current = this.requireRunning(taskId, expectedAttemptId);
-    const uniqueEvidenceIds = [...new Set(evidenceIds.map((id) => requiredText(id, 'Evidence id')))];
-    if (uniqueEvidenceIds.length === 0) {
-      throw new Error(`succeeded Worker Task 缺少非空 Evidence ids：${taskId}`);
-    }
+    const normalizedSuccess = normalizeWorkerSuccessProvenance(evidenceIds, acceptanceId);
     this.state = {
       ...this.state,
       updatedAt: now,
@@ -573,8 +717,8 @@ export class WorkerTaskQueue {
         [taskId]: {
           ...current,
           status: 'succeeded',
-          evidenceIds: uniqueEvidenceIds,
-          ...(acceptanceId ? { acceptanceId: requiredText(acceptanceId, 'acceptance id') } : {}),
+          evidenceIds: normalizedSuccess.evidenceIds,
+          acceptanceId: normalizedSuccess.acceptanceId,
           error: undefined,
           updatedAt: now,
         },
@@ -588,8 +732,8 @@ export class WorkerTaskQueue {
       taskExecutionId,
       attemptId,
       attempt: current.attempt,
-      evidenceIds: uniqueEvidenceIds,
-      ...(acceptanceId ? { acceptanceId } : {}),
+      evidenceIds: normalizedSuccess.evidenceIds,
+      acceptanceId: normalizedSuccess.acceptanceId,
       worktreeId: current.worktreeId,
     }, now);
     this.reconcileBlocked(now);
@@ -638,6 +782,49 @@ export class WorkerTaskQueue {
       ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
     }, now);
     this.reconcileBlocked(now);
+    this.recomputeRunStatus(now);
+  }
+
+  markWaitingFeedback(
+    taskId: string,
+    request: FeedbackRequest,
+    now: string,
+    expectedAttemptId: AttemptId,
+  ): void {
+    const current = this.requireRunning(taskId, expectedAttemptId);
+    const feedbackId = requiredText(request.feedbackId, 'feedback id');
+    if (!request.blocking) throw new Error(`非 blocking FeedbackRequest 不能暂停 Worker：${feedbackId}`);
+    if (request.projectId !== this.state.projectId || request.taskId !== taskId) {
+      throw new Error(`FeedbackRequest 不属于当前项目或 Task：${feedbackId}`);
+    }
+    const taskExecutionId = current.taskExecutionId ?? createTaskExecutionId(this.state.runId, taskId);
+    const attemptId = current.currentAttemptId ?? createAttemptId(taskExecutionId, current.attempt);
+    if (request.attemptId !== attemptId) {
+      throw new Error(`FeedbackRequest 与当前 Attempt 不一致：${feedbackId}`);
+    }
+    this.state = {
+      ...this.state,
+      status: 'blocked',
+      updatedAt: now,
+      tasks: {
+        ...this.state.tasks,
+        [taskId]: {
+          ...current,
+          status: 'waiting-feedback',
+          feedbackId,
+          error: undefined,
+          updatedAt: now,
+        },
+      },
+    };
+    this.emitTask('TaskFeedbackRequested', taskId, {
+      ...request,
+      runId: this.state.runId,
+      taskId,
+      taskExecutionId,
+      attemptId,
+      attempt: current.attempt,
+    }, now);
     this.recomputeRunStatus(now);
   }
 
@@ -697,7 +884,9 @@ export class WorkerTaskQueue {
         ? 'running'
         : statuses.some((status) => status === 'failed')
           ? 'partial'
-          : statuses.some((status) => status === 'blocked')
+          : statuses.some((status) => status === 'waiting-feedback')
+            ? 'blocked'
+            : statuses.some((status) => status === 'blocked')
             ? 'blocked'
             : statuses.some((status) => status === 'cancelled')
               ? 'cancelled'
@@ -714,14 +903,15 @@ export class WorkerTaskQueue {
       succeeded: 'RunSucceeded',
     };
     const type = eventType[next];
-    if (type && !(type === 'RunStarted' && this.events.some((event) => event.eventType === type))) {
+    if (type && !(type === 'RunStarted' && this.runStartedEmitted)) {
       this.emitRun(type, { runId: this.state.runId, taskGraphId: this.state.taskGraphId }, now);
     }
   }
 
   private emitRun(eventType: string, payload: unknown, occurredAt: string): void {
+    if (eventType === 'RunStarted') this.runStartedEmitted = true;
     this.emit({
-      eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.events.length + 1}`,
+      eventId: `${this.state.runId}:${eventType}:attempt-${this.maxAttempt()}:${this.nextSequence}`,
       streamId: this.state.projectId,
       aggregateType: 'Run',
       aggregateId: this.state.runId,
@@ -747,7 +937,7 @@ export class WorkerTaskQueue {
       ? payloadRecord.attemptId
       : 'none';
     this.emit({
-      eventId: `${taskExecutionId}:${eventType}:${attemptId}:${this.events.length + 1}`,
+      eventId: `${taskExecutionId}:${eventType}:${attemptId}:${this.nextSequence}`,
       streamId: this.state.projectId,
       aggregateType: 'TaskExecution',
       aggregateId: taskExecutionId,
@@ -770,15 +960,17 @@ export class WorkerTaskQueue {
   }
 
   private emit(event: Omit<DomainEvent, 'sequence' | 'aggregateVersion'>): void {
-    const previous = [...this.events]
-      .reverse()
-      .find((item) => item.aggregateType === event.aggregateType && item.aggregateId === event.aggregateId);
+    const aggregateKey = `${event.aggregateType}\u0000${event.aggregateId}`;
+    const aggregateVersion = (this.aggregateVersions.get(aggregateKey) ?? 0) + 1;
     const next: DomainEvent = {
       ...event,
-      sequence: this.events.length + 1,
-      aggregateVersion: (previous?.aggregateVersion ?? 0) + 1,
+      sequence: this.nextSequence,
+      aggregateVersion,
     };
-    this.events = appendDomainEvent(this.events, next);
+    this.nextSequence += 1;
+    this.aggregateVersions.set(aggregateKey, aggregateVersion);
+    this.eventHistory = appendDomainEvent(this.eventHistory, next);
+    this.events.push(next);
   }
 
   private validateState(): void {
@@ -794,6 +986,12 @@ export class WorkerTaskQueue {
     if (taskIds.size !== stateIds.size || [...taskIds].some((id) => !stateIds.has(id))) {
       throw new Error('Worker 队列任务集合与任务图不一致，拒绝恢复');
     }
+    if (!['queued', 'running', 'partial', 'blocked', 'failed', 'cancelled', 'succeeded'].includes(this.state.status)) {
+      throw new Error(`Worker Run status 无效：${String(this.state.status)}`);
+    }
+    if (this.state.status === 'succeeded' && !workerRunSuccessIsValid(Object.values(this.state.tasks))) {
+      throw new Error('succeeded Worker Run 必须包含完整 success provenance 的 terminal tasks');
+    }
   }
 }
 
@@ -802,6 +1000,11 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
   const runId = requiredText(input.runId, 'Run id');
   const now = requiredText(input.now, '时间');
   validateGraph(input.taskGraph);
+  const contextPacks = input.contextPacks ?? [];
+  const contextPacksByTask = contextPackMap(projectId, runId, input.taskGraph, contextPacks);
+  if (input.requireContextPack && input.taskGraph.tasks.some((task) => !contextPacksByTask.has(task.id))) {
+    throw new Error('hierarchical Worker queue 的每个 Task 都必须有 ContextPack');
+  }
   const state: WorkerRunQueueState = {
     version: 1,
     projectId,
@@ -814,15 +1017,27 @@ export function createWorkerRunQueue(input: CreateWorkerRunQueueInput): WorkerTa
     updatedAt: now,
     tasks: Object.fromEntries(input.taskGraph.tasks.map((task) => [
       task.id,
-      taskState(task.id, runId, now, task.version, task.stageId),
+      taskState(task.id, runId, now, task.version, task.stageId, contextPacksByTask.get(task.id)),
     ])),
   };
-  return new WorkerTaskQueue(input.taskGraph, state, true);
+  return new WorkerTaskQueue(
+    input.taskGraph,
+    state,
+    true,
+    contextPacks,
+    input.requireContextPack,
+  );
 }
 
 export function restoreWorkerRunQueue(input: RestoreWorkerRunQueueInput): WorkerTaskQueue {
   validateGraph(input.taskGraph);
-  return new WorkerTaskQueue(input.taskGraph, input.state, false);
+  return new WorkerTaskQueue(
+    input.taskGraph,
+    input.state,
+    false,
+    input.contextPacks,
+    input.requireContextPack,
+  );
 }
 
 export async function runWorkerQueue(
@@ -889,14 +1104,28 @@ export async function runWorkerQueue(
           throwIfCancelled();
           result = await options.executor.execute(lease, { signal: options.signal });
           throwIfCancelled();
-          const completed = options.sideEffects
-            ? await options.sideEffects.complete(sideEffect, result)
-            : sideEffect;
-          sideEffect = completed;
-          if (completed.status !== 'receipt') return;
+          if (result.status === 'waiting-feedback') {
+            if (!result.feedbackRequest) throw new Error('waiting-feedback Worker 结果缺少 FeedbackRequest');
+            if (!options.sideEffects?.markUnknown) {
+              throw new Error('side effect 已 claim，但 Worker feedback 缺少 unknown recovery handler');
+            }
+            sideEffect = await options.sideEffects.markUnknown(
+              sideEffect,
+              'worker-requested-feedback-before-terminal-receipt',
+            );
+          } else {
+            const completed = options.sideEffects
+              ? await options.sideEffects.complete(sideEffect, result)
+              : sideEffect;
+            sideEffect = completed;
+            if (completed.status !== 'receipt') return;
+          }
         }
         if (result.status === 'succeeded') {
           queue.markSucceeded(taskId, result.evidenceIds ?? [], new Date().toISOString(), result.acceptanceId, lease.attemptId);
+        } else if (result.status === 'waiting-feedback') {
+          if (!result.feedbackRequest) throw new Error('waiting-feedback Worker 结果缺少 FeedbackRequest');
+          queue.markWaitingFeedback(taskId, result.feedbackRequest, new Date().toISOString(), lease.attemptId);
         } else {
           queue.markFailed(
             taskId,

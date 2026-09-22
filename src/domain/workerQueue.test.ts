@@ -10,6 +10,7 @@ import {
   type WorkerTaskLease,
   type WorkerWorktreeAllocator,
 } from './workerQueue';
+import { createFeedbackRequest, createContextPack, type ContextPack, type FeedbackRequest } from '../projectControl/protocol';
 import { createAttemptId, createTaskExecutionId } from './execution';
 
 function task(id: string, dependsOn: string[] = []): ProjectTask {
@@ -113,6 +114,19 @@ describe('WorkerTaskQueue', () => {
     expect(() => restoreWorkerRunQueue({ taskGraph, state: keyDriftState })).toThrow(/key.*taskId|taskId.*key/);
   });
 
+  it('rejects a persisted succeeded run whose tasks are not terminal successes', () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-status-drift',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const invalid = queue.snapshot();
+    invalid.status = 'succeeded';
+
+    expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: invalid }))
+      .toThrow(/succeeded|terminal|provenance/i);
+  });
   it('assigns stable task execution and attempt ids across retries', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -158,6 +172,7 @@ describe('WorkerTaskQueue', () => {
             worktreePath: undefined,
             branch: undefined,
             baseRevision: undefined,
+            worktreeStatus: undefined,
           },
         },
       },
@@ -180,7 +195,7 @@ describe('WorkerTaskQueue', () => {
       now: '2026-09-01T00:01:00.000Z',
     });
     const lease = await queue.claimTask('a', allocatorFor([]));
-    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', undefined, lease!.attemptId);
+    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', 'acceptance-1', lease!.attemptId);
     const state = queue.snapshot();
     state.tasks.a = { ...state.tasks.a, evidenceIds: [] };
 
@@ -188,6 +203,40 @@ describe('WorkerTaskQueue', () => {
       taskGraph,
       state,
     })).toThrow(/Evidence/);
+  });
+
+  it('rejects successful task completion without Acceptance id', async () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-acceptance-required',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    expect(() => queue.markSucceeded(
+      'a',
+      ['evidence-1'],
+      '2026-09-01T00:02:00.000Z',
+      undefined,
+      lease!.attemptId,
+    )).toThrow(/Acceptance|acceptance/);
+  });
+
+  it('rejects restoring a succeeded task without Acceptance id', async () => {
+    const taskGraph = graph([task('a')]);
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-acceptance-restore',
+      taskGraph,
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const lease = await queue.claimTask('a', allocatorFor([]));
+    queue.markSucceeded('a', ['evidence-1'], '2026-09-01T00:02:00.000Z', 'acceptance-1', lease!.attemptId);
+    const state = queue.snapshot();
+    state.tasks.a = { ...state.tasks.a, acceptanceId: undefined };
+
+    expect(() => restoreWorkerRunQueue({ taskGraph, state })).toThrow(/Acceptance|acceptance/);
   });
 
   it('rejects invalid persisted worktree lifecycle provenance', () => {
@@ -202,16 +251,36 @@ describe('WorkerTaskQueue', () => {
     invalidStatus.tasks.a = { ...invalidStatus.tasks.a, worktreeStatus: 'unknown' as never };
     expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidStatus })).toThrow(/worktreeStatus/);
 
+    const invalidRunStatus = queue.snapshot();
+    invalidRunStatus.status = 'bogus' as never;
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidRunStatus })).toThrow(/Run status|状态/);
+
+    const invalidTaskStatus = queue.snapshot();
+    invalidTaskStatus.tasks.a = { ...invalidTaskStatus.tasks.a, status: 'bogus' as never };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: invalidTaskStatus })).toThrow(/Task status|状态/);
+
+    const createdWithoutAssignment = queue.snapshot();
+    createdWithoutAssignment.tasks.a = { ...createdWithoutAssignment.tasks.a, worktreeStatus: 'created' };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: createdWithoutAssignment })).toThrow(/worktree|assignment|path|branch/i);
+
     const orphanWithoutRevision = queue.snapshot();
     orphanWithoutRevision.tasks.a = { ...orphanWithoutRevision.tasks.a, worktreeStatus: 'orphaned' };
     expect(() => restoreWorkerRunQueue({ taskGraph, state: orphanWithoutRevision })).toThrow(/branchRevision/);
 
+    const orphanWithoutAssignment = queue.snapshot();
+    orphanWithoutAssignment.tasks.a = {
+      ...orphanWithoutAssignment.tasks.a,
+      worktreeStatus: 'orphaned',
+      branchRevision: 'branch-revision-1',
+    };
+    expect(() => restoreWorkerRunQueue({ taskGraph, state: orphanWithoutAssignment })).toThrow(/worktree|assignment|path|branch/i);
     const cleanedWithoutReceipt = queue.snapshot();
     cleanedWithoutReceipt.tasks.a = {
       ...cleanedWithoutReceipt.tasks.a,
       status: 'succeeded',
       attempt: 1,
       evidenceIds: ['evidence-1'],
+      acceptanceId: 'acceptance-1',
       worktreeStatus: 'cleaned',
       cleanupStatus: 'cleaned',
     };
@@ -309,7 +378,7 @@ describe('WorkerTaskQueue', () => {
         leases.push(lease);
         return lease.task.id === 'a'
           ? { status: 'failed', error: '编译失败' }
-          : { status: 'succeeded', evidenceIds: [`evidence-${lease.task.id}`] };
+          : { status: 'succeeded', evidenceIds: [`evidence-${lease.task.id}`], acceptanceId: `acceptance-${lease.task.id}` };
       },
     };
 
@@ -389,6 +458,7 @@ describe('WorkerTaskQueue', () => {
             worktreePath: undefined,
             branch: undefined,
             baseRevision: undefined,
+            worktreeStatus: undefined,
           },
         },
       },
@@ -410,7 +480,7 @@ describe('WorkerTaskQueue', () => {
     });
     const lease = await queue.claimTask('a', allocatorFor(firstAllocations));
     expect(lease).not.toBeNull();
-    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z', undefined, lease!.attemptId);
+    queue.markSucceeded('a', ['evidence-a'], '2026-09-01T00:00:02.000Z', 'acceptance-a', lease!.attemptId);
 
     const restored = restoreWorkerRunQueue({
       taskGraph: graph([task('a'), task('b', ['a'])]),
@@ -419,7 +489,7 @@ describe('WorkerTaskQueue', () => {
     const resumedAllocations: string[] = [];
     const state = await runWorkerQueue(restored, {
       allocator: allocatorFor(resumedAllocations),
-      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-b'] }) },
+      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence-b'], acceptanceId: 'acceptance-b' }) },
     });
 
     expect(firstAllocations).toEqual(['a']);
@@ -474,7 +544,7 @@ describe('WorkerTaskQueue', () => {
       executor: {
         execute: async () => {
           executorStarted = true;
-          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+          return { status: 'succeeded', evidenceIds: ['evidence-a'], acceptanceId: 'acceptance-a' };
         },
       },
       onTransition: ({ state, events }) => {
@@ -543,7 +613,7 @@ describe('WorkerTaskQueue', () => {
       executor: {
         execute: async () => {
           order.push('executor');
-          return { status: 'succeeded', evidenceIds: ['evidence-a'] };
+          return { status: 'succeeded', evidenceIds: ['evidence-a'], acceptanceId: 'acceptance-a' };
         },
       },
       onTransition: ({ state }) => {
@@ -610,7 +680,7 @@ describe('WorkerTaskQueue', () => {
     });
     const state = await runWorkerQueue(queue, {
       allocator: allocatorFor([]),
-      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['evidence-1'] }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1' }) },
       signal: controller.signal,
       sideEffects: {
         start: async (lease) => startSideEffect(createSideEffect({
@@ -673,7 +743,7 @@ describe('WorkerTaskQueue', () => {
           executorCalls += 1;
           expect(signal).toBe(controller.signal);
           controller.abort();
-          return { status: 'succeeded', evidenceIds: ['should-not-persist'] };
+          return { status: 'succeeded', evidenceIds: ['should-not-persist'], acceptanceId: 'acceptance-a' };
         },
       },
       signal: controller.signal,
@@ -699,7 +769,7 @@ describe('WorkerTaskQueue', () => {
     await expect(runWorkerQueue(queue, {
       concurrency: 1,
       allocator: { allocate: async () => ({ worktreeId: 'wt', path: 'C:/wt', branch: 'worker/wt', baseRevision: 'base' }) },
-      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'] }) },
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'], acceptanceId: 'acceptance-a' }) },
       onTransition: async () => { throw new Error('persistence unavailable'); },
     })).rejects.toThrow('persistence unavailable');
     expect(queue.drainEvents().map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted']);
@@ -795,6 +865,24 @@ describe('WorkerTaskQueue', () => {
     expect(queue.drainEvents().filter((event) => event.eventType === 'RunStarted')).toHaveLength(0);
   });
 
+  it('does not re-emit RunStarted after a failed task transitions the run to partial', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-partial-start',
+      taskGraph: graph([task('a'), task('c')]),
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const allocator = allocatorFor([]);
+    const first = await queue.claimTask('a', allocator);
+    expect(first).not.toBeNull();
+    queue.drainEvents();
+    queue.markFailed('a', 'worktree allocation failed', '2026-09-01T00:00:01.000Z', [], undefined, first!.attemptId);
+    queue.drainEvents();
+
+    expect(await queue.claimTask('c', allocator)).not.toBeNull();
+    expect(queue.drainEvents().filter((event) => event.eventType === 'RunStarted')).toHaveLength(0);
+  });
+
   it('fails closed when an allocator reuses a worktree for another task in the same run', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -813,7 +901,7 @@ describe('WorkerTaskQueue', () => {
 
     const state = await runWorkerQueue(queue, {
       allocator: sharedAllocator,
-      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence'] }) },
+      executor: { execute: async () => ({ status: 'succeeded', evidenceIds: ['evidence'], acceptanceId: 'acceptance-a' }) },
       concurrency: 1,
     });
 
@@ -840,5 +928,119 @@ describe('WorkerTaskQueue', () => {
     expect(transitions.map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted', 'TaskFailed', 'RunPartial']);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: -1 } } } })).toThrow(/attempt/);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
+  });
+
+  it('parks a running Worker on structured feedback instead of marking it failed', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-feedback',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const taskExecutionId = createTaskExecutionId('run-feedback', 'a');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const feedbackRequest: FeedbackRequest = createFeedbackRequest({
+      schemaVersion: 1,
+      feedbackId: 'feedback-a-1',
+      projectId: 'project-1',
+      taskId: 'a',
+      parentTaskId: 'root-task',
+      attemptId,
+      contextVersion: 1,
+      ambiguity: '需要确认接口兼容策略',
+      affectedScope: ['src/a'],
+      affectedAcceptance: [{ projectId: 'project-1', kind: 'acceptance', id: 'acceptance-a', version: 1 }],
+      options: [
+        { id: 'option-a', label: '保持兼容' },
+        { id: 'option-b', label: '允许破坏性变更' },
+      ],
+      recommendation: '保持兼容',
+      blocking: true,
+      requestedBy: {
+        projectId: 'project-1',
+        agentId: 'worker-a',
+        role: 'worker',
+        taskId: 'a',
+      },
+      sourceRefs: [{ projectId: 'project-1', kind: 'evidence', id: 'evidence-a', version: 1 }],
+      expiresAt: '2026-09-01T01:00:00.000Z',
+    });
+
+    const state = await runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: {
+        execute: async () => ({ status: 'waiting-feedback', feedbackRequest }),
+      },
+    });
+
+    expect(state.tasks.a).toMatchObject({
+      status: 'waiting-feedback',
+      feedbackId: 'feedback-a-1',
+      currentAttemptId: attemptId,
+    });
+    expect(state.status).toBe('blocked');
+    expect(queue.drainEvents().map((event) => event.eventType)).toContain('TaskFeedbackRequested');
+    expect(state.tasks.a.status).not.toBe('failed');
+  });
+
+  it('binds a versioned ContextPack to a hierarchical Worker lease', async () => {
+    const contextPack: ContextPack = createContextPack({
+      schemaVersion: 1,
+      contextPackId: 'context-pack-a-v2',
+      projectId: 'project-1',
+      taskId: 'a',
+      taskExecutionId: createTaskExecutionId('run-context', 'a'),
+      attemptId: createAttemptId(createTaskExecutionId('run-context', 'a'), 1),
+      contextVersion: 2,
+      sourceVersion: 7,
+      goal: '实现受限任务',
+      nonGoals: ['读取项目外文件'],
+      decisionRefs: [],
+      evidenceRefs: [],
+      requiredFiles: ['src/a'],
+      requiredDocuments: [],
+      dependencyRefs: [],
+      acceptanceCriteria: ['a 通过测试'],
+      scope: {
+        allowedFiles: ['src/a'],
+        allowedDataClasses: ['task', 'source-file'],
+        allowedTools: ['read-file', 'run-tests'],
+        allowedAgentRoles: ['worker'],
+        maxDelegationDepth: 0,
+        maxFanOut: 0,
+        maxTokens: 1000,
+        maxCalls: 2,
+        maxMoneyCents: 0,
+        maxDurationMs: 1000,
+        expiresAt: '2026-09-01T01:00:00.000Z',
+      },
+    });
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-context',
+      taskGraph: graph([task('a')]),
+      contextPacks: [contextPack],
+      requireContextPack: true,
+      now: '2026-09-01T00:00:01.000Z',
+    });
+
+    const lease = await queue.claimTask('a', allocatorFor([]));
+
+    expect(lease?.contextPack).toMatchObject({ taskId: 'a', contextVersion: 2, sourceVersion: 7 });
+    expect(queue.snapshot().tasks.a).toMatchObject({ contextPackId: expect.any(String), contextPackVersion: 2 });
+    const restored = restoreWorkerRunQueue({
+      taskGraph: graph([task('a')]),
+      state: queue.snapshot(),
+      contextPacks: [contextPack],
+      requireContextPack: true,
+    });
+    expect(restored.snapshot().tasks.a).toMatchObject({ contextPackId: 'context-pack-a-v2', contextPackVersion: 2 });
+    expect(() => createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-context-missing',
+      taskGraph: graph([task('a')]),
+      requireContextPack: true,
+      now: '2026-09-01T00:00:01.000Z',
+    })).toThrow(/ContextPack/);
   });
 });
