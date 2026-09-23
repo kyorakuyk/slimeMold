@@ -100,13 +100,17 @@ describe('worker action controller recovery CAS wiring', () => {
       aggregateVersion: 1,
       eventType: 'RunCreated',
       schemaVersion: 1,
-      payload: { runId: 'run-1' },
+      payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1, taskIds: ['task-1'] },
       actor: 'runtime',
       occurredAt: '2026-09-22T00:00:00.000Z',
+      correlationId: 'run-1',
+      source: { objectId: 'graph-1', objectVersion: 1 },
     };
-    expect(findTrustedRunCreatedEvent([base], 'run-1')).toBeDefined();
-    expect(findTrustedRunCreatedEvent([{ ...base, payload: { runId: 'run-other' } }], 'run-1')).toBeUndefined();
-    expect(findTrustedRunCreatedEvent([{ ...base, aggregateId: 'run-other' }], 'run-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([base], 'run-1', 'project-1')).toBeDefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, payload: { runId: 'run-other' } }], 'run-1', 'project-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, aggregateId: 'run-other' }], 'run-1', 'project-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, streamId: 'other-project' }], 'run-1', 'project-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, source: undefined }], 'run-1', 'project-1')).toBeUndefined();
   });
 
   it('persists one decision, repairs a missing projection, and does not rerun an exact request', async () => {
@@ -143,7 +147,7 @@ describe('worker action controller recovery CAS wiring', () => {
         aggregateVersion: 1,
         eventType: 'RunCreated',
         schemaVersion: 1,
-        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1 },
+        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1, taskIds: ['task-1'] },
         actor: 'system',
         occurredAt: '2026-09-22T00:00:00.000Z',
         correlationId: 'run-1',
@@ -254,7 +258,14 @@ describe('worker action controller recovery CAS wiring', () => {
     expect(recordProjectEvents).toHaveBeenCalledTimes(2);
     expect(saveProject).toHaveBeenCalledTimes(2);
     expect(runQueuedWorker).toHaveBeenCalledTimes(1);
-    expect(runQueuedWorker).toHaveBeenNthCalledWith(1, 'run-1', undefined, 'project-1', 'C:/project');
+    expect(runQueuedWorker).toHaveBeenNthCalledWith(
+      1,
+      'run-1',
+      undefined,
+      'project-1',
+      'C:/project',
+      expect.objectContaining({ runId: 'run-1', status: 'queued' }),
+    );
     await expect(persistence.read()).resolves.toMatchObject({
       status: 'ok',
       journal: { entries: [expect.objectContaining({ requestIdentity: 'request-1', status: 'committed' })] },
@@ -374,7 +385,7 @@ describe('worker action controller recovery CAS wiring', () => {
         aggregateVersion: 1,
         eventType: 'RunCreated',
         schemaVersion: 1,
-        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1 },
+        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1, taskIds: ['task-1'] },
         actor: 'system',
         occurredAt: '2026-09-22T00:00:00.000Z',
         correlationId: 'run-1',

@@ -71,6 +71,8 @@ function candidate(decision: 'retry' | 'skip' = 'retry', decisionId = 'decision-
     payload: {
       runId: 'run-1',
       decision,
+      reason: '恢复 durable decision',
+      effectKeys: [],
       requiresNewAttempt: decision === 'retry',
       taskIds: ['task-1'],
     },
@@ -124,6 +126,76 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('WorkerRecoveryDecisionPersistence', () => {
+  it('rejects a TaskQueued event that uses the Run aggregate before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskQueued'
+        ? { ...event, aggregateType: 'Run' as const, aggregateId: 'run-1' }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/aggregateType|TaskQueued/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a recovery decision event without reason or effect keys', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'WorkerRunRecoveryDecided'
+        ? {
+          ...event,
+          payload: (() => {
+            const payload = { ...(event.payload as Record<string, unknown>) };
+            delete payload.reason;
+            delete payload.effectKeys;
+            return payload;
+          })(),
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/reason|effectKeys/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a queued candidate carrying live worktree authority fields', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      state: {
+        ...valid.state,
+        tasks: {
+          ...valid.state.tasks,
+          'task-1': {
+            ...valid.state.tasks['task-1'],
+            worktreeId: 'forged-worktree',
+            worktreePath: 'C:/forged-workers/task-1',
+            branch: 'worker/forged-task-1',
+            baseRevision: 'b'.repeat(40),
+            targetIdentity: 'forged-target',
+          },
+        },
+      },
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/queued|assignment|worktree/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
   it('rejects a retry TaskQueued event without its next-attempt fence before journal write', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');

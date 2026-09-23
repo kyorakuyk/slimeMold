@@ -236,6 +236,21 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
   if (assignmentCount !== 0 && assignmentCount !== assignmentFields.length) {
     throw new Error(`decision candidate WorkerTask assignment 不完整：${taskId}`);
   }
+  optionalText(value.acceptanceStageId, `decision candidate acceptanceStageId：${taskId}`);
+  if (status === 'queued' && value.currentAttemptId === undefined
+    && (assignmentCount !== 0
+      || value.targetIdentity !== undefined
+      || value.branchRevision !== undefined
+      || value.worktreeStatus !== undefined
+      || value.cleanupStateSignature !== undefined
+      || value.cleanupStatus !== undefined
+      || value.cleanupReceiptId !== undefined)) {
+    throw new Error(`queued decision candidate 不能携带 live worktree authority：${taskId}`);
+  }
+  if ((value.targetIdentity !== undefined || value.branchRevision !== undefined)
+    && assignmentCount !== assignmentFields.length) {
+    throw new Error(`decision candidate worktree identity/revision 缺少完整 assignment：${taskId}`);
+  }
   for (const [field, fieldValue] of [
     ['worktreeId', value.worktreeId],
     ['worktreePath', value.worktreePath],
@@ -343,6 +358,19 @@ function validateEvent(
   requiredSafeInteger(value.aggregateVersion, 'decision aggregateVersion', 1);
   const eventType = requiredCanonicalText(value.eventType, 'decision eventType');
   if (!RECOVERY_EVENT_TYPES.has(eventType)) throw new Error(`decision eventType 不允许：${eventType}`);
+  const expectedAggregateType = eventType === 'WorkerRunRecoveryDecided'
+    || eventType === 'RunQueued'
+    || eventType === 'RunPartial'
+    ? 'Run'
+    : eventType === 'TaskQueued'
+      || eventType === 'TaskAttemptMarkedUnknown'
+      || eventType === 'TaskFailed'
+      || eventType === 'TaskBlocked'
+      ? 'TaskExecution'
+      : undefined;
+  if (expectedAggregateType !== undefined && aggregateType !== expectedAggregateType) {
+    throw new Error(`decision ${eventType} aggregateType 必须是 ${expectedAggregateType}`);
+  }
   if (value.schemaVersion !== 1) throw new Error('decision event schemaVersion 无效');
   if (!isRecord(value.payload)) throw new Error('decision event payload 必须是对象');
   if (requiredCanonicalText(value.payload.runId, 'decision event payload.runId') !== context.runId) {
@@ -402,6 +430,11 @@ function validateEvent(
       throw new Error('decision TaskBlocked blockedBy 无效');
     }
   }
+  if (eventType === 'RunQueued' || eventType === 'RunPartial') {
+    if (requiredCanonicalText(value.payload.recoveryDecisionId, `decision ${eventType} recoveryDecisionId`) !== context.decisionId) {
+      throw new Error(`decision ${eventType} recoveryDecisionId 与 decisionId 不一致`);
+    }
+  }
   validateActor(value.actor);
   requiredIsoText(value.occurredAt, 'decision event occurredAt');
   if (requiredCanonicalText(value.correlationId, 'decision event correlationId') !== context.runId) {
@@ -427,6 +460,12 @@ function validateEvent(
     const decision = requiredText(value.payload.decision, 'decision recovery event decision');
     if (decision !== context.action) {
       throw new Error('decision recovery event decision 与 action 不一致');
+    }
+    requiredText(value.payload.reason, 'decision recovery event reason');
+    if (!Array.isArray(value.payload.effectKeys)
+      || value.payload.effectKeys.some((effectKey) => typeof effectKey !== 'string' || !effectKey.trim())
+      || new Set(value.payload.effectKeys).size !== value.payload.effectKeys.length) {
+      throw new Error('decision recovery event effectKeys 无效');
     }
     if (typeof value.payload.requiresNewAttempt !== 'boolean'
       || value.payload.requiresNewAttempt !== (context.action === 'retry')) {

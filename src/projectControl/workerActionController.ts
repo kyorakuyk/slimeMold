@@ -1,7 +1,11 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
 import type { Orchestration } from '../types/orchestration';
 import { replayDomainEvents, type DomainEvent, type SideEffectRecord } from '../domain/contracts';
-import { restoreWorkerRunQueue, type WorkerRunQueueState } from '../domain/workerQueue';
+import {
+  resolveWorkerAcceptanceStageId,
+  restoreWorkerRunQueue,
+  type WorkerRunQueueState,
+} from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { WorkerCleanupProposal } from './workerCleanup';
@@ -52,14 +56,32 @@ function samePersistedEvent(expected: DomainEvent, actual: DomainEvent): boolean
 export function findTrustedRunCreatedEvent(
   events: readonly DomainEvent[],
   runId: string,
+  expectedProjectId?: string,
 ): DomainEvent | undefined {
-  return events.find((event) => {
+  const runEvents = events.filter((event) => event.aggregateType === 'Run' && event.aggregateId === runId);
+  const candidates = runEvents.filter((event) => {
     if (event.eventType !== 'RunCreated'
-      || event.aggregateType !== 'Run'
-      || event.aggregateId !== runId) return false;
+      || event.schemaVersion !== 1
+      || (expectedProjectId !== undefined && event.streamId !== expectedProjectId)
+      || event.aggregateVersion !== 1
+      || (event.actor !== 'runtime' && event.actor !== 'system')
+      || event.correlationId !== runId
+      || !event.source
+      || !Number.isSafeInteger(event.source.objectVersion)
+      || event.source.objectVersion < 1) return false;
     const payload = event.payload as Record<string, unknown>;
-    return payload.runId === runId;
+    return payload.runId === runId
+      && typeof payload.taskGraphId === 'string'
+      && !!payload.taskGraphId.trim()
+      && Number.isSafeInteger(payload.taskGraphVersion)
+      && (payload.taskGraphVersion as number) >= 1
+      && Array.isArray(payload.taskIds)
+      && payload.taskIds.length > 0
+      && payload.taskIds.every((taskId) => typeof taskId === 'string' && !!taskId.trim())
+      && new Set(payload.taskIds).size === payload.taskIds.length;
   });
+  if (candidates.length !== 1 || runEvents[0]?.eventId !== candidates[0].eventId) return undefined;
+  return candidates[0];
 }
 
 function sortedIds(values: readonly string[]): string[] {
@@ -70,6 +92,8 @@ function assertCandidateMatchesTrustedTaskGraph(
   candidate: WorkerRecoveryDecisionCandidate,
   taskGraph: ProjectTaskGraph,
   requestKey: string,
+  capturedRun?: WorkerRunQueueState,
+  decision?: 'retry' | 'skip',
 ): void {
   const graphTaskIds = sortedIds(taskGraph.tasks.map((task) => task.id));
   const candidateTaskIds = sortedIds(candidate.taskGraphTaskIds);
@@ -89,11 +113,90 @@ function assertCandidateMatchesTrustedTaskGraph(
   for (const task of taskGraph.tasks) {
     const candidateTask = candidate.state.tasks[task.id];
     if (!candidateTask
-      || candidateTask.taskDefinitionVersion !== task.version) {
+      || candidateTask.taskDefinitionVersion !== task.version
+      || resolveWorkerAcceptanceStageId(task.id, candidateTask.acceptanceStageId)
+        !== resolveWorkerAcceptanceStageId(task.id, task.stageId)) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
         `recovery candidate task definition 与当前可信 TaskGraph 不一致：${requestKey}`,
       );
+    }
+  }
+  for (const event of candidate.events) {
+    const payload = event.payload as Record<string, unknown>;
+    if (event.eventType === 'TaskBlocked') {
+      const task = taskGraph.tasks.find((item) => item.id === payload.taskId);
+      const blockedBy = payload.blockedBy;
+      if (!task || !Array.isArray(blockedBy)
+        || blockedBy.some((dependency) => typeof dependency !== 'string' || !task.dependsOn.includes(dependency))) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate blockedBy 超出可信 TaskGraph 依赖：${requestKey}`,
+        );
+      }
+    }
+    if (event.eventType === 'TaskQueued') {
+      const task = taskGraph.tasks.find((item) => item.id === payload.taskId);
+      const candidateTask = typeof payload.taskId === 'string' ? candidate.state.tasks[payload.taskId] : undefined;
+      if (!task || !candidateTask
+        || payload.taskExecutionId !== candidateTask.taskExecutionId
+        || payload.nextAttempt !== candidateTask.pendingAttempt) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate TaskQueued lineage 与可信 TaskGraph/候选状态不一致：${requestKey}`,
+        );
+      }
+    }
+  }
+  if (capturedRun && decision) {
+    for (const task of taskGraph.tasks) {
+      const before = capturedRun.tasks[task.id];
+      const after = candidate.state.tasks[task.id];
+      if (!before || !after) continue;
+      const isResetForRetry = decision === 'retry'
+        && (before.status === 'failed' || before.status === 'running')
+        && after.status === 'queued'
+        && after.pendingAttempt === before.attempt + 1;
+      const authorityFields = [
+        'worktreeId',
+        'worktreePath',
+        'branch',
+        'baseRevision',
+        'targetIdentity',
+        'worktreeStatus',
+        'branchRevision',
+        'cleanupStateSignature',
+        'cleanupStatus',
+        'cleanupReceiptId',
+      ] as const;
+      const stableProvenanceFields = [
+        'taskDefinitionVersion',
+        'contextPackId',
+        'contextPackVersion',
+      ] as const;
+      if (
+        resolveWorkerAcceptanceStageId(task.id, after.acceptanceStageId)
+          !== resolveWorkerAcceptanceStageId(task.id, before.acceptanceStageId)
+        || stableProvenanceFields.some((field) => after[field] !== before[field])
+      ) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate 改变了可信 task provenance/context pack：${requestKey}`,
+        );
+      }
+      if (isResetForRetry) {
+        if (authorityFields.some((field) => after[field] !== undefined)) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `retry recovery candidate 保留了旧 attempt authority：${requestKey}`,
+          );
+        }
+      } else if (authorityFields.some((field) => after[field] !== before[field])) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate 未保持未受影响的 worktree/cleanup authority：${requestKey}`,
+        );
+      }
     }
   }
   try {
@@ -214,6 +317,46 @@ function assertCandidateMatchesReplayProjection(
   }
 }
 
+function rebaseCandidateEvents(
+  persistedEvents: readonly DomainEvent[],
+  candidateEvents: readonly DomainEvent[],
+): DomainEvent[] {
+  const aggregateOffsets = new Map<string, number>();
+  for (const event of persistedEvents) {
+    const key = `${event.aggregateType}:${event.aggregateId}`;
+    aggregateOffsets.set(key, Math.max(aggregateOffsets.get(key) ?? 0, event.aggregateVersion));
+  }
+  const candidateBaseVersions = new Map<string, number>();
+  return candidateEvents.map((event, index) => {
+    const key = `${event.aggregateType}:${event.aggregateId}`;
+    const baseVersion = candidateBaseVersions.get(key) ?? event.aggregateVersion - 1;
+    candidateBaseVersions.set(key, baseVersion);
+    const rebased = {
+      ...event,
+      sequence: persistedEvents.length + index + 1,
+      aggregateVersion: (aggregateOffsets.get(key) ?? 0) + event.aggregateVersion - baseVersion,
+    };
+    return rebased;
+  });
+}
+
+export function assertCandidateCanReplay(
+  candidate: WorkerRecoveryDecisionCandidate,
+  persistedEvents: readonly DomainEvent[],
+  requestKey: string,
+): void {
+  try {
+    const rebasedEvents = rebaseCandidateEvents(persistedEvents, candidate.events);
+    const replayedProjection = replayDomainEvents([...persistedEvents, ...rebasedEvents]);
+    assertCandidateMatchesReplayProjection(candidate, replayedProjection, requestKey);
+  } catch (cause) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate event 未通过 pre-write domain reducer replay：${requestKey} (${cause instanceof Error ? cause.message : String(cause)})`,
+    );
+  }
+}
+
 export interface WorkerActionState {
   projectId: string | null;
   projectPath: string | null;
@@ -242,6 +385,7 @@ export interface WorkerActionControllerDeps {
     workerRuntime?: WorkerRuntime,
     expectedProjectId?: string,
     expectedProjectPath?: string,
+    expectedRunState?: WorkerRunQueueState,
   ) => Promise<void>;
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
@@ -306,7 +450,13 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     );
     try {
       if (verifyCurrentCandidate) await verifyCurrentCandidate();
-      await deps.runQueuedWorker(record.runId, workerRuntime, record.projectId, projectPath);
+      await deps.runQueuedWorker(
+        record.runId,
+        workerRuntime,
+        record.projectId,
+        projectPath,
+        record.candidate.state,
+      );
     } catch (cause) {
       await decisionPersistence.markPostCommit(
         {
@@ -371,7 +521,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
           `recovery event stream 在 TaskGraph 解析前需要修复：${requestKey}`,
         );
       }
-      const trustedRunCreated = findTrustedRunCreatedEvent(initialEventStream.events, runId);
+      const trustedRunCreated = findTrustedRunCreatedEvent(initialEventStream.events, runId, projectId);
       const trustedRunCreatedPayload = trustedRunCreated?.payload as Record<string, unknown> | undefined;
       const trustedEventTaskGraphId = typeof trustedRunCreatedPayload?.taskGraphId === 'string'
         ? trustedRunCreatedPayload.taskGraphId
@@ -414,6 +564,17 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
           'needs-repair',
           `RunCreated provenance 与当前可信 TaskGraph 不一致：${runId}`,
         );
+      }
+      if (trustedRunCreated) {
+        const trustedEventTaskIds = sortedIds(
+          ((trustedRunCreated.payload as Record<string, unknown>).taskIds as string[]),
+        );
+        if (JSON.stringify(trustedEventTaskIds) !== JSON.stringify(sortedIds(taskGraph.tasks.map((task) => task.id)))) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `RunCreated taskIds provenance 与当前可信 TaskGraph 不一致：${runId}`,
+          );
+        }
       }
       if (!capturedRun && (!trustedRunCreated
         || trustedEventTaskGraphId !== taskGraph.id
@@ -480,9 +641,16 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
             `recovery post-commit TaskGraph 已丢失：${record.requestIdentity}`,
           );
         }
-        assertCandidateMatchesTrustedTaskGraph(record.candidate, latestTaskGraph, record.requestIdentity);
         const latestRun = latest.workerRuns.find((item) => item.runId === record.runId);
-        if (!latestRun || JSON.stringify(latestRun) !== JSON.stringify(record.candidate.state)) {
+        if (!latestRun) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit WorkerRun 已丢失：${record.requestIdentity}`,
+          );
+        }
+        const decision = record.action === 'retry' || record.action === 'skip' ? record.action : undefined;
+        assertCandidateMatchesTrustedTaskGraph(record.candidate, latestTaskGraph, record.requestIdentity, latestRun, decision);
+        if (JSON.stringify(latestRun) !== JSON.stringify(record.candidate.state)) {
           throw new WorkerRecoveryDecisionCasError(
             'needs-repair',
             `recovery post-commit candidate/state 已漂移：${record.requestIdentity}`,
@@ -594,7 +762,13 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       };
     }
 
-    assertCandidateMatchesTrustedTaskGraph(decisionInput.candidate, capturedTaskGraph, requestKey);
+    assertCandidateMatchesTrustedTaskGraph(
+      decisionInput.candidate,
+      capturedTaskGraph,
+      requestKey,
+      capturedRun,
+      decision,
+    );
 
     let postCommitRecord: WorkerRecoveryDecisionRecord | undefined;
     await decisionPersistence.withDecisionLock(async (decisionLock) => {
@@ -635,6 +809,14 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         );
       }
       deps.assertProjectOperation(operation);
+      const preWriteEvents = await bundle.createEventRepository().readStream();
+      if (preWriteEvents.status === 'needs-repair') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery event stream 在 candidate 写入前需要修复：${requestKey}`,
+        );
+      }
+      assertCandidateCanReplay(admittedCandidate, preWriteEvents.events, requestKey);
       deps.recordProjectEvents(projectId, admittedCandidate.events);
       const nextRuns = currentRun
         ? decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item)

@@ -29,6 +29,7 @@ import { createWorkerRunHostInfrastructure } from '../projectControl/workerRunHo
 import { admitWorkerRunSession } from '../projectControl/workerRunSessionAdmission';
 import { createWorkerRunRecoveryAuditController } from '../projectControl/workerRunRecoveryAuditController';
 import { restoreWorkerWorktrees as restoreWorkerWorktreesFromState } from '../projectControl/workerWorktreeRestore';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectOperationGuard } from '../projectControl/projectOperation';
 import type { WorkflowState } from '../store/workflowStoreTypes';
 
@@ -129,6 +130,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     workerRuntime: WorkerRuntime = 'codex',
     expectedProjectId?: string,
     expectedProjectPath?: string,
+    expectedRunState?: WorkerRunQueueState,
   ): Promise<void> => {
     const beforeSave = store.getState();
     const projectId = beforeSave.projectId;
@@ -141,7 +143,19 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
         throw new Error('Worker post-commit project context 已切换，拒绝执行旧 recovery dispatch');
       }
     };
-    assertExpectedProject();
+    const assertExpectedRun = (expected: WorkerRunQueueState): void => {
+      assertExpectedProject();
+      const current = store.getState();
+      const currentRun = current.workerRuns.find((run) => run.runId === runId);
+      const currentTaskGraph = current.projectControl.taskGraphs?.find((graph) => graph.id === expected.taskGraphId);
+      if (!currentRun || JSON.stringify(currentRun) !== JSON.stringify(expected)
+        || !currentTaskGraph
+        || currentTaskGraph.graphVersion !== expected.taskGraphVersion) {
+        throw new Error('Worker post-commit candidate/state 已漂移，拒绝执行旧 recovery dispatch');
+      }
+    };
+    if (expectedRunState) assertExpectedRun(expectedRunState);
+    else assertExpectedProject();
     const operation = deps.getProjectOperation(projectId, projectPath);
     deps.assertProjectOperation(operation);
 
@@ -156,6 +170,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
       getCurrentProjectId: () => store.getState().projectId,
     });
     const current = store.getState();
+    if (expectedRunState) assertExpectedRun(expectedRunState);
     const infrastructure = await createWorkerRunHostInfrastructure({
       projectPath,
       listAcceptances: () => session.listAcceptances(),
@@ -168,7 +183,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     const coordinator = createGuiProjectWorkerRunCoordinator({
       projectId,
       projectPath,
-      runs: current.workerRuns,
+      runs: expectedRunState ? [expectedRunState] : current.workerRuns,
       session,
       workerRuntime,
       antigravity: antigravityAgent
@@ -182,6 +197,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
       sideEffects: infrastructure.sideEffects,
       signal: operation.controller.signal,
       assertConsistency: async () => {
+        if (expectedRunState) assertExpectedRun(expectedRunState);
         await assertWorkerRunConsistency({
           projectId,
           getState: store.getState,
@@ -191,6 +207,9 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
           auditWorkerRunConsistency,
           auditProjectControlConsistency,
         });
+      },
+      assertBeforeExternalWork: async (expectedState) => {
+        assertExpectedRun(expectedState);
       },
       persistTransition: createWorkerRunTransitionPersistence({
         projectId,

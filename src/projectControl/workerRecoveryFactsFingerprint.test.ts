@@ -177,6 +177,54 @@ describe('worker recovery facts fingerprint v1', () => {
     expect(changedEffect).not.toBe(baseline);
   });
 
+  it('changes when a terminal CleanupReceipt host read-back changes', async () => {
+    const receiptEffect = effect({
+      status: 'receipt',
+      recovery: 'skip',
+      unknownReason: undefined,
+      receipt: {
+        receiptId: 'receipt-1',
+        observedAt: '2026-09-20T00:02:00.000Z',
+        outcome: 'succeeded',
+        cleanup: {
+          worktreePath: 'C:/worktree',
+          worktreeId: 'worktree-1',
+          targetIdentity: 'target-1',
+          branch: 'worker/task-1',
+          branchRevision: 'abcdef0123456789abcdef0123456789abcdef01',
+          baseRevision: '0123456789abcdef0123456789abcdef01234567',
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-20T00:02:00.000Z',
+          hostReadback: {
+            authority: 'native',
+            worktreePath: 'C:/worktree',
+            branch: 'worker/task-1',
+            branchRevision: 'abcdef0123456789abcdef0123456789abcdef01',
+            targetIdentity: 'target-1',
+            finalStatus: 'absent',
+          },
+        },
+      },
+    });
+    const changedReceiptEffect = {
+      ...receiptEffect,
+      receipt: {
+        ...receiptEffect.receipt!,
+        cleanup: {
+          ...receiptEffect.receipt!.cleanup!,
+          branchRevision: 'fedcba9876543210fedcba9876543210fedcba98',
+          hostReadback: {
+            ...receiptEffect.receipt!.cleanup!.hostReadback!,
+            branchRevision: 'fedcba9876543210fedcba9876543210fedcba98',
+          },
+        },
+      },
+    };
+    const baseline = await fingerprintWorkerRecoveryFactsV1(input({ sideEffects: [receiptEffect] }));
+    const changed = await fingerprintWorkerRecoveryFactsV1(input({ sideEffects: [changedReceiptEffect] }));
+    expect(changed).not.toBe(baseline);
+  });
+
   it('rejects cross-task lineage, legacy ids, and malformed assignment provenance', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
       sideEffects: [effect({ taskId: 'ghost-task' })],

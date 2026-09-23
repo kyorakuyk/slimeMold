@@ -157,8 +157,10 @@ export interface RunWorkerQueueOptions {
   concurrency?: number;
   /** 每个并发 batch 完成后，把最新状态与新事实交给持久层。 */
   onTransition?: (update: { state: WorkerRunQueueState; events: DomainEvent[] }) => Promise<void> | void;
-  /** 可选：在 executor 前后记录 Worker side-effect receipt。 */
+  /** 执行前后记录 Worker side-effect receipt。 */
   sideEffects?: WorkerSideEffectRecorder;
+  /** 在分配 worktree 和开始 Worker 外部副作用前重新核对 dispatch fence。 */
+  assertBeforeExternalWork?: (state: WorkerRunQueueState) => Promise<void> | void;
   signal?: AbortSignal;
 }
 
@@ -1074,12 +1076,14 @@ export async function runWorkerQueue(
     }
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
+    await options.assertBeforeExternalWork?.(queue.snapshot());
     await Promise.all(batch.map(async (taskId) => {
       const lease = await queue.claimTask(taskId, options.allocator, options.signal);
       if (lease) leases.push(lease);
     }));
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
     await flushTransition();
+    await options.assertBeforeExternalWork?.(queue.snapshot());
     let terminalizedInBatch = false;
     const settled = await Promise.allSettled(leases.map(async (lease) => {
       const taskId = lease.task.id;

@@ -109,6 +109,20 @@ function cleanupLineageKey(effect: SideEffectRecord): string | undefined {
   return `${effect.runId}:${effect.taskId}:${effect.idempotencyKey}`;
 }
 
+function cleanupReceiptHostReadbackIsTrusted(effect: SideEffectRecord): boolean {
+  const cleanup = effect.receipt?.cleanup;
+  const hostReadback = cleanup?.hostReadback;
+  return !!cleanup
+    && !!hostReadback
+    && hostReadback.authority === 'native'
+    && hostReadback.finalStatus === 'absent'
+    && cleanup.finalStatus === 'absent'
+    && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(cleanup.worktreePath)
+    && hostReadback.branch === cleanup.branch
+    && hostReadback.branchRevision === cleanup.branchRevision
+    && hostReadback.targetIdentity === cleanup.targetIdentity;
+}
+
 export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<string> {
   const runIds = new Set(
     effects
@@ -120,7 +134,7 @@ export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<
             entry.status === 'receipt'
             && entry.recovery === 'skip'
             && entry.receipt?.outcome === 'succeeded'
-            && (!entry.receipt.cleanup || !entry.receipt.cleanup.hostReadback)
+            && !cleanupReceiptHostReadbackIsTrusted(entry)
           )
         )
         && !!entry.runId)

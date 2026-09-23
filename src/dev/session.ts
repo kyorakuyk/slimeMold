@@ -414,6 +414,15 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       }
       try {
         const targetIdentity = await syncRust('register', info.path);
+        if (env === 'tauri' && !targetIdentity) {
+          // A successful Git add without a native stable identity is not a
+          // usable Worker lease: restart recovery could not prove this target.
+          // Clear any native registration best-effort, then roll back the Git
+          // worktree. Never let an identity-less lease reach WorkerQueue state.
+          await syncRust('unregister', info.path).catch(() => undefined);
+          throw new Error('native worktree registration missing stable target identity');
+        }
+
         const registeredInfo = targetIdentity
           ? manager.bindTargetIdentity(info.id, targetIdentity) ?? info
           : info;

@@ -237,6 +237,12 @@ function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerR
   };
 }
 
+export function normalizeWorkerRecoveryReceiptFactV1(
+  receipt: NonNullable<SideEffectRecord['receipt']>,
+): WorkerRecoveryEffectFactV1['receipt'] {
+  return receiptFact(receipt);
+}
+
 function validateSideEffectEnvelope(effect: SideEffectRecord): void {
   const idempotencyKey = requiredText(effect.idempotencyKey ?? '', 'effect idempotency key');
   const kind = requiredText(effect.kind ?? '', 'effect kind');

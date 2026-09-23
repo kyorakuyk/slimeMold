@@ -154,6 +154,14 @@ describe('worker recovery facts', () => {
     expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
   });
 
+  it('marks a successful receipt with mismatched native host read-back for manual repair', () => {
+    const mismatched = successfulCleanupEffect(`cleanup:${attemptId}`);
+    mismatched.receipt!.cleanup!.hostReadback!.targetIdentity = 'v1:other-target';
+
+    expect(reconcileSuccessfulCleanupReceipts([cleanupRun], [mismatched]).events).toEqual([]);
+    expect([...cleanupUnknownRunIds([mismatched])]).toEqual(['run-1']);
+  });
+
   it('fails closed on a canonical/legacy cleanup receipt collision', () => {
     const legacyKey = 'cleanup:run-1:task-1:a1';
     const effects = [

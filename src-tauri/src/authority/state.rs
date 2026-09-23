@@ -1,4 +1,6 @@
 use crate::StableDirectoryIdentity;
+use fs2::FileExt;
+use std::fs::{File, OpenOptions};
 use std::sync::{Mutex, MutexGuard};
 
 /// H4 dev_exec 登记态：主仓库根 + 已登记 worktree。
@@ -6,10 +8,37 @@ pub(crate) static DEV_STATE: Mutex<DevState> = Mutex::new(DevState::new());
 /// Serialize session changes and host operations so a project switch cannot race a checked command.
 pub(crate) static DEV_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
-pub(crate) fn lock_dev_operation() -> MutexGuard<'static, ()> {
-    DEV_OPERATION_LOCK
+pub(crate) struct DevOperationGuard {
+    _process_guard: MutexGuard<'static, ()>,
+    _cross_process_lock: File,
+}
+
+pub(crate) fn lock_dev_operation() -> DevOperationGuard {
+    let process_guard = DEV_OPERATION_LOCK
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let lock_path = std::env::temp_dir().join("slime-mold-dev-operation.lock");
+    let cross_process_lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "无法打开 native dev operation lock {}：{error}",
+                lock_path.display()
+            )
+        });
+    cross_process_lock.lock_exclusive().unwrap_or_else(|error| {
+        panic!(
+            "无法取得 native dev operation lock {}：{error}",
+            lock_path.display()
+        )
+    });
+    DevOperationGuard {
+        _process_guard: process_guard,
+        _cross_process_lock: cross_process_lock,
+    }
 }
 
 pub(crate) fn next_session_generation(current: u64) -> u64 {

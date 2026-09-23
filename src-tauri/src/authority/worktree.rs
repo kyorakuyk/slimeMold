@@ -677,13 +677,28 @@ fn preserve_branch_only_orphan(
     path: &str,
     branch: &str,
 ) -> Result<(), String> {
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed before read-back".into(),
+        );
+    }
     if !cleanup_target_absence_is_confirmed(base_path, std::path::Path::new(path))? {
         return Err("branch-only orphan preservation requires an absent, unlisted target".into());
     }
     if !git_branch_exists(base_path, branch)? {
         return Err("branch-only orphan preservation requires a live branch".into());
     }
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed before revision capture".into(),
+        );
+    }
     let branch_revision = git_branch_revision(base_path, branch)?;
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed after revision capture".into(),
+        );
+    }
     let mut state = DEV_STATE.lock().unwrap();
     if state.base_repo.as_deref() != Some(base)
         || state.base_identity.as_ref() != Some(base_identity)

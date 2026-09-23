@@ -2,7 +2,7 @@
 title: SlimeMold 开发记录：从 ComfyUI 式 Agent 工作流到本地优先的多 Agent 工作站
 type: development-history
 status: active-history
-updated: 2026-09-22
+updated: 2026-09-23
 tags:
   - SlimeMold
   - Agent
@@ -5295,3 +5295,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 相关起始锚点：`023797c` / `checkpoint/worker-recovery-second-review-repair-start-20260923`；本轮尚未形成新的 exact-reviewed checkpoint，未 push。
 - 验证：focused recovery/Cleanup/native suite `5 test files / 46 tests`；完整 `npm run test -- --reporter=dot` 为 `205 test files / 1378 tests`；`npm run build` 通过（`2098 modules transformed`，最大 JS chunk `1,265.79 kB`，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 `106 passed / 0 failed`；`git diff --check` 通过。
 - 当前边界：真实 Tauri GUI restart/live worktree registration 与 CleanupReceipt/TaskCleaned/native deletion-or-retention read-back、双 controller/跨进程竞争、ProjectFile/event/journal crash matrix、产品可达的 `dispatching` manual-repair flow 和新的 exact-HEAD reviewer 仍未完成；正式状态保持 `unverified / partial-fail / not closed`。
+
+### 7.374 unverified：补齐 native stable identity admission 与 restart rebind regression
+
+- 第三轮 repair 起点为 `6b8ab02` / `checkpoint/worker-recovery-third-review-repair-start-20260923`。本轮继续收紧 recovery event/candidate/projection 语义校验、post-commit Worker dispatch fence、nested CleanupReceipt fingerprint/native read-back、native branch-only orphan 的跨进程锁与 base identity 检查，并修复 `workerRuntime` 对 `projectControl.taskGraphs` 和 queue state 的实际 assembly wiring。
+- 根因回归已被最小化为 Tauri `DevSession.manager.create`：native `dev_register_worktree` 若没有返回稳定 target identity，旧路径仍会把 Git worktree 当作可用 Worker lease 返回；该 lease 无法在 host restart 后建立可信 live registration。现在 Tauri create 对缺少 identity fail-closed，先 best-effort 清除 native registration，再复用既有 Git rollback；只有带 stable identity 的 lease 才能进入 WorkerQueue/ProjectFile。
+- RED→GREEN 证据：临时移除 admission guard 后，`fails closed when native worktree registration omits the stable target identity` 明确失败为“promise resolved … instead of rejecting”；恢复 guard 后该测试通过。同时新增 restart regression，验证 host generation 从 `1` 到 `2` 后仍用 durable `targetIdentity` 调用 `dev_restore_worktree`，并保留 `created` worktree projection。当前 Tauri session focused 为 `12/12`，其中 identity omission 与 restart rebind 均通过。
+- 本轮没有把 mock invoke、headless recovery、历史 GUI 日志或 UI success projection 写成正式 restart acceptance；真实 Tauri GUI 关闭/重启/重新打开、native read-back、跨进程竞争与 crash matrix 仍需单独证据。
+- 验证：recovery/CAS/Cleanup focused `6 test files / 57 tests`；完整 Node `205 test files / 1385 tests`；`npm run build` 通过（`2098 modules transformed`，最大 JS chunk `1,272.30 kB`，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 `106 passed / 0 failed`，Rust doc-tests `0`；`git diff --check` 通过。
+- 当前边界：第三轮修改尚未形成新的 exact-HEAD independent review，真实 Tauri GUI restart/live registration 与 CleanupReceipt/TaskCleaned/native deletion-or-retention read-back 仍未闭合；正式状态保持 `unverified / partial-fail / not closed`，未 push。

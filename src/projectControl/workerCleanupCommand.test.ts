@@ -61,6 +61,13 @@ function cleanupReceipt(attempt: number): SideEffectRecord {
         baseRevision: 'abc123',
         finalStatus: 'absent',
         hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+        hostReadback: {
+          authority: 'native' as const,
+          worktreePath: 'C:/project-workers/run-1/task-1',
+          branch: 'worker/task-1',
+          branchRevision: 'a'.repeat(40),
+          finalStatus: 'absent' as const,
+        },
       },
     },
   };
@@ -152,6 +159,26 @@ describe('worker cleanup command', () => {
         now: '2026-09-01T00:03:00.000Z',
       })).toThrow(/receipt|cleanup|outcome/);
     }
+    expect(() => markWorkerTaskCleaned({
+      state: current,
+      taskId: 'task-1',
+      receiptId: cleanupReceiptId(1),
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      stateSignature: 'sig-1',
+      receipt: {
+        ...cleanupReceipt(1),
+        receipt: {
+          ...cleanupReceipt(1).receipt!,
+          cleanup: {
+            ...cleanupReceipt(1).receipt!.cleanup!,
+            hostReadback: undefined,
+          },
+        },
+      },
+      decisionId: 'cleanup-missing-host-readback',
+      now: '2026-09-01T00:03:00.000Z',
+    })).toThrow(/host|read-back|receipt/);
   });
 
   it('rejects a cleanup receipt that belongs to an older attempt', () => {
