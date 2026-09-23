@@ -64,6 +64,8 @@ export interface WorkerRecoveryDecisionRecord {
   candidate: WorkerRecoveryDecisionCandidate;
   admittedAt: string;
   committedAt?: string;
+  repairReason?: string;
+  repairObservedAt?: string;
 }
 
 export interface WorkerRecoveryDecisionReadOptions {
@@ -71,6 +73,8 @@ export interface WorkerRecoveryDecisionReadOptions {
   isCandidateApplied?: (candidate: WorkerRecoveryDecisionCandidate) => Promise<boolean>;
   isCandidateRepairable?: (candidate: WorkerRecoveryDecisionCandidate) => Promise<boolean>;
   isProjectionMissing?: () => Promise<boolean>;
+  /** Semantic reducer/provenance validation that must pass before a new journal record is written. */
+  validateCandidate?: (candidate: WorkerRecoveryDecisionCandidate) => Promise<void> | void;
 }
 
 export interface WorkerRecoveryDecisionAdmission {
@@ -426,6 +430,7 @@ function validateEvent(
   if (eventType === 'TaskBlocked') {
     requiredText(value.payload.reason, 'decision TaskBlocked reason');
     if (!Array.isArray(value.payload.blockedBy)
+      || value.payload.blockedBy.length === 0
       || value.payload.blockedBy.some((taskId) => typeof taskId !== 'string' || !taskId.trim())) {
       throw new Error('decision TaskBlocked blockedBy 无效');
     }
@@ -613,6 +618,15 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
     ? undefined
     : requiredIsoText(value.committedAt, 'recovery decision committedAt');
   if (status === 'committed' && !committedAt) throw new Error('committed decision 缺少 committedAt');
+  const repairReason = value.repairReason === undefined
+    ? undefined
+    : requiredText(value.repairReason, 'recovery decision repairReason');
+  const repairObservedAt = value.repairObservedAt === undefined
+    ? undefined
+    : requiredIsoText(value.repairObservedAt, 'recovery decision repairObservedAt');
+  if ((repairReason === undefined) !== (repairObservedAt === undefined)) {
+    throw new Error('recovery decision repair marker 不完整');
+  }
   const projectId = requiredCanonicalText(value.projectId, 'recovery decision projectId');
   const runId = requiredCanonicalText(value.runId, 'recovery decision runId');
   const decisionId = requiredCanonicalText(value.decisionId, 'recovery decision decisionId');
@@ -630,6 +644,7 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
     candidate: validateCandidate(value.candidate, { projectId, runId, decisionId, action }),
     admittedAt: requiredIsoText(value.admittedAt, 'recovery decision admittedAt'),
     ...(committedAt ? { committedAt } : {}),
+    ...(repairReason && repairObservedAt ? { repairReason, repairObservedAt } : {}),
   };
 }
 
@@ -771,6 +786,12 @@ export class WorkerRecoveryDecisionPersistence {
             `recovery requestIdentity 已绑定其它 decision：${input.requestIdentity}`,
           );
         }
+        if (existing.repairReason) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery decision 已标记需要修复：${input.requestIdentity} (${existing.repairReason})`,
+          );
+        }
         if (existing.status === 'committed') {
           const applied = options.isCandidateApplied
             ? await options.isCandidateApplied(existing.candidate)
@@ -817,6 +838,15 @@ export class WorkerRecoveryDecisionPersistence {
         throw new WorkerRecoveryDecisionCasError(
           'stale',
           `recovery decision facts 已过期：${input.requestIdentity}`,
+        );
+      }
+      try {
+        await options.validateCandidate?.(input.candidate);
+      } catch (cause) {
+        if (cause instanceof WorkerRecoveryDecisionCasError) throw cause;
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate semantic validation failed：${input.requestIdentity} (${cause instanceof Error ? cause.message : String(cause)})`,
         );
       }
       const record: WorkerRecoveryDecisionRecord = {
@@ -868,6 +898,12 @@ export class WorkerRecoveryDecisionPersistence {
       const existing = parsed.journal.entries[index];
       if (!sameIdentity(existing, input)) {
         throw new WorkerRecoveryDecisionCasError('conflict', `recovery decision commit identity 冲突：${input.requestIdentity}`);
+      }
+      if (existing.repairReason) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery decision 已标记需要修复：${input.requestIdentity} (${existing.repairReason})`,
+        );
       }
       if (existing.status === 'committed') {
         if (options.verifyProjection && !(await options.verifyProjection())) {
@@ -923,6 +959,12 @@ export class WorkerRecoveryDecisionPersistence {
       if (!sameIdentity(existing, input) || existing.status !== 'committed' || existing.action !== 'retry') {
         throw new WorkerRecoveryDecisionCasError('conflict', `recovery post-commit identity 冲突：${input.requestIdentity}`);
       }
+      if (existing.repairReason) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery decision 已标记需要修复：${input.requestIdentity} (${existing.repairReason})`,
+        );
+      }
       const allowedTransition = existing.postCommitStatus === status
         || (existing.postCommitStatus === 'pending' && status === 'dispatching')
         || (existing.postCommitStatus === 'dispatching' && (status === 'completed' || status === 'failed'))
@@ -938,6 +980,46 @@ export class WorkerRecoveryDecisionPersistence {
         postCommitStatus: status,
       };
       requiredIsoText(now, 'recovery decision post-commit time');
+      const entries = [...parsed.journal.entries];
+      entries[index] = updated;
+      const journal = await this.persistAndReadBack({ schemaVersion: 1, entries });
+      return journal.entries[index];
+    } finally {
+      if (!existingLock) await lock.release();
+    }
+  }
+
+  async markNeedsRepair(
+    input: WorkerRecoveryDecisionInput,
+    reason: string,
+    now: string,
+    existingLock?: EventStoreLock,
+  ): Promise<WorkerRecoveryDecisionRecord> {
+    validateDecisionInput(input);
+    const normalizedReason = requiredText(reason, 'recovery decision repair reason');
+    const lock = existingLock ?? await this.adapter.acquireLock(this.lockPath);
+    try {
+      const parsed = parseJournal(await this.adapter.readText(this.path));
+      if (parsed.status === 'needs-repair') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery decision journal 需要修复：${parsed.reason ?? '未知格式错误'}`,
+        );
+      }
+      const index = parsed.journal.entries.findIndex((record) => record.requestIdentity === input.requestIdentity);
+      if (index < 0) {
+        throw new WorkerRecoveryDecisionCasError('conflict', `recovery decision 尚未 admitted：${input.requestIdentity}`);
+      }
+      const existing = parsed.journal.entries[index];
+      if (!sameIdentity(existing, input)) {
+        throw new WorkerRecoveryDecisionCasError('conflict', `recovery decision repair identity 冲突：${input.requestIdentity}`);
+      }
+      if (existing.status === 'committed') return existing;
+      const updated: WorkerRecoveryDecisionRecord = {
+        ...existing,
+        repairReason: normalizedReason,
+        repairObservedAt: requiredIsoText(now, 'recovery decision repair time'),
+      };
       const entries = [...parsed.journal.entries];
       entries[index] = updated;
       const journal = await this.persistAndReadBack({ schemaVersion: 1, entries });

@@ -44,6 +44,8 @@ export interface WorkerWorktreeAllocator {
     attemptId: AttemptId;
     signal?: AbortSignal;
   }): Promise<WorkerWorktreeAssignment>;
+  /** Best-effort rollback for an allocation that lost its dispatch fence before execution. */
+  release?(assignment: WorkerWorktreeAssignment, signal?: AbortSignal): Promise<void>;
 }
 
 export interface WorkerTaskLease {
@@ -532,6 +534,8 @@ export class WorkerTaskQueue {
     taskId: string,
     allocator: WorkerWorktreeAllocator,
     signal?: AbortSignal,
+    assertBeforeAllocation?: () => Promise<void> | void,
+    assertAfterAllocation?: () => Promise<void> | void,
   ): Promise<WorkerTaskLease | null> {
     throwIfAborted(signal);
     this.reconcileBlocked(this.state.updatedAt);
@@ -569,8 +573,10 @@ export class WorkerTaskQueue {
       throw new Error(`ContextPack 与当前 claim Attempt 不一致：${taskId}`);
     }
     this.claiming.add(taskId);
+    let allocatedAssignment: WorkerWorktreeAssignment | undefined;
     try {
-      const assignment = await allocator.allocate({
+      await assertBeforeAllocation?.();
+      allocatedAssignment = await allocator.allocate({
         projectId: this.state.projectId,
         runId: this.state.runId,
         task: cloneTask(task),
@@ -580,10 +586,11 @@ export class WorkerTaskQueue {
         signal,
       });
       throwIfAborted(signal);
+      await assertAfterAllocation?.();
       const reusedBy = Object.values(this.state.tasks).find(
         (item) => item.taskId !== taskId
-          && (item.worktreeId === assignment.worktreeId
-            || (item.worktreePath !== undefined && workerPathKey(item.worktreePath) === workerPathKey(assignment.path))),
+          && (item.worktreeId === allocatedAssignment!.worktreeId
+            || (item.worktreePath !== undefined && workerPathKey(item.worktreePath) === workerPathKey(allocatedAssignment!.path))),
       );
       if (reusedBy) {
         throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用`);
@@ -602,11 +609,11 @@ export class WorkerTaskQueue {
             status: 'running',
             attempt,
             pendingAttempt: undefined,
-            worktreeId: requiredText(assignment.worktreeId, 'worktree id'),
-            worktreePath: requiredText(assignment.path, 'worktree 路径'),
-            branch: requiredText(assignment.branch, 'worktree 分支'),
-            baseRevision: requiredText(assignment.baseRevision, 'worktree 基线'),
-            targetIdentity: assignment.targetIdentity,
+            worktreeId: requiredText(allocatedAssignment!.worktreeId, 'worktree id'),
+            worktreePath: requiredText(allocatedAssignment!.path, 'worktree 路径'),
+            branch: requiredText(allocatedAssignment!.branch, 'worktree 分支'),
+            baseRevision: requiredText(allocatedAssignment!.baseRevision, 'worktree 基线'),
+            targetIdentity: allocatedAssignment!.targetIdentity,
             worktreeStatus: 'created',
             branchRevision: undefined,
             cleanupStateSignature: undefined,
@@ -622,11 +629,11 @@ export class WorkerTaskQueue {
         taskId,
         taskExecutionId,
         attemptId,
-        worktreeId: assignment.worktreeId,
-        worktreePath: assignment.path,
-        branch: assignment.branch,
-        baseRevision: assignment.baseRevision,
-        targetIdentity: assignment.targetIdentity,
+        worktreeId: allocatedAssignment!.worktreeId,
+        worktreePath: allocatedAssignment!.path,
+        branch: allocatedAssignment!.branch,
+        baseRevision: allocatedAssignment!.baseRevision,
+        targetIdentity: allocatedAssignment!.targetIdentity,
         worktreeStatus: 'created',
         branchRevision: undefined,
         attempt,
@@ -636,7 +643,7 @@ export class WorkerTaskQueue {
         runId: this.state.runId,
         orchestrationId: this.state.orchestrationId,
         task: cloneTask(task),
-        assignment,
+        assignment: allocatedAssignment!,
         attempt,
         taskExecutionId,
         attemptId,
@@ -644,6 +651,13 @@ export class WorkerTaskQueue {
         ...(dependencyArtifacts.length > 0 ? { dependencyArtifacts } : {}),
       };
     } catch (cause) {
+      if (allocatedAssignment && allocator.release) {
+        try {
+          await allocator.release(allocatedAssignment, signal);
+        } catch (releaseCause) {
+          cause = new Error(`${errorMessage(cause)}；worktree rollback 失败：${errorMessage(releaseCause)}`);
+        }
+      }
       if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
       const message = `worktree 分配失败：${errorMessage(cause)}`;
@@ -1076,9 +1090,15 @@ export async function runWorkerQueue(
     }
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
-    await options.assertBeforeExternalWork?.(queue.snapshot());
     await Promise.all(batch.map(async (taskId) => {
-      const lease = await queue.claimTask(taskId, options.allocator, options.signal);
+      const assertDispatchFence = () => options.assertBeforeExternalWork?.(queue.snapshot());
+      const lease = await queue.claimTask(
+        taskId,
+        options.allocator,
+        options.signal,
+        assertDispatchFence,
+        assertDispatchFence,
+      );
       if (lease) leases.push(lease);
     }));
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。

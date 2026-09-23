@@ -115,6 +115,10 @@ function cleanupReceiptHostReadbackIsTrusted(effect: SideEffectRecord): boolean 
   return !!cleanup
     && !!hostReadback
     && hostReadback.authority === 'native'
+    && typeof cleanup.targetIdentity === 'string'
+    && cleanup.targetIdentity.trim().length > 0
+    && typeof hostReadback.targetIdentity === 'string'
+    && hostReadback.targetIdentity.trim().length > 0
     && hostReadback.finalStatus === 'absent'
     && cleanup.finalStatus === 'absent'
     && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(cleanup.worktreePath)

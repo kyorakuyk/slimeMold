@@ -930,6 +930,45 @@ describe('WorkerTaskQueue', () => {
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
   });
 
+  it('releases an allocation when the dispatch fence changes after allocation', async () => {
+    const allocated: string[] = [];
+    const released: string[] = [];
+    let fenceChecks = 0;
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const allocator: WorkerWorktreeAllocator = {
+      allocate: async ({ task: queuedTask }) => {
+        allocated.push(queuedTask.id);
+        return {
+          worktreeId: `worktree-${queuedTask.id}`,
+          path: `C:/worktrees/${queuedTask.id}`,
+          branch: `worker/${queuedTask.id}`,
+          baseRevision: 'base-revision-1',
+        };
+      },
+      release: async (assignment) => {
+        released.push(assignment.worktreeId);
+      },
+    };
+
+    const state = await runWorkerQueue(queue, {
+      allocator,
+      executor: { execute: async () => ({ status: 'succeeded' }) },
+      assertBeforeExternalWork: () => {
+        fenceChecks += 1;
+        if (fenceChecks === 2) throw new Error('stale dispatch fence');
+      },
+    });
+
+    expect(state.tasks.a.status).toBe('failed');
+    expect(allocated).toEqual(['a']);
+    expect(released).toEqual(['worktree-a']);
+  });
+
   it('parks a running Worker on structured feedback instead of marking it failed', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',

@@ -27,6 +27,7 @@ function state(): WorkerRunQueueState {
         branch: 'worker/task-1',
         branchRevision: 'a'.repeat(40),
         baseRevision: 'abc123',
+        targetIdentity: 'target-1',
         updatedAt: '2026-09-01T00:01:00.000Z',
       },
     },
@@ -56,6 +57,7 @@ function cleanupReceipt(attempt: number): SideEffectRecord {
       cleanup: {
         worktreePath: 'C:/project-workers/run-1/task-1',
         worktreeId: 'wt-1',
+        targetIdentity: 'target-1',
         branch: 'worker/task-1',
         branchRevision: 'a'.repeat(40),
         baseRevision: 'abc123',
@@ -66,6 +68,7 @@ function cleanupReceipt(attempt: number): SideEffectRecord {
           worktreePath: 'C:/project-workers/run-1/task-1',
           branch: 'worker/task-1',
           branchRevision: 'a'.repeat(40),
+          targetIdentity: 'target-1',
           finalStatus: 'absent' as const,
         },
       },
@@ -179,6 +182,35 @@ describe('worker cleanup command', () => {
       decisionId: 'cleanup-missing-host-readback',
       now: '2026-09-01T00:03:00.000Z',
     })).toThrow(/host|read-back|receipt/);
+  });
+
+  it('rejects an identity-less cleanup receipt instead of trusting path equality', () => {
+    const receipt = cleanupReceipt(1);
+    const identityLess = {
+      ...receipt,
+      receipt: {
+        ...receipt.receipt!,
+        cleanup: {
+          ...receipt.receipt!.cleanup!,
+          targetIdentity: undefined,
+          hostReadback: {
+            ...receipt.receipt!.cleanup!.hostReadback!,
+            targetIdentity: undefined,
+          },
+        },
+      },
+    };
+    expect(() => markWorkerTaskCleaned({
+      state: state(),
+      taskId: 'task-1',
+      receiptId: cleanupReceiptId(1),
+      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
+      stateSignature: 'sig-1',
+      receipt: identityLess,
+      decisionId: 'cleanup-identity-less',
+      now: '2026-09-01T00:03:00.000Z',
+    })).toThrow(/receipt|identity|cleanup/);
   });
 
   it('rejects a cleanup receipt that belongs to an older attempt', () => {

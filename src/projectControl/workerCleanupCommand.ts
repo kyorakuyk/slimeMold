@@ -63,9 +63,11 @@ export function markWorkerTaskCleaned(
     || input.receipt.receipt?.receiptId !== `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:receipt`
     || input.receipt.receipt?.outcome !== 'succeeded'
     || input.receipt.receipt?.outputHash !== stateSignature
-    || !input.receipt.receipt?.cleanup
+    || !input.receipt.receipt.cleanup
     || !input.receipt.receipt.cleanup.hostReadback
     || input.receipt.receipt.cleanup.hostReadback.authority !== 'native'
+    || !input.receipt.receipt.cleanup.targetIdentity?.trim()
+    || !input.receipt.receipt.cleanup.hostReadback.targetIdentity?.trim()
     || input.receipt.receipt.cleanup.hostReadback.finalStatus !== 'absent'
     || pathComparisonKey(input.receipt.receipt.cleanup.hostReadback.worktreePath)
       !== pathComparisonKey(input.receipt.receipt.cleanup.worktreePath)
@@ -74,6 +76,7 @@ export function markWorkerTaskCleaned(
     || input.receipt.receipt.cleanup.hostReadback.targetIdentity !== input.receipt.receipt.cleanup.targetIdentity
     || input.receipt.receipt.cleanup.worktreePath !== task.worktreePath
     || input.receipt.receipt.cleanup.worktreeId !== task.worktreeId
+    || !task.targetIdentity?.trim()
     || input.receipt.receipt.cleanup.targetIdentity !== task.targetIdentity
     || input.receipt.receipt.cleanup.branch !== task.branch
     || input.receipt.receipt.cleanup.branchRevision !== task.branchRevision

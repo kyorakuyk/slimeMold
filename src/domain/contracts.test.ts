@@ -890,12 +890,19 @@ describe('Phase 0a domain contracts', () => {
       runId: 'run-1',
       taskGraphId: 'graph-1',
       taskGraphVersion: 1,
+      taskIds: ['task-1'],
       sequence: 10,
       projectVersion: 1,
       now: '2026-09-01T00:01:00.000Z',
     })).toEqual([
       expect.objectContaining({ eventType: 'PlanApproved', aggregateVersion: 2 }),
-      expect.objectContaining({ eventType: 'RunCreated', aggregateVersion: 1 }),
+      expect.objectContaining({
+        eventType: 'RunCreated',
+        aggregateVersion: 1,
+        payload: expect.objectContaining({ taskIds: ['task-1'] }),
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+      }),
     ]);
   });
 

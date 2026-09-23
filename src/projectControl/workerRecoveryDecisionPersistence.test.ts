@@ -168,6 +168,32 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
   });
 
+  it('rejects an empty TaskBlocked blockedBy list before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate('skip');
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskFailed'
+        ? {
+          ...event,
+          eventId: 'decision-1:TaskBlocked:task-execution-run-1-task-1',
+          eventType: 'TaskBlocked' as const,
+          payload: {
+            ...(event.payload as Record<string, unknown>),
+            blockedBy: [],
+            reason: '依赖未完成',
+          },
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ action: 'skip', candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/blockedBy/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
   it('rejects a queued candidate carrying live worktree authority fields', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
@@ -227,6 +253,19 @@ describe('WorkerRecoveryDecisionPersistence', () => {
       input(),
       { readCurrentFactsFingerprint: async () => factsFingerprint('b') },
     )).rejects.toMatchObject({ code: 'stale' });
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('runs semantic candidate validation before persisting an admission', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+
+    await expect(persistence.admit(input(), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+      validateCandidate: async () => {
+        throw new WorkerRecoveryDecisionCasError('needs-repair', 'candidate reducer replay failed');
+      },
+    })).rejects.toMatchObject({ code: 'needs-repair' });
     await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
   });
 
@@ -303,6 +342,24 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     await expect(persistence.commit(exact, {
       verifyProjection: async () => true,
     })).resolves.toMatchObject({ status: 'committed' });
+  });
+
+  it('marks a staged decision as needs-repair after a projection write failure', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    await expect(persistence.markNeedsRepair(exact, 'ProjectFile read-back failed', exact.now))
+      .resolves.toMatchObject({ repairReason: 'ProjectFile read-back failed' });
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ repairReason: 'ProjectFile read-back failed' })] },
+    });
   });
 
   it('resumes an admitted request with its durable candidate after a restart', async () => {

@@ -218,6 +218,14 @@ export async function executeWorkerCleanupWithReceipt(
 
   try {
     throwIfAborted(input.signal);
+    if (!proposal.targetIdentity?.trim()) {
+      const unknown = markSideEffectUnknown(startedRecord, 'cleanup-target-identity-missing');
+      const journal = await input.repository.record(unknown);
+      return {
+        cleaned: false,
+        sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+      };
+    }
     const fingerprint = cleanupBindingFingerprint(proposal);
     const cleaned = input.signal
       ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal, fingerprint)
@@ -258,6 +266,7 @@ export async function executeWorkerCleanupWithReceipt(
         || pathComparisonKey(authoritative.worktreePath) !== pathComparisonKey(proposal.worktreePath)
         || authoritative.branch !== proposal.branch
         || authoritative.branchRevision !== proposal.branchRevision
+        || !authoritative.targetIdentity?.trim()
         || authoritative.targetIdentity !== proposal.targetIdentity
         || authoritative.finalStatus !== 'absent'
       ) {

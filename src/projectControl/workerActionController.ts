@@ -75,6 +75,8 @@ export function findTrustedRunCreatedEvent(
       && !!payload.taskGraphId.trim()
       && Number.isSafeInteger(payload.taskGraphVersion)
       && (payload.taskGraphVersion as number) >= 1
+      && event.source?.objectId === payload.taskGraphId
+      && event.source?.objectVersion === payload.taskGraphVersion
       && Array.isArray(payload.taskIds)
       && payload.taskIds.length > 0
       && payload.taskIds.every((taskId) => typeof taskId === 'string' && !!taskId.trim())
@@ -128,6 +130,7 @@ function assertCandidateMatchesTrustedTaskGraph(
       const task = taskGraph.tasks.find((item) => item.id === payload.taskId);
       const blockedBy = payload.blockedBy;
       if (!task || !Array.isArray(blockedBy)
+        || blockedBy.length === 0
         || blockedBy.some((dependency) => typeof dependency !== 'string' || !task.dependsOn.includes(dependency))) {
         throw new WorkerRecoveryDecisionCasError(
           'needs-repair',
@@ -771,18 +774,57 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     );
 
     let postCommitRecord: WorkerRecoveryDecisionRecord | undefined;
-    await decisionPersistence.withDecisionLock(async (decisionLock) => {
+    let admittedDecisionInput: WorkerRecoveryDecisionInput | undefined;
+    try {
+      await decisionPersistence.withDecisionLock(async (decisionLock) => {
+      const validateCandidateBeforeAdmission = async (candidate: WorkerRecoveryDecisionCandidate): Promise<void> => {
+        deps.assertProjectOperation(operation);
+        const eventStream = await bundle.createEventRepository().readStream();
+        if (eventStream.status === 'needs-repair') {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery event stream 在 candidate admission 前需要修复：${requestKey}`,
+          );
+        }
+        if (candidateEventsArePersistedInOrder(candidate.events, eventStream.events)) {
+          assertCandidateMatchesReplayProjection(
+            candidate,
+            replayDomainEvents(eventStream.events),
+            requestKey,
+          );
+        } else {
+          assertCandidateCanReplay(candidate, eventStream.events, requestKey);
+        }
+      };
       const admission = await decisionPersistence.admit(decisionInput, {
         readCurrentFactsFingerprint,
         isCandidateApplied,
         isCandidateRepairable,
         isProjectionMissing,
+        validateCandidate: validateCandidateBeforeAdmission,
       }, decisionLock);
       if (admission.kind === 'replay') {
         postCommitRecord = admission.record;
         return;
       }
       const admittedCandidate = admission.record.candidate;
+      admittedDecisionInput = admission.kind === 'admitted'
+        ? {
+          ...decisionInput,
+          candidate: admittedCandidate,
+          now: admission.record.admittedAt,
+        }
+        : {
+          projectId: admission.record.projectId,
+          runId: admission.record.runId,
+          requestIdentity: admission.record.requestIdentity,
+          action: admission.record.action,
+          semanticPayloadVersion: admission.record.semanticPayloadVersion,
+          decisionId: admission.record.decisionId,
+          factsFingerprint: admission.record.factsFingerprint,
+          candidate: admittedCandidate,
+          now: admission.record.admittedAt,
+        };
       const decisionState = deps.getState();
       const currentRun = decisionState.workerRuns.find((item) => item.runId === runId);
       const stateAlreadyMatches = !!currentRun
@@ -809,14 +851,6 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         );
       }
       deps.assertProjectOperation(operation);
-      const preWriteEvents = await bundle.createEventRepository().readStream();
-      if (preWriteEvents.status === 'needs-repair') {
-        throw new WorkerRecoveryDecisionCasError(
-          'needs-repair',
-          `recovery event stream 在 candidate 写入前需要修复：${requestKey}`,
-        );
-      }
-      assertCandidateCanReplay(admittedCandidate, preWriteEvents.events, requestKey);
       deps.recordProjectEvents(projectId, admittedCandidate.events);
       const nextRuns = currentRun
         ? decisionState.workerRuns.map((item) => item.runId === runId ? admittedCandidate.state : item)
@@ -859,27 +893,30 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
           `recovery candidate 在 ProjectFile 保存期间发生漂移：${requestKey}`,
         );
       }
-      const commitInput: WorkerRecoveryDecisionInput = admission.kind === 'admitted'
-        ? {
-          ...decisionInput,
-          candidate: admittedCandidate,
-          now: new Date().toISOString(),
-        }
-        : {
-          projectId: admission.record.projectId,
-          runId: admission.record.runId,
-          requestIdentity: admission.record.requestIdentity,
-          action: admission.record.action,
-          semanticPayloadVersion: admission.record.semanticPayloadVersion,
-          decisionId: admission.record.decisionId,
-          factsFingerprint: admission.record.factsFingerprint,
-          candidate: admittedCandidate,
-          now: admission.record.admittedAt,
-        };
-      postCommitRecord = await decisionPersistence.commit(commitInput, {
+      if (!admittedDecisionInput) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery decision commit input 丢失：${requestKey}`,
+        );
+      }
+      postCommitRecord = await decisionPersistence.commit(admittedDecisionInput, {
         verifyProjection: () => isCandidateApplied(admittedCandidate),
       }, decisionLock);
     });
+    } catch (cause) {
+      if (admittedDecisionInput && !postCommitRecord) {
+        try {
+          await decisionPersistence.markNeedsRepair(
+            admittedDecisionInput,
+            cause instanceof Error ? cause.message : String(cause),
+            new Date().toISOString(),
+          );
+        } catch {
+          // Preserve the original failure; an unreadable repair marker is itself fail-closed.
+        }
+      }
+      throw cause;
+    }
     if (!postCommitRecord) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',

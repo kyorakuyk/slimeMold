@@ -854,12 +854,17 @@ export function approvePlanAndEnqueueRun(input: {
   runId: string;
   taskGraphId: string;
   taskGraphVersion: number;
+  taskIds: readonly string[];
   sequence: number;
   projectVersion: number;
   now: string;
 }): DomainEvent[] {
   const validation = validateApprovalGrant(input.grant, input.current);
   if (!validation.ok) throw new Error(`不能批准计划：${validation.reason}`);
+  const taskIds = [...new Set(input.taskIds.map((taskId) => taskId.trim()))];
+  if (taskIds.length === 0 || taskIds.some((taskId) => !taskId)) {
+    throw new Error('不能批准计划：taskIds 不能为空');
+  }
 
   return [
     {
@@ -893,10 +898,16 @@ export function approvePlanAndEnqueueRun(input: {
         runId: input.runId,
         taskGraphId: input.taskGraphId,
         taskGraphVersion: input.taskGraphVersion,
+        taskIds,
       },
       actor: 'runtime',
       occurredAt: input.now,
       causationId: input.grant.id,
+      correlationId: input.runId,
+      source: {
+        objectId: input.taskGraphId,
+        objectVersion: input.taskGraphVersion,
+      },
     },
   ];
 }

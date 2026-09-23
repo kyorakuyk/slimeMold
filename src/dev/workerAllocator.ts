@@ -21,6 +21,7 @@ export interface WorktreeCreator {
     options?: { branch?: string; signal?: AbortSignal },
   ): Promise<WorktreeInfo | null>;
   getLastCreateError?: () => string | null;
+  cleanup?: (id: string, opts?: { confirm?: boolean; signal?: AbortSignal }) => Promise<boolean>;
 }
 
 export type WorkerWorktreePathFactory = (input: {
@@ -95,6 +96,14 @@ export function createWorktreeAllocator(
         reservedPaths.delete(pathKey);
         throw error;
       }
+    },
+    async release(assignment, signal): Promise<void> {
+      reservedPaths.delete(pathComparisonKey(assignment.path));
+      if (!creator.cleanup) {
+        throw new Error(`无法回滚已分配 worktree：宿主未提供 cleanup（${assignment.worktreeId}）`);
+      }
+      const cleaned = await creator.cleanup(assignment.worktreeId, { confirm: true, signal });
+      if (!cleaned) throw new Error(`worktree rollback 未确认完成：${assignment.worktreeId}`);
     },
   };
 }

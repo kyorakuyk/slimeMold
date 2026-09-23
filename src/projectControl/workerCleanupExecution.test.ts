@@ -20,6 +20,7 @@ function proposal(): WorkerCleanupProposalReady {
     branchRevision: 'a'.repeat(40),
     branchRevisionRequired: true,
     worktreePath: 'C:/project-workers/run-1/task-1',
+    targetIdentity: 'v1:target-1',
     baseRevision: 'abc123',
     stateSignature: 'sig-1',
     acceptanceId: 'acc-1',
