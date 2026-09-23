@@ -1,7 +1,7 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
 import type { Orchestration } from '../types/orchestration';
-import type { DomainEvent, SideEffectRecord } from '../domain/contracts';
-import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { replayDomainEvents, type DomainEvent, type SideEffectRecord } from '../domain/contracts';
+import { restoreWorkerRunQueue, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectTaskGraph } from './types';
 import type { WorkerRunRecovery } from './workerRunRuntime';
 import type { WorkerCleanupProposal } from './workerCleanup';
@@ -39,10 +39,52 @@ type PersistedProjectProjection = {
 
 function samePersistedEvent(expected: DomainEvent, actual: DomainEvent): boolean {
   const comparable = (event: DomainEvent): unknown => {
-    const { sequence: _sequence, ...withoutSequence } = event;
-    return withoutSequence;
+    const {
+      sequence: _sequence,
+      aggregateVersion: _aggregateVersion,
+      ...withoutPosition
+    } = event;
+    return withoutPosition;
   };
   return JSON.stringify(comparable(expected)) === JSON.stringify(comparable(actual));
+}
+
+function sortedIds(values: readonly string[]): string[] {
+  return [...values].sort();
+}
+
+function assertCandidateMatchesTrustedTaskGraph(
+  candidate: WorkerRecoveryDecisionCandidate,
+  taskGraph: ProjectTaskGraph,
+  requestKey: string,
+): void {
+  const graphTaskIds = sortedIds(taskGraph.tasks.map((task) => task.id));
+  const candidateTaskIds = sortedIds(candidate.taskGraphTaskIds);
+  if (JSON.stringify(graphTaskIds) !== JSON.stringify(candidateTaskIds)) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate task set 与当前可信 TaskGraph 不一致：${requestKey}`,
+    );
+  }
+  for (const task of taskGraph.tasks) {
+    const candidateTask = candidate.state.tasks[task.id];
+    if (!candidateTask
+      || (candidateTask.taskDefinitionVersion !== undefined
+        && candidateTask.taskDefinitionVersion !== task.version)) {
+      throw new WorkerRecoveryDecisionCasError(
+        'needs-repair',
+        `recovery candidate task definition 与当前可信 TaskGraph 不一致：${requestKey}`,
+      );
+    }
+  }
+  try {
+    restoreWorkerRunQueue({ taskGraph, state: candidate.state });
+  } catch (cause) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate 未通过 Worker queue restore 校验：${requestKey} (${cause instanceof Error ? cause.message : String(cause)})`,
+    );
+  }
 }
 
 export interface WorkerActionState {
@@ -326,6 +368,8 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       };
     }
 
+    assertCandidateMatchesTrustedTaskGraph(decisionInput.candidate, capturedTaskGraph, requestKey);
+
     let postCommitRecord: WorkerRecoveryDecisionRecord | undefined;
     await decisionPersistence.withDecisionLock(async (decisionLock) => {
       const admission = await decisionPersistence.admit(decisionInput, {
@@ -385,6 +429,21 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       deps.assertProjectOperation(operation);
       await deps.saveProject(projectId, projectPath, operation.controller.signal);
       deps.assertProjectOperation(operation);
+      const persistedEvents = await bundle.createEventRepository().readStream();
+      if (persistedEvents.status === 'needs-repair') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery event stream 在 candidate save 后需要修复：${requestKey}`,
+        );
+      }
+      try {
+        replayDomainEvents(persistedEvents.events);
+      } catch (cause) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate event 未通过 domain reducer replay：${requestKey} (${cause instanceof Error ? cause.message : String(cause)})`,
+        );
+      }
       if (!(await isCandidateApplied(admittedCandidate))) {
         throw new WorkerRecoveryDecisionCasError(
           'needs-repair',

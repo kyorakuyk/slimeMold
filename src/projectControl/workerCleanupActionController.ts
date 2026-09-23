@@ -225,10 +225,15 @@ export function createWorkerCleanupActionController(
       repository,
       host: {
         confirmAndCleanup: session.confirmAndCleanup.bind(session),
-        readCleanupState: async (path) => ({
-          present: !!session.manager.getByPath(path),
-          status: session.manager.getByPath(path)?.status ?? 'absent',
-        }),
+        readCleanupState: async (path) => {
+          const info = session.manager.getByPathIncludingCleaned(path);
+          const hostReadback = info ? session.manager.getCleanupReadback(info.id) : undefined;
+          return {
+            present: !!info && info.status !== 'cleaned',
+            status: info?.status === 'cleaned' ? 'absent' : (info?.status ?? 'absent'),
+            ...(hostReadback ? { hostReadback } : {}),
+          };
+        },
       },
       now: new Date().toISOString(),
       signal: operation.controller.signal,

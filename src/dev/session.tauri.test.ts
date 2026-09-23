@@ -9,6 +9,13 @@ const hostState = vi.hoisted(() => ({
   rejectRegister: false,
   rejectUnregister: false,
   registerIdentity: undefined as string | undefined,
+  cleanupReadback: undefined as {
+    worktreePath: string;
+    branch: string;
+    branchRevision: string;
+    targetIdentity?: string;
+    finalStatus: 'absent';
+  } | undefined,
 }));
 
 function trustedProposal(session: ReturnType<typeof initDevSession>, path: string): WorkerCleanupProposalReady {
@@ -28,7 +35,7 @@ const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =
   }
   if (command === 'dev_register_orphan_worktree') return undefined;
   if (command === 'dev_approve_cleanup') return 'native-cleanup-token';
-  if (command === 'dev_cleanup_worktree') return undefined;
+  if (command === 'dev_cleanup_worktree') return hostState.cleanupReadback;
   if (command === 'dev_unregister_worktree') return undefined;
   throw new Error(`unexpected command: ${command}`);
 }));
@@ -47,6 +54,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     hostState.rejectRegister = false;
     hostState.rejectUnregister = false;
     hostState.registerIdentity = undefined;
+    hostState.cleanupReadback = undefined;
     invoke.mockClear();
   });
 
@@ -119,6 +127,48 @@ describe('DevSession Tauri orphan cleanup', () => {
     );
 
     expect(info?.targetIdentity).toBe('v1:1:2');
+  });
+
+  it('retains the native cleanup read-back for the receipt boundary', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    hostState.registerIdentity = 'v1:1:2';
+    hostState.cleanupReadback = {
+      worktreePath: '/repo-workers/task-1',
+      branch: 'worker/task-1',
+      branchRevision: TIP_OID,
+      targetIdentity: 'v1:1:2',
+      finalStatus: 'absent',
+    };
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: {
+        git,
+        cleanupWorktree: async () => ({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 1,
+          cleanupReadback: hostState.cleanupReadback,
+        }),
+      },
+    });
+    const info = await session.manager.create(
+      'worker-id',
+      '/repo-workers/task-1',
+      { branch: 'worker/task-1' },
+    );
+
+    await expect(session.manager.cleanup(info!.id, {
+      confirm: true,
+      branchRevision: TIP_OID,
+    })).resolves.toBe(true);
+    expect(session.manager.getCleanupReadback(info!.id)).toEqual(hostState.cleanupReadback);
   });
 
   it('keeps cleanup retryable when Rust unregister fails after Git cleanup', async () => {

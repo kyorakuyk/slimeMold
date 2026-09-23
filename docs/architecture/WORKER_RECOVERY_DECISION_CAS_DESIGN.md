@@ -9,7 +9,7 @@ authority: design-proposal
 # Worker Recovery Decision CAS Design Gate
 
 > 本文仍是 Worker recovery durable decision CAS 的设计门；当前已实现 Gate A、Gate B 的 durable decision owner 与 Gate C 的 controller wiring，但不是跨文件原子事务或真实 restart/cross-process acceptance 的宣称。
-> 当前 `WorkerRecoveryDecisionPersistence` 在 durable journal read-back 后保留 admitted/committed candidate，并记录 `pending → dispatching → completed/failed` 的 retry post-commit 状态；controller 可在同一 project-local decision lock 内执行 admission、projection/save、read-back 与 durable commit，再从 durable candidate 做 replay/resume 和 projection repair，但在 crash matrix、双 controller 竞争和真实 GUI read-back 完成前，不得把 recovery decision 写成 fully closed。
+> 当前 `WorkerRecoveryDecisionPersistence` 在 durable journal read-back 后保留 admitted/committed candidate，并记录 `pending → dispatching → completed/failed` 的 retry post-commit 状态；controller 可在同一 project-local decision lock 内执行 admission、trusted TaskGraph/queue restore validation、projection/save、真实 event-stream reducer replay/read-back 与 durable commit，再从 durable candidate 做 replay/resume 和 projection repair，但在 crash matrix、双 controller 竞争和真实 GUI read-back 完成前，不得把 recovery decision 写成 fully closed。
 
 ## 1. 目的与边界
 
@@ -134,7 +134,7 @@ DecisionIdentityV1 = {
 6. 每个 durable write 都必须有明确 crash/retry 状态：pending、committed、conflict 或 needs-repair；跨文件无法原子时，必须有可重放的 commit marker/reconciliation，而不是吞掉第二个写失败。
 7. read-back ProjectFile、event stream/projection 和 decision record；只有 read-back 一致后才允许 retry，且 WorkerQueue 仍保持 running lease 在外部 executor/side effect 之前持久化。
 
-**当前限制：** `workerActionController` 已按 fresh facts → decision admission → durable candidate replay/resume → projection/save → candidate state read-back → decision commit → retry post-commit status 接线；这些步骤由 project-local decision lock 包住，但 ProjectFile/event stream 与 decision journal 仍是跨文件写入。任何 save/commit crash window 必须由 admitted/committed candidate 重放、post-commit retry 状态重试或 `needs-repair` 处理，不能称作跨文件原子 CAS。
+**当前限制：** `workerActionController` 已按 fresh facts → decision admission → trusted TaskGraph/task-set and `restoreWorkerRunQueue` validation → durable candidate replay/resume → projection/save → full event-stream `replayDomainEvents` and candidate read-back → decision commit → retry post-commit status 接线；event semantic comparison ignores only storage-rebased `sequence`/`aggregateVersion`, not event identity or payload. 这些步骤由 project-local decision lock 包住，但 ProjectFile/event stream 与 decision journal 仍是跨文件写入。任何 save/commit crash window 必须由 admitted/committed candidate 重放、post-commit retry 状态重试或 `needs-repair` 处理，不能称作跨文件原子 CAS。
 
 ## 5. Legacy 与 migration
 
@@ -143,6 +143,7 @@ DecisionIdentityV1 = {
 - legacy effect key/inputHash 仍遵守既有显式 migration；legacy/canonical collision、unbound lineage 和 malformed record fail-closed。
 - 若未来增加 `RecoveryDecisionRecordV1` 或 event payload 字段，必须定义 schema version、old reader、new writer、migration collision、same-decision replay 和 restart read-back；不能把旧 `WorkerRunRecoveryDecided` 事件静默解释成新的 CAS commit。
 - 迁移前的 run 若缺少可信 fingerprint，保持 inspect/recovery boundary，不自动 retry/skip；迁移需要可信 pre-decision source，否则只能标记 historical/unbound。
+- cleanup side-effect migration separately accepts canonical `cleanup:<attemptId>` and legacy `cleanup:<runId>:<taskId>:a<attempt>` keys only when full `CleanupReceipt.cleanup` facts bind the same lineage; old successful receipts without host cleanup facts are surfaced as `cleanup-unknown` for manual repair and are not auto-projected as `TaskCleaned`.
 
 ## 6. 分阶段实施门
 
@@ -157,7 +158,7 @@ DecisionIdentityV1 = {
 
 ### Gate B：durable decision admission（已实现 partial）
 
-`WorkerRecoveryDecisionPersistence` 已实现 decision lookup、项目内 durable lock、candidate schema/lineage validation、stale/conflict/idempotence、admitted/committed/post-commit 状态和 atomic JSON read-back；controller 可通过同一 lock 完成 admission 到 projection/save/read-back/commit 的顺序约束，但 ProjectFile/event/journal crash matrix、跨文件 commit marker 与跨进程证明仍待 Gate D，不得与 UI capability 或 runtime selection混合。
+`WorkerRecoveryDecisionPersistence` 已实现 decision lookup、项目内 durable lock、candidate schema/lineage/action-event validation、stale/conflict/idempotence、admitted/committed/post-commit 状态和 atomic JSON read-back；controller 可通过同一 lock 完成 admission 到 trusted TaskGraph/queue validation、projection/save、full event-stream reducer replay/read-back/commit 的顺序约束，但 ProjectFile/event/journal crash matrix、跨文件 commit marker 与跨进程证明仍待 Gate D，不得与 UI capability 或 runtime selection混合。
 
 ### Gate C：controller wiring（已实现 partial）
 

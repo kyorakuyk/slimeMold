@@ -62,6 +62,38 @@ describe('worker cleanup execution', () => {
     });
   });
 
+  it('binds the cleanup receipt to authoritative native host read-back facts', async () => {
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    const current = { ...proposal(), targetIdentity: 'v1:target-1' };
+    const result = await executeWorkerCleanupWithReceipt({
+      proposal: current,
+      repository,
+      host: {
+        confirmAndCleanup: vi.fn(async () => true),
+        readCleanupState: async () => ({
+          present: false as const,
+          status: 'absent' as const,
+          hostReadback: {
+            worktreePath: current.worktreePath,
+            branch: current.branch,
+            branchRevision: current.branchRevision,
+            targetIdentity: current.targetIdentity,
+            finalStatus: 'absent' as const,
+          },
+        }),
+      },
+      now: '2026-09-01T00:03:00.000Z',
+    });
+
+    expect(result.cleaned).toBe(true);
+    expect(result.sideEffect.receipt?.cleanup).toMatchObject({
+      worktreePath: current.worktreePath,
+      targetIdentity: current.targetIdentity,
+      branchRevision: current.branchRevision,
+      finalStatus: 'absent',
+    });
+  });
+
   it('finalizes a cleanup receipt when cancellation arrives after the host gate cleans', async () => {
     const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
     const controller = new AbortController();

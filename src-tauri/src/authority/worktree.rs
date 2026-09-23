@@ -1222,6 +1222,16 @@ pub(crate) fn cleanup_target_identity_is_current(
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DevCleanupReadback {
+    pub(crate) worktree_path: String,
+    pub(crate) branch: String,
+    pub(crate) branch_revision: String,
+    pub(crate) target_identity: Option<String>,
+    pub(crate) final_status: &'static str,
+}
+
 #[tauri::command]
 pub(crate) fn dev_cleanup_worktree(
     path: String,
@@ -1229,7 +1239,7 @@ pub(crate) fn dev_cleanup_worktree(
     branch_revision: String,
     approval_token: String,
     generation: u64,
-) -> Result<(), String> {
+) -> Result<DevCleanupReadback, String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_cleanup_worktree")?;
     if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
@@ -1483,7 +1493,13 @@ pub(crate) fn dev_cleanup_worktree(
     state
         .orphan_worktrees
         .retain(|item| path_compare_key(&item.path) != path_compare_key(&c));
-    Ok(())
+    Ok(DevCleanupReadback {
+        worktree_path: c,
+        branch,
+        branch_revision,
+        target_identity: expected_target_identity.map(|identity| identity.token()),
+        final_status: "absent",
+    })
 }
 
 /// 注销 worktree（前端清理成功后调用）。

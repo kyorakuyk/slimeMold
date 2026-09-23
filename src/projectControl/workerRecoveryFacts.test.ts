@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import {
   cleanupUnknownRunIds,
   reconcileSuccessfulCleanupReceipts,
@@ -35,6 +36,61 @@ const run: WorkerRunQueueState = {
   tasks: {},
 };
 
+const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+const attemptId = createAttemptId(taskExecutionId, 1);
+const cleanupRun: WorkerRunQueueState = {
+  ...run,
+  tasks: {
+    'task-1': {
+      taskId: 'task-1',
+      taskExecutionId,
+      currentAttemptId: attemptId,
+      status: 'succeeded',
+      attempt: 1,
+      worktreeId: 'wt-1',
+      worktreePath: 'C:/workers/task-1',
+      targetIdentity: 'v1:target-1',
+      branch: 'worker/task-1',
+      branchRevision: 'a'.repeat(40),
+      baseRevision: 'abc123',
+      worktreeStatus: 'created',
+      evidenceIds: ['evidence-1'],
+      acceptanceId: 'acceptance-1',
+      updatedAt: run.updatedAt,
+    },
+  },
+};
+
+function successfulCleanupEffect(idempotencyKey: string, includeCleanup = true): SideEffectRecord {
+  return effect({
+    idempotencyKey,
+    target: 'C:/workers/task-1',
+    inputHash: 'abc123:sig-1',
+    taskExecutionId,
+    attemptId,
+    status: 'receipt',
+    recovery: 'skip',
+    receipt: {
+      receiptId: `${idempotencyKey}:receipt`,
+      observedAt: '2026-09-01T00:01:00.000Z',
+      outputHash: 'sig-1',
+      outcome: 'succeeded',
+      ...(includeCleanup ? {
+        cleanup: {
+          worktreePath: cleanupRun.tasks['task-1'].worktreePath!,
+          worktreeId: cleanupRun.tasks['task-1'].worktreeId!,
+          targetIdentity: cleanupRun.tasks['task-1'].targetIdentity,
+          branch: cleanupRun.tasks['task-1'].branch!,
+          branchRevision: cleanupRun.tasks['task-1'].branchRevision!,
+          baseRevision: cleanupRun.tasks['task-1'].baseRevision!,
+          finalStatus: 'absent' as const,
+          hostVerifiedAt: '2026-09-01T00:01:00.000Z',
+        },
+      } : {}),
+    },
+  });
+}
+
 describe('worker recovery facts', () => {
   it('collects only cleanup effects that require user recovery', () => {
     const ids = cleanupUnknownRunIds([
@@ -51,5 +107,38 @@ describe('worker recovery facts', () => {
 
     expect(result.runs).toEqual([run]);
     expect(result.events).toEqual([]);
+  });
+
+  it('reconciles a canonical successful cleanup receipt into TaskCleaned', () => {
+    const result = reconcileSuccessfulCleanupReceipts(
+      [cleanupRun],
+      [successfulCleanupEffect(`cleanup:${attemptId}`)],
+    );
+
+    expect(result.runs[0].tasks['task-1']).toMatchObject({
+      cleanupStatus: 'cleaned',
+      worktreeStatus: 'cleaned',
+    });
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].eventType).toBe('TaskCleaned');
+  });
+
+  it('reconciles a legacy successful receipt using its canonical lineage', () => {
+    const legacyKey = 'cleanup:run-1:task-1:a1';
+    const result = reconcileSuccessfulCleanupReceipts(
+      [cleanupRun],
+      [successfulCleanupEffect(legacyKey)],
+    );
+
+    expect(result.runs[0].tasks['task-1'].cleanupStatus).toBe('cleaned');
+    expect(result.events[0].payload).toMatchObject({ receiptId: `cleanup:${attemptId}:receipt` });
+  });
+
+  it('marks an old successful receipt without cleanup facts for manual repair', () => {
+    const legacyKey = 'cleanup:run-1:task-1:a1';
+    const effects = [successfulCleanupEffect(legacyKey, false)];
+
+    expect(reconcileSuccessfulCleanupReceipts([cleanupRun], effects).events).toEqual([]);
+    expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
   });
 });

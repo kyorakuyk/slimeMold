@@ -276,4 +276,24 @@ describe('WorkerRecoveryDecisionPersistence', () => {
 
     await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
   });
+
+  it('rejects a recovery event whose decision payload disagrees with the admitted action', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input({
+      candidate: candidate('skip'),
+    });
+
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
+  });
 });

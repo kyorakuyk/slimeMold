@@ -101,6 +101,7 @@ export type WorktreeIdentityReader = (path: string, mustExist: boolean) => Promi
 
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
+  private cleanupReadbacks = new Map<string, NonNullable<CommandResult['cleanupReadback']>>();
   private lastCreateError: string | null = null;
 
   constructor(
@@ -113,6 +114,10 @@ export class WorktreeManager {
 
   getBaseRepoPath(): string {
     return this.baseRepoPath;
+  }
+
+  getCleanupReadback(id: string): NonNullable<CommandResult['cleanupReadback']> | undefined {
+    return this.cleanupReadbacks.get(id);
   }
 
   getLastCreateError(): string | null {
@@ -222,6 +227,11 @@ export class WorktreeManager {
         (info.status === 'created' || info.status === 'registration-pending' || info.status === 'orphaned') &&
         pathComparisonKey(info.path) === normalized,
     );
+  }
+
+  getByPathIncludingCleaned(path: string): WorktreeInfo | undefined {
+    const normalized = pathComparisonKey(path);
+    return [...this.infos.values()].find((info) => pathComparisonKey(info.path) === normalized);
   }
 
   /** Read the current branch tip for approval/CAS fingerprints. */
@@ -430,6 +440,7 @@ export class WorktreeManager {
         this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
         return false;
       }
+      if (cleanup.cleanupReadback) this.cleanupReadbacks.set(info.id, cleanup.cleanupReadback);
       this.infos.set(info.id, { ...info, branchRevision, status: 'cleaned' });
       return true;
     }
@@ -486,6 +497,7 @@ export class WorktreeManager {
           this.baseRepoPath,
         );
         if (cleanup.exitCode !== 0) return false;
+        if (cleanup.cleanupReadback) this.cleanupReadbacks.set(id, cleanup.cleanupReadback);
         this.infos.set(id, { ...info, status: 'cleaned' });
         return true;
       }

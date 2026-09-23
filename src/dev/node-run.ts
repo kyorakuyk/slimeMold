@@ -17,6 +17,14 @@ export interface CommandResult {
   durationMs: number;
   /** Host-side spawn/capture/cleanup failed after the command may have started. */
   unknownEffects?: boolean;
+  /** Authoritative native cleanup postcondition, when a native host performed cleanup. */
+  cleanupReadback?: {
+    worktreePath: string;
+    branch: string;
+    branchRevision: string;
+    targetIdentity?: string;
+    finalStatus: 'absent';
+  };
 }
 
 /** 常见凭据/密钥环境变量名（执行子命令时剥离，防止开发节点读取宿主凭据）。 */

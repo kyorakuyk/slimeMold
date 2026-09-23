@@ -24,6 +24,13 @@ export interface WorkerCleanupExecutionHost {
   readCleanupState(path: string): Promise<{
     present: boolean;
     status: 'absent' | 'created' | 'orphaned' | 'registration-pending' | 'cleaned';
+    hostReadback?: {
+      worktreePath: string;
+      branch: string;
+      branchRevision: string;
+      targetIdentity?: string;
+      finalStatus: 'absent';
+    };
   }>;
 }
 
@@ -228,6 +235,23 @@ export async function executeWorkerCleanupWithReceipt(
         cleaned: false,
         sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
       };
+    }
+    if (readback.hostReadback) {
+      const authoritative = readback.hostReadback;
+      if (
+        pathComparisonKey(authoritative.worktreePath) !== pathComparisonKey(proposal.worktreePath)
+        || authoritative.branch !== proposal.branch
+        || authoritative.branchRevision !== proposal.branchRevision
+        || authoritative.targetIdentity !== proposal.targetIdentity
+        || authoritative.finalStatus !== 'absent'
+      ) {
+        const unknown = markSideEffectUnknown(startedRecord, 'cleanup-native-readback-mismatch');
+        const journal = await input.repository.record(unknown);
+        return {
+          cleaned: false,
+          sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+        };
+      }
     }
     const cleanupReceipt: CleanupReceipt = {
       worktreePath: proposal.worktreePath,

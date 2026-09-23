@@ -387,6 +387,29 @@ function validateEvent(
   if (context.action !== 'inspect' && eventType === 'WorkerRunRecoveryDecided' && sequence !== 1) {
     throw new Error('mutating recovery decision 必须以 WorkerRunRecoveryDecided 开始');
   }
+  if (eventType === 'WorkerRunRecoveryDecided') {
+    const decision = requiredText(value.payload.decision, 'decision recovery event decision');
+    if (decision !== context.action) {
+      throw new Error('decision recovery event decision 与 action 不一致');
+    }
+    if (value.payload.requiresNewAttempt !== undefined && typeof value.payload.requiresNewAttempt !== 'boolean') {
+      throw new Error('decision recovery event requiresNewAttempt 无效');
+    }
+    if (value.payload.taskIds !== undefined) {
+      if (!Array.isArray(value.payload.taskIds)
+        || value.payload.taskIds.some((taskId) => typeof taskId !== 'string' || !taskId.trim())
+        || new Set(value.payload.taskIds).size !== value.payload.taskIds.length
+        || value.payload.taskIds.some((taskId) => !context.taskGraphTaskIds.has(taskId))) {
+        throw new Error('decision recovery event taskIds 无效');
+      }
+    }
+  }
+  if (context.action === 'retry' && (eventType === 'TaskFailed' || eventType === 'TaskBlocked')) {
+    throw new Error(`retry recovery 不能产生 ${eventType} event`);
+  }
+  if (context.action === 'skip' && (eventType === 'TaskAttemptMarkedUnknown' || eventType === 'TaskQueued')) {
+    throw new Error(`skip recovery 不能产生 ${eventType} event`);
+  }
   return value as unknown as DomainEvent;
 }
 
@@ -417,6 +440,9 @@ function validateCandidate(
     taskGraphTaskIds: new Set(value.taskGraphTaskIds),
   };
   const events = value.events.map((event) => validateEvent(event, eventContext));
+  if (context.action !== 'inspect' && events[0]?.eventType !== 'WorkerRunRecoveryDecided') {
+    throw new Error('mutating recovery decision 必须以 WorkerRunRecoveryDecided 开始');
+  }
   const eventIds = new Set<string>();
   const sequences = new Set<number>();
   const aggregateVersions = new Map<string, number>();

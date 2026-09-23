@@ -21,26 +21,40 @@ export function reconcileSuccessfulCleanupReceipts(
       if (task.cleanupStatus === 'cleaned' || !task.worktreePath || task.attempt < 1) continue;
       const taskExecutionId = task.taskExecutionId ?? createTaskExecutionId(run.runId, taskId);
       const attemptId = task.currentAttemptId ?? createAttemptId(taskExecutionId, task.attempt);
+      const canonicalKey = `cleanup:${attemptId}`;
+      const legacyKey = `cleanup:${run.runId}:${taskId}:a${task.attempt}`;
       const receipt = effects.find((entry) => (
         entry.kind === 'worktree-cleanup'
-        && entry.idempotencyKey === `cleanup:${attemptId}`
+        && (entry.idempotencyKey === canonicalKey || entry.idempotencyKey === legacyKey)
         && entry.status === 'receipt'
         && entry.recovery === 'skip'
         && entry.receipt?.outcome === 'succeeded'
       ));
       const stateSignature = receipt?.receipt?.outputHash;
       if (!receipt || !stateSignature) continue;
+      const isLegacy = receipt.idempotencyKey === legacyKey;
+      const normalizedReceipt = isLegacy
+        ? {
+            ...receipt,
+            idempotencyKey: canonicalKey,
+            taskExecutionId,
+            attemptId,
+            receipt: receipt.receipt
+              ? { ...receipt.receipt, receiptId: `${canonicalKey}:receipt` }
+              : receipt.receipt,
+          }
+        : receipt;
       try {
         const reconciled = markWorkerTaskCleaned({
           state: nextRun,
           taskId,
-          receiptId: receipt.receipt?.receiptId ?? '',
+          receiptId: normalizedReceipt.receipt?.receiptId ?? '',
           taskExecutionId,
           attemptId,
           stateSignature,
-          receipt,
-          decisionId: `cleanup-reconcile:${receipt.receipt?.receiptId ?? attemptId}`,
-          now: receipt.receipt?.observedAt ?? new Date().toISOString(),
+          receipt: normalizedReceipt,
+          decisionId: `cleanup-reconcile:${normalizedReceipt.receipt?.receiptId ?? attemptId}`,
+          now: normalizedReceipt.receipt?.observedAt ?? new Date().toISOString(),
         });
         nextRun = reconciled.state;
         events.push(...reconciled.events);
@@ -58,7 +72,16 @@ export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<
   return new Set(
     effects
       .filter((entry) => entry.kind === 'worktree-cleanup'
-        && (entry.status === 'unknown' || entry.recovery === 'needs-user')
+        && (
+          entry.status === 'unknown'
+          || entry.recovery === 'needs-user'
+          || (
+            entry.status === 'receipt'
+            && entry.recovery === 'skip'
+            && entry.receipt?.outcome === 'succeeded'
+            && !entry.receipt.cleanup
+          )
+        )
         && !!entry.runId)
       .map((entry) => entry.runId as string),
   );
