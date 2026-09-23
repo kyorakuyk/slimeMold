@@ -123,7 +123,7 @@ describe('worker action controller recovery CAS wiring', () => {
         aggregateVersion: 1,
         eventType: 'RunCreated',
         schemaVersion: 1,
-        payload: { runId: 'run-1' },
+        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1 },
         actor: 'system',
         occurredAt: '2026-09-22T00:00:00.000Z',
         correlationId: 'run-1',
@@ -234,6 +234,7 @@ describe('worker action controller recovery CAS wiring', () => {
     expect(recordProjectEvents).toHaveBeenCalledTimes(2);
     expect(saveProject).toHaveBeenCalledTimes(2);
     expect(runQueuedWorker).toHaveBeenCalledTimes(1);
+    expect(runQueuedWorker).toHaveBeenNthCalledWith(1, 'run-1', undefined, 'project-1', 'C:/project');
     await expect(persistence.read()).resolves.toMatchObject({
       status: 'ok',
       journal: { entries: [expect.objectContaining({ requestIdentity: 'request-1', status: 'committed' })] },
@@ -270,10 +271,9 @@ describe('worker action controller recovery CAS wiring', () => {
     await expect(persistence.read()).resolves.toMatchObject({
       journal: { entries: [expect.objectContaining({ postCommitStatus: 'failed' })] },
     });
-    await persistence.markPostCommit(durableInput, 'pending', durableRecord.admittedAt);
     runQueuedWorker.mockRejectedValueOnce(new Error('dispatch failed'));
     await expect(
-      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+      controller.retryFailedWorkerRecoveryPostCommit('run-1', 'request-1'),
     ).rejects.toThrow('dispatch failed');
     expect(runQueuedWorker).toHaveBeenCalledTimes(2);
     await expect(persistence.read()).resolves.toMatchObject({
@@ -330,7 +330,7 @@ describe('worker action controller recovery CAS wiring', () => {
         aggregateVersion: 1,
         eventType: 'RunCreated',
         schemaVersion: 1,
-        payload: { runId: 'run-1' },
+        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1 },
         actor: 'system',
         occurredAt: '2026-09-22T00:00:00.000Z',
         correlationId: 'run-1',

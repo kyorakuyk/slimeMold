@@ -10,6 +10,7 @@ const hostState = vi.hoisted(() => ({
   rejectUnregister: false,
   registerIdentity: undefined as string | undefined,
   cleanupReadback: undefined as {
+    authority: 'native';
     worktreePath: string;
     branch: string;
     branchRevision: string;
@@ -137,6 +138,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     });
     hostState.registerIdentity = 'v1:1:2';
     hostState.cleanupReadback = {
+      authority: 'native',
       worktreePath: '/repo-workers/task-1',
       branch: 'worker/task-1',
       branchRevision: TIP_OID,

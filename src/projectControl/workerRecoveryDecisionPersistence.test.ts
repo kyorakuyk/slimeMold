@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DomainEvent } from '../domain/contracts';
 import { InMemoryEventStoreAdapter } from '../domain/eventStore';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import {
   WorkerRecoveryDecisionCasError,
   WorkerRecoveryDecisionPersistence,
@@ -10,35 +11,100 @@ import {
 const factsFingerprint = (hex: string): string => `worker-recovery-facts-v1:sha256:${hex.repeat(64)}`;
 
 function candidate(decision: 'retry' | 'skip' = 'retry', decisionId = 'decision-1') {
+  const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+  const retry = decision === 'retry';
+  const taskEvent: DomainEvent = retry
+    ? {
+      eventId: `${decisionId}:TaskQueued:${taskExecutionId}`,
+      streamId: 'project-1',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 1,
+      eventType: 'TaskQueued',
+      schemaVersion: 1,
+      payload: {
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        nextAttempt: 1,
+        recoveryDecisionId: decisionId,
+      },
+      actor: 'user',
+      occurredAt: '2026-09-22T00:00:00.000Z',
+      correlationId: 'run-1',
+      source: { objectId: 'graph-1', objectVersion: 1 },
+      sensitivity: 'normal',
+    }
+    : {
+      eventId: `${decisionId}:TaskFailed:${taskExecutionId}`,
+      streamId: 'project-1',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 1,
+      eventType: 'TaskFailed',
+      schemaVersion: 1,
+      payload: {
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        error: '恢复决策导致任务跳过',
+        attempt: 1,
+        attemptId: createAttemptId(taskExecutionId, 1),
+      },
+      actor: 'user',
+      occurredAt: '2026-09-22T00:00:00.000Z',
+      correlationId: 'run-1',
+      source: { objectId: 'graph-1', objectVersion: 1 },
+      sensitivity: 'normal',
+    };
+  const decisionEvent: DomainEvent = {
+    eventId: `${decisionId}:WorkerRunRecoveryDecided:run-1`,
+    streamId: 'project-1',
+    sequence: 1,
+    aggregateType: 'Run',
+    aggregateId: 'run-1',
+    aggregateVersion: 1,
+    eventType: 'WorkerRunRecoveryDecided',
+    schemaVersion: 1,
+    payload: {
+      runId: 'run-1',
+      decision,
+      requiresNewAttempt: decision === 'retry',
+      taskIds: ['task-1'],
+    },
+    actor: 'user',
+    occurredAt: '2026-09-22T00:00:00.000Z',
+    correlationId: 'run-1',
+    source: { objectId: 'graph-1', objectVersion: 1 },
+    sensitivity: 'normal',
+  };
   return {
-    taskGraphTaskIds: [],
+    taskGraphTaskIds: ['task-1'],
     state: {
       version: 1,
       projectId: 'project-1',
       runId: 'run-1',
       taskGraphId: 'graph-1',
       taskGraphVersion: 1,
-      status: 'queued',
+      status: retry ? 'queued' : 'partial',
       createdAt: '2026-09-22T00:00:00.000Z',
       updatedAt: '2026-09-22T00:00:00.000Z',
-      tasks: {},
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          taskDefinitionVersion: 1,
+          taskExecutionId,
+          status: retry ? 'queued' : 'failed',
+          attempt: retry ? 0 : 1,
+          ...(retry ? { pendingAttempt: 1 } : { currentAttemptId: createAttemptId(taskExecutionId, 1), error: '恢复决策导致任务跳过' }),
+          evidenceIds: [],
+          updatedAt: '2026-09-22T00:00:00.000Z',
+        },
+      },
     } satisfies WorkerRunQueueState,
-    events: [{
-      eventId: `${decisionId}:WorkerRunRecoveryDecided:run-1`,
-      streamId: 'project-1',
-      sequence: 1,
-      aggregateType: 'Run',
-      aggregateId: 'run-1',
-      aggregateVersion: 1,
-      eventType: 'WorkerRunRecoveryDecided',
-      schemaVersion: 1,
-      payload: { runId: 'run-1', decision },
-      actor: 'user',
-      occurredAt: '2026-09-22T00:00:00.000Z',
-      correlationId: 'run-1',
-      source: { objectId: 'graph-1', objectVersion: 1 },
-      sensitivity: 'normal',
-    } satisfies DomainEvent],
+    events: [decisionEvent, taskEvent],
   };
 }
 
@@ -169,10 +235,10 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     await expect(persistence.admit({
       ...exact,
       action: 'skip',
-      factsFingerprint: factsFingerprint('d'),
+      factsFingerprint: exact.factsFingerprint,
       candidate: candidate('skip'),
     }, {
-      readCurrentFactsFingerprint: async () => factsFingerprint('d'),
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
     })).rejects.toMatchObject({ code: 'conflict' });
   });
 

@@ -17,6 +17,7 @@ import { markWorkerTaskCleaned } from './workerCleanupCommand';
 import { mergeWorkerSideEffects } from './workerEvidence';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { pathComparisonKey } from '../dev/path-utils';
 import { EventStreamRepository } from '../domain/eventStore';
 import { flushPendingProjectEvents } from './eventBuffer';
 import type { Orchestration } from '../types/orchestration';
@@ -225,12 +226,20 @@ export function createWorkerCleanupActionController(
       repository,
       host: {
         confirmAndCleanup: session.confirmAndCleanup.bind(session),
-        readCleanupState: async (path) => {
-          const info = session.manager.getByPathIncludingCleaned(path);
-          const hostReadback = info ? session.manager.getCleanupReadback(info.id) : undefined;
+        readCleanupState: async (path, worktreeId, targetIdentity) => {
+          const info = worktreeId
+            ? session.manager.getByIdIncludingCleaned(worktreeId)
+            : session.manager.getByPathIncludingCleaned(path);
+          const pathMatches = !!info && pathComparisonKey(info.path) === pathComparisonKey(path);
+          const identityMatches = targetIdentity === undefined || info?.targetIdentity === targetIdentity;
+          const hostReadback = info && pathMatches && identityMatches
+            ? session.manager.getCleanupReadback(info.id)
+            : undefined;
           return {
-            present: !!info && info.status !== 'cleaned',
-            status: info?.status === 'cleaned' ? 'absent' : (info?.status ?? 'absent'),
+            present: !!info && pathMatches && identityMatches && info.status !== 'cleaned',
+            status: info?.status === 'cleaned' && pathMatches && identityMatches
+              ? 'absent'
+              : (info?.status ?? 'absent'),
             ...(hostReadback ? { hostReadback } : {}),
           };
         },

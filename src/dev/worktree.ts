@@ -120,6 +120,10 @@ export class WorktreeManager {
     return this.cleanupReadbacks.get(id);
   }
 
+  getByIdIncludingCleaned(id: string): WorktreeInfo | undefined {
+    return this.infos.get(id);
+  }
+
   getLastCreateError(): string | null {
     return this.lastCreateError;
   }

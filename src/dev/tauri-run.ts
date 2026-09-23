@@ -24,10 +24,11 @@ interface DevExecResult {
 }
 
 interface DevCleanupReadback {
+  authority: 'native';
   worktreePath: string;
   branch: string;
   branchRevision: string;
-  targetIdentity?: string;
+  targetIdentity?: string | null;
   finalStatus: 'absent';
 }
 
@@ -85,7 +86,16 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           approvalToken,
           generation: sessionGeneration,
         });
-        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0, cleanupReadback: readback };
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 0,
+          cleanupReadback: {
+            ...readback,
+            targetIdentity: readback.targetIdentity ?? undefined,
+          },
+        };
       } catch (e) {
         return {
           exitCode: -1,

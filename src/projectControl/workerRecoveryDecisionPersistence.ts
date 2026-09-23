@@ -114,6 +114,12 @@ function requiredText(value: unknown, field: string): string {
   return value.trim();
 }
 
+function requiredCanonicalText(value: unknown, field: string): string {
+  const text = requiredText(value, field);
+  if (text !== value) throw new Error(`${field} 必须是 canonical text`);
+  return text;
+}
+
 function requiredIsoText(value: unknown, field: string): string {
   const text = requiredText(value, field);
   try {
@@ -192,7 +198,7 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
     throw new Error(`decision candidate evidenceIds 重复：${taskId}`);
   }
   requiredIsoText(value.updatedAt, `decision candidate updatedAt：${taskId}`);
-  if (value.taskDefinitionVersion !== undefined && value.taskDefinitionVersion !== 1) {
+  if (value.taskDefinitionVersion !== 1) {
     throw new Error(`decision candidate taskDefinitionVersion 无效：${taskId}`);
   }
   if (value.contextPackVersion !== undefined) {
@@ -279,11 +285,11 @@ function validateTask(value: unknown, taskIdKey: string, runId: string): void {
 function validateState(value: unknown, context: { projectId: string; runId: string }): WorkerRunQueueState {
   if (!isRecord(value)) throw new Error('decision candidate.state 必须是对象');
   if (value.version !== 1) throw new Error('decision candidate.state.version 无效');
-  const projectId = requiredText(value.projectId, 'decision candidate.state.projectId');
+  const projectId = requiredCanonicalText(value.projectId, 'decision candidate.state.projectId');
   if (projectId !== context.projectId) throw new Error('decision candidate.state.projectId 与 record 不一致');
-  const runId = requiredText(value.runId, 'decision candidate.state.runId');
+  const runId = requiredCanonicalText(value.runId, 'decision candidate.state.runId');
   if (runId !== context.runId) throw new Error('decision candidate.state.runId 与 record 不一致');
-  requiredText(value.taskGraphId, 'decision candidate.state.taskGraphId');
+  requiredCanonicalText(value.taskGraphId, 'decision candidate.state.taskGraphId');
   requiredSafeInteger(value.taskGraphVersion, 'decision candidate.state.taskGraphVersion', 1);
   if (!RUN_STATUSES.has(value.status as RunProjectionStatus)) {
     throw new Error('decision candidate.state.status 无效');
@@ -325,21 +331,21 @@ function validateEvent(
   },
 ): DomainEvent {
   if (!isRecord(value)) throw new Error('decision candidate event 必须是对象');
-  const eventId = requiredText(value.eventId, 'decision eventId');
+  const eventId = requiredCanonicalText(value.eventId, 'decision eventId');
   if (!eventId.startsWith(`${context.decisionId}:`)) throw new Error('decision eventId 与 decisionId 不一致');
-  if (requiredText(value.streamId, 'decision streamId') !== context.projectId) {
+  if (requiredCanonicalText(value.streamId, 'decision streamId') !== context.projectId) {
     throw new Error('decision event streamId 与 projectId 不一致');
   }
   const sequence = requiredSafeInteger(value.sequence, 'decision event sequence', 1);
-  requiredText(value.aggregateType, 'decision aggregateType');
+  requiredCanonicalText(value.aggregateType, 'decision aggregateType');
   const aggregateType = value.aggregateType as string;
-  const aggregateId = requiredText(value.aggregateId, 'decision aggregateId');
+  const aggregateId = requiredCanonicalText(value.aggregateId, 'decision aggregateId');
   requiredSafeInteger(value.aggregateVersion, 'decision aggregateVersion', 1);
-  const eventType = requiredText(value.eventType, 'decision eventType');
+  const eventType = requiredCanonicalText(value.eventType, 'decision eventType');
   if (!RECOVERY_EVENT_TYPES.has(eventType)) throw new Error(`decision eventType 不允许：${eventType}`);
   if (value.schemaVersion !== 1) throw new Error('decision event schemaVersion 无效');
   if (!isRecord(value.payload)) throw new Error('decision event payload 必须是对象');
-  if (requiredText(value.payload.runId, 'decision event payload.runId') !== context.runId) {
+  if (requiredCanonicalText(value.payload.runId, 'decision event payload.runId') !== context.runId) {
     throw new Error('decision event payload.runId 与 record 不一致');
   }
   if (value.payload.recoveryDecisionId !== undefined && value.payload.recoveryDecisionId !== context.decisionId) {
@@ -349,16 +355,16 @@ function validateEvent(
     if (aggregateId !== context.runId) throw new Error('decision Run aggregateId 与 runId 不一致');
   } else if (aggregateType === 'TaskExecution') {
     assertTaskExecutionId(aggregateId);
-    const taskId = requiredText(value.payload.taskId, 'decision task event payload.taskId');
+    const taskId = requiredCanonicalText(value.payload.taskId, 'decision task event payload.taskId');
     if (!context.taskGraphTaskIds.has(taskId)) throw new Error(`decision event taskId 不属于 task graph：${taskId}`);
-    const taskExecutionId = requiredText(value.payload.taskExecutionId, 'decision task event payload.taskExecutionId');
+    const taskExecutionId = requiredCanonicalText(value.payload.taskExecutionId, 'decision task event payload.taskExecutionId');
     assertTaskExecutionId(taskExecutionId);
     if (value.payload.attemptId !== undefined) {
       assertTaskExecutionLineage({
         runId: context.runId,
         taskId,
         taskExecutionId,
-        attemptId: requiredText(value.payload.attemptId, 'decision event attemptId'),
+        attemptId: requiredCanonicalText(value.payload.attemptId, 'decision event attemptId'),
         ...(value.payload.attempt !== undefined ? { attempt: requiredSafeInteger(value.payload.attempt, 'decision event attempt', 0) } : {}),
       });
     }
@@ -368,11 +374,11 @@ function validateEvent(
   }
   validateActor(value.actor);
   requiredIsoText(value.occurredAt, 'decision event occurredAt');
-  if (requiredText(value.correlationId, 'decision event correlationId') !== context.runId) {
+  if (requiredCanonicalText(value.correlationId, 'decision event correlationId') !== context.runId) {
     throw new Error('decision event correlationId 与 runId 不一致');
   }
   if (!isRecord(value.source)) throw new Error('decision event source 必须是对象');
-  if (requiredText(value.source.objectId, 'decision event source.objectId') !== context.taskGraphId) {
+  if (requiredCanonicalText(value.source.objectId, 'decision event source.objectId') !== context.taskGraphId) {
     throw new Error('decision event source.objectId 与 taskGraphId 不一致');
   }
   if (requiredSafeInteger(value.source.objectVersion, 'decision event source.objectVersion', 1) !== context.taskGraphVersion) {
@@ -392,8 +398,9 @@ function validateEvent(
     if (decision !== context.action) {
       throw new Error('decision recovery event decision 与 action 不一致');
     }
-    if (value.payload.requiresNewAttempt !== undefined && typeof value.payload.requiresNewAttempt !== 'boolean') {
-      throw new Error('decision recovery event requiresNewAttempt 无效');
+    if (typeof value.payload.requiresNewAttempt !== 'boolean'
+      || value.payload.requiresNewAttempt !== (context.action === 'retry')) {
+      throw new Error('decision recovery event requiresNewAttempt 与 action 不一致');
     }
     if (value.payload.taskIds !== undefined) {
       if (!Array.isArray(value.payload.taskIds)
@@ -440,9 +447,39 @@ function validateCandidate(
     taskGraphTaskIds: new Set(value.taskGraphTaskIds),
   };
   const events = value.events.map((event) => validateEvent(event, eventContext));
-  if (context.action !== 'inspect' && events[0]?.eventType !== 'WorkerRunRecoveryDecided') {
-    throw new Error('mutating recovery decision 必须以 WorkerRunRecoveryDecided 开始');
+  if (context.action !== 'inspect') {
+    const decisionEvent = events[0];
+    if (!decisionEvent || decisionEvent.eventType !== 'WorkerRunRecoveryDecided') {
+      throw new Error('mutating recovery decision 必须以 WorkerRunRecoveryDecided 开始');
+    }
+    const decisionPayload = decisionEvent.payload as Record<string, unknown>;
+    const decisionTaskIds = decisionPayload.taskIds;
+    if (!Array.isArray(decisionTaskIds)
+      || decisionTaskIds.some((taskId) => typeof taskId !== 'string' || taskId.trim() !== taskId || !taskId)
+      || new Set(decisionTaskIds).size !== decisionTaskIds.length) {
+      throw new Error('decision recovery event 必须携带 canonical taskIds');
+    }
+    const eventTaskIds = [...new Set(events
+      .filter((event) => event.aggregateType === 'TaskExecution')
+      .map((event) => String((event.payload as Record<string, unknown>).taskId)))].sort();
+    if (JSON.stringify([...decisionTaskIds].sort()) !== JSON.stringify(eventTaskIds)) {
+      throw new Error('decision recovery event taskIds 与 task event set 不一致');
+    }
+    if (context.action === 'retry') {
+      if (events.some((event) => event.eventType === 'RunPartial'
+        || event.eventType === 'TaskFailed'
+        || event.eventType === 'TaskBlocked')
+        || !events.some((event) => event.eventType === 'TaskQueued')) {
+        throw new Error('retry recovery event set 无效');
+      }
+    } else if (events.some((event) => event.eventType === 'RunQueued'
+      || event.eventType === 'TaskAttemptMarkedUnknown'
+      || event.eventType === 'TaskQueued')
+      || !events.some((event) => event.eventType === 'TaskFailed' || event.eventType === 'TaskBlocked')) {
+      throw new Error('skip recovery event set 无效');
+    }
   }
+  const tasks = Object.values(state.tasks);
   const eventIds = new Set<string>();
   const sequences = new Set<number>();
   const aggregateVersions = new Map<string, number>();
@@ -459,7 +496,6 @@ function validateCandidate(
     sequences.add(event.sequence);
     aggregateVersions.set(aggregateKey, event.aggregateVersion);
   }
-  const tasks = Object.values(state.tasks);
   for (const task of tasks) {
     if (task.status === 'succeeded' && !hasWorkerSuccessProvenance(task)) {
       throw new Error(`succeeded Worker Task 缺少 success provenance：${task.taskId}`);
@@ -508,14 +544,14 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
     ? undefined
     : requiredIsoText(value.committedAt, 'recovery decision committedAt');
   if (status === 'committed' && !committedAt) throw new Error('committed decision 缺少 committedAt');
-  const projectId = requiredText(value.projectId, 'recovery decision projectId');
-  const runId = requiredText(value.runId, 'recovery decision runId');
-  const decisionId = requiredText(value.decisionId, 'recovery decision decisionId');
+  const projectId = requiredCanonicalText(value.projectId, 'recovery decision projectId');
+  const runId = requiredCanonicalText(value.runId, 'recovery decision runId');
+  const decisionId = requiredCanonicalText(value.decisionId, 'recovery decision decisionId');
   return {
     schemaVersion: 1,
     projectId,
     runId,
-    requestIdentity: requiredText(value.requestIdentity, 'recovery decision requestIdentity'),
+    requestIdentity: requiredCanonicalText(value.requestIdentity, 'recovery decision requestIdentity'),
     action,
     semanticPayloadVersion: 1,
     decisionId,
@@ -529,10 +565,10 @@ function validateRecord(value: unknown): WorkerRecoveryDecisionRecord {
 }
 
 function validateDecisionInput(input: WorkerRecoveryDecisionInput): void {
-  const projectId = requiredText(input.projectId, 'recovery decision projectId');
-  const runId = requiredText(input.runId, 'recovery decision runId');
-  const decisionId = requiredText(input.decisionId, 'recovery decision decisionId');
-  requiredText(input.requestIdentity, 'recovery decision requestIdentity');
+  const projectId = requiredCanonicalText(input.projectId, 'recovery decision projectId');
+  const runId = requiredCanonicalText(input.runId, 'recovery decision runId');
+  const decisionId = requiredCanonicalText(input.decisionId, 'recovery decision decisionId');
+  requiredCanonicalText(input.requestIdentity, 'recovery decision requestIdentity');
   if (input.action !== 'retry' && input.action !== 'skip' && input.action !== 'inspect') {
     throw new Error('recovery decision action 无效');
   }
@@ -650,7 +686,6 @@ export class WorkerRecoveryDecisionPersistence {
       const semanticConflict = parsed.journal.entries.find((record) => record.projectId === input.projectId
         && record.runId === input.runId
         && record.factsFingerprint === input.factsFingerprint
-        && record.action === input.action
         && record.semanticPayloadVersion === input.semanticPayloadVersion
         && record.requestIdentity !== input.requestIdentity);
       if (semanticConflict) {

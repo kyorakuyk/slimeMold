@@ -1,6 +1,7 @@
 import {
   markSideEffectUnknown,
   type SideEffectRecord,
+  type CleanupHostReadback,
   type CleanupReceipt,
   type SideEffectReceipt,
 } from './contracts';
@@ -73,6 +74,32 @@ function decodeCleanupReceipt(value: unknown): CleanupReceipt | undefined {
   const targetIdentity = value.targetIdentity === undefined
     ? undefined
     : required('targetIdentity');
+  let hostReadback: CleanupHostReadback | undefined;
+  if (value.hostReadback !== undefined) {
+    if (!isRecord(value.hostReadback) || value.hostReadback.authority !== 'native') {
+      throw new Error('receipt.cleanup.hostReadback 无效');
+    }
+    const readback = value.hostReadback;
+    const readbackRequired = (field: string): string => {
+      const fieldValue = readback[field];
+      if (typeof fieldValue !== 'string' || !fieldValue.trim()) {
+        throw new Error(`receipt.cleanup.hostReadback.${field} 无效`);
+      }
+      return fieldValue;
+    };
+    if (readback.finalStatus !== 'absent') throw new Error('receipt.cleanup.hostReadback.finalStatus 无效');
+    const readbackTargetIdentity = readback.targetIdentity === undefined
+      ? undefined
+      : readbackRequired('targetIdentity');
+    hostReadback = {
+      authority: 'native',
+      worktreePath: readbackRequired('worktreePath'),
+      branch: readbackRequired('branch'),
+      branchRevision: readbackRequired('branchRevision'),
+      ...(readbackTargetIdentity ? { targetIdentity: readbackTargetIdentity } : {}),
+      finalStatus: 'absent',
+    };
+  }
   return {
     worktreePath: required('worktreePath'),
     worktreeId: required('worktreeId'),
@@ -82,6 +109,7 @@ function decodeCleanupReceipt(value: unknown): CleanupReceipt | undefined {
     baseRevision: required('baseRevision'),
     finalStatus: 'absent',
     hostVerifiedAt: required('hostVerifiedAt'),
+    ...(hostReadback ? { hostReadback } : {}),
   };
 }
 

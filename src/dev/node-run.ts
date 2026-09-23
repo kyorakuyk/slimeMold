@@ -19,6 +19,7 @@ export interface CommandResult {
   unknownEffects?: boolean;
   /** Authoritative native cleanup postcondition, when a native host performed cleanup. */
   cleanupReadback?: {
+    authority: 'native';
     worktreePath: string;
     branch: string;
     branchRevision: string;

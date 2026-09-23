@@ -60,6 +60,13 @@ function assertCandidateMatchesTrustedTaskGraph(
 ): void {
   const graphTaskIds = sortedIds(taskGraph.tasks.map((task) => task.id));
   const candidateTaskIds = sortedIds(candidate.taskGraphTaskIds);
+  if (candidate.state.taskGraphId !== taskGraph.id
+    || candidate.state.taskGraphVersion !== taskGraph.graphVersion) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate graph identity 与当前可信 TaskGraph 不一致：${requestKey}`,
+    );
+  }
   if (JSON.stringify(graphTaskIds) !== JSON.stringify(candidateTaskIds)) {
     throw new WorkerRecoveryDecisionCasError(
       'needs-repair',
@@ -69,8 +76,7 @@ function assertCandidateMatchesTrustedTaskGraph(
   for (const task of taskGraph.tasks) {
     const candidateTask = candidate.state.tasks[task.id];
     if (!candidateTask
-      || (candidateTask.taskDefinitionVersion !== undefined
-        && candidateTask.taskDefinitionVersion !== task.version)) {
+      || candidateTask.taskDefinitionVersion !== task.version) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
         `recovery candidate task definition 与当前可信 TaskGraph 不一致：${requestKey}`,
@@ -84,6 +90,88 @@ function assertCandidateMatchesTrustedTaskGraph(
       'needs-repair',
       `recovery candidate 未通过 Worker queue restore 校验：${requestKey} (${cause instanceof Error ? cause.message : String(cause)})`,
     );
+  }
+}
+
+function candidateEventsArePersistedInOrder(
+  candidateEvents: readonly DomainEvent[],
+  persistedEvents: readonly DomainEvent[],
+): boolean {
+  let cursor = -1;
+  const aggregateOffsets = new Map<string, number>();
+  const previousCandidateVersions = new Map<string, number>();
+  const previousPersistedVersions = new Map<string, number>();
+  for (const candidateEvent of candidateEvents) {
+    if (candidateEvent.aggregateVersion < 1) return false;
+    const aggregateKey = `${candidateEvent.aggregateType}:${candidateEvent.aggregateId}`;
+    const previousCandidateVersion = previousCandidateVersions.get(aggregateKey);
+    if (previousCandidateVersion !== undefined
+      && candidateEvent.aggregateVersion !== previousCandidateVersion + 1) return false;
+    previousCandidateVersions.set(aggregateKey, candidateEvent.aggregateVersion);
+    let found = -1;
+    for (let index = cursor + 1; index < persistedEvents.length; index += 1) {
+      if (samePersistedEvent(candidateEvent, persistedEvents[index])) {
+        found = index;
+        break;
+      }
+    }
+    if (found < 0) return false;
+    const persistedEvent = persistedEvents[found];
+    if (persistedEvents.filter((event) => event.eventId === persistedEvent.eventId).length !== 1) return false;
+    const previousPersistedVersion = previousPersistedVersions.get(aggregateKey);
+    if (previousPersistedVersion !== undefined
+      && persistedEvent.aggregateVersion !== previousPersistedVersion + 1) return false;
+    previousPersistedVersions.set(aggregateKey, persistedEvent.aggregateVersion);
+    const offset = persistedEvent.aggregateVersion - candidateEvent.aggregateVersion;
+    const previousOffset = aggregateOffsets.get(aggregateKey);
+    if (previousOffset !== undefined && previousOffset !== offset) return false;
+    aggregateOffsets.set(aggregateKey, offset);
+    cursor = found;
+  }
+  return true;
+}
+
+function assertCandidateMatchesReplayProjection(
+  candidate: WorkerRecoveryDecisionCandidate,
+  projection: ReturnType<typeof replayDomainEvents>,
+  requestKey: string,
+): void {
+  const runProjection = projection.runs[candidate.state.runId];
+  if (!runProjection || runProjection.status !== candidate.state.status) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate run projection 与 event replay 不一致：${requestKey}`,
+    );
+  }
+  const candidateTaskIds = new Set(Object.keys(candidate.state.tasks));
+  const replayTaskIds = new Set(
+    Object.values(projection.taskExecutions)
+      .filter((task) => task.runId === candidate.state.runId)
+      .map((task) => task.taskId),
+  );
+  if (candidateTaskIds.size !== replayTaskIds.size
+    || [...candidateTaskIds].some((taskId) => !replayTaskIds.has(taskId))) {
+    throw new WorkerRecoveryDecisionCasError(
+      'needs-repair',
+      `recovery candidate task projection 与 event replay 不一致：${requestKey}`,
+    );
+  }
+  for (const task of Object.values(candidate.state.tasks)) {
+    const taskExecutionId = task.taskExecutionId;
+    const replay = taskExecutionId ? projection.taskExecutions[taskExecutionId] : undefined;
+    if (!replay
+      || replay.taskId !== task.taskId
+      || replay.runId !== candidate.state.runId
+      || replay.status !== task.status
+      || replay.currentAttemptId !== task.currentAttemptId
+      || replay.pendingAttempt !== task.pendingAttempt
+      || replay.cleanupStatus !== task.cleanupStatus
+      || replay.cleanupReceiptId !== task.cleanupReceiptId) {
+      throw new WorkerRecoveryDecisionCasError(
+        'needs-repair',
+        `recovery candidate task execution projection 与 event replay 不一致：${requestKey}`,
+      );
+    }
   }
 }
 
@@ -110,7 +198,12 @@ export interface WorkerActionControllerDeps {
   recordProjectEvents: (projectId: string, events: Parameters<typeof recoverWorkerRunCommand>[0]['state'] extends never ? never : ReturnType<typeof recoverWorkerRunCommand>['events']) => void;
   saveProject: ProjectSave;
   readProjectProjection: (projectPath: string) => Promise<PersistedProjectProjection | null>;
-  runQueuedWorker: (runId: string, workerRuntime?: WorkerRuntime) => Promise<void>;
+  runQueuedWorker: (
+    runId: string,
+    workerRuntime?: WorkerRuntime,
+    expectedProjectId?: string,
+    expectedProjectPath?: string,
+  ) => Promise<void>;
   isTauri: boolean;
   ensureGuiDevSession?: typeof defaultEnsureGuiDevSession;
   recoverySingleFlight?: WorkerRecoverySingleFlight;
@@ -126,9 +219,60 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     workerRuntime?: WorkerRuntime,
     requestIdentity?: string,
   ) => Promise<void>;
+  retryFailedWorkerRecoveryPostCommit: (
+    runId: string,
+    requestIdentity: string,
+    workerRuntime?: WorkerRuntime,
+  ) => Promise<void>;
 } {
   const ensureGuiDevSession = deps.ensureGuiDevSession ?? defaultEnsureGuiDevSession;
   const recoverySingleFlight = deps.recoverySingleFlight ?? createWorkerRecoverySingleFlight();
+
+  const dispatchPostCommit = async (input: {
+    record: WorkerRecoveryDecisionRecord;
+    decisionPersistence: WorkerRecoveryDecisionPersistence;
+    projectPath: string;
+    workerRuntime?: WorkerRuntime;
+  }): Promise<void> => {
+    const { record, decisionPersistence, projectPath, workerRuntime } = input;
+    if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
+    if (record.postCommitStatus !== 'pending') {
+      throw new WorkerRecoveryDecisionCasError(
+        'needs-repair',
+        `recovery post-commit side effect 状态未知，拒绝自动重试：${record.requestIdentity}`,
+      );
+    }
+    const recordInput: WorkerRecoveryDecisionInput = {
+      projectId: record.projectId,
+      runId: record.runId,
+      requestIdentity: record.requestIdentity,
+      action: record.action,
+      semanticPayloadVersion: record.semanticPayloadVersion,
+      decisionId: record.decisionId,
+      factsFingerprint: record.factsFingerprint,
+      candidate: record.candidate,
+      now: record.admittedAt,
+    };
+    const dispatching = await decisionPersistence.markPostCommit(
+      recordInput,
+      'dispatching',
+      new Date().toISOString(),
+    );
+    try {
+      await deps.runQueuedWorker(record.runId, workerRuntime, record.projectId, projectPath);
+    } catch (cause) {
+      await decisionPersistence.markPostCommit(
+        {
+          ...recordInput,
+          now: dispatching.committedAt ?? recordInput.now,
+        },
+        'failed',
+        new Date().toISOString(),
+      );
+      throw cause;
+    }
+    await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
+  };
 
   const recoverWorkerRun = async (
     runId: string,
@@ -165,7 +309,34 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       const durableRecord = await decisionPersistence.find(requestKey);
       const capturedState = deps.getState();
       const capturedRun = capturedState.workerRuns.find((item) => item.runId === runId);
-      const taskGraphId = capturedRun?.taskGraphId ?? durableRecord?.candidate.state.taskGraphId;
+      const modules = await loadWorkerHostRepositoryModules();
+      const bundle = createWorkerHostRepositoryBundleFromModules(
+        {
+          projectPath,
+          listAcceptances: () => session.listAcceptances(),
+        },
+        modules,
+      );
+      const initialEventStream = await bundle.createEventRepository().readStream();
+      if (initialEventStream.status === 'needs-repair') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery event stream 在 TaskGraph 解析前需要修复：${requestKey}`,
+        );
+      }
+      const trustedRunCreated = initialEventStream.events.find((event) => {
+        if (event.eventType !== 'RunCreated') return false;
+        const payload = event.payload as Record<string, unknown>;
+        return payload.runId === runId || (event.aggregateType === 'Run' && event.aggregateId === runId);
+      });
+      const trustedRunCreatedPayload = trustedRunCreated?.payload as Record<string, unknown> | undefined;
+      const trustedEventTaskGraphId = typeof trustedRunCreatedPayload?.taskGraphId === 'string'
+        ? trustedRunCreatedPayload.taskGraphId
+        : undefined;
+      const trustedEventTaskGraphVersion = typeof trustedRunCreatedPayload?.taskGraphVersion === 'number'
+        ? trustedRunCreatedPayload.taskGraphVersion
+        : undefined;
+      const taskGraphId = capturedRun?.taskGraphId ?? trustedEventTaskGraphId;
       const taskGraph = taskGraphId
         ? capturedState.taskGraphs.find((item) => item.id === taskGraphId)
         : undefined;
@@ -173,6 +344,36 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         'needs-repair',
         `找不到 durable recovery 对应的 TaskGraph：${runId}`,
       );
+      if (taskGraph.approval !== 'approved') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery 对应的 TaskGraph 未批准：${runId}`,
+        );
+      }
+      if (capturedRun
+        && (capturedRun.taskGraphId !== taskGraph.id
+          || capturedRun.taskGraphVersion !== taskGraph.graphVersion)) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `WorkerRun projection 与当前可信 TaskGraph 不一致：${runId}`,
+        );
+      }
+      if (trustedRunCreated
+        && (trustedEventTaskGraphId !== taskGraph.id
+          || trustedEventTaskGraphVersion !== taskGraph.graphVersion)) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `RunCreated provenance 与当前可信 TaskGraph 不一致：${runId}`,
+        );
+      }
+      if (!capturedRun && (!trustedRunCreated
+        || trustedEventTaskGraphId !== taskGraph.id
+        || trustedEventTaskGraphVersion !== taskGraph.graphVersion)) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `缺失 WorkerRun projection 时没有可信 RunCreated TaskGraph provenance：${runId}`,
+        );
+      }
       const capturedTaskGraph = taskGraph;
       if (durableRecord) {
         if (durableRecord.projectId !== projectId
@@ -195,14 +396,6 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         throw new Error(`找不到可恢复的 Worker Run：${runId}`);
       }
 
-      const modulesPromise = loadWorkerHostRepositoryModules();
-      const bundle = createWorkerHostRepositoryBundleFromModules(
-        {
-          projectPath,
-          listAcceptances: () => session.listAcceptances(),
-        },
-        await modulesPromise,
-      );
       const recorder = bundle.sideEffects;
       deps.assertProjectOperation(operation);
       const journal = await recorder.recoverInterruptedRun(runId, { signal: operation.controller.signal });
@@ -256,7 +449,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         const cleanupApplied = !latest.workerCleanupProposals.some((proposal) => proposal.runId === runId);
         const eventStream = await bundle.createEventRepository().readStream();
         const eventsApplied = eventStream.status === 'ok'
-          && candidate.events.every((expected) => eventStream.events.some((actual) => samePersistedEvent(expected, actual)));
+          && candidateEventsArePersistedInOrder(candidate.events, eventStream.events);
         return {
           stateApplied: true,
           fullyApplied: orchestrationApplied && runtimeApplied && cleanupApplied && eventsApplied,
@@ -270,46 +463,6 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       };
       const isProjectionMissing = async (): Promise<boolean> =>
         !deps.getState().workerRuns.some((item) => item.runId === runId);
-
-      const dispatchPostCommit = async (record: WorkerRecoveryDecisionRecord): Promise<void> => {
-        if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
-        if (record.postCommitStatus !== 'pending') {
-          throw new WorkerRecoveryDecisionCasError(
-            'needs-repair',
-            `recovery post-commit side effect 状态未知，拒绝自动重试：${record.requestIdentity}`,
-          );
-        }
-        const recordInput: WorkerRecoveryDecisionInput = {
-          projectId: record.projectId,
-          runId: record.runId,
-          requestIdentity: record.requestIdentity,
-          action: record.action,
-          semanticPayloadVersion: record.semanticPayloadVersion,
-          decisionId: record.decisionId,
-          factsFingerprint: record.factsFingerprint,
-          candidate: record.candidate,
-          now: record.admittedAt,
-        };
-        const dispatching = await decisionPersistence.markPostCommit(
-          recordInput,
-          'dispatching',
-          new Date().toISOString(),
-        );
-        try {
-          await deps.runQueuedWorker(runId, workerRuntime);
-        } catch (cause) {
-          await decisionPersistence.markPostCommit(
-            {
-              ...recordInput,
-              now: dispatching.committedAt ?? recordInput.now,
-            },
-            'failed',
-            new Date().toISOString(),
-          );
-          throw cause;
-        }
-        await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
-      };
 
       let decisionInput: WorkerRecoveryDecisionInput;
       if (durableRecord) {
@@ -437,7 +590,8 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         );
       }
       try {
-        replayDomainEvents(persistedEvents.events);
+        const replayedProjection = replayDomainEvents(persistedEvents.events);
+        assertCandidateMatchesReplayProjection(admittedCandidate, replayedProjection, requestKey);
       } catch (cause) {
         throw new WorkerRecoveryDecisionCasError(
           'needs-repair',
@@ -477,11 +631,88 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         `recovery decision 未产生 durable commit：${requestKey}`,
       );
     }
-    await dispatchPostCommit(postCommitRecord);
+    await dispatchPostCommit({
+      record: postCommitRecord,
+      decisionPersistence,
+      projectPath,
+      workerRuntime,
+    });
     } finally {
       lease.release();
     }
   };
 
-  return { recoverWorkerRun };
+  const retryFailedWorkerRecoveryPostCommit = async (
+    runId: string,
+    requestIdentity: string,
+    workerRuntime?: WorkerRuntime,
+  ): Promise<void> => {
+    if (!deps.isTauri) throw new Error('Worker recovery 需要桌面端项目环境');
+    const initial = deps.getState();
+    const projectId = initial.projectId;
+    const projectPath = initial.projectPath;
+    const normalizedRequestIdentity = requestIdentity.trim();
+    if (!projectId || !projectPath) throw new Error('项目必须先保存，才能重试 Worker post-commit');
+    if (!normalizedRequestIdentity) throw new Error('Worker post-commit request identity 不能为空');
+    const operation = deps.getProjectOperation(projectId, projectPath);
+    deps.assertProjectOperation(operation);
+    const decisionPersistence = deps.recoveryDecisionPersistence
+      ?? (deps.createRecoveryDecisionPersistence
+        ? await deps.createRecoveryDecisionPersistence(projectPath)
+        : await (async () => {
+          const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+          return new WorkerRecoveryDecisionPersistence(
+            createTauriEventStoreAdapter(projectPath),
+            projectPath,
+          );
+        })());
+    const lease = recoverySingleFlight.acquire({ projectId, projectPath, runId });
+    if (!lease) throw new Error(`Worker Run post-commit 重试正在处理中：${runId}`);
+    try {
+      const record = await decisionPersistence.find(normalizedRequestIdentity);
+      if (!record
+        || record.projectId !== projectId
+        || record.runId !== runId
+        || record.action !== 'retry'
+        || record.status !== 'committed') {
+        throw new WorkerRecoveryDecisionCasError(
+          'conflict',
+          `找不到可重试的 Worker post-commit decision：${normalizedRequestIdentity}`,
+        );
+      }
+      if (record.postCommitStatus !== 'failed') {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `Worker post-commit 当前不可手动重试：${record.postCommitStatus}`,
+        );
+      }
+      const input: WorkerRecoveryDecisionInput = {
+        projectId: record.projectId,
+        runId: record.runId,
+        requestIdentity: record.requestIdentity,
+        action: record.action,
+        semanticPayloadVersion: record.semanticPayloadVersion,
+        decisionId: record.decisionId,
+        factsFingerprint: record.factsFingerprint,
+        candidate: record.candidate,
+        now: record.admittedAt,
+      };
+      const pending = await decisionPersistence.markPostCommit(
+        input,
+        'pending',
+        new Date().toISOString(),
+      );
+      deps.assertProjectOperation(operation);
+      await dispatchPostCommit({
+        record: pending,
+        decisionPersistence,
+        projectPath,
+        workerRuntime,
+      });
+    } finally {
+      lease.release();
+    }
+  };
+
+  return { recoverWorkerRun, retryFailedWorkerRecoveryPostCommit };
 }

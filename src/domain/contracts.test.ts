@@ -888,6 +888,8 @@ describe('Phase 0a domain contracts', () => {
       current,
       streamId: 'project-1',
       runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
       sequence: 10,
       projectVersion: 1,
       now: '2026-09-01T00:01:00.000Z',

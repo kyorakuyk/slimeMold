@@ -1225,6 +1225,7 @@ pub(crate) fn cleanup_target_identity_is_current(
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DevCleanupReadback {
+    pub(crate) authority: &'static str,
     pub(crate) worktree_path: String,
     pub(crate) branch: String,
     pub(crate) branch_revision: String,
@@ -1494,6 +1495,7 @@ pub(crate) fn dev_cleanup_worktree(
         .orphan_worktrees
         .retain(|item| path_compare_key(&item.path) != path_compare_key(&c));
     Ok(DevCleanupReadback {
+        authority: "native",
         worktree_path: c,
         branch,
         branch_revision,

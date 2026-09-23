@@ -34,7 +34,7 @@ export function markWorkerTaskCleaned(
   const taskId = requiredText(input.taskId, 'task id');
   const receiptId = requiredText(input.receiptId, 'receipt id');
   const stateSignature = requiredText(input.stateSignature, 'state signature');
-  const decisionId = requiredText(input.decisionId, 'decision id');
+  requiredText(input.decisionId, 'decision id');
   const now = requiredText(input.now, '时间');
   const task = input.state.tasks[taskId];
   if (!task) throw new Error(`队列中不存在任务：${taskId}`);
@@ -103,7 +103,7 @@ export function markWorkerTaskCleaned(
     },
   };
   const event: DomainEvent = {
-    eventId: `${decisionId}:task-cleaned:${expectedTaskExecutionId}`,
+    eventId: `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:TaskCleaned`,
     streamId: input.state.projectId,
     sequence: 1,
     aggregateType: 'TaskExecution',

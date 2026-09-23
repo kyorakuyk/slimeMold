@@ -852,6 +852,8 @@ export function approvePlanAndEnqueueRun(input: {
   current: ApprovalFingerprint;
   streamId: string;
   runId: string;
+  taskGraphId: string;
+  taskGraphVersion: number;
   sequence: number;
   projectVersion: number;
   now: string;
@@ -889,6 +891,8 @@ export function approvePlanAndEnqueueRun(input: {
       payload: {
         grantId: input.grant.id,
         runId: input.runId,
+        taskGraphId: input.taskGraphId,
+        taskGraphVersion: input.taskGraphVersion,
       },
       actor: 'runtime',
       occurredAt: input.now,
@@ -935,6 +939,15 @@ export function validateWorkerCapability(
 export type SideEffectStatus = 'planned' | 'started' | 'receipt' | 'unknown';
 export type SideEffectRecovery = 'retry' | 'skip' | 'needs-user';
 
+export interface CleanupHostReadback {
+  authority: 'native';
+  worktreePath: string;
+  branch: string;
+  branchRevision: string;
+  targetIdentity?: string;
+  finalStatus: 'absent';
+}
+
 export interface CleanupReceipt {
   worktreePath: string;
   worktreeId: string;
@@ -944,6 +957,7 @@ export interface CleanupReceipt {
   baseRevision: string;
   finalStatus: 'absent';
   hostVerifiedAt: string;
+  hostReadback?: CleanupHostReadback;
 }
 
 export interface SideEffectReceipt {

@@ -91,7 +91,7 @@ describe('worker cleanup command', () => {
       cleanupReceiptId: cleanupReceiptId(1),
     }));
     expect(result.events).toEqual([expect.objectContaining({
-      eventId: `cleanup-decision-1:task-cleaned:${taskExecutionId}`,
+      eventId: `cleanup:${taskExecutionId}:attempt-1:TaskCleaned`,
       eventType: 'TaskCleaned',
       aggregateType: 'TaskExecution',
       aggregateId: taskExecutionId,

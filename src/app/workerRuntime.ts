@@ -124,11 +124,24 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
   });
   const auditLoadedWorkerRunFacts = workerRunRecoveryAuditController.auditLoadedWorkerRunFacts;
 
-  const runQueuedWorker = async (runId: string, workerRuntime: WorkerRuntime = 'codex'): Promise<void> => {
+  const runQueuedWorker = async (
+    runId: string,
+    workerRuntime: WorkerRuntime = 'codex',
+    expectedProjectId?: string,
+    expectedProjectPath?: string,
+  ): Promise<void> => {
     const beforeSave = store.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
     if (!projectId || !projectPath) throw new Error('项目必须先保存，Worker 才能创建隔离 worktree');
+    const assertExpectedProject = (): void => {
+      const current = store.getState();
+      if ((expectedProjectId !== undefined && current.projectId !== expectedProjectId)
+        || (expectedProjectPath !== undefined && current.projectPath !== expectedProjectPath)) {
+        throw new Error('Worker post-commit project context 已切换，拒绝执行旧 recovery dispatch');
+      }
+    };
+    assertExpectedProject();
     const operation = deps.getProjectOperation(projectId, projectPath);
     deps.assertProjectOperation(operation);
 
@@ -248,6 +261,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     refreshWorkerCleanupProposals,
     runQueuedWorker,
     recoverWorkerRun: workerActionController.recoverWorkerRun,
+    retryFailedWorkerRecoveryPostCommit: workerActionController.retryFailedWorkerRecoveryPostCommit,
     cleanupWorkerRun: workerCleanupActionController.cleanupWorkerRun,
   };
 }

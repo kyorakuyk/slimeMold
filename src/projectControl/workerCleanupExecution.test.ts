@@ -74,6 +74,7 @@ describe('worker cleanup execution', () => {
           present: false as const,
           status: 'absent' as const,
           hostReadback: {
+            authority: 'native' as const,
             worktreePath: current.worktreePath,
             branch: current.branch,
             branchRevision: current.branchRevision,

@@ -85,6 +85,14 @@ function successfulCleanupEffect(idempotencyKey: string, includeCleanup = true):
           baseRevision: cleanupRun.tasks['task-1'].baseRevision!,
           finalStatus: 'absent' as const,
           hostVerifiedAt: '2026-09-01T00:01:00.000Z',
+          hostReadback: {
+            authority: 'native' as const,
+            worktreePath: cleanupRun.tasks['task-1'].worktreePath!,
+            branch: cleanupRun.tasks['task-1'].branch!,
+            branchRevision: cleanupRun.tasks['task-1'].branchRevision!,
+            targetIdentity: cleanupRun.tasks['task-1'].targetIdentity,
+            finalStatus: 'absent' as const,
+          },
         },
       } : {}),
     },
@@ -121,6 +129,7 @@ describe('worker recovery facts', () => {
     });
     expect(result.events).toHaveLength(1);
     expect(result.events[0].eventType).toBe('TaskCleaned');
+    expect(result.migrations).toEqual([]);
   });
 
   it('reconciles a legacy successful receipt using its canonical lineage', () => {
@@ -132,11 +141,25 @@ describe('worker recovery facts', () => {
 
     expect(result.runs[0].tasks['task-1'].cleanupStatus).toBe('cleaned');
     expect(result.events[0].payload).toMatchObject({ receiptId: `cleanup:${attemptId}:receipt` });
+    expect(result.migrations).toHaveLength(1);
+    expect(result.migrations[0].legacyKey).toBe(legacyKey);
+    expect(result.migrations[0].replacement.idempotencyKey).toBe(`cleanup:${attemptId}`);
   });
 
   it('marks an old successful receipt without cleanup facts for manual repair', () => {
     const legacyKey = 'cleanup:run-1:task-1:a1';
     const effects = [successfulCleanupEffect(legacyKey, false)];
+
+    expect(reconcileSuccessfulCleanupReceipts([cleanupRun], effects).events).toEqual([]);
+    expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
+  });
+
+  it('fails closed on a canonical/legacy cleanup receipt collision', () => {
+    const legacyKey = 'cleanup:run-1:task-1:a1';
+    const effects = [
+      successfulCleanupEffect(`cleanup:${attemptId}`),
+      successfulCleanupEffect(legacyKey),
+    ];
 
     expect(reconcileSuccessfulCleanupReceipts([cleanupRun], effects).events).toEqual([]);
     expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
