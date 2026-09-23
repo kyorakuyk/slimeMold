@@ -1,6 +1,6 @@
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
-import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
 import { pathComparisonKey } from '../dev/path-utils';
 import { markWorkerTaskCleaned } from './workerCleanupCommand';
 
@@ -94,7 +94,14 @@ export function reconcileSuccessfulCleanupReceipts(
 
 function cleanupLineageKey(effect: SideEffectRecord): string | undefined {
   if (!effect.runId || !effect.taskId) return undefined;
-  if (effect.attemptId) return `${effect.runId}:${effect.taskId}:${effect.attemptId}`;
+  if (effect.attemptId) {
+    try {
+      const parsed = parseAttemptId(effect.attemptId);
+      return `${effect.runId}:${effect.taskId}:a${parsed.attempt}`;
+    } catch {
+      return `${effect.runId}:${effect.taskId}:${effect.attemptId}`;
+    }
+  }
   const legacyPrefix = `cleanup:${effect.runId}:${effect.taskId}:a`;
   if (effect.idempotencyKey.startsWith(legacyPrefix)) {
     return `${effect.runId}:${effect.taskId}:a${effect.idempotencyKey.slice(legacyPrefix.length)}`;

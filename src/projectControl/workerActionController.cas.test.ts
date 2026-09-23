@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventStoreAdapter } from '../domain/eventStore';
+import type { DomainEvent } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { Orchestration } from '../types/orchestration';
 import type { ProjectTaskGraph } from './types';
 import { WorkerRecoveryDecisionPersistence } from './workerRecoveryDecisionPersistence';
-import { createWorkerActionController } from './workerActionController';
+import { createWorkerActionController, findTrustedRunCreatedEvent } from './workerActionController';
 
 const hostModules = vi.hoisted(() => {
   const events: unknown[] = [];
@@ -89,6 +90,25 @@ const run: WorkerRunQueueState = {
 };
 
 describe('worker action controller recovery CAS wiring', () => {
+  it('requires RunCreated payload and aggregate identity to agree on the run id', () => {
+    const base: DomainEvent = {
+      eventId: 'run-created',
+      streamId: 'project-1',
+      sequence: 1,
+      aggregateType: 'Run',
+      aggregateId: 'run-1',
+      aggregateVersion: 1,
+      eventType: 'RunCreated',
+      schemaVersion: 1,
+      payload: { runId: 'run-1' },
+      actor: 'runtime',
+      occurredAt: '2026-09-22T00:00:00.000Z',
+    };
+    expect(findTrustedRunCreatedEvent([base], 'run-1')).toBeDefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, payload: { runId: 'run-other' } }], 'run-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([{ ...base, aggregateId: 'run-other' }], 'run-1')).toBeUndefined();
+  });
+
   it('persists one decision, repairs a missing projection, and does not rerun an exact request', async () => {
     hostModules.events.length = 0;
     const state = {
@@ -294,6 +314,30 @@ describe('worker action controller recovery CAS wiring', () => {
     await expect(
       controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
     ).rejects.toMatchObject({ code: 'needs-repair' });
+
+    const originalMarkPostCommit = persistence.markPostCommit.bind(persistence);
+    const pendingJournal = await persistence.read();
+    if (pendingJournal.status !== 'ok') throw new Error('test journal was not readable');
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: pendingJournal.journal.entries.map((entry) => (
+        entry.requestIdentity === 'request-1'
+          ? { ...entry, postCommitStatus: 'pending' }
+          : entry
+      )),
+    }));
+    vi.spyOn(persistence, 'markPostCommit').mockImplementation(async (input, status, now, existingLock) => {
+      const result = await originalMarkPostCommit(input, status, now, existingLock);
+      if (status === 'dispatching') {
+        state.workerRuns = [{ ...run, updatedAt: '2026-09-22T00:09:00.000Z' }];
+      }
+      return result;
+    });
+    runQueuedWorker.mockClear();
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+    ).rejects.toMatchObject({ code: 'needs-repair' });
+    expect(runQueuedWorker).not.toHaveBeenCalled();
   });
 
   it('rejects a committed candidate whose task set no longer matches the trusted TaskGraph', async () => {

@@ -249,6 +249,40 @@ describe('worker recovery facts fingerprint v1', () => {
     }))).toThrow('receipt 必须是对象');
   });
 
+  it('accepts a valid cleanup receipt in the source side-effect journal', () => {
+    const cleanup = {
+      worktreePath: 'C:/worktree',
+      worktreeId: 'worktree-1',
+      targetIdentity: 'v1:target-1',
+      branch: 'worker/task-1',
+      branchRevision: 'a'.repeat(40),
+      baseRevision: '0123456789abcdef0123456789abcdef01234567',
+      finalStatus: 'absent' as const,
+      hostVerifiedAt: '2026-09-20T00:02:00.000Z',
+      hostReadback: {
+        authority: 'native' as const,
+        worktreePath: 'C:/worktree',
+        branch: 'worker/task-1',
+        branchRevision: 'a'.repeat(40),
+        targetIdentity: 'v1:target-1',
+        finalStatus: 'absent' as const,
+      },
+    };
+    expect(() => buildWorkerRecoveryFactsV1(input({
+      sideEffects: [effect({
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: {
+          receiptId: 'effect-1:receipt',
+          observedAt: '2026-09-20T00:02:00.000Z',
+          outcome: 'succeeded',
+          outputHash: 'cleanup-state',
+          cleanup,
+        },
+      })],
+    }))).not.toThrow();
+  });
+
   it('rejects missing lineage, invalid receipts, duplicate terminal ids, paths, and graph references', () => {
     expect(() => buildWorkerRecoveryFactsV1(input({
       run: run({

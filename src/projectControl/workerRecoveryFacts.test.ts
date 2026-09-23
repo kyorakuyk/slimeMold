@@ -164,4 +164,15 @@ describe('worker recovery facts', () => {
     expect(reconcileSuccessfulCleanupReceipts([cleanupRun], effects).events).toEqual([]);
     expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
   });
+
+  it('detects canonical/legacy collisions when the legacy record has no lineage fields', () => {
+    const legacyKey = 'cleanup:run-1:task-1:a1';
+    const legacy = successfulCleanupEffect(legacyKey);
+    delete legacy.taskExecutionId;
+    delete legacy.attemptId;
+    const effects = [successfulCleanupEffect(`cleanup:${attemptId}`), legacy];
+
+    expect(reconcileSuccessfulCleanupReceipts([cleanupRun], effects).events).toEqual([]);
+    expect([...cleanupUnknownRunIds(effects)]).toEqual(['run-1']);
+  });
 });

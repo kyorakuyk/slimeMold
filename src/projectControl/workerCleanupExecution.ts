@@ -98,6 +98,7 @@ function matchesCompletedCleanupReceipt(
   isLegacyKey: boolean,
 ): boolean {
   const cleanup = entry.receipt?.cleanup;
+  const hostReadback = cleanup?.hostReadback;
   return entry.status === 'receipt'
     && matchesProposal(entry, proposal, isLegacyKey)
     && entry.receipt?.receiptId === `${entry.idempotencyKey}:receipt`
@@ -111,7 +112,14 @@ function matchesCompletedCleanupReceipt(
     && cleanup.branch === proposal.branch
     && cleanup.branchRevision === proposal.branchRevision
     && cleanup.baseRevision === proposal.baseRevision
-    && cleanup.finalStatus === 'absent';
+    && cleanup.finalStatus === 'absent'
+    && !!hostReadback
+    && hostReadback.authority === 'native'
+    && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(proposal.worktreePath)
+    && hostReadback.branch === proposal.branch
+    && hostReadback.branchRevision === proposal.branchRevision
+    && hostReadback.targetIdentity === proposal.targetIdentity
+    && hostReadback.finalStatus === 'absent';
 }
 
 /** Execute only after the caller has already recorded the explicit host approval. */
@@ -235,7 +243,7 @@ export async function executeWorkerCleanupWithReceipt(
         sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
       };
     }
-    if (proposal.targetIdentity !== undefined && !readback.hostReadback) {
+    if (!readback.hostReadback) {
       const unknown = markSideEffectUnknown(startedRecord, 'cleanup-native-readback-missing');
       const journal = await input.repository.record(unknown);
       return {

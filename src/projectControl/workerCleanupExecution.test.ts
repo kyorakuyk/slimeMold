@@ -30,7 +30,22 @@ function proposal(): WorkerCleanupProposalReady {
   };
 }
 
-const absentReadback = async () => ({ present: false as const, status: 'absent' as const });
+const absentReadback = async (
+  worktreePath = proposal().worktreePath,
+  _worktreeId?: string,
+  targetIdentity?: string,
+) => ({
+  present: false as const,
+  status: 'absent' as const,
+  hostReadback: {
+    authority: 'native' as const,
+    worktreePath,
+    branch: proposal().branch,
+    branchRevision: proposal().branchRevision,
+    ...(targetIdentity === undefined ? {} : { targetIdentity }),
+    finalStatus: 'absent' as const,
+  },
+});
 
 describe('worker cleanup execution', () => {
   it('writes a start record, calls the approved host gate, and writes a receipt', async () => {
@@ -241,6 +256,46 @@ describe('worker cleanup execution', () => {
     })).rejects.toThrow(/receipt/);
   });
 
+  it('rejects an existing successful cleanup receipt without native host read-back', async () => {
+    const current = proposal();
+    const key = workerCleanupEffectKey(current.taskExecutionId, current.attemptId);
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    await repository.record({
+      idempotencyKey: key,
+      kind: 'worktree-cleanup',
+      target: current.worktreePath,
+      inputHash: `${current.baseRevision}:${current.stateSignature}`,
+      runId: current.runId,
+      taskId: current.taskId,
+      taskExecutionId: current.taskExecutionId,
+      attemptId: current.attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: `${key}:receipt`,
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outcome: 'succeeded',
+        outputHash: current.stateSignature,
+        cleanup: {
+          worktreePath: current.worktreePath,
+          worktreeId: current.worktreeId,
+          branch: current.branch,
+          branchRevision: current.branchRevision,
+          baseRevision: current.baseRevision,
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+        },
+      },
+    });
+
+    await expect(executeWorkerCleanupWithReceipt({
+      proposal: current,
+      repository,
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
+      now: '2026-09-01T00:03:00.000Z',
+    })).rejects.toThrow(/read-back|核对|receipt/);
+  });
+
   it('migrates a matching legacy cleanup receipt to the canonical attempt key', async () => {
     const current = proposal();
     const legacyKey = `cleanup:${current.runId}:${current.taskId}:a${current.attempt}`;
@@ -268,6 +323,14 @@ describe('worker cleanup execution', () => {
           baseRevision: current.baseRevision,
           finalStatus: 'absent',
           hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+          hostReadback: {
+            authority: 'native',
+            worktreePath: current.worktreePath,
+            branch: current.branch,
+            branchRevision: current.branchRevision,
+            ...(current.targetIdentity ? { targetIdentity: current.targetIdentity } : {}),
+            finalStatus: 'absent',
+          },
         },
       },
     });

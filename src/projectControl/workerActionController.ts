@@ -49,6 +49,19 @@ function samePersistedEvent(expected: DomainEvent, actual: DomainEvent): boolean
   return JSON.stringify(comparable(expected)) === JSON.stringify(comparable(actual));
 }
 
+export function findTrustedRunCreatedEvent(
+  events: readonly DomainEvent[],
+  runId: string,
+): DomainEvent | undefined {
+  return events.find((event) => {
+    if (event.eventType !== 'RunCreated'
+      || event.aggregateType !== 'Run'
+      || event.aggregateId !== runId) return false;
+    const payload = event.payload as Record<string, unknown>;
+    return payload.runId === runId;
+  });
+}
+
 function sortedIds(values: readonly string[]): string[] {
   return [...values].sort();
 }
@@ -165,12 +178,38 @@ function assertCandidateMatchesReplayProjection(
       || replay.status !== task.status
       || replay.currentAttemptId !== task.currentAttemptId
       || replay.pendingAttempt !== task.pendingAttempt
+      || JSON.stringify(replay.evidenceIds ?? []) !== JSON.stringify(task.evidenceIds ?? [])
+      || replay.acceptanceId !== task.acceptanceId
+      || replay.feedbackId !== task.feedbackId
       || replay.cleanupStatus !== task.cleanupStatus
-      || replay.cleanupReceiptId !== task.cleanupReceiptId) {
+      || replay.cleanupReceiptId !== task.cleanupReceiptId
+      || replay.error !== task.error) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
         `recovery candidate task execution projection 与 event replay 不一致：${requestKey}`,
       );
+    }
+    if (task.currentAttemptId) {
+      const replayAttempt = projection.attempts[task.currentAttemptId];
+      if (!replayAttempt
+        || replayAttempt.attempt !== task.attempt
+        || replayAttempt.status !== task.status
+        || replayAttempt.worktreeId !== task.worktreeId
+        || replayAttempt.worktreePath !== task.worktreePath
+        || replayAttempt.branch !== task.branch
+        || replayAttempt.baseRevision !== task.baseRevision
+        || replayAttempt.targetIdentity !== task.targetIdentity
+        || JSON.stringify(replayAttempt.evidenceIds ?? []) !== JSON.stringify(task.evidenceIds ?? [])
+        || replayAttempt.acceptanceId !== task.acceptanceId
+        || replayAttempt.feedbackId !== task.feedbackId
+        || replayAttempt.cleanupStatus !== task.cleanupStatus
+        || replayAttempt.cleanupReceiptId !== task.cleanupReceiptId
+        || replayAttempt.error !== task.error) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `recovery candidate attempt projection 与 event replay 不一致：${requestKey}`,
+        );
+      }
     }
   }
 }
@@ -233,8 +272,15 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
     decisionPersistence: WorkerRecoveryDecisionPersistence;
     projectPath: string;
     workerRuntime?: WorkerRuntime;
+    verifyCurrentCandidate?: () => Promise<void>;
   }): Promise<void> => {
-    const { record, decisionPersistence, projectPath, workerRuntime } = input;
+    const {
+      record,
+      decisionPersistence,
+      projectPath,
+      workerRuntime,
+      verifyCurrentCandidate,
+    } = input;
     if (record.action !== 'retry' || record.postCommitStatus === 'completed') return;
     if (record.postCommitStatus !== 'pending') {
       throw new WorkerRecoveryDecisionCasError(
@@ -259,6 +305,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       new Date().toISOString(),
     );
     try {
+      if (verifyCurrentCandidate) await verifyCurrentCandidate();
       await deps.runQueuedWorker(record.runId, workerRuntime, record.projectId, projectPath);
     } catch (cause) {
       await decisionPersistence.markPostCommit(
@@ -324,11 +371,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
           `recovery event stream 在 TaskGraph 解析前需要修复：${requestKey}`,
         );
       }
-      const trustedRunCreated = initialEventStream.events.find((event) => {
-        if (event.eventType !== 'RunCreated') return false;
-        const payload = event.payload as Record<string, unknown>;
-        return payload.runId === runId || (event.aggregateType === 'Run' && event.aggregateId === runId);
-      });
+      const trustedRunCreated = findTrustedRunCreatedEvent(initialEventStream.events, runId);
       const trustedRunCreatedPayload = trustedRunCreated?.payload as Record<string, unknown> | undefined;
       const trustedEventTaskGraphId = typeof trustedRunCreatedPayload?.taskGraphId === 'string'
         ? trustedRunCreatedPayload.taskGraphId
@@ -348,6 +391,12 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         throw new WorkerRecoveryDecisionCasError(
           'needs-repair',
           `recovery 对应的 TaskGraph 未批准：${runId}`,
+        );
+      }
+      if (capturedRun && !trustedRunCreated) {
+        throw new WorkerRecoveryDecisionCasError(
+          'needs-repair',
+          `WorkerRun projection 缺少匹配的 RunCreated provenance：${runId}`,
         );
       }
       if (capturedRun
@@ -415,6 +464,30 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
           taskGraph: latestTaskGraph,
           sideEffects: latestSideEffects.length > 0 ? latestSideEffects : journal.entries,
         });
+      };
+      const verifyCurrentCandidate = async (record: WorkerRecoveryDecisionRecord): Promise<void> => {
+        const latest = deps.getState();
+        if (latest.projectId !== record.projectId || latest.projectPath !== projectPath) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit project context 已漂移：${record.requestIdentity}`,
+          );
+        }
+        const latestTaskGraph = latest.taskGraphs.find((graph) => graph.id === record.candidate.state.taskGraphId);
+        if (!latestTaskGraph) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit TaskGraph 已丢失：${record.requestIdentity}`,
+          );
+        }
+        assertCandidateMatchesTrustedTaskGraph(record.candidate, latestTaskGraph, record.requestIdentity);
+        const latestRun = latest.workerRuns.find((item) => item.runId === record.runId);
+        if (!latestRun || JSON.stringify(latestRun) !== JSON.stringify(record.candidate.state)) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit candidate/state 已漂移：${record.requestIdentity}`,
+          );
+        }
       };
       const readCandidateProjection = async (candidate: WorkerRecoveryDecisionCandidate): Promise<{
         stateApplied: boolean;
@@ -636,6 +709,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       decisionPersistence,
       projectPath,
       workerRuntime,
+      verifyCurrentCandidate: () => verifyCurrentCandidate(postCommitRecord!),
     });
     } finally {
       lease.release();
@@ -697,6 +771,30 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         candidate: record.candidate,
         now: record.admittedAt,
       };
+      const verifyCurrentCandidate = async (): Promise<void> => {
+        const current = deps.getState();
+        if (current.projectId !== record.projectId || current.projectPath !== projectPath) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit project context 已漂移：${record.requestIdentity}`,
+          );
+        }
+        const currentGraph = current.taskGraphs.find((graph) => graph.id === record.candidate.state.taskGraphId);
+        if (!currentGraph) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit TaskGraph 已丢失：${record.requestIdentity}`,
+          );
+        }
+        assertCandidateMatchesTrustedTaskGraph(record.candidate, currentGraph, record.requestIdentity);
+        const currentRun = current.workerRuns.find((item) => item.runId === record.runId);
+        if (!currentRun || JSON.stringify(currentRun) !== JSON.stringify(record.candidate.state)) {
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `recovery post-commit candidate/state 已漂移：${record.requestIdentity}`,
+          );
+        }
+      };
       const pending = await decisionPersistence.markPostCommit(
         input,
         'pending',
@@ -708,6 +806,7 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
         decisionPersistence,
         projectPath,
         workerRuntime,
+        verifyCurrentCandidate,
       });
     } finally {
       lease.release();

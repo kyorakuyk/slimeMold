@@ -372,6 +372,36 @@ function validateEvent(
   } else {
     throw new Error(`decision aggregateType 不允许：${aggregateType}`);
   }
+  if (eventType === 'TaskQueued') {
+    requiredSafeInteger(value.payload.nextAttempt, 'decision TaskQueued payload.nextAttempt', 1);
+    if (requiredCanonicalText(value.payload.recoveryDecisionId, 'decision TaskQueued payload.recoveryDecisionId') !== context.decisionId) {
+      throw new Error('decision TaskQueued recoveryDecisionId 与 decisionId 不一致');
+    }
+  }
+  if (eventType === 'TaskAttemptMarkedUnknown') {
+    if (aggregateType !== 'TaskExecution') throw new Error('decision unknown event aggregateType 无效');
+    const taskExecutionId = requiredCanonicalText(value.payload.taskExecutionId, 'decision unknown taskExecutionId');
+    assertTaskExecutionLineage({
+      runId: context.runId,
+      taskId: requiredCanonicalText(value.payload.taskId, 'decision unknown taskId'),
+      taskExecutionId,
+      attemptId: requiredCanonicalText(value.payload.attemptId, 'decision unknown attemptId'),
+      attempt: requiredSafeInteger(value.payload.attempt, 'decision unknown attempt', 1),
+    });
+    requiredText(value.payload.reason, 'decision unknown reason');
+  }
+  if (eventType === 'TaskFailed') {
+    requiredText(value.payload.error, 'decision TaskFailed error');
+    requiredSafeInteger(value.payload.attempt, 'decision TaskFailed attempt', 1);
+    requiredCanonicalText(value.payload.attemptId, 'decision TaskFailed attemptId');
+  }
+  if (eventType === 'TaskBlocked') {
+    requiredText(value.payload.reason, 'decision TaskBlocked reason');
+    if (!Array.isArray(value.payload.blockedBy)
+      || value.payload.blockedBy.some((taskId) => typeof taskId !== 'string' || !taskId.trim())) {
+      throw new Error('decision TaskBlocked blockedBy 无效');
+    }
+  }
   validateActor(value.actor);
   requiredIsoText(value.occurredAt, 'decision event occurredAt');
   if (requiredCanonicalText(value.correlationId, 'decision event correlationId') !== context.runId) {

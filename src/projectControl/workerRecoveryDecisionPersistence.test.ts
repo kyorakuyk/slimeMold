@@ -124,6 +124,29 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('WorkerRecoveryDecisionPersistence', () => {
+  it('rejects a retry TaskQueued event without its next-attempt fence before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskQueued'
+        ? {
+          ...event,
+          payload: {
+            ...(event.payload as Record<string, unknown>),
+            nextAttempt: undefined,
+          },
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow('TaskQueued');
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
   it('rejects a stale captured fingerprint before writing an admission', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
