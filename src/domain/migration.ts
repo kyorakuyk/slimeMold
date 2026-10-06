@@ -595,22 +595,4 @@ function addWorkerTask(
     eventType: taskEventType(task.status),
     payload,
   });
-  if (task.status === 'succeeded' && task.cleanupStatus === 'cleaned') {
-    add({
-      ...common,
-      eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskCleaned`,
-      aggregateType: 'TaskExecution',
-      aggregateId: taskExecutionId,
-      eventType: 'TaskCleaned',
-      payload: {
-        runId: run.runId,
-        taskId,
-        taskExecutionId,
-        attempt: task.attempt,
-        attemptId,
-        receiptId: task.cleanupReceiptId,
-        cleanupStatus: 'cleaned',
-      },
-    });
-  }
 }

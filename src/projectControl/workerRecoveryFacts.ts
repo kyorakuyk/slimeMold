@@ -1,8 +1,11 @@
 import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId, parseAttemptId } from '../domain/execution';
-import { pathComparisonKey } from '../dev/path-utils';
 import { markWorkerTaskCleaned } from './workerCleanupCommand';
+import {
+  cleanupReceiptHasTrustedNativeReadback,
+  cleanupReceiptMatchesWorkerTask,
+} from './workerCleanupReceiptTrust';
 
 function isCanonicalTimestamp(value: string): boolean {
   try {
@@ -47,16 +50,10 @@ export function reconcileSuccessfulCleanupReceipts(
       const stateSignature = sideEffectReceipt?.outputHash;
       if (!receipt || !stateSignature) continue;
       const cleanup = sideEffectReceipt?.cleanup;
-      const hostReadback = cleanup?.hostReadback;
-      if (!cleanup || !hostReadback
+      if (!cleanup
         || !sideEffectReceipt.observedAt || !isCanonicalTimestamp(sideEffectReceipt.observedAt)
         || !isCanonicalTimestamp(cleanup.hostVerifiedAt)
-        || hostReadback.authority !== 'native'
-        || pathComparisonKey(hostReadback.worktreePath) !== pathComparisonKey(cleanup.worktreePath)
-        || hostReadback.branch !== cleanup.branch
-        || hostReadback.branchRevision !== cleanup.branchRevision
-        || hostReadback.targetIdentity !== cleanup.targetIdentity
-        || hostReadback.finalStatus !== 'absent') continue;
+        || !cleanupReceiptHasTrustedNativeReadback(receipt)) continue;
       const isLegacy = receipt.idempotencyKey === legacyKey;
       const normalizedReceipt = isLegacy
         ? {
@@ -109,25 +106,10 @@ function cleanupLineageKey(effect: SideEffectRecord): string | undefined {
   return `${effect.runId}:${effect.taskId}:${effect.idempotencyKey}`;
 }
 
-function cleanupReceiptHostReadbackIsTrusted(effect: SideEffectRecord): boolean {
-  const cleanup = effect.receipt?.cleanup;
-  const hostReadback = cleanup?.hostReadback;
-  return !!cleanup
-    && !!hostReadback
-    && hostReadback.authority === 'native'
-    && typeof cleanup.targetIdentity === 'string'
-    && cleanup.targetIdentity.trim().length > 0
-    && typeof hostReadback.targetIdentity === 'string'
-    && hostReadback.targetIdentity.trim().length > 0
-    && hostReadback.finalStatus === 'absent'
-    && cleanup.finalStatus === 'absent'
-    && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(cleanup.worktreePath)
-    && hostReadback.branch === cleanup.branch
-    && hostReadback.branchRevision === cleanup.branchRevision
-    && hostReadback.targetIdentity === cleanup.targetIdentity;
-}
-
-export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<string> {
+export function cleanupUnknownRunIds(
+  effects: readonly SideEffectRecord[],
+  runs: readonly WorkerRunQueueState[] = [],
+): Set<string> {
   const runIds = new Set(
     effects
       .filter((entry) => entry.kind === 'worktree-cleanup'
@@ -138,7 +120,7 @@ export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<
             entry.status === 'receipt'
             && entry.recovery === 'skip'
             && entry.receipt?.outcome === 'succeeded'
-            && !cleanupReceiptHostReadbackIsTrusted(entry)
+            && !cleanupReceiptHasTrustedNativeReadback(entry)
           )
         )
         && !!entry.runId)
@@ -155,6 +137,34 @@ export function cleanupUnknownRunIds(effects: readonly SideEffectRecord[]): Set<
     const keys = new Set(group.map((effect) => effect.idempotencyKey));
     if (keys.size > 1 && group.some((effect) => effect.idempotencyKey.startsWith('cleanup:'))) {
       for (const effect of group) if (effect.runId) runIds.add(effect.runId);
+    }
+  }
+  for (const run of runs) {
+    for (const [taskId, task] of Object.entries(run.tasks)) {
+      if (task.cleanupStatus !== 'cleaned') continue;
+      try {
+        const taskExecutionId = createTaskExecutionId(run.runId, taskId);
+        const attemptId = createAttemptId(taskExecutionId, task.attempt);
+        const key = `cleanup:${attemptId}`;
+        const matching = effects.filter((effect) => effect.idempotencyKey === key);
+        if (task.taskExecutionId !== taskExecutionId
+          || task.currentAttemptId !== attemptId
+          || matching.length !== 1
+          || !task.cleanupReceiptId
+          || !cleanupReceiptMatchesWorkerTask({
+            effect: matching[0],
+            runId: run.runId,
+            taskId,
+            taskExecutionId,
+            attemptId,
+            receiptId: task.cleanupReceiptId,
+            task,
+          })) {
+          runIds.add(run.runId);
+        }
+      } catch {
+        runIds.add(run.runId);
+      }
     }
   }
   return runIds;

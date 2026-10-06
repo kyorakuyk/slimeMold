@@ -167,11 +167,11 @@ export function createWorkerRecoveryIoController(
         );
         await deps.saveProject(current.projectId, projectPath, signal);
       }
-      const cleanupUnknownRuns = cleanupUnknownRunIds(mergedEffects);
+      const cleanupUnknownRuns = cleanupUnknownRunIds(mergedEffects, reconciled.runs);
       if (cleanupUnknownRuns.size > 0) {
         current.setWorkerRunRecoveries([
           ...current.workerRunRecoveries.filter((item) => !cleanupUnknownRuns.has(item.runId)),
-          ...current.workerRuns
+          ...reconciled.runs
             .filter((run) => cleanupUnknownRuns.has(run.runId))
             .map((run): WorkerRunRecovery => ({
               runId: run.runId,

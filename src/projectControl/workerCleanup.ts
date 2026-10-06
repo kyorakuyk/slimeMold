@@ -3,6 +3,7 @@ import { normalizeAbsolutePath, pathComparisonKey } from '../dev/path-utils';
 import { resolveWorkerAcceptanceStageId, type WorkerQueueTask, type WorkerRunQueueState } from '../domain/workerQueue';
 import type { SideEffectRecord } from '../domain/contracts';
 import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { cleanupReceiptMatchesWorkerTask } from './workerCleanupReceiptTrust';
 
 export interface WorkerCleanupProposalReady {
   status: 'ready';
@@ -179,8 +180,17 @@ export async function buildWorkerCleanupProposal(
         || receipt.recovery !== 'skip'
         || receipt.receipt.outputHash === undefined
         || receipt.inputHash !== `${task.baseRevision ?? ''}:${receipt.receipt.outputHash}`
-        || receipt.receipt.receiptId !== task.cleanupReceiptId) {
-        return blocked(run.runId, taskId, 'cleaned 任务缺少与当前 attempt 精确匹配的 cleanup receipt');
+        || receipt.receipt.receiptId !== task.cleanupReceiptId
+        || !cleanupReceiptMatchesWorkerTask({
+          effect: receipt,
+          runId: run.runId,
+          taskId,
+          taskExecutionId: lineage.taskExecutionId,
+          attemptId: lineage.attemptId,
+          receiptId: task.cleanupReceiptId,
+          task,
+        })) {
+        return blocked(run.runId, taskId, 'cleaned 任务缺少与当前 attempt 精确匹配的 native identity read-back receipt');
       }
       return {
         status: 'cleaned',

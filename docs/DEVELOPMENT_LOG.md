@@ -5327,3 +5327,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `workerActionController.cas.test.ts` 的 strict TypeScript 错误修复为显式构造 `RunCreated` payload（其基础 DomainEvent payload 类型为 `unknown`），并删除转为直接检查 journal 后不再使用的 `durableInput` fixture。
 - 验证：focused dispatch/CAS 测试通过；`npm run build` 通过；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 通过；Rust `cargo fmt --check` 通过，`cargo test` 为 `106 passed / 0 failed`，doc-tests `0`；`git diff --check` 通过（仅有 CRLF 转换提示）。完整 Vitest 在配置 `NODE_OPTIONS=--localstorage-file=...` 后为 `205 test files`、`1400 passed / 1 failed`；唯一失败为 `src/dev/node-run.test.ts` 的 Windows npm shim 检查，`runCommand('npm')` 返回 `-1`。read-back 显示当前 PATH 的 `D:\Hermes\...` 经 `realpath` 指向 `D:\Family\Hermes\...`，被 `trustedWindowsPath` 的非 canonical path 检查拒绝；该边界尚未修改，不能把失败豁免为环境噪声。默认 Vitest 环境另有 localStorage setup failures。
 - 本轮没有真实 Tauri GUI restart/cleanup、跨进程竞争或 crash matrix 证据，也没有针对最终 exact HEAD 的 independent review；`dispatching` 的产品可达人工修复路径仍未闭合。正式状态保持 `unverified / partial-fail / not closed`；未 push/merge。
+
+### 7.378 unverified：CleanupReceipt identity binding 与 recovery projection 收敛
+
+- Cleanup proposal 现在只有在 receipt 与当前 Run/Task/TaskExecution/Attempt、worktree path/id、base revision、stable target identity 及 native `finalStatus=absent` read-back 全部一致时，才可投影为 `cleaned`；identity-less receipt 保持 blocked。相同的 native identity/read-back verifier 已复用于 recovery reconciliation。
+- Worker recovery audit 不再用空的 runtime recovery projection 覆盖 `cleanup-unknown`；identity-less 或缺少匹配 receipt 的 cleaned snapshot 会进入 recovery，强制 consistency failure、清除 cleanup proposal 并 suppress success projection。pre-execution consistency gate 也拒绝无 durable cleanup receipt 的 cleaned snapshot。
+- Legacy project migration 不再仅凭旧 snapshot 的 `cleanupStatus/cleanupReceiptId` 合成 `TaskCleaned`；新增 bootstrap regression 验证 legacy baseline 不伪造 cleanup 事实。
+- 验证：Cleanup/recovery/bootstrap/migration focused suite 为 `9 files / 55 tests passed`；`npm run build` 与 `npx tsc --noEmit` 通过，构建保留既有 dynamic/static import 与大 chunk warnings；`git diff --check` 通过。
+- 当前仅为 bounded cleanup slice 的 targeted evidence；完整 `npm run test`、`npm run i18n:check`、Rust gates、allocation/reducer 审查与最终 exact-HEAD independent review 尚未完成。真实 Tauri GUI restart/cleanup、跨进程竞争和 crash matrix 仍未闭合，正式状态保持 `unverified / not accepted`，未 push。

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ParsedEventStream } from '../domain/eventStore';
 import type { AcceptanceRecord } from '../dev/session';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { createEmptyProjectControlSnapshot } from './persistence';
 import { assertWorkerRunConsistency } from './workerRunConsistencyAction';
 
@@ -90,5 +92,47 @@ describe('assertWorkerRunConsistency', () => {
       ...common,
       readEventStream: async () => parsed(),
     })).rejects.toThrow('ProjectControl 事实源不一致：control drift');
+  });
+
+  it('rejects cleaned snapshots without their durable cleanup receipt', async () => {
+    const runId = 'run-1';
+    const taskId = 'task-1';
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const cleanedRun = {
+      projectId: 'project-1',
+      runId,
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: 'succeeded',
+      tasks: {
+        [taskId]: {
+          taskId,
+          taskExecutionId,
+          currentAttemptId: attemptId,
+          attempt: 1,
+          status: 'succeeded',
+          cleanupStatus: 'cleaned',
+          cleanupReceiptId: `cleanup:${attemptId}:receipt`,
+          worktreeId: 'worktree-1',
+          worktreePath: 'C:/workers/task-1',
+          targetIdentity: 'target-1',
+          branch: 'worker/task-1',
+          baseRevision: 'base-1',
+        },
+      },
+    } as unknown as WorkerRunQueueState;
+    const state = { ...base(), workerRuns: [cleanedRun] };
+    const audit = audits();
+
+    await expect(assertWorkerRunConsistency({
+      projectId: 'project-1',
+      getState: () => state,
+      assertOperation: vi.fn(),
+      readEventStream: async () => parsed(),
+      listAcceptances: () => [],
+      auditWorkerRunConsistency: audit.worker,
+      auditProjectControlConsistency: audit.control,
+    })).rejects.toThrow(/Cleanup receipt.*run-1/);
   });
 });
