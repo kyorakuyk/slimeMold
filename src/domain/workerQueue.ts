@@ -21,6 +21,7 @@ export interface WorkerWorktreeAssignment {
   path: string;
   branch: string;
   baseRevision: string;
+  branchRevision?: string;
   targetIdentity?: string;
 }
 
@@ -164,6 +165,22 @@ export interface RunWorkerQueueOptions {
   /** 在分配 worktree 和开始 Worker 外部副作用前重新核对 dispatch fence。 */
   assertBeforeExternalWork?: (state: WorkerRunQueueState) => Promise<void> | void;
   signal?: AbortSignal;
+}
+
+export class WorkerDispatchFenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkerDispatchFenceError';
+  }
+}
+
+interface WorkerTaskQueueCheckpoint {
+  state: WorkerRunQueueState;
+  events: DomainEvent[];
+  eventHistory: DomainEvent[];
+  nextSequence: number;
+  aggregateVersions: Array<[string, number]>;
+  runStartedEmitted: boolean;
 }
 
 function requiredText(value: string, field: string): string {
@@ -503,6 +520,32 @@ export class WorkerTaskQueue {
     };
   }
 
+  checkpointForClaimBatch(): WorkerTaskQueueCheckpoint {
+    return {
+      state: this.snapshot(),
+      events: [...this.events],
+      eventHistory: [...this.eventHistory],
+      nextSequence: this.nextSequence,
+      aggregateVersions: [...this.aggregateVersions.entries()],
+      runStartedEmitted: this.runStartedEmitted,
+    };
+  }
+
+  restoreClaimBatch(checkpoint: WorkerTaskQueueCheckpoint): void {
+    this.state = {
+      ...checkpoint.state,
+      tasks: Object.fromEntries(
+        Object.entries(checkpoint.state.tasks).map(([id, task]) => [id, cloneQueueTask(task)]),
+      ),
+    };
+    this.events = [...checkpoint.events];
+    this.eventHistory = [...checkpoint.eventHistory];
+    this.nextSequence = checkpoint.nextSequence;
+    this.aggregateVersions.clear();
+    for (const [key, version] of checkpoint.aggregateVersions) this.aggregateVersions.set(key, version);
+    this.runStartedEmitted = checkpoint.runStartedEmitted;
+  }
+
   getTask(taskId: string): ProjectTask | undefined {
     const task = this.tasksById.get(taskId);
     return task ? cloneTask(task) : undefined;
@@ -651,12 +694,24 @@ export class WorkerTaskQueue {
         ...(dependencyArtifacts.length > 0 ? { dependencyArtifacts } : {}),
       };
     } catch (cause) {
+      let rollbackError: unknown;
       if (allocatedAssignment && allocator.release) {
         try {
           await allocator.release(allocatedAssignment, signal);
         } catch (releaseCause) {
-          cause = new Error(`${errorMessage(cause)}；worktree rollback 失败：${errorMessage(releaseCause)}`);
+          rollbackError = releaseCause;
         }
+      }
+      if (cause instanceof WorkerDispatchFenceError) {
+        if (rollbackError) {
+          throw new WorkerDispatchFenceError(
+            `${cause.message}；worktree rollback 失败：${errorMessage(rollbackError)}`,
+          );
+        }
+        throw cause;
+      }
+      if (rollbackError) {
+        cause = new Error(`${errorMessage(cause)}；worktree rollback 失败：${errorMessage(rollbackError)}`);
       }
       if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
@@ -1066,6 +1121,13 @@ export async function runWorkerQueue(
   options: RunWorkerQueueOptions,
 ): Promise<WorkerRunQueueState> {
   const throwIfCancelled = (): void => throwIfAborted(options.signal);
+  const assertDispatchFence = async (): Promise<void> => {
+    try {
+      await options.assertBeforeExternalWork?.(queue.snapshot());
+    } catch (cause) {
+      throw new WorkerDispatchFenceError(errorMessage(cause));
+    }
+  };
   const concurrency = options.concurrency === undefined
     ? Number.MAX_SAFE_INTEGER
     : Math.max(1, Math.floor(options.concurrency));
@@ -1090,20 +1152,45 @@ export async function runWorkerQueue(
     }
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
-    await Promise.all(batch.map(async (taskId) => {
-      const assertDispatchFence = () => options.assertBeforeExternalWork?.(queue.snapshot());
-      const lease = await queue.claimTask(
-        taskId,
-        options.allocator,
-        options.signal,
-        assertDispatchFence,
-        assertDispatchFence,
-      );
-      if (lease) leases.push(lease);
-    }));
+    const claimCheckpoint = queue.checkpointForClaimBatch();
+    try {
+      // Claims mutate the in-memory queue and allocate host resources. Serialize
+      // this phase so a later claim never fences against an unpersisted sibling.
+      for (const taskId of batch) {
+        const lease = await queue.claimTask(
+          taskId,
+          options.allocator,
+          options.signal,
+          assertDispatchFence,
+          assertDispatchFence,
+        );
+        if (lease) leases.push(lease);
+      }
+    } catch (cause) {
+      let rollbackError: unknown;
+      for (const lease of [...leases].reverse()) {
+        if (!options.allocator.release) {
+          rollbackError = new Error(`无法回滚 dispatch fence 前的 worktree：${lease.assignment.worktreeId}`);
+          break;
+        }
+        try {
+          await options.allocator.release(lease.assignment, options.signal);
+        } catch (releaseCause) {
+          rollbackError = releaseCause;
+          break;
+        }
+      }
+      queue.restoreClaimBatch(claimCheckpoint);
+      if (rollbackError) {
+        throw new WorkerDispatchFenceError(
+          `${errorMessage(cause)}；批量 claim rollback 失败：${errorMessage(rollbackError)}`,
+        );
+      }
+      throw cause;
+    }
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
     await flushTransition();
-    await options.assertBeforeExternalWork?.(queue.snapshot());
+    await assertDispatchFence();
     let terminalizedInBatch = false;
     const settled = await Promise.allSettled(leases.map(async (lease) => {
       const taskId = lease.task.id;

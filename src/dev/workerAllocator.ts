@@ -71,8 +71,12 @@ export function createWorktreeAllocator(
       }
       reservedPaths.set(pathKey, executionAttemptId);
       const branch = `worker/${identitySegment}`;
+      let createReturned = false;
+      let createdInfo: WorktreeInfo | null = null;
       try {
         const info = await creator.create(worktreeId, path, { branch, signal });
+        createReturned = true;
+        createdInfo = info;
         if (signal?.aborted) throw new Error('Worker worktree 分配已取消');
         if (!info || info.status !== 'created') {
           const detail = creator.getLastCreateError?.();
@@ -90,20 +94,37 @@ export function createWorktreeAllocator(
           path: requiredText(info.path, 'worktree 路径'),
           branch: requiredText(info.branch, 'worktree 分支'),
           baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
+          ...(info.branchRevision ? { branchRevision: requiredText(info.branchRevision, 'worktree 分支 revision') } : {}),
           ...(info.targetIdentity ? { targetIdentity: requiredText(info.targetIdentity, 'worktree target identity') } : {}),
         };
       } catch (error) {
-        reservedPaths.delete(pathKey);
+        if (createdInfo?.status === 'created') {
+          if (!creator.cleanup) {
+            throw new Error(`${error instanceof Error ? error.message : String(error)}；创建后的 worktree 无法回滚：宿主未提供 cleanup（${createdInfo.id}）`);
+          }
+          try {
+            const cleaned = await creator.cleanup(createdInfo.id, { confirm: true });
+            if (!cleaned) throw new Error(`worktree rollback 未确认完成：${createdInfo.id}`);
+            reservedPaths.delete(pathKey);
+          } catch (cleanupCause) {
+            throw new Error(`${error instanceof Error ? error.message : String(error)}；创建后的 worktree 回滚失败：${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}`);
+          }
+        } else if (createReturned) {
+          // The creator returned no created worktree; the reservation is safe to release.
+          reservedPaths.delete(pathKey);
+        }
+        // If create itself threw, keep the reservation: the host may have mutated
+        // before reporting the error and the path must not be reused blindly.
         throw error;
       }
     },
     async release(assignment, signal): Promise<void> {
-      reservedPaths.delete(pathComparisonKey(assignment.path));
       if (!creator.cleanup) {
         throw new Error(`无法回滚已分配 worktree：宿主未提供 cleanup（${assignment.worktreeId}）`);
       }
       const cleaned = await creator.cleanup(assignment.worktreeId, { confirm: true, signal });
       if (!cleaned) throw new Error(`worktree rollback 未确认完成：${assignment.worktreeId}`);
+      reservedPaths.delete(pathComparisonKey(assignment.path));
     },
   };
 }

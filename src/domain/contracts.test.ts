@@ -97,6 +97,44 @@ describe('Phase 0a domain contracts', () => {
       payload: { runId: 'run-orphan-cleaned', receiptId: 'cleanup-receipt-1' },
     })])).toThrow(/TaskCleaned|succeeded|Attempt/i);
   });
+
+  it('clears a terminal current attempt when a task becomes blocked', () => {
+    const taskExecutionId = createTaskExecutionId('run-blocked', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const projection = replayDomainEvents([
+      event({ eventId: 'blocked-queued', aggregateType: 'TaskExecution', aggregateId: taskExecutionId, eventType: 'TaskQueued', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId,
+      } }),
+      event({ eventId: 'blocked-started', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskStarted', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+      } }),
+      event({ eventId: 'blocked-failed', sequence: 3, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 3, eventType: 'TaskFailed', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId, error: 'dependency failed',
+      } }),
+      event({ eventId: 'blocked-event', sequence: 4, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 4, eventType: 'TaskBlocked', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, blockedBy: ['dependency-1'], reason: 'dependency failed',
+      } }),
+    ]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ status: 'blocked' });
+    expect(projection.taskExecutions[taskExecutionId].currentAttemptId).toBeUndefined();
+  });
+
+  it('rejects a TaskBlocked event with an empty blockedBy list at replay', () => {
+    const taskExecutionId = createTaskExecutionId('run-empty-blocked-by', 'task-1');
+    expect(() => replayDomainEvents([event({
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskBlocked',
+      payload: {
+        runId: 'run-empty-blocked-by',
+        taskId: 'task-1',
+        taskExecutionId,
+        blockedBy: [],
+        reason: 'missing dependency',
+      },
+    })])).toThrow(/blockedBy|blocked/);
+  });
   it('replays an unknown interrupted attempt before a retry attempt starts', () => {
     const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
     const attempt1 = createAttemptId(taskExecutionId, 1);

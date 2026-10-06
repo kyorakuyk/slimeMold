@@ -100,6 +100,7 @@ function matchesCompletedCleanupReceipt(
   const cleanup = entry.receipt?.cleanup;
   const hostReadback = cleanup?.hostReadback;
   return entry.status === 'receipt'
+    && !!proposal.targetIdentity?.trim()
     && matchesProposal(entry, proposal, isLegacyKey)
     && entry.receipt?.receiptId === `${entry.idempotencyKey}:receipt`
     && entry.recovery === 'skip'
@@ -108,6 +109,7 @@ function matchesCompletedCleanupReceipt(
     && !!cleanup
     && cleanup.worktreePath === proposal.worktreePath
     && cleanup.worktreeId === proposal.worktreeId
+    && !!cleanup.targetIdentity?.trim()
     && cleanup.targetIdentity === proposal.targetIdentity
     && cleanup.branch === proposal.branch
     && cleanup.branchRevision === proposal.branchRevision
@@ -118,6 +120,7 @@ function matchesCompletedCleanupReceipt(
     && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(proposal.worktreePath)
     && hostReadback.branch === proposal.branch
     && hostReadback.branchRevision === proposal.branchRevision
+    && !!hostReadback.targetIdentity?.trim()
     && hostReadback.targetIdentity === proposal.targetIdentity
     && hostReadback.finalStatus === 'absent';
 }
@@ -129,6 +132,7 @@ export async function executeWorkerCleanupWithReceipt(
   if (input.proposal.status === 'blocked') throw new Error(`清理提案不可执行：${input.proposal.reason}`);
   if (input.proposal.status === 'cleaned') throw new Error('清理提案已经完成，不能重复执行');
   const proposal = input.proposal;
+  requiredText(proposal.targetIdentity ?? '', 'cleanup target identity');
   const now = requiredText(input.now, '时间');
   const key = effectKey(proposal);
   const legacyKey = legacyEffectKey(proposal);

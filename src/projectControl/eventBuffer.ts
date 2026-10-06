@@ -61,6 +61,19 @@ export function getPendingProjectEvents(projectId: string): DomainEvent[] {
   return [...(pendingByProject.get(requiredProjectId(projectId)) ?? [])];
 }
 
+/** Restore a previously captured pending-event snapshot after a failed command. */
+export function restoreProjectEventBuffer(projectId: string, events: readonly DomainEvent[]): void {
+  const normalizedProjectId = requiredProjectId(projectId);
+  if (events.some((event) => event.streamId !== normalizedProjectId)) {
+    throw new EventStoreError('event-conflict', `恢复 pending events 时 streamId 与项目不一致：${normalizedProjectId}`);
+  }
+  if (events.length === 0) {
+    pendingByProject.delete(normalizedProjectId);
+    return;
+  }
+  pendingByProject.set(normalizedProjectId, [...events]);
+}
+
 /** Add command facts to the project-local pending buffer without doing I/O. */
 export function recordProjectEvents(projectId: string, incoming: readonly DomainEvent[]): void {
   const normalizedProjectId = requiredProjectId(projectId);

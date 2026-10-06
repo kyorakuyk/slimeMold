@@ -297,6 +297,55 @@ describe('worker cleanup execution', () => {
     })).rejects.toThrow(/read-back|核对|receipt/);
   });
 
+  it('rejects an identity-less existing receipt before idempotent success or migration', async () => {
+    const current = { ...proposal(), targetIdentity: undefined };
+    const key = workerCleanupEffectKey(current.taskExecutionId, current.attemptId);
+    const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
+    await repository.record({
+      idempotencyKey: key,
+      kind: 'worktree-cleanup',
+      target: current.worktreePath,
+      inputHash: `${current.baseRevision}:${current.stateSignature}`,
+      runId: current.runId,
+      taskId: current.taskId,
+      taskExecutionId: current.taskExecutionId,
+      attemptId: current.attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: `${key}:receipt`,
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outputHash: current.stateSignature,
+        outcome: 'succeeded',
+        cleanup: {
+          worktreePath: current.worktreePath,
+          worktreeId: current.worktreeId,
+          targetIdentity: undefined,
+          branch: current.branch,
+          branchRevision: current.branchRevision,
+          baseRevision: current.baseRevision,
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+          hostReadback: {
+            authority: 'native',
+            worktreePath: current.worktreePath,
+            branch: current.branch,
+            branchRevision: current.branchRevision,
+            targetIdentity: undefined,
+            finalStatus: 'absent',
+          },
+        },
+      },
+    });
+
+    await expect(executeWorkerCleanupWithReceipt({
+      proposal: current,
+      repository,
+      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
+      now: '2026-09-01T00:03:00.000Z',
+    })).rejects.toThrow(/identity|receipt|清理/);
+  });
+
   it('migrates a matching legacy cleanup receipt to the canonical attempt key', async () => {
     const current = proposal();
     const legacyKey = `cleanup:${current.runId}:${current.taskId}:a${current.attempt}`;

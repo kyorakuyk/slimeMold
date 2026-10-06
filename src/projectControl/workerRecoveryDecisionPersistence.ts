@@ -792,6 +792,15 @@ export class WorkerRecoveryDecisionPersistence {
             `recovery decision 已标记需要修复：${input.requestIdentity} (${existing.repairReason})`,
           );
         }
+        try {
+          await options.validateCandidate?.(existing.candidate);
+        } catch (cause) {
+          if (cause instanceof WorkerRecoveryDecisionCasError) throw cause;
+          throw new WorkerRecoveryDecisionCasError(
+            'needs-repair',
+            `persisted recovery candidate semantic validation failed：${input.requestIdentity} (${cause instanceof Error ? cause.message : String(cause)})`,
+          );
+        }
         if (existing.status === 'committed') {
           const applied = options.isCandidateApplied
             ? await options.isCandidateApplied(existing.candidate)
@@ -1014,7 +1023,6 @@ export class WorkerRecoveryDecisionPersistence {
       if (!sameIdentity(existing, input)) {
         throw new WorkerRecoveryDecisionCasError('conflict', `recovery decision repair identity 冲突：${input.requestIdentity}`);
       }
-      if (existing.status === 'committed') return existing;
       const updated: WorkerRecoveryDecisionRecord = {
         ...existing,
         repairReason: normalizedReason,

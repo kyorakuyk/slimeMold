@@ -163,20 +163,18 @@ function cleanupReceiptFact(
     'receipt.cleanup',
   );
   if (cleanup.finalStatus !== 'absent') throw new Error(`receipt.cleanup.finalStatus 无效：${cleanup.finalStatus}`);
-  const targetIdentity = cleanup.targetIdentity === undefined
-    ? undefined
-    : requiredText(cleanup.targetIdentity, 'receipt.cleanup target identity');
+  const targetIdentity = requiredText(stringValue(cleanup.targetIdentity, 'receipt.cleanup target identity'), 'receipt.cleanup target identity');
   const normalized = {
     worktreePath: comparableWorkerPath(canonicalPath(requiredText(cleanup.worktreePath, 'receipt.cleanup worktree path'), 'receipt.cleanup worktree path')),
     worktreeId: requiredText(cleanup.worktreeId, 'receipt.cleanup worktree id'),
-    ...(targetIdentity === undefined ? {} : { targetIdentity }),
+    targetIdentity,
     branch: canonicalRef(cleanup.branch, 'receipt.cleanup branch'),
     branchRevision: canonicalRevision(cleanup.branchRevision, 'receipt.cleanup branch revision'),
     baseRevision: canonicalRevision(cleanup.baseRevision, 'receipt.cleanup base revision'),
     finalStatus: 'absent' as const,
     hostVerifiedAt: canonicalTimestamp(cleanup.hostVerifiedAt, 'receipt.cleanup hostVerifiedAt'),
   };
-  if (cleanup.hostReadback === undefined) return normalized;
+  if (cleanup.hostReadback === undefined) throw new Error('receipt.cleanup 缺少 native host read-back');
   const hostReadback = assertObject(cleanup.hostReadback, 'receipt.cleanup.hostReadback');
   assertKeys(
     hostReadback,
@@ -185,16 +183,17 @@ function cleanupReceiptFact(
   );
   if (hostReadback.authority !== 'native') throw new Error('receipt.cleanup.hostReadback.authority 无效');
   if (hostReadback.finalStatus !== 'absent') throw new Error('receipt.cleanup.hostReadback.finalStatus 无效');
-  const hostTargetIdentity = hostReadback.targetIdentity === undefined
-    ? undefined
-    : requiredText(stringValue(hostReadback.targetIdentity, 'receipt.cleanup.hostReadback target identity'), 'receipt.cleanup.hostReadback target identity');
+  const hostTargetIdentity = requiredText(
+    stringValue(hostReadback.targetIdentity, 'receipt.cleanup.hostReadback target identity'),
+    'receipt.cleanup.hostReadback target identity',
+  );
   if (hostTargetIdentity !== targetIdentity) throw new Error('receipt.cleanup.hostReadback target identity 不一致');
   const normalizedHostReadback = {
     authority: 'native' as const,
     worktreePath: comparableWorkerPath(canonicalPath(stringValue(hostReadback.worktreePath, 'receipt.cleanup.hostReadback worktree path'), 'receipt.cleanup.hostReadback worktree path')),
     branch: canonicalRef(stringValue(hostReadback.branch, 'receipt.cleanup.hostReadback branch'), 'receipt.cleanup.hostReadback branch'),
     branchRevision: canonicalRevision(stringValue(hostReadback.branchRevision, 'receipt.cleanup.hostReadback branch revision'), 'receipt.cleanup.hostReadback branch revision'),
-    ...(hostTargetIdentity === undefined ? {} : { targetIdentity: hostTargetIdentity }),
+    targetIdentity: hostTargetIdentity,
     finalStatus: 'absent' as const,
   };
   if (normalizedHostReadback.worktreePath !== normalized.worktreePath

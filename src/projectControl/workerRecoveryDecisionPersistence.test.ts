@@ -376,6 +376,24 @@ describe('WorkerRecoveryDecisionPersistence', () => {
     })).resolves.toMatchObject({ kind: 'resume', record: { status: 'admitted' } });
   });
 
+  it('revalidates an existing durable candidate before replay or projection repair', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await persistence.commit(exact);
+
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+      isCandidateApplied: async () => true,
+      validateCandidate: () => {
+        throw new WorkerRecoveryDecisionCasError('needs-repair', 'persisted candidate reducer drift');
+      },
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+  });
+
   it('fails closed on a same request identity with changed facts or action', async () => {
     const adapter = new InMemoryEventStoreAdapter();
     const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');

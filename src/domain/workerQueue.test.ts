@@ -401,6 +401,24 @@ describe('WorkerTaskQueue', () => {
     expect(eventTypes).toContain('RunPartial');
   });
 
+  it('propagates a dispatch fence rejection without converting the queued task into failure', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence-reject',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const error = new Error('candidate drift');
+
+    await expect(runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'], acceptanceId: 'a' }) },
+      assertBeforeExternalWork: () => { throw error; },
+    })).rejects.toThrow('candidate drift');
+    expect(queue.snapshot().tasks.a.status).toBe('queued');
+    expect(queue.drainEvents().map((event) => event.eventType)).not.toContain('TaskFailed');
+  });
+
   it('keeps host Evidence bindings when acceptance fails', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -930,7 +948,7 @@ describe('WorkerTaskQueue', () => {
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
   });
 
-  it('releases an allocation when the dispatch fence changes after allocation', async () => {
+  it('releases an allocation and fails closed when the dispatch fence changes after allocation', async () => {
     const allocated: string[] = [];
     const released: string[] = [];
     let fenceChecks = 0;
@@ -955,16 +973,16 @@ describe('WorkerTaskQueue', () => {
       },
     };
 
-    const state = await runWorkerQueue(queue, {
+    await expect(runWorkerQueue(queue, {
       allocator,
       executor: { execute: async () => ({ status: 'succeeded' }) },
       assertBeforeExternalWork: () => {
         fenceChecks += 1;
         if (fenceChecks === 2) throw new Error('stale dispatch fence');
       },
-    });
+    })).rejects.toThrow('stale dispatch fence');
 
-    expect(state.tasks.a.status).toBe('failed');
+    expect(queue.snapshot().tasks.a.status).toBe('queued');
     expect(allocated).toEqual(['a']);
     expect(released).toEqual(['worktree-a']);
   });

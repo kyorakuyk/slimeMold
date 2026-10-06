@@ -140,4 +140,49 @@ describe('createWorktreeAllocator', () => {
       taskExecutionId: secondExecutionId, attemptId: createAttemptId(secondExecutionId, 1),
     })).rejects.toThrow(/路径|复用|worktree/);
   });
+
+  it('cleans up a host allocation when creator validation fails after create', async () => {
+    const cleanup = vi.fn(async () => true);
+    const create = vi.fn(async (id: string, path: string, options?: { branch?: string }) => ({
+      ...info(id, path, options?.branch ?? ''),
+      path: `${path}-replaced`,
+    }));
+    const allocator = createWorktreeAllocator(
+      { create, cleanup },
+      () => 'C:/projects/worktrees/created-then-invalid',
+    );
+
+    await expect(allocator.allocate({
+      projectId: 'project-1',
+      runId: 'run-1',
+      task,
+      attempt: 1,
+      taskExecutionId: createTaskExecutionId('run-1', task.id),
+      attemptId: createAttemptId(createTaskExecutionId('run-1', task.id), 1),
+    })).rejects.toThrow(/身份|请求|path|路径/);
+    expect(cleanup).toHaveBeenCalledWith(expect.any(String), { confirm: true });
+  });
+
+  it('keeps the reservation when rollback cannot confirm host cleanup', async () => {
+    const cleanup = vi.fn(async () => false);
+    const create = vi.fn(async (id: string, path: string, options?: { branch?: string }) =>
+      info(id, path, options?.branch ?? ''));
+    const allocator = createWorktreeAllocator(
+      { create, cleanup },
+      () => 'C:/projects/worktrees/rollback-failed',
+    );
+    const taskExecutionId = createTaskExecutionId('run-rollback', task.id);
+    const input = {
+      projectId: 'project-1',
+      runId: 'run-rollback',
+      task,
+      attempt: 1,
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+    };
+    const assignment = await allocator.allocate(input);
+
+    await expect(allocator.release!(assignment)).rejects.toThrow(/rollback|确认/);
+    await expect(allocator.allocate(input)).rejects.toThrow(/保留|复用|路径/);
+  });
 });

@@ -250,6 +250,7 @@ function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<T
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
+
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
@@ -273,6 +274,7 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(typeof payload.branch === 'string' ? { branch: payload.branch } : {}),
     ...(typeof payload.baseRevision === 'string' ? { baseRevision: payload.baseRevision } : {}),
     ...(typeof payload.targetIdentity === 'string' ? { targetIdentity: payload.targetIdentity } : {}),
+
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
@@ -370,6 +372,21 @@ function applyTaskLineageProjection(
     || eventType === 'TaskCleaned';
   if (payload.cleanupStatus === 'cleaned' && eventType !== 'TaskCleaned') {
     throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${lineage.taskExecutionId}`);
+  }
+  if (eventType === 'TaskBlocked') {
+    const blockedBy = payload.blockedBy;
+    if (!Array.isArray(blockedBy)
+      || blockedBy.length === 0
+      || blockedBy.some((dependency) => typeof dependency !== 'string' || !dependency.trim() || dependency.trim() !== dependency)
+      || new Set(blockedBy).size !== blockedBy.length
+      || blockedBy.includes(lineage.taskId)) {
+      throw new Error(`TaskBlocked blockedBy 无效：${lineage.taskExecutionId}`);
+    }
+    if (previous?.currentAttemptId
+      && previousAttempt
+      && (previousAttempt.status === 'running' || previousAttempt.status === 'waiting-feedback')) {
+      throw new Error(`TaskBlocked 不能保留 active Attempt：${lineage.taskExecutionId}`);
+    }
   }
   if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
     evidenceIds: payloadEvidenceIds(payload),
@@ -504,6 +521,7 @@ function applyTaskLineageProjection(
         }
       : {}),
     ...(lineage.attemptId ? { currentAttemptId: lineage.attemptId } : {}),
+    ...(eventType === 'TaskBlocked' ? { currentAttemptId: undefined, pendingAttempt: undefined } : {}),
     ...taskExecutionPatch(payload, eventType),
   };
   if (eventType === 'TaskStarted' || eventType === 'TaskBlocked' || isCompletion) delete nextExecution.pendingAttempt;
