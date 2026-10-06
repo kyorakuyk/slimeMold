@@ -318,9 +318,27 @@ describe('worker action controller recovery CAS wiring', () => {
     ).rejects.toThrow('dispatch failed');
     expect(runQueuedWorker).toHaveBeenCalledTimes(2);
     await expect(persistence.read()).resolves.toMatchObject({
-      journal: { entries: [expect.objectContaining({ postCommitStatus: 'failed' })] },
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'dispatching' })] },
     });
-    await persistence.markPostCommit(durableInput, 'pending', durableRecord.admittedAt);
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1'),
+    ).rejects.toMatchObject({ code: 'needs-repair' });
+    await expect(
+      controller.retryFailedWorkerRecoveryPostCommit('run-1', 'request-1'),
+    ).rejects.toMatchObject({ code: 'needs-repair' });
+    expect(runQueuedWorker).toHaveBeenCalledTimes(2);
+
+    // Test-only repair: model an operator's external inspection before allowing dispatch again.
+    const ambiguousJournal = await persistence.read();
+    if (ambiguousJournal.status !== 'ok') throw new Error('ambiguous decision journal was not readable');
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: ambiguousJournal.journal.entries.map((entry) => (
+        entry.requestIdentity === 'request-1'
+          ? { ...entry, postCommitStatus: 'pending' }
+          : entry
+      )),
+    }));
     runQueuedWorker.mockResolvedValueOnce(undefined);
     await controller.recoverWorkerRun('run-1', 'retry', 'same request', undefined, 'request-1');
     expect(runQueuedWorker).toHaveBeenCalledTimes(3);

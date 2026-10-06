@@ -449,31 +449,19 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       candidate: record.candidate,
       now: record.admittedAt,
     };
-    const dispatching = await decisionPersistence.markPostCommit(
+    await decisionPersistence.markPostCommit(
       recordInput,
       'dispatching',
       new Date().toISOString(),
     );
-    try {
-      if (verifyCurrentCandidate) await verifyCurrentCandidate();
-      await deps.runQueuedWorker(
-        record.runId,
-        workerRuntime,
-        record.projectId,
-        projectPath,
-        record.candidate.state,
-      );
-    } catch (cause) {
-      await decisionPersistence.markPostCommit(
-        {
-          ...recordInput,
-          now: dispatching.committedAt ?? recordInput.now,
-        },
-        'failed',
-        new Date().toISOString(),
-      );
-      throw cause;
-    }
+    if (verifyCurrentCandidate) await verifyCurrentCandidate();
+    await deps.runQueuedWorker(
+      record.runId,
+      workerRuntime,
+      record.projectId,
+      projectPath,
+      record.candidate.state,
+    );
     await decisionPersistence.markPostCommit(recordInput, 'completed', new Date().toISOString());
   };
 
