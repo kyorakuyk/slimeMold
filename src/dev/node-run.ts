@@ -81,7 +81,8 @@ function trustedWindowsPath(candidate: string): string | null {
     const stat = lstatSync(candidate);
     if (stat.isSymbolicLink()) return null;
     const real = realpathSync(candidate);
-    if (pathComparisonKey(real) !== pathComparisonKey(candidate)) return null;
+    // PATH may contain a Windows parent-junction alias. Execute the canonical target
+    // so the command is still bound to the file that was checked above.
     return real;
   } catch {
     return null;
