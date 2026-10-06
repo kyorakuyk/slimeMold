@@ -987,6 +987,53 @@ describe('WorkerTaskQueue', () => {
     expect(released).toEqual(['worktree-a']);
   });
 
+  it('persists orphaned allocation lineage when a stale fence rollback fails', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence-rollback-failed',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const assignment = {
+      worktreeId: 'worktree-a',
+      path: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+      branchRevision: 'base-revision-1',
+      targetIdentity: 'target-a',
+    };
+    const transitions: Array<{ state: ReturnType<typeof queue.snapshot>; events: DomainEvent[] }> = [];
+    let fenceChecks = 0;
+    let executorCalls = 0;
+
+    await expect(runWorkerQueue(queue, {
+      allocator: {
+        allocate: async () => assignment,
+        release: async () => { throw new Error('host cleanup unavailable'); },
+      },
+      executor: {
+        execute: async () => {
+          executorCalls += 1;
+          return { status: 'succeeded' as const };
+        },
+      },
+      assertBeforeExternalWork: () => {
+        fenceChecks += 1;
+        if (fenceChecks === 2) throw new Error('stale dispatch fence');
+      },
+      onTransition: (transition) => { transitions.push(transition); },
+    })).rejects.toThrow(/stale dispatch fence.*rollback 失败/);
+
+    expect(queue.snapshot().tasks.a).toMatchObject({
+      status: 'failed',
+      ...assignment,
+      worktreeStatus: 'orphaned',
+      error: expect.stringMatching(/rollback 失败|cleanup unavailable/),
+    });
+    expect(transitions.flatMap(({ events }) => events).map((event) => event.eventType)).toContain('TaskFailed');
+    expect(executorCalls).toBe(0);
+  });
+
   it('parks a running Worker on structured feedback instead of marking it failed', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
