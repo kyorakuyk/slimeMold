@@ -120,6 +120,44 @@ describe('Phase 0a domain contracts', () => {
     expect(projection.taskExecutions[taskExecutionId].currentAttemptId).toBeUndefined();
   });
 
+  it('rejects TaskBlocked while the current Attempt is active', () => {
+    const taskExecutionId = createTaskExecutionId('run-active-blocked', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => replayDomainEvents([
+      event({
+        eventId: 'active-blocked-queued',
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId },
+      }),
+      event({
+        eventId: 'active-blocked-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+        },
+      }),
+      event({
+        eventId: 'active-blocked-event',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskBlocked',
+        payload: {
+          runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId,
+          blockedBy: ['dependency-1'], reason: 'dependency failed',
+        },
+      }),
+    ])).toThrow(/TaskBlocked.*active Attempt/);
+  });
+
   it('rejects a TaskBlocked event with an empty blockedBy list at replay', () => {
     const taskExecutionId = createTaskExecutionId('run-empty-blocked-by', 'task-1');
     expect(() => replayDomainEvents([event({

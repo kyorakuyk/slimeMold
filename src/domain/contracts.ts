@@ -375,8 +375,8 @@ function applyTaskLineageProjection(
   }
   if (eventType === 'TaskBlocked') {
     if (previous?.currentAttemptId
-      && previousAttempt
-      && (previousAttempt.status === 'running' || previousAttempt.status === 'waiting-feedback')) {
+      && currentAttempt
+      && (currentAttempt.status === 'running' || currentAttempt.status === 'waiting-feedback')) {
       throw new Error(`TaskBlocked 不能保留 active Attempt：${lineage.taskExecutionId}`);
     }
   }
