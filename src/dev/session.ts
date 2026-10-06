@@ -464,7 +464,10 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
   manager.cleanup = async (id, opts) => {
     const info = manager.get(id);
     if (info?.status === 'registration-pending') {
-      if (!opts?.confirm || opts?.signal?.aborted) return false;
+      if (!opts?.confirm
+        || opts?.signal?.aborted
+        || !info.targetIdentity?.trim()
+        || !info.branchRevision?.trim()) return false;
       try {
         await syncRust('unregister', info.path);
         registeredWorktrees.delete(id);

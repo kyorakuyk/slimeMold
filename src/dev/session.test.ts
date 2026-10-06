@@ -6,11 +6,11 @@ import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 import type { WorkerCleanupProposalReady } from '../projectControl/workerCleanup';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async () => {
+const mockInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]): Promise<unknown> => {
     throw new Error('register rejected');
-  }),
 }));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 
 function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
@@ -28,6 +28,34 @@ function trustedProposal(session: ReturnType<typeof initDevSession>, path: strin
 describe('DevSession cleanup', () => {
   afterEach(() => {
     resetDevSession();
+    mockInvoke.mockReset();
+    mockInvoke.mockRejectedValue(new Error('register rejected'));
+  });
+
+  it('does not unregister identity-less registration-pending allocation lineage', async () => {
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git: vi.fn(async () => ok()) },
+    });
+    const info = {
+      id: 'worker-identityless-pending',
+      path: '/repo-workers/identityless',
+      branch: 'worker/identityless',
+      baseRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'registration-pending' as const,
+    };
+    mockInvoke.mockResolvedValue('unexpected-success');
+
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    await expect(session.manager.cleanup(info.id, { confirm: true })).resolves.toBe(false);
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'dev_unregister_worktree',
+      expect.objectContaining({ path: info.path }),
+    );
+    expect(session.manager.get(info.id)?.status).toBe('registration-pending');
   });
 
   it('cleans a Worker worktree by its registered id when approval addresses its path', async () => {

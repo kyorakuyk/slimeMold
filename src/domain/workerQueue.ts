@@ -963,7 +963,7 @@ export class WorkerTaskQueue {
       branch,
       baseRevision,
       ...(allocation.assignment.targetIdentity ? { targetIdentity: allocation.assignment.targetIdentity } : {}),
-      worktreeStatus: 'created',
+      worktreeStatus: allocation.worktreeStatus,
       branchRevision,
     }, now);
     this.markFailed(

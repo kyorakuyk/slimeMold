@@ -192,8 +192,19 @@ export class WorktreeManager {
       }
     }
     const add = await this.runner.git(addArgs, this.baseRepoPath);
-    if (add.exitCode !== 0) {
-      this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
+    if (add.exitCode !== 0 || add.unknownEffects) {
+      const detail = add.stderr.trim() || `exit ${add.exitCode}`;
+      this.lastCreateError = `git ${addArgs.join(' ')} ${add.unknownEffects ? 'outcome unknown' : 'failed'}: ${detail}`;
+      if (add.unknownEffects) {
+        this.infos.set(id, {
+          id,
+          path,
+          branch,
+          baseRevision,
+          createdAt: new Date().toISOString(),
+          status: 'registration-pending',
+        });
+      }
       return null;
     }
     const baseInfo: WorktreeInfo = {
@@ -495,7 +506,9 @@ export class WorktreeManager {
     if (!info || info.status === 'cleaned') return false;
     if (!opts.confirm) return false; // 确认门：未确认拒绝清理（防误删未提交改动）
     if (opts.signal?.aborted) return false;
-    if (info.status === 'registration-pending') return true;
+    if (info.status === 'registration-pending') {
+      return Boolean(info.targetIdentity?.trim() && info.branchRevision?.trim());
+    }
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
       if (opts.branchRevision !== info.branchRevision) return false;

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectTask } from '../projectControl/types';
 import { createAttemptId, createTaskExecutionId, workerIdentitySegment } from '../domain/execution';
-import type { WorktreeInfo } from './worktree';
+import { WorktreeManager, type WorktreeInfo } from './worktree';
+import type { CommandResult } from './node-run';
 import { createWorktreeAllocator } from './workerAllocator';
 import { WorkerAllocationRepairRequiredError } from '../domain/workerQueue';
 
@@ -259,5 +260,71 @@ describe('createWorktreeAllocator', () => {
     expect(cleanup).not.toHaveBeenCalled();
     await expect(allocator.allocate(input)).rejects.toThrow(/保留|复用|路径/);
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains repair lineage when git worktree add reports unknown effects', async () => {
+    const calls: string[][] = [];
+    const baseRevision = 'b'.repeat(40);
+    const git = vi.fn(async (args: string[]): Promise<CommandResult> => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+        return { exitCode: 0, stdout: `${baseRevision}\n`, stderr: '', durationMs: 1 };
+      }
+      if (args[0] === 'show-ref') {
+        return { exitCode: 1, stdout: '', stderr: '', durationMs: 1 };
+      }
+      if (args[0] === 'worktree' && args[1] === 'add') {
+        return {
+          exitCode: -1,
+          stdout: '',
+          stderr: 'host response lost after command start',
+          durationMs: 1,
+          unknownEffects: true,
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '', durationMs: 1 };
+    });
+    const manager = new WorktreeManager({ git }, 'C:/projects');
+    const taskExecutionId = createTaskExecutionId('run-unknown-effects', task.id);
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const identitySegment = workerIdentitySegment(attemptId);
+    const worktreeId = `worker-${identitySegment}`;
+    const path = `C:/projects-workers/${identitySegment}`;
+    const allocator = createWorktreeAllocator(manager, () => path);
+    const input = {
+      projectId: 'project-1',
+      runId: 'run-unknown-effects',
+      task,
+      attempt: 1,
+      taskExecutionId,
+      attemptId,
+    };
+
+    await expect(allocator.allocate(input)).rejects.toMatchObject({
+      name: 'WorkerAllocationRepairRequiredError',
+      allocation: {
+        taskId: task.id,
+        attempt: 1,
+        taskExecutionId,
+        attemptId,
+        assignment: {
+          worktreeId,
+          path,
+          branch: `worker/${identitySegment}`,
+          baseRevision,
+        },
+        worktreeStatus: 'registration-pending',
+      },
+    });
+    expect(manager.get(worktreeId)).toMatchObject({
+      id: worktreeId,
+      path,
+      branch: `worker/${identitySegment}`,
+      baseRevision,
+      status: 'registration-pending',
+    });
+    await expect(manager.cleanup(worktreeId, { confirm: true })).resolves.toBe(false);
+    await expect(allocator.allocate(input)).rejects.toThrow(/保留|复用|路径/);
+    expect(calls.filter((args) => args[0] === 'worktree' && args[1] === 'add')).toHaveLength(1);
   });
 });
