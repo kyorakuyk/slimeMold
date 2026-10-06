@@ -8,6 +8,7 @@
 import type { CommandResult } from './node-run';
 import { runCommand } from './node-run';
 import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
+import { inspectFailedWorktreeAdd } from './worktreeAddRecovery';
 import { WORKER_IDENTITY_MAX_LENGTH } from '../domain/execution';
 
 export interface DevGitRunner {
@@ -204,6 +205,25 @@ export class WorktreeManager {
           createdAt: new Date().toISOString(),
           status: 'registration-pending',
         });
+      } else {
+        const readback = await inspectFailedWorktreeAdd(
+          this.runner,
+          this.baseRepoPath,
+          path,
+          branch,
+          this.verifyPathIdentity,
+        );
+        if (readback.status !== 'none') {
+          this.infos.set(id, {
+            id,
+            path,
+            branch,
+            baseRevision,
+            ...(readback.branchRevision ? { branchRevision: readback.branchRevision } : {}),
+            createdAt: new Date().toISOString(),
+            status: readback.status,
+          });
+        }
       }
       return null;
     }
