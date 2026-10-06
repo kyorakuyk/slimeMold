@@ -289,14 +289,6 @@ function assertCandidateMatchesReplayProjection(
       || replay.feedbackId !== task.feedbackId
       || replay.cleanupStatus !== task.cleanupStatus
       || replay.cleanupReceiptId !== task.cleanupReceiptId
-      || replay.worktreeId !== task.worktreeId
-      || replay.worktreePath !== task.worktreePath
-      || replay.branch !== task.branch
-      || replay.baseRevision !== task.baseRevision
-      || replay.targetIdentity !== task.targetIdentity
-      || replay.worktreeStatus !== task.worktreeStatus
-      || replay.branchRevision !== task.branchRevision
-      || replay.cleanupStateSignature !== task.cleanupStateSignature
       || replay.error !== task.error) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',
@@ -313,9 +305,6 @@ function assertCandidateMatchesReplayProjection(
         || replayAttempt.branch !== task.branch
         || replayAttempt.baseRevision !== task.baseRevision
         || replayAttempt.targetIdentity !== task.targetIdentity
-        || replayAttempt.worktreeStatus !== task.worktreeStatus
-        || replayAttempt.branchRevision !== task.branchRevision
-        || replayAttempt.cleanupStateSignature !== task.cleanupStateSignature
         || JSON.stringify(replayAttempt.evidenceIds ?? []) !== JSON.stringify(task.evidenceIds ?? [])
         || replayAttempt.acceptanceId !== task.acceptanceId
         || replayAttempt.feedbackId !== task.feedbackId

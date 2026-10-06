@@ -5314,3 +5314,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 |- 新增 persistence semantic pre-write、repair marker、empty blocker、RunCreated provenance、allocation rollback、identity-less cleanup receipt regressions；未把这些 focused tests 或 headless quality gates写成正式 GUI E2E 通过。
 |- 验证：focused recovery/Cleanup/domain suite `6 test files / 106 tests`；完整 Node `205 test files / 1390 tests`；`npm run build` 通过（`2098 modules transformed`，最大 JS chunk `1,275.36 kB`，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` `1026/1026`；`npx tsc --noEmit` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 为 `106 passed / 0 failed`，Rust doc-tests `0`；`git diff --check` 通过。
 |- 当前边界：本轮修复尚未形成新的 exact-HEAD independent review；真实 Tauri GUI restart/live registration、CleanupReceipt/TaskCleaned/native deletion-or-retention read-back、双 controller/跨进程竞争与 ProjectFile/event/journal crash matrix 仍未完成。正式状态保持 `unverified / partial-fail / not closed`。
+
+### 7.376 unverified：收窄 recovery replay projection 到 reducer-owned fields
+
+- 为遵守最小充分 lineage，`workerActionController` 的 durable candidate/replay 比较仅保留 reducer projection 实际拥有的字段；移除对 task projection 中不存在的 `worktreeId/path`、branch/status/revision、cleanup signature 等字段比较，不扩张 reducer schema，也不把 native authority 字段复制进每层 lineage。
+- 验证：focused recovery/CAS/domain suites 已通过；完整 Vitest 为 `205 test files`、`1396 passed / 1 failed`，唯一失败为 `src/dev/worktree.test.ts` 的真实 `createNodeGitRunner` 检查，Node runner 返回 `拒绝执行未绑定的 Windows 程序：git`；失败原因尚未进一步定位，不按环境噪声豁免。`npm run build` 通过（保留既有动态/静态 import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过；`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 通过；Rust `cargo test` 为 `106 passed / 0 failed`。
+- 本轮不将 headless 质量门写成真实恢复验收：GUI restart/cleanup read-back、跨进程竞争、crash matrix 和 exact-HEAD independent review 尚未闭合，正式状态继续保持 `unverified / partial-fail / not closed`；未 push。
