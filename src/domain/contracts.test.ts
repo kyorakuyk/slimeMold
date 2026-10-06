@@ -135,6 +135,26 @@ describe('Phase 0a domain contracts', () => {
       },
     })])).toThrow(/blockedBy|blocked/);
   });
+
+  it('rejects malformed TaskBlocked blockers even without TaskExecution lineage', () => {
+    const invalidBlockedBy: unknown[][] = [
+      [],
+      [' dependency-1'],
+      ['dependency-1', 'dependency-1'],
+      ['task-1'],
+    ];
+    for (const [index, blockedBy] of invalidBlockedBy.entries()) {
+      expect(() => replayDomainEvents([event({
+        eventId: `legacy-blocked-${index}`,
+        eventType: 'TaskBlocked',
+        payload: {
+          taskId: 'task-1',
+          blockedBy,
+          reason: 'invalid dependency list',
+        },
+      })])).toThrow(/TaskBlocked blockedBy/);
+    }
+  });
   it('replays an unknown interrupted attempt before a retry attempt starts', () => {
     const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
     const attempt1 = createAttemptId(taskExecutionId, 1);
@@ -942,6 +962,41 @@ describe('Phase 0a domain contracts', () => {
         source: { objectId: 'graph-1', objectVersion: 1 },
       }),
     ]);
+  });
+
+  it('rejects non-canonical or duplicate task ids before creating a RunCreated event', () => {
+    const grant = createApprovalGrant({
+      id: 'grant-task-ids',
+      planHash: 'plan-v1',
+      policyHash: 'policy-v1',
+      baseRevision: 'commit-a',
+      worktreePath: 'D:/repo/.slime-wt/task-1',
+      targetRef: 'refs/heads/feature/task-1',
+      capabilities: ['codex.write'],
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+    });
+    const input = {
+      grant,
+      current: {
+        planHash: 'plan-v1',
+        policyHash: 'policy-v1',
+        baseRevision: 'commit-a',
+        worktreePath: 'D:/repo/.slime-wt/task-1',
+        targetRef: 'refs/heads/feature/task-1',
+        capabilities: ['codex.write'],
+      },
+      streamId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      sequence: 10,
+      projectVersion: 1,
+      now: '2026-09-01T00:01:00.000Z',
+    };
+
+    expect(() => approvePlanAndEnqueueRun({ ...input, taskIds: [' task-1'] })).toThrow(/taskIds/);
+    expect(() => approvePlanAndEnqueueRun({ ...input, taskIds: ['task-1', 'task-1'] })).toThrow(/taskIds/);
   });
 
   it('rejects Planner write access and accepts a Worker in a dedicated worktree', () => {

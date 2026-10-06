@@ -4,7 +4,9 @@ import type { DomainEvent } from '../domain/contracts';
 import {
   clearProjectEventBuffer,
   flushPendingProjectEvents,
+  getProjectEventBufferQuarantine,
   getPendingProjectEvents,
+  quarantineProjectEventBuffer,
   recordProjectEvents,
 } from './eventBuffer';
 
@@ -165,5 +167,26 @@ describe('project event buffer', () => {
 
     await expect(flushPendingProjectEvents('project-1', repository)).resolves.toMatchObject({ status: 'already-present', count: 1 });
     expect(getPendingProjectEvents('project-1')).toEqual([]);
+  });
+
+  it('keeps quarantined recovery facts pending and refuses to flush them', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const repository = new EventStreamRepository(adapter, 'project-root');
+    const pending = event({ eventId: 'recovery-candidate-event', eventType: 'ProjectCreated', payload: {} });
+    recordProjectEvents('project-1', [pending]);
+    quarantineProjectEventBuffer('project-1', {
+      requestIdentity: 'recovery-request-1',
+      eventIds: [pending.eventId],
+      reason: 'project projection read-back failed',
+    });
+
+    await expect(flushPendingProjectEvents('project-1', repository)).rejects.toMatchObject({ code: 'needs-repair' });
+    expect(getPendingProjectEvents('project-1')).toEqual([pending]);
+    expect(getProjectEventBufferQuarantine('project-1')).toEqual({
+      requestIdentity: 'recovery-request-1',
+      eventIds: [pending.eventId],
+      reason: 'project projection read-back failed',
+    });
+    expect((await repository.readStream()).status).toBe('empty');
   });
 });

@@ -1,6 +1,11 @@
 import { ensureGuiDevSession as defaultEnsureGuiDevSession } from '../dev/gui';
 import type { Orchestration } from '../types/orchestration';
-import { replayDomainEvents, type DomainEvent, type SideEffectRecord } from '../domain/contracts';
+import {
+  isCanonicalTaskIdList,
+  replayDomainEvents,
+  type DomainEvent,
+  type SideEffectRecord,
+} from '../domain/contracts';
 import {
   resolveWorkerAcceptanceStageId,
   restoreWorkerRunQueue,
@@ -29,6 +34,7 @@ import {
   type WorkerRecoverySingleFlight,
 } from './workerRecoverySingleFlight';
 import { createWorkerHostRepositoryBundleFromModules, loadWorkerHostRepositoryModules } from './workerHostRepositoryBundle';
+import { quarantineProjectEventBuffer } from './eventBuffer';
 
 type ProjectSave = (
   projectId: string,
@@ -77,10 +83,7 @@ export function findTrustedRunCreatedEvent(
       && (payload.taskGraphVersion as number) >= 1
       && event.source?.objectId === payload.taskGraphId
       && event.source?.objectVersion === payload.taskGraphVersion
-      && Array.isArray(payload.taskIds)
-      && payload.taskIds.length > 0
-      && payload.taskIds.every((taskId) => typeof taskId === 'string' && !!taskId.trim())
-      && new Set(payload.taskIds).size === payload.taskIds.length;
+      && isCanonicalTaskIdList(payload.taskIds);
   });
   if (candidates.length !== 1 || runEvents[0]?.eventId !== candidates[0].eventId) return undefined;
   return candidates[0];
@@ -598,13 +601,6 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
             `recovery requestIdentity 已绑定其它项目、Run 或 action：${requestKey}`,
           );
         }
-        if (durableRecord.candidate.state.taskGraphId !== taskGraph.id
-          || durableRecord.candidate.state.taskGraphVersion !== taskGraph.graphVersion) {
-          throw new WorkerRecoveryDecisionCasError(
-            'needs-repair',
-            `recovery durable candidate 与当前 TaskGraph 不一致：${requestKey}`,
-          );
-        }
       } else if (!capturedRun) {
         throw new Error(`找不到可恢复的 Worker Run：${runId}`);
       }
@@ -765,20 +761,19 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       };
     }
 
-    assertCandidateMatchesTrustedTaskGraph(
-      decisionInput.candidate,
-      capturedTaskGraph,
-      requestKey,
-      capturedRun,
-      decision,
-    );
-
     let postCommitRecord: WorkerRecoveryDecisionRecord | undefined;
-    let admittedDecisionInput: WorkerRecoveryDecisionInput | undefined;
-    try {
-      await decisionPersistence.withDecisionLock(async (decisionLock) => {
+    await decisionPersistence.withDecisionLock(async (decisionLock) => {
+      let admittedDecisionInput: WorkerRecoveryDecisionInput | undefined;
+      try {
       const validateCandidateBeforeAdmission = async (candidate: WorkerRecoveryDecisionCandidate): Promise<void> => {
         deps.assertProjectOperation(operation);
+        assertCandidateMatchesTrustedTaskGraph(
+          candidate,
+          capturedTaskGraph,
+          requestKey,
+          capturedRun,
+          decision,
+        );
         const eventStream = await bundle.createEventRepository().readStream();
         if (eventStream.status === 'needs-repair') {
           throw new WorkerRecoveryDecisionCasError(
@@ -902,21 +897,32 @@ export function createWorkerActionController(deps: WorkerActionControllerDeps): 
       postCommitRecord = await decisionPersistence.commit(admittedDecisionInput, {
         verifyProjection: () => isCandidateApplied(admittedCandidate),
       }, decisionLock);
-    });
-    } catch (cause) {
-      if (admittedDecisionInput && !postCommitRecord) {
-        try {
-          await decisionPersistence.markNeedsRepair(
-            admittedDecisionInput,
-            cause instanceof Error ? cause.message : String(cause),
-            new Date().toISOString(),
-          );
-        } catch {
-          // Preserve the original failure; an unreadable repair marker is itself fail-closed.
+      } catch (cause) {
+        if (admittedDecisionInput && !postCommitRecord) {
+          const repairReason = cause instanceof Error ? cause.message : String(cause);
+          try {
+            quarantineProjectEventBuffer(projectId, {
+              requestIdentity: admittedDecisionInput.requestIdentity,
+              eventIds: admittedDecisionInput.candidate.events.map((event) => event.eventId),
+              reason: repairReason,
+            });
+          } catch {
+            // Preserve the original failure; the durable repair marker remains authoritative.
+          }
+          try {
+            await decisionPersistence.markNeedsRepair(
+              admittedDecisionInput,
+              repairReason,
+              new Date().toISOString(),
+              decisionLock,
+            );
+          } catch {
+            // Preserve the original failure; an unreadable repair marker is itself fail-closed.
+          }
         }
+        throw cause;
       }
-      throw cause;
-    }
+    });
     if (!postCommitRecord) {
       throw new WorkerRecoveryDecisionCasError(
         'needs-repair',

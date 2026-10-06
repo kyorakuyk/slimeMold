@@ -795,11 +795,24 @@ export class WorkerRecoveryDecisionPersistence {
         try {
           await options.validateCandidate?.(existing.candidate);
         } catch (cause) {
-          if (cause instanceof WorkerRecoveryDecisionCasError) throw cause;
-          throw new WorkerRecoveryDecisionCasError(
-            'needs-repair',
-            `persisted recovery candidate semantic validation failed：${input.requestIdentity} (${cause instanceof Error ? cause.message : String(cause)})`,
-          );
+          if (cause instanceof WorkerRecoveryDecisionCasError && cause.code !== 'needs-repair') throw cause;
+          const reason = `persisted recovery candidate semantic validation failed：${input.requestIdentity} (${cause instanceof Error ? cause.message : String(cause)})`;
+          try {
+            await this.markNeedsRepair({
+              projectId: existing.projectId,
+              runId: existing.runId,
+              requestIdentity: existing.requestIdentity,
+              action: existing.action,
+              semanticPayloadVersion: existing.semanticPayloadVersion,
+              decisionId: existing.decisionId,
+              factsFingerprint: existing.factsFingerprint,
+              candidate: existing.candidate,
+              now: existing.admittedAt,
+            }, reason, new Date().toISOString(), lock);
+          } catch {
+            // Preserve the validation failure; a failed marker write remains fail-closed.
+          }
+          throw new WorkerRecoveryDecisionCasError('needs-repair', reason);
         }
         if (existing.status === 'committed') {
           const applied = options.isCandidateApplied

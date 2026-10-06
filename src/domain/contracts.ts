@@ -374,14 +374,6 @@ function applyTaskLineageProjection(
     throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${lineage.taskExecutionId}`);
   }
   if (eventType === 'TaskBlocked') {
-    const blockedBy = payload.blockedBy;
-    if (!Array.isArray(blockedBy)
-      || blockedBy.length === 0
-      || blockedBy.some((dependency) => typeof dependency !== 'string' || !dependency.trim() || dependency.trim() !== dependency)
-      || new Set(blockedBy).size !== blockedBy.length
-      || blockedBy.includes(lineage.taskId)) {
-      throw new Error(`TaskBlocked blockedBy 无效：${lineage.taskExecutionId}`);
-    }
     if (previous?.currentAttemptId
       && previousAttempt
       && (previousAttempt.status === 'running' || previousAttempt.status === 'waiting-feedback')) {
@@ -606,6 +598,16 @@ function applyTaskEvent(
   const payload = payloadRecord(event.payload);
   const taskId = taskIdFor(event, payload);
   const runId = payloadIdentityText(payload, 'runId');
+  if (event.eventType === 'TaskBlocked') {
+    const blockedBy = payload.blockedBy;
+    if (!Array.isArray(blockedBy)
+      || blockedBy.length === 0
+      || blockedBy.some((dependency) => typeof dependency !== 'string' || !dependency.trim() || dependency.trim() !== dependency)
+      || new Set(blockedBy).size !== blockedBy.length
+      || (taskId !== undefined && blockedBy.includes(taskId))) {
+      throw new Error(`TaskBlocked blockedBy 无效：${taskId ?? event.aggregateId}`);
+    }
+  }
   if (taskId) applyLegacyTaskProjection(projection, taskId, runId, status, event.eventType, payload);
   const lineage = taskLineageFor(event, payload, projection);
   if (lineage) applyTaskLineageProjection(projection, lineage, status, event.eventType, payload, event);
@@ -865,6 +867,13 @@ export function validateApprovalGrant(
   return { ok: true };
 }
 
+export function isCanonicalTaskIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((taskId) => typeof taskId === 'string' && !!taskId.trim() && taskId.trim() === taskId)
+    && new Set(value).size === value.length;
+}
+
 export function approvePlanAndEnqueueRun(input: {
   grant: ApprovalGrant;
   current: ApprovalFingerprint;
@@ -879,10 +888,10 @@ export function approvePlanAndEnqueueRun(input: {
 }): DomainEvent[] {
   const validation = validateApprovalGrant(input.grant, input.current);
   if (!validation.ok) throw new Error(`不能批准计划：${validation.reason}`);
-  const taskIds = [...new Set(input.taskIds.map((taskId) => taskId.trim()))];
-  if (taskIds.length === 0 || taskIds.some((taskId) => !taskId)) {
-    throw new Error('不能批准计划：taskIds 不能为空');
+  if (!isCanonicalTaskIdList(input.taskIds)) {
+    throw new Error('不能批准计划：taskIds 必须是非空、canonical 且唯一的 ID 列表');
   }
+  const taskIds = [...input.taskIds];
 
   return [
     {

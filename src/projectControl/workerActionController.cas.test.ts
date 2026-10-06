@@ -4,6 +4,12 @@ import type { DomainEvent } from '../domain/contracts';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { Orchestration } from '../types/orchestration';
+import {
+  clearProjectEventBuffer,
+  getPendingProjectEvents,
+  getProjectEventBufferQuarantine,
+  recordProjectEvents,
+} from './eventBuffer';
 import type { ProjectTaskGraph } from './types';
 import { WorkerRecoveryDecisionPersistence } from './workerRecoveryDecisionPersistence';
 import { createWorkerActionController, findTrustedRunCreatedEvent } from './workerActionController';
@@ -90,7 +96,7 @@ const run: WorkerRunQueueState = {
 };
 
 describe('worker action controller recovery CAS wiring', () => {
-  it('requires RunCreated payload and aggregate identity to agree on the run id', () => {
+  it('requires RunCreated identity and canonical task ids', () => {
     const base: DomainEvent = {
       eventId: 'run-created',
       streamId: 'project-1',
@@ -111,6 +117,10 @@ describe('worker action controller recovery CAS wiring', () => {
     expect(findTrustedRunCreatedEvent([{ ...base, aggregateId: 'run-other' }], 'run-1', 'project-1')).toBeUndefined();
     expect(findTrustedRunCreatedEvent([{ ...base, streamId: 'other-project' }], 'run-1', 'project-1')).toBeUndefined();
     expect(findTrustedRunCreatedEvent([{ ...base, source: undefined }], 'run-1', 'project-1')).toBeUndefined();
+    expect(findTrustedRunCreatedEvent([{
+      ...base,
+      payload: { ...base.payload, taskIds: [' task-1'] },
+    }], 'run-1', 'project-1')).toBeUndefined();
   });
 
   it('persists one decision, repairs a missing projection, and does not rerun an exact request', async () => {
@@ -351,7 +361,7 @@ describe('worker action controller recovery CAS wiring', () => {
     expect(runQueuedWorker).not.toHaveBeenCalled();
   });
 
-  it('rejects a committed candidate whose task set no longer matches the trusted TaskGraph', async () => {
+  it('marks a committed candidate for repair when its TaskGraph version drifts', async () => {
     hostModules.events.length = 0;
     const state = {
       projectId: 'project-1',
@@ -486,9 +496,11 @@ describe('worker action controller recovery CAS wiring', () => {
             ...entry,
             candidate: {
               ...entry.candidate,
-              taskGraphTaskIds: [],
-              state: { ...entry.candidate.state, tasks: {} },
-              events: [entry.candidate.events[0]],
+              state: { ...entry.candidate.state, taskGraphVersion: 2 },
+              events: entry.candidate.events.map((event) => ({
+                ...event,
+                source: { ...event.source, objectVersion: 2 },
+              })),
             },
           }
         : entry),
@@ -499,5 +511,133 @@ describe('worker action controller recovery CAS wiring', () => {
     ).rejects.toMatchObject({ code: 'needs-repair' });
     expect(state.workerRuns).toEqual(appliedRuns);
     expect(original.candidate.state.tasks).toHaveProperty('task-1');
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ repairReason: expect.stringContaining('TaskGraph') })] },
+    });
+  });
+
+  it('marks a failed recovery commit under the decision lock and quarantines its pending events', async () => {
+    clearProjectEventBuffer();
+    hostModules.events.length = 0;
+    hostModules.events.push(
+      {
+        eventId: 'repair-run-created',
+        streamId: 'project-1',
+        sequence: 1,
+        aggregateType: 'Run',
+        aggregateId: 'run-1',
+        aggregateVersion: 1,
+        eventType: 'RunCreated',
+        schemaVersion: 1,
+        payload: { runId: 'run-1', taskGraphId: 'graph-1', taskGraphVersion: 1, taskIds: ['task-1'] },
+        actor: 'system',
+        occurredAt: '2026-09-22T00:00:00.000Z',
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+        sensitivity: 'normal',
+      },
+      {
+        eventId: 'repair-task-queued',
+        streamId: 'project-1',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 1,
+        eventType: 'TaskQueued',
+        schemaVersion: 1,
+        payload: { runId: 'run-1', taskId: 'task-1', taskExecutionId, nextAttempt: 1 },
+        actor: 'runtime',
+        occurredAt: '2026-09-22T00:00:00.000Z',
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+        sensitivity: 'normal',
+      },
+      {
+        eventId: 'repair-task-started',
+        streamId: 'project-1',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        schemaVersion: 1,
+        payload: { runId: 'run-1', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId },
+        actor: 'runtime',
+        occurredAt: '2026-09-22T00:00:30.000Z',
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+        sensitivity: 'normal',
+      },
+      {
+        eventId: 'repair-task-failed',
+        streamId: 'project-1',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskFailed',
+        schemaVersion: 1,
+        payload: { runId: 'run-1', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId, error: 'worker failed' },
+        actor: 'runtime',
+        occurredAt: '2026-09-22T00:01:00.000Z',
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+        sensitivity: 'normal',
+      },
+    );
+    const state = {
+      projectId: 'project-1',
+      projectPath: 'C:/project',
+      workerRuns: [run],
+      workerRunSideEffects: [],
+      workerRunRecoveries: [],
+      workerCleanupProposals: [],
+      orchestrations: [{
+        id: 'orch-1',
+        status: 'failed',
+        runIds: [],
+        stageLogs: [],
+        updatedAt: '2026-09-22T00:01:00.000Z',
+      } as unknown as Orchestration],
+      taskGraphs: [taskGraph],
+      setWorkerRunSideEffects: vi.fn((effects) => { state.workerRunSideEffects = effects; }),
+      setWorkerRuns: vi.fn((runs) => { state.workerRuns = runs; }),
+      setOrchestrations: vi.fn((orchestrations) => { state.orchestrations = orchestrations; }),
+      setWorkerCleanupProposals: vi.fn((proposals) => { state.workerCleanupProposals = proposals; }),
+      setWorkerRunRecoveries: vi.fn((recoveries) => { state.workerRunRecoveries = recoveries; }),
+    };
+    const operation = { projectId: 'project-1', projectPath: 'C:/project', controller: new AbortController() };
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'C:/project');
+    const controller = createWorkerActionController({
+      getState: () => state,
+      getProjectOperation: () => operation,
+      assertProjectOperation: vi.fn(),
+      recordProjectEvents,
+      saveProject: vi.fn(async () => { throw new Error('project save failed'); }),
+      readProjectProjection: vi.fn(async () => ({ workerRuns: state.workerRuns, orchestrations: state.orchestrations })),
+      runQueuedWorker: vi.fn(async () => undefined),
+      isTauri: true,
+      ensureGuiDevSession: vi.fn(async () => ({ listAcceptances: () => [] }) as never),
+      recoveryDecisionPersistence: persistence,
+    });
+    const lockAcquisitionsBefore = adapter.lockAcquisitions;
+
+    await expect(
+      controller.recoverWorkerRun('run-1', 'retry', 'save fails', undefined, 'request-repair-marker'),
+    ).rejects.toThrow('project save failed');
+
+    expect(adapter.lockAcquisitions - lockAcquisitionsBefore).toBe(1);
+    const pending = getPendingProjectEvents('project-1');
+    expect(pending.length).toBeGreaterThan(0);
+    expect(getProjectEventBufferQuarantine('project-1')).toMatchObject({
+      requestIdentity: 'request-repair-marker',
+      eventIds: pending.map((event) => event.eventId),
+      reason: 'project save failed',
+    });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ repairReason: 'project save failed' })] },
+    });
+    clearProjectEventBuffer('project-1');
   });
 });
