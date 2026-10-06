@@ -298,11 +298,11 @@ describe('worker cleanup execution', () => {
   });
 
   it('rejects an identity-less existing receipt before idempotent success or migration', async () => {
-    const current = { ...proposal(), targetIdentity: undefined };
-    const key = workerCleanupEffectKey(current.taskExecutionId, current.attemptId);
+    const current = proposal();
+    const legacyKey = `cleanup:${current.runId}:${current.taskId}:a${current.attempt}`;
     const repository = new SideEffectJournalRepository(new InMemoryEventStoreAdapter(), 'C:/project');
     await repository.record({
-      idempotencyKey: key,
+      idempotencyKey: legacyKey,
       kind: 'worktree-cleanup',
       target: current.worktreePath,
       inputHash: `${current.baseRevision}:${current.stateSignature}`,
@@ -313,14 +313,13 @@ describe('worker cleanup execution', () => {
       status: 'receipt',
       recovery: 'skip',
       receipt: {
-        receiptId: `${key}:receipt`,
+        receiptId: `${legacyKey}:receipt`,
         observedAt: '2026-09-01T00:02:00.000Z',
         outputHash: current.stateSignature,
         outcome: 'succeeded',
         cleanup: {
           worktreePath: current.worktreePath,
           worktreeId: current.worktreeId,
-          targetIdentity: undefined,
           branch: current.branch,
           branchRevision: current.branchRevision,
           baseRevision: current.baseRevision,
@@ -331,19 +330,29 @@ describe('worker cleanup execution', () => {
             worktreePath: current.worktreePath,
             branch: current.branch,
             branchRevision: current.branchRevision,
-            targetIdentity: undefined,
             finalStatus: 'absent',
           },
         },
       },
     });
 
+    const confirmAndCleanup = vi.fn(async () => true);
+    const readCleanupState = vi.fn(async (
+      worktreePath = current.worktreePath,
+      worktreeId?: string,
+      targetIdentity?: string,
+    ) => absentReadback(worktreePath, worktreeId, targetIdentity));
     await expect(executeWorkerCleanupWithReceipt({
       proposal: current,
       repository,
-      host: { confirmAndCleanup: vi.fn(async () => true), readCleanupState: absentReadback },
+      host: { confirmAndCleanup, readCleanupState },
       now: '2026-09-01T00:03:00.000Z',
     })).rejects.toThrow(/identity|receipt|清理/);
+    expect(confirmAndCleanup).not.toHaveBeenCalled();
+    expect(readCleanupState).not.toHaveBeenCalled();
+    await expect(repository.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ idempotencyKey: legacyKey, status: 'receipt' })] },
+    });
   });
 
   it('migrates a matching legacy cleanup receipt to the canonical attempt key', async () => {
