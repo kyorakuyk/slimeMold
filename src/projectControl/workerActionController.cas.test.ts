@@ -119,7 +119,12 @@ describe('worker action controller recovery CAS wiring', () => {
     expect(findTrustedRunCreatedEvent([{ ...base, source: undefined }], 'run-1', 'project-1')).toBeUndefined();
     expect(findTrustedRunCreatedEvent([{
       ...base,
-      payload: { ...base.payload, taskIds: [' task-1'] },
+      payload: {
+        runId: 'run-1',
+        taskGraphId: 'graph-1',
+        taskGraphVersion: 1,
+        taskIds: [' task-1'],
+      },
     }], 'run-1', 'project-1')).toBeUndefined();
   });
 
@@ -284,17 +289,6 @@ describe('worker action controller recovery CAS wiring', () => {
     const durableRecord = await persistence.find('request-1');
     expect(durableRecord).toBeDefined();
     if (!durableRecord) throw new Error('durable recovery decision missing from test journal');
-    const durableInput = {
-      projectId: durableRecord.projectId,
-      runId: durableRecord.runId,
-      requestIdentity: durableRecord.requestIdentity,
-      action: durableRecord.action,
-      semanticPayloadVersion: durableRecord.semanticPayloadVersion,
-      decisionId: durableRecord.decisionId,
-      factsFingerprint: durableRecord.factsFingerprint,
-      candidate: durableRecord.candidate,
-      now: durableRecord.admittedAt,
-    };
     const currentJournal = await persistence.read();
     if (currentJournal.status !== 'ok') throw new Error('test journal was not readable');
     await adapter.writeTextAtomic(persistence.path, JSON.stringify({
