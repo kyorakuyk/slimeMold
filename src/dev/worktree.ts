@@ -167,6 +167,10 @@ export class WorktreeManager {
       return null;
     }
     const baseRevision = rev.stdout.trim();
+    if (!baseRevision) {
+      this.lastCreateError = 'git rev-parse HEAD returned an empty revision';
+      return null;
+    }
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
     if (!isSafeBranchName(branch)) {
       this.lastCreateError = `unsafe branch: ${branch}`;
@@ -192,17 +196,27 @@ export class WorktreeManager {
       this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
       return null;
     }
-    const targetIdentity = this.readPathIdentity
-      ? await this.readPathIdentity(path, true)
-      : undefined;
-    const info: WorktreeInfo = {
+    const baseInfo: WorktreeInfo = {
       id,
       path,
       branch,
       baseRevision,
-      ...(targetIdentity ? { targetIdentity } : {}),
       createdAt: new Date().toISOString(),
       status: 'created',
+    };
+    this.infos.set(id, baseInfo);
+    let targetIdentity: string | null | undefined;
+    try {
+      targetIdentity = this.readPathIdentity
+        ? await this.readPathIdentity(path, true)
+        : undefined;
+    } catch (cause) {
+      this.lastCreateError = `worktree target identity read failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      return null;
+    }
+    const info: WorktreeInfo = {
+      ...baseInfo,
+      ...(targetIdentity ? { targetIdentity } : {}),
     };
     this.infos.set(id, info);
     if (this.readPathIdentity && !targetIdentity) {
