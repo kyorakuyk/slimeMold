@@ -384,6 +384,9 @@ function applyTaskLineageProjection(
       && (currentAttempt.status === 'running' || currentAttempt.status === 'waiting-feedback')) {
       throw new Error(`TaskBlocked 不能保留 active Attempt：${lineage.taskExecutionId}`);
     }
+    if (previous && previous.status !== 'queued') {
+      throw new Error(`TaskBlocked 只能从 queued 状态变更：${lineage.taskExecutionId}`);
+    }
   }
   if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
     evidenceIds: payloadEvidenceIds(payload),
