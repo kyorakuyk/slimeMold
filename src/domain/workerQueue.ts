@@ -1236,9 +1236,9 @@ export async function runWorkerQueue(
   options: RunWorkerQueueOptions,
 ): Promise<WorkerRunQueueState> {
   const throwIfCancelled = (): void => throwIfAborted(options.signal);
-  const assertDispatchFence = async (): Promise<void> => {
+  const assertDispatchFence = async (expectedState = queue.snapshot()): Promise<void> => {
     try {
-      await options.assertBeforeExternalWork?.(queue.snapshot());
+      await options.assertBeforeExternalWork?.(expectedState);
     } catch (cause) {
       throw new WorkerDispatchFenceError(errorMessage(cause));
     }
@@ -1268,6 +1268,8 @@ export async function runWorkerQueue(
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
     const claimCheckpoint = queue.checkpointForClaimBatch();
+    const claimBaseState = queue.snapshot();
+    const assertClaimDispatchFence = async (): Promise<void> => assertDispatchFence(claimBaseState);
     try {
       // Claims mutate the in-memory queue and allocate host resources. Serialize
       // this phase so a later claim never fences against an unpersisted sibling.
@@ -1276,8 +1278,8 @@ export async function runWorkerQueue(
           taskId,
           options.allocator,
           options.signal,
-          assertDispatchFence,
-          assertDispatchFence,
+          assertClaimDispatchFence,
+          assertClaimDispatchFence,
         );
         if (lease) leases.push(lease);
       }
