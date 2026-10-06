@@ -16,7 +16,7 @@ use crate::file_authority::{dev_exec_path_allowed, has_multiple_hardlinks};
 use crate::file_authority::{open_unix_file_relative, stable_file_identity_from_file};
 use crate::fs_guard::{
     canonicalize_dev_exec_args, dev_arg_path_lexically_safe, dev_arg_shell_safe,
-    dev_exec_validate_paths, git_diff_pathspec_allowed, is_git_diff_revision, path_compare_key,
+    dev_exec_validate_paths, git_diff_pathspec_allowed, is_git_diff_revision,
 };
 use crate::session_authority::{
     assert_session_generation, dev_abs_of, dev_cwd_binding, DevCwdKind,
@@ -542,11 +542,8 @@ fn trusted_windows_program(candidate: &std::path::Path) -> Option<std::path::Pat
         return None;
     }
     let canonical = candidate.canonicalize().ok()?;
-    if path_compare_key(&canonical.to_string_lossy())
-        != path_compare_key(&candidate.to_string_lossy())
-    {
-        return None;
-    }
+    // PATH may contain a parent-junction alias. Spawn the canonical target so
+    // execution remains bound to the executable checked above.
     let canonical_text = canonical.to_string_lossy();
     if let Some(rest) = canonical_text.strip_prefix(r"\\?\UNC\") {
         return Some(std::path::PathBuf::from(format!(r"\\{rest}")));
