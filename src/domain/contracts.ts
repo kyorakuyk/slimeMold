@@ -194,6 +194,11 @@ function taskLineageFor(
   payload: EventPayload,
   projection: DomainProjection,
 ): TaskLineage | undefined {
+  if (event.eventType === 'TaskBlocked'
+    && (Object.prototype.hasOwnProperty.call(payload, 'attempt')
+      || Object.prototype.hasOwnProperty.call(payload, 'attemptId'))) {
+    throw new Error(`TaskBlocked 不得携带 Attempt lineage：${event.eventId}`);
+  }
   const runId = payloadIdentityText(payload, 'runId');
   const taskId = taskIdFor(event, payload);
   if (!runId || !taskId) {

@@ -158,6 +158,56 @@ describe('Phase 0a domain contracts', () => {
     ])).toThrow(/TaskBlocked.*active Attempt/);
   });
 
+  it('rejects TaskBlocked carrying Attempt lineage that could rewrite a terminal Attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-blocked-stale-attempt', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => replayDomainEvents([
+      event({
+        eventId: 'stale-attempt-queued',
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId },
+      }),
+      event({
+        eventId: 'stale-attempt-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+        },
+      }),
+      event({
+        eventId: 'stale-attempt-succeeded',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskSucceeded',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId,
+          attempt: 1, attemptId, evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1',
+        },
+      }),
+      event({
+        eventId: 'stale-attempt-blocked',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 4,
+        eventType: 'TaskBlocked',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId,
+          attempt: 1, attemptId, blockedBy: ['dependency-1'], reason: 'dependency failed',
+        },
+      }),
+    ])).toThrow(/TaskBlocked.*Attempt lineage/);
+  });
+
   it('rejects a TaskBlocked event with an empty blockedBy list at replay', () => {
     const taskExecutionId = createTaskExecutionId('run-empty-blocked-by', 'task-1');
     expect(() => replayDomainEvents([event({
