@@ -32,6 +32,8 @@ export interface WorkerCleanupProposalBlocked {
   status: 'blocked';
   runId: string;
   taskId: string;
+  taskExecutionId?: string;
+  attemptId?: string;
   reason: string;
 }
 
@@ -126,8 +128,28 @@ export function workerCleanupDecisionId(taskExecutionId: string, attemptId: stri
   return `cleanup-decision:${workerCleanupEffectKey(taskExecutionId, attemptId)}`;
 }
 
-function blocked(runId: string, taskId: string, reason: string): WorkerCleanupProposalBlocked {
-  return { status: 'blocked', runId, taskId, reason };
+function blocked(
+  run: WorkerRunQueueState,
+  task: WorkerQueueTask,
+  reason: string,
+): WorkerCleanupProposalBlocked {
+  let lineage: ReturnType<typeof resolveTaskLineage> | null = null;
+  if (task.taskExecutionId || task.currentAttemptId) {
+    try {
+      lineage = resolveTaskLineage(run, task);
+    } catch {
+      lineage = null;
+    }
+  }
+  return {
+    status: 'blocked',
+    runId: run.runId,
+    taskId: task.taskId,
+    ...(lineage?.ok
+      ? { taskExecutionId: lineage.taskExecutionId, attemptId: lineage.attemptId }
+      : {}),
+    reason,
+  };
 }
 
 function resolveTaskLineage(
@@ -166,7 +188,7 @@ export async function buildWorkerCleanupProposal(
   if (task.cleanupStatus === 'cleaned') {
     if (task.cleanupReceiptId) {
       const lineage = resolveTaskLineage(run, task);
-      if (!lineage.ok) return blocked(run.runId, taskId, lineage.reason);
+      if (!lineage.ok) return blocked(run, task, lineage.reason);
       const cleanupKey = workerCleanupEffectKey(lineage.taskExecutionId, lineage.attemptId);
       const receipt = input.sideEffects.find((effect) => effect.idempotencyKey === cleanupKey);
       if (!receipt || receipt.status !== 'receipt'
@@ -190,7 +212,7 @@ export async function buildWorkerCleanupProposal(
           receiptId: task.cleanupReceiptId,
           task,
         })) {
-        return blocked(run.runId, taskId, 'cleaned 任务缺少与当前 attempt 精确匹配的 native identity read-back receipt');
+        return blocked(run, task, 'cleaned 任务缺少与当前 attempt 精确匹配的 native identity read-back receipt');
       }
       return {
         status: 'cleaned',
@@ -202,28 +224,28 @@ export async function buildWorkerCleanupProposal(
         receiptId: task.cleanupReceiptId,
       };
     }
-    return blocked(run.runId, taskId, '任务标记为 cleaned 但缺少 cleanup receipt');
+    return blocked(run, task, '任务标记为 cleaned 但缺少 cleanup receipt');
   }
   if (task.status !== 'succeeded') {
-    return blocked(run.runId, taskId, '只有宿主验收成功的任务才能生成清理提案');
+    return blocked(run, task, '只有宿主验收成功的任务才能生成清理提案');
   }
   if (task.evidenceIds.length === 0) {
-    return blocked(run.runId, taskId, '任务缺少 Evidence ID，不能生成清理提案');
+    return blocked(run, task, '任务缺少 Evidence ID，不能生成清理提案');
   }
   if (!task.acceptanceId || !acceptance) {
-    return blocked(run.runId, taskId, '任务缺少宿主 acceptance 记录，不能生成清理提案');
+    return blocked(run, task, '任务缺少宿主 acceptance 记录，不能生成清理提案');
   }
   if (!task.worktreeId || !task.worktreePath || !task.branch || !task.baseRevision) {
-    return blocked(run.runId, taskId, '任务缺少 worktree 或 baseRevision，不能生成清理提案');
+    return blocked(run, task, '任务缺少 worktree 或 baseRevision，不能生成清理提案');
   }
   if (durableBranchCleanup && !task.branchRevision?.trim()) {
-    return blocked(run.runId, taskId, 'orphan/registration-pending 缺少持久化 branchRevision，拒绝清理');
+    return blocked(run, task, 'orphan/registration-pending 缺少持久化 branchRevision，拒绝清理');
   }
   const lineage = resolveTaskLineage(run, task);
-  if (!lineage.ok) return blocked(run.runId, taskId, lineage.reason);
+  if (!lineage.ok) return blocked(run, task, lineage.reason);
   const acceptanceStageId = resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
   if (!acceptanceStageId) {
-    return blocked(run.runId, taskId, 'Worker Task 缺少有效 acceptance stage，拒绝清理');
+    return blocked(run, task, 'Worker Task 缺少有效 acceptance stage，拒绝清理');
   }
 
   const orchestrationId = run.orchestrationId ?? run.runId;
@@ -233,7 +255,7 @@ export async function buildWorkerCleanupProposal(
     && acceptance.taskExecutionId === lineage.taskExecutionId
     && acceptance.attemptId === lineage.attemptId;
   if (acceptance.stageId !== acceptanceStageId) {
-    return blocked(run.runId, taskId, 'acceptance stage 未绑定当前 Worker Task，拒绝清理');
+    return blocked(run, task, 'acceptance stage 未绑定当前 Worker Task，拒绝清理');
   }
   const acceptanceMatches =
     acceptance.acceptanceId === task.acceptanceId &&
@@ -243,17 +265,17 @@ export async function buildWorkerCleanupProposal(
     pathComparisonKey(acceptance.worktreePath) === pathComparisonKey(path) &&
     acceptanceLineageMatches;
   if (!acceptanceMatches) {
-    return blocked(run.runId, taskId, 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt');
+    return blocked(run, task, 'acceptance 未通过或未绑定当前 Run/Task/worktree/attempt');
   }
   if (!durableBranchCleanup && input.isWorktreeTracked && !input.isWorktreeTracked(task.worktreePath)) {
-    return blocked(run.runId, taskId, 'worktree 未被当前宿主登记，不能清理');
+    return blocked(run, task, 'worktree 未被当前宿主登记，不能清理');
   }
 
   const stateSignature = durableBranchCleanup
     ? task.cleanupStateSignature
     : await input.computeWorktreeSignature(task.worktreePath);
   if (!stateSignature?.trim()) {
-    return blocked(run.runId, taskId, durableBranchCleanup
+    return blocked(run, task, durableBranchCleanup
       ? 'orphan/registration-pending 缺少持久化 cleanup state signature，拒绝清理'
       : '无法取得 worktree 状态签名，拒绝清理');
   }
@@ -263,11 +285,11 @@ export async function buildWorkerCleanupProposal(
       ? await input.computeBranchRevision(task.branch)
       : task.branchRevision;
     if (!branchRevision?.trim()) {
-      return blocked(run.runId, taskId, 'live worktree 缺少 branchRevision，拒绝清理');
+      return blocked(run, task, 'live worktree 缺少 branchRevision，拒绝清理');
     }
   }
   if (!branchRevision?.trim()) {
-    return blocked(run.runId, taskId, 'cleanup proposal 缺少 branchRevision，拒绝清理');
+    return blocked(run, task, 'cleanup proposal 缺少 branchRevision，拒绝清理');
   }
   const requiredBranchRevision = branchRevision;
   return {
@@ -301,7 +323,7 @@ export async function buildWorkerCleanupProposalSafely(
     return await buildWorkerCleanupProposal(input);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    return blocked(input.run.runId, input.task.taskId, `Cleanup 提案准备失败：${message}`);
+    return blocked(input.run, input.task, `Cleanup 提案准备失败：${message}`);
   }
 }
 

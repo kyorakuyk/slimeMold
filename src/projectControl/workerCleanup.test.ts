@@ -117,7 +117,27 @@ describe('worker cleanup proposal', () => {
     });
   });
 
-  it('binds cleanup to the Acceptance stage when it differs from the task id', async () => {
+  it('retains current task lineage on a blocked cleanup proposal', async () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const task = { ...run().tasks['task-1'], taskExecutionId, currentAttemptId: attemptId };
+    const proposal = await buildWorkerCleanupProposalSafely({
+      run: run(),
+      task,
+      acceptance: acceptance(),
+      computeWorktreeSignature: vi.fn(async () => { throw new Error('git status read failed'); }),
+      sideEffects: [],
+    });
+
+    expect(proposal).toMatchObject({
+      status: 'blocked',
+      taskExecutionId,
+      attemptId,
+      reason: expect.stringContaining('git status read failed'),
+    });
+  });
+
+  it('binds the Acceptance stage when it differs from the task id', async () => {
     const task = { ...run().tasks['task-1'], acceptanceStageId: 'verify' };
     const proposal = await buildWorkerCleanupProposal({
       run: run(),

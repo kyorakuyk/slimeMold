@@ -267,6 +267,38 @@ describe('workerRunViewsFor', () => {
     expect(views[0].tasks[0].sideEffects).toEqual([]);
   });
 
+  it('projects blocked cleanup only for the matching current attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const source = run({
+      tasks: {
+        ...run().tasks,
+        'task-1': {
+          ...run().tasks['task-1'],
+          status: 'succeeded',
+          taskExecutionId,
+          currentAttemptId: attemptId,
+        },
+      },
+    });
+    const current = {
+      status: 'blocked',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      reason: 'worktree signature unavailable',
+    } satisfies WorkerCleanupProposal;
+    const stale = {
+      ...current,
+      attemptId: createAttemptId(taskExecutionId, 2),
+      reason: 'stale attempt',
+    } satisfies WorkerCleanupProposal;
+    const views = workerRunViewsFor([source], [], 'orch-1', [], [], [stale, current]);
+
+    expect(views[0].tasks[0].cleanup).toEqual(current);
+  });
+
   it('filters runs to the selected orchestration and leaves missing recovery undefined', () => {
     const views = workerRunViewsFor([
       run(),
