@@ -151,15 +151,36 @@ fn canonicalize_required(path: &Path, raw: &str) -> Result<PathBuf, String> {
     canonicalize_if_present(path)?.ok_or_else(|| format!("dev_exec: 参数路径不存在：{raw}"))
 }
 
+fn canonicalize_existing_git_pathspec_ancestor(
+    path: &Path,
+    raw: &str,
+) -> Result<Option<PathBuf>, String> {
+    // `canonicalize` reports dangling symlinks as NotFound; inspect the link itself first.
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => canonicalize_required(path, raw).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "dev_exec: 无法检查 Git pathspec 祖先 {}：{error}",
+            path.display()
+        )),
+    }
+}
+
 fn canonicalize_git_diff_pathspec(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
-    let relative = Path::new(raw);
-    if relative.as_os_str().is_empty()
-        || relative.is_absolute()
-        || relative
+    let pathspec = Path::new(raw);
+    let has_unsafe_component = if pathspec.is_absolute() {
+        pathspec
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    } else {
+        pathspec
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(format!("dev_exec: Git pathspec 不是受控相对路径：{raw}"));
+    };
+    if pathspec.as_os_str().is_empty() || has_unsafe_component {
+        return Err(format!(
+            "dev_exec: Git pathspec 不是受控 worktree 路径：{raw}"
+        ));
     }
 
     let canonical_root = cwd.canonicalize().map_err(|error| {
@@ -168,7 +189,11 @@ fn canonicalize_git_diff_pathspec(cwd: &Path, raw: &str) -> Result<PathBuf, Stri
             cwd.display()
         )
     })?;
-    let candidate = cwd.join(relative);
+    let candidate = if pathspec.is_absolute() {
+        dev_strip_verbatim(pathspec)
+    } else {
+        cwd.join(pathspec)
+    };
     if let Some(canonical) = canonicalize_if_present(&candidate)? {
         if !path_is_same_or_child(&canonical, &canonical_root) {
             return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
@@ -188,7 +213,8 @@ fn canonicalize_git_diff_pathspec(cwd: &Path, raw: &str) -> Result<PathBuf, Stri
         };
         ancestor = parent;
 
-        let Some(canonical_ancestor) = canonicalize_if_present(ancestor)? else {
+        let Some(canonical_ancestor) = canonicalize_existing_git_pathspec_ancestor(ancestor, raw)?
+        else {
             continue;
         };
         if !path_is_same_or_child(&canonical_ancestor, &canonical_root) {
@@ -535,3 +561,6 @@ pub(crate) fn canonicalize_dev_exec_args(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod git_diff_pathspec_tests;
