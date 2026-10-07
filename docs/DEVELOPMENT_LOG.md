@@ -5415,3 +5415,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - durable read-back：原 Worker execution side effect 为 `receipt/succeeded`；worktree-cleanup side effect 为 `unknown/needs-user` 且无 cleanup receipt；run+task 精确匹配 4 个事件（`RunCreated`, `TaskQueued`, `TaskStarted`, `TaskSucceeded`），`TaskCleaned=0`；目标目录与 branch ref 均不存在。新 attempt 未创建，cleanup 未执行。
 - 该停止由现有安全门要求：`cleanupUnknownRunIds` 将 unknown/needs-user 的 worktree cleanup 纳入阻塞集（`src/projectControl/workerRecoveryFacts.ts:109-127`）；`assertWorkerRunConsistency` 对非空阻塞集抛出 identity-read-back 错误（`src/projectControl/workerRunConsistencyAction.ts:65-70`）；Coordinator 在调用 `runActiveWorkerRun` 前先 await 一致性检查（`src/projectControl/workerRunCoordinator.ts:127-148`，由 `src/app/workerRuntime.ts:199-209` 提供）。恢复实现明确禁止对含 cleanup effect 的 recovery 直接 retry（`src/projectControl/workerSideEffects.ts:768-770`）。因此即便用户已授权一次新 attempt，当前事实不满足执行前置条件；没有绕过/清除 unknown，也未调用 recovery skip/cleanup。
 - H4 本轮仍未复现历史 Git top-level probe failure，根因未知。cleanup 仍为 `unknown/needs-user`、GUI cleanup acceptance `unverified / not accepted`。需先另行明确如何处置该旧 cleanup-unknown（保留并停止，或讨论一个只读身份核对/正式 reconciliation 路径）；在其解除前不启动新 attempt。未 push、未 merge。
+
+### 7.390 unverified：当前 native cleanup read-back 不能单独只读调用
+
+- 源码核验未发现独立的只读 native cleanup identity probe：`src/dev/tauri-run.ts:74-88` 先调用 `dev_approve_cleanup`，再调用 `dev_cleanup_worktree`；Rust handler 在 `src-tauri/src/authority/worktree.rs:1507` 执行 worktree/branch cleanup mutations，之后才于 `1546-1555` 做 target/worktree-list read-back 并返回 `DevCleanupReadback`。因此该命令不是可安全用于本次旧 orphan 核对的只读接口。
+- 目标路径虽在本机不存在，但没有有效 cleanup proposal/native capability；本轮未调用 `dev_cleanup_worktree`，未触发删除、receipt/event 写入或状态重置。旧 side effect 继续保持 `unknown/needs-user`，新 Worker attempt 继续被 pre-dispatch consistency gate 阻止。
+- 要在同一 fixture 继续，需先讨论并明确批准如何给旧 unknown 建立可信、非破坏性的核对/reconciliation 路径；不能把现有删除命令当作探测器，也不能因目标目录已不存在而合成 CleanupReceipt 或 `TaskCleaned`。未 push、未 merge。
