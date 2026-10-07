@@ -5381,3 +5381,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - fixture durable read-back：run `run-0903c30c-3cb3-44e2-93c5-a42ccfe37e08` 的 Task `task-create-worker-marker` / attempt 1 仍为 succeeded，4 个 Evidence ID 与 Acceptance `acc-muxh4muk-97071bce` 保持绑定；cleanup side effect 是 `unknown/needs-user`，无 receipt、无 `TaskCleaned`。目标 worktree 目录及 branch ref 当前都不存在；删除来源无法由现有 durable facts 归因，因此不得重试清理或将其标记为成功。
 - 验证：隔离 localStorage 的完整 Vitest 为 `209 files / 1424 tests passed`；`npm run build` 通过（2102 modules transformed，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit`、`git diff --check` 通过。
 - 当前 H4 GUI 可用仅是本次窗口观察，不证明历史 Git top-level probe 根因已修复；cleanup 仍为 `unknown/needs-user`，没有用户批准后的有效 proposal、CleanupReceipt 或 `TaskCleaned`。正式验收保持 `unverified / not accepted`；本轮未执行 cleanup、未 push、未 merge。
+
+### 7.385 unverified：增加 native verbatim path cleanup receipt 回归测试
+
+- 新增 `src/projectControl/workerCleanupExecution.pathReadback.test.ts`，把 native `\\?\C:\...` canonical path 与普通 proposal path 的对照放进 receipt execution 路径；拆出后 `workerCleanupExecution.test.ts` 为 378 行，新测试文件 98 行。
+- TDD 证据：临时绕过 verbatim-prefix normalization 时，新回归测试失败（`result.cleaned` 实际为 `false`）；恢复 normalization 后通过。定向执行 2 个测试文件共 12 tests passed。
+- 验证：最终全量 Vitest 为 `210 files / 1425 tests passed`；`npm run build` 通过（2102 modules transformed，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。首次 build 在新测试 fixture 的可选 `targetIdentity` 类型处报错，收窄 fixture 返回类型后最终质量门通过。
+- 本切片没有重新启动 Tauri，也没有读取 native 返回的实际 verbatim path；该 regression 证明 TS receipt gate 能接受别名，不证明 fixture 历史 unknown cleanup 的根因或结果。fixture cleanup side effect 仍是 `unknown/needs-user`，没有可读回的 CleanupReceipt / `TaskCleaned`；本轮未触碰或清理任何 worktree，正式 GUI 验收仍为 `unverified / not accepted`，未 push、未 merge。
