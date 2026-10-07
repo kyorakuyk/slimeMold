@@ -151,6 +151,60 @@ fn canonicalize_required(path: &Path, raw: &str) -> Result<PathBuf, String> {
     canonicalize_if_present(path)?.ok_or_else(|| format!("dev_exec: 参数路径不存在：{raw}"))
 }
 
+fn canonicalize_git_diff_pathspec(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(raw);
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("dev_exec: Git pathspec 不是受控相对路径：{raw}"));
+    }
+
+    let canonical_root = cwd.canonicalize().map_err(|error| {
+        format!(
+            "dev_exec: 无法 canonicalize worktree root {}：{error}",
+            cwd.display()
+        )
+    })?;
+    let candidate = cwd.join(relative);
+    if let Some(canonical) = canonicalize_if_present(&candidate)? {
+        if !path_is_same_or_child(&canonical, &canonical_root) {
+            return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
+        }
+        return Ok(dev_strip_verbatim(&canonical));
+    }
+
+    let mut ancestor = candidate.as_path();
+    let mut missing_components = Vec::new();
+    loop {
+        let Some(name) = ancestor.file_name() else {
+            return Err(format!("dev_exec: 无法解析 Git pathspec：{raw}"));
+        };
+        missing_components.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            return Err(format!("dev_exec: 无法解析 Git pathspec：{raw}"));
+        };
+        ancestor = parent;
+
+        let Some(canonical_ancestor) = canonicalize_if_present(ancestor)? else {
+            continue;
+        };
+        if !path_is_same_or_child(&canonical_ancestor, &canonical_root) {
+            return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
+        }
+        let mut resolved = canonical_ancestor;
+        for component in missing_components.iter().rev() {
+            resolved.push(component);
+        }
+        if !path_is_same_or_child(&resolved, &canonical_root) {
+            return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
+        }
+        return Ok(dev_strip_verbatim(&resolved));
+    }
+}
+
 pub(crate) fn dev_arg_shell_safe(arg: &str) -> bool {
     !arg.is_empty()
         && arg.chars().all(|character| !character.is_control())
@@ -307,13 +361,12 @@ pub(crate) fn dev_arg_path_lexically_safe(arg: &str) -> bool {
 
 /// dev_exec 实际 spawn 前，对**文件路径参数**做 canonicalize 校验（解析符号链接），
 /// 确认其规范化后路径仍落在 cwd（worktree 根）之内。防止通过 symlink 读取 worktree 外文件。
-/// 仅对带路径参数的受控文件读取或脚本命令（cat/head/tail/ls/grep/find/git diff/tsx）生效。
-/// 规则：文件 operand 必须存在并成功 canonicalize；NotFound 与其他 I/O 错误都直接拒绝；
-/// 若路径存在且 canonicalize 后逃出 cwd，也拒绝。
+/// 仅 scoped Git diff pathspec 可指向不存在的路径；其最深存在祖先仍须 canonicalize 且留在 worktree。
+/// 其他文件 operand 必须存在；NotFound、其他 I/O 错误及 canonicalize 后逃出 cwd 均拒绝。
 pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), String> {
     let name = args.first().map(|value| value.as_str());
+    let worktree_root = dev_strip_verbatim(Path::new(cwd));
     let check = |arg: &str| -> Result<(), String> {
-        let worktree_root = dev_strip_verbatim(Path::new(cwd));
         let joined = worktree_root.join(arg);
         let canonical = canonicalize_required(&joined, arg)?;
         let normalized = dev_strip_verbatim(&canonical);
@@ -321,6 +374,9 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
             return Err(format!("dev_exec: 参数路径逃逸出 worktree：{arg}"));
         }
         Ok(())
+    };
+    let check_git_diff_pathspec = |arg: &str| -> Result<(), String> {
+        canonicalize_git_diff_pathspec(&worktree_root, arg).map(|_| ())
     };
     match name {
         Some("cat") | Some("head") | Some("tail") | Some("ls") => {
@@ -341,7 +397,7 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
         {
             if args.get(5).map(|value| value.as_str()) != Some("--name-only") {
                 for index in 7..args.len() {
-                    check(&args[index])?;
+                    check_git_diff_pathspec(&args[index])?;
                 }
             }
         }
@@ -351,7 +407,7 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
                 && args.get(3).map(|value| value.as_str()) == Some("--") =>
         {
             for index in 4..args.len() {
-                check(&args[index])?;
+                check_git_diff_pathspec(&args[index])?;
             }
         }
         Some("git") => {
@@ -392,57 +448,63 @@ pub(crate) fn dev_exec_validate_paths(cwd: &str, args: &[String]) -> Result<(), 
     Ok(())
 }
 
-/// Canonicalizes command-specific existing path operands under `cwd`.
-/// Every filesystem operand must exist and is replaced with its canonical path; symlink escapes
-/// and missing paths fail closed. Non-filesystem operands such as grep patterns and git revisions
-/// remain untouched.
+/// Canonicalizes command-specific path operands under `cwd`.
+/// Ordinary filesystem operands must exist; scoped Git diff pathspecs may be missing only when
+/// their deepest existing ancestor canonicalizes inside `cwd`. Non-filesystem operands such as
+/// grep patterns and Git revisions remain untouched.
 pub(crate) fn canonicalize_dev_exec_args(
     cwd: &Path,
     args: &[String],
 ) -> Result<Vec<String>, String> {
     let mut result = args.to_vec();
-    let mut replace_if_existing = |index: usize| -> Result<(), String> {
-        let Some(raw) = result.get(index).cloned() else {
-            return Ok(());
+    let mut replace_path_operand =
+        |index: usize, allow_missing_git_pathspec: bool| -> Result<(), String> {
+            let Some(raw) = result.get(index).cloned() else {
+                return Ok(());
+            };
+            if raw.starts_with('-') || (raw == "." && !allow_missing_git_pathspec) {
+                return Ok(());
+            }
+            let canonical = if allow_missing_git_pathspec {
+                canonicalize_git_diff_pathspec(cwd, &raw)?
+            } else {
+                let joined = cwd.join(&raw);
+                let canonical = canonicalize_required(&joined, &raw)?;
+                if !path_is_same_or_child(&canonical, cwd) {
+                    return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
+                }
+                canonical
+            };
+            result[index] = dev_strip_verbatim(&canonical).to_string_lossy().to_string();
+            Ok(())
         };
-        if raw.starts_with('-') || raw == "." {
-            return Ok(());
-        }
-        let joined = cwd.join(&raw);
-        let canonical = canonicalize_required(&joined, &raw)?;
-        if !path_is_same_or_child(&canonical, cwd) {
-            return Err(format!("dev_exec: 参数路径逃逸出 worktree：{raw}"));
-        }
-        result[index] = dev_strip_verbatim(&canonical).to_string_lossy().to_string();
-        Ok(())
-    };
     match args.first().map(|value| value.as_str()) {
         Some("cat") | Some("head") | Some("tail") | Some("ls") => {
             for index in 1..args.len() {
-                replace_if_existing(index)?;
+                replace_path_operand(index, false)?;
             }
         }
         Some("find") => {
             for index in find_starting_point_indices(args) {
-                replace_if_existing(index)?;
+                replace_path_operand(index, false)?;
             }
         }
         Some("node") if args.get(1).map(|value| value.as_str()) == Some("--check") => {
-            replace_if_existing(2)?;
+            replace_path_operand(2, false)?;
         }
         Some("tsc") => {
             for index in tsc_path_start(args)..args.len() {
-                replace_if_existing(index)?;
+                replace_path_operand(index, false)?;
             }
         }
-        Some("tsx") => replace_if_existing(1)?,
+        Some("tsx") => replace_path_operand(1, false)?,
         Some("git")
             if args.get(1).map(|value| value.as_str()) == Some("--no-pager")
                 && args.get(2).map(|value| value.as_str()) == Some("diff") =>
         {
             if args.get(5).map(|value| value.as_str()) != Some("--name-only") {
                 for index in 7..args.len() {
-                    replace_if_existing(index)?;
+                    replace_path_operand(index, true)?;
                 }
             }
         }
@@ -452,18 +514,18 @@ pub(crate) fn canonicalize_dev_exec_args(
                 && args.get(3).map(|value| value.as_str()) == Some("--") =>
         {
             for index in 4..args.len() {
-                replace_if_existing(index)?;
+                replace_path_operand(index, true)?;
             }
         }
         Some("git")
             if args.get(1).map(|value| value.as_str()) == Some("diff")
                 && !args.get(2).is_some_and(|value| is_git_diff_revision(value)) =>
         {
-            replace_if_existing(2)?;
+            replace_path_operand(2, false)?;
         }
         Some("grep") => {
             for index in grep_file_operand_indices(args) {
-                replace_if_existing(index)?;
+                replace_path_operand(index, false)?;
             }
         }
         _ => {}
