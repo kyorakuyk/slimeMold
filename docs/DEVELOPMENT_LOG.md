@@ -5373,3 +5373,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 本次 GUI 中 DevSession 已成功承载 Worker run，未重现历史 `dev_init_session` 初始化失败；这不证明历史 H4 的 Git probe 根因已修复。全量测试日志中的 `[H4]` 来自 `src/dev/gui.test.ts` 有意模拟初始化失败的测试。
 - 验证：设置独立 `NODE_OPTIONS=--localstorage-file=...` 后，`npm run test -- --reporter=dot` 为 `209 files / 1422 tests passed`；`npm run build` 通过（2102 modules transformed，保留既有 dynamic/static import 与大 chunk warnings）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit` 与 `git diff --check` 通过。当前仅证明 blocked proposal lineage/projection 代码切片和质量门，不证明 GUI cleanup 或 durable receipt。
 - 未批准或调用 cleanup；没有 CleanupReceipt、`TaskCleaned` 或 worktree 删除 read-back。正式验收仍为 `unverified / not accepted`；五个历史 Worker worktrees 保留，未 push、未 merge。
+
+### 7.384 unverified：规范化 Windows verbatim cleanup read-back 路径
+
+- `dev_cleanup_worktree` 将 native canonical path 写入 `DevCleanupReadback.worktreePath`；Worker cleanup receipt gate 再以 `pathComparisonKey` 将该字段与 proposal path 比较。`src/dev/path-utils.ts` 现在在 WebView 纯路径解析前识别并去除 Windows verbatim drive/UNC 前缀；`src/dev/path-utils.test.ts` 覆盖 drive 与 UNC 路径在 Node/WebView 两条 key 路径上的别名等价。
+- 真实 Tauri 窗口的 H4 面板成功渲染 DevSession，并读到 1 条 PASS Acceptance；同屏状态为 EvidenceStore 未绑定、Worktree 0。当前窗口未显示原 `src/components` 缺失 pathspec 错误，而显示 cleanup native identity/read-back 审计失败；由于当前无可执行 proposal、journal 为 `unknown/needs-user`，本次观察不能证明新的 cleanup 流程已经越过签名 gate。
+- fixture durable read-back：run `run-0903c30c-3cb3-44e2-93c5-a42ccfe37e08` 的 Task `task-create-worker-marker` / attempt 1 仍为 succeeded，4 个 Evidence ID 与 Acceptance `acc-muxh4muk-97071bce` 保持绑定；cleanup side effect 是 `unknown/needs-user`，无 receipt、无 `TaskCleaned`。目标 worktree 目录及 branch ref 当前都不存在；删除来源无法由现有 durable facts 归因，因此不得重试清理或将其标记为成功。
+- 验证：隔离 localStorage 的完整 Vitest 为 `209 files / 1424 tests passed`；`npm run build` 通过（2102 modules transformed，既有 dynamic/static import 与大 chunk warnings 保持）；`npm run i18n:check` 为 `1026/1026`；`npx tsc --noEmit`、`git diff --check` 通过。
+- 当前 H4 GUI 可用仅是本次窗口观察，不证明历史 Git top-level probe 根因已修复；cleanup 仍为 `unknown/needs-user`，没有用户批准后的有效 proposal、CleanupReceipt 或 `TaskCleaned`。正式验收保持 `unverified / not accepted`；本轮未执行 cleanup、未 push、未 merge。

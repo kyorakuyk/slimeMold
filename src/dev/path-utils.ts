@@ -20,6 +20,17 @@ function isWindowsPath(p: string): boolean {
   return /^[A-Za-z]:\//.test(p) || p.startsWith('//');
 }
 
+function normalizeWindowsVerbatimPrefix(p: string): string {
+  const normalized = p.replace(/\\/g, '/');
+  if (normalized.toLowerCase().startsWith('//?/unc/')) {
+    return `//${normalized.slice(8)}`;
+  }
+  if (/^\/\/\?\/[A-Za-z]:\//i.test(normalized)) {
+    return normalized.slice(4);
+  }
+  return normalized;
+}
+
 /** 用于路径相交/冲突判断的稳定 key；Windows 文件系统默认大小写不敏感。 */
 export function pathComparisonKey(p: string): string {
   const normalized = normalizeAbsolutePath(p);
@@ -42,7 +53,7 @@ export function pathComparisonKeyWeb(p: string): string {
  */
 export function resolveWeb(root: string, rel: string): string {
   const norm = (s: string) => s.replace(/\\/g, '/');
-  const rootNorm = norm(root);
+  const rootNorm = normalizeWindowsVerbatimPrefix(norm(root));
   const relNorm = norm(rel);
   const isUnc = rootNorm.startsWith('//');
   const parts = (rootNorm + '/' + relNorm).split('/');
