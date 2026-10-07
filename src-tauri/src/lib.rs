@@ -295,7 +295,12 @@ fn git_top_level(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
     execution::dev_exec::apply_dev_env(&mut cmd);
     let result = execution::dev_exec::run_with_timeout(&mut cmd, Duration::from_secs(5))?;
     if result.code != 0 {
-        return Err("Git top-level probe 失败".to_string());
+        let stderr = result.stderr.trim();
+        return Err(if stderr.is_empty() {
+            format!("Git top-level probe 失败（exit code {}）", result.code)
+        } else {
+            format!("Git top-level probe 失败（exit code {}）：{}", result.code, stderr)
+        });
     }
     std::path::PathBuf::from(result.stdout.trim())
         .canonicalize()
