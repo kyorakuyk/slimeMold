@@ -1,6 +1,10 @@
 import type { WorkerExecutionResult, WorkerTaskLease } from '../domain/workerQueue';
 import { createFeedbackRequest, type FeedbackRequest } from '../projectControl/protocol';
-import { renderTaskContract, WORKER_CONTRACT_DATA_BOUNDARY } from '../projectControl/workOrder';
+import {
+  renderTaskContract,
+  serializeWorkerContractData,
+  WORKER_CONTRACT_DATA_BOUNDARY,
+} from '../projectControl/workOrder';
 import type { CodexWorkerResponse, WorkerAcceptance } from './codexWorkerExecutor';
 import {
   createAntigravityWorkerInvoker,
@@ -85,11 +89,15 @@ export function createAntigravityWorkerExecutor(
         operationId: `antigravity-${lease.attemptId.replace(/[^A-Za-z0-9_.-]/g, '-')}`,
         context: {
           dataBoundary: WORKER_CONTRACT_DATA_BOUNDARY,
-          task: lease.task,
-          attempt: lease.attempt,
-          attemptId: lease.attemptId,
-          contextPack: lease.contextPack ?? null,
-          dependencyArtifacts: lease.dependencyArtifacts ?? [],
+          untrustedData: serializeWorkerContractData({
+            task: lease.task,
+            contextPack: lease.contextPack ?? null,
+            dependencyArtifacts: lease.dependencyArtifacts ?? [],
+          }),
+          runtime: {
+            attempt: lease.attempt,
+            attemptId: lease.attemptId,
+          },
         },
         signal,
       });
