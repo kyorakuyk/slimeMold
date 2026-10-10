@@ -4,6 +4,7 @@ import type { WorkerTaskLease } from '../domain/workerQueue';
 import type { ProjectTask } from '../projectControl/types';
 import { createAntigravityWorkerExecutor } from './antigravityWorkerExecutor';
 import { buildCodexWorkerPrompt } from './codexWorkerExecutor';
+import { renderTaskContract } from '../projectControl/workOrder';
 
 function createTask(input: {
   id: string;
@@ -125,9 +126,15 @@ describe('Worker prompt characterization baselines', () => {
     it('pins the complete Codex prompt', () => {
       expect(buildCodexWorkerPrompt(simpleLease)).toMatchInlineSnapshot(`
         "你是 SlimeMold 的实现 Worker。只在当前已分配的 worktree 内完成一个任务。
-        Worktree: C:/worktrees/task-1
-        Attempt: 1
 
+        项目级约定
+        （未提供 ContextPack）
+
+        模块级契约
+        模块：module-1
+        类别：implementation
+
+        本任务
         任务标题：实现 Worker 队列
         任务描述：在隔离 worktree 中完成队列执行器
         允许涉及的范围：src/domain/workerQueue.ts, src/dev/workerAllocator.ts
@@ -135,6 +142,10 @@ describe('Worker prompt characterization baselines', () => {
         验收标准：
         - npm run test 通过
         - 没有跨 worktree 写入
+
+        运行时信息：
+        Worktree: C:/worktrees/task-1
+        Attempt: 1
 
         约束：
         - 只能修改当前 worktree；只读依赖成果路径仅用于读取/复制参考，不得在原依赖 worktree 写入。
@@ -147,9 +158,15 @@ describe('Worker prompt characterization baselines', () => {
     it('pins the complete Antigravity prompt', async () => {
       await expect(captureAntigravityPrompt(simpleLease)).resolves.toMatchInlineSnapshot(`
         "你是 SlimeMold 的 Antigravity 实现 Worker。只在当前已分配 Worktree 内工作。
-        Worktree: C:/worktrees/task-1
-        Attempt: 1
 
+        项目级约定
+        （未提供 ContextPack）
+
+        模块级契约
+        模块：module-1
+        类别：implementation
+
+        本任务
         任务标题：实现 Worker 队列
         任务描述：在隔离 worktree 中完成队列执行器
         允许涉及的范围：src/domain/workerQueue.ts, src/dev/workerAllocator.ts
@@ -157,6 +174,10 @@ describe('Worker prompt characterization baselines', () => {
         验收标准：
         - npm run test 通过
         - 没有跨 worktree 写入
+
+        运行时信息：
+        Worktree: C:/worktrees/task-1
+        Attempt: 1
 
         强制边界：
         - 先调用 slimemold_get_task_context，再开始修改。
@@ -172,18 +193,28 @@ describe('Worker prompt characterization baselines', () => {
     it('pins the complete Codex prompt', () => {
       expect(buildCodexWorkerPrompt(dependentLease)).toMatchInlineSnapshot(`
         "你是 SlimeMold 的实现 Worker。只在当前已分配的 worktree 内完成一个任务。
-        Worktree: C:/worktrees/task-2
-        Attempt: 1
 
+        项目级约定
+        （未提供 ContextPack）
+
+        模块级契约
+        模块：module-2
+        类别：implementation
+
+        本任务
         任务标题：实现依赖模块
         任务描述：基于上游成果实现下游模块
         允许涉及的范围：src/feature.ts, tests/feature.test.ts
         依赖任务：task-1
-        已成功完成的依赖成果（只读参考；只能把需要的内容复制/整合到当前 Worktree，禁止修改这些路径）：
-        - task-1 attempt=1 path=C:/worktrees/task-1 revision=abc123
         验收标准：
         - 测试覆盖新行为
         - 不修改依赖工作树
+
+        运行时信息：
+        Worktree: C:/worktrees/task-2
+        Attempt: 1
+        已成功完成的依赖成果（只读参考；只能把需要的内容复制/整合到当前 Worktree，禁止修改这些路径）：
+        - task-1 attempt=1 path=C:/worktrees/task-1 revision=abc123
 
         约束：
         - 只能修改当前 worktree；只读依赖成果路径仅用于读取/复制参考，不得在原依赖 worktree 写入。
@@ -196,9 +227,15 @@ describe('Worker prompt characterization baselines', () => {
     it('pins the complete Antigravity prompt', async () => {
       await expect(captureAntigravityPrompt(dependentLease)).resolves.toMatchInlineSnapshot(`
         "你是 SlimeMold 的 Antigravity 实现 Worker。只在当前已分配 Worktree 内工作。
-        Worktree: C:/worktrees/task-2
-        Attempt: 1
 
+        项目级约定
+        （未提供 ContextPack）
+
+        模块级契约
+        模块：module-2
+        类别：implementation
+
+        本任务
         任务标题：实现依赖模块
         任务描述：基于上游成果实现下游模块
         允许涉及的范围：src/feature.ts, tests/feature.test.ts
@@ -206,6 +243,10 @@ describe('Worker prompt characterization baselines', () => {
         验收标准：
         - 测试覆盖新行为
         - 不修改依赖工作树
+
+        运行时信息：
+        Worktree: C:/worktrees/task-2
+        Attempt: 1
 
         强制边界：
         - 先调用 slimemold_get_task_context，再开始修改。
@@ -223,5 +264,37 @@ describe('Worker prompt characterization baselines', () => {
     expect(lease.task.stageId).toBeUndefined();
     expect(lease.orchestrationId).toBeUndefined();
     expect(lease.contextPack).toBeUndefined();
+  });
+
+  it.each(promptCases)('$name includes the exact shared task contract in both prompts', async ({ lease }) => {
+    const contract = renderTaskContract(lease);
+
+    expect(buildCodexWorkerPrompt(lease)).toContain(contract);
+    expect(await captureAntigravityPrompt(lease)).toContain(contract);
+  });
+
+  it.each(promptCases)('$name keeps every existing task detail in the shared contract', ({ lease }) => {
+    const contract = renderTaskContract(lease);
+    const taskFacts = [
+      lease.task.title,
+      lease.task.description,
+      ...lease.task.scope,
+      ...lease.task.dependsOn,
+      ...lease.task.acceptanceCriteria,
+    ];
+
+    for (const fact of taskFacts) expect(contract).toContain(fact);
+  });
+
+  it('keeps Codex dependency artifact paths in runtime context after the stable contract', () => {
+    const contract = renderTaskContract(dependentLease);
+    const prompt = buildCodexWorkerPrompt(dependentLease);
+    const runtimeContext = prompt.slice(prompt.indexOf(contract) + contract.length);
+
+    expect(contract).not.toContain('C:/worktrees/task-1');
+    expect(runtimeContext).toContain('Worktree: C:/worktrees/task-2');
+    expect(runtimeContext).toContain('Attempt: 1');
+    expect(runtimeContext).toContain('已成功完成的依赖成果');
+    expect(runtimeContext).toContain('task-1 attempt=1 path=C:/worktrees/task-1 revision=abc123');
   });
 });
