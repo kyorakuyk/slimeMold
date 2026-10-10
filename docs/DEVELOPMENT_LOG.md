@@ -5421,3 +5421,12 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 源码核验未发现独立的只读 native cleanup identity probe：`src/dev/tauri-run.ts:74-88` 先调用 `dev_approve_cleanup`，再调用 `dev_cleanup_worktree`；Rust handler 在 `src-tauri/src/authority/worktree.rs:1507` 执行 worktree/branch cleanup mutations，之后才于 `1546-1555` 做 target/worktree-list read-back 并返回 `DevCleanupReadback`。因此该命令不是可安全用于本次旧 orphan 核对的只读接口。
 - 目标路径虽在本机不存在，但没有有效 cleanup proposal/native capability；本轮未调用 `dev_cleanup_worktree`，未触发删除、receipt/event 写入或状态重置。旧 side effect 继续保持 `unknown/needs-user`，新 Worker attempt 继续被 pre-dispatch consistency gate 阻止。
 - 要在同一 fixture 继续，需先讨论并明确批准如何给旧 unknown 建立可信、非破坏性的核对/reconciliation 路径；不能把现有删除命令当作探测器，也不能因目标目录已不存在而合成 CleanupReceipt 或 `TaskCleaned`。未 push、未 merge。
+
+### 7.391 unverified：补全 TaskGraph 事件快照并提供独立回放
+
+- `generateTaskGraphCommand`、`reviseTaskGraphCommand`、`approveTaskGraphCommand` 现在分别在 `TaskGraphProposed`、`TaskGraphSuperseded`、`TaskGraphRevisionCreated`、`TaskGraphApproved` 中追加完整 `ProjectTaskGraph` 快照；原 payload 字段保留，`schemaVersion` 仍为 1。没有改写现存 `events.jsonl`。
+- 新增纯函数 `replayTaskGraphsFromEvents`，按序应用完整快照、按 `eventId` 去重、稳定保留图首次出现顺序；缺少完整结构的旧事件只登记 `legacyGraphIds`，不从 `taskIds` 猜图，之后的完整快照可恢复该图。按计划未改 `replayDomainEvents`。
+- `projectControlConsistency.ts` 的现有检查比较 aggregate、图版本和批准事实，不对事件 payload 做字段白名单校验，因此没有必要改该文件。相关实现和决策记录在本轮报告 `.hermes/reports/2026-10-11-living-graph-batch1.md`。
+- 验证：定向 3 个测试文件 `24 passed`；全量 `npm run test -- --reporter=dot` 退出码 1，为 `211 files` 中 `187 passed / 24 failed`、`1,298 tests` 中 `1,288 passed / 10 failed`，失败文件与用例集合均与基线完全相同；运行仍提示 Node 未配置 `--localstorage-file`，失败表现包括 localStorage 访问错误与 experienceStore 持久化断言失败，本轮不重新分类基线根因；`npm run build` 通过（`2102 modules transformed`，保留既有 mixed static/dynamic import 与大 chunk warnings）；`npx tsc --noEmit` 通过；`npm run i18n:check` 为 `1026/1026`；`git diff --check` 通过。
+- Exact-snapshot reviewer 核对 target `1f363a3be3a40e3a1ce457dfc9170fa96ae42f77`、parent `28d6f99915ef4f38090a92c48b1ec3b604d51c96`、分支 `feat/living-graph-batch1` 与 clean tree；严格 JSON verdict 为 `passed=true`，`security_concerns=[]`、`logic_errors=[]`。建议进一步断言四类事件的 schemaVersion/旧字段保留并覆盖冗余元数据冲突；作为非阻塞建议记录，未扩大本切片。
+- 本地 checkpoint commit `1f363a3be3a40e3a1ce457dfc9170fa96ae42f77` 与 tag `batch1-slice1` 保持明确的 `(unverified)` 状态；独立 review 通过不等于用户验收。未 push、未 merge。
