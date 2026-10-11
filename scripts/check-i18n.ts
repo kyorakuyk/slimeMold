@@ -30,11 +30,12 @@ function collectStringNames(
   out: Set<string>,
   duplicates: Set<string>,
   language: string,
+  namespace: string,
   translations: PlaceholderTranslation[],
 ): void {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) {
-    for (const item of node) collectStringNames(item, out, duplicates, language, translations);
+    for (const item of node) collectStringNames(item, out, duplicates, language, namespace, translations);
     return;
   }
   const obj = node as Record<string, unknown>;
@@ -47,14 +48,14 @@ function collectStringNames(
           if (out.has(name)) duplicates.add(name);
           out.add(name);
           const value = (s as Record<string, unknown>)['#text'];
-          translations.push({ language, key: name, value: typeof value === 'string' ? value : '' });
+          translations.push({ language, namespace, key: name, value: typeof value === 'string' ? value : '' });
         }
       }
     }
   }
   for (const key of Object.keys(obj)) {
     if (key === 'string') continue;
-    collectStringNames(obj[key], out, duplicates, language, translations);
+    collectStringNames(obj[key], out, duplicates, language, namespace, translations);
   }
 }
 
@@ -69,11 +70,12 @@ function loadLangKeys(langDir: string, language: string): {
   const translations: PlaceholderTranslation[] = [];
   const files = readdirSync(langDir).filter((f) => f.endsWith('.xml'));
   for (const f of files) {
+    const namespace = f.replace(/\.xml$/, '');
     const raw = readFileSync(join(langDir, f), 'utf-8');
     const parsed = parser.parse(raw);
     const fileKeys = new Set<string>();
     const fileDuplicates = new Set<string>();
-    collectStringNames(parsed, fileKeys, fileDuplicates, language, translations);
+    collectStringNames(parsed, fileKeys, fileDuplicates, language, namespace, translations);
     for (const key of fileKeys) keys.add(key);
     for (const key of fileDuplicates) duplicates.add(`${f}:${key}`);
   }
@@ -139,9 +141,9 @@ function main(): number {
   for (const issue of checkPlaceholderConsistency(translations)) {
     hasError = true;
     if (issue.code === 'single-brace-placeholder') {
-      console.log(`✗ ${issue.language}:${issue.key} 使用单花括号占位符 {${issue.placeholders.join('}, {')}}；i18next 必须使用双花括号。`);
+      console.log(`✗ ${issue.language}:${issue.namespace}:${issue.key} 使用单花括号占位符 {${issue.placeholders.join('}, {')}}；i18next 必须使用双花括号。`);
     } else {
-      console.log(`✗ ${issue.key} 占位符不一致：${issue.baseLanguage}=${issue.basePlaceholders.join(', ')}；${issue.comparedLanguage}=${issue.comparedPlaceholders.join(', ')}`);
+      console.log(`✗ ${issue.namespace}:${issue.key} 占位符不一致：${issue.baseLanguage}=${issue.basePlaceholders.join(', ')}；${issue.comparedLanguage}=${issue.comparedPlaceholders.join(', ')}`);
     }
   }
 

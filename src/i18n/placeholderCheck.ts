@@ -1,5 +1,6 @@
 export interface PlaceholderTranslation {
   language: string;
+  namespace: string;
   key: string;
   value: string;
 }
@@ -8,11 +9,13 @@ export type PlaceholderIssue =
   | {
       code: 'single-brace-placeholder';
       language: string;
+      namespace: string;
       key: string;
       placeholders: string[];
     }
   | {
       code: 'placeholder-set-mismatch';
+      namespace: string;
       key: string;
       baseLanguage: 'zh-CN';
       basePlaceholders: string[];
@@ -37,6 +40,7 @@ export function checkPlaceholderConsistency(
       issues.push({
         code: 'single-brace-placeholder',
         language: translation.language,
+        namespace: translation.namespace,
         key: translation.key,
         placeholders: found,
       });
@@ -45,16 +49,19 @@ export function checkPlaceholderConsistency(
 
   const baseEntries = translations.filter((entry) => entry.language === 'zh-CN');
   const englishByKey = new Map(
-    translations.filter((entry) => entry.language === 'en-US').map((entry) => [entry.key, entry.value]),
+    translations
+      .filter((entry) => entry.language === 'en-US')
+      .map((entry) => [`${entry.namespace}\0${entry.key}`, entry.value]),
   );
   for (const base of baseEntries) {
-    const comparedValue = englishByKey.get(base.key);
+    const comparedValue = englishByKey.get(`${base.namespace}\0${base.key}`);
     if (comparedValue === undefined) continue;
     const basePlaceholders = placeholders(base.value, DOUBLE_BRACE_PLACEHOLDER);
     const comparedPlaceholders = placeholders(comparedValue, DOUBLE_BRACE_PLACEHOLDER);
     if (basePlaceholders.join('\0') === comparedPlaceholders.join('\0')) continue;
     issues.push({
       code: 'placeholder-set-mismatch',
+      namespace: base.namespace,
       key: base.key,
       baseLanguage: 'zh-CN',
       basePlaceholders,
@@ -63,8 +70,10 @@ export function checkPlaceholderConsistency(
     });
   }
 
+  const compareText = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
   return issues.sort((left, right) =>
-    left.key.localeCompare(right.key) || left.code.localeCompare(right.code) ||
-    ('language' in left ? left.language : '').localeCompare('language' in right ? right.language : ''),
+    compareText(left.namespace, right.namespace) || compareText(left.key, right.key) ||
+    compareText(left.code, right.code) ||
+    compareText('language' in left ? left.language : '', 'language' in right ? right.language : ''),
   );
 }

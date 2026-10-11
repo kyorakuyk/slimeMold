@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { checkPlaceholderConsistency } from './placeholderCheck';
 
-const translation = (language: string, key: string, value: string) => ({ language, key, value });
+const translation = (language: string, key: string, value: string, namespace = 'test') => ({
+  language,
+  namespace,
+  key,
+  value,
+});
 
 describe('checkPlaceholderConsistency', () => {
   it('reports single-brace interpolation tokens', () => {
@@ -11,6 +16,7 @@ describe('checkPlaceholderConsistency', () => {
       {
         code: 'single-brace-placeholder',
         language: 'zh-CN',
+        namespace: 'test',
         key: 'greeting',
         placeholders: ['name'],
       },
@@ -31,6 +37,7 @@ describe('checkPlaceholderConsistency', () => {
     ])).toEqual([
       {
         code: 'placeholder-set-mismatch',
+        namespace: 'test',
         key: 'settings.description',
         baseLanguage: 'zh-CN',
         basePlaceholders: ['工作流', '运行号'],
@@ -38,5 +45,14 @@ describe('checkPlaceholderConsistency', () => {
         comparedPlaceholders: ['run', 'workflow'],
       },
     ]);
+  });
+
+  it('compares duplicate keys only within the same namespace', () => {
+    expect(checkPlaceholderConsistency([
+      translation('zh-CN', 'shared.key', '{{count}}', 'ui'),
+      translation('en-US', 'shared.key', '{{count}}', 'ui'),
+      translation('zh-CN', 'shared.key', '{{name}}', 'panels'),
+      translation('en-US', 'shared.key', '{{name}}', 'panels'),
+    ])).toEqual([]);
   });
 });
