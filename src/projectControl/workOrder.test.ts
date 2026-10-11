@@ -289,4 +289,13 @@ describe('renderTaskContract', () => {
     expect(contract).not.toContain('50 美分');
     expect(contract).not.toContain('undefined');
   });
+
+  it('renders multiple dependency task ids as separate list items', () => {
+    const contract = renderTaskContract({
+      ...lease,
+      task: { ...task, dependsOn: ['task-upstream-a', 'task-upstream-b'] },
+    });
+
+    expect(contract).toContain('依赖任务：\n- task-upstream-a\n- task-upstream-b');
+  });
 });

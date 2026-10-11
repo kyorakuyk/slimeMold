@@ -29,6 +29,12 @@ function references(values: readonly { id: string; version: number; kind: string
     : '（无）';
 }
 
+function dependencyTasks(values: readonly string[]): string {
+  if (values.length === 0) return '依赖任务：（无）';
+  if (values.length === 1) return `依赖任务：${singleLine(values[0])}`;
+  return `依赖任务：\n${bulletList(values)}`;
+}
+
 function optionalNumber(value: unknown, unit: string): string | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? `${value}${unit}` : undefined;
 }
@@ -92,7 +98,7 @@ export function renderTaskContract(lease: WorkerTaskLease): string {
     quotedText(task.description),
     '允许涉及的范围：',
     taskScope.length > 0 ? bulletList(taskScope) : '（未声明）',
-    `依赖任务：${inlineList(Array.isArray(task.dependsOn) ? task.dependsOn : [])}`,
+    dependencyTasks(Array.isArray(task.dependsOn) ? task.dependsOn : []),
     '验收标准：',
     bulletList(Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : []),
   );
