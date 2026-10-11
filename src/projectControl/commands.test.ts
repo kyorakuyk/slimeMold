@@ -425,7 +425,7 @@ describe('startProjectSessionCommand', () => {
       triage: {
         level: 'L0',
         reasons: ['L0：单模块 core，涉及 1 个文件（上限 2）。'],
-        rulesVersion: 1,
+        rulesVersion: 2,
         violations: [],
       },
     });
@@ -469,7 +469,7 @@ describe('startProjectSessionCommand', () => {
       taskIds: ['t1', 't2'],
       triage: {
         level: 'L0',
-        rulesVersion: 1,
+        rulesVersion: 2,
         violations: [
           {
             code: 'over-growth',

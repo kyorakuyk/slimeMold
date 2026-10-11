@@ -156,6 +156,22 @@ describe('recordWorkOrderPreflightCommand', () => {
     expect(() => recordWorkOrderPreflightCommand(commandInput(snapshot))).toThrow(/L0/);
   });
 
+  it('records preflight for a single-module graph whose task scope is undeclared', () => {
+    const snapshot = snapshotFixture();
+    const graph = snapshot.taskGraphs![0];
+    snapshot.taskGraphs = [{
+      ...graph,
+      tasks: graph.tasks.map((task) => ({ ...task, scope: [] })),
+    }];
+
+    const result = recordWorkOrderPreflightCommand(commandInput(snapshot));
+
+    expect(result.events[0].payload).toMatchObject({
+      verdict: 'ambiguous',
+      guessPoints: [guessPoint],
+    });
+  });
+
   it('keeps completed and waived preflight events in the recognized control-event stream', () => {
     const started = startProjectSessionCommand({
       projectId: 'project-1',

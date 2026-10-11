@@ -44,7 +44,7 @@ describe('triageTaskGraph', () => {
       reasons: ['L0：单模块 hello，涉及 1 个文件（上限 2）。'],
       rulesVersion: TRIAGE_RULES_VERSION,
     });
-    expect(TRIAGE_RULES_VERSION).toBe(1);
+    expect(TRIAGE_RULES_VERSION).toBe(2);
   });
 
   it('falls back to L1 when one module spans more than the L0 file limit', () => {
@@ -54,6 +54,33 @@ describe('triageTaskGraph', () => {
     expect(triageTaskGraph(input)).toEqual({
       level: 'L1',
       reasons: [`L1：涉及 1 个模块和 ${scope.length} 个文件，未达到 L0/L2 门槛。`],
+      rulesVersion: TRIAGE_RULES_VERSION,
+    });
+  });
+
+  it('does not classify a small graph with undeclared task scopes as L0', () => {
+    const tasks = Array.from({ length: 3 }, (_, index) => task({
+      id: `task-${index + 1}`,
+      scope: [],
+    }));
+
+    const result = triageTaskGraph(graph(tasks));
+
+    expect(result.level).toBe('L1');
+    expect(result.reasons).toContain('有 3 个任务未声明 scope，不能判为 L0');
+  });
+
+  it('keeps a single task with no declared scope out of L0', () => {
+    const result = triageTaskGraph(graph([task({ scope: [] })]));
+
+    expect(result.level).toBe('L1');
+    expect(result.reasons).toContain('有 1 个任务未声明 scope，不能判为 L0');
+  });
+
+  it('reports an empty task graph with its dedicated L1 reason', () => {
+    expect(triageTaskGraph(graph([]))).toEqual({
+      level: 'L1',
+      reasons: ['任务图没有任务'],
       rulesVersion: TRIAGE_RULES_VERSION,
     });
   });

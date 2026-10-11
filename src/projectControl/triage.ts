@@ -1,6 +1,6 @@
 import type { ProjectTaskGraph } from './types';
 
-export const TRIAGE_RULES_VERSION = 1;
+export const TRIAGE_RULES_VERSION = 2;
 export const L0_MAX_FILES = 2;
 export const L2_MIN_MODULES = 3;
 export const L2_MIN_TASKS = 6;
@@ -14,8 +14,20 @@ export interface TaskGraphTriage {
 }
 
 export function triageTaskGraph(graph: ProjectTaskGraph): TaskGraphTriage {
+  if (graph.tasks.length === 0) {
+    return {
+      level: 'L1',
+      reasons: ['任务图没有任务'],
+      rulesVersion: TRIAGE_RULES_VERSION,
+    };
+  }
+
   const moduleIds = new Set(graph.tasks.map((task) => task.moduleId));
   const files = new Set(graph.tasks.flatMap((task) => task.scope));
+  const unscopedTaskCount = graph.tasks.filter((task) => task.scope.length === 0).length;
+  const scopeReasons = unscopedTaskCount > 0
+    ? [`有 ${unscopedTaskCount} 个任务未声明 scope，不能判为 L0`]
+    : [];
   const taskById = new Map(graph.tasks.map((task) => [task.id, task]));
   const hasCrossModuleDependency = graph.tasks.some((task) =>
     task.dependsOn.some((dependencyId) => {
@@ -24,7 +36,7 @@ export function triageTaskGraph(graph: ProjectTaskGraph): TaskGraphTriage {
     }),
   );
 
-  if (moduleIds.size === 1 && files.size <= L0_MAX_FILES) {
+  if (unscopedTaskCount === 0 && moduleIds.size === 1 && files.size <= L0_MAX_FILES) {
     const moduleId = moduleIds.values().next().value as string;
     return {
       level: 'L0',
@@ -43,14 +55,17 @@ export function triageTaskGraph(graph: ProjectTaskGraph): TaskGraphTriage {
   if (l2Reasons.length > 0) {
     return {
       level: 'L2',
-      reasons: l2Reasons,
+      reasons: [...scopeReasons, ...l2Reasons],
       rulesVersion: TRIAGE_RULES_VERSION,
     };
   }
 
   return {
     level: 'L1',
-    reasons: [`L1：涉及 ${moduleIds.size} 个模块和 ${files.size} 个文件，未达到 L0/L2 门槛。`],
+    reasons: [
+      ...scopeReasons,
+      `L1：涉及 ${moduleIds.size} 个模块和 ${files.size} 个文件，未达到 L0/L2 门槛。`,
+    ],
     rulesVersion: TRIAGE_RULES_VERSION,
   };
 }
