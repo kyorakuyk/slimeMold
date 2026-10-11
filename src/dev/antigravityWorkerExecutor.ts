@@ -1,6 +1,10 @@
 import type { WorkerExecutionResult, WorkerTaskLease } from '../domain/workerQueue';
 import { createFeedbackRequest, type FeedbackRequest } from '../projectControl/protocol';
-import { renderTaskContract, WORKER_CONTRACT_DATA_BOUNDARY } from '../projectControl/workOrder';
+import {
+  renderContextPackRuntimeInfo,
+  renderTaskContract,
+  WORKER_CONTRACT_DATA_BOUNDARY,
+} from '../projectControl/workOrder';
 import type { CodexWorkerResponse, WorkerAcceptance } from './codexWorkerExecutor';
 import {
   createAntigravityWorkerInvoker,
@@ -16,6 +20,7 @@ export interface AntigravityWorkerExecutorOptions extends AntigravityWorkerInvok
 
 function promptFor(lease: WorkerTaskLease): string {
   const { assignment, attempt } = lease;
+  const contextPackRuntimeInfo = renderContextPackRuntimeInfo(lease);
   return [
     '你是 SlimeMold 的 Antigravity 实现 Worker。只在当前已分配 Worktree 内工作。',
     '',
@@ -24,6 +29,7 @@ function promptFor(lease: WorkerTaskLease): string {
     '运行时信息：',
     `Worktree: ${assignment.path}`,
     `Attempt: ${attempt}`,
+    ...(contextPackRuntimeInfo ? [contextPackRuntimeInfo] : []),
     '',
     '强制边界：',
     '- 先调用 slimemold_get_task_context，再开始修改。',

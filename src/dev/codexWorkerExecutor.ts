@@ -4,7 +4,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { codexWorkerExec, prepareCodexWorker } from '../agents/providers/codex';
-import { renderTaskContract } from '../projectControl/workOrder';
+import { renderContextPackRuntimeInfo, renderTaskContract } from '../projectControl/workOrder';
 
 export interface CodexWorkerResponse {
   text: string;
@@ -78,6 +78,7 @@ export function createCodexWorkerInvoker(generation: number): CodexWorkerInvoker
 /** Build the only prompt a code-writing Worker receives from a queue lease. */
 export function buildCodexWorkerPrompt(lease: WorkerTaskLease): string {
   const { assignment, attempt } = lease;
+  const contextPackRuntimeInfo = renderContextPackRuntimeInfo(lease);
   return [
     '你是 SlimeMold 的实现 Worker。只在当前已分配的 worktree 内完成一个任务。',
     '',
@@ -86,6 +87,7 @@ export function buildCodexWorkerPrompt(lease: WorkerTaskLease): string {
     '运行时信息：',
     `Worktree: ${assignment.path}`,
     `Attempt: ${attempt}`,
+    ...(contextPackRuntimeInfo ? [contextPackRuntimeInfo] : []),
     ...(lease.dependencyArtifacts && lease.dependencyArtifacts.length > 0
       ? [
         '已成功完成的依赖成果（只读参考；只能把需要的内容复制/整合到当前 Worktree，禁止修改这些路径）：',

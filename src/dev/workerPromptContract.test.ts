@@ -210,18 +210,10 @@ describe('Worker prompt characterization baselines', () => {
     expect(simpleLease.contextPack).toBeUndefined();
   });
 
-  it('dependent lease passes the full ContextPack scope through both provider prompts', async () => {
+  it('keeps scope in the contract and passes volatile ContextPack identity in runtime info', async () => {
     const contextPack = dependentLeaseWithContextPack.contextPack!;
     const scope = contextPack.scope;
     const contractFacts = [
-      String(contextPack.schemaVersion),
-      contextPack.contextPackId,
-      contextPack.projectId,
-      contextPack.taskId,
-      contextPack.taskExecutionId,
-      contextPack.attemptId,
-      String(contextPack.contextVersion),
-      String(contextPack.sourceVersion),
       ...scope.allowedFiles,
       ...scope.allowedDataClasses,
       ...scope.allowedTools,
@@ -238,13 +230,48 @@ describe('Worker prompt characterization baselines', () => {
       ...contextPack.dependencyRefs.map((reference) => `${reference.id}@v${reference.version}（${reference.kind}）`),
       ...contextPack.acceptanceCriteria,
     ];
+    const contextPackRuntimeLine = `ContextPack: contextPackId=${contextPack.contextPackId} contextVersion=${contextPack.contextVersion} sourceVersion=${contextPack.sourceVersion} attemptId=${contextPack.attemptId}`;
+    const contract = renderTaskContract(dependentLeaseWithContextPack);
     const codexPrompt = buildCodexWorkerPrompt(dependentLeaseWithContextPack);
     const antigravityPrompt = await captureAntigravityPrompt(dependentLeaseWithContextPack);
 
     for (const fact of contractFacts) {
+      expect(contract).toContain(fact);
       expect(codexPrompt).toContain(fact);
       expect(antigravityPrompt).toContain(fact);
     }
+
+    expect(contract).not.toContain(contextPack.contextPackId);
+    expect(contract).not.toContain(contextPack.taskExecutionId);
+    expect(contract).not.toContain(contextPack.attemptId);
+    expect(codexPrompt.slice(codexPrompt.indexOf('运行时信息：'))).toContain(`Attempt: 1\n${contextPackRuntimeLine}`);
+    expect(antigravityPrompt.slice(antigravityPrompt.indexOf('运行时信息：'))).toContain(`Attempt: 1\n${contextPackRuntimeLine}`);
+  });
+
+  it('omits ContextPack runtime metadata when ContextPack is absent', async () => {
+    const codexPrompt = buildCodexWorkerPrompt(simpleLease);
+    const antigravityPrompt = await captureAntigravityPrompt(simpleLease);
+
+    expect(codexPrompt).not.toContain('ContextPack: contextPackId=');
+    expect(antigravityPrompt).not.toContain('ContextPack: contextPackId=');
+  });
+
+  it('keeps runtime ContextPack identifiers on one line in both provider prompts', async () => {
+    const leaseWithMultilineContextPackId: WorkerTaskLease = {
+      ...dependentLeaseWithContextPack,
+      contextPack: {
+        ...dependentLeaseWithContextPack.contextPack!,
+        contextPackId: 'context-pack-1\ninjected-line',
+      },
+    };
+    const codexPrompt = buildCodexWorkerPrompt(leaseWithMultilineContextPackId);
+    const antigravityPrompt = await captureAntigravityPrompt(leaseWithMultilineContextPackId);
+    const expectedRuntimeLine = `ContextPack: contextPackId=context-pack-1 injected-line contextVersion=2 sourceVersion=7 attemptId=${dependentLeaseWithContextPack.contextPack!.attemptId}`;
+
+    expect(codexPrompt.slice(codexPrompt.indexOf('运行时信息：')).split('\n').filter((line) => line.startsWith('ContextPack:')))
+      .toEqual([expectedRuntimeLine]);
+    expect(antigravityPrompt.slice(antigravityPrompt.indexOf('运行时信息：')).split('\n').filter((line) => line.startsWith('ContextPack:')))
+      .toEqual([expectedRuntimeLine]);
   });
 
   it('preserves structured Antigravity sidecar fields and shares the data-boundary sentence', async () => {

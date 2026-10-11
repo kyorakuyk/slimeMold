@@ -64,7 +64,6 @@ export function renderTaskContract(lease: WorkerTaskLease): string {
     lines.push(
       '目标：',
       quotedText(contextPack.goal),
-      `ContextPack：schemaVersion=${contextPack.schemaVersion}，contextPackId=${singleLine(contextPack.contextPackId)}，projectId=${singleLine(contextPack.projectId)}，taskId=${singleLine(contextPack.taskId)}，taskExecutionId=${singleLine(contextPack.taskExecutionId)}，attemptId=${singleLine(contextPack.attemptId)}，contextVersion=${contextPack.contextVersion}，sourceVersion=${contextPack.sourceVersion}`,
       '非目标：',
       bulletList(contextPack.nonGoals),
       `相关决定：${references(contextPack.decisionRefs)}`,
@@ -103,4 +102,17 @@ export function renderTaskContract(lease: WorkerTaskLease): string {
     bulletList(Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : []),
   );
   return lines.join('\n');
+}
+
+/** Render attempt-specific ContextPack identity outside the shared task contract. */
+export function renderContextPackRuntimeInfo(lease: WorkerTaskLease): string | undefined {
+  const contextPack = lease.contextPack;
+  if (!contextPack) return undefined;
+  return [
+    'ContextPack:',
+    `contextPackId=${singleLine(contextPack.contextPackId)}`,
+    `contextVersion=${contextPack.contextVersion}`,
+    `sourceVersion=${contextPack.sourceVersion}`,
+    `attemptId=${singleLine(contextPack.attemptId)}`,
+  ].join(' ');
 }
