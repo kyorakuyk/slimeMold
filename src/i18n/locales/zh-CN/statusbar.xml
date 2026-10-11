@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <resources>
   <string name="tab.terminal">终端</string>
-  <string name="tab.history">历史 ({count})</string>
+  <string name="tab.history">历史 ({{count}})</string>
   <string name="tab.variables">变量</string>
   <string name="tab.artifacts">产物</string>
+  <string name="tab.dev">开发（H4）</string>
   <string name="artifact.empty">暂无交付产物。运行含 pipeline.handoff / 交付节点的流程后，交付成果会出现在这里。</string>
   <string name="artifact.copy">复制</string>
   <string name="artifact.download">下载</string>
@@ -23,7 +24,7 @@
   <string name="artifact.design.modules">模块清单</string>
 
   <string name="autosave.title">工作流已自动保存到本地，关闭后重新打开会自动恢复</string>
-  <string name="autosave.at">已自动保存 {time}</string>
+  <string name="autosave.at">已自动保存 {{time}}</string>
   <string name="autosave.done">已自动保存</string>
 
   <string name="running">执行中…</string>
@@ -36,7 +37,7 @@
   <string name="forceReset.title">强制停止并复位运行状态（abort signal + 清 running + 重置所有节点状态）；旧协程将在节点返回后自动静默退出</string>
   <string name="forceReset.label">强制复位</string>
 
-  <string name="nodes.stat">节点 {total} · 成功 {success} · 失败 {failed}</string>
+  <string name="nodes.stat">节点 {{total}} · 成功 {{success}} · 失败 {{failed}}</string>
 
   <string name="log.clear.title">清空日志</string>
   <string name="log.clear.label">清空</string>

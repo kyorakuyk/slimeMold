@@ -346,4 +346,36 @@
   <string name="orchestrator.taskGraph.selectTask">请先选择一个 TaskGraph 节点</string>
   <string name="orchestrator.taskGraph.revisionUnavailable">当前 TaskGraph revision 不可编辑</string>
   <string name="orchestrator.taskGraph.revisionEmpty">至少修改标题或依赖关系</string>
+  <string name="orchestrator.stageCount">{{count}} 个阶段</string>
+  <string name="orchestrator.log.draftGenerated">编排草案已生成（{{id}}），共 {{count}} 个阶段，请绑定工作流并确认</string>
+  <string name="orchestrator.log.prepareFailed">固化失败：{{failed}}</string>
+  <string name="orchestrator.log.prepared">已固化 {{count}} 个阶段的工作流绑定，可打开编辑或开始执行</string>
+  <string name="orchestrator.log.confirmed">编排草案已确认（待执行）——可先固化/编辑阶段工作流，再开始执行</string>
+  <string name="orchestrator.log.cancelRequested">已请求取消编排，正在停止当前阶段…</string>
+  <string name="orchestrator.log.historyDeleted">编排历史记录已删除</string>
+  <string name="orchestrator.log.draftDiscarded">编排草案已废弃</string>
+  <string name="orchestrator.log.workflowSwitched">已切换到工作流「{{name}}」，可编辑后回到编排面板执行</string>
+  <string name="orchestrator.log.workflowMissing">工作流不存在：{{id}}（请先固化工作流）</string>
+
+  <!-- LeftSidebar -->
+  <string name="sidebar.nodes">节点库</string>
+  <string name="sidebar.groups">组</string>
+  <string name="sidebar.plugins">插件</string>
+  <string name="sidebar.agents">智能体库</string>
+  <string name="sidebar.orchestrator">编排</string>
+  <string name="sidebar.assets">资产</string>
+  <string name="sidebar.variables">变量</string>
+  <string name="sidebar.history">运行历史</string>
+  <string name="sidebar.tokens">Token</string>
+  <string name="sidebar.examples">示例库</string>
+  <string name="sidebar.helpCenter">帮助中心</string>
+  <string name="sidebar.bottomPanel">底部面板</string>
+  <string name="sidebar.shortcuts">快捷键查看</string>
+  <string name="sidebar.theme">切换深浅色</string>
+  <string name="sidebar.settings">设置</string>
+  <string name="sidebar.collapse">收起</string>
+  <string name="sidebar.resize">拖动调节宽度</string>
+  <string name="sidebar.helpPlaceholderTitle">（占位）即将上线</string>
+  <string name="sidebar.helpSupport">帮助与支持</string>
+  <string name="sidebar.helpComingSoon">更多帮助内容即将上线。</string>
 </resources>

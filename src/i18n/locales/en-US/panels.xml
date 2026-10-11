@@ -346,4 +346,36 @@
   <string name="orchestrator.taskGraph.selectTask">Select a TaskGraph node first</string>
   <string name="orchestrator.taskGraph.revisionUnavailable">The current TaskGraph revision is not editable</string>
   <string name="orchestrator.taskGraph.revisionEmpty">Change a title or dependency before creating a revision</string>
+  <string name="orchestrator.stageCount">{{count}} stages</string>
+  <string name="orchestrator.log.draftGenerated">Draft {{id}} generated with {{count}} stages. Bind workflows and confirm.</string>
+  <string name="orchestrator.log.prepareFailed">Could not materialize workflows: {{failed}}</string>
+  <string name="orchestrator.log.prepared">Materialized workflow bindings for {{count}} stages. Open to edit or start execution.</string>
+  <string name="orchestrator.log.confirmed">Draft confirmed and awaiting execution. You can materialize/edit stage workflows before starting.</string>
+  <string name="orchestrator.log.cancelRequested">Cancellation requested; stopping the current stage…</string>
+  <string name="orchestrator.log.historyDeleted">Orchestration history deleted</string>
+  <string name="orchestrator.log.draftDiscarded">Orchestration draft discarded</string>
+  <string name="orchestrator.log.workflowSwitched">Switched to workflow "{{name}}". Edit it, then return here to run.</string>
+  <string name="orchestrator.log.workflowMissing">Workflow not found: {{id}} (materialize it first)</string>
+
+  <!-- LeftSidebar -->
+  <string name="sidebar.nodes">Node library</string>
+  <string name="sidebar.groups">Groups</string>
+  <string name="sidebar.plugins">Plugins</string>
+  <string name="sidebar.agents">Agent library</string>
+  <string name="sidebar.orchestrator">Orchestrator</string>
+  <string name="sidebar.assets">Assets</string>
+  <string name="sidebar.variables">Variables</string>
+  <string name="sidebar.history">Run history</string>
+  <string name="sidebar.tokens">Tokens</string>
+  <string name="sidebar.examples">Examples</string>
+  <string name="sidebar.helpCenter">Help center</string>
+  <string name="sidebar.bottomPanel">Bottom panel</string>
+  <string name="sidebar.shortcuts">Keyboard shortcuts</string>
+  <string name="sidebar.theme">Toggle light/dark theme</string>
+  <string name="sidebar.settings">Settings</string>
+  <string name="sidebar.collapse">Collapse</string>
+  <string name="sidebar.resize">Drag to resize</string>
+  <string name="sidebar.helpPlaceholderTitle">Coming soon</string>
+  <string name="sidebar.helpSupport">Help and support</string>
+  <string name="sidebar.helpComingSoon">More help content is coming soon.</string>
 </resources>

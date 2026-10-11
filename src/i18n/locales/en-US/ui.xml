@@ -61,6 +61,7 @@
   <string name="topbar.newWorkflowHint">New Workflow (add to current project)</string>
   <string name="topbar.newWorkflowHintFree">New Standalone Workflow (pick a location, or use default)</string>
   <string name="topbar.splitView">Split View</string>
+  <string name="topbar.simpleView">Switch to lightweight workspace</string>
   <string name="topbar.resetStatus">Reset workflow run state (stops first if running)</string>
   <string name="topbar.debugOn">Debug Mode: On (node cards show rerun-subgraph / run-to-here)</string>
   <string name="topbar.debugOff">Debug Mode: Off</string>
@@ -79,6 +80,63 @@
   <string name="dialog.closeConfirmTitle">Close Project</string>
   <string name="dialog.closeConfirm">The current project has unsaved changes that will be lost if you close it. Close anyway?</string>
   <string name="log.legacyProject">Legacy .smproj project detected; it will be auto-converted to .slimemold/ on save</string>
+
+  <!-- App and canvas -->
+  <string name="app.split.mainWorkflow">Main workflow</string>
+  <string name="app.split.title">Split view</string>
+  <string name="app.split.selectWorkflow">Choose the workflow shown in the right pane</string>
+  <string name="app.split.activeSuffix"> (main)</string>
+  <string name="app.split.onlyOneWorkflow">This project has one workflow. Create another to view or edit two workflows side by side.</string>
+  <string name="app.resize.expandedPanel">Drag to resize the open side panel</string>
+  <string name="app.resize.inspector">Drag to resize the inspector</string>
+  <string name="app.resize.shortcutsHeight">Drag to resize the shortcuts panel</string>
+  <string name="app.resize.bottomPanel">Drag to resize the bottom panel</string>
+  <string name="app.shortcuts">Shortcuts</string>
+  <string name="app.shortcuts.close">Close shortcuts panel</string>
+  <string name="app.fileDrop.releaseToOpenWorkflow">Release to open workflow file (.workflow.json)</string>
+
+  <string name="canvas.reconnect.cycleCancelled">Reconnect would create a cycle and was cancelled</string>
+  <string name="canvas.reconnect.typeMismatch">Reconnect failed: port types are incompatible</string>
+  <string name="canvas.exampleWorkflowName">Example · {{name}}</string>
+  <string name="canvas.split.stopTitle">Stop run (right pane)</string>
+  <string name="canvas.split.stop">Stop</string>
+  <string name="canvas.split.runTitle">Run workflow (right pane)</string>
+  <string name="canvas.split.run">Run</string>
+  <string name="canvas.align.title">Align and distribute (select multiple nodes first)</string>
+  <string name="canvas.align.left">Align left</string>
+  <string name="canvas.align.hCenter">Center horizontally</string>
+  <string name="canvas.align.right">Align right</string>
+  <string name="canvas.align.top">Align top</string>
+  <string name="canvas.align.vCenter">Center vertically</string>
+  <string name="canvas.align.bottom">Align bottom</string>
+  <string name="canvas.align.distributeHorizontal">Distribute horizontally</string>
+  <string name="canvas.align.distributeVertical">Distribute vertically</string>
+  <string name="canvas.mode.drag">Pan mode (drag the canvas)</string>
+  <string name="canvas.mode.boxSelect">Box select mode (drag to select nodes)</string>
+  <string name="canvas.mode.click">Click mode (select nodes without panning or box selection)</string>
+  <string name="canvas.minimap.hide">Hide minimap</string>
+  <string name="canvas.minimap.show">Show minimap</string>
+  <string name="canvas.zoom.out">Zoom out</string>
+  <string name="canvas.zoom.fit">Fit view</string>
+  <string name="canvas.zoom.in">Zoom in</string>
+  <string name="canvas.subgraph.unpack">Unpack subgraph</string>
+  <string name="canvas.subgraph.packTitle">Pack selected nodes as a reusable subgraph</string>
+  <string name="canvas.subgraph.pack">Pack as subgraph</string>
+  <string name="canvas.group.packTitle">Group selected nodes for moving or collapsing as a unit (does not affect runs)</string>
+  <string name="canvas.group.pack">Group nodes</string>
+  <string name="canvas.selection.count">{{count}} selected</string>
+  <string name="canvas.selection.emptyHint">Select nodes with box-select mode first</string>
+  <string name="canvas.empty.noWorkflow">No workflow is open</string>
+  <string name="canvas.welcome.guide">View guide</string>
+  <string name="canvas.close">Close</string>
+  <string name="canvas.welcome.headline">Connect nodes into a workflow and run it automatically. Get started below:</string>
+  <string name="canvas.welcome.browseExamples">Browse examples</string>
+  <string name="canvas.welcome.openWorkflow">Open an existing workflow</string>
+  <string name="canvas.welcome.nodeHint">Search all nodes in the left Node Library. AI nodes default to offline simulation, so you can try them without configuration.</string>
+  <string name="canvas.welcome.templates">Start from a template</string>
+  <string name="canvas.welcome.allExamples">View all examples →</string>
+  <string name="canvas.subgraph.nameTitle">Name this subgraph</string>
+  <string name="canvas.subgraph.newName">Subgraph {{count}}</string>
 
   <!-- Custom window title bar -->
   <string name="window.title">SlimeMold window title bar</string>
