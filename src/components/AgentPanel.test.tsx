@@ -26,6 +26,7 @@ vi.mock('../i18n/useT', () => ({
 }));
 
 import AgentPanel from './AgentPanel';
+import RolesTab from './agentPanel/RolesTab';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -219,5 +220,34 @@ describe('AgentPanel', () => {
       (container.querySelector('ul li') as HTMLLIElement).click();
     });
     expect(container.querySelector('.absolute.left-full')).not.toBeNull();
+  });
+
+  it('persists role edits through the real catalog action', async () => {
+    await act(async () => {
+      root.render(<RolesTab />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('roles.add'),
+    );
+    expect(addButton).toBeDefined();
+    await act(async () => {
+      addButton?.click();
+    });
+
+    const nameInput = container.querySelector('input') as HTMLInputElement;
+    const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setNativeValue.call(nameInput, '研究角色');
+    await act(async () => {
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(useWorkflowStore.getState().roles).toEqual([
+      expect.objectContaining({
+        name: '研究角色',
+        system: '',
+        contextScope: 'shared',
+      }),
+    ]);
   });
 });
