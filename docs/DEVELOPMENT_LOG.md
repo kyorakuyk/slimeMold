@@ -5537,3 +5537,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 浏览器隔离预览通过 DOM read-back 观察 advanced/Orchestrator 区域的 en/zh 切换与状态数字；仅保存的截图带欢迎遮罩，关闭后的截图工具 stale/timeout，不能作为无遮罩最终视觉证据。一次轻量入口导航误创建 ProjectSession，挂载 effect 自动调用 `runMasterTurn`/`chatWithAgent`；页面报 `Failed to fetch`，无成功响应，Performance origin 只显示 localhost，但不能据此证明没有出站尝试。没有重试，也没有 Worker 运行。
 - 真实 Tauri 启动不白屏，Vite/Rust/窗口均就绪，但应用自动恢复 `D:/Temp/sm-tauri-worker-current-code-20261007` 的 `Tauri Worker disposable verification` 项目，屏幕显示旧失败 Worker 记录与 cleanup identity/worktree restore warnings；启动时宿主自动执行 `grant_project_access`。只读打开了 Orchestrator/Settings，没有 Run、Generate draft、Cleanup、Save 或手动更改项目文件；没有做磁盘前后 read-back，因此不能断言应用启动生命周期没有自动写入。语言切换未完成，计划的真实 Tauri 双语 GUI 门未通过。截图见 `.hermes/reports/assets/slice3-tauri-startup-20261012.png`、`slice3-tauri-orchestrator-readback-20261012.png`、`slice3-tauri-settings-readback-20261012.png`；browser screenshot 为 `slice3-browser-advanced-en-overlay-20261012.png`。
 - 仅创建 `checkpoint/living-graph-batch1-unverified-20261012` 指向 `31dc579`；没有 `checkpoint/living-graph-batch1-verified-20261012`，因为 GUI 双语门缺失。Linux Node 22 直接验证仍受 npm registry `ETIMEDOUT` 限制；Windows Node 22 与 Linux Node 24 的全量测试结果来自代码相同的 `0a66c2f`（`31dc579` 为 docs-only descendant），不把 Node 24 冒充 Node 22。
+
+### 7.404 unverified：归档第一批历史标签分类
+
+- 在 `docs/HISTORICAL_UNVERIFIED_TRIAGE.md` 末尾追加 `Living graph batch1（2026-10-11/12）`，逐组登记 40 个 `batch1-*` 与 9 个当轮 checkpoint 标签（共 49 refs / 33 unique targets）。旧 refs 未移动或删除。
+- 分类区分被后续 bounded repair 替代的 S2/Fix1、B0/B1、S4 placeholder、初始 S6 cost-model 与各 start anchors；仍在当前实现中的 S4/S6/Fix3/Fix4/test-environment snapshots 标为 evidence-missing/environment-blocked，因为最终 GUI 门未闭合。无任何 verified successor；唯一当前批次终态标签仍是 `checkpoint/living-graph-batch1-unverified-20261012` -> `31dc579`。
+- Exact reviewer 的两条建议保持 non-blocking；没有据此分类为 concrete-risk。Tauri 自动恢复的外部 fixture 警告及浏览器 ProjectSession 自动 Master 请求尝试分别保留为范围外观察/夜间报告边界偏差，不把它们归因或改写成第一批修复证据。
+- 本条为 docs-only 历史分诊记录；不改变代码、branch 或历史 tag。`git diff --check` 通过；脚本核对 49 个目标 tag 均被分类，所有产出保持 `(unverified)`。

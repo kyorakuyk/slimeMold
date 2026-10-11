@@ -116,3 +116,37 @@ The next repair must not be chosen implicitly:
 - **Current status:** `concrete-risk`, the Terraform-level local-tool baseline is confirmed but implementation is intentionally deferred until the frontend monolith split is complete. The selected baseline is project-local durable state, four phases, explicit inspect/finalize, no repeated CAS, and restart rebind/read-back. GUI/Worker full E2E does not close this native gap.
 
 Any future code or evidence change invalidates an exact reviewer verdict outside its snapshot. A claim may be upgraded only by a new RED/GREEN regression, full quality gate, exact-head independent review, and—where applicable—real Tauri/native read-back.
+
+## Living graph batch1（2026-10-11/12）
+
+### Scope and current boundary
+
+- Read-only inventory covered 40 `batch1-*` tags and 9 first-batch/night-run `checkpoint/*-20261012` tags (49 refs, 33 unique targets). No historical tag was moved or deleted.
+- The full code target is `31dc5794a76ef72601c2b00a76ea161b23759c05`; the independent full-range reviewer passed with `security_concerns=[]` and `logic_errors=[]`. This is not a verified successor: the required browser + real Tauri bilingual GUI read-back did not complete. `checkpoint/living-graph-batch1-unverified-20261012` is the only final batch-status tag; no `checkpoint/living-graph-batch1-verified-20261012` exists. Therefore **no historical tag is replaced by a verified tag** in this entry.
+
+### superseded — later bounded code/document snapshot exists, but remains unverified
+
+| Historical tags | Later unverified successor / reason | Verified successor |
+|---|---|---|
+| `batch1-slice0`, `batch1-slice1`, `batch1-slice1-review-recorded` | Later branch work updated the living-graph plan and ProjectControl command paths; the current full-range review covers the resulting descendant, not the old tag snapshot. | None |
+| `batch1-slice2`, `batch1-slice2-golden-unverified`, `batch1-slice2-review-fix-unverified`, `batch1-slice2-review-recorded-unverified`, `batch1-slice2-sidecar-boundary-repair-start-unverified`, `batch1-slice2-sidecar-boundary-repair-unverified`, `batch1-fix1-unverified`, `batch1-fix1-list-repair-unverified`, `batch1-fix1-reviewed-unverified` | The shared prompt/sidecar contract was successively repaired, the multi-dependency formatting was corrected, and Fix 4 later moved attempt-varying ContextPack identity out of the shared contract. Later refs include `batch1-fix4-unverified` and current `checkpoint/living-graph-batch1-unverified-20261012`; all remain unverified. | None |
+| `batch1-slice3-review-recorded-unverified`, `batch1-slice3-shadow-triage-unverified`, `batch1-slice3-start-unverified`, `batch1-slice3a-pure-rules-unverified`, `batch1-slice5-l0-eligibility-unverified`, `batch1-slice5-preflight-unverified`, `batch1-slice5-review-recorded-unverified`, `batch1-slice5-start-unverified`, `batch1-fix2-start-unverified`, `batch1-fix2-unverified`, `batch1-fix2-reviewed-unverified`, `batch1-fix3-start-unverified` | B0 triage and B1 preflight snapshots were changed by the later Fix 2/Fix 3 parser, scope, and rules-version repairs. Their implementation successors are unverified; Fix 3 remains in the current full-range reviewed target. | None |
+| `batch1-slice4-review-recorded-unverified`, `batch1-slice4-start-unverified`, `batch1-slice4a-placeholder-check-unverified` | The start/review records were followed by later locale placeholder and namespace-isolation changes; the final current locale tree is in the full-range target. | None |
+| `batch1-slice6-cost-model-unverified`, `batch1-slice6-eac-overflow-repair-start-unverified`, `batch1-slice6-start-unverified` | The initial cost-model snapshot was followed by the bounded EAC overflow repair `batch1-slice6-eac-overflow-fix-unverified`. | None |
+| `batch1-review-fixes-start-unverified`, `batch1-closeout-start-unverified`, `checkpoint/fix4-start-20261012`, `checkpoint/fix4-unverified-20261012`, `checkpoint/night-run-verify-and-split-start-20261012`, `checkpoint/slice0-baseline-start-20261012`, `checkpoint/slice0-baseline-unverified-20261012`, `checkpoint/test-env-start-20261012` | These are retained start/baseline anchors, not approval artifacts; subsequent bounded slices produced later unverified snapshots. Start refs remain unchanged for auditability. | None |
+
+### evidence-missing / environment-blocked — current implementation still lacks full acceptance evidence
+
+| Tags | Missing evidence / remaining boundary | Verified successor |
+|---|---|---|
+| `batch1-slice4-i18n-unverified`, `batch1-slice4a-namespace-isolation-unverified`, `batch1-slice6-eac-overflow-fix-unverified`, `batch1-slice6-review-recorded-unverified` | These slice results remain represented in the current branch, but the complete batch has no verified GUI acceptance. The final reviewer’s cost-model-underflow and production L0 risk-input notes are non-blocking suggestions, not logic findings; they were not silently promoted to blockers. | None |
+| `batch1-fix3-unverified`, `batch1-fix3-reviewed-unverified`, `batch1-fix4-unverified`, `batch1-fix4-reviewed-unverified`, `checkpoint/test-env-unverified-20261012` | Per-slice review/evidence exists for these exact snapshots, but it does not substitute for the required final bilingual GUI read-back on the full current target. | None |
+| `checkpoint/batch1-final-verification-start-20261012`, `checkpoint/living-graph-batch1-unverified-20261012` | The start tag is not an approval. The final unverified tag points to `31dc579`; GUI acceptance remains evidence-missing, so there is deliberately no verified counterpart. | None |
+
+Environment limits recorded for this classification: direct Linux Node 22 package acquisition ended in npm-registry `ETIMEDOUT` (Windows Node 22 and Linux Node 24 tests passed); browser screenshot capture after welcome-overlay dismissal was stale or timed out; the real Tauri app auto-restored an existing disposable Worker fixture with prior failure records, so the bilingual panel sequence stopped before any manual project mutation. The isolated browser DOM language read-back is partial evidence, not a substitute for the real-Tauri GUI gate.
+
+### concrete-risk
+
+- The final independent review reported no source-supported security or logic blocker in the full batch target. No first-batch tag is classified `concrete-risk` from that review.
+- The Tauri fixture displayed pre-existing Worker cleanup/native-identity and worktree-restore warnings. They were observed without file-level read-back, are not attributed to this batch, and were not modified or cleaned. They remain an out-of-scope observation for the later phase2 audit, not evidence that this batch caused or repaired them.
+- A browser-only ProjectSession navigation attempt automatically mounted `runMasterTurn` and showed `Failed to fetch`. There is no successful response evidence, and the read-only browser resource-origin list cannot prove that no outbound attempt occurred. No retry or Worker run followed; this is recorded in the night-run report as an execution-boundary deviation, not silently treated as a product verification failure or as a batch code finding.
