@@ -26,7 +26,7 @@ export function checkGrowth(
   }
   violations.push(...graph.tasks
     .filter((task) => task.acceptanceCriteria.length === 0)
-    .map((task) => ({
+    .map((task): GrowthViolation => ({
       code: 'not-independently-verifiable',
       taskIds: [task.id],
       message: `任务“${task.id}”没有验收标准，无法独立验收。`,

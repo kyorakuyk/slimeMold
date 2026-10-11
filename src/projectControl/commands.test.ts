@@ -411,6 +411,87 @@ describe('startProjectSessionCommand', () => {
     ]);
   });
 
+  it('attaches a shadow B0 triage record to the proposed task graph event', () => {
+    const result = generateTaskGraphCommand({
+      snapshot: architectureSnapshot('approved'),
+      sessionId: 'session-1',
+      id: 'task-graph-1',
+      now: '2026-09-01T00:03:00.000Z',
+    });
+    const proposed = result.events.find((event) => event.eventType === 'TaskGraphProposed');
+
+    expect(proposed?.payload).toMatchObject({
+      taskIds: ['task-1'],
+      triage: {
+        level: 'L0',
+        reasons: ['L0：单模块 core，涉及 1 个文件（上限 2）。'],
+        rulesVersion: 1,
+        violations: [],
+      },
+    });
+    expect(result.snapshot.taskGraphs?.[0]).toMatchObject({ id: 'task-graph-1', approval: 'draft' });
+  });
+
+  it('records growth violations in shadow mode without blocking the proposal', () => {
+    const snapshot = architectureSnapshot('approved');
+    snapshot.architectures[0].tasks = [
+      {
+        id: 't1',
+        title: '导入包',
+        description: '让模块可被导入',
+        moduleId: 'hello',
+        scope: ['helloworld.py'],
+        dependsOn: [],
+        acceptanceCriteria: ['文件可被导入'],
+        category: 'logic',
+      },
+      {
+        id: 't2',
+        title: '定义函数',
+        description: '定义 hello 函数',
+        moduleId: 'hello',
+        scope: ['helloworld.py'],
+        dependsOn: ['t1'],
+        acceptanceCriteria: [],
+        category: 'logic',
+      },
+    ];
+
+    const result = generateTaskGraphCommand({
+      snapshot,
+      sessionId: 'session-1',
+      id: 'task-graph-1',
+      now: '2026-09-01T00:03:00.000Z',
+    });
+    const proposed = result.events.find((event) => event.eventType === 'TaskGraphProposed');
+
+    expect(proposed?.payload).toMatchObject({
+      taskIds: ['t1', 't2'],
+      triage: {
+        level: 'L0',
+        rulesVersion: 1,
+        violations: [
+          {
+            code: 'over-growth',
+            taskIds: ['t1', 't2'],
+            message: 'L0 任务图包含 2 个任务，建议合并为 1 个直通任务。',
+          },
+          {
+            code: 'not-independently-verifiable',
+            taskIds: ['t2'],
+            message: '任务“t2”没有验收标准，无法独立验收。',
+          },
+        ],
+      },
+    });
+    expect(result.snapshot.taskGraphs?.[0]).toMatchObject({
+      id: 'task-graph-1',
+      approval: 'draft',
+      tasks: [expect.objectContaining({ id: 't1' }), expect.objectContaining({ id: 't2' })],
+    });
+    expect(result.snapshot.sessions[0].status).toBe('plan-review');
+  });
+
   it('approves a task graph and makes the session ready without starting a run', () => {
     const draft = generateTaskGraphCommand({
       snapshot: architectureSnapshot('approved'),

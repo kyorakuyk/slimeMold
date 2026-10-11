@@ -21,6 +21,8 @@ import { applyMasterTurn, type ApplyMasterTurnInput } from './session';
 import { approveTaskGraph, createTaskGraphFromArchitecture, reviseTaskGraph } from './taskGraph';
 import { approveProjectPlan } from './projectPlanning';
 import { materializeTaskIssues, taskIssueId } from './taskGraphProjection';
+import { checkGrowth } from './growthPolicy';
+import { triageTaskGraph } from './triage';
 
 export interface StartProjectSessionCommandInput {
   projectId: string;
@@ -634,6 +636,8 @@ export function generateTaskGraphCommand(
     existingIssues: input.snapshot.issues,
     now: input.now,
   });
+  const triage = triageTaskGraph(graph);
+  const growthViolations = checkGrowth(graph, triage);
   const nextSession = transitionSession(session, 'plan-review', input.now);
   const snapshot: ProjectControlSnapshot = {
     ...input.snapshot,
@@ -658,6 +662,7 @@ export function generateTaskGraphCommand(
       graphVersion: graph.graphVersion,
       taskIds: graph.tasks.map((task) => task.id),
       graph,
+      triage: { ...triage, violations: growthViolations },
     },
     actor: 'master',
     occurredAt: input.now,
