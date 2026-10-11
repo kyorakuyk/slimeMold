@@ -7,6 +7,7 @@ import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import type { WorkerTaskLease } from '../domain/workerQueue';
 import { createContextPack } from '../projectControl/protocol';
 import type { ProjectTask } from '../projectControl/types';
+import { WORKER_CONTRACT_DATA_BOUNDARY } from '../projectControl/workOrder';
 import { createAntigravityWorkerExecutor } from './antigravityWorkerExecutor';
 
 const mcpServerPath = resolve(process.cwd(), 'scripts/slimemold-antigravity-mcp.mjs');
@@ -86,13 +87,16 @@ function createHostileLease(): WorkerTaskLease {
 }
 
 type WorkerSidecar = {
+  task: ProjectTask;
+  attempt: number;
+  attemptId: string;
+  contextPack: WorkerTaskLease['contextPack'] | null;
+  dependencyArtifacts: NonNullable<WorkerTaskLease['dependencyArtifacts']>;
   dataBoundary: string;
-  untrustedData: string;
-  runtime: { attempt: number; attemptId: string };
 };
 
 describe('Antigravity context sidecar boundary', () => {
-  it('round-trips hostile task data through MCP only inside the escaped untrusted-data envelope', async () => {
+  it('round-trips hostile task data through structured sidecar fields and the MCP response', async () => {
     const lease = createHostileLease();
     let captured: { prompt: string; context: unknown } | undefined;
     const executor = createAntigravityWorkerExecutor({
@@ -120,27 +124,22 @@ describe('Antigravity context sidecar boundary', () => {
     if (!captured) throw new Error('Antigravity executor did not submit its request');
 
     const sidecar = captured.context as WorkerSidecar;
-    expect(Object.keys(sidecar).sort()).toEqual(['dataBoundary', 'runtime', 'untrustedData']);
-    expect(sidecar.dataBoundary).toContain('untrustedData');
-    expect(sidecar.dataBoundary).toContain('依赖成果');
-    expect(sidecar.runtime).toEqual({ attempt: lease.attempt, attemptId: lease.attemptId });
-
-    const untrustedData = JSON.parse(sidecar.untrustedData) as {
-      task: ProjectTask;
-      contextPack: NonNullable<WorkerTaskLease['contextPack']>;
-      dependencyArtifacts: NonNullable<WorkerTaskLease['dependencyArtifacts']>;
-    };
-    expect(untrustedData.task.description).toBe(hostileText);
-    expect(untrustedData.contextPack.goal).toBe(hostileText);
-    expect(untrustedData.contextPack.nonGoals).toEqual([hostileText]);
-    expect(untrustedData.contextPack.acceptanceCriteria).toEqual([hostileText]);
-    expect(untrustedData.dependencyArtifacts[0].path).toContain(hostileText);
-    expect(sidecar.untrustedData).not.toContain('\n');
-    expect(sidecar.untrustedData).not.toContain('\u2028');
-    expect(sidecar.untrustedData).not.toContain('\u2029');
-    expect(sidecar.untrustedData).toContain('\\n');
-    expect(sidecar.untrustedData).toContain('\\u2028');
-    expect(sidecar.untrustedData).toContain('\\u2029');
+    expect(Object.keys(sidecar).sort()).toEqual([
+      'attempt', 'attemptId', 'contextPack', 'dataBoundary', 'dependencyArtifacts', 'task',
+    ]);
+    expect(sidecar.task).toEqual(lease.task);
+    expect(sidecar.attempt).toBe(lease.attempt);
+    expect(sidecar.attemptId).toBe(lease.attemptId);
+    expect(sidecar.contextPack).toEqual(lease.contextPack);
+    expect(sidecar.dependencyArtifacts).toEqual(lease.dependencyArtifacts);
+    expect(sidecar.task.description).toBe(hostileText);
+    expect(sidecar.contextPack?.goal).toBe(hostileText);
+    expect(sidecar.contextPack?.nonGoals).toEqual([hostileText]);
+    expect(sidecar.contextPack?.acceptanceCriteria).toEqual([hostileText]);
+    expect(sidecar.dependencyArtifacts[0].path).toContain(hostileText);
+    expect(sidecar.dataBoundary).toBe(WORKER_CONTRACT_DATA_BOUNDARY);
+    expect(sidecar.dataBoundary).not.toMatch(/Antigravity|sidecar|untrustedData/i);
+    expect(captured.prompt).toContain(sidecar.dataBoundary);
 
     const contextDocument = { instruction: captured.prompt, context: sidecar };
     const sessionDir = mkdtempSync(join(tmpdir(), 'slimemold-antigravity-context-'));
@@ -169,8 +168,11 @@ describe('Antigravity context sidecar boundary', () => {
       expect(response.result.structuredContent).toEqual(contextDocument);
       expect(toolText).toBe(JSON.stringify(contextDocument, null, 2));
       expect(JSON.parse(toolText)).toEqual(contextDocument);
-      expect(response.result.structuredContent.context.dataBoundary).toBe(sidecar.dataBoundary);
-      expect(JSON.parse(response.result.structuredContent.context.untrustedData)).toEqual(untrustedData);
+      expect(response.result.structuredContent.context.task).toEqual(lease.task);
+      expect(response.result.structuredContent.context.contextPack).toEqual(lease.contextPack);
+      expect(response.result.structuredContent.context.dependencyArtifacts).toEqual(lease.dependencyArtifacts);
+      expect(response.result.structuredContent.context).not.toHaveProperty('untrustedData');
+      expect(response.result.structuredContent.context).not.toHaveProperty('runtime');
     } finally {
       rmSync(sessionDir, { recursive: true, force: true });
     }
