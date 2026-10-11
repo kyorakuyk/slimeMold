@@ -1,4 +1,5 @@
 import { appendDomainEvent, type DomainEvent } from '../domain/contracts';
+import { triageTaskGraph } from './triage';
 import type { ProjectControlSnapshot } from './types';
 import {
   WORK_ORDER_PREFLIGHT_COMPLETED_EVENT,
@@ -57,6 +58,9 @@ export function recordWorkOrderPreflightCommand(
   }
   if (!graph.tasks.some((task) => task.id === taskId)) {
     throw new Error(`task 不属于当前 task graph：${taskId}`);
+  }
+  if (triageTaskGraph(graph).level === 'L0') {
+    throw new Error(`L0 直通任务不需要 B1 试读：${taskId}`);
   }
   const session = input.snapshot.sessions.find((item) => item.id === graph.sessionId);
   if (!session) throw new Error(`task graph session 不存在：${graph.sessionId}`);

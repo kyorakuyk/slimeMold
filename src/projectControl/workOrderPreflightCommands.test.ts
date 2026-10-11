@@ -33,7 +33,7 @@ function snapshotFixture(): ProjectControlSnapshot {
       title: '调整路由',
       description: '调整路由并补测试',
       moduleId: 'routing',
-      scope: ['src/routing.ts'],
+      scope: ['src/routing.ts', 'src/router.ts', 'src/routes.ts'],
       dependsOn: [],
       acceptanceCriteria: ['覆盖空输入'],
       category: 'logic',
@@ -126,6 +126,17 @@ describe('recordWorkOrderPreflightCommand', () => {
       .toThrow(/版本已过期/);
     expect(() => recordWorkOrderPreflightCommand({ ...commandInput(snapshot), taskId: 'other-task' }))
       .toThrow(/task/);
+  });
+
+  it('skips L0 straight-through graphs instead of recording a preflight', () => {
+    const snapshot = snapshotFixture();
+    const graph = snapshot.taskGraphs![0];
+    snapshot.taskGraphs = [{
+      ...graph,
+      tasks: graph.tasks.map((task) => ({ ...task, scope: ['src/routing.ts'] })),
+    }];
+
+    expect(() => recordWorkOrderPreflightCommand(commandInput(snapshot))).toThrow(/L0/);
   });
 
   it('keeps completed and waived preflight events in the recognized control-event stream', () => {
