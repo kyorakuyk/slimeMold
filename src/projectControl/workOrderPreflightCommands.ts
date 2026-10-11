@@ -75,6 +75,7 @@ export function recordWorkOrderPreflightCommand(
     model,
     verdict: assessment.verdict,
     guessPoints: assessment.guessPoints,
+    droppedCount: assessment.droppedCount,
     cost: validateCost(input.cost),
     mode: 'shadow',
     createdAt: now,

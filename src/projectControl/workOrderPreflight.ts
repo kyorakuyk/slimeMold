@@ -4,11 +4,13 @@ export const WORK_ORDER_PREFLIGHT_COMPLETED_EVENT = 'WorkOrderPreflightCompleted
 export const WORK_ORDER_PREFLIGHT_WAIVED_EVENT = 'WorkOrderPreflightWaived' as const;
 
 export const PREFLIGHT_PROMPT = `你稍后要独立完成下面这份施工单。现在不要写代码，也不要给方案。
-逐条列出你必须靠猜才能动手的地方，每条给出：
+逐条列出你必须靠猜才能动手的地方。只输出一个 JSON 数组，每条是一个对象，包含：
 - quote：施工单里引起猜测的原文（逐字复制）
 - question：你需要谁回答什么
 - consequence：猜错会影响验收、接口、范围，还是只影响风格
-没有需要猜的地方就返回空列表。只输出 JSON。`;
+- severity：猜错会影响验收、接口或范围时写 "blocking"，只影响风格或细节时写 "minor"
+- options：可选，你能想到的几种理解（字符串数组）
+没有需要猜的地方就输出 []。`;
 
 export type WorkOrderPreflightVerdict = 'clear' | 'ambiguous' | 'unknown';
 export type WorkOrderPreflightSeverity = 'blocking' | 'minor';
@@ -29,6 +31,7 @@ export interface WorkOrderPreflightGuessPoint {
 export interface WorkOrderPreflightAssessment {
   verdict: WorkOrderPreflightVerdict;
   guessPoints: WorkOrderPreflightGuessPoint[];
+  droppedCount: number;
 }
 
 export interface WorkOrderPreflightRecord extends WorkOrderPreflightAssessment {
@@ -102,20 +105,28 @@ function parseGuessPoint(value: unknown, workOrderText: string): WorkOrderPrefli
   };
 }
 
+function unwrapJsonFence(raw: string): string {
+  const match = raw.trim().match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+  return match?.[1] ?? raw;
+}
+
 export function parsePreflightResponse(raw: string, workOrderText: string): WorkOrderPreflightAssessment {
   let decoded: unknown;
   try {
-    decoded = JSON.parse(raw) as unknown;
+    decoded = JSON.parse(unwrapJsonFence(raw)) as unknown;
   } catch {
-    return { verdict: 'unknown', guessPoints: [] };
+    return { verdict: 'unknown', guessPoints: [], droppedCount: 0 };
   }
-  if (!Array.isArray(decoded)) return { verdict: 'unknown', guessPoints: [] };
+  if (!Array.isArray(decoded)) return { verdict: 'unknown', guessPoints: [], droppedCount: 0 };
   const guessPoints = decoded
     .map((item) => parseGuessPoint(item, workOrderText))
     .filter((item): item is WorkOrderPreflightGuessPoint => item !== undefined);
+  const droppedCount = decoded.length - guessPoints.length;
   // Minor points stay visible in shadow records but do not make approval ambiguous.
-  const verdict = guessPoints.some((point) => point.severity === 'blocking') ? 'ambiguous' : 'clear';
-  return { verdict, guessPoints };
+  const verdict = decoded.length > 0 && guessPoints.length === 0
+    ? 'unknown'
+    : guessPoints.some((point) => point.severity === 'blocking') ? 'ambiguous' : 'clear';
+  return { verdict, guessPoints, droppedCount };
 }
 
 export function isPreflightCurrent(

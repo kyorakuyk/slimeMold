@@ -105,6 +105,7 @@ describe('recordWorkOrderPreflightCommand', () => {
         model: 'fixture-model',
         verdict: 'ambiguous',
         guessPoints: [guessPoint],
+        droppedCount: 0,
         cost: { status: 'not-metered' },
         mode: 'shadow',
         createdAt: now,
@@ -118,6 +119,22 @@ describe('recordWorkOrderPreflightCommand', () => {
       rawResponse: '{invalid JSON',
     });
     expect(result.events[0].payload).toMatchObject({ verdict: 'unknown', guessPoints: [] });
+  });
+
+  it('persists the number of rejected guess points in the event payload', () => {
+    const result = recordWorkOrderPreflightCommand({
+      ...commandInput(snapshotFixture()),
+      rawResponse: JSON.stringify([
+        guessPoint,
+        { ...guessPoint, quote: '不是施工单原文' },
+      ]),
+    });
+
+    expect(result.events[0].payload).toMatchObject({
+      verdict: 'ambiguous',
+      guessPoints: [guessPoint],
+      droppedCount: 1,
+    });
   });
 
   it('rejects a stale graph version or a task outside the selected graph', () => {
