@@ -5,50 +5,13 @@ import {
   proposeProjectPlanCommand,
 } from './projectPlanning';
 import { createDepartmentWorkPackage } from '../projectPlanning';
-import {
-  createEmptyProjectControlSnapshot,
-  parseProjectControlSnapshot,
-  serializeProjectControlSnapshot,
-} from '../persistence';
-import { createProjectSession } from '../state';
-import type { ProjectPlan } from '../types';
-
-const projectPlan: ProjectPlan = {
-  version: 1,
-  id: 'project-plan-1',
-  projectId: 'project-1',
-  sessionId: 'session-1',
-  planVersion: 1,
-  requirementsRef: { id: 'requirements-1', version: 1 },
-  solutionRef: { id: 'solution-1', version: 1 },
-  feasibilityRef: { id: 'feasibility-1', version: 1 },
-  milestonePlanRef: { id: 'milestones-1', version: 1 },
-  departmentCharterRefs: [{ id: 'charter-1', version: 1 }],
-  feasibilityStatus: 'feasible',
-  blockingQuestionCount: 0,
-  approval: 'draft',
-  createdAt: '2026-09-12T09:05:00.000Z',
-  updatedAt: '2026-09-12T09:05:00.000Z',
-};
-
-function projectPlanningSnapshot() {
-  const session = createProjectSession({
-    id: 'session-1',
-    projectId: 'project-1',
-    goal: '目标',
-    now: '2026-09-01T00:00:00.000Z',
-  });
-  return {
-    ...createEmptyProjectControlSnapshot(),
-    activeSessionId: session.id,
-    sessions: [session],
-  };
-}
+import { parseProjectControlSnapshot, serializeProjectControlSnapshot } from '../persistence';
+import { architectureSnapshot, projectPlan } from '../commands.testFixtures';
 
 describe('Project planning command owner', () => {
   it('persists proposal and approval facts, blocks early dispatch, then dispatches an approved package', () => {
     const proposed = proposeProjectPlanCommand({
-      snapshot: projectPlanningSnapshot(),
+      snapshot: architectureSnapshot(),
       plan: projectPlan,
       now: '2026-09-12T09:06:00.000Z',
     });
