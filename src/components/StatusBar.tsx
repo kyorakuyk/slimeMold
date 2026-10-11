@@ -93,7 +93,7 @@ export default function StatusBar({
           data-active={tab === 'dev'}
           onClick={() => setTab('dev')}
         >
-          <GitBranch size={12} /> 开发（H4）
+          <GitBranch size={12} /> {t('tab.dev')}
         </button>
 
         <div className="flex flex-1 items-center justify-end gap-3 px-3 text-[11px]">

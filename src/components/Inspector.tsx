@@ -33,7 +33,7 @@ function ParamField({
     const isFile = typeof value === 'string' && (value.startsWith('path:') || value.startsWith('file:'));
     const fileLabel = isFile
           ? value.startsWith('file:')
-            ? t('asset.localLabel')
+            ? t('param.asset.localLabel')
             : value.slice(5)
       : '';
 
@@ -222,10 +222,12 @@ export default function Inspector({ width = 288 }: { width?: number }) {
       try {
         await revealItemInDir(winPath);
       } catch (err1) {
+        // Developer-console diagnostic only; intentionally not rendered as localized UI.
         console.error('revealItemInDir 失败', err1);
         try {
           await openPath(dir);
         } catch (err2) {
+          // Developer-console diagnostic only; intentionally not rendered as localized UI.
           console.error('openPath 失败', err2);
           void alertDialog(`${t('asset.cannotOpen')}\n${winPath}`);
         }
@@ -245,7 +247,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             <p className="mt-0.5 text-[11px] text-ink-faint">{t('asset.title')}{asset.kind}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title="下载 / 导出" onClick={() => downloadBlob(asset.name, asset.content, asset.kind === 'image' ? 'image/png' : 'text/plain')}>
+            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title={t('asset.download')} onClick={() => downloadBlob(asset.name, asset.content, asset.kind === 'image' ? 'image/png' : 'text/plain')}>
               <Download size={14} />
             </button>
             {asset.path && isTauri && (
@@ -272,7 +274,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs text-ink-soft">内容预览</label>
+            <label className="mb-1 block text-xs text-ink-soft">{t('asset.preview')}</label>
             {asset.kind === 'image' ? (
               <img src={asset.content.startsWith('data:') ? asset.content : `data:image/png;base64,${asset.content}`} alt={asset.name} className="max-w-full rounded border border-line" />
             ) : (

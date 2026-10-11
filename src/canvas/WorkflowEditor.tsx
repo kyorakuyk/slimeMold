@@ -40,11 +40,13 @@ import Companion from '../components/Companion';
 import { runWorkflow, stopWorkflow } from '../engine/executor';
 import { CanvasWfIdContext } from './canvasWfId';
 import { projectStyledEdges } from './workflowEdgeProjection';
+import { useT } from '../i18n/useT';
 
 const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
 const edgeTypes = { kind: KindEdge };
 
 // 小地图节点配色（与 CSS 分类变量同语义，深色调更亮以保证可见）
+// These keys are persisted node category identifiers, not display labels.
 const CAT_COLORS: Record<string, string> = {
   输入: '#51cf66',
   AI: '#9775fa',
@@ -84,6 +86,7 @@ function WorkflowEditorInner({
   wfId?: string;
   onNewProject?: () => void;
 }) {
+  const t = useT();
   // 无 wfId：渲染当前激活工作流（全局状态）；有 wfId：渲染并编辑指定工作流（拆分视图分栏）
   const isSplit = !!wfId;
   const activeNodes = useWorkflowStore((s) => s.nodes);
@@ -258,7 +261,7 @@ function WorkflowEditorInner({
 
       // 环路校验（与 onConnect 一致，忽略 control 语义）
       if (wouldCreateCycle(newSource, newTarget, st.edges.filter((e) => e.id !== oldEdge.id))) {
-        st.addLog('error', '重新连线会形成环路，已取消');
+        st.addLog('error', t('canvas.reconnect.cycleCancelled'));
         return;
       }
       // 端口类型校验
@@ -271,7 +274,7 @@ function WorkflowEditorInner({
       const srcPort = srcDef.outputs.find((o) => o.id === newSH);
       const tgtPort = tgtDef.inputs.find((i) => i.id === newTH);
       if (!arePortsCompatible(srcPort?.type, tgtPort?.type)) {
-        st.addLog('error', '重新连线失败：端口类型不兼容');
+        st.addLog('error', t('canvas.reconnect.typeMismatch'));
         return;
       }
       const kind = (srcPort?.flow as EdgeKind | undefined) ?? (oldEdge.data?.kind as EdgeKind) ?? 'data';
@@ -531,7 +534,7 @@ function WorkflowEditorInner({
     if (!tpl) return;
     const { nodes: n, edges: e } = tpl.build();
     if (workflowCount === 0) newWorkflowInProject();
-    loadGraph('示例 · ' + tpl.name, n, e, [], []);
+    loadGraph(t('canvas.exampleWorkflowName', { name: tpl.name }), n, e, [], []);
   };
 
   const defaultEdgeOptions = useMemo(
@@ -845,18 +848,18 @@ function WorkflowEditorInner({
               {splitRunning ? (
                 <button
                   className="flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-err transition hover:bg-[var(--sm-bg-soft)]"
-                  title="停止运行（右栏）"
+                  title={t('canvas.split.stopTitle')}
                   onClick={handleSplitStop}
                 >
-                  <Square size={13} /> 停止
+                  <Square size={13} /> {t('canvas.split.stop')}
                 </button>
               ) : (
                 <button
                   className="flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium sm-btn-primary transition"
-                  title="运行工作流（右栏）"
+                  title={t('canvas.split.runTitle')}
                   onClick={handleSplitRun}
                 >
-                  <Play size={13} /> 运行
+                  <Play size={13} /> {t('canvas.split.run')}
                 </button>
               )}
               <span className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
@@ -875,17 +878,17 @@ function WorkflowEditorInner({
         )}
         {/* 左上：对齐 / 分布工具条（ComfyUI 风格，对选中≥2节点生效） */}
         <Panel position="top-left" className="sm-cv-panel">
-          <div className="sm-cv-modes sm-cv-modes-h" title="对齐与分布（先框选多个节点）">
-            <button className="sm-cv-btn" title="左对齐" onClick={() => alignSelected('left')}><AlignStartVertical size={15} /></button>
-            <button className="sm-cv-btn" title="水平居中" onClick={() => alignSelected('hcenter')}><AlignCenterVertical size={15} /></button>
-            <button className="sm-cv-btn" title="右对齐" onClick={() => alignSelected('right')}><AlignEndVertical size={15} /></button>
+          <div className="sm-cv-modes sm-cv-modes-h" title={t('canvas.align.title')}>
+            <button className="sm-cv-btn" title={t('canvas.align.left')} onClick={() => alignSelected('left')}><AlignStartVertical size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.hCenter')} onClick={() => alignSelected('hcenter')}><AlignCenterVertical size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.right')} onClick={() => alignSelected('right')}><AlignEndVertical size={15} /></button>
             <span className="sm-cv-sep" />
-            <button className="sm-cv-btn" title="顶对齐" onClick={() => alignSelected('top')}><AlignStartHorizontal size={15} /></button>
-            <button className="sm-cv-btn" title="垂直居中" onClick={() => alignSelected('vcenter')}><AlignCenterHorizontal size={15} /></button>
-            <button className="sm-cv-btn" title="底对齐" onClick={() => alignSelected('bottom')}><AlignEndHorizontal size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.top')} onClick={() => alignSelected('top')}><AlignStartHorizontal size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.vCenter')} onClick={() => alignSelected('vcenter')}><AlignCenterHorizontal size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.bottom')} onClick={() => alignSelected('bottom')}><AlignEndHorizontal size={15} /></button>
             <span className="sm-cv-sep" />
-            <button className="sm-cv-btn" title="水平等距分布" onClick={() => distributeSelected('x')}><AlignHorizontalSpaceBetween size={15} /></button>
-            <button className="sm-cv-btn" title="垂直等距分布" onClick={() => distributeSelected('y')}><AlignVerticalSpaceBetween size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.distributeHorizontal')} onClick={() => distributeSelected('x')}><AlignHorizontalSpaceBetween size={15} /></button>
+            <button className="sm-cv-btn" title={t('canvas.align.distributeVertical')} onClick={() => distributeSelected('y')}><AlignVerticalSpaceBetween size={15} /></button>
           </div>
         </Panel>
 
@@ -894,28 +897,28 @@ function WorkflowEditorInner({
           <div className="sm-cv-modes">
             <button
               className={`sm-cv-btn ${interactionMode === 'move' ? 'active' : ''}`}
-              title="拖动模式（拖动画布）"
+              title={t('canvas.mode.drag')}
               onClick={() => setInteractionMode('move')}
             >
               <Hand size={15} />
             </button>
             <button
               className={`sm-cv-btn ${interactionMode === 'select' ? 'active' : ''}`}
-              title="框选模式（拖拽框选节点）"
+              title={t('canvas.mode.boxSelect')}
               onClick={() => setInteractionMode('select')}
             >
               <BoxSelect size={15} />
             </button>
             <button
               className={`sm-cv-btn ${interactionMode === 'click' ? 'active' : ''}`}
-              title="点击模式（左键点击选中节点，不平移也不框选）"
+              title={t('canvas.mode.click')}
               onClick={() => setInteractionMode('click')}
             >
               <MousePointer2 size={15} />
             </button>
             <button
               className={`sm-cv-btn ${showMinimap ? 'active' : ''}`}
-              title={showMinimap ? '隐藏小地图' : '显示小地图'}
+              title={showMinimap ? t('canvas.minimap.hide') : t('canvas.minimap.show')}
               onClick={toggleMinimap}
             >
               <MapIcon size={15} />
@@ -926,16 +929,16 @@ function WorkflowEditorInner({
         {/* 右下：缩放控制（ComfyUI 风格） */}
         <Panel position="bottom-right" className="sm-cv-panel">
           <div className="sm-cv-zoom">
-            <button className="sm-cv-btn" title="缩小" onClick={() => zoomOut({ duration: 150 })}>
+            <button className="sm-cv-btn" title={t('canvas.zoom.out')} onClick={() => zoomOut({ duration: 150 })}>
               <Minus size={15} />
             </button>
-            <button className="sm-cv-zoom-val" title="适应视图" onClick={() => fitView({ duration: 250, padding: 0.2 })}>
+            <button className="sm-cv-zoom-val" title={t('canvas.zoom.fit')} onClick={() => fitView({ duration: 250, padding: 0.2 })}>
               {zoomPct}%
             </button>
-            <button className="sm-cv-btn" title="放大" onClick={() => zoomIn({ duration: 150 })}>
+            <button className="sm-cv-btn" title={t('canvas.zoom.in')} onClick={() => zoomIn({ duration: 150 })}>
               <Plus size={15} />
             </button>
-            <button className="sm-cv-btn" title="适应视图" onClick={() => fitView({ duration: 250, padding: 0.2 })}>
+            <button className="sm-cv-btn" title={t('canvas.zoom.fit')} onClick={() => fitView({ duration: 250, padding: 0.2 })}>
               <Maximize2 size={15} />
             </button>
           </div>
@@ -974,33 +977,33 @@ function WorkflowEditorInner({
                 unpackSubgraph(menuRefNode.id);
               }}
             >
-              <Ungroup size={13} /> 展开子图
+              <Ungroup size={13} /> {t('canvas.subgraph.unpack')}
             </button>
           ) : (
             <>
               <button
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
                 onClick={handlePack}
-                title="把选中的节点打包成可复用的子图"
+                title={t('canvas.subgraph.packTitle')}
                 disabled={targetIds.length === 0}
               >
-                <Boxes size={13} /> 打包为子图
-                <span className="ml-auto text-[10.5px] text-ink-faint">{targetIds.length} 个</span>
+                <Boxes size={13} /> {t('canvas.subgraph.pack')}
+                <span className="ml-auto text-[10.5px] text-ink-faint">{t('canvas.selection.count', { count: targetIds.length })}</span>
               </button>
               <button
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink transition-colors hover:bg-paper-soft disabled:cursor-not-allowed disabled:text-ink-faint"
                 onClick={handleGroup}
                 disabled={targetIds.length === 0}
-                title="把选中的节点框成一组，可整体移动、折叠（不影响运行）"
+                title={t('canvas.group.packTitle')}
               >
-                <Group size={13} /> 编为一组
-                <span className="ml-auto text-[10.5px] text-ink-faint">{targetIds.length} 个</span>
+                <Group size={13} /> {t('canvas.group.pack')}
+                <span className="ml-auto text-[10.5px] text-ink-faint">{t('canvas.selection.count', { count: targetIds.length })}</span>
               </button>
             </>
           )}
           {targetIds.length === 0 && !menuRefNode && (
             <p className="px-3 py-1 text-[11px] leading-relaxed text-ink-faint">
-              先用框选模式选中若干节点
+              {t('canvas.selection.emptyHint')}
             </p>
           )}
         </div>
@@ -1011,7 +1014,7 @@ function WorkflowEditorInner({
           <div className="flex flex-col items-center gap-3 text-center">
             <Sparkles size={22} style={{ color: 'var(--sm-ink-faint)' }} />
             <p className="text-[13px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              没有打开的工作流
+              {t('canvas.empty.noWorkflow')}
             </p>
             <div className="flex gap-2">
               <button
@@ -1019,14 +1022,14 @@ function WorkflowEditorInner({
                 className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-white transition"
                 style={{ background: 'var(--sm-accent)' }}
               >
-                新建项目
+                {t('menu.newProject')}
               </button>
               <button
                 onClick={() => setWelcomeDismissed(false)}
                 className="rounded-lg border px-3 py-1.5 text-[12.5px] transition hover:bg-[var(--sm-bg-soft)]"
                 style={{ borderColor: 'var(--sm-line)', color: 'var(--sm-ink-soft)' }}
               >
-                查看引导
+                {t('canvas.welcome.guide')}
               </button>
             </div>
           </div>
@@ -1042,7 +1045,7 @@ function WorkflowEditorInner({
             <button
               className="absolute right-3 top-3 rounded-md p-1.5 transition-colors"
               style={{ color: 'var(--sm-ink-faint)' }}
-              title="关闭"
+              title={t('canvas.close')}
               onClick={dismissWelcome}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--sm-bg-soft)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -1058,7 +1061,7 @@ function WorkflowEditorInner({
                 </h2>
               </div>
               <p className="mt-1.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-                把节点连成一条工作流，就能自动运行。从下面开始：
+                {t('canvas.welcome.headline')}
               </p>
 
               <div className="mt-4 flex flex-col gap-1.5">
@@ -1068,7 +1071,7 @@ function WorkflowEditorInner({
                   style={{ color: 'var(--sm-ink)' }}
                 >
                   <FolderPlus size={16} style={{ color: 'var(--sm-accent)' }} />
-                  新建项目
+                  {t('menu.newProject')}
                   <span className="ml-auto text-[11px] opacity-0 transition-opacity group-hover:opacity-60"
                     style={{ color: 'var(--sm-ink-faint)' }}>Ctrl/Cmd+N</span>
                 </button>
@@ -1078,7 +1081,7 @@ function WorkflowEditorInner({
                   style={{ color: 'var(--sm-ink)' }}
                 >
                   <LayoutTemplate size={16} style={{ color: 'var(--sm-accent)' }} />
-                  浏览示例库
+                  {t('canvas.welcome.browseExamples')}
                 </button>
                 <button
                   onClick={() => setExamplesOpen(true)}
@@ -1086,19 +1089,19 @@ function WorkflowEditorInner({
                   style={{ color: 'var(--sm-ink)' }}
                 >
                   <FolderOpen size={16} style={{ color: 'var(--sm-accent)' }} />
-                  打开已有工作流
+                  {t('canvas.welcome.openWorkflow')}
                 </button>
               </div>
 
               <p className="mt-auto pt-4 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-                左侧「节点库」可搜索全部节点；AI 节点默认开启离线模拟，无需配置即可试跑。
+                {t('canvas.welcome.nodeHint')}
               </p>
             </div>
 
             {/* 右：示例模板 */}
             <div className="flex flex-col">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sm-ink-faint)' }}>
-                从模板开始
+                {t('canvas.welcome.templates')}
               </p>
               <div className="grid grid-cols-1 items-start gap-1.5 sm:grid-cols-2">
                 {STARTER_TEMPLATES.slice(0, 6).map((t) => (
@@ -1133,7 +1136,7 @@ function WorkflowEditorInner({
                 className="mt-3 self-start text-[12px] font-medium underline-offset-2 hover:underline"
                 style={{ color: 'var(--sm-accent)' }}
               >
-                查看全部示例 →
+                {t('canvas.welcome.allExamples')}
               </button>
             </div>
           </div>
@@ -1154,8 +1157,8 @@ function WorkflowEditorInner({
 
       {packPrompt && (
         <NamePrompt
-          title="给这个子图起个名字"
-          initial={`子图 ${Object.keys(subgraphs).length + 1}`}
+          title={t('canvas.subgraph.nameTitle')}
+          initial={t('canvas.subgraph.newName', { count: Object.keys(subgraphs).length + 1 })}
           onConfirm={(name) => {
             packAsSubgraph(targetIds, name);
             setPackPrompt(false);

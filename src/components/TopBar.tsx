@@ -169,7 +169,7 @@ export default function TopBar({
       persistSession(path);
       pushRecentProject({ path, name: file.name, openedAt: new Date().toISOString() });
       if ((file as ProjectFile & { legacy?: boolean }).legacy) {
-        addLog('info', '检测到旧版 .smproj 项目，保存时将自动转换为 .slimemold/ 目录结构');
+        addLog('info', t('log.legacyProject'));
       }
     } catch (e) {
       alert(t('dialog.openFailed') + (e as Error).message);
@@ -475,11 +475,11 @@ export default function TopBar({
         <div className="sm-pro-header-actions ml-auto flex items-center gap-1">
           <button
             className="sm-btn h-6 px-2"
-            title="切换到轻量工作台"
+            title={t('topbar.simpleView')}
             onClick={onOpenSimpleView}
           >
             <LayoutDashboard size={14} />
-            <span className="hidden xl:inline">轻量工作台</span>
+            <span className="hidden xl:inline">{t('topbar.simpleView')}</span>
           </button>
           <button
             className="flex h-6 w-7 items-center justify-center rounded transition-colors hover:bg-black/10"

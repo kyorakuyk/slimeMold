@@ -213,10 +213,10 @@ export default function OrchestratorPanel({
         defaultAgentId: useWorkflowStore.getState().defaultAgentId,
         projectId: useWorkflowStore.getState().projectId ?? undefined,
       });
-      addLog(
-        'info',
-        `编排草案已生成（${orch.id}），共 ${orch.draft?.stages.length ?? 0} 个阶段，请绑定工作流并确认`,
-      );
+      addLog('info', t('orchestrator.log.draftGenerated', {
+        id: orch.id,
+        count: orch.draft?.stages.length ?? 0,
+      }));
       setSelectedId(orch.id);
       setGoal('');
     } catch (e) {
@@ -244,11 +244,14 @@ export default function OrchestratorPanel({
       const binds = prepareStageWorkflows(orchId);
       const failed = binds.filter((b) => !b.bind.ok);
       if (failed.length > 0) {
+        const failureSummary = failed
+          .map((item) => `${item.stageId} (${item.bind.ok ? '' : item.bind.error})`)
+          .join('; ');
         setErr(
-          `固化失败：${failed.map((f) => `${f.stageId}（${f.bind.ok ? '' : f.bind.error}）`).join('；')}`,
+          t('orchestrator.log.prepareFailed', { failed: failureSummary }),
         );
       } else {
-        addLog('info', `已固化 ${binds.length} 个阶段的工作流绑定，可打开编辑或开始执行`);
+        addLog('info', t('orchestrator.log.prepared', { count: binds.length }));
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -259,7 +262,7 @@ export default function OrchestratorPanel({
   const onConfirm = (orchId: string) => {
     try {
       confirmDraft(orchId, 'approved');
-      addLog('info', '编排草案已确认（待执行）——可先固化/编辑阶段工作流，再开始执行');
+      addLog('info', t('orchestrator.log.confirmed'));
     } catch (e) {
       addLog('error', e instanceof Error ? e.message : String(e));
     }
@@ -308,7 +311,7 @@ export default function OrchestratorPanel({
     setCancelling(true);
     try {
       cancelOrchestrationRun(orchId);
-      addLog('info', '已请求取消编排，正在停止当前阶段…');
+      addLog('info', t('orchestrator.log.cancelRequested'));
     } catch (e) {
       setCancelling(false);
       addLog('error', e instanceof Error ? e.message : String(e));
@@ -322,7 +325,7 @@ export default function OrchestratorPanel({
     if (isTerminal && !(await confirmDialog(t('orchestrator.deleteConfirm')))) return;
     try {
       if (removeOrchestration(orchId)) {
-        addLog('info', isTerminal ? '编排历史记录已删除' : '编排草案已废弃');
+        addLog('info', isTerminal ? t('orchestrator.log.historyDeleted') : t('orchestrator.log.draftDiscarded'));
         if (selectedId === orchId) setSelectedId(null);
       }
     } catch (e) {
@@ -335,9 +338,9 @@ export default function OrchestratorPanel({
     const st = useWorkflowStore.getState();
     if (st.workflows[wfId]) {
       st.switchWorkflow(wfId);
-      addLog('info', `已切换到工作流「${wfLabel(wfId)}」，可编辑后回到编排面板执行`);
+      addLog('info', t('orchestrator.log.workflowSwitched', { name: wfLabel(wfId) }));
     } else {
-      addLog('warn', `工作流不存在：${wfId}（请先固化工作流）`);
+      addLog('warn', t('orchestrator.log.workflowMissing', { id: wfId }));
     }
   };
 
@@ -345,6 +348,7 @@ export default function OrchestratorPanel({
     const selectedRun = selectedWorkerRuns.find((run) => run.runId === runId);
     if (!onRecoverWorkerRun || recoveryBusy || !selectedRun?.recoveryActions.includes(decision)) return;
     setRecoveryBusy(true);
+    // This language-neutral audit reason is persisted with the recovery decision.
     const reason = `用户在专业编排中选择 ${decision}`;
     void (async () => {
       try {
@@ -508,7 +512,7 @@ export default function OrchestratorPanel({
                           {t(`orchestrator.status.${o.status}`)}
                         </span>
                         <span className="shrink-0 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                          {o.draft?.stages.length ?? 0} 阶段
+                          {t('orchestrator.stageCount', { count: o.draft?.stages.length ?? 0 })}
                         </span>
                       </div>
                       <div className="mt-0.5 line-clamp-2 break-all text-[12px]" style={{ color: 'var(--sm-ink)' }}>
