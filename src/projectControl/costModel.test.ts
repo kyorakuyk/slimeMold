@@ -90,4 +90,13 @@ describe('cost model pure metrics', () => {
       sampleCount: MIN_SAMPLES,
     }).status).toBe('insufficient-data');
   });
+
+  it('rejects an overflowing intermediate CPI in estimate-at-completion', () => {
+    expect(estimateAtCompletion({
+      totalBudget: 100,
+      earnedValue: Number.MAX_VALUE,
+      actualCost: Number.MIN_VALUE,
+      sampleCount: MIN_SAMPLES,
+    })).toEqual({ status: 'insufficient-data' });
+  });
 });

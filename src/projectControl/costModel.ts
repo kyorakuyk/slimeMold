@@ -78,5 +78,6 @@ export function estimateAtCompletion(input: EstimateAtCompletionInput): CostMetr
     return { status: 'insufficient-data' };
   }
   const cpiValue = input.earnedValue / input.actualCost;
+  if (!Number.isFinite(cpiValue) || cpiValue <= 0) return { status: 'insufficient-data' };
   return result(input.totalBudget / cpiValue, input.sampleCount);
 }
