@@ -121,7 +121,7 @@ Any future code or evidence change invalidates an exact reviewer verdict outside
 
 ### Scope and current boundary
 
-- Read-only inventory covered 40 `batch1-*` tags and 9 first-batch/night-run `checkpoint/*-20261012` tags (49 refs, 33 unique targets). No historical tag was moved or deleted.
+- Read-only inventory covered 40 `batch1-*` tags and 10 first-batch/night-run `checkpoint/*-20261012` tags (50 refs, 34 unique targets), including the later docs-only triage checkpoint below. No historical tag was moved or deleted.
 - The full code target is `31dc5794a76ef72601c2b00a76ea161b23759c05`; the independent full-range reviewer passed with `security_concerns=[]` and `logic_errors=[]`. This is not a verified successor: the required browser + real Tauri bilingual GUI read-back did not complete. `checkpoint/living-graph-batch1-unverified-20261012` is the only final batch-status tag; no `checkpoint/living-graph-batch1-verified-20261012` exists. Therefore **no historical tag is replaced by a verified tag** in this entry.
 
 ### superseded — later bounded code/document snapshot exists, but remains unverified
@@ -141,7 +141,7 @@ Any future code or evidence change invalidates an exact reviewer verdict outside
 |---|---|---|
 | `batch1-slice4-i18n-unverified`, `batch1-slice4a-namespace-isolation-unverified`, `batch1-slice6-eac-overflow-fix-unverified`, `batch1-slice6-review-recorded-unverified` | These slice results remain represented in the current branch, but the complete batch has no verified GUI acceptance. The final reviewer’s cost-model-underflow and production L0 risk-input notes are non-blocking suggestions, not logic findings; they were not silently promoted to blockers. | None |
 | `batch1-fix3-unverified`, `batch1-fix3-reviewed-unverified`, `batch1-fix4-unverified`, `batch1-fix4-reviewed-unverified`, `checkpoint/test-env-unverified-20261012` | Per-slice review/evidence exists for these exact snapshots, but it does not substitute for the required final bilingual GUI read-back on the full current target. | None |
-| `checkpoint/batch1-final-verification-start-20261012`, `checkpoint/living-graph-batch1-unverified-20261012` | The start tag is not an approval. The final unverified tag points to `31dc579`; GUI acceptance remains evidence-missing, so there is deliberately no verified counterpart. | None |
+| `checkpoint/batch1-final-verification-start-20261012`, `checkpoint/living-graph-batch1-unverified-20261012`, `checkpoint/batch1-triage-unverified-20261012` | The start tag is not an approval. The final unverified code tag points to `31dc579`; the docs-only triage tag points to `27fbc96` and records classification, not code acceptance. GUI acceptance remains evidence-missing, so there is deliberately no verified counterpart. | None |
 
 Environment limits recorded for this classification: direct Linux Node 22 package acquisition ended in npm-registry `ETIMEDOUT` (Windows Node 22 and Linux Node 24 tests passed); browser screenshot capture after welcome-overlay dismissal was stale or timed out; the real Tauri app auto-restored an existing disposable Worker fixture with prior failure records, so the bilingual panel sequence stopped before any manual project mutation. The isolated browser DOM language read-back is partial evidence, not a substitute for the real-Tauri GUI gate.
 

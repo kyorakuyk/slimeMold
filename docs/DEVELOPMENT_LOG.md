@@ -5540,7 +5540,7 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 ### 7.404 unverified：归档第一批历史标签分类
 
-- 在 `docs/HISTORICAL_UNVERIFIED_TRIAGE.md` 末尾追加 `Living graph batch1（2026-10-11/12）`，逐组登记 40 个 `batch1-*` 与 9 个当轮 checkpoint 标签（共 49 refs / 33 unique targets）。旧 refs 未移动或删除。
+- 在 `docs/HISTORICAL_UNVERIFIED_TRIAGE.md` 末尾追加 `Living graph batch1（2026-10-11/12）`，逐组登记 40 个 `batch1-*` 与 10 个当轮 checkpoint 标签（共 50 refs / 34 unique targets），包括 docs-only `checkpoint/batch1-triage-unverified-20261012`。旧 refs 未移动或删除。
 - 分类区分被后续 bounded repair 替代的 S2/Fix1、B0/B1、S4 placeholder、初始 S6 cost-model 与各 start anchors；仍在当前实现中的 S4/S6/Fix3/Fix4/test-environment snapshots 标为 evidence-missing/environment-blocked，因为最终 GUI 门未闭合。无任何 verified successor；唯一当前批次终态标签仍是 `checkpoint/living-graph-batch1-unverified-20261012` -> `31dc579`。
 - Exact reviewer 的两条建议保持 non-blocking；没有据此分类为 concrete-risk。Tauri 自动恢复的外部 fixture 警告及浏览器 ProjectSession 自动 Master 请求尝试分别保留为范围外观察/夜间报告边界偏差，不把它们归因或改写成第一批修复证据。
-- 本条为 docs-only 历史分诊记录；不改变代码、branch 或历史 tag。`git diff --check` 通过；脚本核对 49 个目标 tag 均被分类，所有产出保持 `(unverified)`。
+- 本条为 docs-only 历史分诊记录；不改变代码、branch 或历史 tag。`git diff --check` 通过；脚本核对 50 个目标 tag 均被分类，所有产出保持 `(unverified)`。
