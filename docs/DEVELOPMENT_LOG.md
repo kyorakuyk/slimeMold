@@ -5682,3 +5682,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立headless Chrome静态props预览捕获并回读 `.hermes/reports/assets/slice12-topbar-preview-20261012.png`：可见菜单行、打开的File菜单和工具栏；未打开项目、点击执行、运行Worker或触发model API。临时preview harness已删除，Vite进程经路径核验后停止，1420端口关闭。
 - 当前 focused `TopBar.test.tsx`：1 file / 4 tests passed；当前 `git diff --check` 通过。之后代码未改动TopBar；最近 descendant full suite为230 files / 1,523 tests passed，build为2,123 modules、app/project tsc、i18n 1,112 keys及diff-check通过。Reviewer未运行tests/build。
 - Exact immutable review对target/parent返回 strict JSON：`head`匹配、`working_tree_clean=true`、`passed=true`、security/logic lists为空。两个非阻塞suggestions：继承的keyboard effect依赖未包含 `handleNewProject`，prop在flow actions稳定时替换可能调用旧callback；以及为zoom/fit-view快捷键补 preventDefault tests。该结构slice未改变旧快捷键逻辑，不在本轮扩大修复。`checkpoint/split-topbar-unverified-20261012` 与 `checkpoint/split-topbar-reviewed-unverified-20261012` 均指向 `303214a...`；仍无Tauri/native验收，保持unverified。
+
+### 7.426 unverified：night-run 最终状态对账
+
+- Closeout resume checkpoint `23d6c614965b06513eb79bd50976f3ab754da956` 于19:42:00创建。当前代码源未在本轮再次修改；最终 `npm run test -- --reporter=dot`：230 files / 1,523 tests passed；`npm run build`：`tsc -b`及Vite成功、2,123 modules；app/project `tsc --noEmit`、i18n（1,112 keys）、`git diff --check`均通过。保留既有mixed static/dynamic import与>500 kB chunk warnings，以及有对应断言通过的GUI测试stderr，不计为新增失败。
+- 回读当前分支 `refactor/monolith-split-2`、HEAD `23d6c614965b06513eb79bd50976f3ab754da956`，工作树干净；S9、S11、S12 preview assets存在；1420端口没有listener。没有再次启动Tauri、访问项目/Worker数据、清理worktree、push、merge或rebase。此前Tauri closeout的Startup grant side effect与既有Worker fixture记录保留；旧Tauri截图不是当前代码snapshot的native验收。
+- Reviewer/代码状态对账：S9 `9bfa353...`、S11 `d1b074a...`、S12 `303214a...` 的reviewed-unverified refs分别指向对应code targets；S9/S11/S12均有非阻塞suggestions，见各自编号小节。Slice7 WorkflowEditor生产结构拆分仍未完成；Slice8 OrchestratorPanel生产拆分未开始，必须由用户决定是否另批75–95分钟（原cap为60分钟）；Slice3双语GUI门与整体真实Tauri/native验收仍未闭合。测试/构建通过不升级这些状态；全轮不标verified，也不宣称最终acceptance完成。
