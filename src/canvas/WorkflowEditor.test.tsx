@@ -43,6 +43,7 @@ import { ReactFlowProvider, useStoreApi } from '@xyflow/react';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { FlowNode } from '../types/graph';
+import type { WorkflowFileInMemory } from '../types/workflow';
 import WorkflowEditor, { DND_MIME } from './WorkflowEditor';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,6 +75,35 @@ function resetCanvasStore() {
     selectedIds: [],
     focusWfId: '',
   });
+}
+
+function seedSplitWorkflows(nodeA: FlowNode, nodeB: FlowNode) {
+  const wfA = 'workflow-editor-split-a';
+  const wfB = 'workflow-editor-split-b';
+  const state = useWorkflowStore.getState();
+  const workflow = (name: string, node: FlowNode): WorkflowFileInMemory => ({
+    version: 1,
+    name,
+    savedAt: '2026-10-12T00:00:00.000Z',
+    nodes: [node],
+    edges: [],
+    agents: state.agents,
+    roles: state.roles,
+    variables: {},
+    belongsToProject: state.projectId!,
+  });
+  useWorkflowStore.setState({
+    activeWfId: wfA,
+    workflowName: 'Workflow A',
+    nodes: [nodeB],
+    edges: [],
+    workflows: {
+      ...state.workflows,
+      [wfA]: workflow('Workflow A', nodeA),
+      [wfB]: workflow('Workflow B', nodeB),
+    },
+  });
+  return { wfA, wfB };
 }
 
 describe('WorkflowEditor characterization', () => {
@@ -239,14 +269,6 @@ describe('WorkflowEditor characterization', () => {
   });
 
   it('loads a new split target when its graph fingerprint matches the previous target', async () => {
-    await act(async () => {
-      await useWorkflowStore.getState().newWorkflowInProject();
-    });
-    const wfA = useWorkflowStore.getState().activeWfId;
-    await act(async () => {
-      await useWorkflowStore.getState().newWorkflowInProject();
-    });
-    const wfB = useWorkflowStore.getState().activeWfId;
     const nodeA = {
       id: 'shared-node',
       type: 'base',
@@ -254,20 +276,7 @@ describe('WorkflowEditor characterization', () => {
       data: { typeId: 'input.text', label: 'Workflow A', params: {}, status: 'idle' },
     } as unknown as FlowNode;
     const nodeB = { ...nodeA, data: { ...nodeA.data, label: 'Workflow B' } };
-    const before = useWorkflowStore.getState();
-    const workflowA = before.workflows[wfA];
-    const workflowB = before.workflows[wfB];
-    expect(workflowA).toBeDefined();
-    expect(workflowB).toBeDefined();
-    useWorkflowStore.setState({
-      nodes: [nodeB],
-      edges: [],
-      workflows: {
-        ...before.workflows,
-        [wfA]: { ...workflowA!, nodes: [nodeA], edges: [] },
-        [wfB]: { ...workflowB!, nodes: [nodeB], edges: [] },
-      },
-    });
+    const { wfA, wfB } = seedSplitWorkflows(nodeA, nodeB);
 
     await act(async () => {
       root.render(<WorkflowEditor wfId={wfA} />);
@@ -278,5 +287,31 @@ describe('WorkflowEditor characterization', () => {
 
     const displayedNodes = canvasHarness.reactFlowProps.at(-1)?.nodes as FlowNode[];
     expect(displayedNodes[0]?.data.label).toBe('Workflow B');
+  });
+
+  it('does not overwrite a different split target while loading it', async () => {
+    const nodeA = {
+      id: 'shared-node',
+      type: 'base',
+      position: { x: 10, y: 20 },
+      data: { typeId: 'input.text', label: 'Workflow A', params: {}, status: 'idle' },
+    } as unknown as FlowNode;
+    const nodeB = {
+      ...nodeA,
+      position: { x: 90, y: 20 },
+      data: { ...nodeA.data, label: 'Workflow B' },
+    };
+    const { wfA, wfB } = seedSplitWorkflows(nodeA, nodeB);
+
+    await act(async () => {
+      root.render(<WorkflowEditor wfId={wfA} />);
+    });
+    await act(async () => {
+      root.render(<WorkflowEditor wfId={wfB} />);
+    });
+
+    const displayedNodes = canvasHarness.reactFlowProps.at(-1)?.nodes as FlowNode[];
+    expect(displayedNodes[0]?.data.label).toBe('Workflow B');
+    expect(useWorkflowStore.getState().workflows[wfB]?.nodes[0]?.data.label).toBe('Workflow B');
   });
 });

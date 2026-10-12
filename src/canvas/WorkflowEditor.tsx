@@ -141,6 +141,11 @@ function WorkflowEditorInner({
   // 标记「当前 wfId 的图是否已从 store 载入本地状态」。
   // 未载入前禁止写回：挂载首帧 splitNodes 还是初始空数组，此时写回会把目标工作流清空。
   const loadedWfIdRef = useRef<string | null>(null);
+  // 先于载入 effect 重置目标标记；否则同指纹的新 wfId 会在载入 effect 中被误判为已同步。
+  useEffect(() => {
+    if (loadedWfIdRef.current !== wfId) splitSigRef.current = null;
+  }, [wfId]);
+
   useEffect(() => {
     if (!isSplit || !splitWf || !wfId) return;
     const srcNodes = splitWf.nodes ?? [];
@@ -156,11 +161,6 @@ function WorkflowEditorInner({
     setSplitNodes(loadedNodes);
     setSplitEdges(loadedEdges);
   }, [isSplit, wfId, splitWf]);
-
-  // 切换分栏目标工作流时重置载入标记，防止用旧工作流的本地状态覆盖新目标
-  useEffect(() => {
-    if (loadedWfIdRef.current !== wfId) splitSigRef.current = null;
-  }, [wfId]);
 
   const groups = useWorkflowStore((s) => s.groups);
   const focusedSubgraphId = useViewStore((s) => s.focusedSubgraphId);

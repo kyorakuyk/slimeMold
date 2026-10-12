@@ -5633,3 +5633,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - closeout 最后一次 `npm run test -- --reporter=dot` 仍 exit 1：230 files 中 229 passed/1 failed；1,522 tests 中 1,521 passed/1 failed。失败为 `src/platform/env.test.ts` 的 `localStorage.clear()` `disk I/O error`。此前两次同代码快照 full run分别记录未修改 `WorkflowEditor` target-switch 失败，以及该失败加 `nodeLlmAdapter.test.ts` collection disk I/O error。不得据此宣称 full Vitest 通过。代码快照既有 build（2,122 modules）、app/project tsc、i18n 1,112 keys、diff-check 通过；TopBar focused 4/4。
 - final targeted readback：`npx vitest run src/platform/env.test.ts --reporter=dot` 1/1 passed；`npx vitest run src/canvas/WorkflowEditor.test.tsx --reporter=dot` 4/5 passed，target-switch case 再次失败（期望 Workflow B、实际 Workflow A）。localStorage disk I/O 在单文件运行时未复现；其全量失败原因仍未知。未修改这两个 scope 外的测试/产品代码。
 - Slice11/12 GUI 与 exact-review 缺口、full-suite 不稳定、既有恢复告警均未满足计划的最终 acceptance；closeout 仅完成 Tauri read-back/报告，整轮保持 unverified，不自动升级任何 tag。
+
+### 7.419 unverified：WorkflowEditor target-switch 同步修复（结构拆分仍待续）
+
+- 新一轮 Slice7 结构拆分侦察于 15:27:34 启动。75 分钟预算内还需覆盖 1,185→≤600 行的职责拆分、同快照全量质量门、浏览器预览和 exact review；事实盘点阶段发现回归并完成最小 RED 后，判断剩余预算不足以闭合全部验收，因此在生产拆分前停止，未对 WorkflowEditor 作结构移动。
+- 原 target-switch characterization 测试曾通过/失败不定，最小诊断发现两次同步 `newWorkflowInProject` 可能生成同一 ID：`workflowRegistryActions.ts:66` 使用 `wf-${deps.now() + 1}`，本次实测两次均为 `wf-1791790577794`。测试现改为使用确定性的两个 workflow fixture，隔离该 ID 生成问题；本轮没有改 registry/store 行为。
+- 使用确定性不同 ID 后，same-fingerprint regression 稳定复现：从 A 切到 B 时，`splitSigRef` 只记录图指纹、不含 wfId；目标 reset effect 在 loader effect 之后执行，loader 因相同指纹提前返回，而 ref 清除不会触发重渲染，故画布继续显示 A。修复仅把既有目标切换 reset effect 移到 loader effect 前；保留组件 props、provider、store action 和不同指纹载入/写回合同。新增不同指纹切换 read-back，断言画布与 store 均仍为 B。
+- focused `WorkflowEditor.test.tsx` 为 1 file / 6 tests passed；两个 target-switch regression 连续 10 次均为 2/2 passed。完整 `npm run test -- --reporter=dot` 为 230 files / 1,523 tests passed。`npm run build`（2,122 modules）、app/project TypeScript checks、i18n（1,112 keys）、`git diff --check` 均通过；build 保留既有 mixed static/dynamic import 与 >500 kB chunk warnings。
+- 该 behavior-fix snapshot 尚无 exact reviewer，未做新的浏览器/Tauri preview；所有提交/tag 保持 unverified。`WorkflowEditor.tsx` 仍为 1,185 行，结构拆分、GUI preview 与 exact review 仍需单独 fresh 75 分钟预算；`newWorkflowInProject` 同毫秒 ID collision 只作为独立 store 风险记录，未在本轮修复。
