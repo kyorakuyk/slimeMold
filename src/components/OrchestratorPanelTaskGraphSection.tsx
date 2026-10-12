@@ -1,6 +1,6 @@
 import { useT } from '../i18n/useT';
 import type { TaskGraphProjection, TaskGraphProjectionNode } from '../projectControl/taskGraphProjection';
-import type { TaskGraphSelection } from '../store/viewStore';
+import type { TaskGraphSelection } from '../types/taskGraphSelection';
 import TaskGraphDAGView from './TaskGraphDAGView';
 
 interface OrchestratorPanelTaskGraphSectionProps {

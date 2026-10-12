@@ -10,7 +10,7 @@ import {
 import { useT } from '../i18n/useT';
 import type { WorkerRunView } from '../projectControl/workerRunView';
 import type { TaskGraphProjection, TaskGraphProjectionNode } from '../projectControl/taskGraphProjection';
-import type { TaskGraphSelection } from '../store/viewStore';
+import type { TaskGraphSelection } from '../types/taskGraphSelection';
 import type { AgentConfig } from '../types/agent';
 import type { Orchestration, StageLog } from '../types/orchestration';
 import type { WorkflowFileInMemory } from '../types/workflow';

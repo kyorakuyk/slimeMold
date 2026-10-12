@@ -1,16 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { TaskGraphSelection } from '../types/taskGraphSelection';
+export type { TaskGraphSelection } from '../types/taskGraphSelection';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type LocaleCode = string;
 export type WorkspaceMode = 'simple' | 'advanced';
-
-export interface TaskGraphSelection {
-  projectId: string;
-  taskGraphId: string;
-  taskId: string;
-  issueId: string;
-}
 
 /** 旧版欢迎遮罩只属于高级工作台，避免覆盖轻量工作台自己的入口。 */
 export function shouldRenderWelcomeModal(workspaceMode: WorkspaceMode, showWelcome: boolean): boolean {
