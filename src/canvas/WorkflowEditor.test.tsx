@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const canvasHarness = vi.hoisted(() => ({
   storeApis: [] as unknown[],
+  reactFlowProps: [] as Array<Record<string, unknown>>,
   runWorkflow: vi.fn(),
   stopWorkflow: vi.fn(),
 }));
@@ -13,9 +14,10 @@ vi.mock('@xyflow/react', async (importActual) => {
   const React = await import('react');
   return {
     ...actual,
-    ReactFlow: ({ children }: { children?: ReactNode }) => {
+    ReactFlow: (props: Record<string, unknown> & { children?: ReactNode }) => {
       canvasHarness.storeApis.push(actual.useStoreApi());
-      return React.createElement('div', { 'data-testid': 'workflow-editor-flow' }, children);
+      canvasHarness.reactFlowProps.push(props);
+      return React.createElement('div', { 'data-testid': 'workflow-editor-flow' }, props.children);
     },
     Panel: ({ children }: { children?: ReactNode }) =>
       React.createElement('div', { 'data-testid': 'workflow-editor-panel' }, children),
@@ -40,6 +42,7 @@ vi.mock('../i18n/useT', () => ({
 import { ReactFlowProvider, useStoreApi } from '@xyflow/react';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { useWorkflowStore } from '../store/workflowStore';
+import type { FlowNode } from '../types/graph';
 import WorkflowEditor, { DND_MIME } from './WorkflowEditor';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,6 +86,7 @@ describe('WorkflowEditor characterization', () => {
     root = createRoot(container);
     resetCanvasStore();
     canvasHarness.storeApis.length = 0;
+    canvasHarness.reactFlowProps.length = 0;
     canvasHarness.runWorkflow.mockReset().mockResolvedValue(undefined);
     canvasHarness.stopWorkflow.mockReset();
   });
@@ -192,5 +196,45 @@ describe('WorkflowEditor characterization', () => {
       await Promise.resolve();
     });
     expect(canvasHarness.runWorkflow).toHaveBeenCalledWith({ wfId });
+  });
+
+  it('preserves a split graph on mount and writes later node changes back to its workflow', async () => {
+    await act(async () => {
+      await useWorkflowStore.getState().newWorkflowInProject();
+    });
+    const wfId = useWorkflowStore.getState().activeWfId;
+    const node = {
+      id: 'node-1',
+      type: 'base',
+      position: { x: 10, y: 20 },
+      data: { typeId: 'input.text', label: 'Input', params: {}, status: 'idle' },
+    } as unknown as FlowNode;
+    const before = useWorkflowStore.getState();
+    const workflow = before.workflows[wfId];
+    expect(workflow).toBeDefined();
+    useWorkflowStore.setState({
+      nodes: [node],
+      edges: [],
+      workflows: { ...before.workflows, [wfId]: { ...workflow!, nodes: [node], edges: [] } },
+    });
+
+    await act(async () => {
+      root.render(<WorkflowEditor wfId={wfId} />);
+    });
+
+    expect(useWorkflowStore.getState().workflows[wfId]?.nodes).toMatchObject([
+      { id: 'node-1', position: { x: 10, y: 20 } },
+    ]);
+
+    const onNodesChange = canvasHarness.reactFlowProps.at(-1)?.onNodesChange as
+      | ((changes: unknown[]) => void)
+      | undefined;
+    expect(onNodesChange).toBeDefined();
+    await act(async () => {
+      onNodesChange?.([{ type: 'position', id: 'node-1', position: { x: 100, y: 200 }, dragging: false }]);
+      await Promise.resolve();
+    });
+
+    expect(useWorkflowStore.getState().workflows[wfId]?.nodes[0]?.position).toEqual({ x: 100, y: 200 });
   });
 });

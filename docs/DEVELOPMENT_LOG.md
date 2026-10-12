@@ -5566,3 +5566,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 切片基线为 `d27b702f45c3460939c105fffa737b5796e27b97`，`src/canvas/WorkflowEditor.tsx` 为 1,185 行；先前没有该组件的直接行为测试。新增 `src/canvas/WorkflowEditor.test.tsx`，覆盖空画布新建项目 owner callback、选择 starter template 后通过真实 store 写入工作流图，以及主画布复用 App provider / split 画布隔离 provider 与 run dispatch。
 - 在未拆分的现有组件上，`npx vitest run src/canvas/WorkflowEditor.test.tsx --reporter=dot`：1 file / 3 tests passed；这组 characterization tests 先于生产代码移动通过，后续拆分必须继续保持通过。测试的 `runWorkflow` 使用 mock，不启动真实执行或 Worker；store fixture 设置 `projectPath: null`，不写项目文件。
 - 本提交范围仅为特征测试与本条验证记录；生产代码尚未移动，完整质量门留到 Slice 7 最终实现快照。
+
+### 7.408 unverified：补充 WorkflowEditor 分栏图同步特征（切片 7）
+
+- 在独立分栏工作流测试中加入非空节点图 fixture，断言首次挂载后目标工作流仍保留原节点，并通过 React Flow `onNodesChange` callback 移动节点后读回同一 `wfId` 的写回位置。测试使用真实 `ReactFlowProvider` / Zustand store，ReactFlow 渲染器本身由测试 mock，不启动模型或 Worker。
+- 未拆分的现有组件基线下，`npx vitest run src/canvas/WorkflowEditor.test.tsx --reporter=dot`：1 file / 4 tests passed；其中主画布共享 provider、分栏 provider 隔离、starter template 实际 store 变更和首帧保留/编辑写回均有直接覆盖。`npm run build`（`tsc -b` 与 Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit` 与 `git diff --check` 均通过；build 仍有既有 mixed static/dynamic import 与 >500 kB chunk warnings。生产代码尚未修改，完整质量门仍留到最终实现快照。
