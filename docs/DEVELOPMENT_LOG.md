@@ -5611,3 +5611,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - 新增 `src/components/SettingsCenter.test.tsx`，不改生产文件：覆盖 modal 内外/ESC close、切换 Flow 后真实 `workflowStore.failFast` 更新，以及模拟 API-key vault recheck 的 deferred fetch rejection（spinner 进入/清除并展示错误）。credential/model/Tauri 边界全部 mock，无真实密钥、IPC 或网络调用。
 - 拆分前 focused `npx vitest run src/components/SettingsCenter.test.tsx --reporter=dot` 为 1 file / 3 tests passed；全量 `npm run test -- --reporter=dot` 为 229 files / 1,518 tests passed。SettingsCenter production split 尚未开始，测试和 baseline 保持 unverified。
+
+### 7.416 unverified：SettingsCenter API keys owner extraction（切片 11）
+
+- 将 `ApiKeysSection` 与其 `PROTOCOLS`/`VENDOR_COLOR` 常量搬到 `src/components/settings/ApiKeysSection.tsx`；原 `SettingsCenter` 保留模态与其他设置区，通过原组件名/default export 接入新 owner。拆出的 JSX、状态和副作用均按 start HEAD 原文搬移，仅新增 default export；与原函数区间做逐字对比，函数体/常量一致。旧组件 741→460 行，新 owner 279 行，characterization test 192 行，均低于 600 行。
+- Slice11 characterization test 在移动前 focused 1 file / 3 tests 通过；移动后同一 focused test 仍为 1 file / 3 tests passed。移动后 `npm run test -- --reporter=dot` exit 0；当前恢复的工具摘要未保留本次全量的计数行，故不以拆分前基线替代本次数字。`npm run build`、`npx tsc -p tsconfig.app.json --noEmit`、`npx tsc --noEmit`、`npm run i18n:check`（1,112 keys）和 `git diff --check` 均通过。
+- Browser 预览导航到隔离浏览器的 advanced shell；capture 调用返回 `Page.captureScreenshot timed out after 60s waiting for the daemon`，未取得 SettingsCenter 截图，故计划要求的 preview gate 未完成。未新建项目、未触发真实 Tauri/credential/network/model/Worker 操作；Vite 进程已终止且 1420/1421 端口空闲。此 Slice 仍为 unverified，GUI evidence 与 exact review 尚缺。
