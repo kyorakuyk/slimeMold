@@ -5647,3 +5647,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 独立 reviewer 以 immutable Git objects 审查 target `3399c539dadb76c18e52f4539a913353d789f77d`、parent `46ca18762fe1a2379c077980a81aceb96971421f` 及三个 scope paths；返回严格 JSON：`working_tree_clean=true`、`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`。Reviewer 未运行测试、未改文件或 refs。
 - reviewer 返回后 read-back：分支仍为 `refactor/monolith-split-2`，HEAD 仍为 target、父提交关系与 reflog 未变、工作树干净；`checkpoint/fix-workfloweditor-target-switch-unverified-20261012` 与新 tag `checkpoint/fix-workfloweditor-target-switch-reviewed-unverified-20261012` 均指向同一 code target。
 - review 仅闭合该 behavior-fix 的 exact-code review；未做 browser/Tauri preview，未完成 1,185 行 `WorkflowEditor` 结构拆分，整轮仍按计划保持 unverified，不创建 verified tag。
+
+### 7.421 unverified：WorkflowEditor 第二次结构拆分窗口止损
+
+- fresh Slice7 window 从 16:19:03 至 17:34:03（75 分钟）执行，start checkpoint/tag 为 `c6e793f36d6f4efec47849b137df5928acf93afd` / `checkpoint/split-workfloweditor-resume2-start-20261012`。基于只读 owner map，临时抽取 `CanvasWelcomeSurface`、`CanvasPanelControls`、`useCanvasGraphProjection`、`useCanvasNodePicker`、`useCanvasContextMenu`；临时测得父组件 572 行，5 个新模块分别 174/196/125/144/170 行，低于文件行数上限。
+- focused `WorkflowEditor.test.tsx` 与 `workflowEdgeProjection.test.ts` 在中间快照为 2 files / 9 tests passed。第一次 `npm run build` 因父组件残留未使用 `CAT_COLORS` 失败；移除后第二次 build 报 `WorkflowEditor.tsx` 的 context-menu handler 参数类型不兼容（`ReactMouseEvent` 与 `MouseEvent | React.MouseEvent`）。在 17:34:03 截止后追加了一次类型修正，但没有再次构建验证；不把该中间代码树描述为通过。
+- 未跑全量 Vitest、同快照 browser preview 或 exact reviewer。结构变更未提交；随后将 `WorkflowEditor.tsx` 精确恢复到 start target，并删除本轮新建的五个未跟踪模块。read-back：HEAD 仍为 `c6e793f36d6f4efec47849b137df5928acf93afd`、分支仍为 `refactor/monolith-split-2`、工作树干净；未运行 `git clean`，未改动任何既有 tag/worktree。结构拆分仍未完成，后续须另开 fresh bounded window。
