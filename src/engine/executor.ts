@@ -412,35 +412,27 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
         onProgress: opts.onProgress,
         // 绑定 executeNode 全部参数（含本轮循环变量与 gate 回调）
         executeNode: (id) =>
-          executeNode(
+          executeNode({
             id,
-            nodeById,
-            edges,
-            outputsMap,
-            branchState,
-            failed,
-            cutSet,
-            stopAfter,
-            sink,
-            signal,
-            limiter,
-            MAX_RETRIES,
-            RETRY_BASE_MS,
-            dirtySet.has(id),
-            force.has(id),
-            costLog,
-            costByNode,
-            { ...loopVarsState },
-            (gid, handles) => gateTaken.set(gid, handles),
-            opts.skipFailed,
-            !!opts.incremental,
-            myRun,
-            isolatedIds,
-            !!opts.sandbox,
-            opts.sandboxMode,
-            wfId,
-            rt,
-          ),
+            graph: { nodeById, edges, outputsMap, branchState, failed, cutSet, stopAfter },
+            control: {
+              sink,
+              signal,
+              limiter,
+              shouldRun: dirtySet.has(id),
+              forced: force.has(id),
+              onGate: (gid, handles) => { gateTaken.set(gid, handles); },
+              skipFailed: opts.skipFailed,
+              isIncremental: !!opts.incremental,
+              myRun,
+              wfId,
+            },
+            retry: { maxRetries: MAX_RETRIES, baseDelayMs: RETRY_BASE_MS },
+            costs: { costLog, costByNode },
+            variables: { extraVars: { ...loopVarsState } },
+            sandbox: { isolatedIds, enabled: !!opts.sandbox, mode: opts.sandboxMode },
+            runtime: rt,
+          }),
       });
     }
     if (signal.aborted || myRun !== executionCoordinator.getCurrentRunId(wfId)) break;
@@ -505,35 +497,51 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   }
 }
 
-async function executeNode(
-  id: string,
-  nodeById: Map<string, FlowNode>,
-  edges: FlowEdge[],
-  outputsMap: Map<string, Record<string, unknown>>,
-  branchState: Map<string, Set<string | undefined>>,
-  failed: Set<string>,
-  cutSet: Set<string>,
-  stopAfter: Set<string>,
-  sink: ExperienceSink | null,
-  signal: AbortSignal,
-  limiter: Semaphore,
-  MAX_RETRIES: number,
-  RETRY_BASE_MS: number,
-  shouldRun: boolean,
-  forced: boolean,
-  costLog: CostRecord[],
-  costByNode: Map<string, CostRecord[]>,
-  extraVars?: Record<string, number>,
-  onGate?: (id: string, handles: string[]) => void,
-  skipFailed?: boolean,
-  isIncremental?: boolean,
-  myRun?: number,
-  isolatedIds?: Set<string>,
-  sandboxEnabled?: boolean,
-  sandboxMode?: 'copy' | 'gitworktree',
-  wfId?: string,
-  rt?: ExecutionRuntime,
-): Promise<void> {
+interface ExecuteNodeArgs {
+  id: string;
+  graph: {
+    nodeById: Map<string, FlowNode>;
+    edges: FlowEdge[];
+    outputsMap: Map<string, Record<string, unknown>>;
+    branchState: Map<string, Set<string | undefined>>;
+    failed: Set<string>;
+    cutSet: Set<string>;
+    stopAfter: Set<string>;
+  };
+  control: {
+    sink: ExperienceSink | null;
+    signal: AbortSignal;
+    limiter: Semaphore;
+    shouldRun: boolean;
+    forced: boolean;
+    onGate?: (id: string, handles: string[]) => void;
+    skipFailed?: boolean;
+    isIncremental?: boolean;
+    myRun?: number;
+    wfId?: string;
+  };
+  retry: { maxRetries: number; baseDelayMs: number };
+  costs: { costLog: CostRecord[]; costByNode: Map<string, CostRecord[]> };
+  variables: { extraVars?: Record<string, number> };
+  sandbox: {
+    isolatedIds?: Set<string>;
+    enabled?: boolean;
+    mode?: 'copy' | 'gitworktree';
+  };
+  runtime?: ExecutionRuntime;
+}
+
+async function executeNode(args: ExecuteNodeArgs): Promise<void> {
+  const {
+    id,
+    graph: { nodeById, edges, outputsMap, branchState, failed, cutSet, stopAfter },
+    control: { sink, signal, limiter, shouldRun, forced, onGate, skipFailed, isIncremental, myRun, wfId },
+    retry: { maxRetries: MAX_RETRIES, baseDelayMs: RETRY_BASE_MS },
+    costs: { costLog, costByNode },
+    variables: { extraVars },
+    sandbox: { isolatedIds, enabled: sandboxEnabled, mode: sandboxMode },
+    runtime: rt,
+  } = args;
   const store = useWorkflowStore.getState();
   const node = nodeById.get(id);
   if (!node || signal.aborted) return;
