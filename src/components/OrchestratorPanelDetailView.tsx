@@ -14,8 +14,9 @@ import type { TaskGraphSelection } from '../store/viewStore';
 import type { AgentConfig } from '../types/agent';
 import type { Orchestration, StageLog } from '../types/orchestration';
 import type { WorkflowFileInMemory } from '../types/workflow';
-import TaskGraphDAGView from './TaskGraphDAGView';
-import { BINDABLE_STATUSES, logStatusCls, roleLabel, statusCls, workerStatusCls } from './OrchestratorPanelViewConfig';
+import OrchestratorPanelTaskGraphSection from './OrchestratorPanelTaskGraphSection';
+import OrchestratorPanelWorkerRunsView from './OrchestratorPanelWorkerRunsView';
+import { BINDABLE_STATUSES, logStatusCls, roleLabel, statusCls } from './OrchestratorPanelViewConfig';
 
 interface WorkflowPickerOption {
   id: string;
@@ -261,52 +262,19 @@ export default function OrchestratorPanelDetailView({
           );
         })}
 
-        {taskGraphDAG.projection && (
-          <TaskGraphDAGView
-            projection={taskGraphDAG.projection}
-            selectedTaskId={selectedTaskId}
-            onSelectTask={onSelectTask}
-          />
-        )}
-        {taskGraphDAG.projection && taskGraphDAG.projection.approval !== 'superseded' && (
-          <details className="rounded border border-line px-2.5 py-2" data-testid="taskgraph-revision-editor">
-            <summary className="cursor-pointer text-[11px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
-              {t('orchestrator.taskGraph.revise')}
-            </summary>
-            <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
-              <p style={{ color: 'var(--sm-ink-faint)' }}>
-                {t('orchestrator.taskGraph.selectedTask')}: {taskGraphSelection?.taskId ?? t('orchestrator.taskGraph.noneSelected')}
-              </p>
-              <input
-                className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
-                placeholder={t('orchestrator.taskGraph.titlePlaceholder')}
-                value={revisionTitle}
-                onChange={(event) => onRevisionTitleChange(event.target.value)}
-                disabled={!taskGraphSelection || revisionBusy}
-              />
-              <input
-                className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
-                placeholder={t('orchestrator.taskGraph.dependsOnPlaceholder')}
-                value={revisionDependsOn}
-                onChange={(event) => onRevisionDependsOnChange(event.target.value)}
-                disabled={!taskGraphSelection || revisionBusy}
-              />
-              <button
-                type="button"
-                className="sm-btn justify-center hover:border-accent hover:text-accent"
-                onClick={() => { void onReviseTaskGraph(); }}
-                disabled={!taskGraphSelection || revisionBusy}
-              >
-                {t('orchestrator.taskGraph.applyRevision')}
-              </button>
-            </div>
-          </details>
-        )}
-        {taskGraphDAG.error && (
-          <div className="rounded border border-dashed border-warn px-2.5 py-1.5 text-[10.5px] text-warn" data-testid="orchestrator-taskgraph-dag-error">
-            {taskGraphDAG.error}
-          </div>
-        )}
+        <OrchestratorPanelTaskGraphSection
+          projection={taskGraphDAG.projection}
+          error={taskGraphDAG.error}
+          selection={taskGraphSelection}
+          selectedTaskId={selectedTaskId}
+          revisionTitle={revisionTitle}
+          revisionDependsOn={revisionDependsOn}
+          revisionBusy={revisionBusy}
+          onSelectTask={onSelectTask}
+          onRevisionTitleChange={onRevisionTitleChange}
+          onRevisionDependsOnChange={onRevisionDependsOnChange}
+          onReviseTaskGraph={onReviseTaskGraph}
+        />
 
         {/* 草稿阶段间 DAG 边提示 */}
         {selected.draft && selected.draft.edges.length > 0 && (
@@ -315,161 +283,15 @@ export default function OrchestratorPanelDetailView({
           </div>
         )}
 
-        {selectedWorkerRuns.length > 0 && (
-          <section className="rounded border border-line px-2.5 py-2" data-testid="orchestrator-worker-runs">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11.5px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
-                {t('orchestrator.workerRuns.title')}
-              </span>
-              <span className="text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                {selectedWorkerRuns.length}
-              </span>
-            </div>
-            <div className="mt-1.5 space-y-2">
-              {selectedWorkerRuns.map((run) => (
-                <div key={run.runId} className="rounded border border-dashed border-line px-2 py-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-[10.5px] font-medium ${workerStatusCls[run.status] ?? 'text-ink-faint'}`}>
-                      {t(`orchestrator.worker.status.${run.status}`)}
-                    </span>
-                    <span className="truncate font-mono text-[10px]" style={{ color: 'var(--sm-ink-faint)' }} title={run.runId}>
-                      {run.runId}
-                    </span>
-                  </div>
-                  {run.recovery && (
-                    <div className="mt-1 space-y-1">
-                      <p className="break-all text-[10.5px] text-warn">
-                        {t('orchestrator.worker.recovery')}: {run.recovery.message}
-                      </p>
-                      {canRecoverWorkerRun && run.recoveryActions.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {run.recoveryActions.includes('retry') && (
-                            <button
-                              type="button"
-                              data-testid={`orchestrator-worker-retry-${run.runId}`}
-                              className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                              disabled={recoveryBusy}
-                              onClick={() => onRecover(run.runId, 'retry')}
-                            >
-                              {t('orchestrator.worker.recovery.retryAction')}
-                            </button>
-                          )}
-                          {run.recoveryActions.includes('skip') && (
-                            <button
-                              type="button"
-                              data-testid={`orchestrator-worker-skip-${run.runId}`}
-                              className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
-                              disabled={recoveryBusy}
-                              onClick={() => onRecover(run.runId, 'skip')}
-                            >
-                              {t('orchestrator.worker.recovery.skipAction')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <ul className="mt-1 space-y-1">
-                    {run.tasks.map((task) => (
-                      <li key={task.taskId} className="rounded bg-paper px-1.5 py-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-[10.5px]" style={{ color: 'var(--sm-ink)' }} title={task.taskId}>
-                            {task.taskId}
-                          </span>
-                          <span className={`shrink-0 text-[10px] ${workerStatusCls[task.status] ?? 'text-ink-faint'}`}>
-                            {t(`orchestrator.worker.task.${task.status}`)} · a{task.attempt}
-                          </span>
-                        </div>
-                        {task.error && (
-                          <p className="mt-0.5 break-all text-[10px] text-err">{task.error}</p>
-                        )}
-                        {task.worktreePath && (
-                          <p className="mt-0.5 truncate font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }} title={task.worktreePath}>
-                            {t('orchestrator.worker.worktree')}: {task.worktreePath}
-                          </p>
-                        )}
-                        {task.evidenceIds.length > 0 && (
-                          <p className="mt-0.5 break-all font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                            {t('orchestrator.worker.evidence')}: {task.evidenceIds.join(', ')}
-                          </p>
-                        )}
-                        {task.evidence.length > 0 && (
-                          <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-evidence-${task.taskId}`}>
-                            {task.evidence.map((record) => (
-                              <li key={record.id} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
-                                <span className={record.status === 'passed' ? 'text-ok' : record.status === 'failed' ? 'text-err' : 'text-warn'}>
-                                  {record.kind} · {record.status}
-                                </span>
-                                {' · '}{record.summary}
-                                {record.command ? ` · ${record.command}` : ''}
-                                {record.exitCode !== undefined ? ` · ${t('orchestrator.worker.exitCode')}: ${record.exitCode}` : ''}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {task.sideEffects.length > 0 && (
-                          <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-receipts-${task.taskId}`}>
-                            {task.sideEffects.map((effect) => (
-                              <li key={effect.idempotencyKey} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
-                                <span className={effect.status === 'receipt' ? 'text-ok' : effect.status === 'unknown' ? 'text-warn' : 'text-accent'}>
-                                  {t('orchestrator.worker.receipt')}: {effect.kind} · {effect.status}
-                                </span>
-                                {effect.receiptId ? ` · ${effect.receiptId}` : ''}
-                                {effect.unknownReason ? ` · ${effect.unknownReason}` : ''}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {task.cleanup ? (
-                          task.cleanup.status === 'ready' ? (
-                            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px]" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                              <span className="break-all text-ok">
-                                {t('orchestrator.worker.cleanup')}: {task.cleanup.approvalStatus === 'approved' ? t('orchestrator.worker.cleanup.approved') : t('orchestrator.worker.cleanup.ready')} · {task.cleanup.acceptanceId}
-                              </span>
-                              {canCleanupWorkerRun && (
-                                <button
-                                  type="button"
-                                  data-testid={`orchestrator-worker-cleanup-action-${task.taskId}`}
-                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                                  disabled={cleanupBusy}
-                                  onClick={() => {
-                                    const proposal = task.cleanup;
-                                    if (!proposal || proposal.status !== 'ready') return;
-                                    onCleanup(
-                                      proposal.runId,
-                                      task.taskId,
-                                      proposal.approvalStatus === 'approved' ? 'cleanup' : 'approve',
-                                    );
-                                  }}
-                                >
-                                  {task.cleanup.approvalStatus === 'approved'
-                                    ? t('orchestrator.worker.cleanup.executeAction')
-                                    : t('orchestrator.worker.cleanup.approveAction')}
-                                </button>
-                              )}
-                            </div>
-                          ) : task.cleanup.status === 'cleaned' ? (
-                            <p className="mt-0.5 break-all text-[9.5px] text-ok" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                              {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.cleaned')} · {task.cleanup.receiptId}
-                            </p>
-                          ) : (
-                            <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                              {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.blocked')}: {task.cleanup.reason}
-                            </p>
-                          )
-                        ) : task.status === 'succeeded' ? (
-                          <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                            {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.unavailable')}
-                          </p>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        <OrchestratorPanelWorkerRunsView
+          runs={selectedWorkerRuns}
+          canRecover={canRecoverWorkerRun}
+          canCleanup={canCleanupWorkerRun}
+          recoveryBusy={recoveryBusy}
+          cleanupBusy={cleanupBusy}
+          onRecover={onRecover}
+          onCleanup={onCleanup}
+        />
       </div>
 
       {/* 操作栏 */}
