@@ -11,19 +11,6 @@
  * - 废弃只删除编排记录，不触碰用户工作流；运行中须先取消。
  */
 import { useMemo, useState } from 'react';
-import {
-  ChevronLeft,
-  Target,
-  Play,
-  CheckCircle2,
-  XCircle,
-  Trash2,
-  FolderOpen,
-  RotateCcw,
-  Workflow,
-  AlertCircle,
-  Plus,
-} from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
@@ -42,60 +29,18 @@ import {
   stagesReadyToRun,
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
-import type { Orchestration, OrchestrationStatus, StageLog } from '../types/orchestration';
 import { workerRunViewsFor } from '../projectControl/workerRunView';
 import {
   buildTaskGraphProjection,
   buildTaskGraphProjectionFromWorkerRun,
   taskIssueId,
 } from '../projectControl/taskGraphProjection';
-import TaskGraphDAGView from './TaskGraphDAGView';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 import { reviseTaskGraphCommand } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
-
-/** 编排整体状态徽标配色 */
-const statusCls: Record<string, string> = {
-  draft: 'text-ink-faint',
-  'awaiting-confirm': 'text-warn',
-  ready: 'text-accent',
-  running: 'text-accent',
-  paused: 'text-warn',
-  done: 'text-ok',
-  cancelled: 'text-ink-faint',
-  failed: 'text-err',
-};
-
-/** 阶段日志状态徽标配色 */
-const logStatusCls: Record<string, string> = {
-  pending: 'text-ink-faint',
-  running: 'text-accent',
-  success: 'text-ok',
-  failed: 'text-err',
-  skipped: 'text-ink-faint',
-  cancelled: 'text-warn',
-};
-
-const workerStatusCls: Record<string, string> = {
-  queued: 'text-ink-faint',
-  running: 'text-accent',
-  succeeded: 'text-ok',
-  failed: 'text-err',
-  partial: 'text-warn',
-  blocked: 'text-warn',
-  cancelled: 'text-ink-faint',
-};
-
-/** 阶段职能角色徽标 */
-const roleLabel: Record<string, string> = {
-  builder: 'builder',
-  constructor: 'constructor',
-  ops: 'ops',
-};
-
-/** 可绑定/配置的工作流状态：awaiting-confirm（确认前）与 ready（确认后执行前） */
-const BINDABLE_STATUSES: ReadonlySet<OrchestrationStatus> = new Set(['awaiting-confirm', 'ready']);
+import OrchestratorPanelDetailView from './OrchestratorPanelDetailView';
+import OrchestratorPanelListView from './OrchestratorPanelListView';
 
 export default function OrchestratorPanel({
   embedded = false,
@@ -189,14 +134,10 @@ export default function OrchestratorPanel({
     nodeCount: (w?.nodes?.length ?? 0) as number,
   }));
 
-  const agentName = (id?: string) =>
-    allAgents.find((a) => a.id === id)?.name ?? id ?? '—';
   const wfLabel = (wfId?: string) => {
     if (!wfId) return '—';
     return workflows[wfId]?.name ?? wfId;
   };
-  const stageLogOf = (orch: Orchestration, stageId: string): StageLog | undefined =>
-    orch.stageLogs.find((l) => l.stageId === stageId);
 
   /** 生成草案（纯函数）并创建编排记录（readonly 经 createDraftOrchestration 固化，P0 修复） */
   const onGenerate = () => {
@@ -434,551 +375,74 @@ export default function OrchestratorPanel({
 
   const inner = (
     <div className="flex min-h-0 flex-1 flex-col">
-      {!selected ? (
-        /* ---------- 列表视图：目标输入 + 编排列表 ---------- */
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex flex-col gap-1.5 border-b border-line px-3 py-2.5">
-            <label className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
-              <Target size={13} /> {t('orchestrator.goalLabel')}
-            </label>
-            <textarea
-              className="h-16 w-full resize-none rounded border border-line bg-transparent px-2 py-1.5 text-[12.5px] outline-none focus:border-accent"
-              style={{ color: 'var(--sm-ink)' }}
-              placeholder={t('orchestrator.goalPlaceholder')}
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-            />
-            <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-              <select
-                className="max-w-[130px] rounded border border-line bg-transparent px-1.5 py-1 outline-none"
-                style={{ color: 'var(--sm-ink-soft)' }}
-                value={agentId}
-                onChange={(e) => setAgentId(e.target.value)}
-                title={t('orchestrator.agent')}
-              >
-                <option value="">{t('orchestrator.agentAuto')}</option>
-                {allAgents.map((a) => (
-                  <option key={a.id} value={a.id} className="bg-[var(--sm-bg)]">
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              <label className="flex cursor-pointer items-center gap-1" title={t('orchestrator.readonlyHint')}>
-                <input
-                  type="checkbox"
-                  className="cursor-pointer"
-                  checked={readonly}
-                  onChange={(e) => setReadonly(e.target.checked)}
-                />
-                <span className="text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                  {t('orchestrator.readonly')}
-                </span>
-              </label>
-            </div>
-            <button
-              className="sm-btn w-full justify-center hover:border-accent hover:text-accent"
-              onClick={onGenerate}
-              disabled={!goal.trim()}
-            >
-              <Plus size={13} /> {t('orchestrator.generate')}
-            </button>
-            {err && (
-              <p className="flex items-start gap-1 break-all text-[11px] leading-relaxed text-err">
-                <AlertCircle size={13} className="mt-0.5 shrink-0" /> {err}
-              </p>
-            )}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-            {orchestrations.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center">
-                <Workflow size={22} className="opacity-40" />
-                <p className="text-[12.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                  {t('orchestrator.empty')}
-                </p>
-                <p className="max-w-64 text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-faint)' }}>
-                  {t('orchestrator.emptyHint')}
-                </p>
-              </div>
-            ) : (
-              <ul className="space-y-1.5">
-                {orchestrations.map((o) => (
-                  <li key={o.id}>
-                    <button
-                      className="w-full rounded border border-line px-2.5 py-2 text-left transition-colors hover:border-accent/50"
-                      onClick={() => setSelectedId(o.id)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-[11.5px] font-medium ${statusCls[o.status]}`}>
-                          {t(`orchestrator.status.${o.status}`)}
-                        </span>
-                        <span className="shrink-0 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                          {t('orchestrator.stageCount', { count: o.draft?.stages.length ?? 0 })}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 line-clamp-2 break-all text-[12px]" style={{ color: 'var(--sm-ink)' }}>
-                        {o.goal}
-                      </div>
-                      <div className="mt-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                        {new Date(o.createdAt).toLocaleString()}
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
+      {selected ? (
+        <OrchestratorPanelDetailView
+          selected={selected}
+          allAgents={allAgents}
+          workflows={workflows}
+          workflowsList={workflowsList}
+          wfLabel={wfLabel}
+          getEffectiveStageWfId={(stageId) => effectiveStageWfId(selected, stageId)}
+          selectedWorkerRuns={selectedWorkerRuns}
+          taskGraphDAG={taskGraphDAG}
+          taskGraphSelection={taskGraphSelection}
+          selectedTaskId={
+            taskGraphDAG.projection
+              && taskGraphSelection?.taskGraphId === taskGraphDAG.projection.graphId
+              ? taskGraphSelection.taskId
+              : undefined
+          }
+          error={err}
+          busy={busy}
+          cancelling={cancelling}
+          recoveryBusy={recoveryBusy}
+          cleanupBusy={cleanupBusy}
+          canRecoverWorkerRun={Boolean(onRecoverWorkerRun)}
+          canCleanupWorkerRun={Boolean(onCleanupWorkerRun)}
+          revisionTitle={revisionTitle}
+          revisionDependsOn={revisionDependsOn}
+          revisionBusy={revisionBusy}
+          canRun={stagesReadyToRun(selected, workflows)}
+          onBack={() => setSelectedId(null)}
+          onBind={onBind}
+          onOpenWf={onOpenWf}
+          onSelectTask={(node) => {
+            if (!projectId) return;
+            setTaskGraphSelection({
+              projectId,
+              taskGraphId: taskGraphDAG.projection!.graphId,
+              taskId: node.taskId,
+              issueId: node.issueId,
+            });
+          }}
+          onRevisionTitleChange={setRevisionTitle}
+          onRevisionDependsOnChange={(value) => {
+            setRevisionDependsOn(value);
+            setRevisionDependsOnTouched(true);
+          }}
+          onReviseTaskGraph={onReviseTaskGraph}
+          onRecover={onRecover}
+          onCleanup={onCleanup}
+          onPrepare={onPrepare}
+          onConfirm={onConfirm}
+          onRun={onRun}
+          onCancel={onCancel}
+          onRemove={onRemove}
+        />
       ) : (
-        /* ---------- 详情视图：草案预览 + 绑定/配置 + 确认/执行 + 进度 ---------- */
-        <div className="flex min-h-0 flex-1 flex-col">
-          {/* 头部：返回 + 状态 + 目标 */}
-          <div className="shrink-0 border-b border-line px-3 py-2">
-            <div className="flex items-center gap-1.5">
-              <button
-                className="sm-btn border-transparent px-1.5"
-                onClick={() => setSelectedId(null)}
-                title={t('orchestrator.back')}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span className={`text-[11.5px] font-semibold ${statusCls[selected.status]}`}>
-                {t(`orchestrator.status.${selected.status}`)}
-              </span>
-              {selected.readonly && (
-                <span className="rounded bg-paper px-1.5 py-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                  {t('orchestrator.readonly')}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 line-clamp-3 break-all text-[12.5px] leading-snug" style={{ color: 'var(--sm-ink)' }}>
-              {selected.goal}
-            </p>
-          </div>
-
-          {/* 阶段列表：每阶段绑定 + 阶段日志 */}
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
-            {selected.draft?.stages.map((stage, idx) => {
-              const log = stageLogOf(selected, stage.id);
-              // 有效绑定：已固化 stageWfIds 优先；复用已有工作流时取 wfRef（即使未固化也可打开编辑）
-              const boundWfId = effectiveStageWfId(selected, stage.id);
-              const wfNodeCount = boundWfId ? workflows[boundWfId]?.nodes?.length : undefined;
-              const bindable = BINDABLE_STATUSES.has(selected.status);
-              return (
-                <div key={stage.id} className="rounded border border-line px-2.5 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px]"
-                        style={{ background: 'var(--sm-accent)', color: 'var(--sm-bg)' }}
-                      >
-                        {idx + 1}
-                      </span>
-                      <span className="truncate text-[12px] font-medium" style={{ color: 'var(--sm-ink)' }}>
-                        {stage.label}
-                      </span>
-                      <span className="shrink-0 rounded bg-paper px-1 py-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                        {t(`orchestrator.stage.role.${roleLabel[stage.role]}`)}
-                      </span>
-                      <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                        {agentName(stage.agentId)}
-                      </span>
-                    </div>
-                    {log && (
-                      <span className={`shrink-0 text-[10.5px] font-medium ${logStatusCls[log.status]}`}>
-                        {t(`orchestrator.stageLog.${log.status}`)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 line-clamp-2 break-all text-[11px] leading-relaxed" style={{ color: 'var(--sm-ink-soft)' }}>
-                    {stage.goal}
-                  </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                    {stage.artifactIn && stage.artifactIn.length > 0 && (
-                      <span>← {stage.artifactIn.join(', ')}</span>
-                    )}
-                    {stage.artifactOut && stage.artifactOut.length > 0 && (
-                      <span>→ {stage.artifactOut.join(', ')}</span>
-                    )}
-                  </div>
-
-                  {/* 绑定/配置工作流 */}
-                  {bindable ? (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <select
-                        className="rounded border border-line bg-transparent px-1.5 py-0.5 text-[11px] outline-none"
-                        style={{ color: 'var(--sm-ink-soft)' }}
-                        value={stage.wfRef.kind}
-                        onChange={(e) =>
-                          onBind(
-                            selected.id,
-                            stage.id,
-                            e.target.value === 'new'
-                              ? { kind: 'new' }
-                              : { kind: 'existing', wfId: workflowsList[0]?.id ?? '' },
-                          )
-                        }
-                      >
-                        <option value="new">{t('orchestrator.stage.bindNew')}</option>
-                        <option value="existing">{t('orchestrator.stage.bindExisting')}</option>
-                      </select>
-                      {stage.wfRef.kind === 'existing' && (
-                        <select
-                          className="max-w-[150px] rounded border border-line bg-transparent px-1.5 py-0.5 text-[11px] outline-none"
-                          style={{ color: 'var(--sm-ink-soft)' }}
-                          value={stage.wfRef.wfId}
-                          onChange={(e) => onBind(selected.id, stage.id, { kind: 'existing', wfId: e.target.value })}
-                        >
-                          {workflowsList.length === 0 && <option value="">—</option>}
-                          {workflowsList.map((w) => (
-                            <option key={w.id} value={w.id} className="bg-[var(--sm-bg)]">
-                              {w.name}（{w.nodeCount}）
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="mt-1.5 text-[10.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                      {t('orchestrator.bindLocked')}
-                    </div>
-                  )}
-
-                  {/* 已固化 wfId + 打开编辑 */}
-                  {boundWfId && (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <span className="truncate text-[10.5px]" style={{ color: 'var(--sm-ink-soft)' }}>
-                        {t('orchestrator.stage.boundWf')}: {wfLabel(boundWfId)}
-                      </span>
-                      {wfNodeCount != null && (
-                        <span className="text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                          {wfNodeCount > 0
-                            ? t('orchestrator.stage.nodeCount', { count: wfNodeCount })
-                            : t('orchestrator.stage.emptyWf')}
-                        </span>
-                      )}
-                      <button
-                        className="flex items-center gap-0.5 rounded border border-line px-1.5 py-0.5 text-[10.5px] transition-colors hover:border-accent hover:text-accent"
-                        style={{ color: 'var(--sm-ink-soft)' }}
-                        onClick={() => onOpenWf(boundWfId)}
-                      >
-                        <FolderOpen size={11} /> {t('orchestrator.stage.open')}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* 阶段日志详情 */}
-                  {log?.error && (
-                    <p className="mt-1.5 break-all text-[10.5px] leading-relaxed text-err">{log.error}</p>
-                  )}
-                  {log && (log.runId != null || log.startedAt || log.finishedAt) && (
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                      {log.wfId && <span>wf: {wfLabel(log.wfId)}</span>}
-                      {log.runId != null && <span>run #{log.runId}</span>}
-                      {log.startedAt && <span>{new Date(log.startedAt).toLocaleTimeString()}</span>}
-                      {log.finishedAt && <span>→ {new Date(log.finishedAt).toLocaleTimeString()}</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {taskGraphDAG.projection && (
-              <TaskGraphDAGView
-                projection={taskGraphDAG.projection}
-                selectedTaskId={taskGraphSelection?.taskGraphId === taskGraphDAG.projection.graphId ? taskGraphSelection.taskId : undefined}
-                onSelectTask={(node) => {
-                  if (!projectId) return;
-                  setTaskGraphSelection({
-                    projectId,
-                    taskGraphId: taskGraphDAG.projection!.graphId,
-                    taskId: node.taskId,
-                    issueId: node.issueId,
-                  });
-                }}
-              />
-            )}
-            {taskGraphDAG.projection && taskGraphDAG.projection.approval !== 'superseded' && (
-              <details className="rounded border border-line px-2.5 py-2" data-testid="taskgraph-revision-editor">
-                <summary className="cursor-pointer text-[11px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
-                  {t('orchestrator.taskGraph.revise')}
-                </summary>
-                <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
-                  <p style={{ color: 'var(--sm-ink-faint)' }}>
-                    {t('orchestrator.taskGraph.selectedTask')}: {taskGraphSelection?.taskId ?? t('orchestrator.taskGraph.noneSelected')}
-                  </p>
-                  <input
-                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
-                    placeholder={t('orchestrator.taskGraph.titlePlaceholder')}
-                    value={revisionTitle}
-                    onChange={(event) => setRevisionTitle(event.target.value)}
-                    disabled={!taskGraphSelection || revisionBusy}
-                  />
-                  <input
-                    className="rounded border border-line bg-transparent px-2 py-1 outline-none focus:border-accent"
-                    placeholder={t('orchestrator.taskGraph.dependsOnPlaceholder')}
-                    value={revisionDependsOn}
-                    onChange={(event) => {
-                      setRevisionDependsOn(event.target.value);
-                      setRevisionDependsOnTouched(true);
-                    }}
-                    disabled={!taskGraphSelection || revisionBusy}
-                  />
-                  <button
-                    type="button"
-                    className="sm-btn justify-center hover:border-accent hover:text-accent"
-                    onClick={() => { void onReviseTaskGraph(); }}
-                    disabled={!taskGraphSelection || revisionBusy}
-                  >
-                    {t('orchestrator.taskGraph.applyRevision')}
-                  </button>
-                </div>
-              </details>
-            )}
-            {taskGraphDAG.error && (
-              <div className="rounded border border-dashed border-warn px-2.5 py-1.5 text-[10.5px] text-warn" data-testid="orchestrator-taskgraph-dag-error">
-                {taskGraphDAG.error}
-              </div>
-            )}
-
-            {/* 草稿阶段间 DAG 边提示 */}
-            {selected.draft && selected.draft.edges.length > 0 && (
-              <div className="rounded border border-dashed border-line px-2.5 py-1.5 text-[10.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                {selected.draft.edges.map((e) => `${e.from} → ${e.to}（${e.artifactKind}）`).join('  ·  ')}
-              </div>
-            )}
-
-            {selectedWorkerRuns.length > 0 && (
-              <section className="rounded border border-line px-2.5 py-2" data-testid="orchestrator-worker-runs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11.5px] font-medium" style={{ color: 'var(--sm-ink-soft)' }}>
-                    {t('orchestrator.workerRuns.title')}
-                  </span>
-                  <span className="text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                    {selectedWorkerRuns.length}
-                  </span>
-                </div>
-                <div className="mt-1.5 space-y-2">
-                  {selectedWorkerRuns.map((run) => (
-                    <div key={run.runId} className="rounded border border-dashed border-line px-2 py-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-[10.5px] font-medium ${workerStatusCls[run.status] ?? 'text-ink-faint'}`}>
-                          {t(`orchestrator.worker.status.${run.status}`)}
-                        </span>
-                        <span className="truncate font-mono text-[10px]" style={{ color: 'var(--sm-ink-faint)' }} title={run.runId}>
-                          {run.runId}
-                        </span>
-                      </div>
-                      {run.recovery && (
-                        <div className="mt-1 space-y-1">
-                          <p className="break-all text-[10.5px] text-warn">
-                            {t('orchestrator.worker.recovery')}: {run.recovery.message}
-                          </p>
-                          {onRecoverWorkerRun && run.recoveryActions.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {run.recoveryActions.includes('retry') && (
-                                <button
-                                  type="button"
-                                  data-testid={`orchestrator-worker-retry-${run.runId}`}
-                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                                  disabled={recoveryBusy}
-                                  onClick={() => onRecover(run.runId, 'retry')}
-                                >
-                                  {t('orchestrator.worker.recovery.retryAction')}
-                                </button>
-                              )}
-                              {run.recoveryActions.includes('skip') && (
-                                <button
-                                  type="button"
-                                  data-testid={`orchestrator-worker-skip-${run.runId}`}
-                                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn disabled:opacity-50"
-                                  disabled={recoveryBusy}
-                                  onClick={() => onRecover(run.runId, 'skip')}
-                                >
-                                  {t('orchestrator.worker.recovery.skipAction')}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <ul className="mt-1 space-y-1">
-                        {run.tasks.map((task) => (
-                          <li key={task.taskId} className="rounded bg-paper px-1.5 py-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-[10.5px]" style={{ color: 'var(--sm-ink)' }} title={task.taskId}>
-                                {task.taskId}
-                              </span>
-                              <span className={`shrink-0 text-[10px] ${workerStatusCls[task.status] ?? 'text-ink-faint'}`}>
-                                {t(`orchestrator.worker.task.${task.status}`)} · a{task.attempt}
-                              </span>
-                            </div>
-                            {task.error && (
-                              <p className="mt-0.5 break-all text-[10px] text-err">{task.error}</p>
-                            )}
-                            {task.worktreePath && (
-                              <p className="mt-0.5 truncate font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }} title={task.worktreePath}>
-                                {t('orchestrator.worker.worktree')}: {task.worktreePath}
-                              </p>
-                            )}
-                            {task.evidenceIds.length > 0 && (
-                              <p className="mt-0.5 break-all font-mono text-[9.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                                {t('orchestrator.worker.evidence')}: {task.evidenceIds.join(', ')}
-                              </p>
-                            )}
-                            {task.evidence.length > 0 && (
-                              <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-evidence-${task.taskId}`}>
-                                {task.evidence.map((record) => (
-                                  <li key={record.id} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
-                                    <span className={record.status === 'passed' ? 'text-ok' : record.status === 'failed' ? 'text-err' : 'text-warn'}>
-                                      {record.kind} · {record.status}
-                                    </span>
-                                    {' · '}{record.summary}
-                                    {record.command ? ` · ${record.command}` : ''}
-                                    {record.exitCode !== undefined ? ` · ${t('orchestrator.worker.exitCode')}: ${record.exitCode}` : ''}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {task.sideEffects.length > 0 && (
-                              <ul className="mt-0.5 space-y-0.5 pl-2 text-[9.5px]" data-testid={`orchestrator-worker-receipts-${task.taskId}`}>
-                                {task.sideEffects.map((effect) => (
-                                  <li key={effect.idempotencyKey} className="break-all" style={{ color: 'var(--sm-ink-faint)' }}>
-                                    <span className={effect.status === 'receipt' ? 'text-ok' : effect.status === 'unknown' ? 'text-warn' : 'text-accent'}>
-                                      {t('orchestrator.worker.receipt')}: {effect.kind} · {effect.status}
-                                    </span>
-                                    {effect.receiptId ? ` · ${effect.receiptId}` : ''}
-                                    {effect.unknownReason ? ` · ${effect.unknownReason}` : ''}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {task.cleanup ? (
-                              task.cleanup.status === 'ready' ? (
-                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px]" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                                  <span className="break-all text-ok">
-                                    {t('orchestrator.worker.cleanup')}: {task.cleanup.approvalStatus === 'approved' ? t('orchestrator.worker.cleanup.approved') : t('orchestrator.worker.cleanup.ready')} · {task.cleanup.acceptanceId}
-                                  </span>
-                                  {onCleanupWorkerRun && (
-                                    <button
-                                      type="button"
-                                      data-testid={`orchestrator-worker-cleanup-action-${task.taskId}`}
-                                      className="rounded border border-line px-1.5 py-0.5 text-[10px] text-accent disabled:opacity-50"
-                                      disabled={cleanupBusy}
-                                      onClick={() => {
-                                        const proposal = task.cleanup;
-                                        if (!proposal || proposal.status !== 'ready') return;
-                                        onCleanup(
-                                          proposal.runId,
-                                          task.taskId,
-                                          proposal.approvalStatus === 'approved' ? 'cleanup' : 'approve',
-                                        );
-                                      }}
-                                    >
-                                      {task.cleanup.approvalStatus === 'approved'
-                                        ? t('orchestrator.worker.cleanup.executeAction')
-                                        : t('orchestrator.worker.cleanup.approveAction')}
-                                    </button>
-                                  )}
-                                </div>
-                              ) : task.cleanup.status === 'cleaned' ? (
-                                <p className="mt-0.5 break-all text-[9.5px] text-ok" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                                  {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.cleaned')} · {task.cleanup.receiptId}
-                                </p>
-                              ) : (
-                                <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                                  {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.blocked')}: {task.cleanup.reason}
-                                </p>
-                              )
-                            ) : task.status === 'succeeded' ? (
-                              <p className="mt-0.5 break-all text-[9.5px] text-warn" data-testid={`orchestrator-worker-cleanup-${task.taskId}`}>
-                                {t('orchestrator.worker.cleanup')}: {t('orchestrator.worker.cleanup.unavailable')}
-                              </p>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-
-          {/* 操作栏 */}
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
-            {BINDABLE_STATUSES.has(selected.status) && (
-              <>
-                <button
-                  className="sm-btn hover:border-accent hover:text-accent"
-                  onClick={() => onPrepare(selected.id)}
-                  title={t('orchestrator.prepareHint')}
-                  disabled={busy}
-                >
-                  <RotateCcw size={13} /> {t('orchestrator.prepare')}
-                </button>
-                {selected.status === 'awaiting-confirm' && (
-                  <button
-                    className="sm-btn hover:border-accent hover:text-accent"
-                    onClick={() => onConfirm(selected.id)}
-                    disabled={busy}
-                  >
-                    <CheckCircle2 size={13} /> {t('orchestrator.confirm')}
-                  </button>
-                )}
-              </>
-            )}
-            {(selected.status === 'ready' || selected.status === 'failed') &&
-              (() => {
-                // H3c：failed 可重试（failed → running 迁移表合法，复用已固化 stageWfIds）
-                // 审计建议：执行前检查所有阶段已绑定非空工作流，未就绪禁用并提示
-                const runnable = stagesReadyToRun(selected, workflows);
-                const isRetry = selected.status === 'failed';
-                const workerOwnsExecution = selectedWorkerRuns.length > 0;
-                return (
-                  <button
-                    className="sm-btn justify-center hover:border-accent hover:text-accent"
-                    onClick={() => onRun(selected.id)}
-                    disabled={busy || !!selected.readonly || !runnable || workerOwnsExecution}
-                    title={
-                      selected.readonly
-                        ? t('orchestrator.hint.readonly')
-                        : workerOwnsExecution
-                          ? t('orchestrator.hint.workerRunOwnsExecution')
-                        : runnable
-                          ? t('orchestrator.hint.ready')
-                          : t('orchestrator.hint.notReady')
-                    }
-                  >
-                    <Play size={13} /> {busy ? t('orchestrator.running') : isRetry ? t('orchestrator.retry') : t('orchestrator.run')}
-                  </button>
-                );
-              })()}
-            {(selected.status === 'running' || selected.status === 'paused') && (
-              <button
-                className="sm-btn text-err hover:border-err"
-                onClick={() => onCancel(selected.id)}
-                disabled={cancelling}
-              >
-                <XCircle size={13} /> {cancelling ? t('orchestrator.cancelling') : t('orchestrator.cancel')}
-              </button>
-            )}
-            {selected.status !== 'running' && selected.status !== 'paused' && (
-              <button
-                className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-err"
-                onClick={() => onRemove(selected.id, selected.status)}
-                title={t('orchestrator.deleteHint')}
-                disabled={busy}
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
-            {err && (
-              <span className="ml-auto min-w-0 max-w-[220px] truncate text-[10.5px] text-err" title={err}>
-                {err}
-              </span>
-            )}
-          </div>
-        </div>
+        <OrchestratorPanelListView
+          goal={goal}
+          agentId={agentId}
+          readonly={readonly}
+          agents={allAgents}
+          orchestrations={orchestrations}
+          error={err}
+          onGoalChange={setGoal}
+          onAgentChange={setAgentId}
+          onReadonlyChange={setReadonly}
+          onGenerate={onGenerate}
+          onSelect={setSelectedId}
+        />
       )}
     </div>
   );
