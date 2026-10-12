@@ -6,6 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 const TARGET_FILES = [
   'src/canvas/WorkflowEditor.tsx',
+  'src/canvas/CanvasWelcomeSurface.tsx',
+  'src/canvas/CanvasPanelControls.tsx',
+  'src/canvas/useCanvasContextMenu.tsx',
+  'src/canvas/useCanvasNodePicker.tsx',
   'src/components/LeftSidebar.tsx',
   'src/App.tsx',
   'src/components/OrchestratorPanel.tsx',
@@ -16,6 +20,10 @@ const TARGET_FILES = [
 
 const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/canvas/WorkflowEditor.tsx': ['ui'],
+  'src/canvas/CanvasWelcomeSurface.tsx': ['ui'],
+  'src/canvas/CanvasPanelControls.tsx': ['ui'],
+  'src/canvas/useCanvasContextMenu.tsx': ['ui'],
+  'src/canvas/useCanvasNodePicker.tsx': ['ui'],
   'src/components/LeftSidebar.tsx': ['panels'],
   'src/App.tsx': ['ui'],
   'src/components/OrchestratorPanel.tsx': ['panels'],
@@ -26,7 +34,7 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
 
 const EXCEPTIONS = [
   ...['输入', '智能体', '文本', '工具', '输出', '流程'].map((token) => ({
-    path: 'src/canvas/WorkflowEditor.tsx',
+    path: 'src/canvas/CanvasPanelControls.tsx',
     fragment: `${token}:`,
     reason: 'Node category identifiers are stored workflow data used by the minimap color map, not display labels.',
   })),
