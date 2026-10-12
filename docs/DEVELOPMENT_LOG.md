@@ -5640,4 +5640,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 原 target-switch characterization 测试曾通过/失败不定，最小诊断发现两次同步 `newWorkflowInProject` 可能生成同一 ID：`workflowRegistryActions.ts:66` 使用 `wf-${deps.now() + 1}`，本次实测两次均为 `wf-1791790577794`。测试现改为使用确定性的两个 workflow fixture，隔离该 ID 生成问题；本轮没有改 registry/store 行为。
 - 使用确定性不同 ID 后，same-fingerprint regression 稳定复现：从 A 切到 B 时，`splitSigRef` 只记录图指纹、不含 wfId；目标 reset effect 在 loader effect 之后执行，loader 因相同指纹提前返回，而 ref 清除不会触发重渲染，故画布继续显示 A。修复仅把既有目标切换 reset effect 移到 loader effect 前；保留组件 props、provider、store action 和不同指纹载入/写回合同。新增不同指纹切换 read-back，断言画布与 store 均仍为 B。
 - focused `WorkflowEditor.test.tsx` 为 1 file / 6 tests passed；两个 target-switch regression 连续 10 次均为 2/2 passed。完整 `npm run test -- --reporter=dot` 为 230 files / 1,523 tests passed。`npm run build`（2,122 modules）、app/project TypeScript checks、i18n（1,112 keys）、`git diff --check` 均通过；build 保留既有 mixed static/dynamic import 与 >500 kB chunk warnings。
-- 该 behavior-fix snapshot 尚无 exact reviewer，未做新的浏览器/Tauri preview；所有提交/tag 保持 unverified。`WorkflowEditor.tsx` 仍为 1,185 行，结构拆分、GUI preview 与 exact review 仍需单独 fresh 75 分钟预算；`newWorkflowInProject` 同毫秒 ID collision 只作为独立 store 风险记录，未在本轮修复。
+- 提交时该 behavior-fix snapshot 尚无 exact reviewer，未做新的浏览器/Tauri preview；所有提交/tag 保持 unverified。`WorkflowEditor.tsx` 仍为 1,185 行，结构拆分与 GUI preview 仍需单独 fresh 75 分钟预算；`newWorkflowInProject` 同毫秒 ID collision 只作为独立 store 风险记录，未在本轮修复。
+
+### 7.420 unverified：WorkflowEditor target-switch exact review disposition
+
+- 独立 reviewer 以 immutable Git objects 审查 target `3399c539dadb76c18e52f4539a913353d789f77d`、parent `46ca18762fe1a2379c077980a81aceb96971421f` 及三个 scope paths；返回严格 JSON：`working_tree_clean=true`、`passed=true`、`security_concerns=[]`、`logic_errors=[]`、`suggestions=[]`。Reviewer 未运行测试、未改文件或 refs。
+- reviewer 返回后 read-back：分支仍为 `refactor/monolith-split-2`，HEAD 仍为 target、父提交关系与 reflog 未变、工作树干净；`checkpoint/fix-workfloweditor-target-switch-unverified-20261012` 与新 tag `checkpoint/fix-workfloweditor-target-switch-reviewed-unverified-20261012` 均指向同一 code target。
+- review 仅闭合该 behavior-fix 的 exact-code review；未做 browser/Tauri preview，未完成 1,185 行 `WorkflowEditor` 结构拆分，整轮仍按计划保持 unverified，不创建 verified tag。
