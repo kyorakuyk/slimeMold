@@ -237,4 +237,46 @@ describe('WorkflowEditor characterization', () => {
 
     expect(useWorkflowStore.getState().workflows[wfId]?.nodes[0]?.position).toEqual({ x: 100, y: 200 });
   });
+
+  it('loads a new split target when its graph fingerprint matches the previous target', async () => {
+    await act(async () => {
+      await useWorkflowStore.getState().newWorkflowInProject();
+    });
+    const wfA = useWorkflowStore.getState().activeWfId;
+    await act(async () => {
+      await useWorkflowStore.getState().newWorkflowInProject();
+    });
+    const wfB = useWorkflowStore.getState().activeWfId;
+    const nodeA = {
+      id: 'shared-node',
+      type: 'base',
+      position: { x: 10, y: 20 },
+      data: { typeId: 'input.text', label: 'Workflow A', params: {}, status: 'idle' },
+    } as unknown as FlowNode;
+    const nodeB = { ...nodeA, data: { ...nodeA.data, label: 'Workflow B' } };
+    const before = useWorkflowStore.getState();
+    const workflowA = before.workflows[wfA];
+    const workflowB = before.workflows[wfB];
+    expect(workflowA).toBeDefined();
+    expect(workflowB).toBeDefined();
+    useWorkflowStore.setState({
+      nodes: [nodeB],
+      edges: [],
+      workflows: {
+        ...before.workflows,
+        [wfA]: { ...workflowA!, nodes: [nodeA], edges: [] },
+        [wfB]: { ...workflowB!, nodes: [nodeB], edges: [] },
+      },
+    });
+
+    await act(async () => {
+      root.render(<WorkflowEditor wfId={wfA} />);
+    });
+    await act(async () => {
+      root.render(<WorkflowEditor wfId={wfB} />);
+    });
+
+    const displayedNodes = canvasHarness.reactFlowProps.at(-1)?.nodes as FlowNode[];
+    expect(displayedNodes[0]?.data.label).toBe('Workflow B');
+  });
 });

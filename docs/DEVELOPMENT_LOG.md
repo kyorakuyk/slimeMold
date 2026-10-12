@@ -5571,3 +5571,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - 在独立分栏工作流测试中加入非空节点图 fixture，断言首次挂载后目标工作流仍保留原节点，并通过 React Flow `onNodesChange` callback 移动节点后读回同一 `wfId` 的写回位置。测试使用真实 `ReactFlowProvider` / Zustand store，ReactFlow 渲染器本身由测试 mock，不启动模型或 Worker。
 - 未拆分的现有组件基线下，`npx vitest run src/canvas/WorkflowEditor.test.tsx --reporter=dot`：1 file / 4 tests passed；其中主画布共享 provider、分栏 provider 隔离、starter template 实际 store 变更和首帧保留/编辑写回均有直接覆盖。`npm run build`（`tsc -b` 与 Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit` 与 `git diff --check` 均通过；build 仍有既有 mixed static/dynamic import 与 >500 kB chunk warnings。生产代码尚未修改，完整质量门仍留到最终实现快照。
+
+### 7.409 unverified：分栏目标切换特征与基线质量门（切片 7）
+
+- 增加相同节点结构指纹、不同工作流标签时切换 `wfId` 的特征测试；未拆分的现有组件在目标切换后正确显示新工作流。focused 测试：1 file / 5 tests passed；测试仅使用内存项目与 mock 执行器。
+- 当前未拆分基线完整验证：`npm run test -- --reporter=dot` 为 227 files / 1,512 tests passed；`npm run build`（`tsc -b` + Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit`、`npm run i18n:check`（1,112 keys）与 `git diff --check` 均通过。保留既有 mixed static/dynamic import、>500 kB chunk warnings；测试中 GUI 初始化失败 stderr 属于既有受测错误路径，测试通过。
+- 只读拓扑盘点提示 split `onReconnect` 的 cycle check 读取 active `st.edges`，其分栏 scope 语义未覆盖；本结构切片不修复、不重定义该行为，作为后续独立核验项记录。生产代码尚未拆分，浏览器预览、Tauri/native 验收与 exact review 均未完成；保持 unverified。
