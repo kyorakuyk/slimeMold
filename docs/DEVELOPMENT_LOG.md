@@ -5583,3 +5583,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 新增 `src/components/OrchestratorPanel.test.tsx`，覆盖目标输入经真实 `createDraftOrchestration` 写入 `awaiting-confirm` store、mock executor rejection 后清理 busy 并显示错误，以及 modal / `embedded` 容器切换。测试保留真实 Zustand 与编排确认逻辑；只 mock `runOrchestration`，项目 `projectPath: null`，不触发 Worker、模型 API 或 Tauri。
 - 未拆分基线 focused 测试 `npx vitest run src/components/OrchestratorPanel.test.tsx --reporter=dot`：1 file / 3 tests passed；全量 `npm run test -- --reporter=dot`：228 files / 1,515 tests passed。`npm run build`（`tsc -b` + Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit`、`npm run i18n:check`（1,112 keys）和 `git diff --check` 均通过。保留既有 mixed static/dynamic import、>500 kB chunk warnings；全量测试中既有 GUI 初始化失败路径仍写 stderr，但对应测试通过。
 - 本次仅为特征测试与基线验证，`OrchestratorPanel.tsx` 生产代码尚未移动；UI 预览/exact review 留到生产拆分最终快照，产出保持 unverified。
+
+### 7.411 unverified：OrchestratorPanel 生产拆分时间盒止损（切片 8）
+
+- 在未改变 controller 行为的尝试中，曾将 WorkerRun evidence/recovery/cleanup 显示拆到 `WorkerRunsView` 并抽取共享状态样式/props contract；中间快照下 `npx vitest run src/components/OrchestratorPanel.test.tsx --reporter=dot` 为 1 file / 3 tests passed，`npm run build`（`tsc -b` + Vite，2,118 modules）通过并保留既有 import/chunk warnings。
+- 60 分钟预算到期时，尚未完成将主面板降到 ≤600 行，也未完成全量质量门、浏览器预览或 exact review。按止损边界，撤回未提交的 `OrchestratorPanel.tsx` 修改并移除新建但未接入/未提交的 owner 文件；没有生产代码 commit。当前权威快照仍为测试 commit `2a165a1f69f93cea8648c1041c03764a0f248012`，生产组件保持 997 行，Slice 8 仅完成特征测试与未拆分基线门，状态为部分/unverified。
