@@ -55,7 +55,13 @@
 | Run 生命周期 | `workerRunTransitionProjection.ts` | 以现有 Run/Orchestration projections 和一个已准入 transition 计算 next state；不生成 events。 | `projectWorkerRunTransition` |
 | Run 生命周期 | `workerRunView.ts` | 为界面生成 Worker、task、Evidence 与 side-effect 的只读 view。 | `workerRunViewsFor` |
 | Run 生命周期 | `workerWorktreeRestore.ts` | 在恢复时向 host 重新注册已有 Worker worktrees。 | `restoreWorkerWorktrees` |
-| 一致性与审计 | `workerRunConsistency.ts` | 比较 Run、TaskGraph、Acceptance 与 durable event facts，生成有序 issues/report。 | `auditWorkerRunConsistency` |
+| 一致性与审计 | `workerRunConsistency.ts` | 按固定顺序协调一致性检查并返回有序报告；各问题族由独立 checks 承载。 | `auditWorkerRunConsistency` |
+| 一致性与审计 | `workerRunConsistencyEventChecks.ts` | 校验输入 facts 与项目事件流、重放 events，并建立 Run audit context。 | `checkInitialConsistencyFacts`、`replayWorkerEvents`、`createWorkerRunAuditContext` |
+| 一致性与审计 | `workerRunConsistencyTaskChecks.ts` | 校验 TaskGraph/Run/Task 与事件重放、attempt、Evidence、Acceptance 的一致性。 | `checkWorkerRun` |
+| 一致性与审计 | `workerRunConsistencySideEffectChecks.ts` | 校验 Worker、cleanup 与 artifact-delivery side effect 的 lineage、receipt 和 success provenance。 | `checkWorkerRunSideEffects` |
+| 一致性与审计 | `workerRunConsistencyOrphanChecks.ts` | 查找事件投影中未登记的 Run、TaskExecution 与 Task。 | `checkOrphanedWorkerEvents` |
+| 一致性与审计 | `workerRunConsistencyTypes.ts` | 声明审计输入、issues/report、context 与 Task lineage 类型。 | `WorkerRunConsistencyInput`、`WorkerRunConsistencyReport`、`WorkerRunConsistencyAuditContext` |
+| 一致性与审计 | `workerRunConsistencyUtils.ts` | 提供 issue/projection helper、lineage predicate 与历史 effect 校验。 | `issue`、`sameStringSet`、`recordMatchesTaskLineage`、`isVerifiedHistoricalEffect` |
 | 一致性与审计 | `workerRunConsistencyAction.ts` | 调用一致性审计并在不一致时阻断外部执行。 | `assertWorkerRunConsistency` |
 | 一致性与审计 | `workerRunRecoveryAuditController.ts` | 组织加载后的 event replay、facts audit、recovery suppression 和 projection 更新。 | `createWorkerRunRecoveryAuditController` |
 | 恢复事实 | `workerRecoveryFactsTypes.ts` | 声明版本化 `worker-recovery-facts-v1` DTO 与 task/effect/project fact 类型。 | `WorkerRecoveryFactsV1`、`WorkerRecoveryFactsInput` |
@@ -96,17 +102,17 @@
 
 | 术语 | 定义与类型位置 |
 | --- | --- |
-| ProjectTaskGraph | 获批版本化任务图，含 `graphVersion` 与 tasks；类型 `ProjectTaskGraph`，`src/projectControl/types.ts`。 |
-| ProjectTask | 图内的计划 task、依赖和状态定义；类型 `ProjectTask`，`src/projectControl/types.ts`。 |
-| graphVersion | TaskGraph 的版本字段，用于将 Run 与所依据的任务图版本绑定；`ProjectTaskGraph`，`src/projectControl/types.ts`。 |
-| WorkerRunQueueState | 一个 Run 的持久化 queue snapshot；类型 `WorkerRunQueueState`，`src/domain/workerQueue.ts`。 |
+| ProjectTaskGraph | 获批版本化任务图，含 `graphVersion` 与 tasks；类型 `ProjectTaskGraph`，`src/projectControl/types.ts`；相关 ADR-SM-012/-013。 |
+| ProjectTask | 图内的计划 task、依赖和状态定义；类型 `ProjectTask`，`src/projectControl/types.ts`；相关 ADR-SM-012/-013。 |
+| graphVersion | TaskGraph 的版本字段，用于将 Run 与所依据的任务图版本绑定；`ProjectTaskGraph`，`src/projectControl/types.ts`；相关 ADR-SM-012/-013。 |
+| WorkerRunQueueState | 一个 Run 的持久化 queue snapshot/projection；类型 `WorkerRunQueueState`，`src/domain/workerQueue.ts`；相关 ADR-SM-015。 |
 | WorkerQueueTask | Run 内按 task id 索引的 task/attempt/worktree 状态；类型 `WorkerQueueTask`，`src/domain/workerQueue.ts`。 |
 | TaskExecutionId | 一个 Task 执行谱系的稳定 id，与 run/task 身份绑定；类型别名 `TaskExecutionId`，`src/domain/execution.ts`；相关 ADR-SM-014。 |
 | AttemptId | 单次 attempt 的稳定 fencing id；类型别名 `AttemptId`，`src/domain/execution.ts`；相关 ADR-SM-014。 |
 | ContextPack | 面向一次受限执行的版本化上下文载荷；类型 `ContextPack`，`src/projectControl/protocol.ts`；相关 ADR-SM-027。 |
 | DomainEvent | 项目事实流中的单条带 stream/aggregate/version 的事件；类型 `DomainEvent`，`src/domain/contracts.ts`；相关 ADR-SM-015。 |
 | EvidenceRecord | Host 为一次执行记录的 Evidence 状态与来源；类型 `EvidenceRecord`，`src/dev/evidence.ts`。 |
-| AcceptanceRecord | Host 对某个 orchestration/stage 的验收记录；类型 `AcceptanceRecord`，`src/dev/sessionContracts.ts`。 |
+| AcceptanceRecord | Host 对某个 orchestration/stage 的验收记录；类型 `AcceptanceRecord`，`src/dev/sessionContracts.ts`；相关 ADR-SM-018。 |
 | SideEffectRecord | 外部副作用的 idempotency、lineage 与 outcome 记录；类型 `SideEffectRecord`，`src/domain/contracts.ts`；相关 ADR-SM-037。 |
 | CleanupReceipt | Host cleanup 的目标、outcome 与 read-back 记录；类型 `CleanupReceipt`，`src/domain/contracts.ts`；相关 ADR-SM-040。 |
 | WorkerRecoveryFactsV1 | Recovery fingerprint 所用的 versioned、规范化项目事实 DTO；类型 `WorkerRecoveryFactsV1`，`src/projectControl/workerRecoveryFactsTypes.ts`；相关 ADR-SM-084（设计基线，不表示 durable CAS 已闭合）。 |
