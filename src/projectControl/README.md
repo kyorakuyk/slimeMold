@@ -52,7 +52,7 @@
 | Run 生命周期 | `workerRunRehydration.ts` | 从 durable events 重建、恢复缺失 projection，并对现有 snapshot 做重放核对；不完整 lineage 不补造状态。 | `rehydrateWorkerRunsFromEvents`、`restoreMissingWorkerRunsFromEvents`、`reconcileWorkerRunsFromEvents` |
 | Run 生命周期 | `workerRunTransitionPersistence.ts` | 串接 transition event、ProjectFile 和 Evidence/side-effect projection 的持久化。 | `createWorkerRunTransitionPersistence` |
 | Run 生命周期 | `workerRunOrchestrationProjection.ts` | 将 Worker Run 状态投影到 Orchestration，并抑制不可信 projection。 | `projectWorkerRunsOntoOrchestrations`、`suppressInvalidWorkerRunProjection`、`selectLatestWorkerRun` |
-| Run 生命周期 | `workerRunTransitionProjection.ts` | 将一个 Worker transition 应用为新的 Run state 与 events。 | `projectWorkerRunTransition` |
+| Run 生命周期 | `workerRunTransitionProjection.ts` | 以现有 Run/Orchestration projections 和一个已准入 transition 计算 next state；不生成 events。 | `projectWorkerRunTransition` |
 | Run 生命周期 | `workerRunView.ts` | 为界面生成 Worker、task、Evidence 与 side-effect 的只读 view。 | `workerRunViewsFor` |
 | Run 生命周期 | `workerWorktreeRestore.ts` | 在恢复时向 host 重新注册已有 Worker worktrees。 | `restoreWorkerWorktrees` |
 | 一致性与审计 | `workerRunConsistency.ts` | 比较 Run、TaskGraph、Acceptance 与 durable event facts，生成有序 issues/report。 | `auditWorkerRunConsistency` |
@@ -66,10 +66,10 @@
 | 恢复事实 | `workerRecoveryFactsCanonicalJson.ts` | 输出稳定顺序的 JSON 表示。 | `canonicalizeJsonValue` |
 | 恢复事实 | `workerRecoveryFactsFingerprint.ts` | 对规范化 facts 产生 canonical JSON 与 fingerprint。 | `canonicalizeWorkerRecoveryFactsV1`、`fingerprintWorkerRecoveryFactsV1` |
 | 恢复事实 | `workerRecoveryFacts.ts` | 从可信 cleanup receipt 协调已完成清理，并识别未知副作用对应的 Run。 | `reconcileSuccessfulCleanupReceipts`、`cleanupUnknownRunIds` |
-| Recovery 决定与命令 | `workerRecoveryCapabilityProjection.ts` | 从当前 Run facts 投影允许的 inspect/retry/skip actions。 | `projectWorkerRecoveryActions` |
+| Recovery 决定与命令 | `workerRecoveryCapabilityProjection.ts` | 从 canonical recovery plan 投影当前可点击的 retry/skip actions（不含 inspect）。 | `projectWorkerRecoveryActions` |
 | Recovery 决定与命令 | `workerRecoveryDecisionPrecondition.ts` | 比较提交前重新读取的 facts 与已捕获决定，拒绝 stale/drift。 | `assertWorkerRecoveryDecisionPrecondition` |
 | Recovery 决定与命令 | `workerRecoveryDecisionPersistence.ts` | 持久化 decision admission/commit 状态并实施锁与 CAS 冲突处理。 | `WorkerRecoveryDecisionPersistence`、`WorkerRecoveryDecisionCasError` |
-| Recovery 决定与命令 | `workerRecoverySingleFlight.ts` | 按项目/Run 合并并发 recovery 请求，返回可释放 lease。 | `createWorkerRecoverySingleFlight` |
+| Recovery 决定与命令 | `workerRecoverySingleFlight.ts` | 进程内 admission guard 按 projectId/projectPath/runId 阻断重复 active 请求；重复 acquire 返回 null，不是合并或 durable lock。 | `createWorkerRecoverySingleFlight` |
 | Recovery 决定与命令 | `workerRecoveryCommand.ts` | 把 recovery plan/decision 转换为 queue state 与领域事件。 | `recoverWorkerRunCommand` |
 | Recovery 决定与命令 | `workerRecoveryIoController.ts` | 连接 GUI host、Evidence repository、项目保存与中断 side-effect recovery。 | `createWorkerRecoveryIoController` |
 | Recovery 决定与命令 | `workerActionController.ts` | 重新读取当前 Run/TaskGraph，持久化 recovery decision，再按 post-commit 状态分派 retry。 | `createWorkerActionController`、`assertCandidateCanReplay` |
@@ -101,20 +101,20 @@
 | graphVersion | TaskGraph 的版本字段，用于将 Run 与所依据的任务图版本绑定；`ProjectTaskGraph`，`src/projectControl/types.ts`。 |
 | WorkerRunQueueState | 一个 Run 的持久化 queue snapshot；类型 `WorkerRunQueueState`，`src/domain/workerQueue.ts`。 |
 | WorkerQueueTask | Run 内按 task id 索引的 task/attempt/worktree 状态；类型 `WorkerQueueTask`，`src/domain/workerQueue.ts`。 |
-| TaskExecutionId | 一个 Task 执行谱系的稳定 id，与 run/task 身份绑定；类型别名 `TaskExecutionId`，`src/domain/execution.ts`。 |
-| AttemptId | 单次 attempt 的稳定 fencing id；类型别名 `AttemptId`，`src/domain/execution.ts`。 |
-| ContextPack | 面向一次受限执行的版本化上下文载荷；类型 `ContextPack`，`src/projectControl/protocol.ts`。 |
-| DomainEvent | 项目事实流中的单条带 stream/aggregate/version 的事件；类型 `DomainEvent`，`src/domain/contracts.ts`。 |
+| TaskExecutionId | 一个 Task 执行谱系的稳定 id，与 run/task 身份绑定；类型别名 `TaskExecutionId`，`src/domain/execution.ts`；相关 ADR-SM-014。 |
+| AttemptId | 单次 attempt 的稳定 fencing id；类型别名 `AttemptId`，`src/domain/execution.ts`；相关 ADR-SM-014。 |
+| ContextPack | 面向一次受限执行的版本化上下文载荷；类型 `ContextPack`，`src/projectControl/protocol.ts`；相关 ADR-SM-027。 |
+| DomainEvent | 项目事实流中的单条带 stream/aggregate/version 的事件；类型 `DomainEvent`，`src/domain/contracts.ts`；相关 ADR-SM-015。 |
 | EvidenceRecord | Host 为一次执行记录的 Evidence 状态与来源；类型 `EvidenceRecord`，`src/dev/evidence.ts`。 |
 | AcceptanceRecord | Host 对某个 orchestration/stage 的验收记录；类型 `AcceptanceRecord`，`src/dev/sessionContracts.ts`。 |
-| SideEffectRecord | 外部副作用的 idempotency、lineage 与 outcome 记录；类型 `SideEffectRecord`，`src/domain/contracts.ts`。 |
-| CleanupReceipt | Host cleanup 的目标、outcome 与 read-back 记录；类型 `CleanupReceipt`，`src/domain/contracts.ts`。 |
-| WorkerRecoveryFactsV1 | Recovery fingerprint 所用的 versioned、规范化项目事实 DTO；类型 `WorkerRecoveryFactsV1`，`src/projectControl/workerRecoveryFactsTypes.ts`。 |
-| WorkerRecoveryDecisionRecord | Durable recovery 请求及 post-commit 状态；类型 `WorkerRecoveryDecisionRecord`，`src/projectControl/workerRecoveryDecisionPersistence.ts`。 |
-| WorkerRecoverySingleFlightLease | 并发 recovery 请求占用/释放的 lease；类型 `WorkerRecoverySingleFlightLease`，`src/projectControl/workerRecoverySingleFlight.ts`。 |
-| WorkerCleanupProposal | ready/blocked/cleaned 三态的清理建议 union；类型 `WorkerCleanupProposal`，`src/projectControl/workerCleanup.ts`。 |
-| WorkerRunRehydrationResult | 从 durable events 重建 Run snapshot 与 issue 列表的结果；类型 `WorkerRunRehydrationResult`，`src/projectControl/workerRunRehydration.ts`。 |
-| ArtifactDeliveryReceipt | 已批准交付文件的路径/hash 与结果记录；类型 `ArtifactDeliveryReceipt`，`src/projectControl/workerDelivery.ts`。 |
+| SideEffectRecord | 外部副作用的 idempotency、lineage 与 outcome 记录；类型 `SideEffectRecord`，`src/domain/contracts.ts`；相关 ADR-SM-037。 |
+| CleanupReceipt | Host cleanup 的目标、outcome 与 read-back 记录；类型 `CleanupReceipt`，`src/domain/contracts.ts`；相关 ADR-SM-040。 |
+| WorkerRecoveryFactsV1 | Recovery fingerprint 所用的 versioned、规范化项目事实 DTO；类型 `WorkerRecoveryFactsV1`，`src/projectControl/workerRecoveryFactsTypes.ts`；相关 ADR-SM-084（设计基线，不表示 durable CAS 已闭合）。 |
+| WorkerRecoveryDecisionRecord | Durable recovery 请求及 post-commit 状态；类型 `WorkerRecoveryDecisionRecord`，`src/projectControl/workerRecoveryDecisionPersistence.ts`；相关 ADR-SM-084（设计基线，不表示 durable CAS 已闭合）。 |
+| WorkerRecoverySingleFlightLease | 进程内 recovery admission 成功后用于释放占用的 lease；类型 `WorkerRecoverySingleFlightLease`，`src/projectControl/workerRecoverySingleFlight.ts`；重复 key 返回 null，非 durable CAS；相关 ADR-SM-084。 |
+| WorkerCleanupProposal | ready/blocked/cleaned 三态的清理建议 union；类型 `WorkerCleanupProposal`，`src/projectControl/workerCleanup.ts`；相关 ADR-SM-040。 |
+| WorkerRunRehydrationResult | 从 durable events 重建 Run snapshot 与 issue 列表的结果；类型 `WorkerRunRehydrationResult`，`src/projectControl/workerRunRehydration.ts`；相关 ADR-SM-015。 |
+| ArtifactDeliveryReceipt | 已批准交付文件的路径/hash 与结果记录；类型 `ArtifactDeliveryReceipt`，`src/projectControl/workerDelivery.ts`；相关 ADR-SM-040。 |
 | WorkerRunView | 面向 UI 的 Run/task/Evidence/side-effect 只读视图；类型 `WorkerRunView`，`src/projectControl/workerRunView.ts`。 |
 
 ## 三个常见任务从哪读起
