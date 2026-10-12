@@ -164,4 +164,20 @@ describe('TopBar characterization', () => {
 
     expect(onToggleSidebar).toHaveBeenCalledTimes(1);
   });
+
+  it('routes the new-project keyboard shortcut through its container callback', () => {
+    const onNewProject = vi.fn();
+    renderTopBar({ onNewProject });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'N',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }));
+    });
+
+    expect(onNewProject).toHaveBeenCalledTimes(1);
+  });
 });
