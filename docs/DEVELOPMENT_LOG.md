@@ -5606,3 +5606,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - 独立只读 reviewer 针对 target `33b7b14185c34303670b7fe40c597cae5baca7b2` / parent `ee49a7842de76189f8fdb9669c477feac52ad272` 返回严格 JSON：`passed=true`、`working_tree_clean=true`、`security_concerns=[]`、`logic_errors=[]`；复核确认 facade 路由/props/callback、Home projectIO 顺序、Cockpit selectors/run/stop、shared header 与移出实现保持语义一致，无 reverse import 或重复 owner。
 - Reviewer 的一条非阻塞建议是追查 `WorkflowEditor` target-switch 测试的间歇性失败。最终全量重跑通过，但首轮 full 和 standalone run 曾失败，原因仍未知；此风险不在 Slice10 内修复。评审/质量门不等于用户验收；根据夜间任务要求，代码 commit 与 tags 仍保持 unverified，浏览器预览不作 Tauri/native 证据。
+
+### 7.415 unverified：SettingsCenter 拆分前 characterization baseline（切片 11）
+
+- 新增 `src/components/SettingsCenter.test.tsx`，不改生产文件：覆盖 modal 内外/ESC close、切换 Flow 后真实 `workflowStore.failFast` 更新，以及模拟 API-key vault recheck 的 deferred fetch rejection（spinner 进入/清除并展示错误）。credential/model/Tauri 边界全部 mock，无真实密钥、IPC 或网络调用。
+- 拆分前 focused `npx vitest run src/components/SettingsCenter.test.tsx --reporter=dot` 为 1 file / 3 tests passed；全量 `npm run test -- --reporter=dot` 为 229 files / 1,518 tests passed。SettingsCenter production split 尚未开始，测试和 baseline 保持 unverified。
