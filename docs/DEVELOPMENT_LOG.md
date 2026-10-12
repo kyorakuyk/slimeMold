@@ -5589,8 +5589,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 在未改变 controller 行为的尝试中，曾将 WorkerRun evidence/recovery/cleanup 显示拆到 `WorkerRunsView` 并抽取共享状态样式/props contract；中间快照下 `npx vitest run src/components/OrchestratorPanel.test.tsx --reporter=dot` 为 1 file / 3 tests passed，`npm run build`（`tsc -b` + Vite，2,118 modules）通过并保留既有 import/chunk warnings。
 - 60 分钟预算到期时，尚未完成将主面板降到 ≤600 行，也未完成全量质量门、浏览器预览或 exact review。按止损边界，撤回未提交的 `OrchestratorPanel.tsx` 修改并移除新建但未接入/未提交的 owner 文件；没有生产代码 commit。当前权威快照仍为测试 commit `2a165a1f69f93cea8648c1041c03764a0f248012`，生产组件保持 997 行，Slice 8 仅完成特征测试与未拆分基线门，状态为部分/unverified。
 
-### 7.412 unverified：ProjectSessionPanel 拆分时间盒止损（切片 9）
+### 7.412 unverified：ProjectSessionPanel 拆分提前止损（切片 9，45 分钟上限内约 31.5 分钟）
 
 - 在 start checkpoint `2f71acc31eb3e726eb79adff64dd50f979ec4a78` 上完成只读盘点：生产调用来自 `BeginnerExperience.tsx`；现有直接测试 12 项覆盖首轮 Master turn、保存/事件、Brief/Architecture/TaskGraph/Orchestration、queued Worker runtime 与部分 recovery。store/save、Master turn、runtime dispatch 和 recovery eligibility 均留在现有 controller owner 是最低风险边界；视图抽取不得把这些副作用移入展示层。
 - 曾短暂创建 header/conversation/sidebar/contracts 展示模块并提前移动 `sessionStatusKey` helper，旧 JSX 尚未替换时 focused 测试 1 file / 12 tests 全部因 `ReferenceError: sessionStatusKey is not defined` 失败。该快照是不完整的编辑中状态；随后撤回 `ProjectSessionPanel.tsx` 改动并删除所有新文件，没有留下生产代码修改。
-- 撤回后在精确 start HEAD 重跑 `npx vitest run src/components/ProjectSessionPanel.test.tsx --reporter=dot`：1 file / 12 tests passed；当前组件仍为 867 行，worktree clean。剩余预算不足以同时达到视图 owner 接线、≤600 行、全量门禁与 exact review，故按行为保持切片规则止损；没有源代码 commit、截图、全量 post-split 门禁或 reviewer verdict，状态为部分/unverified。
+- 撤回后在精确 start HEAD 重跑 `npx vitest run src/components/ProjectSessionPanel.test.tsx --reporter=dot`：1 file / 12 tests passed；当前组件仍为 867 行，worktree clean。约 31.5 分钟后，剩余 13.5 分钟不足以同时达到视图 owner 接线、≤600 行、全量门禁与 exact review，因此在 45 分钟上限内提前止损；没有源代码 commit、截图、全量 post-split 门禁或 reviewer verdict，状态为部分/unverified。
