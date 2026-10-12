@@ -5577,3 +5577,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 增加相同节点结构指纹、不同工作流标签时切换 `wfId` 的特征测试；未拆分的现有组件在目标切换后正确显示新工作流。focused 测试：1 file / 5 tests passed；测试仅使用内存项目与 mock 执行器。
 - 当前未拆分基线完整验证：`npm run test -- --reporter=dot` 为 227 files / 1,512 tests passed；`npm run build`（`tsc -b` + Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit`、`npm run i18n:check`（1,112 keys）与 `git diff --check` 均通过。保留既有 mixed static/dynamic import、>500 kB chunk warnings；测试中 GUI 初始化失败 stderr 属于既有受测错误路径，测试通过。
 - 只读拓扑盘点提示 split `onReconnect` 的 cycle check 读取 active `st.edges`，其分栏 scope 语义未覆盖；本结构切片不修复、不重定义该行为，作为后续独立核验项记录。生产代码尚未拆分，浏览器预览、Tauri/native 验收与 exact review 均未完成；保持 unverified。
+
+### 7.410 unverified：OrchestratorPanel 拆分前特征测试（切片 8）
+
+- 新增 `src/components/OrchestratorPanel.test.tsx`，覆盖目标输入经真实 `createDraftOrchestration` 写入 `awaiting-confirm` store、mock executor rejection 后清理 busy 并显示错误，以及 modal / `embedded` 容器切换。测试保留真实 Zustand 与编排确认逻辑；只 mock `runOrchestration`，项目 `projectPath: null`，不触发 Worker、模型 API 或 Tauri。
+- 未拆分基线 focused 测试 `npx vitest run src/components/OrchestratorPanel.test.tsx --reporter=dot`：1 file / 3 tests passed；全量 `npm run test -- --reporter=dot`：228 files / 1,515 tests passed。`npm run build`（`tsc -b` + Vite，2,116 modules）、`npx tsc -p tsconfig.app.json --noEmit`、`npm run i18n:check`（1,112 keys）和 `git diff --check` 均通过。保留既有 mixed static/dynamic import、>500 kB chunk warnings；全量测试中既有 GUI 初始化失败路径仍写 stderr，但对应测试通过。
+- 本次仅为特征测试与基线验证，`OrchestratorPanel.tsx` 生产代码尚未移动；UI 预览/exact review 留到生产拆分最终快照，产出保持 unverified。
