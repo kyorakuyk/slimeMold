@@ -5560,3 +5560,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Exact reviewer 只读 immutable Git objects，target/parent 匹配且工作树 clean；严格 JSON `passed=true`、`security_concerns=[]`、`logic_errors=[]`。建议在标 verified 前完成计划要求的浏览器截图；该建议现已通过下述同代码 HEAD read-back 闭合。
 - 浏览器预览在未改变的 code HEAD `b9977aae28e285f4e2edcc099b6896360c3aa74e` 上，通过本地 Vite `http://127.0.0.1:1420` 打开 Settings → Agents；为到达面板，只在隔离浏览器上下文中创建了无磁盘路径的空白项目，然后选中默认 Ollama Agent 显示编辑表单。截图 `.hermes/reports/assets/slice6-agentpanel-preview-20261012.png`（900×566）可读回设置导航、Agent 列表与编辑表单。仅作浏览器视觉预览，不代表真实 Tauri/native 验收；没有触发运行、Worker、模型探测或模型拉取。
 - `checkpoint/split-agentpanel-unverified-20261012` 指向代码 target `b9977aa`。虽然测试、build、类型检查、独立 review 与浏览器预览均通过，本夜间任务要求产出保持 `(unverified)`，因此没有创建 verified tag。
+
+### 7.407 unverified：WorkflowEditor 拆分前特征测试（切片 7）
+
+- 切片基线为 `d27b702f45c3460939c105fffa737b5796e27b97`，`src/canvas/WorkflowEditor.tsx` 为 1,185 行；先前没有该组件的直接行为测试。新增 `src/canvas/WorkflowEditor.test.tsx`，覆盖空画布新建项目 owner callback、选择 starter template 后通过真实 store 写入工作流图，以及主画布复用 App provider / split 画布隔离 provider 与 run dispatch。
+- 在未拆分的现有组件上，`npx vitest run src/canvas/WorkflowEditor.test.tsx --reporter=dot`：1 file / 3 tests passed；这组 characterization tests 先于生产代码移动通过，后续拆分必须继续保持通过。测试的 `runWorkflow` 使用 mock，不启动真实执行或 Worker；store fixture 设置 `projectPath: null`，不写项目文件。
+- 本提交范围仅为特征测试与本条验证记录；生产代码尚未移动，完整质量门留到 Slice 7 最终实现快照。
