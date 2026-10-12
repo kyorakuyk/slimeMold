@@ -5618,3 +5618,9 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Slice11 characterization test 在移动前 focused 1 file / 3 tests 通过；移动后同一 focused test 仍为 1 file / 3 tests passed。移动后 `npm run test -- --reporter=dot` exit 0；当前恢复的工具摘要未保留本次全量的计数行，故不以拆分前基线替代本次数字。`npm run build`、`npx tsc -p tsconfig.app.json --noEmit`、`npx tsc --noEmit`、`npm run i18n:check`（1,112 keys）和 `git diff --check` 均通过。
 - Browser 预览导航到隔离浏览器的 advanced shell；capture 调用返回 `Page.captureScreenshot timed out after 60s waiting for the daemon`，未取得 SettingsCenter 截图，故计划要求的 preview gate 未完成。未新建项目、未触发真实 Tauri/credential/network/model/Worker 操作；Vite 进程已终止且 1420/1421 端口空闲。此 Slice 仍为 unverified，GUI evidence 与 exact review 尚缺。
 - 时间盒边界偏差：本切片从 13:20:00 开始，45 分钟截止为 14:05:00；生产代码 commit `d1b074a479fddb7222fd49552a1999c0a6b75a8a` 的 Git 时间为 14:08:50（超出 3 分 50 秒）。已保留该 unverified commit/tag 作为事实记录；没有改写历史，未继续派发 exact review，也不将该切片升级为 verified。
+
+### 7.417 unverified：TopBar menu row 与快捷键职责抽取（切片 12）
+
+- 从 `TopBar.tsx` 抽出 presentation-only `TopBarMenuRow`（菜单行与本地菜单/子菜单状态）及 `useTopBarKeyboardShortcuts`（window key listener lifecycle）；Project/Workflow/store/executor/host handlers 留在原 facade。行数：TopBar 686→488、MenuRow 221、shortcut hook 31、直接 characterization test 183，均低于 UI 500/文件 600 行目标。保留 TopBar default export/props。
+- 拆分前 focused characterization 为 1 file / 3 tests，full baseline 为 230 files / 1,521 tests passed；快捷键 tracer 后 focused 为 1 file / 4 tests passed。拆分后 `npm run build`（2,122 modules）、app/project tsc、i18n 1,112 keys、diff-check 通过。Full Vitest 两次未过：一次为既有 `WorkflowEditor.test.tsx` target-switch（1/1,522 failed）；第二次同一失败并另有 `nodeLlmAdapter.test.ts` collection `disk I/O error`（1 failed test/1 failed suite）。未删改相关断言，故 full gate 未闭合。
+- Browser advanced preview 的 DOM 可达；欢迎遮罩关闭后 `Page.captureScreenshot` 再次发生 60s Browser Use daemon timeout，无截图文件。未启动 Tauri、未触发项目/Workflow/Worker/model 操作。Slice12 45 分钟截止 14:59:29 前保持 unverified；本轮不宣称 GUI evidence 或 exact review 通过。
