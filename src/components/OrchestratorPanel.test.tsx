@@ -207,4 +207,119 @@ describe('OrchestratorPanel characterization', () => {
     expect(container.querySelector('.fixed.inset-0')).toBeNull();
     expect(container.textContent).toContain('orchestrator.goalLabel');
   });
+
+  it('moves an awaiting-confirm draft to ready without starting the executor', async () => {
+    const goal = 'Confirmation must not execute a draft';
+    const orchestration = createDraftOrchestration(
+      { goal, source: 'ui' },
+      { agents: [testAgent], defaultAgentId: testAgent.id },
+    );
+
+    await act(async () => {
+      root.render(<OrchestratorPanel embedded />);
+    });
+    const listItem = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes(goal),
+    );
+    expect(listItem).toBeDefined();
+    await act(async () => {
+      (listItem as HTMLButtonElement).click();
+    });
+
+    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('orchestrator.confirm'),
+    );
+    expect(confirmButton).toBeDefined();
+    await act(async () => {
+      (confirmButton as HTMLButtonElement).click();
+    });
+
+    expect(useWorkflowStore.getState().orchestrations.find((item) => item.id === orchestration.id)?.status)
+      .toBe('ready');
+    expect(panelHarness.runOrchestration).not.toHaveBeenCalled();
+  });
+
+  it('forwards cleanup approval once and re-enables the action after the callback settles', async () => {
+    const orchestration = seedReadyOrchestration('Exercise the mocked cleanup action');
+    const runId = 'worker-run-cleanup-panel-test';
+    const taskId = 'task-cleanup-panel-test';
+    useWorkflowStore.setState({
+      workerRuns: [{
+        runId,
+        orchestrationId: orchestration.id,
+        status: 'succeeded',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+        tasks: {
+          [taskId]: {
+            taskId,
+            status: 'succeeded',
+            attempt: 1,
+            evidenceIds: [],
+          },
+        },
+      }],
+      workerCleanupProposals: [{
+        status: 'ready',
+        runId,
+        taskId,
+        attempt: 1,
+        taskExecutionId: 'task-execution-panel-test',
+        attemptId: 'attempt-panel-test',
+        worktreeId: 'worktree-panel-test',
+        branch: 'worker/panel-test',
+        branchRevision: 'revision-panel-test',
+        branchRevisionRequired: true,
+        worktreePath: 'C:/fixtures/panel-test',
+        baseRevision: 'base-panel-test',
+        stateSignature: 'signature-panel-test',
+        acceptanceId: 'acceptance-panel-test',
+        orchestrationId: orchestration.id,
+        stageId: 'stage-panel-test',
+        taskStatus: 'succeeded',
+        cleanupStatus: 'active',
+        approvalStatus: 'pending',
+      }],
+    } as never);
+
+    let settleCallback!: () => void;
+    const callbackPromise = new Promise<void>((resolve) => {
+      settleCallback = resolve;
+    });
+    const onCleanupWorkerRun = vi.fn(() => callbackPromise);
+    await act(async () => {
+      root.render(<OrchestratorPanel embedded onCleanupWorkerRun={onCleanupWorkerRun} />);
+    });
+    const listItem = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes(orchestration.goal),
+    );
+    expect(listItem).toBeDefined();
+    await act(async () => {
+      (listItem as HTMLButtonElement).click();
+    });
+
+    const cleanupButton = container.querySelector(
+      `button[data-testid="orchestrator-worker-cleanup-action-${taskId}"]`,
+    ) as HTMLButtonElement;
+    expect(cleanupButton).toBeDefined();
+    await act(async () => {
+      cleanupButton.click();
+    });
+    expect(onCleanupWorkerRun).toHaveBeenCalledTimes(1);
+    expect(onCleanupWorkerRun).toHaveBeenCalledWith(runId, taskId, 'approve');
+    expect(cleanupButton.disabled).toBe(true);
+
+    await act(async () => {
+      cleanupButton.click();
+    });
+    expect(onCleanupWorkerRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settleCallback();
+      await callbackPromise;
+    });
+    const settledCleanupButton = container.querySelector(
+      `button[data-testid="orchestrator-worker-cleanup-action-${taskId}"]`,
+    ) as HTMLButtonElement;
+    expect(settledCleanupButton.disabled).toBe(false);
+  });
 });
