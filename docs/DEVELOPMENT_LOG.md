@@ -5714,3 +5714,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 最终门：full `npm run test -- --reporter=dot` 231 files / 1,529 tests通过；`npm run build`（2,133 modules，tsc-b + Vite通过，保留既有dynamic/static import与>500kB chunk warnings）；app/project tsc通过；`npm run i18n:check` 1,112 keys通过；`git diff --check`通过。
 - 修复code target `96005a971a161cc9d50124076413de06d87b21f0` / parent `cadb1cabac55c130152284c2793043db3a6fc6a1`，累计对比slice start `96be03f63a0ddecf751fd916321aa4a9fa772e02` 的独立immutable review返回严格JSON：HEAD匹配、worktree clean、`passed=true`、security/logic/suggestions均为空；reviewer确认中立类型唯一、viewStore兼容导出保留、四个view无viewStore import，且原callback/status/TaskGraph顺序保留。Reviewer未运行质量门。`checkpoint/split-orchestrator-view-type-unverified-20261013`指向code target；产出仍为unverified，review通过不是用户验收，也不补足Tauri/native验证。
 - 最终工作树保持clean；Slice8 browser preview仅为headless静态夹具，列表/详情截图已有回读。Slice3 bilingual GUI与整体当前版本Tauri/native验收仍未完成；全夜间目标未完成/未验收，所有产出unverified。
+
+### 7.430 unverified：merged-run Slice0 基线
+
+- 按 `.hermes/plans/2026-10-13_003500-merged-run.md` 开工；计划要求的基线为 `7f248ae705b8f5a44cb3d9b0c3551288eec7cbad`，起始工作树干净。为本轮可回退性创建空 checkpoint `20ba26271d4bdd4da1bfe0bc2daaea563667345c`，源代码内容与计划基线相同；创建 `checkpoint/merged-run-plan-start-20261013` 与 `checkpoint/merged-run-slice0-start-20261013`。
+- `npm run test -- --reporter=dot`：231 test files / 1,529 tests通过；保留 `src/dev/gui.test.ts` 预期 `[H4]` 错误日志，未见 localStorage unavailable 警告。`npm run build`：tsc-b + Vite通过、2,133 modules；保留dynamic/static import与>500kB chunk warnings。`npx tsc -p tsconfig.app.json --noEmit`通过；`npm run i18n:check` en-US/zh-CN对齐、1,112 keys；`git diff --check`通过。
+- 初始可读性metrics：生产333 files / 68,202 lines；测试扫描232 files / 38,543 lines；生产文件>400/600/1,000行39/12/4；4,868函数中>100/300行123/18；复杂度>20/>50为103/13；深度≥4为33，参数≥6为17；`src/projectControl` 79 files / 16,732 lines / 注释率1.0%。完整指标及计划聚焦函数的行数/复杂度记录于 `.hermes/reports/2026-10-13-merged-run.md`。
+- 本Slice未修改源文件；本地Node `v26.7.0`。`git ls-files` 未发现跟踪的AGENTS.md、CLAUDE.md或.cursorrules。起始报告确认被取代的计划仅标注“已被取代”；当前计划没有单独待决定事项，后续任何用户授权门将写入报告并跳过受阻操作。运行产出保持unverified。
