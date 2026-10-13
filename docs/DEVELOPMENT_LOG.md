@@ -5837,3 +5837,18 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 验证结果（code snapshot `f34c824182168dcb0d6e3eafc4c94d57eda28c2b`）：`npm run test` 238 files / 1,544 tests 全部通过（切片 1b 后为 237/1,542）；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys 对齐；`git diff --check` 无空白错误。
 - 本切片未处理的同类问题（计划未授权，已记入报告）：`buildNewProjectState` 的 `proj-${Date.now()}` 与 `buildProjectFile` 的项目 ID 仍有同毫秒重复风险。
 - 本地提交 `f34c824182168dcb0d6e3eafc4c94d57eda28c2b`，tag `checkpoint/workflow-id-unique-unverified-20261013-r4`；无独立 reviewer verdict。未 push。
+
+### 7.445 partial/unverified：closeout-run-r4 Slice3 补放可读性评估与度量脚本
+
+- 上一轮因时间盒过紧撤回的两份文件按计划补回：`.hermes/plans/2026-10-12-readability/CODE_READABILITY_REVIEW.md` → `docs/architecture/CODE_READABILITY_REVIEW.md`（10,987 字节，SHA-256 `41ebc4853e3e7567…`）、`.hermes/plans/2026-10-12-readability/readability-metrics.cjs` → `scripts/readability-metrics.cjs`（12,831 字节，SHA-256 `ff2bec61d23d7ec2…`）；逐字节比对与源文件一致。
+- `docs/README.md` 阅读顺序在第 6 条「代码结构审查」之后插入新的第 7 条「代码可读性评估」，原第 7–14 条顺延为第 8–15 条。
+- 在仓库根目录运行 `node scripts/readability-metrics.cjs`，exit 0，输出含 `## Highest import fan-in` 一节（`src/store/workflowStore.ts` 60、`src/domain/contracts.ts` 58、`src/projectControl/types.ts` 58）。注意：该脚本在后台作业 + 输出重定向下会以 `stdin is not a tty` 失败（exit 1），必须在前台运行。
+- 验证结果（code snapshot `021a42797914cab6d36a3e01aeae40dc3e598dc4`）：`npm run test` 238 files / 1,544 tests 全部通过；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys 对齐；`git diff --check` 无空白错误。
+- 本地提交 `021a42797914cab6d36a3e01aeae40dc3e598dc4`，tag `checkpoint/readability-import-unverified-20261013-r4`（文档/脚本切片，无行为改动、无独立 reviewer verdict）。未 push。
+
+### 7.446 回填与更正：closeout-run-r4 Slice4 verified 账目
+
+- 按计划补打 `checkpoint/test-hygiene-verified-20261013` → `cd4be6d4fc0f83f9fc4c278dada76fe7048179e5`（parent `0ac830fc2313a177d40018df5101d48abb9235b5`），与既有 `checkpoint/test-hygiene-unverified-20261013` 成对指向同一 commit；这是本轮边界第 2 条不加 `-r4` 的唯一例外。创建前确认该 tag 名不存在，未覆盖任何已有 tag。
+- 该 verified 的三项证据来自上一轮已经产生的真实记录：Windows Node 26.7.0 与 Node 22.23.2 各 3 次全量 232 files / 1,530 tests 通过，build/app tsc/i18n 1,112/`git diff --check` 通过；exact reviewer 只读 Git 对象，返回严格 JSON `passed=true`、`security_concerns=[]`、`logic_errors=[]`；非界面改动，按边界第 8 条不需要 GUI 回读。WSL Node 24 在 scratch 安装后 420 秒超时无汇总，上一份任务书列为可选项，不构成缺口，也不写成通过。
+- `docs/HISTORICAL_UNVERIFIED_TRIAGE.md` 新增「Phase2 拆分与收口回填（2026-10-12/13）」一节：记录本次 verified 回填；把 `0a66c2ff7eb3464e782a838aff43b7abddeb3608` 记为被 `cd4be6d` 取代、`1be58a18f92dddea02502131129abe72ed0da710`（fix4）保持 evidence-missing；并写明 `checkpoint/readability-project-session-verified-20261013` 的更正——tag 保留不删不移，但没有同快照 GUI 回读，不满足本轮边界第 8 条的 verified 条件，最终以切片 5 的分支整体验证为准。
+- 本切片不改代码，只提交文档；无独立 reviewer verdict。未 push。

@@ -150,3 +150,26 @@ Environment limits recorded for this classification: direct Linux Node 22 packag
 - The final independent review reported no source-supported security or logic blocker in the full batch target. No first-batch tag is classified `concrete-risk` from that review.
 - The Tauri fixture displayed pre-existing Worker cleanup/native-identity and worktree-restore warnings. They were observed without file-level read-back, are not attributed to this batch, and were not modified or cleaned. They remain an out-of-scope observation for the later phase2 audit, not evidence that this batch caused or repaired them.
 - A browser-only ProjectSession navigation attempt automatically mounted `runMasterTurn` and showed `Failed to fetch`. There is no successful response evidence, and the read-only browser resource-origin list cannot prove that no outbound attempt occurred. No retry or Worker run followed; this is recorded in the night-run report as an execution-boundary deviation, not silently treated as a product verification failure or as a batch code finding.
+
+## Phase2 拆分与收口回填（2026-10-12/13）
+
+本节核对 2026-10-12/13 的 phase2 拆分、merged-run 与 closeout-run-r4 回填。历史 tag 一律不删除、不移动、不重命名；本节只修正账目。
+
+### 新增的 verified 回填
+
+| tag | target | 质量门 | 评审 | GUI |
+|---|---|---|---|---|
+| `checkpoint/test-hygiene-verified-20261013` | `cd4be6d4fc0f83f9fc4c278dada76fe7048179e5`（parent `0ac830fc2313a177d40018df5101d48abb9235b5`） | Windows Node 26.7.0 与 Node 22.23.2 各 3 次全量 232 files / 1,530 tests 通过；build、app tsc、i18n 1,112 keys、`git diff --check` 通过 | exact reviewer 只读 Git 对象（不 checkout/编辑/移动 refs），返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；一条非阻塞 suggestion 关于测试单独提交 | 非界面改动，按边界第 8 条不要求 |
+
+与既有的 `checkpoint/test-hygiene-unverified-20261013` 成对指向同一 commit，保留两个 tag。WSL Node 24 全量运行在 scratch 安装后 420 秒超时、没有测试汇总；上一份任务书把该环境写为可选项，因此不构成本次回填的缺口，也不写成通过。
+
+### 不补 verified，记为被取代或证据缺失
+
+| 历史目标 | 处理 | 依据 |
+|---|---|---|
+| `0a66c2ff7eb3464e782a838aff43b7abddeb3608`（test-env：为 Worker 传 file-backed Web Storage 参数） | 不补 verified；记为被 `cd4be6d` 取代 | 同一批测试卫生问题（jsdom 存储隔离与超时）已在 `cd4be6d` 收敛并取得 exact 评审；`0a66c2f` 自身没有独立 reviewer verdict |
+| `1be58a18f92dddea02502131129abe72ed0da710`（fix4：ContextPack identity 移入 runtime prompt） | 不补 verified；保持 evidence-missing | 该快照当时全量测试有 10 项失败，不满足「同一快照质量门全过」；后续提交覆盖了同一区域，但没有同快照的质量门与评审证据 |
+
+### 更正：`checkpoint/readability-project-session-verified-20261013`
+
+该 tag 保留作为审计事实，不删除也不移动。按本轮边界第 8 条，界面改动必须有**同一快照**的 GUI 回读才能打 verified；该 tag 只有质量门与 exact 评审、没有同快照 GUI 回读，因此不满足 verified 条件。最终以 closeout run r4 切片 5 的分支整体验证为准：若切片 5 通过，则在当次回填中把该条标为被整体 verified tag 取代；若切片 5 不通过，则该条与切片 5 同等保持未验证。
