@@ -5944,3 +5944,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 未完成部分（如实记录）：扫描显示仍余 **45 处 / 15 个文件**，其中 5 处在禁区文件内（不动），可继续处理的还有 **40 处 / 13 个文件**：`runFinalizer.ts` 9、`io/workflowIO.ts` 6、`store/workflowSubgraphCommands.ts` 5、`platform/env.ts` 4、`agents/harness.ts` 3、`store/projectSaveAsController.ts` 3、`hooks/useWorkflowFileDrop.ts` 2、`store/workflowGroupCommands.ts` 2、`store/workflowProjectDataCommands.ts` 2、`app/globalShortcuts.ts` 1、`components/PluginPanel.tsx` 1、`store/projectCreationActions.ts` 1、`store/workflowGraphCommands.ts` 1。本轮按 1 小时时间盒停在引擎运行环这一批。
 - 验证结果（code snapshot `1b8d541`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 与 `npx tsc --noEmit` 均无输出；`npm run i18n:check` 1,170 keys 对齐；`git diff --check` 无空白错误。
 - 本地提交 `1b8d541`，tag `checkpoint/runtime-log-i18n-unverified-20261013-r4`。非界面改动，不需要 GUI 回读；未 push。
+
+### 7.456 unverified：closeout-run-r4 Slice5 exact review 延迟回执
+
+- 用户在收尾后收到 Slice5 独立 reviewer 的异步回执；review 范围精确为 `1e2030983bbb606315e9d9a2f5b421f29c0b3855..43093da1c1d10fbafff25c6c88946abb22ad93be`，JSON 报告 `passed=true`、`reviewed_head=43093da1c1d10fbafff25c6c88946abb22ad93be`、`working_tree_clean=true`，**无 high/medium security concern 或 logic error**。只读对象评审覆盖 108 files（+10,719/−6,028）；没有重跑测试、构建、metrics 或 GUI，故只完成 Slice5 的独立代码评审项，不改变 GUI 门失败与 Slice5 partial/unverified 结论。
+- Reviewer 留下的四项 low 观察均记录在 ignored 本地报告 `.hermes/reports/2026-10-13-closeout-r4.md` 的「Slice5 独立评审」段：① 其读取的 `43093da` 本地 report 仍旧（当前报告后来已更新至本轮结束状态）；② 63→45 的 AST 日志扫描只统计直接字面量参数，遗漏经状态对象传递的 fallback（如 `workflowCatalogCommands.ts:68` ← `projectCatalogState.ts:112`）；③ metrics `--json` 只校验 `.json` 后缀、不阻止覆盖仓库内 JSON；④ `workflowStore.ts` 时间戳使用 view-store locale，而其他格式化使用 `i18n.language`，现有切换路径同步但未来存在双 source 风险。均为低风险/报告口径问题；不在本次补记切片授权范围内，未改代码。
+- 工作区核对：异步结果到达时主分支仍是 `refactor/monolith-split-2`、HEAD=`fcca2a087d52eb93b473cc726f490fbd93848dae`、tracked 工作区干净；用户通知的 Vite `ready` 端口此时已无 listener，本轮未重启或终止用户进程。
+- 本次仅创建回执起点空提交 `4e92acfd05ffcf972df1de0346880558068bdbe8` 与 tag `checkpoint/r4-slice5-review-receipt-start-20261013`，更新本地 ignored 报告与本开发日志；没有新代码改动、没有 verified tag、未 push。Slice5 仍 unverified，因为英文 Tauri GUI 门失败；Slice6/7/8 的三份独立评审仍未返回。
