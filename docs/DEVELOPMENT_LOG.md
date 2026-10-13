@@ -5892,3 +5892,14 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 测试：`src/engine/*.test.ts`（含上一轮为 `executeNode` 补的特征测试）35 files / 338 tests 全绿；未改动任何测试或断言；未触碰函数内对 `useWorkflowStore.getState()` 的直读。
 - 验证结果（code snapshot `8f60b801757d9c2c3f9e9c19e72472103bd1436c`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
 - 本地提交 `8f60b801757d9c2c3f9e9c19e72472103bd1436c`，tag `checkpoint/readability-execute-node-body-unverified-20261013-r4`。非界面改动，不需要 GUI 回读；独立 reviewer 已派发审查 `8e05743..8f60b80`，verdict 未返回，故暂保持 unverified。未 push。
+
+### 7.451 unverified：closeout-run-r4 Slice9 runWorkflow 阶段化拆分
+
+- 目标函数改动前（行/复杂度/嵌套/参数）：`runWorkflow`（`src/engine/executor.ts:156`）**337 / 59 / 6 / 1**（取自切片 0 基线 `r4-slice0-metrics.json`）。
+- 新增模块 `src/engine/runWorkflowPhases.ts`，按阶段拆开：`admitWorkflowRun`（写运行态检查 + 并发准入 + superseded 残留清理 + `syncDebugRun` + 运行资源登记）、`setupRunSandbox`（Git Worktree 强隔离探测与降级日志）、`prepareExecutionPlan`（空图校验 + `compileExecutionPlan` + 子图展开日志 + 死循环校验与 abort 结果）、`applyCacheInvalidation`（全量清脏标记 / 增量保留 / force strike / `forceRerun` 清空缓存）、`startRunSession`（`setRunning`/`resetStatuses`/`RunContext`/`run.created`/事件日志 attach/`resetUsage`/`beginRun`/限流器/`ExperienceSink`/开始运行日志）、`createRunExecutionState`（输出预填、分支状态、失败集、裁剪集、`nodeById`、计时、成本账本、循环门与循环变量）、`runLoopRounds`（`prepareLoopRound` → 逐 stage `runStage` → `shouldContinueLoop` 回环判定与轮次日志）、`finalizeWorkflowRun`（收口到既有 `runFinalizer.finalizeRun`）、`finishRunCleanup`（finally 段的代次复位、资源清理、介入取消、事件日志 detach）。
+- 需要说明的接线改动（均为等价搬运）：`executeNode`、`executionCoordinator`、`syncDebugRun`、`scheduleRunCheckpoint` 以参数注入阶段函数（保持同一实例/同一闭包语义，避免模块循环依赖）；`startRunSession` 原本在 `try` 顶部声明、`run.created` 后赋值的 `detachEventLog` 改为由会话对象返回再赋给外层变量；`admission` 在阶段函数里收窄为「准入通过」分支（`Extract<…, { signal: AbortSignal }>`），被拒绝分支仍在 `admitWorkflowRun` 内直接返回 abort 结果。
+- 顺带按 600 行上限收口：`executeNode` 阶段文件超过 600 行（630），把 `createTrackCost` 与前置决策解析拆到新模块 `src/engine/executorNodePolicy.ts`（131 行），`executorNodePhases.ts` 降到 508 行。`src/engine/executor.ts` 由 630 行降到 **376 行**（退出「生产文件 >600 行」名单）。
+- 改动后：`runWorkflow` **88 / 10 / 2 / 1**（主函数 ≤100 行、嵌套 ≤3 ✓）；新函数 `runLoopRounds` 113/CX11/嵌套3、`startRunSession` 53、`prepareExecutionPlan` 49、`createRunExecutionState` 44、`admitWorkflowRun` 30、`finalizeWorkflowRun` 30、`setupRunSandbox` 27（辅助函数均 ≤120 行）。未改动 `useWorkflowStore.getState()` 的直读位置与判定顺序。
+- 测试：`src/engine/*.test.ts`（含 `executorLifecycle`/`executorEvents`/`executorIntervene`/`executorCapability` 等）35 files / 338 tests 全绿；未改动任何测试或断言。
+- 验证结果（code snapshot `cbc6f4a5d0717b2ea1cd1430e33bcfbfdb70abf7`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
+- 本地提交 `cbc6f4a5d0717b2ea1cd1430e33bcfbfdb70abf7`，tag `checkpoint/readability-run-workflow-unverified-20261013-r4`。非界面改动，不需要 GUI 回读；未 push。
