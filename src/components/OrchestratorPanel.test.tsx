@@ -239,6 +239,45 @@ describe('OrchestratorPanel characterization', () => {
     expect(panelHarness.runOrchestration).not.toHaveBeenCalled();
   });
 
+  it('removes a non-running orchestration without touching its bound workflow', async () => {
+    const goal = 'Delete only the orchestration record';
+    const workflowId = 'wf-orchestrator-remove-preserves-workflow';
+    useWorkflowStore.setState({
+      workflows: { [workflowId]: { name: 'User-owned workflow', nodes: [], edges: [] } },
+    } as never);
+    const orchestration = createDraftOrchestration(
+      { goal, source: 'ui' },
+      { agents: [testAgent], defaultAgentId: testAgent.id },
+    );
+    const stage = orchestration.draft?.stages[0];
+    expect(stage).toBeDefined();
+    bindStageWorkflow(orchestration.id, stage!.id, { kind: 'existing', wfId: workflowId });
+    const workflowBefore = useWorkflowStore.getState().workflows[workflowId];
+
+    await act(async () => {
+      root.render(<OrchestratorPanel embedded />);
+    });
+    const listItem = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes(goal),
+    );
+    expect(listItem).toBeDefined();
+    await act(async () => {
+      (listItem as HTMLButtonElement).click();
+    });
+    const removeButton = container.querySelector(
+      'button[title="orchestrator.deleteHint"]',
+    ) as HTMLButtonElement;
+    expect(removeButton).toBeDefined();
+
+    await act(async () => {
+      removeButton.click();
+    });
+
+    expect(useWorkflowStore.getState().orchestrations).toHaveLength(0);
+    expect(useWorkflowStore.getState().workflows[workflowId]).toBe(workflowBefore);
+    expect(container.textContent).toContain('orchestrator.goalLabel');
+  });
+
   it('forwards cleanup approval once and re-enables the action after the callback settles', async () => {
     const orchestration = seedReadyOrchestration('Exercise the mocked cleanup action');
     const runId = 'worker-run-cleanup-panel-test';
