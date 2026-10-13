@@ -16,6 +16,7 @@ import type { AssetMeta } from '../types/project';
 import type { NodeGroup, SubgraphDef, WorkflowFile, WorkflowFileEdge, WorkflowFileInMemory, WorkflowFileNode } from '../types/workflow';
 import type { ProjectFile } from '../types/projectFile';
 import type { FlowEdge, FlowNode, NodeStatus, WorkflowNodeData } from '../types/graph';
+import { createWorkflowId } from './workflowId';
 import { createEmptyProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
 
@@ -187,7 +188,7 @@ export function buildProjectFile(
   const workflowsInMemory = { ...s.workflows };
   if (s.activeWfId) workflowsInMemory[s.activeWfId] = current;
   else {
-    const id = stable ? `wf-${current.name}` : `wf-${Date.now()}`;
+    const id = stable ? `wf-${current.name}` : createWorkflowId(Date.now(), Object.keys(workflowsInMemory));
     workflowsInMemory[id] = current;
   }
   // 方案 P：落盘前把内存态 FlowNode 拍平回磁盘态 WorkflowFile（剥离瞬态字段）

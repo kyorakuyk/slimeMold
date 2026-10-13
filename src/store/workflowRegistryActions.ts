@@ -14,6 +14,7 @@ import {
   buildSwitchWorkflowState,
   type WorkflowSwitchView,
 } from './workflowRegistryState';
+import { createWorkflowId } from './workflowId';
 
 export interface WorkflowRegistryActionState extends Omit<WorkflowSwitchView, 'activeWfId'> {
   activeWfId: string;
@@ -61,9 +62,14 @@ export function createWorkflowRegistryActions(
       ? undefined
       : await deps.resolveStandalonePath(workspaceDir);
     const shouldCapture = !state.activeWfId && (state.nodes.length || state.edges.length);
-    const capturedWorkflowId = shouldCapture ? `wf-${deps.now()}` : state.activeWfId;
+    const capturedWorkflowId = shouldCapture
+      ? createWorkflowId(deps.now(), Object.keys(state.workflows))
+      : state.activeWfId;
     const capturedSavedAt = shouldCapture ? deps.nowIso() : '';
-    const id = `wf-${deps.now() + 1}`;
+    const id = createWorkflowId(deps.now() + 1, [
+      ...Object.keys(state.workflows),
+      capturedWorkflowId,
+    ]);
     const result = buildNewWorkflowInProjectState({
       workflows: state.workflows,
       activeWfId: state.activeWfId,

@@ -7,6 +7,7 @@
 import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types/graph';
 import { fromDisk, serializeCurrent } from './workflowSerialize';
+import { createWorkflowId } from './workflowId';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 
 export function resolveActiveWorkflowWorkspaceDir(input: {
@@ -60,7 +61,7 @@ export function buildSwitchWorkflowState(
   if (id === view.activeWfId) return null;
   // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
   const synced: Record<string, WorkflowFileInMemory> = { ...view.workflows };
-  const curId = view.activeWfId || `wf-${Date.now()}`;
+  const curId = view.activeWfId || createWorkflowId(Date.now(), Object.keys(view.workflows));
   const prev = view.workflows[curId];
   synced[curId] = serializeCurrent(
     view,
