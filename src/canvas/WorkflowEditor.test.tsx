@@ -320,4 +320,53 @@ describe('WorkflowEditor characterization', () => {
     expect(displayedNodes[0]?.data.label).toBe('Workflow B');
     expect(useWorkflowStore.getState().workflows[wfB]?.nodes[0]?.data.label).toBe('Workflow B');
   });
+
+  it('registers right-box window listeners once and removes the same handlers on unmount', async () => {
+    const eventTypes = new Set(['mousemove', 'mouseup', 'blur']);
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    try {
+      await act(async () => {
+        root.render(<ReactFlowProvider><WorkflowEditor /></ReactFlowProvider>);
+      });
+      const added = addSpy.mock.calls.filter(([type]) => eventTypes.has(String(type)));
+      expect(added.map(([type]) => String(type)).sort()).toEqual(['blur', 'mousemove', 'mouseup']);
+
+      act(() => root.unmount());
+      root = createRoot(container);
+      const removed = removeSpy.mock.calls.filter(([type]) => eventTypes.has(String(type)));
+      expect(removed.map(([type]) => String(type)).sort()).toEqual(['blur', 'mousemove', 'mouseup']);
+      for (const [type, handler] of added) {
+        expect(removed.some(([removedType, removedHandler]) => removedType === type && removedHandler === handler)).toBe(true);
+      }
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+
+  it('suppresses ReactFlow selection sync during right-button box selection', async () => {
+    await act(async () => useWorkflowStore.getState().newWorkflowInProject());
+    useWorkflowStore.setState({ selectedIds: ['kept-selection'] });
+    await act(async () => {
+      root.render(<ReactFlowProvider><WorkflowEditor /></ReactFlowProvider>);
+    });
+
+    const flow = container.querySelector('[data-testid="workflow-editor-flow"]');
+    expect(flow).not.toBeNull();
+    await act(async () => {
+      flow?.dispatchEvent(new MouseEvent('mousedown', {
+        button: 2, clientX: 10, clientY: 10, bubbles: true,
+      }));
+    });
+    const onSelectionChange = canvasHarness.reactFlowProps.at(-1)?.onSelectionChange as
+      | ((change: { nodes: FlowNode[] }) => void)
+      | undefined;
+    expect(onSelectionChange).toBeDefined();
+    await act(async () => {
+      onSelectionChange?.({ nodes: [{ id: 'replacement' } as FlowNode] });
+    });
+
+    expect(useWorkflowStore.getState().selectedIds).toEqual(['kept-selection']);
+  });
 });
