@@ -29,6 +29,14 @@ describe('R5 Slice2 localized display labels', () => {
     expect(i18n.t('token.modelCalls', { count: 3, lng: 'zh-CN' })).toBe('3 次调用');
   });
 
+  it('localizes model recommendations while retaining technical model IDs', () => {
+    expect(i18n.t('agent.model.note.qwen25_3b', { lng: 'en-US' })).toBe('~2GB VRAM · recommended for 6GB GPUs, runs smoothly');
+    expect(i18n.t('agent.model.note.qwen25_7b', { lng: 'en-US' })).toBe('~4.5GB VRAM · better quality, tight on 6GB');
+    expect(i18n.t('agent.model.note.llama31_8b', { lng: 'en-US' })).toBe('~5GB VRAM · recommended for 8GB+ GPUs');
+    expect(i18n.t('agent.model.note.deepseekR1_7b', { lng: 'en-US' })).toBe('~4.5GB VRAM · strong reasoning, tight on 6GB');
+    expect(i18n.t('agent.model.note.qwen25_05b', { lng: 'en-US' })).toBe('~0.5GB VRAM · ultra-light');
+  });
+
   it('pluralizes the R4 count-bearing English runtime messages', () => {
     expect(i18n.t('log.resumeFromBreakpoint', { count: 1, lng: 'en-US' })).toBe(
       'Resuming from breakpoint: recomputing 1 failed node and its downstream',

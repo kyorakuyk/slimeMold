@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAgent, probeAgent, protocolDefaults, providerPresets } from './agentManager';
+import { createAgent, ollamaModels, probeAgent, protocolDefaults, providerPresets } from './agentManager';
 import i18n from '../i18n';
 
 describe('agent catalog stored values and display keys', () => {
@@ -30,6 +30,23 @@ describe('agent catalog stored values and display keys', () => {
       'labelKey',
       'agent.provider.deepseek',
     );
+  });
+
+  it('provides display-only locale keys for Ollama guidance without changing model IDs', () => {
+    expect(ollamaModels.map(({ id }) => id)).toEqual([
+      'qwen2.5:3b',
+      'qwen2.5:7b',
+      'llama3.1:8b',
+      'deepseek-r1:7b',
+      'qwen2.5:0.5b',
+    ]);
+    expect(ollamaModels.map(({ noteKey }) => noteKey)).toEqual([
+      'agent.model.note.qwen25_3b',
+      'agent.model.note.qwen25_7b',
+      'agent.model.note.llama31_8b',
+      'agent.model.note.deepseekR1_7b',
+      'agent.model.note.qwen25_05b',
+    ]);
   });
 
   it('localizes probe diagnostics at the display boundary', async () => {
