@@ -7,6 +7,8 @@ import { sandboxManager } from './sandbox';
 import { assertPluginRelativePath } from './pluginPath';
 import { SLIMEMOLD_DIR } from '../io/projectIO';
 import type { NodeDefinition } from '../types/node';
+// 日志文案跟随界面语言：通过 i18n 默认导出的 t 调用（本模块不是 React 组件，不能用 useT）。
+import i18n from '../i18n';
 
 /** 当前是否启用插件沙箱执行（H2）：由 viewStore.pluginSandbox 决定 */
 function sandboxEnabled(): boolean {
@@ -30,7 +32,7 @@ function log(level: 'info' | 'error', message: string): void {
 /** Tauri 模式：扫描 AppData/plugins 下的插件目录（每个子目录一个插件） */
 export async function scanPluginsDir(): Promise<number> {
   if (!isTauri) {
-    log('info', '浏览器模式不支持目录扫描，请使用「从文件导入插件」');
+    log('info', i18n.t('plugin.log.browserNoDirScan'));
     return 0;
   }
   const fs = await import('@tauri-apps/plugin-fs');
@@ -40,7 +42,7 @@ export async function scanPluginsDir(): Promise<number> {
   const dirExists = await fs.exists(PLUGIN_DIR, opts);
   if (!dirExists) {
     await fs.mkdir(PLUGIN_DIR, { ...opts, recursive: true });
-    log('info', '已创建插件目录（AppData/plugins），放入插件后可重新扫描');
+    log('info', i18n.t('plugin.log.dirCreated'));
     return 0;
   }
 
@@ -63,10 +65,10 @@ export async function scanPluginsDir(): Promise<number> {
       );
       useRegistryStore.getState().registerPlugin(plugin, defs);
       loaded += 1;
-      log('info', `插件已加载：${plugin.manifest.name}（${defs.length} 个节点）`);
+      log('info', i18n.t('plugin.log.loaded', { name: plugin.manifest.name, count: defs.length }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log('error', `插件 ${entry.name} 加载失败：${message}`);
+      log('error', i18n.t('plugin.log.loadFailed', { name: entry.name, message }));
     }
   }
   return loaded;
@@ -77,7 +79,7 @@ export async function importPluginFiles(files: FileList | File[]): Promise<void>
   const list = Array.from(files);
   const manifestFile = list.find((f) => f.name === 'manifest.json');
   if (!manifestFile) {
-    log('error', '导入失败：未找到 manifest.json');
+    log('error', i18n.t('plugin.log.importNoManifest'));
     return;
   }
   const manifestText = await manifestFile.text();
@@ -86,13 +88,15 @@ export async function importPluginFiles(files: FileList | File[]): Promise<void>
     const parsed = JSON.parse(manifestText);
     entryName = assertPluginRelativePath(parsed?.entry ?? 'index.js');
   } catch (err) {
-    log('error', `导入失败：manifest.entry 无效（${err instanceof Error ? err.message : String(err)}）`);
+    log('error', i18n.t('plugin.log.importEntryInvalid', {
+      message: err instanceof Error ? err.message : String(err),
+    }));
     return;
   }
 
   const entryFile = list.find((f) => f.name === entryName);
   if (!entryFile) {
-    log('error', `导入失败：未找到入口文件 ${entryName}`);
+    log('error', i18n.t('plugin.log.importEntryMissing', { name: entryName }));
     return;
   }
   try {
@@ -105,16 +109,16 @@ export async function importPluginFiles(files: FileList | File[]): Promise<void>
       { sandbox: sandboxEnabled() },
     );
     useRegistryStore.getState().registerPlugin(plugin, defs);
-    log('info', `插件已导入：${plugin.manifest.name}（${defs.length} 个节点）`);
+    log('info', i18n.t('plugin.log.imported', { name: plugin.manifest.name, count: defs.length }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log('error', `插件导入失败：${message}`);
+    log('error', i18n.t('plugin.log.importFailed', { message }));
   }
 }
 
 export function removePlugin(pluginId: string): void {
   useRegistryStore.getState().unregisterPlugin(pluginId);
-  log('info', `插件已卸载：${pluginId}`);
+  log('info', i18n.t('plugin.log.unloaded', { name: pluginId }));
 }
 
 /** Stop all in-flight plugin workers before a project context is replaced. */
@@ -133,7 +137,7 @@ async function scanCustomNodesDir(
   canRegister: () => boolean = () => true,
 ): Promise<number> {
   if (!isTauri) {
-    log('info', '浏览器模式不支持自定义节点扫描（需桌面端）');
+    log('info', i18n.t('plugin.log.customNodesBrowserUnsupported'));
     return 0;
   }
   const fs = await import('@tauri-apps/plugin-fs');
@@ -143,7 +147,10 @@ async function scanCustomNodesDir(
     dirExists = await fs.exists(base);
   } catch (e) {
     // 权限范围外（如项目目录不在 capabilities 白名单）时静默降级，不抛 UnhandledRejection
-    log('info', `自定义节点目录不可访问（跳过扫描）：${base} —— ${e instanceof Error ? e.message : String(e)}`);
+    log('info', i18n.t('plugin.log.customNodesDirUnreadable', {
+      path: base,
+      message: e instanceof Error ? e.message : String(e),
+    }));
     return 0;
   }
   if (!dirExists) {
@@ -151,9 +158,12 @@ async function scanCustomNodesDir(
     try {
       await fs.mkdir(base, { recursive: true });
       if (!canRegister()) return 0;
-      log('info', `已创建自定义节点目录（${base}），放入节点包后可重新扫描`);
+      log('info', i18n.t('plugin.log.customNodesDirCreated', { path: base }));
     } catch (e) {
-      log('info', `自定义节点目录无法创建（跳过）：${base} —— ${e instanceof Error ? e.message : String(e)}`);
+      log('info', i18n.t('plugin.log.customNodesDirCreateFailed', {
+        path: base,
+        message: e instanceof Error ? e.message : String(e),
+      }));
     }
     return 0;
   }
@@ -181,10 +191,14 @@ async function scanCustomNodesDir(
       // 标注生效范围：程序级全局、项目级仅本项目
       useRegistryStore.getState().registerPlugin({ ...plugin, source: 'custom', scope }, defs);
       loaded += 1;
-      log('info', `自定义节点已加载：${plugin.manifest.name}（${defs.length} 个节点，能力由 extends 声明决定，范围=${scope === 'program' ? '全局' : '本项目'}）`);
+      log('info', i18n.t('plugin.log.customNodesLoaded', {
+        name: plugin.manifest.name,
+        count: defs.length,
+        scope: i18n.t(scope === 'program' ? 'plugin.log.scopeProgram' : 'plugin.log.scopeProject'),
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log('error', `自定义节点 ${entry.name} 加载失败：${message}`);
+      log('error', i18n.t('plugin.log.customNodesLoadFailed', { name: entry.name, message }));
     }
   }
   return loaded;
@@ -198,7 +212,9 @@ export async function scanProgramCustomNodes(): Promise<number> {
     return await scanCustomNodesDir(`${programRoot}/${CUSTOM_NODES_DIR}`, 'program');
   } catch (e) {
     // 兜底：任何未预期错误（含 fs scope 之外）静默降级为「扫描 0 个」，避免 UnhandledRejection
-    log('info', `程序级自定义节点扫描跳过：${e instanceof Error ? e.message : String(e)}`);
+    log('info', i18n.t('plugin.log.programScanSkipped', {
+      message: e instanceof Error ? e.message : String(e),
+    }));
     return 0;
   }
 }
@@ -245,7 +261,9 @@ export async function scanProjectCustomNodes(
     return n + m;
   } catch (e) {
     // 兜底：项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT 盘符），静默跳过
-    log('info', `项目级自定义节点扫描跳过（目录可能不在文件系统权限范围内）：${e instanceof Error ? e.message : String(e)}`);
+    log('info', i18n.t('plugin.log.projectScanSkipped', {
+      message: e instanceof Error ? e.message : String(e),
+    }));
     return 0;
   }
 }
@@ -265,7 +283,7 @@ export function unloadProjectCustomNodes(): void {
     defs: kept,
     plugins: plugins.filter((p) => !projectPluginIds.includes(p.manifest.id)),
   });
-  log('info', `已卸载 ${projectPluginIds.length} 个项目级自定义节点`);
+  log('info', i18n.t('plugin.log.projectNodesUnloaded', { count: projectPluginIds.length }));
 }
 
 /** 安全读取目录：某些 Tauri 版本 readDir 在无子项时抛错，做兜底 */

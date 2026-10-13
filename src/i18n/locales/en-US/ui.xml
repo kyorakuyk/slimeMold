@@ -149,4 +149,27 @@
   <string name="window.maximize">Maximize window</string>
   <string name="window.restore">Restore window</string>
   <string name="window.close">Close window</string>
+
+  <!-- Plugin manager and custom node logs (pluginManager calls the i18n default export) -->
+  <string name="plugin.log.browserNoDirScan">Directory scan is not available in the browser; use "Import plugin from files" instead</string>
+  <string name="plugin.log.dirCreated">Created the plugin directory (AppData/plugins); add plugins there and rescan</string>
+  <string name="plugin.log.loaded">Plugin loaded: {{name}} ({{count}} nodes)</string>
+  <string name="plugin.log.loadFailed">Plugin {{name}} failed to load: {{message}}</string>
+  <string name="plugin.log.importNoManifest">Import failed: manifest.json not found</string>
+  <string name="plugin.log.importEntryInvalid">Import failed: invalid manifest.entry ({{message}})</string>
+  <string name="plugin.log.importEntryMissing">Import failed: entry file {{name}} not found</string>
+  <string name="plugin.log.imported">Plugin imported: {{name}} ({{count}} nodes)</string>
+  <string name="plugin.log.importFailed">Plugin import failed: {{message}}</string>
+  <string name="plugin.log.unloaded">Plugin unloaded: {{name}}</string>
+  <string name="plugin.log.customNodesBrowserUnsupported">Custom node scanning is not available in the browser (desktop only)</string>
+  <string name="plugin.log.customNodesDirUnreadable">Custom node directory is not readable (scan skipped): {{path}} — {{message}}</string>
+  <string name="plugin.log.customNodesDirCreated">Created the custom node directory ({{path}}); add node packs there and rescan</string>
+  <string name="plugin.log.customNodesDirCreateFailed">Could not create the custom node directory (skipped): {{path}} — {{message}}</string>
+  <string name="plugin.log.customNodesLoaded">Custom nodes loaded: {{name}} ({{count}} nodes; capabilities come from the extends declaration, scope={{scope}})</string>
+  <string name="plugin.log.scopeProgram">program-wide</string>
+  <string name="plugin.log.scopeProject">this project</string>
+  <string name="plugin.log.customNodesLoadFailed">Custom nodes {{name}} failed to load: {{message}}</string>
+  <string name="plugin.log.programScanSkipped">Program-wide custom node scan skipped: {{message}}</string>
+  <string name="plugin.log.projectScanSkipped">Project-level custom node scan skipped (the directory may be outside the filesystem scope): {{message}}</string>
+  <string name="plugin.log.projectNodesUnloaded">Unloaded {{count}} project-level custom nodes</string>
 </resources>

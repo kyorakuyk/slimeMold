@@ -44,6 +44,11 @@
   <string name="runHistory.clearTitle">清空历史</string>
   <string name="runHistory.restore">恢复</string>
   <string name="runHistory.restoreTitle">把最近一次运行的节点结果恢复回画布（成功复用、失败续跑）</string>
+  <string name="runHistory.calls">{{count}} 次</string>
+  <string name="runHistory.node.startedAt">开始：{{time}}</string>
+  <string name="runHistory.node.cost">模型：{{models}}；含失败 {{failed}} 次</string>
+  <string name="runHistory.log.checkpointRestored">已从检查点恢复画布：成功节点复用、失败节点可续跑</string>
+  <string name="runHistory.log.noCheckpoint">当前工作流没有可恢复的运行检查点</string>
 
   <!-- InterventionModal -->
   <string name="intervention.title">人工接管</string>

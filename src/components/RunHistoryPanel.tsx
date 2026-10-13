@@ -99,7 +99,7 @@ export default function RunHistoryPanel({
                   .getState()
                   .addLog(
                     ok ? 'info' : 'warn',
-                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                    ok ? t('runHistory.log.checkpointRestored') : t('runHistory.log.noCheckpoint'),
                   );
               }}
               title={t('runHistory.restoreTitle')}
@@ -169,7 +169,7 @@ export default function RunHistoryPanel({
                       </span>
                       <span className="shrink-0 tabular-nums text-ink-faint">
                         {m.promptTokens.toLocaleString()}+{m.completionTokens.toLocaleString()} tok ·{' '}
-                        {m.calls} 次
+                        {t('runHistory.calls', { count: m.calls })}
                       </span>
                     </div>
                   ))}
@@ -188,7 +188,9 @@ export default function RunHistoryPanel({
                       {n.durationMs != null ? (
                         <span
                           className="rounded bg-paper px-1 text-[10px] tabular-nums text-ink-faint"
-                          title={`开始：${n.startedAt ? formatTime(n.startedAt) : '—'}`}
+                          title={t('runHistory.node.startedAt', {
+                            time: n.startedAt ? formatTime(n.startedAt) : '—',
+                          })}
                         >
                           {n.durationMs}ms
                         </span>
@@ -196,7 +198,10 @@ export default function RunHistoryPanel({
                       {n.cost && n.cost.length > 0 ? (
                         <span
                           className="rounded bg-amber-50 px-1 text-[10px] tabular-nums text-amber-700"
-                          title={`模型：${n.cost.map((c) => c.model).join(', ')}；含失败 ${n.cost.filter((c) => !c.ok).length} 次`}
+                          title={t('runHistory.node.cost', {
+                            models: n.cost.map((c) => c.model).join(', '),
+                            failed: n.cost.filter((c) => !c.ok).length,
+                          })}
                         >
                           {n.cost
                             .reduce((s, c) => s + (c.usage?.totalTokens ?? 0), 0)
@@ -272,7 +277,7 @@ export default function RunHistoryPanel({
                   .getState()
                   .addLog(
                     ok ? 'info' : 'warn',
-                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                    ok ? t('runHistory.log.checkpointRestored') : t('runHistory.log.noCheckpoint'),
                   );
               }}
               title={t('runHistory.restoreTitle')}

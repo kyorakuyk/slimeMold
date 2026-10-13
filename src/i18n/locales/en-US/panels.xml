@@ -44,6 +44,11 @@
   <string name="runHistory.clearTitle">Clear history</string>
   <string name="runHistory.restore">Restore</string>
   <string name="runHistory.restoreTitle">Restore latest run node results to canvas (reuse success, resume failed)</string>
+  <string name="runHistory.calls">{{count}} calls</string>
+  <string name="runHistory.node.startedAt">Started: {{time}}</string>
+  <string name="runHistory.node.cost">Models: {{models}}; {{failed}} failed</string>
+  <string name="runHistory.log.checkpointRestored">Canvas restored from the checkpoint: successful nodes are reused and failed nodes can resume</string>
+  <string name="runHistory.log.noCheckpoint">This workflow has no restorable run checkpoint</string>
 
   <!-- InterventionModal -->
   <string name="intervention.title">Human Takeover</string>

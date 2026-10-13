@@ -149,4 +149,27 @@
   <string name="window.maximize">最大化窗口</string>
   <string name="window.restore">还原窗口</string>
   <string name="window.close">关闭窗口</string>
+
+  <!-- 插件管理器与自定义节点日志（pluginManager 通过 i18n 默认导出调用） -->
+  <string name="plugin.log.browserNoDirScan">浏览器模式不支持目录扫描，请使用「从文件导入插件」</string>
+  <string name="plugin.log.dirCreated">已创建插件目录（AppData/plugins），放入插件后可重新扫描</string>
+  <string name="plugin.log.loaded">插件已加载：{{name}}（{{count}} 个节点）</string>
+  <string name="plugin.log.loadFailed">插件 {{name}} 加载失败：{{message}}</string>
+  <string name="plugin.log.importNoManifest">导入失败：未找到 manifest.json</string>
+  <string name="plugin.log.importEntryInvalid">导入失败：manifest.entry 无效（{{message}}）</string>
+  <string name="plugin.log.importEntryMissing">导入失败：未找到入口文件 {{name}}</string>
+  <string name="plugin.log.imported">插件已导入：{{name}}（{{count}} 个节点）</string>
+  <string name="plugin.log.importFailed">插件导入失败：{{message}}</string>
+  <string name="plugin.log.unloaded">插件已卸载：{{name}}</string>
+  <string name="plugin.log.customNodesBrowserUnsupported">浏览器模式不支持自定义节点扫描（需桌面端）</string>
+  <string name="plugin.log.customNodesDirUnreadable">自定义节点目录不可访问（跳过扫描）：{{path}} —— {{message}}</string>
+  <string name="plugin.log.customNodesDirCreated">已创建自定义节点目录（{{path}}），放入节点包后可重新扫描</string>
+  <string name="plugin.log.customNodesDirCreateFailed">自定义节点目录无法创建（跳过）：{{path}} —— {{message}}</string>
+  <string name="plugin.log.customNodesLoaded">自定义节点已加载：{{name}}（{{count}} 个节点，能力由 extends 声明决定，范围={{scope}}）</string>
+  <string name="plugin.log.scopeProgram">全局</string>
+  <string name="plugin.log.scopeProject">本项目</string>
+  <string name="plugin.log.customNodesLoadFailed">自定义节点 {{name}} 加载失败：{{message}}</string>
+  <string name="plugin.log.programScanSkipped">程序级自定义节点扫描跳过：{{message}}</string>
+  <string name="plugin.log.projectScanSkipped">项目级自定义节点扫描跳过（目录可能不在文件系统权限范围内）：{{message}}</string>
+  <string name="plugin.log.projectNodesUnloaded">已卸载 {{count}} 个项目级自定义节点</string>
 </resources>
