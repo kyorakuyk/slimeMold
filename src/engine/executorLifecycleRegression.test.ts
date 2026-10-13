@@ -78,6 +78,24 @@ describe('runWorkflow lifecycle regressions', () => {
     expect(useWorkflowStore.getState().runStates[wfId]?.running).toBe(false);
   });
 
+  it('keeps copy-sandbox startup synchronous, rejects a duplicate, and keeps an immediate stop final', async () => {
+    const wfId = 'wf-r5-s3-copy-sandbox-start-order';
+    seedStore(wfId);
+
+    const firstRun = runWorkflow({ wfId, sandbox: true, sandboxMode: 'copy' });
+    const activeRunId = getActiveRunId(wfId);
+    const runningImmediately = useWorkflowStore.getState().runStates[wfId]?.running;
+    const duplicateRun = runWorkflow({ wfId, sandbox: true, sandboxMode: 'copy' });
+    const activeRunAfterDuplicate = getActiveRunId(wfId);
+
+    stopWorkflow(wfId);
+    await Promise.all([firstRun, duplicateRun]);
+
+    expect(runningImmediately).toBe(true);
+    expect(activeRunAfterDuplicate).toBe(activeRunId);
+    expect(useWorkflowStore.getState().runStates[wfId]?.running).toBe(false);
+  });
+
   it('detaches an attached event log when session initialization throws', async () => {
     const wfId = 'wf-r4-s9-event-log-cleanup';
     seedStore(wfId);
