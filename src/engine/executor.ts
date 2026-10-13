@@ -312,7 +312,7 @@ async function executeNode(args: ExecuteNodeArgs): Promise<void> {
   // 阶段 3：代次守卫 → running/事件/日志 → 带重试执行 → 成功/失败收尾
   await runNodeWithRetry({
     ...nodePhases, ctx, getBranchesTaken, cacheScope, skipFailed,
-    inputs: collectInputs(id, edges, outputsMap),
+    getInputs: () => collectInputs(id, edges, outputsMap),
   });
 }
 

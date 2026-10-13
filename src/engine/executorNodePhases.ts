@@ -372,7 +372,7 @@ export interface NodeRunInput {
   emit: (kind: NodeEventKind, payload: NodeEventPayload) => void;
   setStatus: SetNodeStatus;
   getBranchesTaken: () => string[] | undefined;
-  inputs: Record<string, unknown>;
+  getInputs: () => Record<string, unknown>;
   edges: FlowEdge[];
   outputsMap: Map<string, Record<string, unknown>>;
   branchState: Map<string, Set<string | undefined>>;
@@ -398,7 +398,7 @@ export async function runNodeWithRetry({
   emit,
   setStatus,
   getBranchesTaken,
-  inputs,
+  getInputs,
   edges,
   outputsMap,
   branchState,
@@ -425,6 +425,8 @@ export async function runNodeWithRetry({
   if (isAgent) {
     R.addLog('info', i18n.t('log.agentProcessing', { label: node.data.label }));
   }
+  // Keep input reads after the generation fence and node-start callbacks, as in the original inline executor.
+  const inputs = getInputs();
   const startedAt = Date.now();
   const perfStart = performance.now();
   try {
