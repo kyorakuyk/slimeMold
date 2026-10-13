@@ -21,6 +21,8 @@ const TARGET_FILES = [
   'src/components/Inspector.tsx',
   'src/components/TopBar.tsx',
   'src/components/StatusBar.tsx',
+  'src/components/RunHistoryPanel.tsx',
+  'src/plugins/pluginManager.ts',
 ] as const;
 
 const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
@@ -40,6 +42,8 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/components/Inspector.tsx': ['ui', 'inspector'],
   'src/components/TopBar.tsx': ['ui'],
   'src/components/StatusBar.tsx': ['ui', 'statusbar'],
+  'src/components/RunHistoryPanel.tsx': ['panels'],
+  'src/plugins/pluginManager.ts': ['ui'],
 };
 
 const EXCEPTIONS = [
@@ -136,6 +140,17 @@ function staticTranslationKeys(filePath: string): Set<string> {
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
       node.expression.text === 't' &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      keys.add(node.arguments[0].text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'i18n' &&
+      node.expression.name.text === 't' &&
       node.arguments.length > 0 &&
       ts.isStringLiteralLike(node.arguments[0])
     ) {
