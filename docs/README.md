@@ -17,14 +17,15 @@ updated: 2026-10-13
 4. [产品与架构取舍记录](architecture/SLIMEMOLD_ARCHITECTURE_DECISIONS.md) —— 跨阶段的决定、替代方案、代价、来源和未决事项。
 5. [Worker recovery CAS design gate](architecture/WORKER_RECOVERY_DECISION_CAS_DESIGN.md) —— durable recovery decision 的 fingerprint、commit/read-back 和 migration contract；未实现前不得过度宣称 CAS 闭合。
 6. [代码结构审查](architecture/CODEBASE_ARCHITECTURE_REVIEW.md) —— 当前代码与目标架构的差距、阻塞项和迁移顺序。
-7. [projectControl 代码地图](../src/projectControl/README.md) —— Worker 生命周期、命令、恢复与清理模块的源码导航。
-8. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
-9. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
-10. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
-11. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
-12. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
-13. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
-14. [历史 unverified triage](HISTORICAL_UNVERIFIED_TRIAGE.md) —— 按当前 HEAD 证据分类历史快照、残余风险和验收边界。
+7. [代码可读性评估](architecture/CODE_READABILITY_REVIEW.md) —— 可读性指标基线、阅读成本集中点与改进顺序。
+8. [projectControl 代码地图](../src/projectControl/README.md) —— Worker 生命周期、命令、恢复与清理模块的源码导航。
+9. [专题架构设计](architecture/modules/) —— 插件隔离、Orchestrator 和自我开发能力的专题设计。
+10. [轻量界面设计](product/BEGINNER_UI_DESIGN.md) —— 将产品原则和控制面转译为用户界面。
+11. [下一阶段计划](plans/NEXT_PHASE_PLAN.md) —— 近期开发顺序和完成门槛。
+12. [Professional 路线](plans/PROFESSIONAL_ROADMAP.md) —— 暂不进入 MVP 的长期能力储备。
+13. [当前验证入口](verification/README.md) —— 自动质量门和人工验收矩阵。
+14. [开发记录](DEVELOPMENT_LOG.md) —— 已发生变化的回顾性时间线。
+15. [历史 unverified triage](HISTORICAL_UNVERIFIED_TRIAGE.md) —— 按当前 HEAD 证据分类历史快照、残余风险和验收边界。
 
 ## 权威层级
 
