@@ -45,6 +45,21 @@ const TARGET_FILES = [
   'src/engine/executor.ts',
   'src/engine/runWorkflowPhases.ts',
   'src/engine/executorNodePhases.ts',
+  'src/engine/runFinalizer.ts',
+  'src/io/workflowIO.ts',
+  'src/store/workflowSubgraphCommands.ts',
+  'src/platform/env.ts',
+  'src/agents/harness.ts',
+  'src/store/projectSaveAsController.ts',
+  'src/hooks/useWorkflowFileDrop.ts',
+  'src/store/workflowGroupCommands.ts',
+  'src/store/workflowProjectDataCommands.ts',
+  'src/app/globalShortcuts.ts',
+  'src/components/PluginPanel.tsx',
+  'src/store/projectCreationActions.ts',
+  'src/store/workflowGraphCommands.ts',
+  'src/store/projectCatalogState.ts',
+  'src/store/workflowCatalogCommands.ts',
 ] as const;
 
 const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
@@ -88,6 +103,21 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/engine/executor.ts': ['ui'],
   'src/engine/runWorkflowPhases.ts': ['ui'],
   'src/engine/executorNodePhases.ts': ['ui'],
+  'src/engine/runFinalizer.ts': ['ui'],
+  'src/io/workflowIO.ts': ['ui'],
+  'src/store/workflowSubgraphCommands.ts': ['ui'],
+  'src/platform/env.ts': ['ui'],
+  'src/agents/harness.ts': ['ui'],
+  'src/store/projectSaveAsController.ts': ['ui'],
+  'src/hooks/useWorkflowFileDrop.ts': ['ui'],
+  'src/store/workflowGroupCommands.ts': ['ui'],
+  'src/store/workflowProjectDataCommands.ts': ['ui'],
+  'src/app/globalShortcuts.ts': ['ui'],
+  'src/components/PluginPanel.tsx': ['panels', 'ui'],
+  'src/store/projectCreationActions.ts': ['ui'],
+  'src/store/workflowGraphCommands.ts': ['ui'],
+  'src/store/projectCatalogState.ts': [],
+  'src/store/workflowCatalogCommands.ts': ['ui'],
 };
 
 const EXCEPTIONS = [
@@ -105,6 +135,112 @@ const EXCEPTIONS = [
     path: 'src/components/useOrchestratorPanelActions.ts',
     fragment: '用户在专业编排中选择',
     reason: 'This is a persisted recovery audit reason; changing it by locale would alter stored provenance.',
+  },
+  {
+    path: 'src/store/projectCatalogState.ts',
+    fragment: '内置角色不可删除',
+    reason: 'Stable pure-state rejection text remains unchanged; the command boundary translates its user-visible log.',
+  },
+  {
+    path: 'src/io/workflowIO.ts',
+    fragment: "raw.name || '导入的工作流'",
+    reason: 'This fallback becomes the imported workflow name and may be persisted in the project; keep the data value stable.',
+  },
+  {
+    path: 'src/platform/env.ts',
+    fragment: '${docs}/SlimeMold/未归类',
+    reason: 'This is a stable on-disk default directory component; translating it would change persisted paths.',
+  },
+
+  {
+    path: 'src/platform/env.ts',
+    fragment: 'HTTP 请求失败（plugin-http）：${msg}',
+    reason: 'Transport failures can flow into durable run error records; preserve the existing error value.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '[一-鿿]',
+    reason: 'This is a Unicode range in token estimation, not user-facing text.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '第 ${i + 1} 层 / 共 ${scopeStack.length} 层',
+    reason: 'This Chinese text is part of the stable agent-facing scope prompt; preserve prompt behavior.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '作用域变量${tag}',
+    reason: 'This Chinese text is part of the stable agent-facing scope prompt; preserve prompt behavior.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '当前可用变量（作用域上下文）',
+    reason: 'This Chinese text is part of the stable agent-facing scope prompt; preserve prompt behavior.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '以下变量在当前执行作用域中可见，可在回复或工具参数中直接引用（内层覆盖外层同名项）：',
+    reason: 'This Chinese text is part of the stable agent-facing scope prompt; preserve prompt behavior.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '如需引用变量，使用 {{变量名}} 或纯文本描述其值；不要凭空编造未列出的变量。',
+    reason: 'This Chinese text is part of the stable agent-facing scope prompt; preserve prompt behavior.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: 'Harness 第 ${rounds} 轮 / 模型 ${modelOverride || agent.model}',
+    reason: 'The raw trajectory event remains stable; only the UI logger projection is localized.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '瞬时错误（${attempt}/${retries}）： ${err.message}，退避重试',
+    reason: 'The raw trajectory event remains stable; only the UI logger projection is localized.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '达到最大轮次 ${maxRounds}，强制结束（可能存在未完成的工具链）',
+    reason: 'The raw trajectory event remains stable; only the UI logger projection is localized.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '连续多轮无工具调用且无有效输出，建议复盘/注入上下文',
+    reason: 'This optional onNudge reason is an internal event payload without a current UI consumer.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '工具不存在：${call.name}',
+    reason: 'This is a model-facing tool-result error value, not display chrome; preserve the agent protocol text.',
+  },
+  {
+    path: 'src/store/projectSaveAsController.ts',
+    fragment: "state.projectName ?? '未命名项目'",
+    reason: 'This default name is passed to the native Save As picker and can become the saved project path.',
+  },
+  {
+    path: 'src/store/workflowSubgraphCommands.ts',
+    fragment: "name || '未命名子图'",
+    reason: 'This fallback is persisted as the user subgraph name; translating it would mutate project data.',
+  },
+  {
+    path: 'src/store/workflowGroupCommands.ts',
+    fragment: 'name: title || `分组 ${cleaned.length + 1}`',
+    reason: 'This default group title is persisted in the workflow graph; preserve the stable data value.',
+  },
+  {
+    path: 'src/store/workflowGroupCommands.ts',
+    fragment: "category: '分组'",
+    reason: 'This group category is persisted in the workflow graph; preserve the stable data value.',
+  },
+  {
+    path: 'src/store/workflowGroupCommands.ts',
+    fragment: 'title: title || `分组 ${cleaned.length + 1}`',
+    reason: 'This default group title is persisted in the workflow graph; preserve the stable data value.',
+  },
+  {
+    path: 'src/app/globalShortcuts.ts',
+    fragment: '`子图 ${deps.getSubgraphCount() + 1}`',
+    reason: 'This default prompt value becomes the persisted user subgraph name; the prompt title is localized separately.',
   },
   {
     path: 'src/components/Inspector.tsx',
@@ -251,6 +387,11 @@ function commentFreeSource(filePath: string, text: string): string {
     ts.forEachChild(node, collect);
   };
   collect(source);
+  for (const match of text.matchAll(/^[ \t]*\/\/.*$/gm)) {
+    for (const range of ts.getTrailingCommentRanges(text, match.index!) ?? []) {
+      ranges.set(`${range.pos}:${range.end}`, range);
+    }
+  }
 
   const chars = text.split('');
   for (const { pos, end } of ranges.values()) {
@@ -329,13 +470,16 @@ function resourceKeys(language: string, namespace: string): Set<string> {
 
 describe('target UI files use localized Chinese literals', () => {
   it('ignores comments but still scans code and JSX text', () => {
-    const source = 'const label = "可见"; // 注释文本\nconst regex = /[。！？]/; try {} catch { /* 空块注释 */ }\nconst view = <div>页面文本{/* JSX 注释 */}</div>;';
+    const source = 'const label = "可见"; // 注释文本\n// 独立注释\n/* 独立块注释 */\nconst text = "/* 保留的文本 */";\nconst regex = /[。！？]/; try {} catch { /* 空块注释 */ }\nconst view = <div>页面文本{/* JSX 注释 */}</div>;';
     const stripped = commentFreeSource('sample.tsx', source);
 
     expect(stripped).toContain('可见');
     expect(stripped).toContain('。！？');
     expect(stripped).toContain('页面文本');
+    expect(stripped).toContain('保留的文本');
     expect(stripped).not.toContain('注释文本');
+    expect(stripped).not.toContain('独立注释');
+    expect(stripped).not.toContain('独立块注释');
     expect(stripped).not.toContain('空块注释');
     expect(stripped).not.toContain('JSX 注释');
   });
