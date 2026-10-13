@@ -183,7 +183,9 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   try {
   // 步骤 11 阶段 C + 依赖图编译（runWorkflowPhases）：沙箱清理/Worktree 探测，空图与死循环校验。
   // 非沙箱运行必须保持准入到 startRunSession 的同步区间，不能因 await 一个空操作让位给 stop/重复准入。
-  if (opts.sandbox) await setupRunSandbox({ wf, wfId, myRun, opts, resources });
+  if (opts.sandbox && opts.sandboxMode === 'gitworktree' && isTauri && wf.workspaceDir) {
+    await setupRunSandbox({ wf, wfId, myRun, opts, resources });
+  }
   const prepared = prepareExecutionPlan({
     wf,
     wfId,
