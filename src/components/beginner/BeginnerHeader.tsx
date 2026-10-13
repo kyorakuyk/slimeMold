@@ -1,11 +1,12 @@
 import { ArrowLeft, ArrowUpRight, LayoutDashboard } from 'lucide-react';
 import { useT } from '../../i18n/useT';
+import { formatDateTime } from '../../i18n/dateTime';
 import slimeMoldIcon from '../../assets/slimemold-dense-ic-state.svg';
 
 export function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
+  return formatDateTime(date, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

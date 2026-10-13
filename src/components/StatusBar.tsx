@@ -3,6 +3,7 @@ import { ChevronDown, Terminal, History, Variable, Eraser, Save, Power, Package,
 import { useWorkflowStore } from '../store/workflowStore';
 import { stopWorkflow } from '../engine/executor';
 import { useT } from '../i18n/useT';
+import { formatTime } from '../i18n/dateTime';
 import { ArtifactsPanel } from './ArtifactsPanel';
 import { DevSessionPanel } from './DevSessionPanel';
 
@@ -104,7 +105,7 @@ export default function StatusBar({
           >
             <Save size={12} />
             {lastAutosave
-              ? t('autosave.at', { time: new Date(lastAutosave).toLocaleTimeString() })
+              ? t('autosave.at', { time: formatTime(lastAutosave) })
               : t('autosave.done')}
           </span>
           {running ? (

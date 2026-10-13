@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Trash2, RotateCcw } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { formatDateTime, formatTime } from '../i18n/dateTime';
 
 const statusCls: Record<string, string> = {
   success: 'text-grn',
@@ -81,7 +82,7 @@ export default function RunHistoryPanel({
                 {r.name}
               </div>
               <div className="text-[10px] text-ink-faint">
-                {(r.durationMs / 1000).toFixed(1)}s · {new Date(r.startedAt).toLocaleString()}
+                {(r.durationMs / 1000).toFixed(1)}s · {formatDateTime(r.startedAt)}
               </div>
             </button>
           ))
@@ -127,7 +128,7 @@ export default function RunHistoryPanel({
                 {t('runHistory.status.label')}：<span className={statusCls[selected.status]}>{t(`runHistory.status.${selected.status}`)}</span>
               </div>
               <div>{t('runHistory.duration', { sec: (selected.durationMs / 1000).toFixed(1) })}</div>
-              <div>{t('runHistory.start', { time: new Date(selected.startedAt).toLocaleString() })}</div>
+              <div>{t('runHistory.start', { time: formatDateTime(selected.startedAt) })}</div>
               {selected.cost ? (
                 <div className="mt-1 border-t border-line pt-1 text-ink">
                   <div>
@@ -187,7 +188,7 @@ export default function RunHistoryPanel({
                       {n.durationMs != null ? (
                         <span
                           className="rounded bg-paper px-1 text-[10px] tabular-nums text-ink-faint"
-                          title={`开始：${n.startedAt ? new Date(n.startedAt).toLocaleTimeString() : '—'}`}
+                          title={`开始：${n.startedAt ? formatTime(n.startedAt) : '—'}`}
                         >
                           {n.durationMs}ms
                         </span>

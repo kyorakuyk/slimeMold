@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <resources>
+  <!-- App shell -->
+  <string name="app.title">SlimeMold · Agent 工作流</string>
+
   <!-- TopBar: 菜单 -->
   <string name="topbar.file">文件</string>
   <string name="topbar.edit">编辑</string>

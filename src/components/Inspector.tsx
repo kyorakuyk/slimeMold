@@ -8,6 +8,7 @@ import { alertDialog, isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef } from '../types/graph';
 import { useT } from '../i18n/useT';
+import { formatDateTime } from '../i18n/dateTime';
 import { AgentSelect } from './AgentSelect';
 import { mergeAgentPool } from '../agents/globalAgents';
 
@@ -265,7 +266,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.type')}{asset.kind}</div>
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.size')}{fmtBytes(asset.content)}</div>
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.source')}{asset.inWorkspace ? t('asset.source.workspace') : t('asset.source.workflow')}</div>
-            <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.created')}{new Date(asset.createdAt).toLocaleString()}</div>
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.created')}{formatDateTime(asset.createdAt)}</div>
           </div>
           {asset.path && (
             <div>

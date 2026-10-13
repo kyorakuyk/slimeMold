@@ -2,6 +2,7 @@ import { AlertCircle, Plus, Target, Workflow } from 'lucide-react';
 import type { AgentConfig } from '../types/agent';
 import type { Orchestration } from '../types/orchestration';
 import { useT } from '../i18n/useT';
+import { formatDateTime } from '../i18n/dateTime';
 import { statusCls } from './OrchestratorPanelViewConfig';
 
 interface OrchestratorPanelListViewProps {
@@ -117,7 +118,7 @@ export default function OrchestratorPanelListView({
                     {orchestration.goal}
                   </div>
                   <div className="mt-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                    {new Date(orchestration.createdAt).toLocaleString()}
+                    {formatDateTime(orchestration.createdAt)}
                   </div>
                 </button>
               </li>

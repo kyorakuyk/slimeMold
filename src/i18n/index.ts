@@ -113,6 +113,16 @@ i18n.use(initReactI18next).init({
   returnNull: false,
 });
 
+function syncDocumentMetadata(language: string = i18n.language): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.lang = language;
+  document.title = i18n.t('app.title', { lng: language });
+}
+
+i18n.on('languageChanged', syncDocumentMetadata);
+i18n.on('initialized', () => syncDocumentMetadata());
+if (i18n.isInitialized) syncDocumentMetadata();
+
 if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
   (globalThis as typeof globalThis & {
     __slimeMoldI18n?: typeof i18n;

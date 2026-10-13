@@ -8,6 +8,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useT } from '../i18n/useT';
+import { formatTime } from '../i18n/dateTime';
 import type { WorkerRunView } from '../projectControl/workerRunView';
 import type { TaskGraphProjection, TaskGraphProjectionNode } from '../projectControl/taskGraphProjection';
 import type { TaskGraphSelection } from '../types/taskGraphSelection';
@@ -254,8 +255,8 @@ export default function OrchestratorPanelDetailView({
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
                   {log.wfId && <span>wf: {wfLabel(log.wfId)}</span>}
                   {log.runId != null && <span>run #{log.runId}</span>}
-                  {log.startedAt && <span>{new Date(log.startedAt).toLocaleTimeString()}</span>}
-                  {log.finishedAt && <span>→ {new Date(log.finishedAt).toLocaleTimeString()}</span>}
+                  {log.startedAt && <span>{formatTime(log.startedAt)}</span>}
+                  {log.finishedAt && <span>→ {formatTime(log.finishedAt)}</span>}
                 </div>
               )}
             </div>
