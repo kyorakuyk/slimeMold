@@ -114,12 +114,12 @@ describe('runWorkflow lifecycle regressions', () => {
     const definitions: NodeDefinition[] = [
       {
         typeId: 'test.orderSource', name: 'Source', category: 'test', inputs: [],
-        outputs: [{ id: 'out', label: 'Output', type: 'string' }], params: [],
+        outputs: [{ id: 'out', label: 'Output', type: 'text' }], params: [],
         execute: async () => sourceOutputs,
       },
       {
         typeId: 'test.orderTarget', name: 'Target', category: 'test',
-        inputs: [{ id: 'in', label: 'Input', type: 'string' }], outputs: [], params: [],
+        inputs: [{ id: 'in', label: 'Input', type: 'text' }], outputs: [], params: [],
         execute: async (inputs) => {
           order.push('execute B');
           expect(inputs.in).toBe('source-value');

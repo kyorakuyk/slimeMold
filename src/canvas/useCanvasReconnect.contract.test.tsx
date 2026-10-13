@@ -46,8 +46,8 @@ const reconnectDefinition: NodeDefinition = {
   typeId: 'test.reconnect',
   name: 'Reconnect test node',
   category: 'test',
-  inputs: [{ id: 'in', label: 'Input', type: 'string' }],
-  outputs: [{ id: 'out', label: 'Output', type: 'string' }],
+  inputs: [{ id: 'in', label: 'Input', type: 'text' }],
+  outputs: [{ id: 'out', label: 'Output', type: 'text' }],
   params: [],
   execute: async () => ({}),
 };
