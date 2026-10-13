@@ -7,11 +7,7 @@ import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import type { DomainEvent } from '../domain/contracts';
 import {
-  approveArchitectureCommand,
-  approveBriefCommand,
-  approveTaskGraphCommand,
   createExecutionDraftCreatedEvent,
-  generateTaskGraphCommand,
   linkOrchestrationCommand,
 } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
@@ -28,6 +24,7 @@ import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/t
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 import ProjectSessionPanelView from './projectSession/ProjectSessionPanelView';
 import useProjectSessionConversation from './projectSession/useProjectSessionConversation';
+import useProjectSessionPlanningActions from './projectSession/useProjectSessionPlanningActions';
 import useProjectSessionWorkerActions from './projectSession/useProjectSessionWorkerActions';
 
 interface ProjectSessionPanelProps {
@@ -180,96 +177,19 @@ export default function ProjectSessionPanel({
     setError,
   });
 
-  const handleApproveBrief = async () => {
-    const state = useWorkflowStore.getState();
-    const snapshot = state.projectControl;
-    const currentSession = findSession(snapshot, sessionId);
-    const briefId = currentSession?.briefId;
-    const brief = briefId ? snapshot.briefs.find((item) => item.id === briefId) : undefined;
-    if (!currentSession || !brief) return;
-    try {
-      const now = new Date().toISOString();
-      const next = approveBriefCommand({
-        snapshot,
-        sessionId,
-        approvedBy: 'user',
-        now,
-      });
-      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
-      setLocalResponse(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  const handleApproveArchitecture = async () => {
-    const state = useWorkflowStore.getState();
-    const snapshot = state.projectControl;
-    const currentSession = findSession(snapshot, sessionId);
-    const architectureId = currentSession?.architectureId;
-    const architecture = architectureId
-      ? snapshot.architectures.find((item) => item.id === architectureId)
-      : undefined;
-    if (!currentSession || !architecture) return;
-    try {
-      const now = new Date().toISOString();
-      const next = approveArchitectureCommand({
-        snapshot,
-        sessionId,
-        approvedBy: 'user',
-        now,
-      });
-      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
-      setLocalResponse(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  const handleGenerateTaskGraph = async () => {
-    const state = useWorkflowStore.getState();
-    const snapshot = state.projectControl;
-    const currentSession = findSession(snapshot, sessionId);
-    const architectureId = currentSession?.architectureId;
-    const architecture = architectureId
-      ? snapshot.architectures.find((item) => item.id === architectureId)
-      : undefined;
-    if (!currentSession || !architecture || architecture.approval !== 'approved' || currentSession.taskGraphId) return;
-    try {
-      const now = new Date().toISOString();
-      const next = generateTaskGraphCommand({
-        snapshot,
-        sessionId,
-        id: controlId('task-graph'),
-        now,
-      });
-      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  const handleApproveTaskGraph = async () => {
-    const state = useWorkflowStore.getState();
-    const snapshot = state.projectControl;
-    const currentSession = findSession(snapshot, sessionId);
-    const taskGraphId = currentSession?.taskGraphId;
-    const graph = taskGraphId
-      ? snapshot.taskGraphs?.find((item) => item.id === taskGraphId)
-      : undefined;
-    if (!currentSession || !graph) return;
-    try {
-      const now = new Date().toISOString();
-      const next = approveTaskGraphCommand({
-        snapshot,
-        sessionId,
-        approvedBy: 'user',
-        now,
-      });
-      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
+  const {
+    handleApproveBrief,
+    handleApproveArchitecture,
+    handleGenerateTaskGraph,
+    handleApproveTaskGraph,
+  } = useProjectSessionPlanningActions({
+    sessionId,
+    createId: controlId,
+    findSession,
+    persistControlMutation,
+    setError,
+    setLocalResponse,
+  });
 
   const handleCreateOrchestration = async () => {
     const state = useWorkflowStore.getState();
