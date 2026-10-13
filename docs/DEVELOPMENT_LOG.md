@@ -5862,3 +5862,23 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - **未通过 GUI 门：** 英文模式仍出现未登记的中文字面量标签——`src/agents/agentManager.ts:125,130,135,140,145` 的协议标签（含 `Ollama 本地`、`OpenAI Codex（ChatGPT 订阅）`、`Antigravity CLI（交互式）`）、`:168,176,184,192,200` 的模型预设名（`OpenAI 官方`、`DeepSeek 官方`、`硅基流动 SiliconFlow`、`OpenRouter 聚合`、`自定义中转`）、`src/components/RouteTableEditor.tsx:65,87` 的 `○ 未绑定` 与 `回退链`。这些文件不在切片 1b 点名清单，也不在 `uiChineseLiterals.test.ts` 的扫描范围/白名单，本轮边界未授权扩大修复范围，故只定位未修。
 - 按任务书切片 5 第 4 条「任何一项不满足：不打 tag，写清缺口，继续后面的切片」，**未创建** `checkpoint/monolith-split-2-final-*`。独立 reviewer 已按计划派发（只读 Git 对象审查 `1e20309..43093da`，要求严格 JSON），verdict 尚未返回；返回后需重新 read-back HEAD/status/reflog 并核对 `reviewed_head`。
 - 证据：`.hermes/reports/assets/` 下 92 张截图与 `r4-slice5-readback-manifest.json`（112 个证据文件的存在性、字节数与 SHA-256），scratch 里保存浏览器与 Tauri 的 CDP 报告 JSON/LOG。详见报告 `.hermes/reports/2026-10-13-closeout-r4.md`。未 push。
+
+### 7.448 unverified：closeout-run-r4 Slice6 一致性检查参数对象化
+
+- 目标函数改动前（行/复杂度/嵌套/参数）：`workerReceiptSuccessProvenanceMatches` 38/6/2/**7**、`workerReceiptEvidenceMatches` 25/2/0/**7**、`workerReceiptAcceptanceMatches` 21/3/0/**6**、`checkWorkerTask` 51/9/1/**6**、`checkAcceptanceStage` 38/11/1/**6**。
+- 做法：新增两个文件内参数对象类型 `WorkerReceiptProvenanceContext` 与 `WorkerTaskCheckContext`；五个函数统一变成「参数对象 + 1–2 个位置参数」，函数体与判定顺序、短路、日志、store 写入均按原样搬运。`src/store/workflowStore.ts` 与其他禁区文件未触碰。
+- 改动后：五个函数参数均为 **3**，行数 20/22/19/49/36；被触及文件中 >250 行或复杂度 >25 的函数数量没有增加（两个文件的最大复杂度仍是原有的 22）。
+- 测试：上一轮冻结的金样 `src/projectControl/workerRunConsistency.test.ts.snap`（提交 `6bb6dc5`）与 `workerRunConsistencyAction.test.ts` 未改动且通过（23 + 3 tests）；已核对 `git diff --stat` 确认测试与快照文件不在本次 diff 内。纯结构改动，按 TDD 约定使用改前通过的既有特征测试作为基线，不制造人为 RED。
+- 验证结果（code snapshot `81d22c69bbda64584ecddb76a9486a323eeb77d7`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
+- 本地提交 `81d22c69bbda64584ecddb76a9486a323eeb77d7`，tag `checkpoint/readability-check-params-unverified-20261013-r4`；非界面改动，不需要 GUI 回读。独立 reviewer 已派发审查 `8e05743..81d22c6`（要求严格 JSON + `behavior_preserving`），verdict 未返回，故本切片暂保持 unverified。未 push。
+
+### 7.449 unverified：closeout-run-r4 Slice7 WorkflowEditor 拆分
+
+- 改动前：`WorkflowEditorInner`（`src/canvas/WorkflowEditor.tsx:64`）507 行 / 复杂度 17；同文件还有 `<callback of useEffect>` 86 行与 `onMove` 60 行的框选监听。
+- 按上一轮盘点的顺序拆出 5 个模块：`src/canvas/useSplitWorkflowGraph.ts`（拆分视图本地图 + 「载入 effect ↔ 写回 effect」内容指纹同步）、`src/canvas/useRightBoxSelection.ts`（右键框选状态/refs/监听与自愈清理）、`src/canvas/useCanvasReconnect.ts`（既有 `onReconnect` 行为整体搬运，含环路与端口类型校验、主画布写 store / 分栏写本地副本分支）、`src/canvas/useCanvasDrop.ts`（drop 三分支；`DND_MIME` 移到此处并从 `WorkflowEditor.tsx` re-export，保持既有导入路径）、`src/canvas/connectValidation.ts`（纯函数 `canConnectEdges`）。
+- `useReactFlow()` 上移到组件顶部以便 hook 复用；`suppressSelectionSync` / `rightStart` / `rightMovedRef` 仍由组件持有（hook 返回同一批 ref），`onPaneClick` 的清理与 `onSelectionChange` 的判断未改。依赖数组与实现体按原样搬运，未改动 `useWorkflowStore.getState()` 直读。
+- 改动后：`WorkflowEditorInner` **265 行**（目标 ≤300 ✓）/ 复杂度 17；新函数最大为 `useRightBoxSelection` 117 行、复杂度 1（≤250 / ≤25 ✓）；被触及文件里 >250 行或复杂度 >25 的函数数量没有增加（`WorkflowEditor.tsx` 仍为 1 个）。
+- 测试：`src/canvas/WorkflowEditor.test.tsx`（上一轮的特征测试，6 tests：空画布新建、模板载入、主画布复用 App Provider / 分栏隔离 Provider、分栏挂载与写回、同指纹换目标、不同目标不被覆盖）未改动且通过；纯结构改动不制造人为 RED。
+- 验证结果（code snapshot `39f54f45c7ac57ccee92728dff2b9a25738eb52e`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
+- 浏览器 GUI 回读（全新上下文，CDP 从页面加载前记录 `Log`/`Runtime`）：空画布欢迎页 → 新建项目弹窗 → 编辑器；新建第二个工作流后进入拆分视图（`.react-flow` 实例数 1→2，左栏 pane 宽 1070→535）；在画布上按住右键拖动，截到半透明蓝色框选矩形。全程 `Log` error 与 `Runtime.exceptionThrown` **0 条**。截图 `r4-slice7-welcome.png`、`r4-slice7-new-project-modal.png`、`r4-slice7-editor.png`、`r4-slice7-editor-second-workflow.png`、`r4-slice7-split-view.png`、`r4-slice7-right-box-selecting.png`、`r4-slice7-right-box-released.png`（存 `.hermes/reports/assets/`，被 git 忽略）。
+- 本地提交 `39f54f45c7ac57ccee92728dff2b9a25738eb52e`，tag `checkpoint/readability-workflow-editor-unverified-20261013-r4`。这是界面改动，需要有同一快照的独立 reviewer verdict 才满足 verified 条件；reviewer 已派发审查 `31b5785..39f54f4`，verdict 未返回，故暂保持 unverified。未 push。
