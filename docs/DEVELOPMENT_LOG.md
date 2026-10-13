@@ -5903,3 +5903,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 测试：`src/engine/*.test.ts`（含 `executorLifecycle`/`executorEvents`/`executorIntervene`/`executorCapability` 等）35 files / 338 tests 全绿；未改动任何测试或断言。
 - 验证结果（code snapshot `cbc6f4a5d0717b2ea1cd1430e33bcfbfdb70abf7`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
 - 本地提交 `cbc6f4a5d0717b2ea1cd1430e33bcfbfdb70abf7`，tag `checkpoint/readability-run-workflow-unverified-20261013-r4`。非界面改动，不需要 GUI 回读；未 push。
+
+### 7.452 unverified：closeout-run-r4 加时切片——TopBar 拆分（界面改动）
+
+- 目标函数改动前（行/复杂度/嵌套/参数）：`TopBar`（`src/components/TopBar.tsx`）**417 / 16 / 0 / 1**（计划加时切片清单里的口径；R4 Slice0 基线同值）。
+- 拆出三个 props 驱动的模块：`src/components/topBar/topBarMenus.tsx`（`buildTopBarMenus`，文件/编辑/视图/运行/工具/帮助六组菜单的定义与图标，123 行/CX8）、`src/components/topBar/WorkflowTabStrip.tsx`（项目面包屑 + 工作流标签浏览器 + 新建按钮，保留 `children` 插槽以维持与原 DOM 相同的层级）、`src/components/topBar/TopBarActionButtons.tsx`（拆分视图/复位/调试/撤销重做/运行-停止，69 行/CX5）。
+- 等价搬运说明：「打开最近项目」子菜单原本内联在菜单数组里做 `openProjectByPath → openProject → persistSession → pushRecentProject → addLog`，现由 `buildTopBarMenus` 回调 `onOpenRecent(path)`，实现在 `TopBar.handleOpenRecent`（同一顺序、同一 store 调用）；标签条的新建按钮逻辑抽到 `TopBar.handleNewWorkflow`（项目内直接新建；游离态先 `openDirDialog()` 再 `newWorkflowInProject(ws)`）。class 名、title 文案、disabled 条件、`data-active` 与内联 style 均按原样保留。
+- 改动后：`TopBar` **241 / 1 / 0 / 1**（界面组件低于计划给 WorkflowEditorInner 的 ≤300 口径）。上一轮已补的快捷键回归测试（`src/components/TopBar.test.tsx`，4 tests，含 `routes the new-project keyboard shortcut through its container callback`）未改动且通过，满足计划「拆 TopBar 前先补快捷键回归测试」的前置要求。
+- 浏览器 GUI 回读（全新 profile + 加载前注入 `workspaceMode=advanced`，CDP 从页面加载前记录 `Log`/`Runtime`）：欢迎页 → 新建项目 → 创建项目 → 编辑器。顶栏为品牌 + 六个菜单按钮（文件/编辑/视图/运行工作流/工具/帮助）；文件菜单展开后 11 个条目与快捷键标注齐全（含红色 danger 的「关闭项目」）；运行菜单可展开；工具条含项目面包屑、工作流标签、拆分视图/复位/调试/撤销/重做/运行按钮，撤销与重做的 disabled 状态与 store 一致。全程 `Log` error 与 `Runtime.exceptionThrown` **0 条**。截图 `r4-addon-topbar-01-shell.png`、`r4-addon-topbar-02-file-menu.png`、`r4-addon-topbar-03-run-menu.png`、`r4-addon-topbar-04-split-view.png`（`.hermes/reports/assets/`，被 git 忽略），证据 JSON `D:/Hermes/cache/scratch/r4-addon-topbar-tour.json`。
+- 验证结果（code snapshot `20790a4`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
+- 本地提交 `20790a4`，tag `checkpoint/readability-topbar-unverified-20261013-r4`。界面改动但尚无同快照独立 reviewer verdict，故保持 unverified。未 push。
