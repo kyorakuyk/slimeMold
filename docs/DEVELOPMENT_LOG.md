@@ -5913,3 +5913,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 浏览器 GUI 回读（全新 profile + 加载前注入 `workspaceMode=advanced`，CDP 从页面加载前记录 `Log`/`Runtime`）：欢迎页 → 新建项目 → 创建项目 → 编辑器。顶栏为品牌 + 六个菜单按钮（文件/编辑/视图/运行工作流/工具/帮助）；文件菜单展开后 11 个条目与快捷键标注齐全（含红色 danger 的「关闭项目」）；运行菜单可展开；工具条含项目面包屑、工作流标签、拆分视图/复位/调试/撤销/重做/运行按钮，撤销与重做的 disabled 状态与 store 一致。全程 `Log` error 与 `Runtime.exceptionThrown` **0 条**。截图 `r4-addon-topbar-01-shell.png`、`r4-addon-topbar-02-file-menu.png`、`r4-addon-topbar-03-run-menu.png`、`r4-addon-topbar-04-split-view.png`（`.hermes/reports/assets/`，被 git 忽略），证据 JSON `D:/Hermes/cache/scratch/r4-addon-topbar-tour.json`。
 - 验证结果（code snapshot `20790a4`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
 - 本地提交 `20790a4`，tag `checkpoint/readability-topbar-unverified-20261013-r4`。界面改动但尚无同快照独立 reviewer verdict，故保持 unverified。未 push。
+
+### 7.453 unverified：closeout-run-r4 加时切片——AgentEditorForm 拆分（界面改动）
+
+- 目标函数改动前（行/复杂度/嵌套/参数）：`AgentEditorForm`（`src/components/agentPanel/AgentEditorForm.tsx`）**302 / 54 / 0 / 1**（计划加时切片清单里的口径；该函数是本轮复杂度最高的界面函数）。
+- 拆出两个 props 驱动的字段组：`AgentConnectionFields`（协议下拉、按协议分支的 Base URL、按协议分支的凭据区 `CodexAuthField`/`AntigravityCliField`/`ApiKeyField`/Ollama 提示，92 行）、`AgentModelFields`（模型标签与下拉、拉取/探测按钮、Ollama note、`modelHint`、探测结果卡片、两条提示分支、手填模型输入，以及紧随其后的温度滑块与高级代理折叠区，191 行）。两者各自 `useT('agents')`，不再由父组件透传文案函数。
+- 改动后：`AgentEditorForm` **109 / 11 / 0 / 1**（复杂度过 50 的界面函数清零）；子组件各自的判定分支与 JSX 属性按原样搬运，DOM 顺序未变（名称 → 协议 → Base URL → 凭据 → 模型 → 温度 → 高级）。
+- 测试：`src/components/AgentPanel.test.tsx`（7 tests）未改动且通过；全量 `npm run test` 238 files / 1,544 tests 通过。
+- 浏览器 GUI 回读（全新 profile + 加载前注入 `workspaceMode=advanced`，CDP 从页面加载前记录 `Log`/`Runtime`）：欢迎页 → 新建项目 → 创建项目 → 左侧「智能体库」→ 点选「Ollama 本地智能体」→「编辑」。表单实测到协议下拉（5 个选项，当前 `ollama`）、模型下拉（6 个选项，当前 `qwen2.5:3b`）、温度滑块 1 个、高级折叠区 1 个，标签为「名称 / 协议 / Base URL / 模型（本地 Ollama）/ 温度（0.7）」。全程 `Log` error 与 `Runtime.exceptionThrown` **0 条**。截图 `r4-addon-agentform-01-library.png`、`r4-addon-agentform-02-editor.png`、`r4-addon-agentform-03-protocol-switched.png`，证据 JSON `D:/Hermes/cache/scratch/r4-addon-agentform-tour.json`。
+- 验证结果（code snapshot `d2ea241`）：`npm run test` 238 files / 1,544 tests；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys；`git diff --check` 无空白错误。
+- 本地提交 `d2ea241`，tag `checkpoint/readability-agent-editor-form-unverified-20261013-r4`。界面改动但尚无同快照独立 reviewer verdict，故保持 unverified。未 push。
