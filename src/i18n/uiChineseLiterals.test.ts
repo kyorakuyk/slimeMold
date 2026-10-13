@@ -117,17 +117,17 @@ const EXCEPTIONS = [
   {
     path: 'src/engine/executor.ts',
     fragment: '包含 dev.* 节点的工作流必须先打开已保存项目',
-    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+    reason: 'Kept as durable RunResult.error; src/orchestrator/run.ts persists it in stageLogs, not ordinary run history. The visible addLog text uses log.devSessionNeedsProject.',
   },
   {
     path: 'src/engine/executor.ts',
     fragment: 'Tauri DevSession 未就绪，开发节点未执行',
-    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+    reason: 'Kept as durable RunResult.error; src/orchestrator/run.ts persists it in stageLogs, not ordinary run history. The visible addLog text uses log.devSessionNotReady.',
   },
   {
     path: 'src/engine/executor.ts',
     fragment: '节点不存在',
-    reason: 'Persisted as node error text in the project file; localizing would alter stored provenance.',
+    reason: 'Thrown before node state changes; BaseNode calls void retryNode, so main.tsx surfaces it through the unhandled-rejection fatal overlay. Preserve and report this behavior; do not fix in this slice.',
   },
   {
     path: 'src/engine/executor.ts',
@@ -137,12 +137,12 @@ const EXCEPTIONS = [
   {
     path: 'src/engine/runWorkflowPhases.ts',
     fragment: '上一次运行仍在有效进行中，已忽略重复启动',
-    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+    reason: 'Kept as durable RunResult.error; orchestration stageLogs may persist it. The visible addLog message is separately localized.',
   },
   {
     path: 'src/engine/runWorkflowPhases.ts',
     fragment: '还没放任何节点',
-    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+    reason: 'Kept as durable RunResult.error; orchestration stageLogs may persist it. The visible addLog message uses log.emptyGraph.',
   },
   {
     path: 'src/engine/runWorkflowPhases.ts',
@@ -151,8 +151,8 @@ const EXCEPTIONS = [
   },
   {
     path: 'src/engine/runWorkflowPhases.ts',
-    fragment: '节点连成了死循环（${labels}）',
-    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+    fragment: '节点连成了死循环（${persistedLabels}）',
+    reason: 'Kept as durable RunResult.error; only the transient log uses the locale-specific separator, preserving stored error text.',
   },
   {
     path: 'src/engine/executorNodePhases.ts',
@@ -169,6 +169,57 @@ const EXCEPTIONS = [
     fragment: '节点上下文尚未就绪：getTools 在 ctx 组装完成前被调用',
     reason: 'Internal invariant error thrown to the run loop; it is not rendered to the user.',
   },
+  ...[
+    "name: '产品经理'",
+    "description: '梳理需求、拆解任务、定义验收标准'",
+    '你是一名严谨的产品经理。请用清晰的结构梳理需求，拆解为可执行的任务，并明确验收标准。输出简洁、可执行，避免空话。',
+    "name: '开发工程师'",
+    "description: '根据需求编写与解释代码'",
+    '你是一名资深开发工程师。请针对给定任务给出正确、可读、遵循最佳实践的代码或技术方案，必要时说明取舍。',
+    "name: '代码审查员'",
+    "description: '审查代码质量、风险与改进建议'",
+    '你是一名严格的代码审查员。请指出代码中的缺陷、安全隐患、可维护性问题，并给出具体修改建议，按严重程度分级。',
+    "name: '技术作家'",
+    "description: '撰写文档、说明与总结'",
+    '你是一名技术作家。请将技术内容转化为准确、条理清晰、面向目标读者的文档或说明，语言专业且易懂。',
+  ].map((fragment) => ({
+    path: 'src/agents/agentManager.ts',
+    fragment,
+    reason: 'Built-in RoleTemplate defaults are cloned into store/project data and include system prompts supplied to agents; preserve these persisted role values rather than changing them as UI chrome.',
+  })),
+  {
+    path: 'src/agents/agentManager.ts',
+    fragment: 'Antigravity CLI 仅作为 TaskGraph Worker Runtime 使用，请从项目 Worker Run 选择 Antigravity。',
+    reason: 'Runtime exception text can be returned through durable RunResult.error; preserve the stable error contract.',
+  },
+  {
+    path: 'src/agents/agentManager.ts',
+    fragment: '未知协议: ${agent.protocol}',
+    reason: 'Runtime exception text can be returned through durable RunResult.error; preserve the stable error contract.',
+  },
+  ...[
+    "label: 'OpenAI 兼容'",
+    "label: 'Ollama 本地'",
+    "label: 'OpenAI Codex（ChatGPT 订阅）'",
+    "label: 'Antigravity CLI（交互式）'",
+    "name: 'OpenAI 官方'",
+    "name: 'DeepSeek 官方'",
+    "name: '硅基流动 SiliconFlow'",
+    "name: 'OpenRouter 聚合'",
+    "name: '自定义中转'",
+    "name: 'OpenAI Codex（ChatGPT 订阅）'",
+    "name: 'Antigravity CLI（交互式）'",
+    "note: '~2GB 显存 · 6GB 显卡首选，流畅'",
+    "note: '~4.5GB 显存 · 质量更好，6GB 偏吃紧'",
+    "note: '~5GB 显存 · 8GB+ 显卡推荐'",
+    "note: '~4.5GB 显存 · 推理强，6GB 偏吃紧'",
+    "note: '~0.5GB 显存 · 极轻量'",
+    'name: preset ? `${preset.name}智能体` : `${d.label}智能体`',
+  ].map((fragment) => ({
+    path: 'src/agents/agentManager.ts',
+    fragment,
+    reason: 'Stored provider/protocol creation values or static recommendation metadata; display surfaces use separate locale keys (labelKey/noteKey), while IDs and serialized defaults remain unchanged.',
+  })),
 ] as const;
 
 function commentFreeSource(filePath: string, text: string): string {
@@ -228,7 +279,7 @@ function staticTranslationKeys(filePath: string): Set<string> {
     if (
       ts.isPropertyAssignment(node) &&
       ts.isIdentifier(node.name) &&
-      node.name.text === 'labelKey' &&
+      (node.name.text === 'labelKey' || node.name.text === 'noteKey') &&
       ts.isStringLiteralLike(node.initializer)
     ) {
       keys.add(node.initializer.text);

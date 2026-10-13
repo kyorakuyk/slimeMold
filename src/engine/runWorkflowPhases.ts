@@ -155,16 +155,16 @@ export function prepareExecutionPlan({ wf, wfId, opts, getCurrentRunId }: Prepar
   }
 
   if (cyclic.length > 0) {
-    const labels = cyclic
-      .map((id) => nodes.find((n) => n.id === id)?.data.label ?? id)
-      .join('、');
+    const cycleLabels = cyclic.map((id) => nodes.find((n) => n.id === id)?.data.label ?? id);
+    const displayLabels = cycleLabels.join(i18n.t('log.cycleLabelsSeparator'));
+    const persistedLabels = cycleLabels.join('、');
     for (const id of cyclic) {
       wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' }, wfId);
     }
-    wf.addLog('error', i18n.t('log.cycleLog', { labels }));
+    wf.addLog('error', i18n.t('log.cycleLog', { labels: displayLabels }));
     return {
       ok: false,
-      result: { status: 'aborted', runId: getCurrentRunId(wfId), error: `节点连成了死循环（${labels}）` },
+      result: { status: 'aborted', runId: getCurrentRunId(wfId), error: `节点连成了死循环（${persistedLabels}）` },
     };
   }
 

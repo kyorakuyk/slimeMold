@@ -21,7 +21,7 @@
   <string name="runHistory.recent">(last {{count}} runs)</string>
   <string name="runHistory.empty">No run history yet</string>
   <string name="runHistory.selectHint">Select a run to view node results</string>
-  <string name="runHistory.status.label">Status</string>
+  <string name="runHistory.status.label">Status:</string>
   <string name="runHistory.status.success">Success</string>
   <string name="runHistory.status.partial">Partial</string>
   <string name="runHistory.status.failed">Failed</string>
@@ -149,6 +149,9 @@
   <string name="token.legendWrite">Write</string>
   <string name="token.legendMiss">Miss</string>
   <string name="token.byModel">By model</string>
+  <string name="token.modelCalls">{{count}} calls</string>
+  <string name="token.modelCalls_one">{{count}} call</string>
+  <string name="token.modelCalls_other">{{count}} calls</string>
 
   <!-- Companion -->
   <string name="companion.title">Companion</string>
@@ -181,6 +184,7 @@
   <string name="route.fillDefaults">Fill defaults</string>
   <string name="route.fillDefaultsTitle">Bind all categories to the default agent</string>
   <string name="route.unbound">— Default / unbound —</string>
+  <string name="route.fallbackLabel">Fallback chain</string>
   <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId; global agents work too)</string>
   <string name="route.noAgents">No usable agents (project + global both empty). Add one in the Agent panel first.</string>
   <string name="route.globalSuffix"> (global)</string>

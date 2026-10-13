@@ -64,7 +64,7 @@ describe('prepareExecutionPlan localized cycle diagnostics', () => {
       });
       expect(addLog).toHaveBeenCalledWith(
         'error',
-        'Nodes form a cycle (A, B); remove one of the connections before running',
+        'Nodes form a cycle (A,B); remove one of the connections before running',
       );
     } finally {
       await i18n.changeLanguage(originalLanguage || 'zh-CN');

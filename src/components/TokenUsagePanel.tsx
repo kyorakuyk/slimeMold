@@ -154,7 +154,7 @@ export default function TokenUsagePanel({
                   <div key={model} className="flex items-center justify-between text-xs">
                     <span className="truncate text-ink-soft" title={model}>{model}</span>
                     <span className="tabular-nums text-ink-faint">
-                      {num(m.promptTokens)} + {num(m.completionTokens)} tok · {m.calls} 次
+                      {num(m.promptTokens)} + {num(m.completionTokens)} tok · {t('token.modelCalls', { count: m.calls })}
                     </span>
                   </div>
                 ))}

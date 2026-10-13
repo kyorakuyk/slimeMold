@@ -24,7 +24,6 @@
   <string name="agent.list.default">Current default agent</string>
   <string name="agent.list.setDefault">Set as default</string>
   <string name="agent.list.newByPreset">+ New by provider preset…</string>
-  <string name="agent.list.customProxy">(custom relay)</string>
   <string name="agent.list.addTitle">New {{label}} agent</string>
   <string name="agent.list.importTitle">Import a configured endpoint from the APIKEYS library</string>
   <string name="agent.list.importOption">⇩ Import a configured endpoint from the API library…</string>
@@ -34,6 +33,18 @@
   <string name="agent.edit.close">Collapse edit panel</string>
   <string name="agent.field.name">Name</string>
   <string name="agent.field.protocol">Protocol</string>
+  <string name="agent.protocol.openai">OpenAI-compatible</string>
+  <string name="agent.protocol.anthropic">Anthropic</string>
+  <string name="agent.protocol.ollama">Ollama (local)</string>
+  <string name="agent.protocol.codex">OpenAI Codex (ChatGPT subscription)</string>
+  <string name="agent.protocol.antigravity">Antigravity CLI (interactive)</string>
+  <string name="agent.provider.openai">OpenAI (official)</string>
+  <string name="agent.provider.deepseek">DeepSeek (official)</string>
+  <string name="agent.provider.siliconflow">SiliconFlow</string>
+  <string name="agent.provider.openrouter">OpenRouter (aggregator)</string>
+  <string name="agent.provider.custom">Custom relay</string>
+  <string name="agent.provider.codex">OpenAI Codex (ChatGPT subscription)</string>
+  <string name="agent.provider.antigravity">Antigravity CLI (interactive)</string>
   <string name="agent.field.baseUrl">Base URL</string>
   <string name="agent.ollamaHint">Local Ollama models need no API Key — leave credentials empty.</string>
   <string name="agent.field.model">Model</string>
@@ -70,7 +81,26 @@
   <string name="agent.model.noAnthropicModels">No models fetched. Native Anthropic has no /models endpoint — use "OpenAI compatible" protocol on the relay</string>
   <string name="agent.model.noModels">No models fetched — check Base URL and Key</string>
   <string name="agent.model.pullFailed">Failed to pull models: {{error}}</string>
+  <string name="agent.model.note.qwen25_3b">~2GB VRAM · recommended for 6GB GPUs, runs smoothly</string>
+  <string name="agent.model.note.qwen25_7b">~4.5GB VRAM · better quality, tight on 6GB</string>
+  <string name="agent.model.note.llama31_8b">~5GB VRAM · recommended for 8GB+ GPUs</string>
+  <string name="agent.model.note.deepseekR1_7b">~4.5GB VRAM · strong reasoning, tight on 6GB</string>
+  <string name="agent.model.note.qwen25_05b">~0.5GB VRAM · ultra-light</string>
   <string name="agent.probe.proxied">via proxy</string>
+  <string name="agent.probe.antigravityRegistration">Antigravity CLI is registered; verify availability through Worker startup and Host Acceptance.</string>
+  <string name="agent.probe.emptyBaseUrl">Base URL is empty</string>
+  <string name="agent.probe.ollamaOk">Connection successful; model is available</string>
+  <string name="agent.probe.ollamaModelMissing">Model "{{model}}" was not found on this Ollama service</string>
+  <string name="agent.probe.ollamaStatus">Ollama returned {{status}}</string>
+  <string name="agent.probe.connected">Connection successful; model and API key are valid</string>
+  <string name="agent.probe.authFailed">Authentication failed ({{status}}); API key is invalid or lacks permission</string>
+  <string name="agent.probe.anthropicUrl404">Address returned 404; check the Anthropic Base URL (it should include /v1 or use the correct domain)</string>
+  <string name="agent.probe.modelUnavailable">Model "{{model}}" is unavailable: {{details}}</string>
+  <string name="agent.probe.detailsSuffix">: {{details}}</string>
+  <string name="agent.probe.baseAndModelHint">; check the Base URL and model name</string>
+  <string name="agent.probe.requestFailed">Request failed ({{status}}){{details}}</string>
+  <string name="agent.probe.openAiUrl404">Address returned 404; check the Base URL (OpenAI-compatible endpoints require /v1)</string>
+  <string name="agent.probe.connectionFailed">Cannot connect (network/address error): {{message}}</string>
 
   <!-- ApiKeyField -->
   <string name="agent.apikey.label">API Key (stored in OS keychain)</string>

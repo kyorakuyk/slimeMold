@@ -125,7 +125,7 @@ export default function RunHistoryPanel({
           <div className="space-y-3">
             <div className="rounded border border-line p-2 text-xs text-ink-soft">
               <div>
-                {t('runHistory.status.label')}：<span className={statusCls[selected.status]}>{t(`runHistory.status.${selected.status}`)}</span>
+                {t('runHistory.status.label')}<span className={`ml-1 ${statusCls[selected.status]}`}>{t(`runHistory.status.${selected.status}`)}</span>
               </div>
               <div>{t('runHistory.duration', { sec: (selected.durationMs / 1000).toFixed(1) })}</div>
               <div>{t('runHistory.start', { time: formatDateTime(selected.startedAt) })}</div>

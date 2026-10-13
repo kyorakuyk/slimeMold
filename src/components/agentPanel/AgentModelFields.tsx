@@ -31,6 +31,7 @@ export default function AgentModelFields({
   onProbe,
 }: AgentModelFieldsProps) {
   const t = useT('agents');
+  const selectedOllamaNoteKey = ollamaModels.find((model) => model.id === editing.model)?.noteKey;
 
   return (
     <>
@@ -64,7 +65,7 @@ export default function AgentModelFields({
               >
                 <option value="">{t('agent.model.select')}</option>
                 {ollamaModels.map((model) => (
-                  <option key={model.id} value={model.id} title={model.note}>
+                  <option key={model.id} value={model.id} title={t(model.noteKey)}>
                     {model.id}
                   </option>
                 ))}
@@ -99,9 +100,9 @@ export default function AgentModelFields({
                 {probing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
               </button>
             </div>
-            {ollamaModels.find((model) => model.id === editing.model)?.note && (
+            {selectedOllamaNoteKey && (
               <p className="text-[11px] text-ink-faint">
-                {ollamaModels.find((model) => model.id === editing.model)?.note}
+                {t(selectedOllamaNoteKey)}
               </p>
             )}
             {modelHint && (

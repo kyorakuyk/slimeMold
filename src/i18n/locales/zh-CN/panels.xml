@@ -21,7 +21,7 @@
   <string name="runHistory.recent">（最近 {{count}} 次）</string>
   <string name="runHistory.empty">还没有运行记录</string>
   <string name="runHistory.selectHint">选择一次运行以查看节点结果</string>
-  <string name="runHistory.status.label">状态</string>
+  <string name="runHistory.status.label">状态：</string>
   <string name="runHistory.status.success">成功</string>
   <string name="runHistory.status.partial">部分成功</string>
   <string name="runHistory.status.failed">失败</string>
@@ -149,6 +149,9 @@
   <string name="token.legendWrite">写入</string>
   <string name="token.legendMiss">未命中</string>
   <string name="token.byModel">按模型</string>
+  <string name="token.modelCalls">{{count}} 次调用</string>
+  <string name="token.modelCalls_one">{{count}} 次调用</string>
+  <string name="token.modelCalls_other">{{count}} 次调用</string>
 
   <!-- Companion -->
   <string name="companion.title">Companion</string>
@@ -181,6 +184,7 @@
   <string name="route.fillDefaults">一键填充默认</string>
   <string name="route.fillDefaultsTitle">所有类别绑定到默认智能体</string>
   <string name="route.unbound">— 默认/未绑定 —</string>
+  <string name="route.fallbackLabel">回退链</string>
   <string name="route.fallbackPlaceholder">回退链（可选，逗号分隔 agentId，可用全局智能体）</string>
   <string name="route.noAgents">当前无可用智能体（项目级+全局均为空），请先在智能体面板添加。</string>
   <string name="route.globalSuffix">（全局）</string>

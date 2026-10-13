@@ -151,7 +151,7 @@
   <string name="window.close">Close window</string>
 
   <!-- Plugin manager and custom node logs (pluginManager calls the i18n default export) -->
-  <string name="plugin.log.browserNoDirScan">Directory scan is not available in the browser; use "Import plugin from files" instead</string>
+  <string name="plugin.log.browserNoDirScan">Directory scanning is unavailable in the browser; use "Import from file" instead</string>
   <string name="plugin.log.dirCreated">Created the plugin directory (AppData/plugins); add plugins there and rescan</string>
   <string name="plugin.log.loaded">Plugin loaded: {{name}} ({{count}} nodes)</string>
   <string name="plugin.log.loadFailed">Plugin {{name}} failed to load: {{message}}</string>
@@ -173,35 +173,34 @@
   <string name="plugin.log.projectScanSkipped">Project-level custom node scan skipped (the directory may be outside the filesystem scope): {{message}}</string>
   <string name="plugin.log.projectNodesUnloaded">Unloaded {{count}} project-level custom nodes</string>
   <!-- Runtime logs (engine / run scheduling / single node execution) -->
-  <string name="log.checkpointPersistFailed">Checkpoint write failed (throttled and skipped, run is unaffected): {{message}}</string>
   <string name="log.runStopped">Workflow run stopped: {{id}}</string>
   <string name="log.devSessionNeedsProject">Workflows containing dev.* nodes require an opened, saved project first</string>
   <string name="log.devSessionNotReady">Tauri DevSession is not ready; dev nodes were not executed</string>
-  <string name="log.nodeMissing">Node not found</string>
   <string name="log.noFailedNodes">No failed nodes, nothing to resume</string>
   <string name="log.resumeFromBreakpoint">Resuming from breakpoint: recomputing {{count}} failed nodes and their downstream</string>
+  <string name="log.resumeFromBreakpoint_one">Resuming from breakpoint: recomputing {{count}} failed node and its downstream</string>
+  <string name="log.resumeFromBreakpoint_other">Resuming from breakpoint: recomputing {{count}} failed nodes and their downstream</string>
   <string name="log.duplicateStartIgnored">A previous run is still active; duplicate start ignored (stop it first to force a restart)</string>
-  <string name="log.duplicateStartError">A previous run is still active; duplicate start ignored</string>
   <string name="log.staleRunRestarted">Stale run state detected; the run was force-restarted (concurrency guard ignored)</string>
   <string name="log.worktreeCreated">Git Worktree isolated sandbox created: {{path}}</string>
   <string name="log.worktreeCreateFailed">Git Worktree creation failed; falling back to the copy sandbox</string>
   <string name="log.worktreeNotGitRepo">Workspace is not a git repository; Git Worktree mode falls back to the copy sandbox</string>
   <string name="log.worktreeProbeError">Git Worktree probe failed; falling back to the copy sandbox: {{message}}</string>
   <string name="log.emptyGraph">No nodes yet — drag a node onto the canvas first</string>
-  <string name="log.emptyGraphShort">No nodes yet</string>
   <string name="log.subgraphExpanded">Subgraph expanded: {{count}} internal steps added</string>
-  <string name="log.cycleNodeError">These nodes form a cycle; remove one of the connections</string>
+  <string name="log.subgraphExpanded_one">Subgraph expanded: {{count}} internal step added</string>
+  <string name="log.subgraphExpanded_other">Subgraph expanded: {{count}} internal steps added</string>
   <string name="log.cycleLog">Nodes form a cycle ({{labels}}); remove one of the connections before running</string>
-  <string name="log.cycleError">Nodes form a cycle ({{labels}})</string>
+  <string name="log.cycleLabelsSeparator">,</string>
   <string name="log.cacheCleared">Node result cache cleared; this run recomputes everything (forced rerun)</string>
   <string name="log.modeResume">continuing from last time</string>
   <string name="log.modeFresh">starting from scratch</string>
   <string name="log.runStarted">Run started ({{mode}}) with {{count}} nodes</string>
+  <string name="log.runStarted_one">Run started ({{mode}}) with {{count}} node</string>
+  <string name="log.runStarted_other">Run started ({{mode}}) with {{count}} nodes</string>
   <string name="log.loopRoundStart">Loop round {{round}} started (max {{max}} rounds)</string>
   <string name="log.loopFinished">Loop finished after {{round}} rounds</string>
-  <string name="log.nodeSkippedUpstream">Upstream node failed; skipped</string>
-  <string name="log.nodeTypeMissing">Node type {{typeId}} is missing (possibly from an unloaded plugin)</string>
-  <string name="log.ctxNotReady">Node context is not ready: getTools was called before ctx assembly finished</string>
+
   <string name="log.agentProcessing">“{{label}}” is being processed by AI, please wait…</string>
   <string name="log.nodeRetry">“{{label}}” failed; retry {{attempt}} in about {{seconds}}s: {{message}}</string>
 </resources>

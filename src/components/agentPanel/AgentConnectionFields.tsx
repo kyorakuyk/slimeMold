@@ -35,7 +35,7 @@ export default function AgentConnectionFields({
         >
           {(Object.keys(protocolDefaults) as Protocol[]).map((protocol) => (
             <option key={protocol} value={protocol}>
-              {protocolDefaults[protocol].label}
+              {t(protocolDefaults[protocol].labelKey)}
             </option>
           ))}
         </select>

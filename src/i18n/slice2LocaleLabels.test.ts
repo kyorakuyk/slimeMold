@@ -63,7 +63,7 @@ describe('R5 Slice2 localized display labels', () => {
     expect(i18n.t('route.fallbackLabel', { lng: 'zh-CN' })).toBe('回退链');
     expect(i18n.t('runHistory.status.label', { lng: 'en-US' })).toBe('Status:');
     expect(i18n.t('runHistory.status.label', { lng: 'zh-CN' })).toBe('状态：');
-    expect(i18n.t('log.cycleLabelsSeparator', { lng: 'en-US' })).toBe(', ');
+    expect(i18n.t('log.cycleLabelsSeparator', { lng: 'en-US' })).toBe(',');
     expect(i18n.t('log.cycleLabelsSeparator', { lng: 'zh-CN' })).toBe('、');
     expect(i18n.t('plugin.log.browserNoDirScan', { lng: 'en-US' })).toContain('Import from file');
   });

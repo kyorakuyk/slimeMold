@@ -160,14 +160,14 @@ export async function runWorkflow(opts: RunOptions = {}): Promise<RunResult> {
   if (isTauri && workflowRequiresDevSession(graphNodesForSession)) {
     if (!wf.projectPath) {
       const error = '包含 dev.* 节点的工作流必须先打开已保存项目';
-      wf.addLog('error', error);
+      wf.addLog('error', i18n.t('log.devSessionNeedsProject'));
       return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error };
     }
     const { ensureGuiDevSession } = await import('../dev/gui');
     const session = await ensureGuiDevSession(wf.projectPath);
     if (!session) {
       const error = 'Tauri DevSession 未就绪，开发节点未执行';
-      wf.addLog('error', error);
+      wf.addLog('error', i18n.t('log.devSessionNotReady'));
       return { status: 'aborted', runId: executionCoordinator.getCurrentRunId(wfId), error };
     }
   }

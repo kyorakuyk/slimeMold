@@ -52,6 +52,10 @@ export default function AgentCatalogList({
   onImportFromVault,
 }: AgentCatalogListProps) {
   const t = useT('agents');
+  const providerLabel = (providerId: string | undefined, protocol: Protocol) => {
+    const preset = findProviderPreset(providerId);
+    return t(preset?.labelKey ?? protocolDefaults[protocol].labelKey);
+  };
 
   return (
     <div className={`flex h-full min-h-0 shrink-0 flex-col border-r border-line bg-paper-soft ${variant === 'sidebar' ? 'w-full' : 'w-56'}`}>
@@ -148,7 +152,7 @@ export default function AgentCatalogList({
                 </div>
               </div>
               <p className="text-[11px] text-ink-faint">
-                {findProviderPreset(agent.providerId)?.name ?? protocolDefaults[agent.protocol].label}
+                {providerLabel(agent.providerId, agent.protocol)}
                 {' · '}
                 {agent.model}
               </p>
@@ -172,8 +176,7 @@ export default function AgentCatalogList({
           <option value="">{t('agent.list.newByPreset')}</option>
           {providerPresets.map((preset) => (
             <option key={preset.id} value={preset.id}>
-              {preset.name}
-              {preset.id === 'custom' ? t('agent.list.customProxy') : ''}
+              {t(preset.labelKey)}
             </option>
           ))}
         </select>
@@ -183,9 +186,9 @@ export default function AgentCatalogList({
               key={protocol}
               className="sm-btn flex-1 justify-center px-1 text-[11px]"
               onClick={() => onAddAgent(protocol)}
-              title={t('agent.list.addTitle', { label: protocolDefaults[protocol].label })}
+              title={t('agent.list.addTitle', { label: providerLabel(undefined, protocol) })}
             >
-              <Plus size={12} /> {protocolDefaults[protocol].label.slice(0, 3)}
+              <Plus size={12} /> {providerLabel(undefined, protocol).slice(0, 3)}
             </button>
           ))}
         </div>
