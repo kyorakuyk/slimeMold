@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import {
   ArrowRight,
   TriangleAlert,
@@ -8,7 +8,6 @@ import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
 import type { DomainEvent } from '../domain/contracts';
 import {
-  applyMasterTurnCommand,
   approveArchitectureCommand,
   approveBriefCommand,
   approveTaskGraphCommand,
@@ -21,7 +20,7 @@ import { enqueueWorkerRunCommand } from '../projectControl/workerRun';
 import { installWorkerRunRuntime } from '../projectControl/workerRunRuntime';
 import { projectWorkerRecoveryActions } from '../projectControl/workerRecoveryCapabilityProjection';
 import type { WorkerRunRecoveryDecision } from '../projectControl/workerSideEffects';
-import { resolveMasterAgent, runMasterTurn, type MasterResponse } from '../projectControl/master';
+import type { MasterResponse } from '../projectControl/master';
 import { buildExecutionDraftFromTaskGraph } from '../projectControl/executionPlan';
 import { projectWorkerRunsOntoOrchestrations, selectLatestWorkerRun } from '../projectControl/workerRunOrchestrationProjection';
 import { confirmDraft, createOrchestration } from '../orchestrator/confirm';
@@ -29,6 +28,7 @@ import { buildConstructionWorkflow, buildOpsWorkflow } from '../engine/builder';
 import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/types';
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 import ProjectSessionPanelView from './projectSession/ProjectSessionPanelView';
+import useProjectSessionConversation from './projectSession/useProjectSessionConversation';
 
 interface ProjectSessionPanelProps {
   sessionId: string;
@@ -138,89 +138,35 @@ export default function ProjectSessionPanel({
         hint: t(`session.workerRun.${currentWorkerRun.status}Hint`),
       }
     : null;
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    input,
+    setInput,
+    busy,
+    error,
+    setError,
+    streamingText,
+    localResponse,
+    setLocalResponse,
+    visibleQuestions,
+    localReplyVisible,
+    handleSubmit,
+    handleGenerateArchitecture,
+  } = useProjectSessionConversation({
+    sessionId,
+    session,
+    currentBrief,
+    currentArchitecture,
+    globalMasterAgentId,
+    t,
+    createId: controlId,
+    findSession,
+    persistControlMutation,
+    responseQuestions,
+  });
+
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [workerStartBusy, setWorkerStartBusy] = useState(false);
   const [workerRuntime, setWorkerRuntime] = useState<'codex' | 'antigravity'>('codex');
-  const [streamingText, setStreamingText] = useState('');
-  const [localResponse, setLocalResponse] = useState<MasterResponse | null>(null);
-  const initialTurnStarted = useRef(false);
-
-  const visibleQuestions = useMemo(
-    () => (session ? responseQuestions(session, localResponse) : []),
-    [session, localResponse],
-  );
-  const localReplyVisible = !!localResponse &&
-    !!session && !session.messages.some((message) => message.content === localResponse.reply);
-
-  const runTurn = async (userMessage: string, recordUserMessage: boolean) => {
-    const state = useWorkflowStore.getState();
-    const snapshot = state.projectControl;
-    const currentSession = findSession(snapshot, sessionId);
-    if (!currentSession) {
-      setError(t('session.error.noSession'));
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setStreamingText('');
-    try {
-      const agent = resolveMasterAgent({
-        agents: state.agents,
-        globalAgents: state.globalAgents,
-        requestedAgentId: state.projectControl.masterAgentId,
-        globalMasterAgentId,
-        defaultAgentId: state.defaultAgentId,
-      });
-      const brief = currentSession.briefId
-        ? snapshot.briefs.find((item) => item.id === currentSession.briefId) ?? null
-        : null;
-      const result = await runMasterTurn({
-        agent,
-        session: currentSession,
-        userMessage,
-        currentBrief: brief,
-        decisions: snapshot.decisions,
-        onToken: (text) => setStreamingText((current) => current + text),
-      });
-      const latestSnapshot = useWorkflowStore.getState().projectControl;
-      const next = applyMasterTurnCommand({
-        snapshot: latestSnapshot,
-        sessionId,
-        userMessage: recordUserMessage ? userMessage : undefined,
-        response: result.response,
-        now: new Date().toISOString(),
-        createId: controlId,
-      });
-      await persistControlMutation(currentSession.projectId, next.snapshot, next.events);
-      setLocalResponse(result.response);
-      if (recordUserMessage) setInput('');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-      setStreamingText('');
-    }
-  };
-
-  useEffect(() => {
-    if (!session || initialTurnStarted.current) return;
-    if (session.messages.some((message) => message.role === 'assistant') || session.briefId) return;
-    initialTurnStarted.current = true;
-    void runTurn('请开始需求澄清，先提出最关键的问题。', false);
-    // 只在这个会话第一次挂载时触发，后续状态更新不能重复发起主控调用。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, session?.id]);
-
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    const message = input.trim();
-    if (!message || busy) return;
-    void runTurn(message, true);
-  };
 
   const handleWorkerRecovery = (decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>) => {
     if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy || !currentWorkerRecoveryActions.includes(decision)) return;
@@ -271,12 +217,6 @@ export default function ProjectSessionPanel({
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
-
-  const handleGenerateArchitecture = () => {
-    if (!currentBrief || currentBrief.approval !== 'approved' || currentArchitecture || busy) return;
-    void runTurn('请基于已批准的 Brief 生成架构、模块、接口、施工任务和风险。', false);
-  };
-
   const handleApproveArchitecture = async () => {
     const state = useWorkflowStore.getState();
     const snapshot = state.projectControl;
