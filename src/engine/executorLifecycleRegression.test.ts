@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowEdge, FlowNode } from '../types';
+import type { NodeDefinition } from '../types/node';
 import { registerBuiltins } from '../nodes/builtin';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useRegistryStore } from '../store/registryStore';
 import { runWorkflow, stopWorkflow, getActiveRunId } from './executor';
 import { clearCache, beginRun } from './nodeCache';
 import { EventLogWriter, resetEventLog, setEventPersistenceMode } from './eventLog';
+import { getRunBus, resetRunBus } from './runEvents';
 
 function mkNode(id: string, typeId: string): FlowNode {
   return {
@@ -94,6 +97,60 @@ describe('runWorkflow lifecycle regressions', () => {
     expect(runningImmediately).toBe(true);
     expect(activeRunAfterDuplicate).toBe(activeRunId);
     expect(useWorkflowStore.getState().runStates[wfId]?.running).toBe(false);
+  });
+
+  it('reads an upstream output getter after the downstream node-start event', async () => {
+    const wfId = 'wf-r5-s4-input-read-order';
+    seedStore(wfId);
+    const order: string[] = [];
+    const originalDefs = useRegistryStore.getState().defs;
+    const sourceOutputs: Record<string, unknown> = {};
+    Object.defineProperty(sourceOutputs, 'out', {
+      get: () => {
+        order.push('read A.out');
+        return 'source-value';
+      },
+    });
+    const definitions: NodeDefinition[] = [
+      {
+        typeId: 'test.orderSource', name: 'Source', category: 'test', inputs: [],
+        outputs: [{ id: 'out', label: 'Output', type: 'string' }], params: [],
+        execute: async () => sourceOutputs,
+      },
+      {
+        typeId: 'test.orderTarget', name: 'Target', category: 'test',
+        inputs: [{ id: 'in', label: 'Input', type: 'string' }], outputs: [], params: [],
+        execute: async (inputs) => {
+          order.push('execute B');
+          expect(inputs.in).toBe('source-value');
+          return {};
+        },
+      },
+    ];
+    useRegistryStore.getState().register(definitions);
+    const nodes = [mkNode('A', 'test.orderSource'), mkNode('B', 'test.orderTarget')];
+    const edges: FlowEdge[] = [{
+      id: 'A-to-B', source: 'A', sourceHandle: 'out', target: 'B', targetHandle: 'in',
+    } as FlowEdge];
+    const current = useWorkflowStore.getState();
+    useWorkflowStore.setState({
+      nodes,
+      edges,
+      workflows: { ...current.workflows, [wfId]: { ...current.workflows[wfId], nodes, edges } },
+    } as never);
+    const unsubscribe = getRunBus().subscribe((event) => {
+      if (event.kind === 'node.started' && event.nodeId === 'B') order.push('node.started:B');
+    });
+
+    try {
+      const result = await runWorkflow({ wfId, forceNodes: ['B'] });
+      expect(result.status).toBe('success');
+      expect(order).toEqual(['node.started:B', 'read A.out', 'execute B']);
+    } finally {
+      unsubscribe();
+      useRegistryStore.setState({ defs: originalDefs });
+      resetRunBus();
+    }
   });
 
   it('detaches an attached event log when session initialization throws', async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowNode } from '../types';
 import { useWorkflowStore } from './workflowStore';
+import { createWorkflowId } from './workflowId';
 
 const node: FlowNode = {
   id: 'node-1',
@@ -40,6 +41,12 @@ beforeEach(() => {
 });
 
 describe('workflow id uniqueness inside one millisecond', () => {
+  it('adds deterministic suffixes for IDs already taken at the same timestamp', () => {
+    expect(createWorkflowId(1000)).toBe('wf-1000');
+    expect(createWorkflowId(1000, ['wf-1000'])).toBe('wf-1000-2');
+    expect(createWorkflowId(1000, ['wf-1000', 'wf-1000-2'])).toBe('wf-1000-3');
+  });
+
   it('does not reuse the active workflow id when a second workflow is created', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
     try {
