@@ -161,8 +161,44 @@ describe('ProjectSessionPanel', () => {
     expect(container.querySelector('.sm-beginner-session-main')).not.toBeNull();
     expect(container.textContent).toContain('记账应用');
     expect(mocks.runMasterTurn).toHaveBeenCalledTimes(1);
+    expect(mocks.runMasterTurn.mock.calls[0][0]).toMatchObject({
+      userMessage: '请开始需求澄清，先提出最关键的问题。',
+      session: expect.objectContaining({ id: 'session-1' }),
+    });
     expect(container.textContent).toContain('第一版需要云同步吗？');
+    expect(mocks.store.setProjectControl.mock.calls[0][0].sessions[0].messages).not.toContainEqual(
+      expect.objectContaining({ role: 'user', content: '请开始需求澄清，先提出最关键的问题。' }),
+    );
   });
+
+  it.each(['assistant-message', 'linked-brief'] as const)(
+    'does not start an initial master turn when the session already has %s',
+    async (existingFact) => {
+      const session = { ...mocks.session };
+      if (existingFact === 'assistant-message') {
+        session.messages = [
+          ...session.messages,
+          { id: 'message-assistant', role: 'assistant', content: '已有回复', createdAt: '2026-08-31T03:01:00.000Z' },
+        ];
+      } else {
+        session.briefId = 'brief-1';
+      }
+      mocks.store.projectControl = { ...mocks.store.projectControl, sessions: [session] };
+
+      await act(async () => {
+        root.render(
+          <ProjectSessionPanel
+            sessionId="session-1"
+            onBackHome={vi.fn()}
+            onOpenAdvanced={vi.fn()}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      expect(mocks.runMasterTurn).not.toHaveBeenCalled();
+    },
+  );
 
   it('submits a user answer and persists the structured master response', async () => {
     await act(async () => {
