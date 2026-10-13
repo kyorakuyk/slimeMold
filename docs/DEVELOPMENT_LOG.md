@@ -6028,3 +6028,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 
 - Slice2 hard cutoff 为 `2026-10-14 01:43:10 +0800`；经 Git read-back，docs-only closure commit/tagger timestamp 为 `2026-10-14 01:48:13 +0800`，超过 5 分 03 秒。质量门、Browser 回读与 exact review 已完成；超时部分仅用于更新本地报告与开发日志，没有超时后的生产代码改动。
 - Slice2 保持 unverified，code tag 仍指向 reviewer 精确审查的 `c9c9243236694f419c879c6580045aa8a70b3a0c`；不迁移 verdict 至 docs-only HEAD，不创建 verified tag。后续 Slice3 start tag 固定指向 `2f6ae37d9a527bf8b9d26142dff1e4bfe1240c7e`，报告收尾时间偏差已如实登记。
+
+### 7.467 R5 Slice3：copy sandbox 启动同步修复
+
+- 根因为 `runWorkflow` 在所有 `opts.sandbox` 路径都无条件 `await setupRunSandbox`；copy 模式没有 Worktree I/O，但该 await 仍在 admission 后、`startRunSession` 前让出执行权。RED test-only commit `d3af20c02e599cc3aede1c0feb99e4125a143a38` 增加 copy 模式即时 `running`、duplicate admission 与 immediate stop 回归；focused test 按预期因 `runningImmediately` 是 `undefined` 而失败。
+- `src/engine/executor.ts` 现在仅在 `opts.sandbox && opts.sandboxMode === 'gitworktree' && isTauri && wf.workspaceDir` 时 await sandbox setup；其余路径保持 admission→`startRunSession` 同步。`runNodeWithRetry` 中其余同轮程序化 stop 微任务让步按计划记录、不改。本切片没有启动真实 Worker、调用模型 API 或做 Tauri GUI 验收。
+- focused lifecycle suite：2 files / 17 tests passed。全量验证（code snapshot `b6111efa1dcca38eee710637486b2c5e6d6bf794`）：`npm run test -- --reporter=dot` 244 files / 1,573 tests；`npm run build` 通过、2,163 modules（保留既有 mixed dynamic/static import 与 >500kB chunk warnings）；app/root `tsc --noEmit` 均 exit 0；`npm run i18n:check` 1,202 keys 对齐；`git diff --check` 通过。
+- Exact review parent `d3af20c02e599cc3aede1c0feb99e4125a143a38` → target `b6111efa1dcca38eee710637486b2c5e6d6bf794` 返回 `working_tree_clean=true`、`passed=true`，security/logic findings 与 suggestions 均为空；reviewer 未重跑 gates。Code tag `checkpoint/run-start-sandbox-sync-unverified-20261014-r5` 指向 target；Slice3 依计划仍 unverified，未 push。
