@@ -23,6 +23,9 @@ const TARGET_FILES = [
   'src/components/StatusBar.tsx',
   'src/components/RunHistoryPanel.tsx',
   'src/plugins/pluginManager.ts',
+  'src/engine/executor.ts',
+  'src/engine/runWorkflowPhases.ts',
+  'src/engine/executorNodePhases.ts',
 ] as const;
 
 const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
@@ -44,6 +47,9 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/components/StatusBar.tsx': ['ui', 'statusbar'],
   'src/components/RunHistoryPanel.tsx': ['panels'],
   'src/plugins/pluginManager.ts': ['ui'],
+  'src/engine/executor.ts': ['ui'],
+  'src/engine/runWorkflowPhases.ts': ['ui'],
+  'src/engine/executorNodePhases.ts': ['ui'],
 };
 
 const EXCEPTIONS = [
@@ -71,6 +77,61 @@ const EXCEPTIONS = [
     path: 'src/components/Inspector.tsx',
     fragment: 'openPath 失败',
     reason: 'Developer-console diagnostic only; it is not rendered to the user.',
+  },
+  {
+    path: 'src/engine/executor.ts',
+    fragment: '包含 dev.* 节点的工作流必须先打开已保存项目',
+    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executor.ts',
+    fragment: 'Tauri DevSession 未就绪，开发节点未执行',
+    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executor.ts',
+    fragment: '节点不存在',
+    reason: 'Persisted as node error text in the project file; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executor.ts',
+    fragment: '快照落盘失败（已节流跳过，不影响运行）',
+    reason: 'Developer-console diagnostic only; it is not rendered to the user.',
+  },
+  {
+    path: 'src/engine/runWorkflowPhases.ts',
+    fragment: '上一次运行仍在有效进行中，已忽略重复启动',
+    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/runWorkflowPhases.ts',
+    fragment: '还没放任何节点',
+    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/runWorkflowPhases.ts',
+    fragment: '这几个节点连成了死循环，请拆掉其中一条连线',
+    reason: 'Persisted as node error text in the project file; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/runWorkflowPhases.ts',
+    fragment: '节点连成了死循环（${labels}）',
+    reason: 'Persisted in RunResult.error and run history; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executorNodePhases.ts',
+    fragment: '上游节点失败，已跳过',
+    reason: 'Persisted as node error text in the project file; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executorNodePhases.ts',
+    fragment: '节点类型 ${policy.typeId} 缺失（可能来自未加载的插件）',
+    reason: 'Persisted as node error text in the project file; localizing would alter stored provenance.',
+  },
+  {
+    path: 'src/engine/executorNodePhases.ts',
+    fragment: '节点上下文尚未就绪：getTools 在 ctx 组装完成前被调用',
+    reason: 'Internal invariant error thrown to the run loop; it is not rendered to the user.',
   },
 ] as const;
 

@@ -3,6 +3,7 @@ import type { ExecContext, NodeDefinition } from '../types/node';
 import type { FlowEdge, FlowNode } from '../types/graph';
 import { scopedStorage, isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
+import i18n from '../i18n';
 import { withRetry } from './rateLimiter';
 import type { Semaphore } from './rateLimiter';
 import { computeDownstream } from './graphAlgo';
@@ -422,7 +423,7 @@ export async function runNodeWithRetry({
   });
   const isAgent = node.data.typeId.startsWith('agent.') || node.data.typeId.startsWith('ai.');
   if (isAgent) {
-    R.addLog('info', `「${node.data.label}」正在让 AI 处理，请稍候…`);
+    R.addLog('info', i18n.t('log.agentProcessing', { label: node.data.label }));
   }
   const startedAt = Date.now();
   const perfStart = performance.now();
@@ -439,7 +440,12 @@ export async function runNodeWithRetry({
         onRetry: (msg, delay, attempt) =>
           R.addLog(
             'info',
-            `「${node.data.label}」节点出错，正在第 ${attempt} 次重试（稍等约 ${(delay / 1000).toFixed(1)} 秒）：${msg}`,
+            i18n.t('log.nodeRetry', {
+              label: node.data.label,
+              attempt,
+              seconds: (delay / 1000).toFixed(1),
+              message: msg,
+            }),
           ),
       },
     );

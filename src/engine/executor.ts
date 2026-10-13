@@ -1,5 +1,6 @@
 import type { FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
+import i18n from '../i18n';
 import { useRegistryStore } from '../store/registryStore';
 import { isTauri } from '../platform/env';
 import { ownerRefId } from './subgraph';
@@ -116,6 +117,10 @@ function scheduleRunCheckpoint(wfId: string, runId: number, startedWall: number,
   });
 }
 
+// 单节点操作的错误文案：该字符串会随运行结果/节点状态持久化到项目，按区域本地化会改变已存溯源，
+// 因此保持常量形态（不进 i18n），并在 src/i18n/uiChineseLiterals.test.ts 登记为已记录的例外。
+const ERR_NODE_MISSING = '节点不存在';
+
 // 节点级实时重试（仅瞬时错误）：与 LLM 网络层重试互补，
 // 应对 LLM 层重试耗尽后仍偶发的瞬时故障（持续 429/网关超时等）
 // 常量已随单节点执行阶段函数迁至 executorNodePhases.ts（NODE_RETRIES / NODE_RETRY_BASE_MS）
@@ -129,7 +134,7 @@ export function stopWorkflow(wfId?: string): void {
   // 阶段 G2：停止前强制落盘快照（跳过节流），保存已完成节点结果——resetStatuses 会清空节点状态
   scheduleRunCheckpoint(id, abortedRunId, Date.now(), true);
   wf.resetStatuses(id);
-  wf.addLog('info', `已停止工作流运行：${id}`);
+  wf.addLog('info', i18n.t('log.runStopped', { id }));
   // 阶段 D：取消该运行残留的待接管请求（防挂起泄漏）
   cancelInterventionsForRun(id, abortedRunId);
   // 运行级中止事件：立即发出（被终止的旧协程 isCurrentRun=false，不再重复发）
@@ -320,7 +325,7 @@ export async function retryNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
   const wid = wfId ?? store.activeWfId;
   const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
-  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (!nodes.some((n) => n.id === id)) throw new Error(ERR_NODE_MISSING);
   if (store.runStates[wid]?.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id], wfId: wid });
@@ -334,7 +339,7 @@ export async function runToNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
   const wid = wfId ?? store.activeWfId;
   const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
-  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (!nodes.some((n) => n.id === id)) throw new Error(ERR_NODE_MISSING);
   if (store.runStates[wid]?.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], wfId: wid });
@@ -349,7 +354,7 @@ export async function runSingleNode(id: string, wfId?: string): Promise<void> {
   const store = useWorkflowStore.getState();
   const wid = wfId ?? store.activeWfId;
   const nodes = wid === store.activeWfId ? store.nodes : (store.workflows[wid]?.nodes ?? []);
-  if (!nodes.some((n) => n.id === id)) throw new Error('节点不存在');
+  if (!nodes.some((n) => n.id === id)) throw new Error(ERR_NODE_MISSING);
   if (store.runStates[wid]?.running) return;
   store.markDirty(id);
   await runWorkflow({ incremental: true, forceNodes: [id], stopAfterNodes: [id], isolated: true, wfId: wid });
@@ -367,10 +372,10 @@ export async function resumeRun(wfId?: string): Promise<void> {
   if (store.runStates[wid]?.running) return;
   const errored = nodes.filter((n) => n.data.status === 'error');
   if (errored.length === 0) {
-    store.addLog('info', '没有失败的节点，无需续跑');
+    store.addLog('info', i18n.t('log.noFailedNodes'));
     return;
   }
-  store.addLog('info', `从断点续跑：重算 ${errored.length} 个失败节点及其下游`);
+  store.addLog('info', i18n.t('log.resumeFromBreakpoint', { count: errored.length }));
   await runWorkflow({ incremental: true, retryFailed: true, wfId: wid });
 }
 

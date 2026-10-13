@@ -1,6 +1,7 @@
 import type { CostRecord } from '../types/agent';
 import type { FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
+import i18n from '../i18n';
 import { isTauri } from '../platform/env';
 import type { RunOptions, RunResult } from './runTypes';
 import type { ExecutionCoordinator } from './executionCoordinator';
@@ -47,7 +48,7 @@ export function admitWorkflowRun({ wf, wfId, opts, coordinator, syncDebugRun }: 
   const running = wf.runStates[wfId]?.running ?? false;
   const admission = coordinator.start(wfId, { running, force: Boolean(opts.force) });
   if (admission.status === 'rejected') {
-    wf.addLog('warn', '上一次运行仍在有效进行中，已忽略重复启动（如需强制重启请先停止）');
+    wf.addLog('warn', i18n.t('log.duplicateStartIgnored'));
     return {
       ok: false,
       result: {
@@ -60,7 +61,7 @@ export function admitWorkflowRun({ wf, wfId, opts, coordinator, syncDebugRun }: 
   if (admission.supersededRunId !== undefined) {
     // F5：force 重启取消旧运行残留的待接管请求，避免旧协程挂在介入 Promise 上。
     cancelInterventionsForRun(wfId, admission.supersededRunId);
-    wf.addLog('warn', '检测到运行态残留，已强制重启运行（忽略并发拦截）');
+    wf.addLog('warn', i18n.t('log.staleRunRestarted'));
   }
   const myRun = admission.runId;
   syncDebugRun(wfId);
@@ -95,15 +96,15 @@ export async function setupRunSandbox({ wf, wfId, myRun, opts, resources }: Sand
           const wt = { cwd: runWorkspaceDir, path: wtPath, branch };
           resources.worktree = wt;
           resources.gitWorktrees = [wt];
-          wf.addLog('info', `已创建 Git Worktree 强隔离沙箱：${wtPath}`);
+          wf.addLog('info', i18n.t('log.worktreeCreated', { path: wtPath }));
         } else {
-          wf.addLog('warn', 'Git Worktree 创建失败，降级为 copy 沙箱');
+          wf.addLog('warn', i18n.t('log.worktreeCreateFailed'));
         }
       } else {
-        wf.addLog('warn', '当前工作目录非 git 仓库，Git Worktree 模式降级为 copy 沙箱');
+        wf.addLog('warn', i18n.t('log.worktreeNotGitRepo'));
       }
     } catch (e) {
-      wf.addLog('warn', `Git Worktree 探测异常，降级为 copy 沙箱：${String(e)}`);
+      wf.addLog('warn', i18n.t('log.worktreeProbeError', { message: String(e) }));
     }
   }
 }
@@ -124,7 +125,7 @@ export function prepareExecutionPlan({ wf, wfId, opts, getCurrentRunId }: Prepar
   const graphNodes = wfId === wf.activeWfId ? wf.nodes : (wf.workflows[wfId]?.nodes ?? []);
   const graphEdges = wfId === wf.activeWfId ? wf.edges : (wf.workflows[wfId]?.edges ?? []);
   if (graphNodes.length === 0) {
-    wf.addLog('error', '还没放任何节点，先把节点拖到画布上吧');
+    wf.addLog('error', i18n.t('log.emptyGraph'));
     return {
       ok: false,
       result: { status: 'aborted', runId: getCurrentRunId(wfId), error: '还没放任何节点' },
@@ -150,7 +151,7 @@ export function prepareExecutionPlan({ wf, wfId, opts, getCurrentRunId }: Prepar
   const { nodes, cyclic } = plan;
   const expandedCount = nodes.length - graphNodes.length;
   if (expandedCount > 0) {
-    wf.addLog('info', `已展开子图，新增 ${expandedCount} 个内部步骤`);
+    wf.addLog('info', i18n.t('log.subgraphExpanded', { count: expandedCount }));
   }
 
   if (cyclic.length > 0) {
@@ -160,7 +161,7 @@ export function prepareExecutionPlan({ wf, wfId, opts, getCurrentRunId }: Prepar
     for (const id of cyclic) {
       wf.setNodeStatus(id, 'error', { error: '这几个节点连成了死循环，请拆掉其中一条连线' }, wfId);
     }
-    wf.addLog('error', `有节点连成了死循环（${labels}），请拆掉其中一条连线后再运行`);
+    wf.addLog('error', i18n.t('log.cycleLog', { labels }));
     return {
       ok: false,
       result: { status: 'aborted', runId: getCurrentRunId(wfId), error: `节点连成了死循环（${labels}）` },
@@ -192,7 +193,7 @@ export function applyCacheInvalidation({ wf, wfId, opts, graphNodes, force }: Ca
   // 强制重跑：清空全局节点缓存，使所有节点都重新执行（不复用上一轮 LLM 结果）
   if (opts.forceRerun) {
     clearCache();
-    wf.addLog('info', '已清空节点结果缓存，本轮将全量重新执行（强制重跑）');
+    wf.addLog('info', i18n.t('log.cacheCleared'));
   }
 }
 
@@ -265,8 +266,8 @@ export function startRunSession({
   // #9/#8：轨迹采集器（供 reviewer 复盘沉淀记忆/技能），本轮运行共享一个实例
   const sink = new ExperienceSink(wf.workflowName);
 
-  const modeLabel = opts.incremental ? '接着上次接着跑' : '从头开始';
-  wf.addLog('info', `开始运行（${modeLabel}），一共 ${nodeCount} 个节点`);
+  const modeLabel = opts.incremental ? i18n.t('log.modeResume') : i18n.t('log.modeFresh');
+  wf.addLog('info', i18n.t('log.runStarted', { mode: modeLabel, count: nodeCount }));
 
   return { runCtx, detachEventLog, limiter, sink, maxRetries: MAX_RETRIES, retryBaseMs: RETRY_BASE_MS };
 }
@@ -404,7 +405,7 @@ export async function runLoopRounds({
     });
     // 本轮开始日志（round > 0）
     if (round > 0) {
-      wf.addLog('info', `循环第 ${round + 1} 轮开始（最大 ${maxRounds} 轮）`);
+      wf.addLog('info', i18n.t('log.loopRoundStart', { round: round + 1, max: maxRounds }));
     }
     for (let li = 0; li < stages.length; li++) {
       if (signal.aborted || myRun !== getCurrentRunId(wfId)) break;
@@ -470,7 +471,7 @@ export async function runLoopRounds({
     }
   } while (loopContinued);
   if (hasLoop && round > 1) {
-    wf.addLog('info', `循环结束，共执行 ${round} 轮`);
+    wf.addLog('info', i18n.t('log.loopFinished', { round }));
   }
 }
 
