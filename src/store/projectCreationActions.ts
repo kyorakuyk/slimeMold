@@ -5,6 +5,7 @@
  * ProjectFile saving and host lifecycle remain owned by the facade/controllers.
  */
 import type { FlowEdge, FlowNode } from '../types/graph';
+import i18n from '../i18n';
 import {
   buildCreateProjectState,
   type CreateProjectState,
@@ -82,7 +83,9 @@ export function createProjectCreationActions(
         deps.setState({ projectPath: null, projectDirty: true });
         deps.addLog(
           'warn',
-          `项目已创建但落盘失败：${error instanceof Error ? error.message : String(error)}`,
+          i18n.t('log.projectCreation.createdButSaveFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
         );
       }
     } else {

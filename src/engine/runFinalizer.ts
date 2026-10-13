@@ -35,6 +35,7 @@ import {
 } from '../agents/experienceStore';
 import { modelPrice } from '../agents/routerScoring';
 import { skippedCount } from './nodeCache';
+import i18n from '../i18n';
 
 /** 收尾结果（H3b 编排器依赖：status 判定执行成败） */
 export interface RunFinalizeResult {
@@ -130,21 +131,25 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
     // 用 signal.aborted 区分：停止是用户主动中止，stopWorkflow 已打过「已停止」日志，
     // 这里只补一条收尾说明，不写历史/复盘（避免污染后续运行）。
     if (signal.aborted) {
-      rt.addLog('info', `已停止（旧协程收尾，用时 ${elapsed}s）`);
+      rt.addLog('info', i18n.t('log.runFinalizer.stoppedOldRun', { elapsed }));
       return { status: 'aborted', runId: myRun };
     }
     // 真正被新一次运行顶替的旧运行：只留最简日志，不写历史/复盘
-    rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
+    rt.addLog('warn', i18n.t('log.runFinalizer.superseded', { elapsed }));
     return { status: 'aborted', runId: myRun };
   }
   if (signal.aborted && failed.size === 0) {
-    rt.addLog('info', `已手动停止（用时 ${elapsed}s）`);
+    rt.addLog('info', i18n.t('log.runFinalizer.manualStop', { elapsed }));
   } else if (failed.size > 0) {
-    rt.addLog('error', `有 ${failed.size} 个步骤没跑通，请检查标红的节点（用时 ${elapsed}s）`);
+    rt.addLog('error', i18n.t('log.runFinalizer.failedSteps', { count: failed.size, elapsed }));
   } else {
-    const skipMsg = skipped > 0 ? `，${skipped} 步用了缓存结果` : '';
-    const pruneMsg = pruned > 0 ? `，${pruned} 步因条件不成立而跳过` : '';
-    rt.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
+    const cacheSuffix = skipped > 0
+      ? i18n.t('log.runFinalizer.cachedSteps', { count: skipped })
+      : '';
+    const pruneSuffix = pruned > 0
+      ? i18n.t('log.runFinalizer.conditionSkippedSteps', { count: pruned })
+      : '';
+    rt.addLog('info', i18n.t('log.runFinalizer.completed', { elapsed, cacheSuffix, pruneSuffix }));
   }
 
   const status: RunRecord['status'] = failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
@@ -281,10 +286,12 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
         if (addExperience(projectId, exp)) learned += 1;
       }
       if (learned > 0) {
-        rt.addLog('info', `自我学习：已沉淀 ${learned} 条运行经验（${status}）`);
+        rt.addLog('info', i18n.t('log.runFinalizer.experienceSaved', { count: learned, status }));
       }
     } catch (e) {
-      rt.addLog('warn', `经验沉淀失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+      rt.addLog('warn', i18n.t('log.runFinalizer.experienceSaveFailed', {
+        message: e instanceof Error ? e.message : String(e),
+      }));
     }
 
     const stReview = useWorkflowStore.getState();
@@ -304,7 +311,9 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
             projectRoot: root,
           });
         } catch (e) {
-          rt.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
+          rt.addLog('warn', i18n.t('log.runFinalizer.reviewTriggerFailed', {
+            message: e instanceof Error ? e.message : String(e),
+          }));
         }
       })();
     }
@@ -317,7 +326,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
     if (firstId && firstId !== store.selectedNodeId) {
       store.setSelected(firstId, wfId);
     }
-    rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+    rt.addLog('info', i18n.t('log.runFinalizer.workflowReady'));
   }
 
   // 返回明确运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行）

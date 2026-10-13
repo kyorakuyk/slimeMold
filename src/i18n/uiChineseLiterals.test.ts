@@ -147,9 +147,24 @@ const EXCEPTIONS = [
     reason: 'This fallback becomes the imported workflow name and may be persisted in the project; keep the data value stable.',
   },
   {
+    path: 'src/io/workflowIO.ts',
+    fragment: '疑似自定义节点（custom node）：请到「插件面板」点「扫描自定义节点」，或将对应节点包放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后重新打开。',
+    reason: 'Preserved in the missing-node execution error that can be stored in RunResult; the visible placeholder description uses localized copy.',
+  },
+  {
+    path: 'src/io/workflowIO.ts',
+    fragment: '该类型不属于内置节点，可能来自尚未加载的插件。',
+    reason: 'Preserved in the missing-node execution error that can be stored in RunResult; the visible placeholder description uses localized copy.',
+  },
+  {
+    path: 'src/io/workflowIO.ts',
+    fragment: '节点类型 ${n.typeId} 缺失，无法执行。${persistedHint}',
+    reason: 'This error is stored as a run/node failure reason; keep its stable Chinese text unchanged.',
+  },
+  {
     path: 'src/platform/env.ts',
-    fragment: '${docs}/SlimeMold/未归类',
-    reason: 'This is a stable on-disk default directory component; translating it would change persisted paths.',
+    fragment: "const UNCLASSIFIED_FOLDER = '未归类'",
+    reason: 'This stable on-disk directory component is a data value; keep it unchanged while localizing adjacent dialog labels.',
   },
 
   {
@@ -194,13 +209,28 @@ const EXCEPTIONS = [
   },
   {
     path: 'src/agents/harness.ts',
+    fragment: 'Harness 第 (\\d+) 轮 \\/ 模型',
+    reason: 'This exact parser pattern recognizes the preserved trajectory event before projecting it through locale keys.',
+  },
+  {
+    path: 'src/agents/harness.ts',
     fragment: '瞬时错误（${attempt}/${retries}）： ${err.message}，退避重试',
     reason: 'The raw trajectory event remains stable; only the UI logger projection is localized.',
   },
   {
     path: 'src/agents/harness.ts',
+    fragment: '瞬时错误（(\\d+)\\/(\\d+)）： ([\\s\\S]*)，退避重试',
+    reason: 'This exact parser pattern recognizes the preserved trajectory event before projecting it through locale keys.',
+  },
+  {
+    path: 'src/agents/harness.ts',
     fragment: '达到最大轮次 ${maxRounds}，强制结束（可能存在未完成的工具链）',
     reason: 'The raw trajectory event remains stable; only the UI logger projection is localized.',
+  },
+  {
+    path: 'src/agents/harness.ts',
+    fragment: '达到最大轮次 (\\d+)，强制结束（可能存在未完成的工具链）',
+    reason: 'This exact parser pattern recognizes the preserved trajectory event before projecting it through locale keys.',
   },
   {
     path: 'src/agents/harness.ts',

@@ -3,6 +3,7 @@ import type { NodeDefinition } from '../types/node';
 import type { NodeGroup, SubgraphDef } from '../types/workflow';
 import { inferPorts, packSubgraph, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { expandSubgraphInstance } from './workflowGraph';
+import i18n from '../i18n';
 
 export interface WorkflowSubgraphCommandState {
   nodes: FlowNode[];
@@ -31,11 +32,11 @@ export function createWorkflowSubgraphCommands(
       const idSet = new Set(nodeIds);
       const selected = state.nodes.filter((node) => idSet.has(node.id));
       if (selected.length === 0) {
-        deps.addLog('error', '请先选中要打包的节点');
+        deps.addLog('error', i18n.t('log.workflowSubgraph.noSelection'));
         return null;
       }
       if (selected.some((node) => node.data.typeId === SUBGRAPH_REF_TYPE)) {
-        deps.addLog('error', '暂不支持把已有的子图节点再次打包，请先展开它');
+        deps.addLog('error', i18n.t('log.workflowSubgraph.nestedUnsupported'));
         return null;
       }
 
@@ -92,7 +93,12 @@ export function createWorkflowSubgraphCommands(
       });
       deps.addLog(
         'info',
-        `已打包 ${selected.length} 个节点为子图「${subgraph.name}」（${subgraph.inputs.length} 入 / ${subgraph.outputs.length} 出）`,
+        i18n.t('log.workflowSubgraph.packed', {
+          count: selected.length,
+          name: subgraph.name,
+          inputs: subgraph.inputs.length,
+          outputs: subgraph.outputs.length,
+        }),
       );
       return subgraph.id;
     },
@@ -104,7 +110,7 @@ export function createWorkflowSubgraphCommands(
       if (!ref || ref.data.typeId !== SUBGRAPH_REF_TYPE) return;
       const subgraph = state.subgraphs[String(ref.data.params?.subgraphId ?? '')];
       if (!subgraph) {
-        deps.addLog('error', '这个子图的定义已丢失，无法展开');
+        deps.addLog('error', i18n.t('log.workflowSubgraph.definitionMissing'));
         return;
       }
       const { nodes, edges } = expandSubgraphInstance(
@@ -118,7 +124,10 @@ export function createWorkflowSubgraphCommands(
         edges,
         selectedNodeId: nodes[0]?.id ?? null,
       });
-      deps.addLog('info', `已展开子图「${subgraph.name}」，还原为 ${nodes.length} 个节点`);
+      deps.addLog('info', i18n.t('log.workflowSubgraph.expanded', {
+        name: subgraph.name,
+        count: nodes.length,
+      }));
     },
 
     addSubgraphRefNode: (subgraphId: string, position: { x: number; y: number }): void => {

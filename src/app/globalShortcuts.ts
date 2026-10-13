@@ -1,3 +1,5 @@
+import i18n from '../i18n';
+
 export interface GlobalShortcutDependencies {
   exportWorkflow: () => void;
   undo: () => void;
@@ -77,12 +79,12 @@ export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => 
       event.preventDefault();
       const ids = deps.getSelectedNodeIds();
       if (ids.length === 0) {
-        deps.addLog('error', '请先框选若干节点，再按 Ctrl+G');
+        deps.addLog('error', i18n.t('log.shortcut.selectNodesBeforeGrouping'));
         return;
       }
       if (event.shiftKey) {
         deps.promptForName(
-          '给这个子图起个名字',
+          i18n.t('dialog.subgraphNamePrompt'),
           `子图 ${deps.getSubgraphCount() + 1}`,
           (name) => deps.packSelectionAsSubgraph(ids, name),
         );

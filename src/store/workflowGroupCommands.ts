@@ -2,6 +2,7 @@ import type { FlowEdge, FlowNode } from '../types/graph';
 import type { NodeDefinition } from '../types/node';
 import type { NodeGroup, SubgraphDef, WorkflowFileEdge, WorkflowFileNode } from '../types/workflow';
 import { recomputeProxyPorts, GROUP_COLORS } from './groupProxy';
+import i18n from '../i18n';
 
 export interface WorkflowGroupCommandState {
   nodes: FlowNode[];
@@ -32,7 +33,7 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
       deps.pushHistory();
       const valid = nodeIds.filter((id) => state.nodes.some((node) => node.id === id));
       if (valid.length === 0) {
-        deps.addLog('error', '请先选中要编组的节点');
+        deps.addLog('error', i18n.t('log.workflowGroup.noSelection'));
         return null;
       }
       const cleaned = state.groups
@@ -104,7 +105,11 @@ export function createWorkflowGroupCommands(deps: WorkflowGroupCommandDependenci
         subgraphs: { ...state.subgraphs, [subgraphId]: subgraph },
         groups: [...cleaned, withProxy],
       });
-      deps.addLog('info', `已把 ${valid.length} 个节点编为「${group.title}」（子图：${subgraph.name}）`);
+      deps.addLog('info', i18n.t('log.workflowGroup.created', {
+        count: valid.length,
+        groupName: group.title,
+        subgraphName: subgraph.name,
+      }));
       return group.id;
     },
 

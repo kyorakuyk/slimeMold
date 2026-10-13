@@ -3,8 +3,12 @@
  * - Tauri 桌面端：HTTP 走 plugin-http（Rust 侧转发，规避 CORS 且不暴露密钥于渲染层网络栈）
  * - 浏览器预览：退化为 window.fetch（用于开发调试，本地 Ollama 等同源可用场景）
  */
+import i18n from '../i18n';
+
 export const isTauri =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+const UNCLASSIFIED_FOLDER = '未归类';
 
 /**
  * 平台层轻量日志：直接走 console，不反向依赖 store（避免 env→store 循环）。
@@ -73,7 +77,7 @@ export async function openDirDialog(): Promise<string | null> {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: '选择工作区文件夹',
+      title: i18n.t('dialog.workspaceFolderTitle'),
     });
     return Array.isArray(selected) ? selected[0] ?? null : selected;
   } catch {
@@ -90,12 +94,12 @@ export async function defaultStandaloneDir(): Promise<string> {
     try {
       const { documentDir } = await import('@tauri-apps/api/path');
       const docs = await documentDir();
-      return `${docs}/SlimeMold/未归类`.replace(/\\/g, '/');
+      return `${docs}/SlimeMold/${UNCLASSIFIED_FOLDER}`.replace(/\\/g, '/');
     } catch {
-      return 'SlimeMold/未归类';
+      return `SlimeMold/${UNCLASSIFIED_FOLDER}`;
     }
   }
-  return 'SlimeMold/未归类';
+  return `SlimeMold/${UNCLASSIFIED_FOLDER}`;
 }
 
 /**
@@ -110,7 +114,7 @@ export async function pickProjectFile(): Promise<string | null> {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: '选择项目文件夹（含 .slimemold 的目录）',
+      title: i18n.t('dialog.projectFolderTitle'),
     });
     return Array.isArray(selected) ? selected[0] ?? null : selected;
   } catch {
@@ -129,7 +133,9 @@ export async function confirmDialog(message: string): Promise<boolean> {
       const { confirm } = await import('@tauri-apps/plugin-dialog');
       return await confirm(message, { kind: 'warning' });
     } catch (e) {
-      log('warn', `dialog.confirm 调用失败，退化为 window.confirm — ${e instanceof Error ? e.message : String(e)}`);
+      log('warn', i18n.t('log.platform.confirmFallback', {
+        message: e instanceof Error ? e.message : String(e),
+      }));
       return window.confirm(message);
     }
   }
@@ -148,7 +154,9 @@ export async function alertDialog(message: string): Promise<void> {
       await msg(message, { kind: 'info' });
       return;
     } catch (e) {
-      log('warn', `dialog.message 调用失败，退化为 window.alert — ${e instanceof Error ? e.message : String(e)}`);
+      log('warn', i18n.t('log.platform.messageFallback', {
+        message: e instanceof Error ? e.message : String(e),
+      }));
     }
   }
   window.alert(message);
@@ -168,7 +176,7 @@ export async function showSaveDirDialog(defaultName: string): Promise<string | n
       multiple: false,
       canCreateDirectories: true,
       defaultPath: defaultName,
-      title: '选择项目保存位置',
+      title: i18n.t('dialog.projectSaveLocationTitle'),
     });
     return Array.isArray(selected) ? selected[0] ?? null : selected;
   } catch {
@@ -211,7 +219,10 @@ export async function writeProjectText(
     } catch (e) {
       // 项目目录若不在 capabilities fs scope 内（如位于非 $HOME/$DOCUMENT/$APPDATA 盘符），
       // 降级为不落盘并记 warn，避免上层未捕获 Promise rejection 导致应用崩溃。
-      log('warn', `项目文件写入跳过（目录可能不在文件系统权限范围内）：${relNorm} — ${e instanceof Error ? e.message : String(e)}`);
+      log('warn', i18n.t('log.platform.projectWriteSkipped', {
+        path: relNorm,
+        message: e instanceof Error ? e.message : String(e),
+      }));
     }
     return;
   }
@@ -231,7 +242,10 @@ export async function readProjectText(root: string | null | undefined, rel: stri
       return await fs.readTextFile(abs);
     } catch (e) {
       // 同上：权限/IO 异常降级为「无文件」，不向上抛出
-      log('warn', `项目文件读取跳过（目录可能不在文件系统权限范围内）：${relNorm} — ${e instanceof Error ? e.message : String(e)}`);
+      log('warn', i18n.t('log.platform.projectReadSkipped', {
+        path: relNorm,
+        message: e instanceof Error ? e.message : String(e),
+      }));
       return null;
     }
   }

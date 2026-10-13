@@ -1,6 +1,7 @@
 import type { LogEntry } from '../types/execution';
 import type { AssetMeta } from '../types/project';
 import type { FlowNode } from '../types/graph';
+import i18n from '../i18n';
 
 export interface WorkflowProjectDataShape {
   activeWfId: string;
@@ -30,15 +31,21 @@ export function createWorkflowProjectDataCommands<State extends WorkflowProjectD
 ): WorkflowProjectDataCommands {
   const { getState, setState, addLog, removeFile } = deps;
 
-  const removePersistedFile = (path: string, scope: '资产' | '项目资产') => {
+  const removePersistedFile = (path: string, scope: 'asset' | 'projectAsset') => {
+    const scopeLabel = scope === 'asset'
+      ? i18n.t('log.workflowProjectData.assetScope')
+      : i18n.t('log.workflowProjectData.projectAssetScope');
     void (async () => {
       try {
         await removeFile(path);
-        addLog('info', `已删除${scope}文件：${path}`);
+        addLog('info', i18n.t('log.workflowProjectData.removed', { scope: scopeLabel, path }));
       } catch (err) {
         addLog(
           'warn',
-          `删除${scope}文件失败（记录已移除）：${err instanceof Error ? err.message : String(err)}`,
+          i18n.t('log.workflowProjectData.removeFailed', {
+            scope: scopeLabel,
+            message: err instanceof Error ? err.message : String(err),
+          }),
         );
       }
     })();
@@ -74,7 +81,7 @@ export function createWorkflowProjectDataCommands<State extends WorkflowProjectD
           },
         },
       } as unknown as Partial<State>);
-      if (target?.path) removePersistedFile(target.path, '资产');
+      if (target?.path) removePersistedFile(target.path, 'asset');
     },
 
     addProjectAsset: (meta) => {
@@ -106,7 +113,7 @@ export function createWorkflowProjectDataCommands<State extends WorkflowProjectD
       setState({
         projectAssets: state.projectAssets.filter((asset) => asset.id !== assetId),
       } as unknown as Partial<State>);
-      if (target?.path) removePersistedFile(target.path, '项目资产');
+      if (target?.path) removePersistedFile(target.path, 'projectAsset');
       return refs;
     },
 
