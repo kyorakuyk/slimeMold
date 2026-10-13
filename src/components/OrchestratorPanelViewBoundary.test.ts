@@ -7,6 +7,7 @@ const VIEW_MODULES = [
   'OrchestratorPanelListView.tsx',
   'OrchestratorPanelTaskGraphSection.tsx',
   'OrchestratorPanelWorkerRunsView.tsx',
+  'OrchestratorStageCard.tsx',
 ] as const;
 
 describe('OrchestratorPanel view dependency boundary', () => {
