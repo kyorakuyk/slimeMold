@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -22,10 +22,9 @@ import GroupProxyNode from './nodes/GroupProxyNode';
 import { KindEdge } from './KindEdge';
 import GroupLayer from './GroupLayer';
 import SubgraphEditor from './SubgraphEditor';
-import { getNodeDef, useRegistryStore } from '../store/registryStore';
-import { resolvePorts, SUBGRAPH_REF_TYPE } from '../engine/subgraph';
-import { arePortsCompatible, type EdgeKind, type FlowEdge, type FlowNode, type NodeStatus } from '../types/graph';
-import { wouldCreateCycle } from '../engine/topoSort';
+import { useRegistryStore } from '../store/registryStore';
+import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import JobBoard from '../components/JobBoard';
 import Companion from '../components/Companion';
 import { CanvasWfIdContext } from './canvasWfId';
@@ -34,12 +33,17 @@ import CanvasPanelControls from './CanvasPanelControls';
 import useCanvasGraphProjection from './useCanvasGraphProjection';
 import useCanvasNodePicker from './useCanvasNodePicker';
 import useCanvasContextMenu from './useCanvasContextMenu';
+import useSplitWorkflowGraph from './useSplitWorkflowGraph';
+import useRightBoxSelection from './useRightBoxSelection';
+import useCanvasReconnect from './useCanvasReconnect';
+import useCanvasDrop, { DND_MIME } from './useCanvasDrop';
+import { canConnectEdges } from './connectValidation';
 import { useT } from '../i18n/useT';
 
 const nodeTypes: NodeTypes = { base: BaseNode, groupProxy: GroupProxyNode };
 const edgeTypes = { kind: KindEdge };
 
-export const DND_MIME = 'application/x-slime-node';
+export { DND_MIME };
 
 /**
  * 画布外壳：决定该实例使用哪个 ReactFlowProvider。
@@ -71,6 +75,7 @@ function WorkflowEditorInner({
   const t = useT();
   // 无 wfId：渲染当前激活工作流（全局状态）；有 wfId：渲染并编辑指定工作流（拆分视图分栏）
   const isSplit = !!wfId;
+  const { screenToFlowPosition, getNodes } = useReactFlow();
   const activeNodes = useWorkflowStore((s) => s.nodes);
   const activeEdges = useWorkflowStore((s) => s.edges);
   const splitWf = useWorkflowStore((s) => (wfId ? s.workflows[wfId] : undefined));
@@ -81,9 +86,16 @@ function WorkflowEditorInner({
   const addNode = useWorkflowStore((s) => s.addNode);
   const setSelected = useWorkflowStore((s) => s.setSelected);
   const setSelectedIds = useWorkflowStore((s) => s.setSelectedIds);
-  // 分栏工作流：以本地状态维护其图，编辑时写回 workflows 字典
-  const [splitNodes, setSplitNodes] = useState<FlowNode[]>([]);
-  const [splitEdges, setSplitEdges] = useState<FlowEdge[]>([]);
+  // 右键框选的状态、refs 与全局监听由 useRightBoxSelection 拥有（suppressSelectionSync 供选区同步使用）
+  const { rightBox, rightStart, rightMovedRef, suppressSelectionSync, onPaneMouseDownCapture } =
+    useRightBoxSelection({ screenToFlowPosition, getNodes, isSplit, wfId });
+  // 分栏工作流的图状态与「载入 ↔ 写回」双向同步由 useSplitWorkflowGraph 拥有
+  const { splitNodes, splitEdges, setSplitNodes, setSplitEdges } = useSplitWorkflowGraph({
+    isSplit,
+    wfId,
+    splitWf,
+    updateWorkflowGraph,
+  });
   // 把 React Flow 当前选中的节点 id 集合写入 store，供对齐/分布使用
   // （原实现依赖节点瞬态 selected 字段，拆分视图右栏的运行态节点不会被同步，导致全图误选堆叠）
   const onSelectionChange = useCallback(
@@ -95,42 +107,6 @@ function WorkflowEditorInner({
     },
     [setSelectedIds],
   );
-  // ---- 拆分视图右栏：载入 effect ↔ 写回 effect 双向同步 ----
-  // 采用「内容指纹」而非引用比较来切断循环：
-  // 载入 effect 依赖 splitWf，写回 effect 依赖 splitNodes，二者在同一 commit 中按声明顺序执行，
-  // 若用「引用是否相等」判断回流，载入 effect 先跑时会看到旧 splitWf 而误判外部变化，反复重载导致
-  // 「写回 → splitWf 变 → 重载 → 又写回」无限循环（曾导致拆分视图拖拽即卡死）。
-  // 指纹是「节点/连线的关键字段序列化」，内容级比较与执行顺序无关，能精准区分「自身回流」与「外部真修改」。
-  const splitSigRef = useRef<string | null>(null);
-  const splitSig = (ns: FlowNode[], es: FlowEdge[]) =>
-    JSON.stringify([
-      ns.map((n) => [n.id, n.position.x, n.position.y, n.data?.typeId, n.data?.params ?? null]),
-      es.map((e) => [e.id, e.source, e.sourceHandle ?? null, e.target, e.targetHandle ?? null]),
-    ]);
-  // 标记「当前 wfId 的图是否已从 store 载入本地状态」。
-  // 未载入前禁止写回：挂载首帧 splitNodes 还是初始空数组，此时写回会把目标工作流清空。
-  const loadedWfIdRef = useRef<string | null>(null);
-  // 先于载入 effect 重置目标标记；否则同指纹的新 wfId 会在载入 effect 中被误判为已同步。
-  useEffect(() => {
-    if (loadedWfIdRef.current !== wfId) splitSigRef.current = null;
-  }, [wfId]);
-
-  useEffect(() => {
-    if (!isSplit || !splitWf || !wfId) return;
-    const srcNodes = splitWf.nodes ?? [];
-    const srcEdges = splitWf.edges ?? [];
-    const sig = splitSig(srcNodes, srcEdges);
-    // 内容与本地已同步（含自身写回回流、重复载入）→ 跳过
-    if (splitSigRef.current === sig) return;
-    // 方案 P：splitWf.nodes 已是运行态 FlowNode，直接复用
-    const loadedNodes = srcNodes.map((n) => ({ ...n, data: { ...n.data, dirty: true } }));
-    const loadedEdges = srcEdges.map((e) => ({ ...e }));
-    splitSigRef.current = sig;
-    loadedWfIdRef.current = wfId;
-    setSplitNodes(loadedNodes);
-    setSplitEdges(loadedEdges);
-  }, [isSplit, wfId, splitWf]);
-
   const groups = useWorkflowStore((s) => s.groups);
   const allDefs = useRegistryStore((s) => s.defs);
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
@@ -162,67 +138,8 @@ function WorkflowEditorInner({
         )
     : storeOnConnect;
 
-  // 重新连线：拖拽已有连线的一端到新端口，更新该连线端点（带环路/类型校验）
-  const onReconnect = useCallback(
-    (oldEdge: FlowEdge, conn: Connection) => {
-      const st = useWorkflowStore.getState();
-      const newSource = conn.source ?? oldEdge.source;
-      const newTarget = conn.target ?? oldEdge.target;
-      const newSH = conn.sourceHandle ?? oldEdge.sourceHandle;
-      const newTH = conn.targetHandle ?? oldEdge.targetHandle;
-
-      // 环路校验（与 onConnect 一致，忽略 control 语义）
-      if (wouldCreateCycle(newSource, newTarget, st.edges.filter((e) => e.id !== oldEdge.id))) {
-        st.addLog('error', t('canvas.reconnect.cycleCancelled'));
-        return;
-      }
-      // 端口类型校验
-      const srcNode = nodes.find((n) => n.id === newSource);
-      const tgtNode = nodes.find((n) => n.id === newTarget);
-      const sgs = st.subgraphs;
-      const defs = useRegistryStore.getState().defs;
-      const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, defs, sgs);
-      const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, defs, sgs);
-      const srcPort = srcDef.outputs.find((o) => o.id === newSH);
-      const tgtPort = tgtDef.inputs.find((i) => i.id === newTH);
-      if (!arePortsCompatible(srcPort?.type, tgtPort?.type)) {
-        st.addLog('error', t('canvas.reconnect.typeMismatch'));
-        return;
-      }
-      const kind = (srcPort?.flow as EdgeKind | undefined) ?? (oldEdge.data?.kind as EdgeKind) ?? 'data';
-      const updated: FlowEdge = {
-        ...oldEdge,
-        source: newSource,
-        target: newTarget,
-        sourceHandle: newSH ?? undefined,
-        targetHandle: newTH ?? undefined,
-        data: { ...(oldEdge.data ?? {}), kind },
-      };
-      if (isSplit) {
-        setSplitEdges((es) => es.map((e) => (e.id === oldEdge.id ? updated : e)));
-      } else {
-        st.pushHistory();
-        useWorkflowStore.setState({ edges: st.edges.map((e) => (e.id === oldEdge.id ? updated : e)) });
-        st.markDirty(newSource);
-      }
-    },
-    [isSplit, nodes, setSplitEdges],
-  );
-
-  // 分栏编辑时，把最新图写回 store。
-  // 两道闸门：
-  // 1) loadedWfIdRef !== wfId —— 尚未从 store 载入，此时 splitNodes 是初始空数组，
-  //    写回会把目标工作流清空（曾导致分栏目标工作流节点全丢）。
-  // 2) 内容指纹与上次写回/载入一致 —— 说明没有用户编辑，跳过以切断
-  //    「加载 effect ↔ 写回 effect」死循环（曾打爆 WebView2）。
-  useEffect(() => {
-    if (!isSplit || !wfId) return;
-    if (loadedWfIdRef.current !== wfId) return;
-    const sig = splitSig(splitNodes, splitEdges);
-    if (splitSigRef.current === sig) return;
-    splitSigRef.current = sig;
-    updateWorkflowGraph(wfId, splitNodes, splitEdges);
-  }, [isSplit, wfId, splitNodes, splitEdges, updateWorkflowGraph]);
+  // 重新连线：环路/类型校验与「主画布写 store / 分栏写本地副本」的分支由 useCanvasReconnect 拥有
+  const onReconnect = useCanvasReconnect({ isSplit, nodes, setSplitEdges, t });
 
   const handleNodeClick = useCallback(
     (_: unknown, node: FlowNode) => setSelected(node.id, wfId),
@@ -232,172 +149,17 @@ function WorkflowEditorInner({
 
   const interactionMode = useViewStore((s) => s.interactionMode);
   const setInteractionMode = useViewStore((s) => s.setInteractionMode);
-  const { screenToFlowPosition, getNodes } = useReactFlow();
-
-  // 右键长按框选：按住右键拖动在画布上画矩形，命中节点高亮；短按则弹右键菜单
-  const [rightBox, setRightBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
-  const rightStart = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  // 右键框选是否发生移动：在 mouseup 时落定，供紧随其后的 contextmenu 判断（避免 mouseup 清 rightStart 导致误弹菜单）
-  const rightMovedRef = useRef(false);
-  // 右键框选 drag 期间抑制 React Flow 的 onSelectionChange 写入，避免把框选刚设的 selectedIds 清空
-  const suppressSelectionSync = useRef(false);
-  // 框选上一帧命中集合（join 后的 key），仅当命中真正变化时才写回 store，
-  // 避免每帧 mousemove 都重写整个 nodes 数组（曾导致多次交互后卡死）
-  const lastHitRef = useRef<string | null>(null);
-  const onPaneMouseDownCapture = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 2) return; // 仅右键
-    e.preventDefault();
-    rightStart.current = { x: e.clientX, y: e.clientY, moved: false };
-    suppressSelectionSync.current = true; // 框选期间抑制 React Flow 选区回写，避免清空 selectedIds
-    setRightBox({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
-  }, []);
-  // 供框选 effect 读取的最新值（避免 effect 依赖频繁重建导致监听器叠加）
-  const latestRef = useRef({ screenToFlowPosition, getNodes, isSplit, wfId });
-  latestRef.current = { screenToFlowPosition, getNodes, isSplit, wfId };
-
-  useEffect(() => {
-    const onMove = (ev: MouseEvent) => {
-      const rs = rightStart.current;
-      if (!rs) return;
-      // 自愈：右键已松开却未收到 mouseup（如拖出窗口外松手、菜单拦截、焦点切换），
-      // 主动清理，避免 残留的 rightStart 让后续任意 mousemove（含左键拖节点）持续重写 nodes 数组而致卡死。
-      if (!(ev.buttons & 2)) {
-        rightStart.current = null;
-        suppressSelectionSync.current = false;
-        rightMovedRef.current = false;
-        setRightBox(null);
-        lastHitRef.current = null;
-        return;
-      }
-      if (Math.abs(ev.clientX - rs.x) + Math.abs(ev.clientY - rs.y) > 4) {
-        rs.moved = true;
-      }
-      setRightBox((b) => (b ? { ...b, x1: ev.clientX, y1: ev.clientY } : b));
-      const { screenToFlowPosition, getNodes, isSplit, wfId } = latestRef.current;
-      const sx = Math.min(rs.x, ev.clientX);
-      const sy = Math.min(rs.y, ev.clientY);
-      const ex = Math.max(rs.x, ev.clientX);
-      const ey = Math.max(rs.y, ev.clientY);
-      const tl = screenToFlowPosition({ x: sx, y: sy });
-      const br = screenToFlowPosition({ x: ex, y: ey });
-      const hit = getNodes()
-        .filter((n) => {
-          const w = n.measured?.width ?? 160;
-          const h = n.measured?.height ?? 70;
-          return n.position.x < br.x && n.position.x + w > tl.x && n.position.y < br.y && n.position.y + h > tl.y;
-        })
-        .map((n) => n.id);
-      // 命中集合未变化则跳过整段 store 写入，避免每帧重写整个 nodes 数组（卡死根因之一）
-      const hitKey = hit.join(',');
-      if (hitKey === lastHitRef.current) return;
-      lastHitRef.current = hitKey;
-      // 框选命中后：同步选中态到正确的节点列表（拆分视图写右栏运行态副本，否则写主工作区），
-      // 并写入 selectedIds / selectedNodeId / focusWfId，供对齐、分布、Inspector 等消费。
-      const st = useWorkflowStore.getState();
-      if (isSplit && wfId) {
-        const wf = st.workflows[wfId];
-        if (wf) {
-          useWorkflowStore.setState({
-            workflows: {
-              ...st.workflows,
-              [wfId]: { ...wf, nodes: wf.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })) },
-            },
-            selectedIds: hit,
-            selectedNodeId: hit[0] ?? null,
-            focusWfId: wfId,
-          });
-        }
-      } else {
-        useWorkflowStore.setState({
-          nodes: st.nodes.map((nd) => ({ ...nd, selected: hit.includes(nd.id) })),
-          selectedIds: hit,
-          selectedNodeId: hit[0] ?? null,
-          focusWfId: st.activeWfId,
-        });
-      }
-    };
-    const onUp = () => {
-      setRightBox(null);
-      // mouseup 先于 contextmenu：落定 moved 标记并清理 rightStart，避免残留导致 window mousemove 常驻重渲染（卡死）
-      rightMovedRef.current = rightStart.current?.moved ?? false;
-      rightStart.current = null;
-      suppressSelectionSync.current = false;
-      lastHitRef.current = null;
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    // 鼠标移出窗口/失焦时（mouseup 可能不触发）强制清理框选标记，避免残留导致常驻重渲染
-    const onBlur = () => {
-      rightStart.current = null;
-      rightMovedRef.current = false;
-      suppressSelectionSync.current = false;
-      setRightBox(null);
-      lastHitRef.current = null;
-    };
-    window.addEventListener('blur', onBlur);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('blur', onBlur);
-    };
-  }, []);
 
   // 连线时的友好预校验：环路或端口类型不兼容时，手柄直接显示不可连接
   const isValidConnection = useCallback(
-    (conn: Connection | Edge) => {
-      if (!conn.source || !conn.target) return false;
-      if (conn.source === conn.target) return false;
-      if (wouldCreateCycle(conn.source, conn.target, edges)) return false;
-      // 端口须按节点实例解析：子图节点的端口来自其引用的子图定义
-      const srcNode = nodes.find((n) => n.id === conn.source);
-      const tgtNode = nodes.find((n) => n.id === conn.target);
-      const srcDef = resolvePorts(srcNode?.data.typeId ?? '', srcNode?.data.params, allDefs, subgraphs);
-      const tgtDef = resolvePorts(tgtNode?.data.typeId ?? '', tgtNode?.data.params, allDefs, subgraphs);
-      const srcPort = srcDef.outputs.find((o) => o.id === conn.sourceHandle);
-      const tgtPort = tgtDef.inputs.find((i) => i.id === conn.targetHandle);
-      return arePortsCompatible(srcPort?.type, tgtPort?.type);
-    },
+    (conn: Connection | Edge) => canConnectEdges({ conn, edges, nodes, allDefs, subgraphs }),
     [edges, nodes, allDefs, subgraphs],
   );
 
   const addSubgraphRef = useWorkflowStore((s) => s.addSubgraphRefNode);
 
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const typeId = e.dataTransfer.getData(DND_MIME) || e.dataTransfer.getData('text/plain');
-      if (!typeId) return;
-      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      // 子图载荷格式：`subgraph.ref:<子图 id>`
-      if (typeId.startsWith(`${SUBGRAPH_REF_TYPE}:`)) {
-        if (isSplit) return;
-        addSubgraphRef(typeId.slice(SUBGRAPH_REF_TYPE.length + 1), {
-          x: position.x - 112,
-          y: position.y - 20,
-        });
-        return;
-      }
-      // 分栏工作流：拖入的节点加入本地副本（随后写回 workflows）
-      if (isSplit) {
-        const id = `n-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-        const def = getNodeDef(typeId);
-        const params: Record<string, unknown> = {};
-        for (const p of def?.params ?? []) if (p.default !== undefined) params[p.key] = p.default;
-        setSplitNodes((ns) => [
-          ...ns,
-          {
-            id,
-            type: 'base',
-            position: { x: position.x - 112, y: position.y - 20 },
-            data: { typeId, label: def?.name ?? typeId, params, status: 'idle' as NodeStatus, dirty: true },
-          },
-        ]);
-        return;
-      }
-      addNode(typeId, { x: position.x - 112, y: position.y - 20 });
-    },
-    [addNode, screenToFlowPosition, isSplit, addSubgraphRef],
-  );
+  // 画布 drop（普通节点写 store / 子图引用 / 分栏写本地副本）由 useCanvasDrop 拥有
+  const onDrop = useCanvasDrop({ isSplit, addNode, addSubgraphRef, setSplitNodes, screenToFlowPosition });
 
   // 仅当「标签页栏没有任何标签页」（项目内零工作流）时，画布背景显示欢迎卡片
   const workflowCount = useWorkflowStore((s) => Object.keys(s.workflows).length);
