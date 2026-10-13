@@ -21,6 +21,7 @@ import {
   createDraftOrchestration,
   removeOrchestration,
 } from '../orchestrator/confirm';
+import { computeOrchestratorTaskGraph } from './orchestratorPanelTaskGraph';
 import {
   cancelOrchestrationRun,
   effectiveStageWfId,
@@ -30,11 +31,7 @@ import {
 } from '../orchestrator/run';
 import type { OrchestratorRequest } from '../orchestrator/types';
 import { workerRunViewsFor } from '../projectControl/workerRunView';
-import {
-  buildTaskGraphProjection,
-  buildTaskGraphProjectionFromWorkerRun,
-  taskIssueId,
-} from '../projectControl/taskGraphProjection';
+import { taskIssueId } from '../projectControl/taskGraphProjection';
 import { canStartLegacyOrchestration } from '../projectControl/executionBoundary';
 import { reviseTaskGraphCommand } from '../projectControl/commands';
 import { recordProjectEvents } from '../projectControl/eventBuffer';
@@ -90,43 +87,12 @@ export default function OrchestratorPanel({
   const selectedWorkerRuns = selected
     ? workerRunViewsFor(workerRuns, workerRunRecoveries, selected.id, workerRunEvidence, workerRunSideEffects, workerCleanupProposals, projectControl.taskGraphs ?? [])
     : [];
-  const taskGraphDAG = useMemo(() => {
-    if (!selected) return { projection: null, error: null };
-    const taskGraphRuns = workerRuns
-      .filter((run) => run.projectId === projectId && run.orchestrationId === selected.id)
-      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
-    const latestRun = taskGraphRuns.at(-1);
-    const selectedGraphId = taskGraphSelection?.projectId === projectId ? taskGraphSelection.taskGraphId : undefined;
-    const graphId = selectedGraphId
-      ?? latestRun?.taskGraphId
-      ?? selected.draft?.stages.find((stage) => stage.sourceTaskGraphId)?.sourceTaskGraphId;
-    const graph = graphId
-      ? projectControl.taskGraphs?.find((item) => item.id === graphId)
-      : undefined;
-    if (!graph) return { projection: null, error: null };
-    const issues = projectControl.issues.filter((issue) => issue.projectId === projectId || issue.projectId === null);
-    try {
-      if (latestRun) {
-        return {
-          projection: buildTaskGraphProjectionFromWorkerRun({ graph, issues, run: latestRun }),
-          error: null,
-        };
-      }
-      return {
-        projection: buildTaskGraphProjection({
-          graph,
-          issues,
-          execution: { lastSequence: 0, runs: {}, tasks: {}, taskExecutions: {}, attempts: {} },
-        }),
-        error: null,
-      };
-    } catch (cause) {
-      return {
-        projection: null,
-        error: cause instanceof Error ? cause.message : String(cause),
-      };
-    }
-  }, [projectControl.issues, projectControl.taskGraphs, projectId, selected, taskGraphSelection, workerRuns]);
+  // DAG 投影（orchestratorPanelTaskGraph.computeOrchestratorTaskGraph，原 useMemo 回调）
+  const taskGraphDAG = useMemo(
+    () => computeOrchestratorTaskGraph({ selected, workerRuns, projectId, taskGraphSelection, projectControl }),
+    // 依赖粒度与原实现一致：仅 issues / taskGraphs 两个字段参与投影
+    [projectControl.issues, projectControl.taskGraphs, projectId, selected, taskGraphSelection, workerRuns],
+  );
   const allAgents = [...globalAgents, ...agents];
   const workflowsList = Object.entries(workflows).map(([id, w]) => ({
     id,
