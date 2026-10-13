@@ -173,3 +173,16 @@ Environment limits recorded for this classification: direct Linux Node 22 packag
 ### 更正：`checkpoint/readability-project-session-verified-20261013`
 
 该 tag 保留作为审计事实，不删除也不移动。按本轮边界第 8 条，界面改动必须有**同一快照**的 GUI 回读才能打 verified；该 tag 只有质量门与 exact 评审、没有同快照 GUI 回读，因此不满足 verified 条件。最终以 closeout run r4 切片 5 的分支整体验证为准：若切片 5 通过，则在当次回填中把该条标为被整体 verified tag 取代；若切片 5 不通过，则该条与切片 5 同等保持未验证。
+
+## R5 ledger correction: R4 verified-tag overclaims (2026-10-14)
+
+R5 plan `.hermes/plans/2026-10-13_233500-r5-long-run.md` re-evaluates two R4 tags. Both tag refs remain untouched for auditability; this section corrects their evidence classification and defines which R4 snapshot may serve as a verified ancestor in R5.
+
+| Tag retained | Target | Correction | Evidence / scope |
+| --- | --- | --- | --- |
+| `checkpoint/readability-execute-node-body-verified-20261013-r4` | `e66d89d13469cd189ff719544694bf375e02f14d` | **evidence-missing; not a valid verified ancestor** | The review `a583834..e66d89d` covered the Slice8 test/fix delta, not the full code ancestry: its target tree also contained the unreviewed Slice9 refactor and four unreviewed R4 add-ons. Optional isolated replay: archive exact `e66d89d` to `D:/Hermes/cache/scratch/r5-e66-lifecycle-probe-20261013`, overlay regression test blob `25b76f812d98ed62a45fa12334df22730ac86435` from `5ae675f`, and run the focused test. Both regressions failed as expected: immediate running state was `undefined`; `EventLogWriter.close` had 0 calls after injected session-init failure. |
+| `checkpoint/readability-run-workflow-verified-20261013-r4` | `3700d0c0321baf40ed6936c93c0a0c9a02550414` | **evidence-missing; not a valid verified ancestor** | The original Slice9 range `d84cff1..cbc6f4a` had `passed=false` with two lifecycle findings. The repair review `8a31eb5..3700d0c` passed for its delta, but did not review every intervening code change since the last valid verified ancestor. The target tree still includes four R4 add-ons without complete exact-review coverage. |
+| `checkpoint/readability-check-params-verified-20261013-r4` | `81d22c69bbda64584ecddb76a9486a323eeb77d7` | **valid for its exact bounded snapshot** | Same-snapshot gates and clean exact review are recorded in the R4 report/development log. |
+| `checkpoint/readability-workflow-editor-verified-20261013-r4` | `39f54f45c7ac57ccee92728dff2b9a25738eb52e` | **valid for its exact bounded snapshot; nearest valid R4 verified ancestor** | Same-snapshot gates, Browser evidence and clean exact review are recorded in the R4 report/development log. |
+
+No tag was deleted, moved, or renamed. The Slice8/Slice9 lifecycle repairs remain useful code changes, but their historical `verified` labels do not satisfy the R5 coverage rule. R5's most recent valid verified ancestor is `39f54f45c7ac57ccee92728dff2b9a25738eb52e`; Slice5/12 still require full-range review of every code change after that ancestor plus their own same-snapshot GUI/gate requirements before any R5 verified tag.
