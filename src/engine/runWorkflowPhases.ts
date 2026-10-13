@@ -207,6 +207,7 @@ export interface StartRunSessionInput {
   signal: AbortSignal;
   opts: RunOptions;
   nodeCount: number;
+  onEventLogAttached: (detach: () => void) => void;
 }
 
 export interface RunSession {
@@ -227,6 +228,7 @@ export function startRunSession({
   signal,
   opts,
   nodeCount,
+  onEventLogAttached,
 }: StartRunSessionInput): RunSession {
   wf.setRunning(true, wfId);
   wf.resetStatuses(wfId, { preserveOutputs: Boolean(opts.incremental || opts.retryFailed) });
@@ -253,6 +255,7 @@ export function startRunSession({
   const eventLogRoot = useWorkflowStore.getState().projectPath;
   if (eventLogMode !== 'off' && eventLogRoot) {
     detachEventLog = attachEventLog(getRunBus(), eventLogRoot, wfId, myRun, eventLogMode);
+    onEventLogAttached(detachEventLog);
   }
   // 清空运行期成本账本，供 Companion 浮窗实时展示
   rt.resetUsage();
