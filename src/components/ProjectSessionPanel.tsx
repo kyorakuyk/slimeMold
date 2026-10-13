@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   ArrowRight,
   TriangleAlert,
@@ -29,6 +28,7 @@ import type { ProjectControlSnapshot, ProjectSession } from '../projectControl/t
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
 import ProjectSessionPanelView from './projectSession/ProjectSessionPanelView';
 import useProjectSessionConversation from './projectSession/useProjectSessionConversation';
+import useProjectSessionWorkerActions from './projectSession/useProjectSessionWorkerActions';
 
 interface ProjectSessionPanelProps {
   sessionId: string;
@@ -164,37 +164,21 @@ export default function ProjectSessionPanel({
     responseQuestions,
   });
 
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
-  const [workerStartBusy, setWorkerStartBusy] = useState(false);
-  const [workerRuntime, setWorkerRuntime] = useState<'codex' | 'antigravity'>('codex');
-
-  const handleWorkerRecovery = (decision: Exclude<WorkerRunRecoveryDecision, 'inspect'>) => {
-    if (!onRecoverWorkerRun || !currentWorkerRun || recoveryBusy || !currentWorkerRecoveryActions.includes(decision)) return;
-    const runId = currentWorkerRun.runId;
-    const reason = `用户在项目驾驶舱选择 ${decision}`;
-    setRecoveryBusy(true);
-    setError(null);
-    void (async () => {
-      try {
-        await onRecoverWorkerRun(runId, decision, reason, workerRuntime);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        setRecoveryBusy(false);
-      }
-    })();
-  };
-
-  const handleStartQueuedWorker = () => {
-    if (!onRunWorker || !currentWorkerRun || currentWorkerRun.status !== 'queued' || currentWorkerRunRecovery || workerStartBusy) return;
-    setWorkerStartBusy(true);
-    setError(null);
-    void Promise.resolve(onRunWorker(currentWorkerRun.runId, workerRuntime))
-      .catch((cause) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => setWorkerStartBusy(false));
-  };
+  const {
+    recoveryBusy,
+    workerStartBusy,
+    workerRuntime,
+    setWorkerRuntime,
+    handleWorkerRecovery,
+    handleStartQueuedWorker,
+  } = useProjectSessionWorkerActions({
+    currentWorkerRun,
+    currentWorkerRunRecovery,
+    currentWorkerRecoveryActions,
+    onRunWorker,
+    onRecoverWorkerRun,
+    setError,
+  });
 
   const handleApproveBrief = async () => {
     const state = useWorkflowStore.getState();
