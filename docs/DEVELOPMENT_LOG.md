@@ -5827,3 +5827,13 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 验证结果（code snapshot `adced7998f3e0fac0b1e142d41e30c95abd76730`）：`npm run test` 237 files / 1,542 tests 全部通过（切片 1a 后为 236/1,540）；`npm run build` 通过（保留既有 warnings）；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 基准 1,139 keys、en-US 对齐（切片 1a 后为 1,113）；`git diff --check` 无空白错误。
 - 按计划列出本切片不处理的其余中文日志调用：对 `src/**`（排除测试与禁区文件）做 AST 扫描，`addLog`/`log` 的 message 参数本身为含汉字字面量的调用共 **63 处、16 个文件**（`executor.ts` 18、`runFinalizer.ts` 9、`workflowIO.ts` 6、`workflowSubgraphCommands.ts` 5 等），明细见报告；留给加时切片 2。
 - 本地提交 `adced7998f3e0fac0b1e142d41e30c95abd76730`，tag `checkpoint/ui-locale-literals-unverified-20261013-r4`。按计划不做 GUI 回读、不打 verified；无独立 reviewer verdict。未 push。
+
+### 7.444 partial/unverified：closeout-run-r4 Slice2 重复 workflow ID
+
+- 缺陷来源：工作流 ID 用 `wf-<毫秒时间戳>` 生成，同一毫秒内连续新建会重复；实测同一固定时钟下连续两次 `newWorkflowInProject`，第二次直接复用当前激活工作流 ID，把刚创建的工作流覆盖掉（工作流数量停在 2，名称重复为「工作流 2」）。
+- 新增 `src/store/workflowId.ts`：`createWorkflowId(now, taken)` 保留 `wf-<时间戳>` 形态，与传入的既有/已发出 ID 冲突时追加递增后缀 `-2`、`-3`…。
+- 替换计划列出的 5 处：`workflowRegistryActions.ts` 的 `capturedWorkflowId`（`wf-${deps.now()}`）与新建 ID（`wf-${deps.now() + 1}`，taken 含当前 workflows 与本次捕获 ID）、`workflowLifecycleState.ts` 的 `buildNewProjectState`、`workflowRegistryState.ts` 的 `buildSwitchWorkflowState` 游离态兜底 ID、`workflowSerialize.ts` 非 stable 分支的兜底 ID（stable 分支 `wf-${current.name}` 未动）。已有 ID 形态与时钟顺序保持不变。
+- 测试：新增 `src/store/workflowIdUniqueness.test.ts`（test-only RED 先单独提交 `18eaac37217e2e1f54966aef8af7542cf8bcbc29`，tag `checkpoint/workflow-id-unique-tests-red-unverified-20261013-r4`）。改前因 `expected [ 'wf-1000', 'wf-1001' ] to have a length of 3 but got 2` 失败；改后两个用例通过。既有特征测试 `src/store/workflowStore.newWorkflow.test.ts` 未改且仍通过（仍断言 `wf-1000` / `wf-2001` 的时钟顺序）。
+- 验证结果（code snapshot `f34c824182168dcb0d6e3eafc4c94d57eda28c2b`）：`npm run test` 238 files / 1,544 tests 全部通过（切片 1b 后为 237/1,542）；`npm run build` 通过；`npx tsc -p tsconfig.app.json --noEmit` 无输出；`npm run i18n:check` 1,139 keys 对齐；`git diff --check` 无空白错误。
+- 本切片未处理的同类问题（计划未授权，已记入报告）：`buildNewProjectState` 的 `proj-${Date.now()}` 与 `buildProjectFile` 的项目 ID 仍有同毫秒重复风险。
+- 本地提交 `f34c824182168dcb0d6e3eafc4c94d57eda28c2b`，tag `checkpoint/workflow-id-unique-unverified-20261013-r4`；无独立 reviewer verdict。未 push。
