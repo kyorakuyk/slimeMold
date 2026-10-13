@@ -1,59 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import {
-  FilePlus2,
-  FolderOpen,
-  Save,
-  Play,
-  Square,
-  Bot,
-  Puzzle,
-  Variable,
-  History,
-  Trash2,
-  Eraser,
-  ZoomIn,
-  ZoomOut,
-  Maximize,
-  Grid3x3,
-  Keyboard,
-  Info,
-  FileDown,
-  FolderPlus,
-  FileStack,
-  FileBox,
-  Columns2,
-  Plus,
-  X,
-  FastForward,
-  RotateCcw,
-  RefreshCw,
-  Zap,
-  SkipForward,
-  Undo2,
-  Redo2,
-  Wand2,
-  Bug,
-  Boxes,
-} from 'lucide-react';
 import type { SidePanelKey } from './LeftSidebar';
 import type { ProjectFile } from '../types/projectFile';
-import TopBarMenuRow, { type MenuAction, type MenuDef } from './topBar/TopBarMenuRow';
+import TopBarMenuRow, { type MenuDef } from './topBar/TopBarMenuRow';
+import { buildTopBarMenus } from './topBar/topBarMenus';
+import WorkflowTabStrip from './topBar/WorkflowTabStrip';
+import TopBarActionButtons from './topBar/TopBarActionButtons';
 import { useTopBarKeyboardShortcuts } from './topBar/useTopBarKeyboardShortcuts';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useViewStore } from '../store/viewStore';
 import { useT } from '../i18n/useT';
-import { runWorkflow, stopWorkflow, resumeRun, rerunWorkflow } from '../engine/executor';
-import { exportWorkflow, importWorkflow, copyWorkflowText } from '../io/workflowIO';
+import { runWorkflow, stopWorkflow, rerunWorkflow } from '../engine/executor';
 import { alertDialog, confirmDialog, openDirDialog, isTauri } from '../platform/env';
 import { ask } from '@tauri-apps/plugin-dialog';
-import {
-  openProjectFile,
-  getRecentProjects,
-  clearRecentProjects,
-  pushRecentProject,
-  saveLastSession,
-} from '../io/projectIO';
+import { openProjectFile, pushRecentProject, saveLastSession } from '../io/projectIO';
 
 interface TopBarProps {
   sidebarOpen: boolean;
@@ -199,108 +159,59 @@ export default function TopBar({
     closeProject();
   };
 
-  const menus: MenuDef[] = [
-    {
-      label: t('topbar.file'),
-      items: [
-        { label: t('menu.newProject'), icon: <FolderPlus size={14} />, shortcut: 'Ctrl+Shift+N', onClick: handleNewProject },
-        { label: t('menu.openProject'), icon: <FolderOpen size={14} />, onClick: handleOpenProject },
-        {
-          type: 'submenu',
-          label: t('menu.openRecent'),
-          icon: <FileStack size={14} />,
-          items: (() => {
-            const recents = getRecentProjects();
-            if (recents.length === 0) return [{ label: t('menu.noRecent'), onClick: () => {} }];
-            return [
-              ...recents.map((r) => ({
-                label: r.name,
-                onClick: async () => {
-                  const { openProjectByPath } = await import('../io/projectIO');
-                  const file = await openProjectByPath(r.path);
-                  if (file) {
-                    openProject(file, r.path);
-                    persistSession(r.path);
-                    pushRecentProject({ path: r.path, name: file.name, openedAt: new Date().toISOString() });
-                    if ((file as ProjectFile & { legacy?: boolean }).legacy) {
-                      addLog('info', t('log.legacyProject'));
-                    }
-                  }
-                },
-              })),
-              { label: t('menu.clearRecent'), danger: true, onClick: clearRecentProjects },
-            ] as MenuAction[];
-          })(),
-        },
-        'separator',
-        { label: t('menu.newWorkflow'), icon: <FilePlus2 size={14} />, onClick: newWorkflow },
-        { label: t('menu.workflowWizard'), icon: <Wand2 size={14} />, onClick: onOpenWizard },
-        { label: t('menu.importWorkflow'), icon: <FileDown size={14} />, onClick: importWorkflow },
-        { label: t('menu.saveProject'), icon: <Save size={14} />, shortcut: 'Ctrl+S', onClick: handleSaveProject },
-        { label: t('menu.saveProjectAs'), icon: <FileBox size={14} />, onClick: handleSaveProjectAs, disabled: !projectName },
-        { label: t('menu.exportWorkflow'), icon: <Save size={14} />, onClick: () => exportWorkflow() },
-        { label: t('menu.copyWorkflowText'), icon: <FileStack size={14} />, onClick: () => copyWorkflowText() },
-        'separator',
-        { label: t('menu.closeProject'), icon: <X size={14} />, danger: true, disabled: !projectName, onClick: handleCloseProject },
-      ],
-    },
-    {
-      label: t('topbar.edit'),
-      items: [
-        { label: t('menu.deleteSelected'), icon: <Trash2 size={14} />, shortcut: 'Del', danger: true, disabled: !selectedNodeId, onClick: deleteSelected },
-        { label: t('menu.clearCanvas'), icon: <Eraser size={14} />, danger: true, disabled: !hasNodes, onClick: clearGraph },
-      ],
-    },
-    {
-      label: t('topbar.view'),
-      items: [
-        { label: t('menu.zoomIn'), icon: <ZoomIn size={14} />, shortcut: 'Ctrl+=', onClick: () => zoomIn() },
-        { label: t('menu.zoomOut'), icon: <ZoomOut size={14} />, shortcut: 'Ctrl+-', onClick: () => zoomOut() },
-        { label: t('menu.fitView'), icon: <Maximize size={14} />, shortcut: 'Shift+1', onClick: () => fitView({ padding: 0.2, duration: 200 }) },
-        'separator',
-        { label: showGrid ? t('menu.hideGrid') : t('menu.showGrid'), icon: <Grid3x3 size={14} />, onClick: toggleGrid },
-      ],
-    },
-    {
-      label: t('topbar.run'),
-      items: [
-        { label: running ? t('menu.stopRun') : t('menu.runFull'), icon: running ? <Square size={14} /> : <Play size={14} />, onClick: running ? () => stopWorkflow(activeWfId) : () => runWorkflow({ skipFailed: skipFailed, wfId: activeWfId }) },
-        { label: t('menu.runIncremental'), icon: <FastForward size={14} />, onClick: () => runWorkflow({ incremental: true, skipFailed: skipFailed, wfId: activeWfId }), disabled: running },
-        { label: t('menu.runSandbox'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, wfId: activeWfId }), disabled: running },
-        { label: t('menu.runGitworktree'), icon: <Boxes size={14} />, onClick: () => runWorkflow({ skipFailed: skipFailed, sandbox: true, sandboxMode: 'gitworktree', wfId: activeWfId }), disabled: running },
-        { label: t('menu.resumeRun'), icon: <RotateCcw size={14} />, onClick: () => resumeRun(activeWfId), disabled: running },
-        { label: running ? t('menu.rerunForce') : t('menu.rerun'), icon: <RefreshCw size={14} />, onClick: () => rerunWorkflow(activeWfId) },
-        'separator',
-        {
-          label: failFast ? t('menu.failFastOn') : t('menu.failFastOff'),
-          icon: <Zap size={14} />,
-          onClick: () => setFailFast(!failFast),
-        },
-        {
-          label: skipFailed ? t('menu.skipFailedOn') : t('menu.skipFailedOff'),
-          icon: <SkipForward size={14} />,
-          onClick: () => setSkipFailed(!skipFailed),
-          disabled: failFast,
-        },
-      ],
-    },
-    {
-      label: t('topbar.tools'),
-      items: [
-        { label: t('menu.agents'), icon: <Bot size={14} />, onClick: () => onOpenPanel('agents') },
-        { label: t('menu.plugins'), icon: <Puzzle size={14} />, onClick: () => onOpenPanel('plugins') },
-        { label: t('menu.variables'), icon: <Variable size={14} />, onClick: () => onOpenPanel('variables') },
-        { label: t('menu.history'), icon: <History size={14} />, onClick: () => onOpenPanel('history') },
-      ],
-    },
-    {
-      label: t('topbar.help'),
-      items: [
-        { label: t('menu.shortcuts'), icon: <Keyboard size={14} />, onClick: onOpenShortcuts },
-        { label: t('menu.about'), icon: <Info size={14} />, onClick: () => alert(t('about.text')) },
-      ],
-    },
-  ];
+  /** 最近项目子菜单：按路径打开（原内联实现搬到这里，行为不变） */
+  const handleOpenRecent = async (path: string) => {
+    const { openProjectByPath } = await import('../io/projectIO');
+    const file = await openProjectByPath(path);
+    if (file) {
+      openProject(file, path);
+      persistSession(path);
+      pushRecentProject({ path, name: file.name, openedAt: new Date().toISOString() });
+      if ((file as ProjectFile & { legacy?: boolean }).legacy) {
+        addLog('info', t('log.legacyProject'));
+      }
+    }
+  };
+
+  /** 新建工作流：项目内直接新建；游离态先让用户指定存放位置（取消则落默认位置） */
+  const handleNewWorkflow = async () => {
+    if (projectName) {
+      newWorkflowInProject();
+      return;
+    }
+    const ws = await openDirDialog();
+    newWorkflowInProject(ws); // ws 为 null 时 store 内部记为游离、未指定路径
+  };
+
+  const menus: MenuDef[] = buildTopBarMenus({
+    t,
+    running,
+    failFast,
+    skipFailed,
+    showGrid,
+    projectName,
+    selectedNodeId,
+    hasNodes,
+    activeWfId,
+    setFailFast,
+    setSkipFailed,
+    deleteSelected,
+    clearGraph,
+    zoomIn,
+    zoomOut,
+    fitView,
+    toggleGrid,
+    newWorkflow,
+    onOpenWizard,
+    onOpenPanel,
+    onOpenShortcuts,
+    onNewProject,
+    onOpenProject: handleOpenProject,
+    onSaveProject: handleSaveProject,
+    onSaveProjectAs: handleSaveProjectAs,
+    onCloseProject: handleCloseProject,
+    onOpenRecent: handleOpenRecent,
+  });
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -322,167 +233,40 @@ export default function TopBar({
         onOpenSimpleView={onOpenSimpleView}
       />
 
-      {/* 工具条：工作流标签浏览器 */}
-      <div className="sm-pro-workflow-bar flex h-11 items-center gap-2 border-t px-3" style={{ borderColor: 'var(--sm-line)' }}>
-        {/* 项目名 + 脏标记 */}
-        <div className="sm-pro-project-crumb flex shrink-0 items-center gap-1 pr-2" style={{ borderRight: '1px solid var(--sm-line)' }}>
-          <FolderOpen size={13} className="text-ink-faint" />
-          <span className="max-w-[160px] truncate text-[12.5px] font-medium" title={projectName ?? t('topbar.untitledProject')}>
-            {projectName ?? t('topbar.untitledProject')}
-          </span>
-          {projectDirty && (
-            <span className="text-[13px] leading-none text-err" title={t('topbar.dirtyMark')}>
-              *
-            </span>
-          )}
-        </div>
-        {/* 标签条 + 新建加号 */}
-        <div className="sm-pro-workflow-tabs flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {wfList.map(([id, wf]) => {
-            const active = id === activeWfId;
-            return (
-              <div
-                key={id}
-                className="sm-pro-workflow-tab group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md border-b-2 px-2.5"
-                data-active={active}
-                style={{
-                  borderColor: active ? 'var(--sm-accent)' : 'transparent',
-                  background: active ? 'color-mix(in srgb, var(--sm-accent) 8%, transparent)' : 'transparent',
-                  color: active ? 'var(--sm-accent)' : 'var(--sm-ink-soft)',
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.background = 'var(--sm-bg)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                {editingId === id ? (
-                  <input
-                    autoFocus
-                    className="w-24 bg-transparent text-[12.5px] outline-none"
-                    defaultValue={wf.name}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v) renameWorkflow(v);
-                      setEditingId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      if (e.key === 'Escape') setEditingId(null);
-                    }}
-                  />
-                ) : (
-                  <button
-                    className="flex min-w-0 items-center gap-1.5 truncate text-[12.5px]"
-                    onClick={() => switchWorkflow(id)}
-                    onDoubleClick={() => {
-                      switchWorkflow(id);
-                      setEditingId(id);
-                    }}
-                    title={wf.name}
-                  >
-                    <FileBox size={12} />
-                    <span className="truncate">{wf.name}</span>
-                  </button>
-                )}
-                <button
-                  className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
-                  title={t('topbar.closeWorkflow')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeWorkflow(id);
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
-          })}
-          <button
-            className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
-            title={projectName ? t('topbar.newWorkflowHint') : t('topbar.newWorkflowHintFree')}
-            onClick={async () => {
-              if (projectName) {
-                // 已在项目内：工作流归属项目，无需指定路径
-                newWorkflowInProject();
-                return;
-              }
-              // 游离工作流：让用户指定存放位置；取消则落默认位置
-              const ws = await openDirDialog();
-              newWorkflowInProject(ws); // ws 为 null 时 store 内部记为游离、未指定路径
-            }}
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-
-        <span className="sm-pro-workflow-divider mx-1 h-4 w-px" style={{ background: 'var(--sm-line)' }} />
-        {/* 拆分视图气泡 */}
-        <button
-          className="sm-btn px-1.5"
-          title={t('topbar.splitView')}
-          data-active={splitView}
-          onClick={toggleSplit}
-          style={splitView ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
-        >
-          <Columns2 size={15} />
-        </button>
-
-        <button
-          className="sm-btn px-1.5"
-          title={t('topbar.resetStatus')}
-          onClick={() => {
+      {/* 工具条：工作流标签浏览器（右侧动作按钮作为 children 保持同一 DOM 层级） */}
+      <WorkflowTabStrip
+        projectName={projectName}
+        projectDirty={projectDirty}
+        wfList={wfList}
+        activeWfId={activeWfId}
+        editingId={editingId}
+        setEditingId={setEditingId}
+        onSwitch={switchWorkflow}
+        onRename={renameWorkflow}
+        onRemove={removeWorkflow}
+        onNewWorkflow={handleNewWorkflow}
+        t={t}
+      >
+        <TopBarActionButtons
+          t={t}
+          splitView={splitView}
+          onToggleSplit={toggleSplit}
+          onResetStatus={() => {
             stopWorkflow(activeWfId);
             resetStatuses(activeWfId);
           }}
-        >
-          <RotateCcw size={14} />
-        </button>
-
-        <button
-          className="sm-btn px-1.5"
-          title={debugMode ? t('topbar.debugOn') : t('topbar.debugOff')}
-          data-active={debugMode}
-          onClick={toggleDebug}
-          style={debugMode ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
-        >
-          <Bug size={14} />
-        </button>
-
-        <button
-          className="sm-btn px-1.5"
-          title={t('topbar.undo')}
-          disabled={!canUndo}
-          onClick={() => useWorkflowStore.getState().undo()}
-        >
-          <Undo2 size={14} />
-        </button>
-        <button
-          className="sm-btn px-1.5"
-          title={t('topbar.redo')}
-          disabled={!canRedo}
-          onClick={() => useWorkflowStore.getState().redo()}
-        >
-          <Redo2 size={14} />
-        </button>
-
-        {running ? (
-          <>
-            <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} onClick={() => stopWorkflow(activeWfId)}>
-              <Square size={14} />
-            </button>
-            <button className="sm-btn px-1.5" title={t('topbar.rerunForce')} onClick={() => rerunWorkflow(activeWfId)}>
-              <RefreshCw size={14} />
-            </button>
-          </>
-        ) : (
-          <button className="sm-pro-run-button sm-btn sm-btn-primary px-2" title={t('topbar.run')} onClick={() => runWorkflow({ wfId: activeWfId })}>
-          <Play size={14} />
-          <span className="sm-pro-run-label">{t('topbar.run')}</span>
-          </button>
-        )}
-      </div>
+          debugMode={debugMode}
+          onToggleDebug={toggleDebug}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={() => useWorkflowStore.getState().undo()}
+          onRedo={() => useWorkflowStore.getState().redo()}
+          running={running}
+          onStop={() => stopWorkflow(activeWfId)}
+          onRerunForce={() => rerunWorkflow(activeWfId)}
+          onRun={() => runWorkflow({ wfId: activeWfId })}
+        />
+      </WorkflowTabStrip>
     </header>
   );
 }
