@@ -6023,3 +6023,8 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 全新 Browser context 以 English/advanced 模式回读 Settings → Models、Routing 与 Tokens；未创建 ProjectSession、未调用模型、未启动 Worker。English 视图中仅保留计划允许的工作区数据值 `未命名工作流` 与 `Ollama 本地智能体`。Token 面板为空，因此实际单复数由单测覆盖。Browser preload hooks 的 console/error/unhandled-rejection 计数为 0；此结果不代表真实 Tauri 验收。截图 `.hermes/reports/assets/r5-s2-{models,routing,tokens}-en.png` 均 1280×900、hash 互异，完整 SHA-256 和回读边界见 ignored 本地报告 `.hermes/reports/2026-10-14-r5.md`。
 - 验证结果（code snapshot `c9c9243236694f419c879c6580045aa8a70b3a0c`）：`npm run test -- --reporter=dot` 244 files / 1,572 tests；`npm run build` 成功、2,163 modules（保留既有 dynamic/static import 与 >500kB chunk warnings）；`npx tsc -p tsconfig.app.json --noEmit` 和 `npx tsc --noEmit` 均 exit 0；`npm run i18n:check` 1,202 keys 对齐；`git diff --check` 通过。独立 exact review 对该快照返回 `working_tree_clean=true`、`passed=true`，security/logic findings 均空；建议增加 Settings Models/Routing en-US mounted component assertions，作为非阻塞后续项记录，未扩展本切片。
 - 本切片 code tag `checkpoint/ui-locale-catalog-labels-unverified-20261014-r5` 指向上述 target；按 R5 计划 Slice2 仍为 unverified，无 Tauri GUI 验收或 verified tag。未 push。
+
+### 7.466 R5 Slice2 补记：报告收尾超过时间盒
+
+- Slice2 hard cutoff 为 `2026-10-14 01:43:10 +0800`；经 Git read-back，docs-only closure commit/tagger timestamp 为 `2026-10-14 01:48:13 +0800`，超过 5 分 03 秒。质量门、Browser 回读与 exact review 已完成；超时部分仅用于更新本地报告与开发日志，没有超时后的生产代码改动。
+- Slice2 保持 unverified，code tag 仍指向 reviewer 精确审查的 `c9c9243236694f419c879c6580045aa8a70b3a0c`；不迁移 verdict 至 docs-only HEAD，不创建 verified tag。后续 Slice3 start tag 固定指向 `2f6ae37d9a527bf8b9d26142dff1e4bfe1240c7e`，报告收尾时间偏差已如实登记。
