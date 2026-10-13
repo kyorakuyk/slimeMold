@@ -26,13 +26,22 @@ interface WorkerTaskAuditContext {
   replayedTask: ReplayedWorkerTask;
 }
 
+/** 单个 Worker Task 校验共用的事实（参数对象，避免长位置参数列表）。 */
+interface WorkerTaskCheckContext {
+  context: WorkerRunConsistencyAuditContext;
+  run: WorkerRunQueueState;
+  taskGraph: ProjectTaskGraph | undefined;
+  graphVersionMatches: boolean;
+}
+
 export function checkWorkerRun(context: WorkerRunConsistencyAuditContext, run: WorkerRunQueueState): void {
   const taskGraph = context.input.taskGraphs?.find((graph) => graph.id === run.taskGraphId);
   const graphVersionMatches = checkTaskGraphFacts(context, run, taskGraph);
   checkSucceededRunFacts(context, run, taskGraph);
   checkReplayedRunFacts(context, run);
+  const taskCheckContext: WorkerTaskCheckContext = { context, run, taskGraph, graphVersionMatches };
   for (const [taskId, task] of Object.entries(run.tasks)) {
-    checkWorkerTask(context, run, taskGraph, graphVersionMatches, taskId, task);
+    checkWorkerTask(taskCheckContext, taskId, task);
   }
 }
 
@@ -139,14 +148,12 @@ function checkReplayedRunFacts(context: WorkerRunConsistencyAuditContext, run: W
 }
 
 function checkWorkerTask(
-  context: WorkerRunConsistencyAuditContext,
-  run: WorkerRunQueueState,
-  taskGraph: ProjectTaskGraph | undefined,
-  graphVersionMatches: boolean,
+  taskCheckContext: WorkerTaskCheckContext,
   taskId: string,
   task: WorkerRunQueueState['tasks'][string],
 ): void {
-  const expectedAcceptanceStageId = checkAcceptanceStage(context, run, taskGraph, graphVersionMatches, taskId, task);
+  const { context, run } = taskCheckContext;
+  const expectedAcceptanceStageId = checkAcceptanceStage(taskCheckContext, taskId, task);
   const expectedTaskExecutionId = createTaskExecutionId(run.runId, taskId);
   if (task.taskExecutionId && task.taskExecutionId !== expectedTaskExecutionId) {
     context.issues.push(issue(
@@ -191,13 +198,11 @@ function checkWorkerTask(
 }
 
 function checkAcceptanceStage(
-  context: WorkerRunConsistencyAuditContext,
-  run: WorkerRunQueueState,
-  taskGraph: ProjectTaskGraph | undefined,
-  graphVersionMatches: boolean,
+  taskCheckContext: WorkerTaskCheckContext,
   taskId: string,
   task: WorkerRunQueueState['tasks'][string],
 ): string | undefined {
+  const { context, run, taskGraph, graphVersionMatches } = taskCheckContext;
   const trustedGraph = taskGraph && graphVersionMatches && taskGraph.approval === 'approved'
     ? taskGraph
     : undefined;

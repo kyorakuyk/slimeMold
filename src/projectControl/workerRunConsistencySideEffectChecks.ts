@@ -19,6 +19,15 @@ interface SideEffectTaskContext {
   currentLineageMatches: boolean;
 }
 
+/** receipt 成功来源校验共用的事实（参数对象，避免长位置参数列表）。 */
+interface WorkerReceiptProvenanceContext {
+  context: WorkerRunConsistencyAuditContext;
+  run: WorkerRunQueueState;
+  task: WorkerRunQueueState['tasks'][string];
+  taskId: string;
+  expectedLineage: ExpectedTaskLineage;
+}
+
 export function checkWorkerRunSideEffects(context: WorkerRunConsistencyAuditContext): void {
   if (context.input.sideEffects) {
     for (const effect of context.input.sideEffects) {
@@ -145,15 +154,8 @@ function checkWorkerOrCleanupSideEffect(
   const inputHashMatches = isCleanup && effect.status === 'unknown' && effect.recovery === 'needs-user'
     ? !!task.baseRevision && effect.inputHash.startsWith(`${task.baseRevision}:`)
     : expectedInputHash !== undefined && effect.inputHash === expectedInputHash;
-  const receiptSuccessProvenanceMatches = workerReceiptSuccessProvenanceMatches(
-    context,
-    effect,
-    run,
-    task,
-    taskId,
-    expectedLineage,
-    isCleanup,
-  );
+  const receiptContext: WorkerReceiptProvenanceContext = { context, run, task, taskId, expectedLineage };
+  const receiptSuccessProvenanceMatches = workerReceiptSuccessProvenanceMatches(receiptContext, effect, isCleanup);
   const lifecycleMatches = effect.kind === (isCleanup ? 'worktree-cleanup' : 'worker-execution')
     && expectedTarget !== undefined
     && effect.target === expectedTarget
@@ -171,36 +173,18 @@ function checkWorkerOrCleanupSideEffect(
 }
 
 function workerReceiptSuccessProvenanceMatches(
-  context: WorkerRunConsistencyAuditContext,
+  receiptContext: WorkerReceiptProvenanceContext,
   effect: SideEffectRecord,
-  run: WorkerRunQueueState,
-  task: WorkerRunQueueState['tasks'][string],
-  taskId: string,
-  expectedLineage: ExpectedTaskLineage,
   isCleanup: boolean,
 ): boolean {
+  const { task, taskId } = receiptContext;
   let matches = true;
   if (!isCleanup && effect.status === 'receipt' && effect.receipt?.outcome === 'succeeded') {
     try {
       const success = normalizeWorkerSuccessProvenance(effect.receipt.evidenceIds, effect.receipt.acceptanceId);
       const expectedStageId = resolveWorkerAcceptanceStageId(taskId, task.acceptanceStageId);
-      const evidenceMatches = workerReceiptEvidenceMatches(
-        context,
-        success.evidenceIds,
-        run,
-        task,
-        taskId,
-        expectedLineage,
-        expectedStageId,
-      );
-      const acceptanceMatches = workerReceiptAcceptanceMatches(
-        context,
-        success.acceptanceId,
-        run,
-        task,
-        expectedLineage,
-        expectedStageId,
-      );
+      const evidenceMatches = workerReceiptEvidenceMatches(receiptContext, success.evidenceIds, expectedStageId);
+      const acceptanceMatches = workerReceiptAcceptanceMatches(receiptContext, success.acceptanceId, expectedStageId);
       matches = evidenceMatches && acceptanceMatches;
     } catch {
       matches = false;
@@ -210,14 +194,11 @@ function workerReceiptSuccessProvenanceMatches(
 }
 
 function workerReceiptEvidenceMatches(
-  context: WorkerRunConsistencyAuditContext,
+  receiptContext: WorkerReceiptProvenanceContext,
   evidenceIds: readonly string[],
-  run: WorkerRunQueueState,
-  task: WorkerRunQueueState['tasks'][string],
-  taskId: string,
-  expectedLineage: ExpectedTaskLineage,
   expectedStageId: string | undefined,
 ): boolean {
+  const { context, run, task, taskId, expectedLineage } = receiptContext;
   return context.input.evidence !== undefined && evidenceIds.every((evidenceId) => {
     const record = context.evidenceById.get(evidenceId);
     return !!record
@@ -236,13 +217,11 @@ function workerReceiptEvidenceMatches(
 }
 
 function workerReceiptAcceptanceMatches(
-  context: WorkerRunConsistencyAuditContext,
+  receiptContext: WorkerReceiptProvenanceContext,
   acceptanceId: string,
-  run: WorkerRunQueueState,
-  task: WorkerRunQueueState['tasks'][string],
-  expectedLineage: ExpectedTaskLineage,
   expectedStageId: string | undefined,
 ): boolean {
+  const { context, run, task, expectedLineage } = receiptContext;
   return context.input.acceptances !== undefined
     && context.input.acceptances.filter((record) => record.acceptanceId === acceptanceId).length === 1
     && (() => {
