@@ -252,6 +252,12 @@ describe('WorkflowEditor characterization', () => {
       root.render(<WorkflowEditor wfId={wfId} />);
     });
 
+    const loadedNodes = canvasHarness.reactFlowProps.at(-1)?.nodes as FlowNode[];
+    expect(loadedNodes[0]).not.toBe(node);
+    expect(loadedNodes[0]?.data).not.toBe(node.data);
+    expect(loadedNodes[0]?.data).toMatchObject({ dirty: true });
+    expect(node.data).not.toHaveProperty('dirty');
+
     expect(useWorkflowStore.getState().workflows[wfId]?.nodes).toMatchObject([
       { id: 'node-1', position: { x: 10, y: 20 } },
     ]);
