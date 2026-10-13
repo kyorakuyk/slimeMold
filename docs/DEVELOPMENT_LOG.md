@@ -6008,3 +6008,10 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - `checkpoint/readability-run-workflow-verified-20261013-r4` → `3700d0c0321baf40ed6936c93c0a0c9a02550414` 重新分类为 **evidence-missing / R5 无效 verified ancestor**：原 Slice9 exact range `d84cff1..cbc6f4a` 为 `passed=false`，两项缺陷后续由 R5 修复；`8a31eb5..3700d0c` 的 pass 只审 repair delta，并未覆盖最近有效 ancestor 后的全部代码与四个 R4 add-ons。
 - R4 Slice6 `81d22c69bbda64584ecddb76a9486a323eeb77d7` 与 Slice7 `39f54f45c7ac57ccee92728dff2b9a25738eb52e` 按本计划保留为各自精确快照的有效 verified tags；其中 `39f54f4` 是 R5 最近的有效 verified ancestor。R5 仅允许 Slice5/12 在满足完整 review-coverage、同快照门和 GUI 条件后申请 verified。
 - Slice1 仅改分类文档与开发日志，无生产代码改动、无 tag 移动。`git diff --check` 通过；start tag `checkpoint/ledger-r4-correction-start-20261014-r5` 指向 `97102584682955c389a70588403e4d23528f8421`；隔离 probe 保留于 `D:/Hermes/cache/scratch/r5-e66-lifecycle-probe-20261013`。未 push。
+
+### 7.464 R5 Slice1 补记：更正 R4 lifecycle 与度量说明
+
+- 保留 7.459/7.461 的历史原文，在 triage 与 R5 报告追加更正：`node scripts/readability-metrics.cjs --match runNodeWithRetry` 在 R5 baseline 实测 `src/engine/executorNodePhases.ts:388` 为 127 行，不是旧记录中的 120 行；R5 Slice4 再决定能否按计划压至 ≤120。
+- 经 `git show 39f54f4:src/engine/executor.ts` 核实，R4 最近有效基线仅在 `opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir` 下进入实际 Worktree setup/await；R4 修复 target `3700d0c` 改为 `if (opts.sandbox) await setupRunSandbox(...)`，会在 copy sandbox 路径也让出执行权。故“基线也会在 copy sandbox 路径 await”的先前判断不成立；R4 修复解决 no-sandbox yield，但该 verified target 仍需 R5 Slice3 用即时 stop/duplicate-start RED 回归验证并收口。
+- 补正 7.463 的措辞：原 Slice9 review 的 no-sandbox yield 与 event-log detach 两项由 R4 repair commit `3700d0c` 修复；R5 Slice3 尚待验证/修复的是 `if (opts.sandbox)` 扩大后 copy-sandbox 路径仍发生的 yield，不把它说成上述两项之一或已修复。
+- 此 addendum 仅更正账目与源码事实，不触碰生产代码或既有 R4 历史段落；当前 Slice2 start tag 仍固定在 `b163d0df5c2afa03f346fa5fdf29309638560c71`。`git diff --check` 通过；本补记由 `checkpoint/ledger-r4-correction-followup-unverified-20261014-r5` 标记为 docs-only unverified；未 push。
