@@ -110,6 +110,7 @@ describe('ApiKeysSection English locale regression', () => {
   });
 
   it('localizes legacy migration feedback and the no-models validation message', async () => {
+    await i18n.changeLanguage('zh-CN');
     mocks.listEndpoints.mockResolvedValue([
       { name: 'legacy-endpoint', baseUrl: 'https://api.example.invalid/v1', protocol: 'openai', credentialKey: 'legacy-key' },
     ]);
@@ -119,21 +120,31 @@ describe('ApiKeysSection English locale regression', () => {
     mocks.fetchModelsByProtocol.mockResolvedValue([]);
 
     await act(async () => root.render(<ApiKeysSection />));
-    const migrationMessage = i18n.t('settings.apikeys.migrationSuccess', {
+    const zhMigrationMessage = i18n.t('settings.apikeys.migrationSuccess', {
       ns: 'settings',
-      lng: 'en-US',
+      lng: 'zh-CN',
       count: 1,
     });
-    await vi.waitFor(() => expect(container.textContent).toContain(migrationMessage));
+    await vi.waitFor(() => expect(container.textContent).toContain(zhMigrationMessage));
 
-    const recheckTitle = i18n.t('settings.apikeys.recheck', { ns: 'settings', lng: 'en-US' });
+    const recheckTitle = i18n.t('settings.apikeys.recheck', { ns: 'settings', lng: 'zh-CN' });
     const recheck = container.querySelector(`button[title="${recheckTitle}"]`) as HTMLButtonElement;
     await act(async () => recheck.click());
     await vi.waitFor(() => {
       expect(container.textContent).toContain(
-        i18n.t('settings.apikeys.noModels', { ns: 'settings', lng: 'en-US' }),
+        i18n.t('settings.apikeys.noModels', { ns: 'settings', lng: 'zh-CN' }),
       );
     });
+
+    await act(async () => i18n.changeLanguage('en-US'));
+    expect(container.textContent).toContain(i18n.t('settings.apikeys.migrationSuccess', {
+      ns: 'settings',
+      lng: 'en-US',
+      count: 1,
+    }));
+    expect(container.textContent).toContain(
+      i18n.t('settings.apikeys.noModels', { ns: 'settings', lng: 'en-US' }),
+    );
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
 });
