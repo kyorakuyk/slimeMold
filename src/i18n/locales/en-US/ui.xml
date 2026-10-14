@@ -238,6 +238,7 @@
   <string name="log.workflowProjectData.projectAssetScope">project asset</string>
   <string name="log.workflowProjectData.removed">Deleted {{scope}} file: {{path}}</string>
   <string name="log.workflowProjectData.removeFailed">Failed to delete {{scope}} file (the record was removed): {{message}}</string>
+  <string name="log.workflowRegistry.projectChanged">Workflow creation was cancelled because the project changed while the workspace path was resolving</string>
   <string name="log.projectCreation.createdButSaveFailed">Project was created, but saving it to disk failed: {{message}}</string>
   <string name="log.projectSaveAs.failed">Save As failed: {{message}}</string>
   <string name="log.catalog.builtinRoleRemovalRejected">Built-in roles cannot be removed</string>

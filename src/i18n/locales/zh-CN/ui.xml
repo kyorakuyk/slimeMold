@@ -238,6 +238,7 @@
   <string name="log.workflowProjectData.projectAssetScope">项目资产</string>
   <string name="log.workflowProjectData.removed">已删除{{scope}}文件：{{path}}</string>
   <string name="log.workflowProjectData.removeFailed">删除{{scope}}文件失败（记录已移除）：{{message}}</string>
+  <string name="log.workflowRegistry.projectChanged">项目工作区路径解析期间项目已切换，已取消新建工作流</string>
   <string name="log.projectCreation.createdButSaveFailed">项目已创建但落盘失败：{{message}}</string>
   <string name="log.projectSaveAs.failed">项目另存为失败：{{message}}</string>
   <string name="log.catalog.builtinRoleRemovalRejected">内置角色不可删除</string>

@@ -122,10 +122,10 @@ describe('workflowRegistryActions', () => {
     await i18n.changeLanguage('en-US');
     try {
       const oldWorkflows = {
-        'old-workflow': { name: 'Old project', nodes: [], edges: [], agents: [], roles: [] },
+        'old-workflow': { version: 1, name: 'Old project', savedAt: '2026-01-01', nodes: [], edges: [], agents: [], roles: [] },
       } as WorkflowRegistryActionState['workflows'];
       const newWorkflows = {
-        'new-workflow': { name: 'New project', nodes: [], edges: [], agents: [], roles: [] },
+        'new-workflow': { version: 1, name: 'New project', savedAt: '2026-01-01', nodes: [], edges: [], agents: [], roles: [] },
       } as WorkflowRegistryActionState['workflows'];
       const addLog = vi.fn();
       const oldState = {
