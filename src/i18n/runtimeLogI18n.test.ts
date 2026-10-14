@@ -64,4 +64,35 @@ describe('R5 Slice7 runtime log translations', () => {
       lng: 'zh-CN',
     })).toBe('全部完成 ✓（用时 4s，2 步用了缓存结果，1 步因条件不成立而跳过）');
   });
+
+  it('uses neutral count labels for independent workflow and subgraph totals', () => {
+    expect(i18n.t('log.workflowIO.imported', {
+      name: 'Demo',
+      nodes: 1,
+      edges: 1,
+      lng: 'en-US',
+    })).toBe('Workflow imported: Demo (node count: 1 / edge count: 1)');
+
+    expect(i18n.t('log.workflowSubgraph.packed', {
+      count: 1,
+      name: 'Demo subgraph',
+      inputs: 1,
+      outputs: 2,
+      lng: 'en-US',
+    })).toBe('Packaged 1 node as subgraph “Demo subgraph” (input count: 1 / output count: 2)');
+    expect(i18n.t('log.workflowSubgraph.packed', {
+      count: 2,
+      name: 'Demo subgraph',
+      inputs: 2,
+      outputs: 1,
+      lng: 'en-US',
+    })).toBe('Packaged 2 nodes as subgraph “Demo subgraph” (input count: 2 / output count: 1)');
+
+    expect(i18n.t('log.workflowIO.missingNodeTypes', {
+      count: 2,
+      customCount: 1,
+      detail: 'plugin.foo, builtin.bar',
+      lng: 'en-US',
+    })).toBe('2 node types are missing (possible custom count: 1) and were shown as placeholders. Missing types: plugin.foo, builtin.bar.');
+  });
 });
