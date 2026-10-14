@@ -125,6 +125,7 @@
   <string name="groups.focus">Focus this group</string>
   <string name="groups.remove">Remove this group (nodes stay)</string>
   <string name="groups.ungrouped">(ungrouped)</string>
+  <string name="groups.unassignedTitle">{{label}} · {{typeId}} (ungrouped)</string>
 
   <!-- ExamplesPanel -->
   <string name="examples.intro">Pick a scenario template and click the card to load it. All AI templates enable offline simulation by default — no model config needed to try.</string>

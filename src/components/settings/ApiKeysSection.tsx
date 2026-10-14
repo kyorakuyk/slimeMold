@@ -29,6 +29,35 @@ const VENDOR_COLOR: Record<string, string> = {
   transit: '#94A3B8',
 };
 
+type ApiKeysFeedbackKey =
+  | 'webOnly'
+  | 'migrationSuccess'
+  | 'missingKey'
+  | 'noModels'
+  | 'urlRequired'
+  | 'keyRequired'
+  | 'savedVerified'
+  | 'saveVerifyFail'
+  | 'saveFail'
+  | 'deleted'
+  | 'deleteFail';
+
+type ApiKeysFeedback = {
+  type: 'ok' | 'err';
+  key: ApiKeysFeedbackKey;
+  count?: number;
+  name?: string;
+  errorText?: string;
+  errorKey?: 'missingKey' | 'noModels';
+};
+
+type ApiKeysCheck = {
+  ok: boolean;
+  count: number;
+  errorText?: string;
+  errorKey?: 'missingKey' | 'noModels';
+};
+
 export default function ApiKeysSection() {
   const t = useT('settings');
   const [vaults, setVaults] = useState<ApiVault[]>([]);
@@ -38,9 +67,9 @@ export default function ApiKeysSection() {
   const [protocol, setProtocol] = useState<Protocol>('openai');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text?: string; key?: 'webOnly' } | null>(null);
+  const [msg, setMsg] = useState<ApiKeysFeedback | null>(null);
   // 每项检测状态：id -> { ok, count, error }
-  const [checks, setChecks] = useState<Record<string, { ok: boolean; count: number; error?: string }>>({});
+  const [checks, setChecks] = useState<Record<string, ApiKeysCheck>>({});
   const [checking, setChecking] = useState<string | null>(null);
 
   const refresh = async () => setVaults(await listVaults());
@@ -63,7 +92,7 @@ export default function ApiKeysSection() {
         }
       }
       if (migrated > 0) {
-        setMsg({ type: 'ok', text: t('settings.apikeys.migrationSuccess', { count: migrated }) });
+        setMsg({ type: 'ok', key: 'migrationSuccess', count: migrated });
         await refresh();
       }
     } catch {
@@ -84,24 +113,24 @@ export default function ApiKeysSection() {
   const verify = async (
     v: Pick<ApiVault, 'protocol' | 'baseUrl'>,
     key: string | null,
-  ): Promise<{ ok: boolean; count: number; error?: string }> => {
+  ): Promise<ApiKeysCheck> => {
     if (v.protocol === 'ollama') {
       return { ok: !!v.baseUrl, count: 0 };
     }
-    if (!key) return { ok: false, count: 0, error: t('settings.apikeys.missingKey') };
+    if (!key) return { ok: false, count: 0, errorKey: 'missingKey' };
     try {
       const models = await fetchModelsByProtocol(v.protocol, v.baseUrl, key);
-      if (models.length === 0) return { ok: false, count: 0, error: t('settings.apikeys.noModels') };
+      if (models.length === 0) return { ok: false, count: 0, errorKey: 'noModels' };
       return { ok: true, count: models.length };
     } catch (e) {
-      return { ok: false, count: 0, error: (e as Error).message };
+      return { ok: false, count: 0, errorText: (e as Error).message };
     }
   };
 
   const handleAdd = async () => {
     const bu = baseUrl.trim().replace(/\/+$/, '');
-    if (!bu) return setMsg({ type: 'err', text: t('settings.apikeys.urlRequired') });
-    if (protocol !== 'ollama' && !apiKey.trim()) return setMsg({ type: 'err', text: t('settings.apikeys.keyRequired') });
+    if (!bu) return setMsg({ type: 'err', key: 'urlRequired' });
+    if (protocol !== 'ollama' && !apiKey.trim()) return setMsg({ type: 'err', key: 'keyRequired' });
     try {
       // id 自动生成、vendor 自动推断，label 缺省取 baseUrl 域名
       const saved = await saveVault({ label, baseUrl: bu, protocol }, apiKey.trim());
@@ -113,14 +142,14 @@ export default function ApiKeysSection() {
         setLabel('');
         setBaseUrl('');
         setApiKey('');
-        setMsg({ type: 'ok', text: t('settings.apikeys.savedVerified', { name: saved.label, count: res.count }) });
+        setMsg({ type: 'ok', key: 'savedVerified', name: saved.label, count: res.count });
         await refresh();
       } else {
-        setMsg({ type: 'err', text: t('settings.apikeys.saveVerifyFail', { error: res.error ?? t('settings.apikeys.unknownError') }) });
+        setMsg({ type: 'err', key: 'saveVerifyFail', errorText: res.errorText, errorKey: res.errorKey });
       }
     } catch (e) {
       setChecking(null);
-      setMsg({ type: 'err', text: t('settings.apikeys.saveFail', { error: (e as Error).message }) });
+      setMsg({ type: 'err', key: 'saveFail', errorText: (e as Error).message });
     }
   };
 
@@ -137,10 +166,10 @@ export default function ApiKeysSection() {
         delete x[id];
         return x;
       });
-      setMsg({ type: 'ok', text: t('settings.apikeys.deleted', { name: id }) });
+      setMsg({ type: 'ok', key: 'deleted', name: id });
       await refresh();
     } catch (e) {
-      setMsg({ type: 'err', text: t('settings.apikeys.deleteFail', { error: (e as Error).message }) });
+      setMsg({ type: 'err', key: 'deleteFail', errorText: (e as Error).message });
     }
   };
 
@@ -163,6 +192,32 @@ export default function ApiKeysSection() {
     const res = await verify(v, key);
     setChecking(null);
     setChecks((c) => ({ ...c, [v.id]: res }));
+  };
+
+  const feedbackText = (feedback: ApiKeysFeedback): string => {
+    switch (feedback.key) {
+      case 'webOnly': return t('settings.apikeys.webOnly');
+      case 'migrationSuccess': return t('settings.apikeys.migrationSuccess', { count: feedback.count });
+      case 'missingKey': return t('settings.apikeys.missingKey');
+      case 'noModels': return t('settings.apikeys.noModels');
+      case 'urlRequired': return t('settings.apikeys.urlRequired');
+      case 'keyRequired': return t('settings.apikeys.keyRequired');
+      case 'savedVerified':
+        return t('settings.apikeys.savedVerified', { name: feedback.name, count: feedback.count });
+      case 'saveVerifyFail': {
+        const error = feedback.errorKey === 'missingKey'
+          ? t('settings.apikeys.missingKey')
+          : feedback.errorKey === 'noModels'
+            ? t('settings.apikeys.noModels')
+            : feedback.errorText ?? t('settings.apikeys.unknownError');
+        return t('settings.apikeys.saveVerifyFail', { error });
+      }
+      case 'saveFail':
+        return t('settings.apikeys.saveFail', { error: feedback.errorText ?? t('settings.apikeys.unknownError') });
+      case 'deleted': return t('settings.apikeys.deleted', { name: feedback.name });
+      case 'deleteFail':
+        return t('settings.apikeys.deleteFail', { error: feedback.errorText ?? t('settings.apikeys.unknownError') });
+    }
   };
 
   return (
@@ -222,7 +277,7 @@ export default function ApiKeysSection() {
 
       {msg && (
         <p className="text-[12px]" style={{ color: msg.type === 'ok' ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
-          {msg.key === 'webOnly' ? t('settings.apikeys.webOnly') : msg.text}
+          {feedbackText(msg)}
         </p>
       )}
 
@@ -264,7 +319,9 @@ export default function ApiKeysSection() {
                     </div>
                   </div>
                   <p className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>{v.baseUrl}</p>
-                  {chk?.error && <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-err)' }}>{chk.error}</p>}
+                  {chk?.errorKey === 'missingKey' && <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-err)' }}>{t('settings.apikeys.missingKey')}</p>}
+                  {chk?.errorKey === 'noModels' && <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-err)' }}>{t('settings.apikeys.noModels')}</p>}
+                  {chk?.errorText && <p className="mt-0.5 text-[11px]" style={{ color: 'var(--sm-err)' }}>{chk.errorText}</p>}
                   {reveal[v.id] !== undefined && (
                     <code className="mt-1 block break-all rounded bg-black/10 px-2 py-1 text-[11px]" style={{ color: 'var(--sm-ink)' }}>
                       {reveal[v.id]}

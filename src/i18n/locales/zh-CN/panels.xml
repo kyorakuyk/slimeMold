@@ -125,6 +125,7 @@
   <string name="groups.focus">聚焦到该组</string>
   <string name="groups.remove">删除这个分组（不影响组内节点）</string>
   <string name="groups.ungrouped">（未分组）</string>
+  <string name="groups.unassignedTitle">{{label}} · {{typeId}}（未分组）</string>
 
   <!-- ExamplesPanel -->
   <string name="examples.intro">挑一个场景模板，点击卡片即可载入。所有 AI 模板默认开启离线模拟，无需配置模型也能试跑。</string>
