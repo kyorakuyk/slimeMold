@@ -183,7 +183,7 @@
 
   <!-- DevSessionPanel -->
   <string name="devSession.nonGitProject">当前项目不是 Git 仓库，H4 开发功能不可用。</string>
-  <string name="devSession.initializationFailed">H4 开发能力不可用：宿主 DevSession 初始化失败（dev_init_session 未成功）。</string>
+  <string name="devSession.initializationFailed">H4 开发会话初始化失败。</string>
   <string name="devSession.retryHint">请重新打开项目或查看日志后重试。</string>
   <string name="devSession.desktopOnly">H4 开发会话仅桌面端（Tauri）可用。</string>
   <string name="devSession.notInitialized">H4 开发会话未初始化（请先打开一个项目）。</string>
