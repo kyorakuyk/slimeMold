@@ -203,6 +203,21 @@ describe('worker command policy', () => {
     expect(parseWorkerCommand(totalOverLimit).ok).toBe(false);
   });
 
+  it('preserves read-command and typecheck intent projections', () => {
+    expect(parseWorkerCommand(['ls', 'src/dev'])).toEqual({
+      ok: true,
+      intent: { kind: 'read-files', command: 'ls', files: ['src/dev'] },
+    });
+    expect(parseWorkerCommand(['tsc', '--noEmit'])).toEqual({
+      ok: true,
+      intent: { kind: 'typecheck', command: 'tsc', args: ['--noEmit'] },
+    });
+    expect(parseWorkerCommand(['tail', '+10'])).toEqual({
+      ok: false,
+      error: 'read command file operands are not safe',
+    });
+  });
+
   it('keeps the parity vectors executable', () => {
     for (const vector of vectors) {
       const result = parseWorkerCommand(vector.command);
