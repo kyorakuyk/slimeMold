@@ -264,6 +264,8 @@ export const nodeCouncil: NodeDefinition = {
       tooltip: '把裁决写入项目级黑板对应阶段，经 backflow 控制流端口回流上游重派。',
     },
   ],
+  // 先并行收集独立议员意见，再单独合成；simulate 模式以占位输出验证链路而不调用 LLM。
+  // 缺失议员在调用前拒绝，部分失败与共识状态保留在 verdict（ADR-SM-021、ADR-SM-030）。
   async execute(inputs, params, ctx) {
     const dispute = inputs.dispute;
     const context = inputs.context != null ? String(inputs.context) : '';

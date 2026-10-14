@@ -123,7 +123,10 @@ export function prepareStageWorkflows(
   return draft.stages.map((stage) => ({ stageId: stage.id, bind: deps.ensureStageWorkflow(orchId, stage) }));
 }
 
-/** 运行编排：ready → running → 绑定并执行各阶段。返回最终 Orchestration。 */
+/**
+ * 将 ready/failed 的 legacy orchestration 转为 running，并按 draft DAG 顺序绑定、执行各阶段。
+ * 阶段成功必须来自 executor 结果；WorkerRun 接管、取消或失败都不能由此路径伪装为成功（ADR-SM-009、ADR-SM-031）。
+ */
 export async function runOrchestration(
   orchId: string,
   deps: OrchestrationDeps = defaultDeps,

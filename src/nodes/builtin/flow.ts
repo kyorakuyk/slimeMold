@@ -316,6 +316,8 @@ const nodeAssert: NodeDefinition = {
       default: '',
     },
   ],
+  // 按所选模式评估一个值并输出 pass/fail 结果；failFast 只改变失败时抛错还是返回结果。
+  // 这是画布验证/流程节点，不替代宿主 Acceptance（ADR-SM-018、ADR-SM-080）。
   async execute(inputs, params, ctx) {
     const value = inputs.value;
     const mode = String(params.mode ?? 'truthy');

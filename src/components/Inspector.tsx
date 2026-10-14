@@ -12,6 +12,10 @@ import { formatDateTime } from '../i18n/dateTime';
 import { AgentSelect } from './AgentSelect';
 import { mergeAgentPool } from '../agents/globalAgents';
 
+/**
+ * 将一个 `ParamDef` 与当前值映射为表单控件，并通过 `onChange` 回传编辑结果。
+ * 控件不拥有工作流节点状态（ADR-SM-005）。
+ */
 function ParamField({
   def,
   value,
@@ -176,7 +180,10 @@ function ParamField({
   );
 }
 
-/** 右侧属性检查面板 */
+/**
+ * 展示当前焦点工作流的节点参数/错误，或当前选中的资产详情。
+ * 事实留在 store owner 中，组件通过既有 action 编辑或移除（ADR-SM-005、ADR-SM-006）。
+ */
 export default function Inspector({ width = 288 }: { width?: number }) {
   const selectedId = useWorkflowStore((s) => s.selectedNodeId);
   const focusWfId = useWorkflowStore((s) => s.focusWfId);

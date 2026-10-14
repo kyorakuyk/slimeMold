@@ -91,6 +91,10 @@ function PortBadge({ type }: { type?: string }) {
   );
 }
 
+/**
+ * 将节点数据与当前画布工作流的运行态投影组合成画布单元；拆分视图必须按 `canvasWfId` 读取运行态。
+ * 重跑/单节点运行仍受该工作流的 `running` 状态门控（ADR-SM-005、ADR-SM-007）。
+ */
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const def = useRegistryStore((s) => s.defs[data.typeId]);
   // 方案 A：节点运行类操作需定位到所属工作流（拆分视图右栏）

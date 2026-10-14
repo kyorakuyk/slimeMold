@@ -70,6 +70,10 @@ function assertTaskGraphIsIdle(graph: ProjectTaskGraph): void {
   }
 }
 
+/**
+ * 返回新增任务前校验 identity/status、依赖闭合与无环，以及 depth/fan-out 限额。
+ * 输出仍是 `proposed` 候选，不等同于批准或 dispatch（ADR-SM-012、ADR-SM-023）。
+ */
 function assertExpandedTasks(
   graph: ProjectTaskGraph,
   sourceTaskId: string,

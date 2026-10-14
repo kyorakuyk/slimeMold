@@ -364,11 +364,8 @@ export interface ProbeResult {
 }
 
 /**
- * 探测一个智能体配置是否真正可用：发一个最小请求（max_tokens=1）。
- * - 网络层/URL 失败 → stage='url'
- * - 401/403 → stage='auth'（key 无效或无权限）
- * - 404/400 且提示模型不存在 → stage='model'
- * - 正常返回 → stage='ok'
+ * 用最小请求或注册信号区分 provider 的 url/auth/model/ok 可用性阶段。
+ * 结果用于诊断，不授予执行能力；协议、认证、可用性保持分离（ADR-SM-019、ADR-SM-073）。
  */
 export async function probeAgent(
   config: { protocol: Protocol; baseUrl: string; model: string },

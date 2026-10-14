@@ -158,6 +158,10 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
     setInnerNodes((ns) => [...ns, node]);
   };
 
+  /**
+   * 写回真实子图节点/边，并把虚拟代理端点连线转换为子图输入/输出端口。
+   * 保存后同步父图代理端口，使引用该定义的画布投影保持一致（ADR-SM-017）。
+   */
   const close = () => {
     // 写回子图定义：排除虚拟代理端点节点；涉及代理节点的连线转为子图对外端口语义
     const innerNodesArr = innerNodes;

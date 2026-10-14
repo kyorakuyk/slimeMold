@@ -72,7 +72,8 @@ export function unifiedDiffForFilePatch(entry: FilePatchEntry): string {
 
 /**
  * Apply a structured patch set through the host's existing guarded codePatch API.
- * All preimages are checked before the first write; every successful write is read back.
+ * All target-file preimages are checked before the first codePatch; each patched file is read back.
+ * codePatch calls are sequential, not cross-file atomic; failures report applied file paths (ADR-SM-034).
  */
 export async function applyFilePatchSet(
   value: unknown,

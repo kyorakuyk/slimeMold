@@ -47,7 +47,10 @@ export function initialBoardState(wfId: string): RunBoardState {
   };
 }
 
-/** 把单个事件归约进快照（事件 wfId 不匹配时原样返回）。 */
+/**
+ * 将一个匹配 `wfId` 的 RunEvent 归约为 JobBoard 展示快照；其他工作流事件原样返回。
+ * 这是 RunEvent 的 UI projection，不反向成为运行事实（ADR-SM-005）。
+ */
 export function applyRunEvent(state: RunBoardState, e: RunEvent): RunBoardState {
   if (e.wfId !== state.wfId) return state;
   const nid = e.nodeId ?? '';

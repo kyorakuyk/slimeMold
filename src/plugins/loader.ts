@@ -34,6 +34,10 @@ export interface ParsedPlugin {
 /** 框架职业类名的集合（manifest extends 只可引用这些或本包 occupations 定义的职业） */
 const FRAMEWORK_OCCUPATIONS = new Set(Object.keys(OCCUPATION_CAPABILITY));
 
+/**
+ * 在加载节点定义前校验 manifest 结构、occupation 继承及来源特定的 capability 声明。
+ * 这些检查约束 API 声明，不构成不可信 JavaScript 的进程级沙箱（ADR-SM-074）。
+ */
 export function validateManifest(raw: unknown, source: 'dir' | 'files' | 'custom' = 'dir'): PluginManifest {
   const m = raw as PluginManifest;
   if (!m || typeof m !== 'object') throw new Error('manifest.json 不是有效对象');

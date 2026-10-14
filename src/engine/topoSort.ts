@@ -90,6 +90,10 @@ export interface StageResult {
   cyclic: string[];
 }
 
+/**
+ * 从输入图派生执行 stage：data/task 环路保持显式，control 边约束顺序但不改写源图。
+ * Stage 是 Draft/Runtime 图的派生执行视图，不取代源图版本（ADR-SM-017）。
+ */
 export function topoStages(
   nodeIds: string[],
   edges: { source: string; target: string }[],

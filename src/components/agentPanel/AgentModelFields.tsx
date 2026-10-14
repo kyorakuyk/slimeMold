@@ -16,8 +16,8 @@ export interface AgentModelFieldsProps {
 }
 
 /**
- * 模型区：模型选择/拉取/探测、提示与探测结果、手填模型，随后是温度与高级（代理）折叠区。
- * 从 AgentEditorForm 抽出，JSX 与分支顺序保持原样（temperature、details 仍在模型区之后）。
+ * 渲染模型选择/拉取/探测、temperature 与代理选项，所有编辑通过 `onPatch` 回交调用方。
+ * Provider 协议、认证方式与当前可用性保持分离（ADR-SM-073）。
  */
 export default function AgentModelFields({
   editing,

@@ -274,6 +274,8 @@ const designerGenerate: NodeDefinition = {
       ],
     },
   ],
+  // 用 concept 和可选 ref 生成 design spec；simulate 只回显，真实路径调用所选智能体。
+  // 返回的是设计规格候选，不等同于已批准的交付物（ADR-SM-018、ADR-SM-080）。
   async execute(inputs, params, ctx) {
     const concept = String(inputs.concept ?? '');
     if (!concept) throw new Error('缺少概念输入（concept 端口未接入数据）');
