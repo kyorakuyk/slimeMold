@@ -78,6 +78,40 @@ describe('workflowRegistryActions', () => {
     expect(state.state.workflows['wf-2001']?.savedAt).toBe('new-time');
   });
 
+  it('keeps concurrent standalone creations in the registry after path resolution', async () => {
+    let currentState = {
+      workflows: {}, activeWfId: '', workflowName: '未归属', nodes: [], edges: [], agents: [], roles: [],
+      variables: {}, groups: [], defaultAgentId: null, projectId: null, selectedNodeId: null, logs: [],
+    } as WorkflowRegistryActionState;
+    const pathResolvers: Array<(path: string | undefined) => void> = [];
+    const resolveStandalonePath = vi.fn(() => new Promise<string | undefined>((resolve) => {
+      pathResolvers.push(resolve);
+    }));
+    const actions = createWorkflowRegistryActions({
+      getState: () => currentState,
+      setState: (patch) => { currentState = { ...currentState, ...patch }; },
+      setDirtySuppressed: vi.fn(),
+      cleanupWorkflow: vi.fn(),
+      resolveStandalonePath,
+      now: () => 1000,
+      nowIso: () => '2026-01-01T00:00:00.000Z',
+      createRegisteredWorkflowId: () => 'wf-registered',
+    });
+
+    const first = actions.newWorkflowInProject('C:/workspace');
+    const second = actions.newWorkflowInProject('C:/workspace');
+    expect(resolveStandalonePath).toHaveBeenCalledTimes(2);
+    expect(pathResolvers).toHaveLength(2);
+
+    pathResolvers[0]?.('C:/workspace');
+    pathResolvers[1]?.('C:/workspace');
+    await Promise.all([first, second]);
+
+    expect(Object.keys(currentState.workflows)).toHaveLength(2);
+    expect(new Set(Object.keys(currentState.workflows)).size).toBe(2);
+    expect(new Set(Object.values(currentState.workflows).map((item) => item.name)).size).toBe(2);
+  });
+
   it('registers without activation and returns the generated id', () => {
     const { state, actions } = harness({ activeWfId: 'wf-active' });
     const id = actions.registerWorkflow(workflow('Registered'), { activate: false });
