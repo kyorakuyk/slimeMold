@@ -1,6 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import i18n from '../i18n';
 
 const mocks = vi.hoisted(() => ({ status: 'unavailable' as 'unavailable' | 'error' }));
 
@@ -47,5 +48,13 @@ describe('DevSessionPanel initialization status', () => {
     expect(container.textContent).toContain('devSession.initializationFailed');
     expect(container.textContent).toContain('devSession.retryHint');
     expect(container.firstElementChild?.getAttribute('style')).toContain('--sm-err');
+  });
+
+  it('uses generic initialization-failure copy for host and persistence errors', () => {
+    const english = i18n.t('devSession.initializationFailed', { ns: 'panels', lng: 'en-US' });
+    const chinese = i18n.t('devSession.initializationFailed', { ns: 'panels', lng: 'zh-CN' });
+
+    expect(english).not.toContain('dev_init_session');
+    expect(chinese).not.toContain('dev_init_session');
   });
 });
