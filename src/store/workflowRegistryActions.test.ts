@@ -166,6 +166,8 @@ describe('workflowRegistryActions', () => {
 
       expect(oldState.workflows).toBe(oldWorkflows);
       expect(currentState.workflows).toBe(newWorkflows);
+      expect(oldState.workflows).toEqual(oldWorkflows);
+      expect(currentState.workflows).toEqual(newWorkflows);
       expect(setState).not.toHaveBeenCalled();
       expect(result).toEqual({ status: 'aborted', reason: 'project-changed' });
       expect(addLog).toHaveBeenCalledOnce();
