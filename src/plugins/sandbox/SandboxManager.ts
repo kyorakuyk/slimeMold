@@ -435,8 +435,8 @@ export function createRuntimeUrl(): string {
  * 注意：worker 内 onToken 流式在 PoC 阶段暂不通（llm 非流式），见设计 §3.3。
  */
 export function execContextResponder(ctx: ExecContext): CapabilityResponder {
-  // 只把显式 capability 方法路由到捕获的宿主 ExecContext；未知方法必须失败关闭。
-  // 沙箱持有请求端而非宿主权限本身（ADR-SM-009、ADR-SM-034）。
+  // 此宿主 responder 接收 Worker RPC，并将显式 capability 方法分派到捕获的 ExecContext；未知方法失败关闭。
+  // Worker 侧持有请求接口，实际宿主权限仍由此处执行（ADR-SM-009、ADR-SM-034）。
   return async (method, args) => {
     const [a0, a1, a2, a3] = args as [unknown?, unknown?, unknown?, unknown?];
     switch (method) {

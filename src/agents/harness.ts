@@ -154,7 +154,7 @@ export function renderScopeContext(scopeStack: Record<string, unknown>[]): strin
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 在轮次/token 预算内协调 provider 回复、注册工具调用、取消与瞬时错误重试。
+ * 按 `maxRounds` 协调 provider 回复、注册工具调用、取消与瞬时错误重试；`tokenBudget` 仅裁剪初始 history。
  * 工具可见性和上下文由调用方注入；模型输出本身不是项目事实或权限来源（ADR-SM-009、ADR-SM-010）。
  */
 export async function runAgentLoop(opts: HarnessOptions): Promise<HarnessResult> {

@@ -51,7 +51,7 @@ function formatBytes(content: string): string {
 
 /**
  * 管理当前 workflow 或 project scope 的 asset 列表、导入/导出、搜索与多选操作。
- * scope 决定读写所属资产，批量操作限于当前可见选择（ADR-SM-005、ADR-SM-018）。
+ * scope 决定读写所属资产，批量操作限于当前可见选择（ADR-SM-005）。
  */
 export default function AssetsPanel({
   embedded = false,

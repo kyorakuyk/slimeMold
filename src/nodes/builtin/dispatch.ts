@@ -311,7 +311,7 @@ export const nodeArchitect: NodeDefinition = {
       tooltip: '将该节点产出的 design 交付物写入项目级黑板对应阶段，供 Builder/施工方工作流读取。',
     },
   ],
-  // 将目标/约束转换为设计文本与模块候选；模拟模式不调 LLM，pipelineStage 非空时发布 Artifact。
+  // 将目标/约束转换为设计文本与模块候选；模拟模式不调 LLM，pipelineStage 非空时尝试发布 Artifact。
   // 模块输出供后续规划与路由消费，不等同于已批准的 TaskGraph（ADR-SM-018、ADR-SM-023）。
   async execute(inputs, params, ctx) {
     const goal = String(inputs.goal ?? '').trim();
