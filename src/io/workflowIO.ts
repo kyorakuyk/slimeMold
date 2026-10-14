@@ -92,7 +92,7 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
   if (missingDefs.length > 0) {
     registry.register(missingDefs);
     const customCount = missingTypeIds.filter(looksLikeCustom).length;
-    const detail = missingTypeIds.join('、');
+    const detail = missingTypeIds.join(i18n.t('log.workflowIO.missingNodeTypesSeparator'));
     const missingMessage = i18n.t('log.workflowIO.missingNodeTypes', {
       count: missingDefs.length,
       customCount,

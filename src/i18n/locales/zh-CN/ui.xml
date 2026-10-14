@@ -252,6 +252,7 @@
   <string name="log.workflowIO.missingNodeTypes">有 {{count}} 种节点类型缺失（其中 {{customCount}} 个疑似自定义节点），已用占位节点显示。缺失类型：{{detail}}。</string>
   <string name="log.workflowIO.missingNodeTypes_one">有 {{count}} 种节点类型缺失（其中 {{customCount}} 个疑似自定义节点），已用占位节点显示。缺失类型：{{detail}}。</string>
   <string name="log.workflowIO.missingNodeTypes_other">有 {{count}} 种节点类型缺失（其中 {{customCount}} 个疑似自定义节点），已用占位节点显示。缺失类型：{{detail}}。</string>
+  <string name="log.workflowIO.missingNodeTypesSeparator">、</string>
   <string name="log.workflowIO.missingNodeTypesFix">&#10;修复：在「插件面板」点「扫描自定义节点」并确保节点包已放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后，重新打开本工作流。</string>
   <string name="log.workflowIO.imported">工作流已导入：{{name}}（{{nodes}} 节点 / {{edges}} 连线）</string>
   <string name="log.workflowIO.exported">工作流已导出：{{target}}</string>

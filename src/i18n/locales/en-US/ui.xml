@@ -252,6 +252,7 @@
   <string name="log.workflowIO.missingNodeTypes">{{count}} node types are missing (possible custom count: {{customCount}}) and were shown as placeholders. Missing types: {{detail}}.</string>
   <string name="log.workflowIO.missingNodeTypes_one">{{count}} node type is missing (possible custom count: {{customCount}}) and was shown as a placeholder. Missing type: {{detail}}.</string>
   <string name="log.workflowIO.missingNodeTypes_other">{{count}} node types are missing (possible custom count: {{customCount}}) and were shown as placeholders. Missing types: {{detail}}.</string>
+  <string name="log.workflowIO.missingNodeTypesSeparator">,</string>
   <string name="log.workflowIO.missingNodeTypesFix">&#10;Fix: in Plugin Panel, select Scan Custom Nodes and ensure the package is in the program's custom_nodes folder (global) or the current project's custom_nodes folder (project only), then reopen this workflow.</string>
   <string name="log.workflowIO.imported">Workflow imported: {{name}} (node count: {{nodes}} / edge count: {{edges}})</string>
   <string name="log.workflowIO.exported">Workflow exported: {{target}}</string>
