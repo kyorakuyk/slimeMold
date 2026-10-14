@@ -53,7 +53,7 @@ it('uses locale-appropriate punctuation in missing node type details', async () 
     await i18n.changeLanguage('en-US');
     applyWorkflowFile(workflowText);
     const englishError = mocks.workflow.addLog.mock.calls.find(([level]) => level === 'error')?.[1];
-    expect(englishError).toContain('Missing types: custom/foo, builtin.bar.');
+    expect(englishError).toContain('Missing types: custom/foo,builtin.bar.');
 
     mocks.workflow.addLog.mockClear();
     await i18n.changeLanguage('zh-CN');
