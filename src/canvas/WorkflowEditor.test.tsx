@@ -161,8 +161,9 @@ describe('WorkflowEditor characterization', () => {
       );
     });
 
+    const templateNameKey = `starterTemplate.${template.id}.name`;
     const templateButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes(template.name),
+      button.textContent?.includes(templateNameKey),
     );
     expect(templateButton).toBeDefined();
 

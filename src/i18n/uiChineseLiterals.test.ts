@@ -27,6 +27,10 @@ const TARGET_FILES = [
   'src/components/RouteTableEditor.tsx',
   'src/components/TokenUsagePanel.tsx',
   'src/components/SettingsCenter.tsx',
+  'src/components/ExamplesPanel.tsx',
+  'src/components/ExamplesModal.tsx',
+  'src/components/NewProjectModal.tsx',
+  'src/components/settings/ApiKeysSection.tsx',
   'src/components/agentPanel/AgentCatalogList.tsx',
   'src/components/agentPanel/AgentEditorForm.tsx',
   'src/components/agentPanel/AgentConnectionFields.tsx',
@@ -56,6 +60,7 @@ const TARGET_FILES = [
   'src/store/workflowProjectDataCommands.ts',
   'src/app/globalShortcuts.ts',
   'src/components/PluginPanel.tsx',
+  'src/data/starterTemplates.ts',
   'src/store/projectCreationActions.ts',
   'src/store/workflowGraphCommands.ts',
   'src/store/projectCatalogState.ts',
@@ -65,7 +70,7 @@ const TARGET_FILES = [
 const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/agents/agentManager.ts': ['agents'],
   'src/canvas/WorkflowEditor.tsx': ['ui'],
-  'src/canvas/CanvasWelcomeSurface.tsx': ['ui'],
+  'src/canvas/CanvasWelcomeSurface.tsx': ['ui', 'beginner'],
   'src/canvas/CanvasPanelControls.tsx': ['ui'],
   'src/canvas/useCanvasContextMenu.tsx': ['ui'],
   'src/canvas/useCanvasNodePicker.tsx': ['ui'],
@@ -85,6 +90,10 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/components/RouteTableEditor.tsx': ['panels'],
   'src/components/TokenUsagePanel.tsx': ['panels'],
   'src/components/SettingsCenter.tsx': ['settings', 'agents'],
+  'src/components/ExamplesPanel.tsx': ['panels', 'beginner'],
+  'src/components/ExamplesModal.tsx': ['modals', 'beginner'],
+  'src/components/NewProjectModal.tsx': ['modals', 'beginner'],
+  'src/components/settings/ApiKeysSection.tsx': ['settings'],
   'src/components/agentPanel/AgentCatalogList.tsx': ['agents'],
   'src/components/agentPanel/AgentEditorForm.tsx': ['agents'],
   'src/components/agentPanel/AgentConnectionFields.tsx': ['agents'],
@@ -114,6 +123,7 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/store/workflowProjectDataCommands.ts': ['ui'],
   'src/app/globalShortcuts.ts': ['ui'],
   'src/components/PluginPanel.tsx': ['panels', 'ui'],
+  'src/data/starterTemplates.ts': ['beginner'],
   'src/store/projectCreationActions.ts': ['ui'],
   'src/store/workflowGraphCommands.ts': ['ui'],
   'src/store/projectCatalogState.ts': [],
@@ -121,6 +131,11 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
 };
 
 const EXCEPTIONS = [
+  {
+    path: 'src/components/NewProjectModal.tsx',
+    fragment: "useState('未命名项目')",
+    reason: 'This default becomes the user-editable project name and can be persisted as project data; keep its existing Chinese workspace value.',
+  },
   ...['输入', '智能体', '文本', '工具', '输出', '流程'].map((token) => ({
     path: 'src/canvas/CanvasPanelControls.tsx',
     fragment: `${token}:`,
@@ -452,7 +467,7 @@ function staticTranslationKeys(filePath: string): Set<string> {
     if (
       ts.isPropertyAssignment(node) &&
       ts.isIdentifier(node.name) &&
-      (node.name.text === 'labelKey' || node.name.text === 'noteKey') &&
+      ['labelKey', 'noteKey', 'displayNameKey', 'displayDescKey'].includes(node.name.text) &&
       ts.isStringLiteralLike(node.initializer)
     ) {
       keys.add(node.initializer.text);
