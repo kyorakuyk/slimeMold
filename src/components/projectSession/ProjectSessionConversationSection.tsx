@@ -3,6 +3,7 @@ import type {
   ProjectSessionPanelViewProps,
   ProjectSessionViewTranslator,
 } from './ProjectSessionPanelView.types';
+import { WORKER_RUNTIME_ERROR_MESSAGES } from '../../app/workerRuntimeErrorMessages';
 
 type ProjectSessionConversationSectionProps = Pick<
   ProjectSessionPanelViewProps,
@@ -31,6 +32,14 @@ export default function ProjectSessionConversationSection({
   error,
   t,
 }: ProjectSessionConversationSectionProps) {
+  const displayedError = error === WORKER_RUNTIME_ERROR_MESSAGES.projectNotSaved
+    ? t('session.error.workerProjectNotSaved')
+    : error === WORKER_RUNTIME_ERROR_MESSAGES.projectContextChanged
+      ? t('session.error.workerProjectChanged')
+      : error === WORKER_RUNTIME_ERROR_MESSAGES.workerStateDrifted
+        ? t('session.error.workerStateDrifted')
+        : error;
+
   return (
     <section className="sm-beginner-session-conversation" aria-label={t('session.conversation')}>
       <div className="sm-beginner-session-card-heading">
@@ -103,7 +112,7 @@ export default function ProjectSessionConversationSection({
           </button>
         </div>
       </form>
-      {error && <p className="sm-beginner-inline-error" role="alert">{error}</p>}
+      {displayedError && <p className="sm-beginner-inline-error" role="alert">{displayedError}</p>}
     </section>
   );
 }

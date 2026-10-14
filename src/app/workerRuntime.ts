@@ -32,6 +32,7 @@ import { restoreWorkerWorktrees as restoreWorkerWorktreesFromState } from '../pr
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectOperationGuard } from '../projectControl/projectOperation';
 import type { WorkflowState } from '../store/workflowStoreTypes';
+import { WORKER_RUNTIME_ERROR_MESSAGES } from './workerRuntimeErrorMessages';
 
 export interface AppWorkerRuntimeStore {
   getState: () => WorkflowState;
@@ -135,12 +136,12 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     const beforeSave = store.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
-    if (!projectId || !projectPath) throw new Error('项目必须先保存，Worker 才能创建隔离 worktree');
+    if (!projectId || !projectPath) throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.projectNotSaved);
     const assertExpectedProject = (): void => {
       const current = store.getState();
       if ((expectedProjectId !== undefined && current.projectId !== expectedProjectId)
         || (expectedProjectPath !== undefined && current.projectPath !== expectedProjectPath)) {
-        throw new Error('Worker post-commit project context 已切换，拒绝执行旧 recovery dispatch');
+        throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.projectContextChanged);
       }
     };
     const assertExpectedRun = (expected: WorkerRunQueueState): void => {
@@ -151,7 +152,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
       if (!currentRun || JSON.stringify(currentRun) !== JSON.stringify(expected)
         || !currentTaskGraph
         || currentTaskGraph.graphVersion !== expected.taskGraphVersion) {
-        throw new Error('Worker post-commit candidate/state 已漂移，拒绝执行旧 recovery dispatch');
+        throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.workerStateDrifted);
       }
     };
     if (expectedRunState) assertExpectedRun(expectedRunState);

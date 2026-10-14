@@ -123,6 +123,9 @@
   <string name="session.send">发送回答</string>
   <string name="session.safetyNote">主控只会提出建议；确认前不会修改代码或运行项目。</string>
   <string name="session.error.noSession">找不到当前项目会话。</string>
+  <string name="session.error.workerProjectNotSaved">项目必须先保存，Worker 才能创建隔离 worktree</string>
+  <string name="session.error.workerProjectChanged">Worker post-commit project context 已切换，拒绝执行旧 recovery dispatch</string>
+  <string name="session.error.workerStateDrifted">Worker post-commit candidate/state 已漂移，拒绝执行旧 recovery dispatch</string>
   <string name="session.contextEyebrow">当前状态</string>
   <string name="session.currentUnderstanding">主控目前的理解</string>
   <string name="session.noBrief">回答几个关键问题后，这里会出现项目 Brief。</string>

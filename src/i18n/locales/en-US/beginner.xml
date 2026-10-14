@@ -123,6 +123,9 @@
   <string name="session.send">Send answer</string>
   <string name="session.safetyNote">The master proposes; it does not modify code or run the project before approval.</string>
   <string name="session.error.noSession">The current project session could not be found.</string>
+  <string name="session.error.workerProjectNotSaved">Save the project before starting a Worker.</string>
+  <string name="session.error.workerProjectChanged">Project context changed; the prior recovery dispatch was rejected.</string>
+  <string name="session.error.workerStateDrifted">Worker state changed; the prior recovery dispatch was rejected.</string>
   <string name="session.contextEyebrow">CURRENT STATE</string>
   <string name="session.currentUnderstanding">What the master understands</string>
   <string name="session.noBrief">Answer a few key questions and a project Brief will appear here.</string>
