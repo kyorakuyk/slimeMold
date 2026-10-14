@@ -43,8 +43,8 @@ export function serializeWorkflow(): WorkflowFile {
 }
 
 /* ---------- 反序列化与校验 ---------- */
-/** 将 version-1 workflow 文档校验并载入当前图；缺失的节点类型保留为占位定义。
- * 已知 typeId 先规范为注册表拼写；导入路径不负责恢复 ProjectFile/项目级状态（ADR-SM-016、ADR-SM-017）。
+/** 检查 version 与 nodes/edges 容器后载入当前 workflow；缺失的节点类型保留为占位定义。
+ * 已知 typeId 先规范为注册表拼写；这不是完整 schema 校验，也不恢复 ProjectFile/项目级状态（ADR-SM-016、ADR-SM-017）。
  */
 export function applyWorkflowFile(text: string, standalonePath?: string): void {
   const raw = JSON.parse(text) as WorkflowFile;
