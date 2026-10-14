@@ -104,6 +104,11 @@
   <string name="settings.apikeys.unknownError">unknown error</string>
   <string name="settings.apikeys.deleted">Deleted: {{name}}</string>
   <string name="settings.apikeys.deleteFail">Delete failed: {{error}}</string>
+  <string name="settings.apikeys.migrationSuccess">Legacy endpoint migration complete. Records moved to grouped Vault storage: {{count}}.</string>
+  <string name="settings.apikeys.missingKey">API key is missing.</string>
+  <string name="settings.apikeys.noModels">The URL is reachable, but no models were returned. Check the Base URL and API key.</string>
+  <string name="settings.apikeys.autoGroup">Auto-detected group:</string>
+  <string name="settings.apikeys.nameFromDomain">The name will use the domain {{domain}}</string>
 
   <!-- ToggleRow -->
   <string name="settings.toggle.on">On</string>

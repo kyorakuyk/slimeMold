@@ -137,7 +137,7 @@ export function AgentSelect({
                       e.stopPropagation();
                       removeTag(id);
                     }}
-                    title="移除"
+                    title={t('agentSelect.remove')}
                   >
                     <X size={11} />
                   </button>
@@ -160,7 +160,7 @@ export function AgentSelect({
               e.stopPropagation();
               removeAll();
             }}
-            title="清空"
+            title={t('agentSelect.clear')}
           >
             <X size={13} />
           </button>

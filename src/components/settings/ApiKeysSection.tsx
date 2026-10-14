@@ -38,7 +38,7 @@ export default function ApiKeysSection() {
   const [protocol, setProtocol] = useState<Protocol>('openai');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text?: string; key?: 'webOnly' } | null>(null);
   // 每项检测状态：id -> { ok, count, error }
   const [checks, setChecks] = useState<Record<string, { ok: boolean; count: number; error?: string }>>({});
   const [checking, setChecking] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export default function ApiKeysSection() {
         }
       }
       if (migrated > 0) {
-        setMsg({ type: 'ok', text: `已自动迁移 ${migrated} 条旧接入点为分组密钥库（Vault）` });
+        setMsg({ type: 'ok', text: t('settings.apikeys.migrationSuccess', { count: migrated }) });
         await refresh();
       }
     } catch {
@@ -74,7 +74,7 @@ export default function ApiKeysSection() {
   useEffect(() => {
     if (isTauri) {
       void migrateLegacy().then(refresh);
-    } else setMsg({ type: 'err', text: t('settings.apikeys.webOnly') });
+    } else setMsg({ type: 'err', key: 'webOnly' });
   }, []);
 
   /** 自动 vendor 预览（随 baseUrl 输入实时变化）。 */
@@ -88,10 +88,10 @@ export default function ApiKeysSection() {
     if (v.protocol === 'ollama') {
       return { ok: !!v.baseUrl, count: 0 };
     }
-    if (!key) return { ok: false, count: 0, error: '缺少密钥' };
+    if (!key) return { ok: false, count: 0, error: t('settings.apikeys.missingKey') };
     try {
       const models = await fetchModelsByProtocol(v.protocol, v.baseUrl, key);
-      if (models.length === 0) return { ok: false, count: 0, error: '网址可达但拉不到模型，检查 Base URL / Key' };
+      if (models.length === 0) return { ok: false, count: 0, error: t('settings.apikeys.noModels') };
       return { ok: true, count: models.length };
     } catch (e) {
       return { ok: false, count: 0, error: (e as Error).message };
@@ -200,7 +200,7 @@ export default function ApiKeysSection() {
           />
           {vendorPreview && (
             <span className="col-span-2 flex items-center gap-1 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-              自动分组：
+              {t('settings.apikeys.autoGroup')}
               <span
                 className="rounded px-1.5 py-0.5 text-[10px] font-medium text-white"
                 style={{ background: VENDOR_COLOR[vendorPreview] ?? '#94A3B8' }}
@@ -208,7 +208,9 @@ export default function ApiKeysSection() {
                 {vendorPreview}
               </span>
               {!label.trim() && (
-                <span className="opacity-70">（名称将自动取域名 {labelFromBaseUrl(baseUrl)}）</span>
+                <span className="opacity-70">
+                  {t('settings.apikeys.nameFromDomain', { domain: labelFromBaseUrl(baseUrl) })}
+                </span>
               )}
             </span>
           )}
@@ -220,7 +222,7 @@ export default function ApiKeysSection() {
 
       {msg && (
         <p className="text-[12px]" style={{ color: msg.type === 'ok' ? 'var(--sm-ok)' : 'var(--sm-err)' }}>
-          {msg.text}
+          {msg.key === 'webOnly' ? t('settings.apikeys.webOnly') : msg.text}
         </p>
       )}
 

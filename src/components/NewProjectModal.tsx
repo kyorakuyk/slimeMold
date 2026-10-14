@@ -10,6 +10,7 @@ import { useT } from '../i18n/useT';
  */
 export default function NewProjectModal({ onClose }: { onClose: () => void }) {
   const t = useT('modals');
+  const tBeginner = useT('beginner');
   const createProject = useWorkflowStore((s) => s.createProject);
   const addLog = useWorkflowStore((s) => s.addLog);
 
@@ -35,7 +36,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const tplName = tpl?.name;
+      const tplName = tpl ? tBeginner(tpl.displayNameKey) : undefined;
       await createProject({ name: name.trim(), templateId: templateId || undefined, location: location ?? undefined });
       addLog('info', t('newProject.created', { name: name.trim(), tpl: tplName ? t('newProject.createdTpl', { name: tplName }) : t('newProject.createdBlank') }));
       onClose();
@@ -102,8 +103,8 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
             <TemplateCard
               key={t.id}
               active={templateId === t.id}
-              title={`${t.emoji} ${t.name}`}
-              desc={t.desc}
+              title={`${t.emoji} ${tBeginner(t.displayNameKey)}`}
+              desc={tBeginner(t.displayDescKey)}
               nodeCount={t.build().nodes.length}
               onClick={() => setTemplateId(t.id)}
             />
@@ -115,14 +116,14 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
           <div className="sm-beginner-template-preview">
             <div className="sm-beginner-template-preview-title">
               <span>
-                {tpl.emoji} {tpl.name}
+                {tpl.emoji} {tBeginner(tpl.displayNameKey)}
               </span>
               <small>
                 {t('newProject.nodesEdges', { nodes: preview.nodes.length, edges: preview.edges.length })}
               </small>
             </div>
             <p>
-              {tpl.desc}
+              {tBeginner(tpl.displayDescKey)}
             </p>
             <div className="sm-beginner-template-tags">
               {preview.nodes.map((n) => (
@@ -174,7 +175,7 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
         <div className="sm-beginner-modal-footer">
           {tpl && preview && (
             <span className="sm-beginner-modal-footer-note">
-              {t('newProject.willLoad', { name: tpl.name, nodes: preview.nodes.length, edges: preview.edges.length })}
+              {t('newProject.willLoad', { name: tBeginner(tpl.displayNameKey), nodes: preview.nodes.length, edges: preview.edges.length })}
             </span>
           )}
           <button

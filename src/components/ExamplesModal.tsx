@@ -7,6 +7,7 @@ import { useT } from '../i18n/useT';
 /** 示例库次级窗口：居中弹窗，模板以网格排列，超出部分滚轮滚动 */
 export default function ExamplesModal({ onClose }: { onClose: () => void }) {
   const t = useT('modals');
+  const tBeginner = useT('beginner');
   const loadGraph = useWorkflowStore((s) => s.loadGraph);
 
   const apply = (id: string) => {
@@ -86,11 +87,11 @@ export default function ExamplesModal({ onClose }: { onClose: () => void }) {
                 <div className="flex items-center gap-2">
                   <span className="text-[20px] leading-none">{tpl.emoji}</span>
                   <span className="text-[13px] font-semibold leading-tight" style={{ color: 'var(--sm-ink)' }}>
-                    {tpl.name}
+                    {tBeginner(tpl.displayNameKey)}
                   </span>
                 </div>
                 <p className="mt-2 line-clamp-3 text-[11.5px] leading-snug" style={{ color: 'var(--sm-ink-faint)' }}>
-                  {tpl.desc}
+                  {tBeginner(tpl.displayDescKey)}
                 </p>
                 <span
                   className="mt-2 inline-flex w-fit items-center gap-1 text-[11px] font-medium opacity-70 transition-opacity group-hover:opacity-100"

@@ -6,6 +6,7 @@ import { useT } from '../i18n/useT';
 export default function ExamplesPanel({ embedded }: { embedded?: boolean }) {
   const loadGraph = useWorkflowStore((s) => s.loadGraph);
   const t = useT('panels');
+  const tBeginner = useT('beginner');
 
   const apply = (id: string) => {
     const tpl = STARTER_TEMPLATES.find((tpl) => tpl.id === id);
@@ -46,11 +47,11 @@ export default function ExamplesPanel({ embedded }: { embedded?: boolean }) {
               <div className="flex items-center gap-2">
                 <span className="text-[18px] leading-none">{tpl.emoji}</span>
                 <span className="text-[12.5px] font-semibold leading-tight" style={{ color: 'var(--sm-ink)' }}>
-                  {tpl.name}
+                  {tBeginner(tpl.displayNameKey)}
                 </span>
               </div>
               <p className="mt-1.5 line-clamp-3 text-[11px] leading-snug" style={{ color: 'var(--sm-ink-faint)' }}>
-                {tpl.desc}
+                {tBeginner(tpl.displayDescKey)}
               </p>
               <span
                 className="mt-2 inline-flex w-fit items-center gap-1 text-[11px] font-medium opacity-70 transition-opacity group-hover:opacity-100"

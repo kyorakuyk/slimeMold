@@ -274,4 +274,23 @@
   <string name="masterAgent.safetyTitle">Permission boundary</string>
   <string name="masterAgent.safetyBody">The master can only ask questions and propose structured plans. Code changes, execution, merging, and release still require their approval gates.</string>
   <string name="masterAgent.configureHint">Need to add a model, save credentials, or test a connection? Open the Agents section in advanced configuration.</string>
+
+  <string name="starterTemplate.polish-email.name">Turn a sentence into a formal email</string>
+  <string name="starterTemplate.polish-email.description">Enter a short idea and AI will expand it into a polished, professional email. Ready to use with no model setup.</string>
+  <string name="starterTemplate.batch-translate.name">Translate a list in batches</string>
+  <string name="starterTemplate.batch-translate.description">Send each short line to AI for translation and combine the results. Ideal for lists of names, labels, and phrases.</string>
+  <string name="starterTemplate.condition-route.name">Route by condition</string>
+  <string name="starterTemplate.condition-route.description">Check whether the input contains a keyword, then send it down one of two branches. Demonstrates conditional routing.</string>
+  <string name="starterTemplate.article-outline.name">Generate an article outline</string>
+  <string name="starterTemplate.article-outline.description">Give a topic: AI drafts an outline, then expands it into an opening paragraph. Useful for newsletters, weekly updates, and documents.</string>
+  <string name="starterTemplate.extract-json.name">Extract structured data from text</string>
+  <string name="starterTemplate.extract-json.description">Give AI an unstructured passage and it will organize the fields you request for later use.</string>
+  <string name="starterTemplate.summarize.name">Summarize a long text</string>
+  <string name="starterTemplate.summarize.description">Paste a long passage and AI will condense it into three key points at a glance.</string>
+  <string name="starterTemplate.sentiment-route.name">Route by sentiment</string>
+  <string name="starterTemplate.sentiment-route.description">Classify a comment as positive or negative and send it to the matching result. Demonstrates combining conditions with routing.</string>
+  <string name="starterTemplate.multilingual-titles.name">Generate multilingual titles</string>
+  <string name="starterTemplate.multilingual-titles.description">Give a topic and AI generates Chinese, English, and Japanese titles in one batch.</string>
+  <string name="starterTemplate.game-2048-three-party.name">Build a collaborative 2048 game</string>
+  <string name="starterTemplate.game-2048-three-party.description">Builder planning → architect decomposes modules → arbitration can send work back for reassignment → generator registers separate “builder” and “property management” workflows. Includes a seven-module 2048 checklist and runs in offline simulate mode without an API key, as a development reference skeleton.</string>
 </resources>

@@ -9,6 +9,12 @@ const TARGET_FILES = [
   'src/canvas/WorkflowEditor.tsx',
   'src/canvas/CanvasWelcomeSurface.tsx',
   'src/canvas/CanvasPanelControls.tsx',
+  'src/canvas/GroupLayer.tsx',
+  'src/canvas/SubgraphEditor.tsx',
+  'src/canvas/nodes/BaseNode.tsx',
+  'src/canvas/nodes/GroupProxyNode.tsx',
+  'src/canvas/nodes/NodeUsageBadge.tsx',
+  'src/canvas/nodes/ProxyPortNode.tsx',
   'src/canvas/useCanvasContextMenu.tsx',
   'src/canvas/useCanvasNodePicker.tsx',
   'src/components/LeftSidebar.tsx',
@@ -30,6 +36,10 @@ const TARGET_FILES = [
   'src/components/ExamplesPanel.tsx',
   'src/components/ExamplesModal.tsx',
   'src/components/NewProjectModal.tsx',
+  'src/components/AgentSelect.tsx',
+  'src/components/NodePalette.tsx',
+  'src/components/agentPanel/RolesTab.tsx',
+  'src/components/InterventionModal.tsx',
   'src/components/settings/ApiKeysSection.tsx',
   'src/components/agentPanel/AgentCatalogList.tsx',
   'src/components/agentPanel/AgentEditorForm.tsx',
@@ -61,6 +71,7 @@ const TARGET_FILES = [
   'src/app/globalShortcuts.ts',
   'src/components/PluginPanel.tsx',
   'src/data/starterTemplates.ts',
+  'src/i18n/nodeLabels.ts',
   'src/store/projectCreationActions.ts',
   'src/store/workflowGraphCommands.ts',
   'src/store/projectCatalogState.ts',
@@ -72,6 +83,12 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/canvas/WorkflowEditor.tsx': ['ui'],
   'src/canvas/CanvasWelcomeSurface.tsx': ['ui', 'beginner'],
   'src/canvas/CanvasPanelControls.tsx': ['ui'],
+  'src/canvas/GroupLayer.tsx': ['ui'],
+  'src/canvas/SubgraphEditor.tsx': ['ui'],
+  'src/canvas/nodes/BaseNode.tsx': ['ui'],
+  'src/canvas/nodes/GroupProxyNode.tsx': ['ui'],
+  'src/canvas/nodes/NodeUsageBadge.tsx': ['ui'],
+  'src/canvas/nodes/ProxyPortNode.tsx': ['ui'],
   'src/canvas/useCanvasContextMenu.tsx': ['ui'],
   'src/canvas/useCanvasNodePicker.tsx': ['ui'],
   'src/components/LeftSidebar.tsx': ['panels'],
@@ -93,6 +110,10 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/components/ExamplesPanel.tsx': ['panels', 'beginner'],
   'src/components/ExamplesModal.tsx': ['modals', 'beginner'],
   'src/components/NewProjectModal.tsx': ['modals', 'beginner'],
+  'src/components/AgentSelect.tsx': ['ui', 'agents', 'inspector'],
+  'src/components/NodePalette.tsx': ['ui', 'nodepalette'],
+  'src/components/agentPanel/RolesTab.tsx': ['agents'],
+  'src/components/InterventionModal.tsx': ['panels'],
   'src/components/settings/ApiKeysSection.tsx': ['settings'],
   'src/components/agentPanel/AgentCatalogList.tsx': ['agents'],
   'src/components/agentPanel/AgentEditorForm.tsx': ['agents'],
@@ -124,6 +145,7 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
   'src/app/globalShortcuts.ts': ['ui'],
   'src/components/PluginPanel.tsx': ['panels', 'ui'],
   'src/data/starterTemplates.ts': ['beginner'],
+  'src/i18n/nodeLabels.ts': ['ui'],
   'src/store/projectCreationActions.ts': ['ui'],
   'src/store/workflowGraphCommands.ts': ['ui'],
   'src/store/projectCatalogState.ts': [],
@@ -131,6 +153,40 @@ const NAMESPACE_CANDIDATES: Record<(typeof TARGET_FILES)[number], string[]> = {
 };
 
 const EXCEPTIONS = [
+  {
+    path: 'src/components/agentPanel/RolesTab.tsx',
+    fragment: "name: '新角色'",
+    reason: 'This is the user-editable default name persisted for a newly created role, not interface chrome.',
+  },
+  {
+    path: 'src/components/InterventionModal.tsx',
+    fragment: "rejectIntervention(r.wfId, r.runId, r.nodeId, '人工取消')",
+    reason: 'This stable cancellation reason is written to the intervention execution record; localizing it would alter persisted provenance.',
+  },
+  ...[
+    "case '输入':",
+    "case '输出':",
+    "case '流程':",
+    "case '工具':",
+    "case '文本':",
+    "case '协调':",
+    "case '派发':",
+    "case '审计':",
+    "case '预览':",
+    "case '资产':",
+    "case '项目 MVP':",
+    "case '自定义':",
+    "case 'AI':",
+  ].map((fragment) => ({
+    path: 'src/i18n/nodeLabels.ts',
+    fragment,
+    reason: 'These stable node-catalog category values select localized display keys; they are identifiers, not UI copy.',
+  })),
+  ...['输入', '智能体', '文本', '工具', '输出', '流程'].map((token) => ({
+    path: 'src/canvas/nodes/BaseNode.tsx',
+    fragment: `${token}:`,
+    reason: 'Stable node-category identifiers select the matching header icon; the rendered category label is localized separately.',
+  })),
   {
     path: 'src/components/NewProjectModal.tsx',
     fragment: "useState('未命名项目')",
@@ -458,6 +514,40 @@ function maskException(text: string, fragment: string): { text: string; count: n
   };
 }
 
+function maskStarterTemplateWorkspaceData(filePath: string, text: string): string {
+  if (filePath !== 'src/data/starterTemplates.ts') return text;
+  const source = ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const ranges: Array<{ pos: number; end: number }> = [];
+  const belongsToTemplateArray = (node: ts.Node): boolean => {
+    let current: ts.Node | undefined = node;
+    while (current && !ts.isVariableDeclaration(current)) current = current.parent;
+    return Boolean(
+      current && ts.isIdentifier(current.name) && current.name.text === 'STARTER_TEMPLATES',
+    );
+  };
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      belongsToTemplateArray(node) &&
+      ['name', 'desc', 'build'].includes(node.name.text)
+    ) {
+      // `name` seeds the persisted workflow name; `desc` remains canonical Chinese metadata;
+      // `build` emits workspace node data and prompts. Display keys remain scanned.
+      ranges.push({ pos: node.initializer.getStart(source), end: node.initializer.end });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const chars = text.split('');
+  for (const { pos, end } of ranges) {
+    for (let index = pos; index < end; index += 1) {
+      if (text.charCodeAt(index) !== 10 && text.charCodeAt(index) !== 13) chars[index] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
 function staticTranslationKeys(filePath: string): Set<string> {
   const text = readFileSync(resolve(process.cwd(), filePath), 'utf8');
   const scriptKind = filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -529,6 +619,18 @@ describe('target UI files use localized Chinese literals', () => {
     expect(stripped).not.toContain('JSX 注释');
   });
 
+  it('exempts only persisted starter-template values, not display translation metadata', () => {
+    const source = "const STARTER_TEMPLATES = [{ name: '保存的工作流名', desc: '模板数据描述', displayNameKey: '可见标签', displayDescKey: '可见说明', build: () => ({ label: '节点标签', prompt: '模型提示词' }) }];";
+    const stripped = maskStarterTemplateWorkspaceData('src/data/starterTemplates.ts', source);
+
+    expect(stripped).not.toContain('保存的工作流名');
+    expect(stripped).not.toContain('模板数据描述');
+    expect(stripped).not.toContain('节点标签');
+    expect(stripped).not.toContain('模型提示词');
+    expect(stripped).toContain('可见标签');
+    expect(stripped).toContain('可见说明');
+  });
+
   it('has no undocumented Han text outside comments', () => {
     const unexpected: string[] = [];
     const staleExceptions: string[] = [];
@@ -536,6 +638,7 @@ describe('target UI files use localized Chinese literals', () => {
 
     for (const filePath of TARGET_FILES) {
       let source = commentFreeSource(filePath, readFileSync(resolve(process.cwd(), filePath), 'utf8'));
+      source = maskStarterTemplateWorkspaceData(filePath, source);
       for (const exception of EXCEPTIONS.filter((item) => item.path === filePath)) {
         const masked = maskException(source, exception.fragment);
         if (masked.count !== 1) staleExceptions.push(`${filePath}: expected one ${exception.fragment} exception`);

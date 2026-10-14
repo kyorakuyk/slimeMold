@@ -19,6 +19,7 @@ export default function CanvasWelcomeSurface({
   workflowCount,
 }: CanvasWelcomeSurfaceProps) {
   const t = useT();
+  const tBeginner = useT('beginner');
   const setExamplesOpen = useWorkflowStore((s) => s.setExamplesOpen);
   const loadGraph = useWorkflowStore((s) => s.loadGraph);
   const newWorkflow = useWorkflowStore((s) => s.newWorkflow);
@@ -151,10 +152,10 @@ export default function CanvasWelcomeSurface({
                 <span className="text-[18px] leading-none">{template.emoji}</span>
                 <span className="min-w-0">
                   <span className="block truncate text-[12.5px] font-medium" style={{ color: 'var(--sm-ink)' }}>
-                    {template.name}
+                    {tBeginner(template.displayNameKey)}
                   </span>
                   <span className="mt-0.5 block line-clamp-2 text-[11px] leading-snug" style={{ color: 'var(--sm-ink-faint)' }}>
-                    {template.desc}
+                    {tBeginner(template.displayDescKey)}
                   </span>
                 </span>
               </button>
