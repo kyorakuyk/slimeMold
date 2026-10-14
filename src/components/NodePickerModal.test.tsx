@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
       'input.text': {
         typeId: 'input.text',
         name: 'Text Input',
-        category: 'Input',
+        category: '输入',
         description: 'Text input',
       },
     },
@@ -37,7 +37,8 @@ vi.mock('../i18n/useT', () => ({
   useT: () => (key: string, options?: { count?: number }) =>
     key === 'nodePicker.mySubgraph' ? 'My subgraphs'
       : key === 'nodePicker.steps' ? `${options?.count ?? 0} steps`
-        : key,
+        : key === 'canvas.node.category.input' ? 'Input'
+          : key,
 }));
 
 import { NodePickerModal } from './NodePickerModal';
@@ -78,5 +79,22 @@ describe('NodePickerModal pending connection filtering', () => {
     };
     await act(async () => root.render(<NodePickerModal {...props} />));
     expect(container.textContent).toContain('Reusable subgraph');
+  });
+
+  it('localizes built-in categories without rewriting catalog values', async () => {
+    const props = {
+      screenPos: { x: 0, y: 0 },
+      onSelect: vi.fn(),
+      onClose: vi.fn(),
+      showSubgraphs: false,
+    };
+    await act(async () => root.render(<NodePickerModal {...props} />));
+
+    const categoryLabel = Array.from(container.querySelectorAll('button span')).find(
+      (span) => span.textContent?.trim() === 'Input' || span.textContent?.trim() === '输入',
+    );
+    expect(categoryLabel?.textContent?.trim()).toBe('Input');
+    expect(container.textContent).not.toContain('输入');
+    expect(mocks.registryState.defs['input.text']?.category).toBe('输入');
   });
 });
