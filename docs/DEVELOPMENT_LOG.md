@@ -6077,3 +6077,11 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 ### 7.472 R5 Slice7 closeout timestamp correction
 
 - 7.471 将 docs-only closeout 时间记为 `07:49:18 +0800`，该时间是提交前的时钟读数。Git reflog 证明 closeout commit `fa5c15c5190af039eaef43801b0e1dd96bae3f96` 实际创建于 `2026-10-14 07:51:23 +0800`，较 Slice7 cutoff `07:48:12 +0800` 超 3:11；本节更正旧记载，不改写历史条目。截止后没有 Slice7 代码或测试改动。Slice8 start tag `checkpoint/workflow-create-race-start-20261014-r5` 于 `07:54:57 +0800` 创建并指向 `fa5c15c`。
+
+### 7.473 R5 Slice8：workflow creation race（unverified）
+
+- Slice8 start tag `checkpoint/workflow-create-race-start-20261014-r5` 指向 `fa5c15c5190af039eaef43801b0e1dd96bae3f96`，tagger `07:54:57 +0800`，cutoff `08:39:57 +0800`。切片重核确认 `newWorkflowInProject` 在 standalone path await 前捕获 store state，而并发回调会从旧 registry 生成同一 ID；现有 sequential workflow tests 未覆盖并发。
+- TDD 回归先以 mutating `Object.assign` fixture 试跑时错误地 green；改为 immutable state replacement 以模拟 Zustand 快照语义后，预期 RED：`expected ['wf-1001'] to have a length of 2 but got 1`。test-only commit `e7a48f3dbf9ef519c8087cbdd0eb0b5d0ac13227`。实现 commit `02866455501836c7847404b1ded63b7f3fd193aa` 在 path await 后重新读取 `deps.getState()`，ID、capture 与 activation 都基于当前 state；unverified tag `checkpoint/workflow-create-race-unverified-20261014-r5` 指向该 target。
+- Same-target gates：focused 3 files / 12 tests；全量 `npm run test -- --reporter=dot` 247 files / 1,586 tests；`npm run build` 2,164 modules；app/node 两个 tsconfig `tsc --noEmit` 通过；`npm run i18n:check` 1,279 keys；`git diff --check` 通过。真实输出日志 `D:/Hermes/cache/scratch/r5-s8-final-gates-20261014.log`。Build 仍有既有 mixed dynamic/static import 与 >500kB chunk warnings。
+- Exact reviewer 审查完整范围 `fa5c15c5190af039eaef43801b0e1dd96bae3f96..02866455501836c7847404b1ded63b7f3fd193aa`（target parent `e7a48f3dbf9ef519c8087cbdd0eb0b5d0ac13227`，包含 docs-only correction、test 与 implementation），严格 JSON `passed=true`、`working_tree_clean=true`、security/logic/suggestions 均空；reviewer 未运行 gates 或改文件。回读确认 branch、HEAD、parent、tag 与 clean status 一致。
+- Slice8 在 timebox 内完成 gates 与 review；按 R5 计划只允许 Slice5/12 在条件满足时建立 verified tag，因此本切片保留 unverified。未进行 Browser/Tauri、Worker 或模型 API 验收。
