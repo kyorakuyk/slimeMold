@@ -6073,3 +6073,7 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - Exact reviewer 对完整对象范围 `02b10e9eb8e6f7faad6cfff757368e3711912e7b..653b8fd0d6db1f70a95837dc5252ae507b79898d`（target parent `7e6b941ce638bf1d7a5172e72d44f6f0a54296ba`）返回 `passed=false`、`working_tree_clean=true`、`security_concerns=[]`。评审实际范围为三提交（两个测试提交 + implementation）；派审说明误写“四提交”，但 pinned base/target 和审查范围正确。reviewer 未运行 gates 或修改文件。
 - 三项 unresolved logic findings：英文 workflow-import log 固定写 nodes/edges，单数显示 `1 nodes / 1 edges`；subgraph-packed 只按 node count 复数化，单数 input/output 显示 `1 inputs / 1 outputs`；missing-node log 按 missing total 复数化而未按 customCount 复数化，可能显示 `1 may be custom nodes`。非阻塞建议：增加 ExperienceSink 与 localized display fan-out 的集成断言。
 - Review 于 `07:41:02 +0800` 返回，距 cutoff 不足7分钟；不足以对三个结果分别 RED/GREEN、重跑完整质量门并再次 exact review。依照时间盒不仓促改代码，记录为 partial/unverified，保留 unverified tag，不打 verified tag；无 Browser/Tauri、真实 Worker 或模型调用。docs-only closeout 在 `07:49:18 +0800` 完成，较 Slice7 cutoff 超 1:06；cutoff 后无代码、测试或 ref 改动。
+
+### 7.472 R5 Slice7 closeout timestamp correction
+
+- 7.471 将 docs-only closeout 时间记为 `07:49:18 +0800`，该时间是提交前的时钟读数。Git reflog 证明 closeout commit `fa5c15c5190af039eaef43801b0e1dd96bae3f96` 实际创建于 `2026-10-14 07:51:23 +0800`，较 Slice7 cutoff `07:48:12 +0800` 超 3:11；本节更正旧记载，不改写历史条目。截止后没有 Slice7 代码或测试改动。Slice8 start tag `checkpoint/workflow-create-race-start-20261014-r5` 于 `07:54:57 +0800` 创建并指向 `fa5c15c`。
