@@ -181,7 +181,7 @@ function ParamField({
 }
 
 /**
- * 展示当前焦点工作流的节点参数/错误，或当前选中的资产详情。
+ * 展示焦点工作流的节点参数/错误，或 `activeWfId` 所指工作流中所选资产的详情。
  * 事实留在 store owner 中，组件通过既有 action 编辑或移除（ADR-SM-005、ADR-SM-006）。
  */
 export default function Inspector({ width = 288 }: { width?: number }) {

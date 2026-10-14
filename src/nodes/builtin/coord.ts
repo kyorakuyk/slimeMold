@@ -264,8 +264,8 @@ export const nodeCouncil: NodeDefinition = {
       tooltip: '把裁决写入项目级黑板对应阶段，经 backflow 控制流端口回流上游重派。',
     },
   ],
-  // 真实模式先验证议员/合成器存在；simulate 跳过存在性校验并以离线占位输出验证链路。
-  // 并行意见与合成分层，部分失败和共识保留在 verdict（ADR-SM-021、ADR-SM-030）。
+  // 真实模式校验议员 ID 与合成器 ID，但字面量 `synthesizer` 被合成器存在性检查排除。
+  // simulate 跳过存在性校验并使用离线占位输出；独立意见再合成，结果保留部分失败/共识（ADR-SM-021、ADR-SM-030）。
   async execute(inputs, params, ctx) {
     const dispute = inputs.dispute;
     const context = inputs.context != null ? String(inputs.context) : '';
