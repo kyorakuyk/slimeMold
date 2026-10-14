@@ -56,11 +56,12 @@ export function createWorkflowRegistryActions(
   };
 
   const newWorkflowInProject = async (workspaceDir?: string | null): Promise<void> => {
-    const state = deps.getState();
-    const inProject = !!state.projectId;
+    const stateBeforePathResolution = deps.getState();
+    const inProject = !!stateBeforePathResolution.projectId;
     const standalonePath = inProject
       ? undefined
       : await deps.resolveStandalonePath(workspaceDir);
+    const state = deps.getState();
     const shouldCapture = !state.activeWfId && (state.nodes.length || state.edges.length);
     const capturedWorkflowId = shouldCapture
       ? createWorkflowId(deps.now(), Object.keys(state.workflows))
