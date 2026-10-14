@@ -74,7 +74,8 @@ describe('workflowRegistryActions', () => {
       nowIso,
       createRegisteredWorkflowId: () => 'unused',
     });
-    await actions.newWorkflowInProject();
+    const result = await actions.newWorkflowInProject();
+    expect(result).toEqual({ status: 'created', workflowId: 'wf-2001' });
     expect(resolveStandalonePath).toHaveBeenCalledOnce();
     expect(state.state.workflows['wf-1000']?.savedAt).toBe('capture-time');
     expect(state.state.activeWfId).toBe('wf-2001');
@@ -160,15 +161,13 @@ describe('workflowRegistryActions', () => {
         projectId: 'project-2',
         projectPath: 'C:/projects/project-2',
       };
-      const result = await (async () => {
-        resolvePath('C:/standalone');
-        return creation;
-      })();
+      resolvePath('C:/standalone');
+      const result = await creation;
 
-      expect(result).toEqual({ status: 'aborted', reason: 'project-changed' });
       expect(oldState.workflows).toBe(oldWorkflows);
       expect(currentState.workflows).toBe(newWorkflows);
       expect(setState).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: 'aborted', reason: 'project-changed' });
       expect(addLog).toHaveBeenCalledOnce();
       expect(addLog).toHaveBeenCalledWith('warn', i18n.t('log.workflowRegistry.projectChanged'));
     } finally {
