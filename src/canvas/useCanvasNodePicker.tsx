@@ -115,6 +115,11 @@ export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }
     [pickerPos, screenToFlowPosition, addSubgraphRef, addNode, isSplit],
   );
 
+  const closePicker = useCallback(() => {
+    pendingConn.current = null;
+    setPickerPos(null);
+  }, []);
+
   // 从端口拖拽到空白处松手：缓存源端口上下文，弹出命令面板建节点并自动连边（ComfyUI 风格）
   const onConnectEnd = useCallback(
     (_event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
@@ -141,7 +146,12 @@ export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }
     onCanvasDoubleClick,
     onConnectEnd,
     pickerOverlay: pickerPos
-      ? <NodePickerModal screenPos={pickerPos} onSelect={onPickNode} onClose={() => setPickerPos(null)} />
+      ? <NodePickerModal
+          screenPos={pickerPos}
+          onSelect={onPickNode}
+          onClose={closePicker}
+          showSubgraphs={!pendingConn.current}
+        />
       : null,
   };
 }

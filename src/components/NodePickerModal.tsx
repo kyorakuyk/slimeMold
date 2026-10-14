@@ -14,10 +14,11 @@ interface Props {
   screenPos: { x: number; y: number };
   onSelect: (payload: PickPayload) => void;
   onClose: () => void;
+  showSubgraphs?: boolean;
 }
 
 /** 节点选择窗：仿「示例库」居中弹窗样式，右上角关闭按钮，点遮罩关闭 */
-export function NodePickerModal({ onSelect, onClose }: Props) {
+export function NodePickerModal({ onSelect, onClose, showSubgraphs = true }: Props) {
   const t = useT('modals');
   const defs = useRegistryStore((s) => s.defs);
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
@@ -37,14 +38,14 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
         category: d.category,
         desc: d.description,
       }));
-    const sgItems = Object.values(subgraphs).map((sg) => ({
+    const sgItems = showSubgraphs ? Object.values(subgraphs).map((sg) => ({
       key: `s:${sg.id}`,
       kind: 'subgraph' as const,
       id: sg.id,
       label: sg.name,
       category: t('nodePicker.mySubgraph'),
       desc: t('nodePicker.steps', { count: sg.nodes.length }),
-    }));
+    })) : [];
     const all = [...nodeItems, ...sgItems];
     if (!q) return all;
     return all.filter(
@@ -53,7 +54,7 @@ export function NodePickerModal({ onSelect, onClose }: Props) {
         it.category.toLowerCase().includes(q) ||
         (it.desc ?? '').toLowerCase().includes(q),
     );
-  }, [defs, subgraphs, query]);
+  }, [defs, subgraphs, query, showSubgraphs]);
 
   useEffect(() => {
     inputRef.current?.focus();
