@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import i18n from '../i18n';
 import type { WorkflowFile } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types';
 import { createWorkflowRegistryActions, type WorkflowRegistryActionState } from './workflowRegistryActions';
@@ -15,9 +16,11 @@ const workflow = (name: string): WorkflowFile => ({
 });
 
 const harness = (initial: Partial<WorkflowRegistryActionState> = {}) => {
+  const addLog = vi.fn();
   const state = {
     workflows: {}, activeWfId: '', workflowName: '', nodes: [], edges: [], agents: [], roles: [],
-    variables: {}, groups: [], defaultAgentId: null, projectId: 'p1', selectedNodeId: null, logs: [],
+    variables: {}, groups: [], defaultAgentId: null, projectId: 'p1', projectPath: null,
+    selectedNodeId: null, logs: [], addLog,
     ...initial,
   } as WorkflowRegistryActionState;
   const setSuppressed = vi.fn();
@@ -33,7 +36,7 @@ const harness = (initial: Partial<WorkflowRegistryActionState> = {}) => {
     nowIso: () => '2026-01-01T00:00:00.000Z',
     createRegisteredWorkflowId: () => 'wf-registered',
   });
-  return { state, actions, setSuppressed, resolveStandalonePath, cleanupWorkflow };
+  return { state, actions, setSuppressed, resolveStandalonePath, cleanupWorkflow, addLog };
 };
 
 describe('workflowRegistryActions', () => {
@@ -81,7 +84,8 @@ describe('workflowRegistryActions', () => {
   it('keeps concurrent standalone creations in the registry after path resolution', async () => {
     let currentState = {
       workflows: {}, activeWfId: '', workflowName: '未归属', nodes: [], edges: [], agents: [], roles: [],
-      variables: {}, groups: [], defaultAgentId: null, projectId: null, selectedNodeId: null, logs: [],
+      variables: {}, groups: [], defaultAgentId: null, projectId: null, projectPath: null,
+      selectedNodeId: null, logs: [], addLog: vi.fn(),
     } as WorkflowRegistryActionState;
     const pathResolvers: Array<(path: string | undefined) => void> = [];
     const resolveStandalonePath = vi.fn(() => new Promise<string | undefined>((resolve) => {
@@ -110,6 +114,66 @@ describe('workflowRegistryActions', () => {
     expect(Object.keys(currentState.workflows)).toHaveLength(2);
     expect(new Set(Object.keys(currentState.workflows)).size).toBe(2);
     expect(new Set(Object.values(currentState.workflows).map((item) => item.name)).size).toBe(2);
+  });
+
+  it('aborts standalone creation and logs when the project changes during path resolution', async () => {
+    const previousLanguage = i18n.language;
+    await i18n.changeLanguage('en-US');
+    try {
+      const oldWorkflows = {
+        'old-workflow': { name: 'Old project', nodes: [], edges: [], agents: [], roles: [] },
+      } as WorkflowRegistryActionState['workflows'];
+      const newWorkflows = {
+        'new-workflow': { name: 'New project', nodes: [], edges: [], agents: [], roles: [] },
+      } as WorkflowRegistryActionState['workflows'];
+      const addLog = vi.fn();
+      const oldState = {
+        workflows: oldWorkflows, activeWfId: 'old-workflow', workflowName: 'Old project',
+        nodes: [], edges: [], agents: [], roles: [], variables: {}, groups: [], defaultAgentId: null,
+        projectId: null, projectPath: null, selectedNodeId: null, logs: [], addLog,
+      } as WorkflowRegistryActionState;
+      let currentState = oldState;
+      let resolvePath!: (path: string | undefined) => void;
+      const resolveStandalonePath = vi.fn(() => new Promise<string | undefined>((resolve) => {
+        resolvePath = resolve;
+      }));
+      const setState = vi.fn((patch: Partial<WorkflowRegistryActionState>) => {
+        currentState = { ...currentState, ...patch };
+      });
+      const actions = createWorkflowRegistryActions({
+        getState: () => currentState,
+        setState,
+        setDirtySuppressed: vi.fn(),
+        cleanupWorkflow: vi.fn(),
+        resolveStandalonePath,
+        now: () => 1000,
+        nowIso: () => '2026-01-01T00:00:00.000Z',
+        createRegisteredWorkflowId: () => 'unused',
+      });
+
+      const creation = actions.newWorkflowInProject('C:/standalone');
+      currentState = {
+        ...currentState,
+        workflows: newWorkflows,
+        activeWfId: 'new-workflow',
+        workflowName: 'New project',
+        projectId: 'project-2',
+        projectPath: 'C:/projects/project-2',
+      };
+      const result = await (async () => {
+        resolvePath('C:/standalone');
+        return creation;
+      })();
+
+      expect(result).toEqual({ status: 'aborted', reason: 'project-changed' });
+      expect(oldState.workflows).toBe(oldWorkflows);
+      expect(currentState.workflows).toBe(newWorkflows);
+      expect(setState).not.toHaveBeenCalled();
+      expect(addLog).toHaveBeenCalledOnce();
+      expect(addLog).toHaveBeenCalledWith('warn', i18n.t('log.workflowRegistry.projectChanged'));
+    } finally {
+      await i18n.changeLanguage(previousLanguage);
+    }
   });
 
   it('registers without activation and returns the generated id', () => {
