@@ -111,6 +111,9 @@ function isSafeRevision(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]*[A-Za-z0-9]$/.test(value) || /^[A-Za-z0-9]$/.test(value);
 }
 
+/** 在 command parser 中筛掉不安全的词法 pathspec：absolute、含 `..`、glob、Windows 设备名及 protected-root overlap。
+ * 这是 Node 参数策略而非 real-path 证明，不能替代 native host 的路径授权检查（ADR-SM-043）。
+ */
 function isSafePathspec(value: string): boolean {
   const normalized = value.replace(/\\/g, '/');
   const comparable = normalized.toLowerCase();

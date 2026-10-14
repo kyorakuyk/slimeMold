@@ -67,7 +67,9 @@ async function openAICompatPost(
   return lastRes!;
 }
 
-/** OpenAI 兼容协议（OpenAI / DeepSeek / Moonshot / 通义 / Gemini 中转 等） */
+/** 将 OpenAI-compatible 请求与 buffered/SSE 响应适配为统一 `LLMResponse`。
+ * SSE tool-call 参数按 index 累积后解析，usage 在此归一；此处不负责选择 provider 能力（ADR-SM-073）。
+ */
 export async function chatOpenAI(
   agent: AgentConfig,
   messages: ChatMessage[],

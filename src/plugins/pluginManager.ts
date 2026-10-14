@@ -126,10 +126,8 @@ export function terminatePluginRuntime(): void {
   sandboxManager.terminateAll();
 }
 
-/**
- * 扫描一个 `custom_nodes/` 目录并加载其中的节点包。
- * @param base 节点包根目录（绝对路径）
- * @param scope 'program' = 程序安装目录（全局生效）；'project' = 当前项目目录（仅本项目）
+/** 按 program/project scope 扫描 `custom_nodes/` 并注册成功加载的节点包。
+ * 插件加载后的 `canRegister` 检查会阻止过期注册；这仍是可信 JS/TS 扩展，不是进程级沙箱（ADR-SM-074）。
  */
 async function scanCustomNodesDir(
   base: string,

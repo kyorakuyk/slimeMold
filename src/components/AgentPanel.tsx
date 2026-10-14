@@ -262,10 +262,9 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     }
   };
 
-  /** 根据协议拉取可用模型：
-   *  - ollama   → 本地 /api/tags（无需 key）
-   *  - openai   → 中转站/官方 /models（需已保存的 key）
-   *  - anthropic→ 中转站通常也是 OpenAI 格式，复用 /models；纯原生 Anthropic 无 /models 端点 */
+  /** 为编辑器模型选择器读取当前协议的 model catalog，不改写 `editing.model`。
+   * Codex 在此只显示登录状态；Ollama 与 keyed API 走不同读取路径，缺 credential 时只给出 UI 提示（ADR-SM-073）。
+   */
   const pullModels = async () => {
     if (!editing) return;
     setLoadingModels(true);

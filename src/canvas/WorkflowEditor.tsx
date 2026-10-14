@@ -65,6 +65,9 @@ export default function WorkflowEditor(props: { wfId?: string; onNewProject?: ()
   );
 }
 
+/** 组合主画布与指定分栏 workflow 的 React Flow 交互，图投影和专用手势由子 hook 提供。
+ * 节点/边变更按 `wfId` 路由到主 store actions 或 split-local setters，保持两种图上下文分离（ADR-SM-017、ADR-SM-072）。
+ */
 function WorkflowEditorInner({
   wfId,
   onNewProject,

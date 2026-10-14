@@ -46,6 +46,9 @@ function mergeCandidates(globalAgents: AgentConfig[], projectAgents: AgentConfig
   ];
 }
 
+/** 维护项目主控的显式覆盖选择；空覆盖按全局主控、项目默认的继承顺序显示。
+ * 禁用的选择会阻止保存；空覆盖仍表示继承，而不会复制成项目绑定（ADR-SM-071）。
+ */
 export default function MasterAgentPage({ onBack, onOpenAdvanced }: MasterAgentPageProps) {
   const t = useT('beginner');
   const projectName = useWorkflowStore((state) => state.projectName);

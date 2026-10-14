@@ -52,7 +52,9 @@ export interface RunLlmCallInput {
   };
 }
 
-/** 逐级尝试候选 agent；全部失败抛最后一个错误。返回最终文本。 */
+/** 按调用方提供的 `chainIds` 顺序尝试 Agent，并记录请求结果/释放已取得的 limiter slot。
+ * abort/stale error 会直接抛出，不继续 fallback；具体候选范围由调用方决定（ADR-SM-039）。
+ */
 export async function runLlmWithFallback(input: RunLlmCallInput): Promise<string> {
   const {
     chainIds,

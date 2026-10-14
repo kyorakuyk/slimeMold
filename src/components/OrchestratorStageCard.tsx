@@ -36,6 +36,7 @@ export interface OrchestratorStageCardProps {
 /**
  * 阶段卡片：序号/角色/智能体、阶段日志状态、目标、产物方向、绑定下拉、已固化工作流与打开按钮、日志详情。
  * 从 OrchestratorPanelDetailView 的 stages.map 内联 JSX 抽出，DOM 与分支顺序保持原样。
+ * 可绑定与已绑定分别由 `bindable`/`boundWfId` 决定；更新只经父层 callbacks（ADR-SM-005、ADR-SM-017）。
  */
 export default function OrchestratorStageCard({
   stage,

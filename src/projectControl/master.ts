@@ -123,6 +123,9 @@ function parseJsonPayload(text: string): unknown {
   }
 }
 
+/** 将主控文本解析为 question、brief 或 architecture 提案，供后续会话流程处理。
+ * 校验必需字段、问题数量、唯一 ID 与任务模块引用；解析本身不等于批准或持久化（ADR-SM-010、ADR-SM-011）。
+ */
 export function parseMasterResponse(text: string): MasterResponse {
   const value = parseJsonPayload(text);
   if (!isRecord(value)) throw new Error('主控输出必须是 JSON 对象');

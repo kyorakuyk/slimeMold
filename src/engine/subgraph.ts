@@ -157,7 +157,7 @@ export function resolvePorts(
  *  3. ref -> 外部   -> 源重定向到 该输出端口对应的 内部节点/handle
  *
  * 支持子图嵌套引用（子图内部又放了 subgraph.ref），通过递归展开实现；
- * 用 stack 检测循环引用，遇到则抛错。
+ * 用 stack 检测循环引用，遇到则抛错。缺失定义/循环会拒绝运行；失效端口的边会被丢弃（ADR-SM-017）。
  */
 export function flattenSubgraphs(
   nodes: FlowNode[],

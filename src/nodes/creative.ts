@@ -10,7 +10,9 @@ import { findRole, resolveRoleSystem } from '../agents/agentManager';
  * 让"idea 节点""设计师节点"成为可拖拽、可编排的创意流水线节点。
  */
 
-/** 与 agent.chat 一致的核心 LLM 调用（含离线模拟回显），供创作节点复用 */
+/** 统一创作节点的离线模拟回显与 provider-backed LLM 调用路径。
+ * `simulate === 'on'` 不调用 `ctx.llm`；真实分支要求 agentId 并通过注入的执行上下文取响应（ADR-SM-073）。
+ */
 async function runCreativeLLM(
   opts: {
     agentId: string;

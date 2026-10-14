@@ -288,6 +288,9 @@ export function useOrchestratorPanelActions({
     setRevisionDependsOnTouched(true);
   };
 
+  /** 对当前选中的任务提交新 TaskGraph revision，不就地改写 source graph。
+   * 仅接受匹配的 graph/task/session 与显式标题或依赖编辑；沿既有事件和保存路径写回（ADR-SM-013）。
+   */
   const onReviseTaskGraph = async () => {
     const projection = taskGraphDAG.projection;
     const selection = taskGraphSelection;

@@ -52,6 +52,9 @@ function RunIcon({ status }: { status: RunRecord['status'] }) {
   return <CircleDashed size={17} />;
 }
 
+/** 新手项目驾驶舱：把当前工作流、最近运行与进度压缩成项目概况和下一步入口。
+ * 运行/停止复用既有 workflow actions，不在页面另存一份执行状态（ADR-SM-004、ADR-SM-075）。
+ */
 export default function ProjectCockpit({
   onOpenAdvanced,
   onOpenIssues,

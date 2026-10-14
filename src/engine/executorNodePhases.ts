@@ -87,6 +87,9 @@ export interface NodeDecisionInput {
   countSkip: () => void;
 }
 
+/** 将预计算的 NodeDecision 投影到本轮 outputs/branch/status/events；这里不运行节点实现。
+ * 只有 `execute` 返回 true；缓存、剪枝、跳过、mute/bypass 各自保留对应状态与分支语义（ADR-SM-017、ADR-SM-080）。
+ */
 export function applyNodeDecision({
   policy,
   id,
