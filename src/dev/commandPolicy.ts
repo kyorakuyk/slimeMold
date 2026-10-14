@@ -197,33 +197,24 @@ function parseSafeTypecheck(command: string[]): WorkerCommandIntent | null {
   return null;
 }
 
-export function parseWorkerCommand(command: string[]): WorkerCommandResult {
-  const snapshot = snapshotBoundedCommand(command);
-  if (!snapshot) return { ok: false, error: 'command input is not bounded and well-formed' };
-  command = snapshot;
-
-  const typecheck = parseSafeTypecheck(command);
-  if (typecheck) return { ok: true, intent: typecheck };
-
-  if (['ls', 'cat', 'head', 'tail'].includes(command[0] as 'ls' | 'cat' | 'head' | 'tail')) {
-    const readCommand = command[0] as 'ls' | 'cat' | 'head' | 'tail';
-    const files = command.slice(1);
-    if (files.length > 0 && files.every((file) => isSafeReadOperand(readCommand, file))) {
-      return {
-        ok: true,
-        intent: { kind: 'read-files', command: readCommand, files },
-      };
-    }
-    return { ok: false, error: 'read command file operands are not safe' };
+function parseReadCommand(command: string[]): WorkerCommandResult | null {
+  if (!['ls', 'cat', 'head', 'tail'].includes(command[0] as 'ls' | 'cat' | 'head' | 'tail')) return null;
+  const readCommand = command[0] as 'ls' | 'cat' | 'head' | 'tail';
+  const files = command.slice(1);
+  if (files.length > 0 && files.every((file) => isSafeReadOperand(readCommand, file))) {
+    return { ok: true, intent: { kind: 'read-files', command: readCommand, files } };
   }
+  return { ok: false, error: 'read command file operands are not safe' };
+}
 
-  if (command.length === 5 && command[0] === 'git' && command[1] === 'diff' && command[2] === '--name-only' && command[4] === '--') {
+function parseGitDiffCommand(command: string[]): WorkerCommandResult | null {
+  if (command[0] !== 'git' || command[1] !== 'diff') return null;
+  if (command.length === 5 && command[2] === '--name-only' && command[4] === '--') {
     return isSafeRevision(command[3])
       ? { ok: true, intent: { kind: 'git-names-only', revision: command[3], pathspecs: [] } }
       : { ok: false, error: 'git revision is not safe' };
   }
-
-  if (command.length >= 5 && command[0] === 'git' && command[1] === 'diff') {
+  if (command.length >= 5) {
     const revision = command[2];
     const separator = command[3];
     const pathspecs = command.slice(4);
@@ -231,83 +222,102 @@ export function parseWorkerCommand(command: string[]): WorkerCommandResult {
       return { ok: true, intent: { kind: 'git-diff-scoped', revision, pathspecs } };
     }
   }
+  return { ok: false, error: 'git diff content requires explicit non-protected pathspecs' };
+}
 
-  if (command[0] === 'tsx') {
-    const script = command[1] ?? '';
-    if (!isSafeScriptPath(script)) {
-      return { ok: false, error: 'tsx script path is not safe' };
-    }
-    const args = command.slice(2);
-    const safeOptions = new Set(['--reporter=dot']);
-    if (args.some((argument) => !safeOptions.has(argument))) {
-      return { ok: false, error: 'tsx argument is not safe' };
-    }
-    return { ok: true, intent: { kind: 'tsx-script', script, args } };
+function parseTsxCommand(command: string[]): WorkerCommandResult | null {
+  if (command[0] !== 'tsx') return null;
+  const script = command[1] ?? '';
+  if (!isSafeScriptPath(script)) {
+    return { ok: false, error: 'tsx script path is not safe' };
   }
-
-  if (command[0] === 'find') {
-    const forbidden = ['-L', '-H', '-follow', '-files0-from', '--files0-from', '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fls', '-fprint', '-fprint0'];
-    if (command.some((argument) => forbidden.some((option) => argument === option || argument.startsWith(`${option}=`)))) {
-      return { ok: false, error: 'find traversal mode is not safe' };
-    }
-    let index = 1;
-    if (command[index] === '-P') index += 1;
-    const roots: string[] = [];
-    while (index < command.length && !command[index].startsWith('-') && command[index] !== '!') {
-      roots.push(command[index]);
-      index += 1;
-    }
-    const predicates = command.slice(index);
-    if (!areFindPredicatesSafe(predicates)) {
-      return { ok: false, error: 'find traversal mode is not safe' };
-    }
-    if (roots.length > 0 && roots.every(isSafePathspec)) {
-      return { ok: true, intent: { kind: 'find', roots, predicates } };
-    }
-    return { ok: false, error: 'find roots are not safe' };
+  const args = command.slice(2);
+  const safeOptions = new Set(['--reporter=dot']);
+  if (args.some((argument) => !safeOptions.has(argument))) {
+    return { ok: false, error: 'tsx argument is not safe' };
   }
+  return { ok: true, intent: { kind: 'tsx-script', script, args } };
+}
 
-  if (command[0] === 'grep') {
-    const safeOptions = new Set(['-n', '--line-number', '-i', '--ignore-case', '-F', '--fixed-strings', '-v', '--invert-match']);
-    let index = 1;
-    let pattern: string | undefined;
-    while (index < command.length) {
-      const argument = command[index];
-      if (argument === '--') {
-        pattern = command[index + 1];
-        index += 2;
-        break;
-      }
-      if (argument === '-e' || argument === '--regexp') {
-        const value = command[index + 1];
-        if (!isSafeTextToken(value) || value.startsWith('-')) {
-          return { ok: false, error: 'grep option arguments must be explicit and safe' };
-        }
-        pattern = value;
-        index += 2;
-        break;
-      }
-      if (argument.startsWith('-')) {
-        if (!safeOptions.has(argument)) {
-          return { ok: false, error: 'grep option arguments must be explicit and safe' };
-        }
-        index += 1;
-        continue;
-      }
-      pattern = argument;
-      index += 1;
+function parseFindCommand(command: string[]): WorkerCommandResult | null {
+  if (command[0] !== 'find') return null;
+  const forbidden = ['-L', '-H', '-follow', '-files0-from', '--files0-from', '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fls', '-fprint', '-fprint0'];
+  if (command.some((argument) => forbidden.some((option) => argument === option || argument.startsWith(`${option}=`)))) {
+    return { ok: false, error: 'find traversal mode is not safe' };
+  }
+  let index = 1;
+  if (command[index] === '-P') index += 1;
+  const roots: string[] = [];
+  while (index < command.length && !command[index].startsWith('-') && command[index] !== '!') {
+    roots.push(command[index]);
+    index += 1;
+  }
+  const predicates = command.slice(index);
+  if (!areFindPredicatesSafe(predicates)) {
+    return { ok: false, error: 'find traversal mode is not safe' };
+  }
+  if (roots.length > 0 && roots.every(isSafePathspec)) {
+    return { ok: true, intent: { kind: 'find', roots, predicates } };
+  }
+  return { ok: false, error: 'find roots are not safe' };
+}
+
+function parseGrepCommand(command: string[]): WorkerCommandResult | null {
+  if (command[0] !== 'grep') return null;
+  const safeOptions = new Set(['-n', '--line-number', '-i', '--ignore-case', '-F', '--fixed-strings', '-v', '--invert-match']);
+  let index = 1;
+  let pattern: string | undefined;
+  while (index < command.length) {
+    const argument = command[index];
+    if (argument === '--') {
+      pattern = command[index + 1];
+      index += 2;
       break;
     }
-    const files = command.slice(index);
-    if (!isSafeTextToken(pattern) || files.length === 0 || !files.every(isSafePathspec)) {
-      return { ok: false, error: 'grep file operands are not safe' };
+    if (argument === '-e' || argument === '--regexp') {
+      const value = command[index + 1];
+      if (!isSafeTextToken(value) || value.startsWith('-')) {
+        return { ok: false, error: 'grep option arguments must be explicit and safe' };
+      }
+      pattern = value;
+      index += 2;
+      break;
     }
-    return { ok: true, intent: { kind: 'grep-files', pattern, files } };
+    if (argument.startsWith('-')) {
+      if (!safeOptions.has(argument)) {
+        return { ok: false, error: 'grep option arguments must be explicit and safe' };
+      }
+      index += 1;
+      continue;
+    }
+    pattern = argument;
+    index += 1;
+    break;
   }
+  const files = command.slice(index);
+  if (!isSafeTextToken(pattern) || files.length === 0 || !files.every(isSafePathspec)) {
+    return { ok: false, error: 'grep file operands are not safe' };
+  }
+  return { ok: true, intent: { kind: 'grep-files', pattern, files } };
+}
 
-  if (command[0] === 'git' && command[1] === 'diff') {
-    return { ok: false, error: 'git diff content requires explicit non-protected pathspecs' };
-  }
+export function parseWorkerCommand(command: string[]): WorkerCommandResult {
+  const snapshot = snapshotBoundedCommand(command);
+  if (!snapshot) return { ok: false, error: 'command input is not bounded and well-formed' };
+  command = snapshot;
+
+  const typecheck = parseSafeTypecheck(command);
+  if (typecheck) return { ok: true, intent: typecheck };
+  const read = parseReadCommand(command);
+  if (read) return read;
+  const gitDiff = parseGitDiffCommand(command);
+  if (gitDiff) return gitDiff;
+  const tsx = parseTsxCommand(command);
+  if (tsx) return tsx;
+  const find = parseFindCommand(command);
+  if (find) return find;
+  const grep = parseGrepCommand(command);
+  if (grep) return grep;
   return { ok: false, error: 'command is not supported' };
 }
 
