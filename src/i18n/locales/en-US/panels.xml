@@ -182,6 +182,7 @@
   <string name="templates.genToast">Draft generated — adjust on the canvas</string>
 
   <!-- DevSessionPanel -->
+  <string name="devSession.nonGitProject">H4 development features are unavailable because this project is not a Git repository.</string>
   <string name="devSession.initializationFailed">H4 DevSession is unavailable: host initialization failed (dev_init_session did not succeed).</string>
   <string name="devSession.retryHint">Reopen the project or check the logs, then try again.</string>
   <string name="devSession.desktopOnly">H4 development sessions are available only in the desktop (Tauri) app.</string>

@@ -50,8 +50,15 @@ export function DevSessionPanel() {
   const hasSession = !!getDevSession();
   const isReady = isTauri && hasSession;
 
-  // 审计 P1：宿主初始化失败 → 显式「开发能力不可用」，不静默吞异常
-  if (isTauri && getDevGuiStatus() === 'unavailable') {
+  const guiStatus = getDevGuiStatus();
+  if (isTauri && guiStatus === 'unavailable') {
+    return (
+      <div className="p-3 text-xs" style={{ color: 'var(--sm-ink-soft)' }}>
+        {t('devSession.nonGitProject')}
+      </div>
+    );
+  }
+  if (isTauri && guiStatus === 'error') {
     return (
       <div className="p-3 text-xs" style={{ color: 'var(--sm-err)' }}>
         {t('devSession.initializationFailed')} {t('devSession.retryHint')}
