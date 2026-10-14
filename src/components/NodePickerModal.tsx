@@ -4,6 +4,7 @@ import { useRegistryStore } from '../store/registryStore';
 import { useWorkflowStore } from '../store/workflowStore';
 import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import { useT } from '../i18n/useT';
+import { localizeNodeCategory } from '../i18n/nodeLabels';
 
 export interface PickPayload {
   kind: 'node' | 'subgraph';
@@ -20,6 +21,7 @@ interface Props {
 /** 节点选择窗：仿「示例库」居中弹窗样式，右上角关闭按钮，点遮罩关闭 */
 export function NodePickerModal({ onSelect, onClose, showSubgraphs = true }: Props) {
   const t = useT('modals');
+  const tUi = useT('ui');
   const defs = useRegistryStore((s) => s.defs);
   const subgraphs = useWorkflowStore((s) => s.subgraphs);
   const [query, setQuery] = useState('');
@@ -36,25 +38,31 @@ export function NodePickerModal({ onSelect, onClose, showSubgraphs = true }: Pro
         id: d.typeId,
         label: d.name,
         category: d.category,
+        displayCategory: localizeNodeCategory(d.category, tUi),
         desc: d.description,
       }));
-    const sgItems = showSubgraphs ? Object.values(subgraphs).map((sg) => ({
-      key: `s:${sg.id}`,
-      kind: 'subgraph' as const,
-      id: sg.id,
-      label: sg.name,
-      category: t('nodePicker.mySubgraph'),
-      desc: t('nodePicker.steps', { count: sg.nodes.length }),
-    })) : [];
+    const sgItems = showSubgraphs ? Object.values(subgraphs).map((sg) => {
+      const category = t('nodePicker.mySubgraph');
+      return {
+        key: `s:${sg.id}`,
+        kind: 'subgraph' as const,
+        id: sg.id,
+        label: sg.name,
+        category,
+        displayCategory: category,
+        desc: t('nodePicker.steps', { count: sg.nodes.length }),
+      };
+    }) : [];
     const all = [...nodeItems, ...sgItems];
     if (!q) return all;
     return all.filter(
       (it) =>
         it.label.toLowerCase().includes(q) ||
         it.category.toLowerCase().includes(q) ||
+        it.displayCategory.toLowerCase().includes(q) ||
         (it.desc ?? '').toLowerCase().includes(q),
     );
-  }, [defs, subgraphs, query, showSubgraphs]);
+  }, [defs, subgraphs, query, showSubgraphs, t, tUi]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -186,7 +194,7 @@ export function NodePickerModal({ onSelect, onClose, showSubgraphs = true }: Pro
                     </span>
                   </div>
                   <span className="mt-1.5 text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                    {it.category}
+                    {it.displayCategory}
                   </span>
                 </button>
               ))}
