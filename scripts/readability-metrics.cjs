@@ -34,9 +34,43 @@ if (jsonOut && !/\.json$/i.test(jsonOut)) {
   console.error(`--json expects a path ending in .json, got "${jsonOut}" (refusing to overwrite other files)`);
   process.exit(2);
 }
+function lstatOrMissing(filePath) {
+  try {
+    return fs.lstatSync(filePath);
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return null;
+    throw error;
+  }
+}
+
+function resolveJsonOutputRealPath(filePath) {
+  const absolutePath = path.resolve(root, filePath);
+  const targetStat = lstatOrMissing(absolutePath);
+  if (targetStat?.isSymbolicLink()) {
+    throw new Error(`--json target must not be a symbolic link (refusing to write "${absolutePath}")`);
+  }
+
+  let ancestor = absolutePath;
+  const remaining = [];
+  while (!lstatOrMissing(ancestor)) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) throw new Error(`--json path has no existing ancestor: "${absolutePath}"`);
+    remaining.unshift(path.basename(ancestor));
+    ancestor = parent;
+  }
+  return path.resolve(fs.realpathSync.native(ancestor), ...remaining);
+}
+
 if (jsonOut) {
-  const resolvedJsonOut = path.resolve(root, jsonOut);
-  const relativeJsonOut = path.relative(root, resolvedJsonOut);
+  const resolvedRoot = fs.realpathSync.native(root);
+  let resolvedJsonOut;
+  try {
+    resolvedJsonOut = resolveJsonOutputRealPath(jsonOut);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+  const relativeJsonOut = path.relative(resolvedRoot, resolvedJsonOut);
   const writesInsideRepo = relativeJsonOut === '' || (
     relativeJsonOut !== '..' &&
     !relativeJsonOut.startsWith(`..${path.sep}`) &&
