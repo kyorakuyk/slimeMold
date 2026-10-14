@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeDefinition } from '../types/node';
 import { getNodeDef, useRegistryStore } from '../store/registryStore';
-import { ensureGuiDevSession, getDevGuiError, registerGuiDevDefs, teardownGuiDevSession } from './gui';
+import {
+  ensureGuiDevSession,
+  getDevGuiError,
+  getDevGuiStatus,
+  registerGuiDevDefs,
+  teardownGuiDevSession,
+} from './gui';
 
 const { invoke } = vi.hoisted(() => ({
   invoke: vi.fn(async (_command: string, _args?: unknown): Promise<string | number> => ''),
@@ -36,6 +42,7 @@ describe('GUI DevSession registry bridge', () => {
 
   afterEach(async () => {
     await teardownGuiDevSession();
+    vi.restoreAllMocks();
   });
 
   it('registers session defs even when the session already exists', () => {
@@ -93,5 +100,39 @@ describe('GUI DevSession registry bridge', () => {
 
     expect(await ensureGuiDevSession('C:/repo')).toBeNull();
     expect(getDevGuiError()).toBe('Git top-level probe 失败');
+  });
+
+  it('treats a non-Git project as unavailable without an error-level console event', async () => {
+    const nonGitFailure = new Error(
+      'Git top-level probe 失败（exit code 128）：fatal: not a git repository (or any of the parent directories): .git',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'dev_init_session') throw nonGitFailure;
+      return '';
+    });
+
+    expect(await ensureGuiDevSession('C:/ordinary-project')).toBeNull();
+    expect(getDevGuiStatus()).toBe('unavailable');
+    expect(getDevGuiError()).toBe(nonGitFailure.message);
+    expect(warn).toHaveBeenCalledWith('[H4] dev_init_session unavailable for non-Git project:', nonGitFailure);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('keeps unexpected host initialization failures at error severity', async () => {
+    const ipcFailure = new Error('Tauri IPC unavailable');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'dev_init_session') throw ipcFailure;
+      return '';
+    });
+
+    expect(await ensureGuiDevSession('C:/ordinary-project')).toBeNull();
+    expect(getDevGuiStatus()).toBe('error');
+    expect(getDevGuiError()).toBe(ipcFailure.message);
+    expect(error).toHaveBeenCalledWith('[H4] dev_init_session 失败：', ipcFailure);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
