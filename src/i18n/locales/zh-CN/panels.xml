@@ -176,9 +176,25 @@
   <string name="templates.empty">运行过的工作流会在此沉淀为可复用模板。先跑通一个工作流试试吧。</string>
   <string name="templates.freqTag">高频模式</string>
   <string name="templates.noPattern">暂无重复出现的高频模式（需 ≥2 次成功运行且结构相似）。</string>
+  <string name="templates.unnamed">未命名</string>
   <string name="templates.genDraft">生成草稿</string>
   <string name="templates.genHint">从你的成功运行中提炼，越用越懂你</string>
   <string name="templates.genToast">已生成草稿，可在画布中调整</string>
+
+  <!-- DevSessionPanel -->
+  <string name="devSession.initializationFailed">H4 开发能力不可用：宿主 DevSession 初始化失败（dev_init_session 未成功）。</string>
+  <string name="devSession.retryHint">请重新打开项目或查看日志后重试。</string>
+  <string name="devSession.desktopOnly">H4 开发会话仅桌面端（Tauri）可用。</string>
+  <string name="devSession.notInitialized">H4 开发会话未初始化（请先打开一个项目）。</string>
+  <string name="devSession.header">DevSession（宿主导航）</string>
+  <string name="devSession.persistenceBound">EvidenceStore 已绑定</string>
+  <string name="devSession.persistenceUnavailable">无宿主持久化</string>
+  <string name="devSession.worktrees">Worktree（{{count}}）</string>
+  <string name="devSession.noWorktrees">暂无 worktree（自举任务从 dev.worktree.create 开始）</string>
+  <string name="devSession.baseRevision">基线提交</string>
+  <string name="devSession.approved">· 已批准</string>
+  <string name="devSession.acceptances">验收记录（{{count}}）</string>
+  <string name="devSession.noAcceptances">暂无验收记录</string>
 
   <!-- RouteTableEditor -->
   <string name="route.title">类别 → 智能体路由（Builder 生成时绑定 worker）</string>

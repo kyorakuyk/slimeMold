@@ -164,6 +164,9 @@
   <string name="session.taskGraphEyebrow">管理层任务</string>
   <string name="session.taskGraphTitle">执行任务图</string>
   <string name="session.taskGraph.tasks">任务与影响范围</string>
+  <string name="session.taskScopeSummary">{{title}}：{{scope}}</string>
+  <string name="session.scopeSeparator">、</string>
+  <string name="session.scopePending">待补充影响范围</string>
   <string name="session.generateTaskGraph">生成任务图</string>
   <string name="session.approveTaskGraph">确认这份任务图</string>
   <string name="session.taskGraphApproved">任务图已确认，下一步生成执行编排。</string>

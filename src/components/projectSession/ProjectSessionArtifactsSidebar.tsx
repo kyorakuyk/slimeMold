@@ -110,7 +110,15 @@ export default function ProjectSessionArtifactsSidebar({
             </div>
             <ClipboardList size={17} />
           </div>
-          <ArchitectureItems label={t('session.taskGraph.tasks')} items={currentTaskGraph.tasks.map((task) => `${task.title}：${task.scope.join('、') || '待补充影响范围'}`)} />
+          <ArchitectureItems
+            label={t('session.taskGraph.tasks')}
+            items={currentTaskGraph.tasks.map((task) =>
+              t('session.taskScopeSummary', {
+                title: task.title,
+                scope: task.scope.join(t('session.scopeSeparator')) || t('session.scopePending'),
+              }),
+            )}
+          />
           {currentTaskGraph.approval === 'draft' ? (
             <button type="button" data-testid="beginner-session-approve-task-graph" className="sm-beginner-primary-button sm-beginner-session-approve" onClick={onApproveTaskGraph}>
               <CheckCircle2 size={16} /> {t('session.approveTaskGraph')}

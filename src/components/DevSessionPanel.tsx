@@ -15,6 +15,7 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { getDevGuiStatus } from '../dev/gui';
 import type { WorktreeInfo } from '../dev/worktree';
 import type { AcceptanceRecord } from '../dev/session';
+import { useT } from '../i18n/useT';
 
 
 interface SessionSnapshot {
@@ -37,6 +38,7 @@ function snapshot(): SessionSnapshot {
 }
 
 export function DevSessionPanel() {
+  const t = useT('panels');
   const [snap, setSnap] = useState<SessionSnapshot>(snapshot);
 
   // 画布节点状态变化时刷新面板（dev.* 节点执行后 worktree/验收会变）
@@ -52,8 +54,7 @@ export function DevSessionPanel() {
   if (isTauri && getDevGuiStatus() === 'unavailable') {
     return (
       <div className="p-3 text-xs" style={{ color: 'var(--sm-err)' }}>
-        H4 开发能力不可用：宿主 DevSession 初始化失败（dev_init_session 未成功）。
-        请重新打开项目或查看日志后重试。
+        {t('devSession.initializationFailed')} {t('devSession.retryHint')}
       </div>
     );
   }
@@ -63,8 +64,8 @@ export function DevSessionPanel() {
     return (
       <div className="p-3 text-xs" style={{ color: 'var(--sm-ink-faint)' }}>
         {!isTauri
-          ? 'H4 开发会话仅桌面端（Tauri）可用。'
-          : 'H4 开发会话未初始化（请先打开一个项目）。'}
+          ? t('devSession.desktopOnly')
+          : t('devSession.notInitialized')}
       </div>
     );
   }
@@ -73,7 +74,7 @@ export function DevSessionPanel() {
     <div className="space-y-3 p-3 text-xs">
       <div className="flex items-center gap-2" style={{ color: 'var(--sm-ink-soft)' }}>
         <ShieldCheck size={13} />
-        <span>DevSession（宿主导航）</span>
+        <span>{t('devSession.header')}</span>
         <span
           className="ml-auto rounded px-1.5 py-0.5"
           style={{
@@ -81,16 +82,16 @@ export function DevSessionPanel() {
             background: 'var(--sm-bg-soft)',
           }}
         >
-          {snap.hasPersistence ? 'EvidenceStore 已绑定' : '无宿主持久化'}
+          {snap.hasPersistence ? t('devSession.persistenceBound') : t('devSession.persistenceUnavailable')}
         </span>
       </div>
 
       <div>
         <div className="mb-1 flex items-center gap-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
-          <GitBranch size={12} /> Worktree（{snap.worktrees.length}）
+          <GitBranch size={12} /> {t('devSession.worktrees', { count: snap.worktrees.length })}
         </div>
         {snap.worktrees.length === 0 ? (
-          <p style={{ color: 'var(--sm-ink-faint)' }}>暂无 worktree（自举任务从 dev.worktree.create 开始）</p>
+          <p style={{ color: 'var(--sm-ink-faint)' }}>{t('devSession.noWorktrees')}</p>
         ) : (
           <ul className="space-y-2">
             {snap.worktrees.map((wt) => (
@@ -102,9 +103,9 @@ export function DevSessionPanel() {
                   </span>
                 </div>
                 <div className="mt-1 flex items-center gap-1 text-[10.5px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                  <span title="基线提交">{wt.baseRevision.slice(0, 8)}</span>
+                  <span title={t('devSession.baseRevision')}>{wt.baseRevision.slice(0, 8)}</span>
                   {snap.approvalPaths.includes(wt.path.replace(/\\/g, '/').replace(/\/+$/, '')) && (
-                    <span style={{ color: 'var(--sm-ok)' }}>· 已批准</span>
+                    <span style={{ color: 'var(--sm-ok)' }}>{t('devSession.approved')}</span>
                   )}
                 </div>
               </li>
@@ -116,10 +117,10 @@ export function DevSessionPanel() {
 
       <div>
         <div className="mb-1 flex items-center gap-1.5" style={{ color: 'var(--sm-ink-soft)' }}>
-          <FileText size={12} /> 验收记录（{snap.acceptances.length}）
+          <FileText size={12} /> {t('devSession.acceptances', { count: snap.acceptances.length })}
         </div>
         {snap.acceptances.length === 0 ? (
-          <p style={{ color: 'var(--sm-ink-faint)' }}>暂无验收记录</p>
+          <p style={{ color: 'var(--sm-ink-faint)' }}>{t('devSession.noAcceptances')}</p>
         ) : (
           <ul className="space-y-1">
             {snap.acceptances.map((a) => (

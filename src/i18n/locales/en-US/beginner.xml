@@ -164,6 +164,9 @@
   <string name="session.taskGraphEyebrow">MANAGEMENT TASKS</string>
   <string name="session.taskGraphTitle">Execution task graph</string>
   <string name="session.taskGraph.tasks">Tasks and scope</string>
+  <string name="session.taskScopeSummary">{{title}}: {{scope}}</string>
+  <string name="session.scopeSeparator">, </string>
+  <string name="session.scopePending">Impact scope not specified</string>
   <string name="session.generateTaskGraph">Generate task graph</string>
   <string name="session.approveTaskGraph">Approve this task graph</string>
   <string name="session.taskGraphApproved">Task graph approved. Execution orchestration comes next.</string>

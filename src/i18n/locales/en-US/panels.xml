@@ -176,9 +176,25 @@
   <string name="templates.empty">Workflows you run will crystallize into reusable templates here. Run one to get started.</string>
   <string name="templates.freqTag">Frequent pattern</string>
   <string name="templates.noPattern">No repeated high-frequency pattern yet (needs ≥2 successful runs with similar structure).</string>
+  <string name="templates.unnamed">Untitled</string>
   <string name="templates.genDraft">Generate draft</string>
   <string name="templates.genHint">Distilled from your successful runs — learns you over time</string>
   <string name="templates.genToast">Draft generated — adjust on the canvas</string>
+
+  <!-- DevSessionPanel -->
+  <string name="devSession.initializationFailed">H4 DevSession is unavailable: host initialization failed (dev_init_session did not succeed).</string>
+  <string name="devSession.retryHint">Reopen the project or check the logs, then try again.</string>
+  <string name="devSession.desktopOnly">H4 development sessions are available only in the desktop (Tauri) app.</string>
+  <string name="devSession.notInitialized">H4 DevSession is not initialized (open a project first).</string>
+  <string name="devSession.header">DevSession (host navigation)</string>
+  <string name="devSession.persistenceBound">EvidenceStore connected</string>
+  <string name="devSession.persistenceUnavailable">No host persistence</string>
+  <string name="devSession.worktrees">Worktree count: {{count}}</string>
+  <string name="devSession.noWorktrees">No worktrees yet (bootstrap tasks begin with dev.worktree.create).</string>
+  <string name="devSession.baseRevision">Base commit</string>
+  <string name="devSession.approved">· Approved</string>
+  <string name="devSession.acceptances">Acceptance record count: {{count}}</string>
+  <string name="devSession.noAcceptances">No acceptance records yet.</string>
 
   <!-- RouteTableEditor -->
   <string name="route.title">Category → Agent routing (bound to workers at build time)</string>
