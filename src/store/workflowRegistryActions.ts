@@ -13,6 +13,7 @@ import {
   buildRemoveWorkflowState,
   buildRenameWorkflowState,
   buildSwitchWorkflowState,
+  type NewWorkflowInProjectResult,
   type WorkflowSwitchView,
 } from './workflowRegistryState';
 import { createWorkflowId } from './workflowId';
@@ -39,10 +40,7 @@ export interface WorkflowRegistryActionDeps {
 
 export interface WorkflowRegistryActions {
   switchWorkflow: (id: string) => void;
-  newWorkflowInProject: (workspaceDir?: string | null) => Promise<
-    | { status: 'created'; workflowId: string }
-    | { status: 'aborted'; reason: 'project-changed' }
-  >;
+  newWorkflowInProject: (workspaceDir?: string | null) => Promise<NewWorkflowInProjectResult>;
   registerWorkflow: (workflow: WorkflowFile, opts?: { activate?: boolean; name?: string }) => string;
   renameWorkflow: (name: string) => void;
   removeWorkflow: (id: string) => void;

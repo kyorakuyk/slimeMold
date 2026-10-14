@@ -10,6 +10,10 @@ import { fromDisk, serializeCurrent } from './workflowSerialize';
 import { createWorkflowId } from './workflowId';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 
+export type NewWorkflowInProjectResult =
+  | { status: 'created'; workflowId: string }
+  | { status: 'aborted'; reason: 'project-changed' };
+
 export function resolveActiveWorkflowWorkspaceDir(input: {
   workflows: Record<string, Pick<WorkflowFileInMemory, 'workspaceDir'>>;
   activeWfId: string;

@@ -17,6 +17,7 @@ import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { WorkerRunRecovery } from '../projectControl/workerRunRuntime';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { SideEffectRecord } from '../domain/contracts';
+import type { NewWorkflowInProjectResult } from './workflowRegistryState';
 import type { WorkerCleanupProposal } from '../projectControl/workerCleanup';
 import type { GraphSnapshot } from './workflowGraph';
 import type { WorkflowCatalogState } from './workflowCatalogTypes';
@@ -221,7 +222,7 @@ export interface WorkflowState extends WorkflowCatalogState, WorkflowProjectionS
   /** 切换当前激活工作流（先写回当前，再加载目标） */
   switchWorkflow: (id: string) => void;
   /** 在项目内新建一个工作流并激活；workspaceDir 为用户指定的工作区文件夹（null=不创建，产物随工作流销毁） */
-  newWorkflowInProject: (workspaceDir?: string | null) => void;
+  newWorkflowInProject: (workspaceDir?: string | null) => Promise<NewWorkflowInProjectResult>;
   /**
    * 步骤 14.F：把一份「现成」WorkflowFile（如 Builder 节点生成的施工/物业工作流）
    * 直接注册进项目工作流集合并激活。与 newWorkflowInProject（建空白）互补——
