@@ -47,9 +47,9 @@ export function pathComparisonKeyWeb(p: string): string {
  * 纯前端路径解析（GUI/浏览器环境，不依赖 node:path）：
  * - 解析 . / .. 段；
  * - 统一 POSIX 分隔符（Windows 盘符 `C:/...` 保留）；
- * - 相对路径基于当前工作目录（Tauri WebView 无 process.cwd，仅用于 worktree 内相对解析）。
+ * 相对路径基于当前工作目录（Tauri WebView 无 process.cwd，仅用于 worktree 内相对解析）。
  * 仅用于 Tauri deps 注入（resolveInside/relativePath 的替代实现），安全语义由
- * capabilities 的 assertPathAllowed + worktree 登记校验兜底。
+ * capabilities 的 assertPathAllowed + worktree 登记校验兜底；词法解析本身不是授权检查（ADR-SM-043）。
  */
 export function resolveWeb(root: string, rel: string): string {
   const norm = (s: string) => s.replace(/\\/g, '/');

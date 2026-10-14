@@ -21,6 +21,7 @@ interface CanvasReconnectInput {
  *
  * 行为与抽取前保持一致：校验失败只记日志并原样返回；主画布写 store 并 pushHistory/markDirty，
  * 分栏只更新本地 splitEdges 副本。
+ * 环检以 store 当前边集排除旧边后进行；端口类型校验通过才改写端点（ADR-SM-017）。
  */
 export default function useCanvasReconnect({
   isSplit,

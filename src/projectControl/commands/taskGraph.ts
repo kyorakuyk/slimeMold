@@ -253,6 +253,9 @@ export interface ApproveTaskGraphCommandInput {
   now: string;
 }
 
+/** Convert approval into a next snapshot/event batch: approve the graph, transition eligible Issues, and ready the Session.
+ * It returns the new snapshot and DomainEvent batch; persistence and execution dispatch stay outside this function (ADR-SM-007、ADR-SM-010、ADR-SM-013).
+ */
 export function approveTaskGraphCommand(
   input: ApproveTaskGraphCommandInput,
 ): ProjectControlCommandResult {

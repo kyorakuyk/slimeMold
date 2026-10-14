@@ -84,6 +84,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Accept only well-shaped clarification points whose quote occurs in the current work-order text; malformed items are dropped.
+ * A `blocking` result marks ambiguity, not approval or permission to proceed (ADR-SM-029).
+ */
 function parseGuessPoint(value: unknown, workOrderText: string): WorkOrderPreflightGuessPoint | undefined {
   if (!isRecord(value)) return undefined;
   const { quote, question, consequence, severity, options } = value;

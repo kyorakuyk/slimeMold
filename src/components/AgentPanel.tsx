@@ -218,7 +218,8 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   };
 
   /** 发一个最小请求探测 API 是否真正可用，并定位失败环节（url/auth/model）。
-   *  若配置了代理（智能体 proxyUrl 优先于全局代理），则经代理出口探测，验证整条链路。 */
+   *  若配置了代理（智能体 proxyUrl 优先于全局代理），则经代理出口探测，验证整条链路。
+   *  Codex/Ollama/keyed provider 使用各自认证路径；结果只更新 probe UI，不持久化编辑中的 Agent（ADR-SM-073）。 */
   const runProbe = async () => {
     if (!editing) return;
     setProbing(true);

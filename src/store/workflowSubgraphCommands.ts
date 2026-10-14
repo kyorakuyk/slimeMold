@@ -26,6 +26,10 @@ export function createWorkflowSubgraphCommands(
   deps: WorkflowSubgraphCommandDependencies,
 ) {
   return {
+    /**
+     * Replace a selected flat-node set with one subgraph reference; internal edges move into the definition and mapped boundary edges retarget.
+     * Nested subgraph references are rejected, keeping the editable graph distinct from its reusable definition (ADR-SM-017).
+     */
     packSelectionAsSubgraph: (nodeIds: string[], name: string): string | null => {
       const state = deps.getState();
       deps.pushHistory();

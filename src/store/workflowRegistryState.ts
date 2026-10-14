@@ -216,6 +216,7 @@ export interface RegisteredWorkflowState {
 /**
  * 构建 registerWorkflow 的 normalized registry 与可选 canvas activation state。
  * 不触碰 store；ID生成和 set 由 facade负责。
+ * 非空输入 agents/roles 优先，否则沿用当前工作流值再用内置项；activation 仅返回画布投影（ADR-SM-005、ADR-SM-016）。
  */
 export function buildRegisteredWorkflowState(input: RegisteredWorkflowStateInput): RegisteredWorkflowState {
   const current = input.workflows[input.activeWfId];

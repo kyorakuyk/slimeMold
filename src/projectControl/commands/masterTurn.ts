@@ -2,7 +2,9 @@ import type { DomainEvent } from '../../domain/contracts';
 import { applyMasterTurn, type ApplyMasterTurnInput } from '../session';
 import { appendFact, type ProjectControlCommandResult } from './shared';
 
-/** Apply a master turn and expose the same state transition as auditable facts. */
+/** Apply a prepared master response and derive message, turn-completion, and proposal facts from before/after snapshots.
+ * Returns the next snapshot with events; this function does not durably append them (ADR-SM-010).
+ */
 export function applyMasterTurnCommand(
   input: ApplyMasterTurnInput,
 ): ProjectControlCommandResult {

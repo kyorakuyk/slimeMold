@@ -2,7 +2,9 @@ import { httpFetch } from '../../platform/env';
 import type { AgentConfig, ChatMessage, LLMResponse } from '../../types/agent';
 import { forEachSSEData } from '../streamSSE';
 
-/** Anthropic Messages API */
+/** Anthropic Messages adapter: separate system text from conversation turns and normalize response/cache usage.
+ * `onToken` selects the streaming path; both paths return the shared LLMResponse shape (ADR-SM-073).
+ */
 export async function chatAnthropic(
   agent: AgentConfig,
   messages: ChatMessage[],

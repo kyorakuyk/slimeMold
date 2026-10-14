@@ -41,6 +41,7 @@ function Row({
 /**
  * 节点底部的 token 用量徽标：常态只占一行，鼠标悬停时弹出该节点单独的用量明细。
  * 与左侧总览面板互不影响——总览看整体，这里看单个节点。
+ * 此处只投影调用方提供的 token/缓存/延迟统计，不估算费用或代表 provider 账单（ADR-SM-006、ADR-SM-073）。
  */
 export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
   const [open, setOpen] = useState(false);

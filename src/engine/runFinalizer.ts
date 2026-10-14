@@ -168,6 +168,9 @@ interface UpdateFinalizerExperienceInput {
   rt: ExecutionRuntime;
 }
 
+/** With self-improvement enabled, store project-scoped experience from this run and launch a combined review when configured.
+ * The review is fire-and-forget, not an awaited finalization dependency (ADR-SM-079).
+ */
 function updateFinalizerExperience({
   wfId,
   myRun,

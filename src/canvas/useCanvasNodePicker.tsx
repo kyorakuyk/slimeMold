@@ -56,6 +56,8 @@ export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }
     setPickerPos({ x: event.clientX, y: event.clientY });
   }, []);
 
+  // Consume the saved port endpoint once; pending selection creates a node and prefers a compatible port (first-declared fallback),
+  // while ordinary selection adds a node/reference and split mode suppresses subgraph references (ADR-SM-017、ADR-SM-075).
   const onPickNode = useCallback(
     (payload: PickPayload) => {
       if (!pickerPos) return;

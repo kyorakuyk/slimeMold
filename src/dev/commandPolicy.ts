@@ -36,6 +36,9 @@ function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/** Build a dense argv snapshot from data descriptors only; reject accessors, unpaired surrogates, and per-token/total UTF-8 overflow.
+ * `null` keeps malformed command vectors out of the policy input (ADR-SM-043).
+ */
 function snapshotBoundedCommand(command: unknown[]): string[] | null {
   try {
     if (!Array.isArray(command)) return null;

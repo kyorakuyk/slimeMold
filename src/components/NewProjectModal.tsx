@@ -5,6 +5,9 @@ import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { isTauri, showSaveDirDialog } from '../platform/env';
 import { useT } from '../i18n/useT';
 
+/** 项目入口弹窗先维护名称/模板/位置的 UI 选择；只有显式 confirm 才调用 createProject。
+ * 位置选择仅在 Tauri 显示，符合驾驶舱入口与宿主分层（ADR-SM-004、ADR-SM-072）。
+ */
 export default function NewProjectModal({ onClose }: { onClose: () => void }) {
   const t = useT('modals');
   const createProject = useWorkflowStore((s) => s.createProject);
