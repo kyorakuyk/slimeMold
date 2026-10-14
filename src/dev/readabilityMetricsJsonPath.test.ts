@@ -24,12 +24,13 @@ function outputName(): string {
   return `.r7-metrics-json-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
 }
 
-function skipIfLinkUnavailable(skip: () => never, error: unknown, kind: string): never {
+function skipIfLinkUnavailable(skip: () => void, error: unknown, kind: string): void {
   const code = (error as NodeJS.ErrnoException).code;
   if (code && ['EPERM', 'EACCES', 'ENOTSUP', 'EOPNOTSUPP', 'EINVAL'].includes(code)) {
     const reason = `${kind} creation unavailable (${code}); ${String(error)}`;
     console.warn(`[r7] skipped symlink boundary case: ${reason}`);
-    return skip();
+    skip();
+    return;
   }
   throw error;
 }
