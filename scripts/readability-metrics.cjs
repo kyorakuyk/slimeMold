@@ -2,12 +2,12 @@
 /**
  * Readability metrics for src/ and scripts/ (TypeScript/TSX), using the TypeScript compiler API.
  *
- * Usage (from the repo root):
- *   node scripts/readability-metrics.cjs              # summary + top lists
- *   node scripts/readability-metrics.cjs --top 25     # longer top lists
- *   node scripts/readability-metrics.cjs --match auditWorkerRunConsistency   # functions whose name or file matches
- *   node scripts/readability-metrics.cjs --json out.json                     # raw data for trend tracking
- *     (the --json path must end in .json; keep it outside the repo, e.g. in a scratch folder)
+ * Usage (from the repo root; in Git Bash use node.exe, especially with redirected/background output):
+ *   node.exe scripts/readability-metrics.cjs              # summary + top lists
+ *   node.exe scripts/readability-metrics.cjs --top 25     # longer top lists
+ *   node.exe scripts/readability-metrics.cjs --match auditWorkerRunConsistency   # functions whose name or file matches
+ *   node.exe scripts/readability-metrics.cjs --json out.json                     # raw data for trend tracking
+ *     (the --json path must end in .json and resolve outside the repo)
  *
  * Definitions:
  *   - lines: physical lines from the function's first token to its closing brace.
@@ -33,6 +33,19 @@ const jsonOut = opt('--json', '');
 if (jsonOut && !/\.json$/i.test(jsonOut)) {
   console.error(`--json expects a path ending in .json, got "${jsonOut}" (refusing to overwrite other files)`);
   process.exit(2);
+}
+if (jsonOut) {
+  const resolvedJsonOut = path.resolve(root, jsonOut);
+  const relativeJsonOut = path.relative(root, resolvedJsonOut);
+  const writesInsideRepo = relativeJsonOut === '' || (
+    relativeJsonOut !== '..' &&
+    !relativeJsonOut.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativeJsonOut)
+  );
+  if (writesInsideRepo) {
+    console.error(`--json output must resolve outside the repository root (refusing to write "${resolvedJsonOut}")`);
+    process.exit(2);
+  }
 }
 const ts = require(path.join(root, 'node_modules', 'typescript'));
 
