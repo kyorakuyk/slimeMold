@@ -97,6 +97,7 @@ let swapped = false;
 let restored = false;
 const originalRenameSync = fs.renameSync;
 const originalRmdirSync = fs.rmdirSync;
+const originalUnlinkSync = fs.unlinkSync;
 const originalWriteFileSync = fs.writeFileSync;
 const originalOpenSync = fs.openSync;
 const originalRealpath = fs.realpathSync.native;
@@ -116,7 +117,8 @@ fs.realpathSync.native = function (file, ...args) {
   const actualPath = originalRealpath.call(this, file, ...args);
   if (swapped && !restored && isOutput(file)) {
     try {
-      originalRmdirSync(outputDir);
+      if (process.platform === 'win32') originalRmdirSync(outputDir);
+      else originalUnlinkSync(outputDir);
       originalRenameSync(backupDir, outputDir);
       restored = true;
       originalWriteFileSync(marker, 'restored');
