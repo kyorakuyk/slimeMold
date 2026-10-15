@@ -183,7 +183,7 @@ function runSymlinkRace(skip: () => void): void {
     expect(existsSync(repoOutput)).toBe(false);
     writeFileSync(repoOutput, sentinel);
     try {
-      symlinkSync(root, repoAlias, process.platform === 'win32' ? 'junction' : 'dir');
+      symlinkSync(root, repoAlias, 'dir');
     } catch (error) {
       skipIfLinkUnavailable(skip, error, 'race directory junction');
     }
@@ -318,9 +318,9 @@ it('cleans a missing-output repo entry when the parent restores before the first
     mkdirSync(outputDir);
     expect(existsSync(repoOutput)).toBe(false);
     try {
-      symlinkSync(root, repoAlias, process.platform === 'win32' ? 'junction' : 'dir');
+      symlinkSync(root, repoAlias, 'dir');
     } catch (error) {
-      skipIfLinkUnavailable(context.skip, error, process.platform === 'win32' ? 'junction' : 'directory symlink');
+      skipIfLinkUnavailable(context.skip, error, 'directory symlink');
     }
     const hookPath = join(fixture, 'missing-output-race.cjs');
     writeFileSync(hookPath, missingOutputRaceHook);
