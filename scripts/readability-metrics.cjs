@@ -85,36 +85,49 @@ function sameFile(left, right) {
 function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
   let fd = null;
   let created = false;
+  let openedPath = null;
   try {
     try {
-      fd = fs.openSync(outputPath, 'r+');
+      fd = fs.openSync(outputPath, fs.constants.O_WRONLY);
     } catch (error) {
       if (!error || error.code !== 'ENOENT') throw error;
-      fd = fs.openSync(outputPath, 'wx', 0o600);
+      fd = fs.openSync(
+        outputPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+        0o600,
+      );
       created = true;
     }
 
-    const actualPath = fs.realpathSync.native(outputPath);
+    openedPath = fs.realpathSync.native(outputPath);
     const pathStat = fs.statSync(outputPath, { bigint: true });
     const descriptorStat = fs.fstatSync(fd, { bigint: true });
     if (!sameFile(pathStat, descriptorStat)) {
       throw new Error('--json output target changed during validation (refusing to write)');
     }
-    if (!samePath(actualPath, outputPath) || isInsideRepo(resolvedRoot, actualPath)) {
-      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${actualPath}")`);
+    if (pathStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
+      throw new Error('--json output target has multiple hard links (refusing to write)');
+    }
+    if (!samePath(openedPath, outputPath) || isInsideRepo(resolvedRoot, openedPath)) {
+      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${openedPath}")`);
     }
 
+    const beforeWriteStat = fs.fstatSync(fd, { bigint: true });
+    if (!sameFile(descriptorStat, beforeWriteStat) || beforeWriteStat.nlink !== 1n) {
+      throw new Error('--json output target changed during validation (refusing to write)');
+    }
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, jsonText);
   } catch (error) {
-    if (created && fd !== null) {
+    if (created && fd !== null && openedPath !== null) {
       try {
-        const actualPath = fs.realpathSync.native(outputPath);
-        const pathStat = fs.statSync(outputPath, { bigint: true });
-        const descriptorStat = fs.fstatSync(fd, { bigint: true });
-        if (sameFile(pathStat, descriptorStat)) fs.unlinkSync(actualPath);
+        fs.closeSync(fd);
+        fd = null;
+        // Use the canonical path captured immediately after creation. Re-resolving
+        // outputPath here can miss a newly created entry after its parent is restored.
+        fs.unlinkSync(openedPath);
       } catch {
-        // The pathname may have changed again; preserve the original write failure.
+        // Preserve the original write failure if best-effort cleanup is unavailable.
       }
     }
     throw error;
