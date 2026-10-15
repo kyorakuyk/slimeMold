@@ -20,6 +20,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('node:child_process');
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -82,30 +83,49 @@ function sameFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
+function writeJsonOutputViaDirectoryHandle(outputPath, resolvedRoot, jsonText) {
+  const parentPath = path.dirname(outputPath);
+  const fileName = path.basename(outputPath);
+  const fdRoot = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
+  const directoryFlags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0);
+  let directoryFd = null;
   let fd = null;
   let created = false;
-  let openedPath = null;
+  let anchoredPath = null;
   try {
+    directoryFd = fs.openSync(parentPath, directoryFlags);
+    const directoryStat = fs.fstatSync(directoryFd, { bigint: true });
+    const pathStat = fs.statSync(parentPath, { bigint: true });
+    const actualParent = fs.realpathSync.native(`${fdRoot}/${directoryFd}`);
+    if (!sameFile(directoryStat, pathStat)) {
+      throw new Error('--json output parent changed during validation (refusing to write)');
+    }
+    if (isInsideRepo(resolvedRoot, actualParent)) {
+      throw new Error(`--json output path resolves inside the repository (refusing to write "${actualParent}")`);
+    }
+
+    anchoredPath = `${fdRoot}/${directoryFd}/${fileName}`;
     try {
-      fd = fs.openSync(outputPath, fs.constants.O_WRONLY);
+      fd = fs.openSync(anchoredPath, fs.constants.O_WRONLY);
     } catch (error) {
       if (!error || error.code !== 'ENOENT') throw error;
       fd = fs.openSync(
-        outputPath,
+        anchoredPath,
         fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
         0o600,
       );
       created = true;
     }
 
-    openedPath = fs.realpathSync.native(outputPath);
-    const pathStat = fs.statSync(outputPath, { bigint: true });
+    const openedPath = fs.realpathSync.native(anchoredPath);
+    const outputStat = fs.statSync(anchoredPath, { bigint: true });
     const descriptorStat = fs.fstatSync(fd, { bigint: true });
-    if (!sameFile(pathStat, descriptorStat)) {
+    if (!sameFile(outputStat, descriptorStat)) {
       throw new Error('--json output target changed during validation (refusing to write)');
     }
-    if (pathStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
+    // Reject pre-existing aliases. Same-UID concurrent link creation is outside this
+    // CLI guard's threat model: that process already has direct filesystem write access.
+    if (outputStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
       throw new Error('--json output target has multiple hard links (refusing to write)');
     }
     if (!samePath(openedPath, outputPath) || isInsideRepo(resolvedRoot, openedPath)) {
@@ -119,13 +139,12 @@ function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, jsonText);
   } catch (error) {
-    if (created && fd !== null && openedPath !== null) {
+    if (created && fd !== null && anchoredPath !== null) {
       try {
         fs.closeSync(fd);
         fd = null;
-        // Use the canonical path captured immediately after creation. Re-resolving
-        // outputPath here can miss a newly created entry after its parent is restored.
-        fs.unlinkSync(openedPath);
+        // Resolve cleanup relative to the pinned directory descriptor, not outputPath.
+        fs.unlinkSync(anchoredPath);
       } catch {
         // Preserve the original write failure if best-effort cleanup is unavailable.
       }
@@ -133,7 +152,59 @@ function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
     throw error;
   } finally {
     if (fd !== null) fs.closeSync(fd);
+    if (directoryFd !== null) fs.closeSync(directoryFd);
   }
+}
+
+function writeJsonOutputViaWindowsHandle(outputPath, resolvedRoot, jsonText) {
+  const helper = path.join(__dirname, 'readability-metrics-json-output.ps1');
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Run',
+  ], {
+    input: JSON.stringify({ outputPath, repositoryRoot: resolvedRoot, jsonText }),
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error((result.stderr || '').trim() || `Windows handle-based JSON writer failed (${result.status})`);
+  }
+}
+
+function writeJsonOutputViaExistingPath(outputPath, resolvedRoot, jsonText) {
+  const fd = fs.openSync(outputPath, fs.constants.O_WRONLY);
+  try {
+    const actualPath = fs.realpathSync.native(outputPath);
+    const pathStat = fs.statSync(outputPath, { bigint: true });
+    const descriptorStat = fs.fstatSync(fd, { bigint: true });
+    if (!sameFile(pathStat, descriptorStat)) {
+      throw new Error('--json output target changed during validation (refusing to write)');
+    }
+    if (pathStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
+      throw new Error('--json output target has multiple hard links (refusing to write)');
+    }
+    if (!samePath(actualPath, outputPath) || isInsideRepo(resolvedRoot, actualPath)) {
+      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${actualPath}")`);
+    }
+    const beforeWriteStat = fs.fstatSync(fd, { bigint: true });
+    if (!sameFile(descriptorStat, beforeWriteStat) || beforeWriteStat.nlink !== 1n) {
+      throw new Error('--json output target changed during validation (refusing to write)');
+    }
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, jsonText);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
+  if (process.platform === 'win32' && lstatOrMissing(outputPath) === null) {
+    return writeJsonOutputViaWindowsHandle(outputPath, resolvedRoot, jsonText);
+  }
+  if (process.platform !== 'win32') {
+    return writeJsonOutputViaDirectoryHandle(outputPath, resolvedRoot, jsonText);
+  }
+  return writeJsonOutputViaExistingPath(outputPath, resolvedRoot, jsonText);
 }
 
 let resolvedRoot;

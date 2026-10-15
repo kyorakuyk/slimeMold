@@ -30,6 +30,15 @@ function runMetrics(jsonPath: string, preload?: { path: string; env: NodeJS.Proc
   });
 }
 
+function runWindowsHandleCleanupRace(): void {
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', join(root, 'scripts', 'readability-metrics-json-output-race-test.ps1'),
+  ], { cwd: root, encoding: 'utf8', maxBuffer: 1024 * 1024 });
+  expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(0);
+  expect(result.stdout).toContain('PASS: parent restored before final-path lookup');
+}
+
 function outputName(): string {
   return `.r7-metrics-json-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
 }
@@ -66,7 +75,9 @@ const marker = path.resolve(process.env.R7_RACE_MARKER);
 let swapped = false;
 const originalRenameSync = fs.renameSync;
 const originalWriteFileSync = fs.writeFileSync;
+const originalOpenSync = fs.openSync;
 const isOutput = (file) => typeof file === 'string' && path.resolve(file) === output;
+const isParent = (file) => typeof file === 'string' && path.resolve(file) === outputDir;
 function swapParent() {
   if (swapped) return;
   originalRenameSync(outputDir, backupDir);
@@ -74,10 +85,14 @@ function swapParent() {
   swapped = true;
   originalWriteFileSync(marker, 'race injected');
 }
-const originalOpenSync = fs.openSync;
-fs.openSync = function (file, ...args) {
+fs.openSync = function (file, flags, ...args) {
+  if (!swapped && isParent(file)) {
+    const fd = originalOpenSync.call(this, file, flags, ...args);
+    swapParent();
+    return fd;
+  }
   if (!swapped && isOutput(file)) swapParent();
-  return originalOpenSync.call(this, file, ...args);
+  return originalOpenSync.call(this, file, flags, ...args);
 };
 fs.writeFileSync = function (file, ...args) {
   if (!swapped && isOutput(file)) swapParent();
@@ -101,6 +116,7 @@ const originalUnlinkSync = fs.unlinkSync;
 const originalWriteFileSync = fs.writeFileSync;
 const originalOpenSync = fs.openSync;
 const isOutput = (file) => typeof file === 'string' && path.resolve(file) === output;
+const isParent = (file) => typeof file === 'string' && path.resolve(file) === outputDir;
 function swapParent() {
   if (swapped) return;
   originalRenameSync(outputDir, backupDir);
@@ -117,6 +133,12 @@ function restoreParent() {
   originalWriteFileSync(marker, 'restored-before-realpath');
 }
 fs.openSync = function (file, flags, ...args) {
+  if (!swapped && isParent(file)) {
+    const fd = originalOpenSync.call(this, file, flags, ...args);
+    swapParent();
+    restoreParent();
+    return fd;
+  }
   if (!swapped && isOutput(file) && typeof flags === 'number' && (flags & fs.constants.O_CREAT) !== 0) {
     swapParent();
     const fd = originalOpenSync.call(this, file, flags, ...args);
@@ -133,7 +155,7 @@ const path = require('node:path');
 const output = path.resolve(process.env.R7_WRITE_ONLY_OUTPUT);
 const originalOpenSync = fs.openSync;
 fs.openSync = function (file, flags, ...args) {
-  if (typeof file === 'string' && path.resolve(file) === output && flags !== fs.constants.O_WRONLY) {
+  if (typeof file === 'string' && path.basename(path.resolve(file)) === path.basename(output) && flags !== fs.constants.O_WRONLY) {
     const error = new Error('EACCES: simulated write-only output');
     error.code = 'EACCES';
     throw error;
@@ -143,6 +165,10 @@ fs.openSync = function (file, flags, ...args) {
 `;
 
 function runSymlinkRace(skip: () => void): void {
+  if (process.platform === 'win32') {
+    runWindowsHandleCleanupRace();
+    return;
+  }
   const fixture = tempDir();
   const outputDir = join(fixture, 'output');
   const repoAlias = join(fixture, 'repo-alias');
@@ -276,6 +302,10 @@ it('rejects an external hard-link alias to a repository file without changing it
 });
 
 it('cleans a missing-output repo entry when the parent restores before the first realpath', (context) => {
+  if (process.platform === 'win32') {
+    runWindowsHandleCleanupRace();
+    return;
+  }
   const fixture = tempDir();
   const outputDir = join(fixture, 'output');
   const repoAlias = join(fixture, 'repo-alias');
@@ -310,7 +340,8 @@ it('cleans a missing-output repo entry when the parent restores before the first
       return;
     }
     expect(raceState).toBe('restored-before-realpath');
-    expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(2);
+    expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(0);
+    expect(JSON.parse(readFileSync(output, 'utf8'))).toHaveProperty('fileStats');
     expect(existsSync(repoOutput), 'cleanup left a repository output entry').toBe(false);
   } finally {
     if (existsSync(outputDir) && existsSync(backupDir)) renameSync(outputDir, repoAlias);
