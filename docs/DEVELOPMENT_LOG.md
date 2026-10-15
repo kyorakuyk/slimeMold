@@ -6244,3 +6244,19 @@ GUI 边界：当前分支 Tauri dev 窗口已真实启动，并对仓库外 disp
 - 同一 target 的全量门（08:51:55–08:52:32 +0800）：257 test files / 1,625 passed / 1 skipped（Windows symlink setup `EPERM`）；build 2,167 modules；app/root TypeScript、i18n 1,417 keys、`git diff --check`通过；metrics 369 production files、258 test files、4,972 functions、>300 LOC 9、complexity >50 9。保留既有 Vite mixed import 与 >500kB chunk warnings。日志 `D:/Hermes/cache/scratch/r7-slice2-repair-20261015-{test,build,app-tsc,root-tsc,i18n,metrics,diff-check}.log`。
 - 增量 immutable review `12c4d864e78b6456ecbf1ebceeae791cd9c7297e..3da19882e51a08a5606c1c871e833b7057537ec8`（2 commits）返回严格 JSON `passed=true`、security/logic/suggestions均空，确认快照独立并覆盖两项目列表；工作树 clean，reviewer未改仓库。
 - 该测试 finding 已解决，但 R7 overall 仍 partial/unverified：Slice3 的 AgentPanel mounted-locale stale feedback 仍未修复，因此不创建 final tag pair、不更新 historical triage 为“被取代”。下一步如需修复该 UI 行为，需单独的有界授权窗口。
+
+### 7.494 R7 AgentPanel mounted-locale feedback 修复（修复通过 / R7 overall partial）
+
+- 用户授权的45分钟代码修复窗口由 start tag `checkpoint/r7-agentpanel-locale-state-repair-start-20261015-r7` 固定在 `c40665de74f5818bda49e58800f8b25f53e9f4dd`，tagger `2026-10-15 11:35:46 +0800`，cutoff `12:20:46 +0800`。代码 target `521cf0aafaa979088d52306f8c41a2f461af7328`，parent `c40665de74f5818bda49e58800f8b25f53e9f4dd`，commit time `12:01:31 +0800`；unverified tag `checkpoint/r7-agentpanel-locale-state-repair-unverified-20261015-r7` 指向该 target。
+- 根因是 mounted `AgentPanel` 把已翻译的 model hint/probe feedback 字符串保存在 state，locale 切换后无法重新翻译。本轮在 `src/agents/agentManager.ts` 增加带 interpolation 与递归 nested descriptor 的 `ProbeMessageSpec`，保留兼容 `ProbeResult.message` 并增加 `messageSpec`；`src/components/AgentPanel.tsx` 改存 descriptor 并在 render 时使用当前 `t`，`probeStates` / `AgentCatalogList` 仅保存和消费 `ProbeStatus`。新增 `src/components/AgentPanel.localeSwitch.test.tsx`，并扩展 `src/agents/agentManager.test.ts`。
+- RED/GREEN：mounted 回归切换 locale 后确认 model hint/probe feedback 重译，模型列表 fetch 与 probe 各调用一次；focused 3 files / 12 tests 通过。
+- 验证结果：
+  - `npm run test`：258 个测试文件、1,626 个测试通过、1 个 skipped（总1,627）；该 skip 是 `src/dev/readabilityMetricsJsonPath.test.ts` 的 Windows file-symlink setup `EPERM`，原测试保留，未声称通过；
+  - `npm run build`：TypeScript/Vite 构建通过、2,167 modules；
+  - `npx tsc -p tsconfig.app.json --noEmit` 与 `npx tsc --noEmit`：通过；
+  - `npm run i18n:check`：中英文 1,417 个 key 对齐；
+  - `git diff --check`：无空白错误。
+- Metrics：369 production files、259 test files、4,975 production functions；9 个 >300 LOC、9 个 complexity >50。保留已有 mixed dynamic/static import 与 >500kB chunk warnings。质量门日志前缀：`D:/Hermes/cache/scratch/r7-agentpanel-repair-head-20261015-`。
+- Browser mounted DOM readback 在 no-key 路径中验证 zh-CN→en-US 后两个 feedback 均显示英文、旧中文消失，且无模型/API 请求重发；Browser screenshot 未取得。Tauri `en-US` no-key 截图 `D:/Hermes/cache/scratch/r7-agentpanel-repair-evidence-20261015-521cf0a/tauri-agentpanel-en-feedback.png`，SHA-256 `f2f4e0a3e29b07b7c1362193cb74a1b1577275032113f3676d5b0c9e8b8ce2bb`；该 native 观察在原修复时间盒 cutoff 后取得，仅作为 post-cutoff observation，不作为计划门通过证据。无 ProjectSession、Worker 或真实模型/API 调用；Tauri/Vite 进程停止，端口 `1420/9231` 已释放。
+- Incremental immutable exact review `3da19882e51a08a5606c1c871e833b7057537ec8..521cf0aafaa979088d52306f8c41a2f461af7328`（3 commits）通过：`passed=true`、clean worktree、`security_concerns=[]`、`logic_errors=[]`；reviewer 于 `12:39:11 +0800`（代码 cutoff 后）派发，只读 pinned Git objects，检查完整 provider descriptor mapping、nested details、Codex/no-key paths 与 consumers。非阻塞建议是补充 Codex、missing-key、provider nested-error 的 mounted-locale 覆盖，本轮未扩大范围。
+- R7 overall 仍 partial/unverified：Slice1 symlink 覆盖受 `EPERM` 限制，Slice4 的实际 `baseRepo` 参数 Tauri readback 未完成；修复循环按计划重读受影响页面并做增量复核，没有重跑完整页面矩阵；不创建 final tag pair、不改 historical triage。历史数字与既有 Slice 状态保持原样。
