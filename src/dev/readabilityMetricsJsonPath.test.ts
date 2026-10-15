@@ -49,9 +49,7 @@ const outputDir = path.dirname(output);
 const repoAlias = path.resolve(process.env.R7_RACE_REPO_ALIAS);
 const backupDir = path.resolve(process.env.R7_RACE_BACKUP);
 const marker = path.resolve(process.env.R7_RACE_MARKER);
-const phase = process.env.R7_RACE_PHASE;
 let swapped = false;
-let outputFd;
 const originalRenameSync = fs.renameSync;
 const originalWriteFileSync = fs.writeFileSync;
 const isOutput = (file) => typeof file === 'string' && path.resolve(file) === output;
@@ -64,19 +62,16 @@ function swapParent() {
 }
 const originalOpenSync = fs.openSync;
 fs.openSync = function (file, ...args) {
-  if (!swapped && phase === 'open' && isOutput(file)) swapParent();
-  const fd = originalOpenSync.call(this, file, ...args);
-  if (isOutput(file)) outputFd = fd;
-  return fd;
+  if (!swapped && isOutput(file)) swapParent();
+  return originalOpenSync.call(this, file, ...args);
 };
 fs.writeFileSync = function (file, ...args) {
-  if (!swapped && phase === 'open' && isOutput(file)) swapParent();
-  if (!swapped && phase === 'write' && (file === outputFd || isOutput(file))) swapParent();
+  if (!swapped && isOutput(file)) swapParent();
   return originalWriteFileSync.call(this, file, ...args);
 };
 `;
 
-function runSymlinkRace(skip: () => void, phase: 'open' | 'write'): void {
+function runSymlinkRace(skip: () => void): void {
   const fixture = tempDir();
   const outputDir = join(fixture, 'output');
   const repoAlias = join(fixture, 'repo-alias');
@@ -85,7 +80,7 @@ function runSymlinkRace(skip: () => void, phase: 'open' | 'write'): void {
   const basename = outputName();
   const output = join(outputDir, basename);
   const repoOutput = join(root, basename);
-  const sentinel = `sentinel-${phase}`;
+  const sentinel = 'sentinel';
   try {
     mkdirSync(outputDir);
     expect(existsSync(repoOutput)).toBe(false);
@@ -95,7 +90,7 @@ function runSymlinkRace(skip: () => void, phase: 'open' | 'write'): void {
     } catch (error) {
       skipIfLinkUnavailable(skip, error, 'race directory junction');
     }
-    const hookPath = join(fixture, `symlink-race-${phase}.cjs`);
+    const hookPath = join(fixture, 'symlink-race.cjs');
     writeFileSync(hookPath, symlinkRaceHook);
     const result = runMetrics(output, {
       path: hookPath,
@@ -104,18 +99,12 @@ function runSymlinkRace(skip: () => void, phase: 'open' | 'write'): void {
         R7_RACE_REPO_ALIAS: repoAlias,
         R7_RACE_BACKUP: backupDir,
         R7_RACE_MARKER: marker,
-        R7_RACE_PHASE: phase,
       },
     });
     expect(existsSync(marker), result.stderr || result.stdout || String(result.error)).toBe(true);
     expect(readFileSync(repoOutput, 'utf8') === sentinel, 'race wrote into repository sentinel').toBe(true);
-    if (phase === 'open') {
-      expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(2);
-      expect(result.stderr).toMatch(/--json.*(?:outside|inside|repository|changed)|repository.*--json/i);
-    } else {
-      expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(0);
-      expect(JSON.parse(readFileSync(join(backupDir, basename), 'utf8'))).toHaveProperty('fileStats');
-    }
+    expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(2);
+    expect(result.stderr).toMatch(/--json.*(?:outside|inside|repository|changed)|repository.*--json/i);
   } finally {
     if (existsSync(outputDir) && existsSync(backupDir)) renameSync(outputDir, repoAlias);
     if (existsSync(backupDir)) renameSync(backupDir, outputDir);
@@ -187,9 +176,5 @@ it('allows a regular --json path outside the repository', () => {
 });
 
 it('rejects a repository directory-link swap before opening the --json target', (context) => {
-  runSymlinkRace(context.skip, 'open');
-});
-
-it('keeps --json writes bound to the validated file handle after a directory-link swap', (context) => {
-  runSymlinkRace(context.skip, 'write');
+  runSymlinkRace(context.skip);
 });

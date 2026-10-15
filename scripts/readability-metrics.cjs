@@ -61,9 +61,72 @@ function resolveJsonOutputRealPath(filePath) {
   return path.resolve(fs.realpathSync.native(ancestor), ...remaining);
 }
 
+function isInsideRepo(resolvedRoot, candidatePath) {
+  const relativePath = path.relative(resolvedRoot, candidatePath);
+  return relativePath === '' || (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
+function samePath(left, right) {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
+  let fd = null;
+  let created = false;
+  try {
+    try {
+      fd = fs.openSync(outputPath, 'r+');
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') throw error;
+      fd = fs.openSync(outputPath, 'wx', 0o600);
+      created = true;
+    }
+
+    const actualPath = fs.realpathSync.native(outputPath);
+    const pathStat = fs.statSync(outputPath, { bigint: true });
+    const descriptorStat = fs.fstatSync(fd, { bigint: true });
+    if (!sameFile(pathStat, descriptorStat)) {
+      throw new Error('--json output target changed during validation (refusing to write)');
+    }
+    if (!samePath(actualPath, outputPath) || isInsideRepo(resolvedRoot, actualPath)) {
+      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${actualPath}")`);
+    }
+
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, jsonText);
+  } catch (error) {
+    if (created && fd !== null) {
+      try {
+        const actualPath = fs.realpathSync.native(outputPath);
+        const pathStat = fs.statSync(outputPath, { bigint: true });
+        const descriptorStat = fs.fstatSync(fd, { bigint: true });
+        if (sameFile(pathStat, descriptorStat)) fs.unlinkSync(actualPath);
+      } catch {
+        // The pathname may have changed again; preserve the original write failure.
+      }
+    }
+    throw error;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+let resolvedRoot;
+let resolvedJsonOut;
 if (jsonOut) {
-  const resolvedRoot = fs.realpathSync.native(root);
-  let resolvedJsonOut;
+  resolvedRoot = fs.realpathSync.native(root);
   try {
     resolvedJsonOut = resolveJsonOutputRealPath(jsonOut);
   } catch (error) {
@@ -275,6 +338,12 @@ if (match) {
 }
 
 if (jsonOut) {
-  fs.writeFileSync(jsonOut, JSON.stringify({ generatedAt: new Date().toISOString(), fileStats, fnStats, hatches,
-    fanIn: Object.fromEntries(fanIn) }, null, 2));
+  const jsonText = JSON.stringify({ generatedAt: new Date().toISOString(), fileStats, fnStats, hatches,
+    fanIn: Object.fromEntries(fanIn) }, null, 2);
+  try {
+    writeJsonOutputSafely(resolvedJsonOut, resolvedRoot, jsonText);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
 }
