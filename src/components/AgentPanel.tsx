@@ -7,8 +7,11 @@ import {
   fetchOllamaModels,
   fetchModelsByProtocol,
   probeAgent,
+  translateProbeMessage,
   findProviderPreset,
+  type ProbeMessageSpec,
   type ProbeResult,
+  type ProbeStatus,
 } from '../agents/agentManager';
 import { codexLoginStatus } from '../agents/providers/codex';
 import { loadCredential, defaultCredentialKey, listVaults, loadVaultKey } from '../agents/credentialStore';
@@ -27,6 +30,8 @@ interface AgentPanelProps {
    *  'sidebar'（侧边栏）= 列表为一级菜单，编辑配置作 absolute 二级抽屉从右滑入覆盖列表 */
   variant?: 'center' | 'sidebar';
 }
+
+type ProbeFeedback = Pick<ProbeResult, 'ok' | 'stage' | 'messageSpec' | 'proxied'>;
 
 /** 智能体管理弹层：多协议配置的增删改 + 角色库（角色模板）管理 */
 export default function AgentPanel({ onClose, embedded = false, variant = 'center' }: AgentPanelProps) {
@@ -124,11 +129,11 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [modelHint, setModelHint] = useState('');
-  const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [modelHint, setModelHint] = useState<ProbeMessageSpec | null>(null);
+  const [probe, setProbe] = useState<ProbeFeedback | null>(null);
   const [probing, setProbing] = useState(false);
   /** 各智能体可用性状态（列表小圆点用），key=agentId */
-  const [probeStates, setProbeStates] = useState<Record<string, ProbeResult>>({});
+  const [probeStates, setProbeStates] = useState<Record<string, ProbeStatus>>({});
   /** 保存成功后暂存的明文 key（仅当前会话内存，不落盘），供随后的检测/拉取直接使用，
    *  避免依赖从密钥库读回导致「已保存却读不到」的困惑。 */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -227,11 +232,15 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     try {
       if (editing.protocol === 'codex') {
         const status = await codexLoginStatus();
-        const result: ProbeResult = status.loggedIn && status.authMode === 'chatgpt'
-          ? { ok: true, stage: 'ok', message: t('agent.codex.connected') }
-          : { ok: false, stage: 'auth', message: status.loggedIn ? t('agent.codex.otherAuth') : t('agent.codex.loginRequired') };
+        const result = status.loggedIn && status.authMode === 'chatgpt'
+          ? { ok: true, stage: 'ok' as const, messageSpec: { key: 'agent.codex.connected' } }
+          : {
+              ok: false,
+              stage: 'auth' as const,
+              messageSpec: { key: status.loggedIn ? 'agent.codex.otherAuth' : 'agent.codex.loginRequired' },
+            };
         setProbe(result);
-        setProbeStates((prev) => ({ ...prev, [editing.id]: result }));
+        setProbeStates((prev) => ({ ...prev, [editing.id]: { ok: result.ok, stage: result.stage } }));
         return;
       }
       const key =
@@ -242,7 +251,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         setProbe({
           ok: false,
           stage: 'auth',
-          message: isTauri ? t('agent.probe.saveKeyFirst') : t('agent.probe.saveKeyFirstWeb'),
+          messageSpec: { key: isTauri ? 'agent.probe.saveKeyFirst' : 'agent.probe.saveKeyFirstWeb' },
         });
         return;
       }
@@ -256,8 +265,8 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         key,
         proxyUrl,
       );
-      setProbe(r);
-      setProbeStates((prev) => ({ ...prev, [editing.id]: r }));
+      setProbe({ ok: r.ok, stage: r.stage, messageSpec: r.messageSpec, proxied: r.proxied });
+      setProbeStates((prev) => ({ ...prev, [editing.id]: { ok: r.ok, stage: r.stage } }));
     } finally {
       setProbing(false);
     }
@@ -269,18 +278,18 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
   const pullModels = async () => {
     if (!editing) return;
     setLoadingModels(true);
-    setModelHint('');
+    setModelHint(null);
     try {
       let list: string[] = [];
       if (editing.protocol === 'codex') {
         const status = await codexLoginStatus();
-        setModelHint(
-          status.loggedIn && status.authMode === 'chatgpt'
-            ? t('agent.model.codexDefault')
+        setModelHint({
+          key: status.loggedIn && status.authMode === 'chatgpt'
+            ? 'agent.model.codexDefault'
             : status.loggedIn
-              ? t('agent.codex.otherAuth')
-              : t('agent.model.codexLoginFirst'),
-        );
+              ? 'agent.codex.otherAuth'
+              : 'agent.model.codexLoginFirst',
+        });
         return;
       }
       if (editing.protocol === 'ollama') {
@@ -288,17 +297,17 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
       } else {
         const key = pendingKey ?? (await loadCredential(editing.credentialKey ?? defaultCredentialKey(editing.protocol)));
         if (!key) {
-          setModelHint(t('agent.model.noKey'));
+          setModelHint({ key: 'agent.model.noKey' });
           return;
         }
         const proxyUrl: string | undefined = editing.proxyUrl?.trim() || useViewStore.getState().globalProxyUrl?.trim() || undefined;
         list = await fetchModelsByProtocol(editing.protocol, editing.baseUrl, key, proxyUrl);
         if (list.length === 0) {
-          setModelHint(
-            editing.protocol === 'anthropic'
-              ? t('agent.model.noAnthropicModels')
-              : t('agent.model.noModels'),
-          );
+          setModelHint({
+            key: editing.protocol === 'anthropic'
+              ? 'agent.model.noAnthropicModels'
+              : 'agent.model.noModels',
+          });
         }
       }
       setRemoteModels(list);
@@ -306,7 +315,7 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
       // 静默吞错是诊断盲区：keyring 读取失败、HTTP 被拦截、URL 解析异常等都会表现为
       // 「点了没反应」。把真实错误暴露到 UI，便于用户定位是 key / 网址 / 权限问题。
       const msg = e instanceof Error ? e.message : String(e);
-      setModelHint(t('agent.model.pullFailed', { error: msg }));
+      setModelHint({ key: 'agent.model.pullFailed', options: { error: msg } });
     } finally {
       setLoadingModels(false);
     }
@@ -345,6 +354,10 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
     }
   };
 
+  const localizedProbe: ProbeResult | null = probe
+    ? { ...probe, message: translateProbeMessage(probe.messageSpec, t) }
+    : null;
+
   return (
     <div className={`relative flex h-full w-full min-h-0 flex-1 ${variant === 'sidebar' ? 'overflow-visible' : 'overflow-hidden'}`}>
       <AgentCatalogList
@@ -379,9 +392,9 @@ function AgentsTab({ variant = 'center' }: { variant?: 'center' | 'sidebar' }) {
         variant={variant}
         remoteModels={remoteModels}
         loadingModels={loadingModels}
-        modelHint={modelHint}
+        modelHint={modelHint ? translateProbeMessage(modelHint, t) : ''}
         probing={probing}
-        probe={probe}
+        probe={localizedProbe}
         onPatch={patch}
         onProtocolChange={changeProtocol}
         onPullModels={pullModels}

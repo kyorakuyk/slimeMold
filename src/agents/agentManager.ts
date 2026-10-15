@@ -353,14 +353,53 @@ export async function fetchModelsByProtocol(
   return fetchOpenAIModels(baseUrl, apiKey, proxyUrl);
 }
 
+/** A translatable probe message, kept as a key and interpolation data in UI state. */
+export interface ProbeMessageSpec {
+  key: string;
+  options?: Record<string, string | number>;
+  nested?: Record<string, ProbeMessageSpec>;
+}
+
 /** API 可用性探测结果。
  * stage 表示失败发生在哪一环，便于用户区分"网址错"还是"key 错"还是"模型错"。 */
 export interface ProbeResult {
   ok: boolean;
   stage: 'url' | 'auth' | 'model' | 'ok';
+  /** Current-locale compatibility string; UI state should retain messageSpec instead. */
   message: string;
+  messageSpec: ProbeMessageSpec;
   /** 本次探测是否经本地代理转发（proxyUrl / 全局代理） */
   proxied?: boolean;
+}
+
+export type ProbeStatus = Pick<ProbeResult, 'ok' | 'stage'>;
+
+type ProbeTranslator = (key: string, options?: Record<string, string | number>) => string;
+
+export function translateProbeMessage(
+  spec: ProbeMessageSpec,
+  translate: ProbeTranslator = (key, options) => i18n.t(key, options),
+): string {
+  const options: Record<string, string | number> = { ...spec.options };
+  for (const [name, nested] of Object.entries(spec.nested ?? {})) {
+    options[name] = translateProbeMessage(nested, translate);
+  }
+  return translate(spec.key, options);
+}
+
+function createProbeResult(
+  ok: boolean,
+  stage: ProbeResult['stage'],
+  messageSpec: ProbeMessageSpec,
+  proxied?: boolean,
+): ProbeResult {
+  return {
+    ok,
+    stage,
+    message: translateProbeMessage(messageSpec),
+    messageSpec,
+    ...(proxied === undefined ? {} : { proxied }),
+  };
 }
 
 /**
@@ -375,18 +414,13 @@ export async function probeAgent(
   const base = (config.baseUrl || '').replace(/\/+$/, '');
   const proxied = !!proxyUrl?.trim();
   if (config.protocol === 'antigravity') {
-    return {
-      ok: true,
-      stage: 'ok',
-      message: i18n.t('agent.probe.antigravityRegistration'),
-      proxied: false,
-    };
+    return createProbeResult(true, 'ok', { key: 'agent.probe.antigravityRegistration' }, false);
   }
   // 本地代理转发（参考 cc-switch 路由）：经该代理出口做连通性探测，
   // 代理通 + 目标可达 → 证明整条链路（含代理）可用。
   const proxyOpt = proxied ? { proxy: proxyUrl!.trim() } : {};
   if (!base) {
-    return { ok: false, stage: 'url', message: i18n.t('agent.probe.emptyBaseUrl'), proxied };
+    return createProbeResult(false, 'url', { key: 'agent.probe.emptyBaseUrl' }, proxied);
   }
   try {
     if (config.protocol === 'ollama') {
@@ -401,16 +435,19 @@ export async function probeAgent(
           options: { num_predict: 1 },
         }),
       });
-      if (res.ok) return { ok: true, stage: 'ok', message: i18n.t('agent.probe.ollamaOk'), proxied };
-      if (res.status === 404) {
-        return {
-          ok: false,
-          stage: 'model',
-          message: i18n.t('agent.probe.ollamaModelMissing', { model: config.model }),
-          proxied,
-        };
+      if (res.ok) {
+        return createProbeResult(true, 'ok', { key: 'agent.probe.ollamaOk' }, proxied);
       }
-      return { ok: false, stage: 'url', message: i18n.t('agent.probe.ollamaStatus', { status: res.status }), proxied };
+      if (res.status === 404) {
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.ollamaModelMissing',
+          options: { model: config.model },
+        }, proxied);
+      }
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.ollamaStatus',
+        options: { status: res.status },
+      }, proxied);
     }
 
     // Anthropic 原生协议：POST /v1/messages + x-api-key + anthropic-version
@@ -431,13 +468,16 @@ export async function probeAgent(
         }),
       });
       if (res.ok) {
-        return { ok: true, stage: 'ok', message: i18n.t('agent.probe.connected'), proxied };
+        return createProbeResult(true, 'ok', { key: 'agent.probe.connected' }, proxied);
       }
       if (res.status === 401 || res.status === 403) {
-        return { ok: false, stage: 'auth', message: i18n.t('agent.probe.authFailed', { status: res.status }), proxied };
+        return createProbeResult(false, 'auth', {
+          key: 'agent.probe.authFailed',
+          options: { status: res.status },
+        }, proxied);
       }
       if (res.status === 404) {
-        return { ok: false, stage: 'url', message: i18n.t('agent.probe.anthropicUrl404'), proxied };
+        return createProbeResult(false, 'url', { key: 'agent.probe.anthropicUrl404' }, proxied);
       }
       let adetail = '';
       try {
@@ -447,22 +487,20 @@ export async function probeAgent(
         /* ignore */
       }
       if (/model/i.test(adetail) && /(not|exist|found|invalid)/i.test(adetail)) {
-        return {
-          ok: false,
-          stage: 'model',
-          message: i18n.t('agent.probe.modelUnavailable', { model: config.model, details: adetail }),
-          proxied,
-        };
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.modelUnavailable',
+          options: { model: config.model, details: adetail },
+        }, proxied);
       }
-      const details = adetail
-        ? i18n.t('agent.probe.detailsSuffix', { details: adetail })
-        : i18n.t('agent.probe.baseAndModelHint');
-      return {
-        ok: false,
-        stage: 'url',
-        message: i18n.t('agent.probe.requestFailed', { status: res.status, details }),
-        proxied,
-      };
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.requestFailed',
+        options: { status: res.status },
+        nested: {
+          details: adetail
+            ? { key: 'agent.probe.detailsSuffix', options: { details: adetail } }
+            : { key: 'agent.probe.baseAndModelHint' },
+        },
+      }, proxied);
     }
 
     // OpenAI 兼容（遍历候选：原 base 优先，缺 /v1 时补 /v1 兜底）
@@ -482,10 +520,13 @@ export async function probeAgent(
         }),
       });
       if (res.ok) {
-        return { ok: true, stage: 'ok', message: i18n.t('agent.probe.connected'), proxied };
+        return createProbeResult(true, 'ok', { key: 'agent.probe.connected' }, proxied);
       }
       if (res.status === 401 || res.status === 403) {
-        return { ok: false, stage: 'auth', message: i18n.t('agent.probe.authFailed', { status: res.status }), proxied };
+        return createProbeResult(false, 'auth', {
+          key: 'agent.probe.authFailed',
+          options: { status: res.status },
+        }, proxied);
       }
       if (res.status === 404) {
         // 可能是缺 /v1 路径：继续尝试下一个候选；全部失败再返回 url 错误
@@ -499,32 +540,28 @@ export async function probeAgent(
         /* ignore */
       }
       if (/model/i.test(odetail) && /(not|exist|found|invalid)/i.test(odetail)) {
-        return {
-          ok: false,
-          stage: 'model',
-          message: i18n.t('agent.probe.modelUnavailable', { model: config.model, details: odetail }),
-          proxied,
-        };
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.modelUnavailable',
+          options: { model: config.model, details: odetail },
+        }, proxied);
       }
-      const details = odetail
-        ? i18n.t('agent.probe.detailsSuffix', { details: odetail })
-        : i18n.t('agent.probe.baseAndModelHint');
-      return {
-        ok: false,
-        stage: 'url',
-        message: i18n.t('agent.probe.requestFailed', { status: res.status, details }),
-        proxied,
-      };
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.requestFailed',
+        options: { status: res.status },
+        nested: {
+          details: odetail
+            ? { key: 'agent.probe.detailsSuffix', options: { details: odetail } }
+            : { key: 'agent.probe.baseAndModelHint' },
+        },
+      }, proxied);
     }
-    return { ok: false, stage: 'url', message: i18n.t('agent.probe.openAiUrl404'), proxied };
+    return createProbeResult(false, 'url', { key: 'agent.probe.openAiUrl404' }, proxied);
   } catch (e: any) {
     const msg = e?.message ?? String(e);
-    return {
-      ok: false,
-      stage: 'url',
-      message: i18n.t('agent.probe.connectionFailed', { message: msg }),
-      proxied,
-    };
+    return createProbeResult(false, 'url', {
+      key: 'agent.probe.connectionFailed',
+      options: { message: msg },
+    }, proxied);
   }
 }
 

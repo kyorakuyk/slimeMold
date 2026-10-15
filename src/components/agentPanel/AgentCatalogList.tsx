@@ -3,7 +3,7 @@ import {
   findProviderPreset,
   protocolDefaults,
   providerPresets,
-  type ProbeResult,
+  type ProbeStatus,
 } from '../../agents/agentManager';
 import type { AgentConfig, ApiVault, Protocol } from '../../types/agent';
 import { useT } from '../../i18n/useT';
@@ -19,7 +19,7 @@ export interface AgentCatalogListProps {
   projectSet: Set<string>;
   globalSet: Set<string>;
   defaultAgentId: string | null;
-  probeStates: Record<string, ProbeResult>;
+  probeStates: Record<string, ProbeStatus>;
   vaults: ApiVault[];
   belongsToGlobal: (id: string | null) => boolean;
   onFilterChange: (filter: AgentFilter) => void;

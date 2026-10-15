@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createAgent, ollamaModels, probeAgent, protocolDefaults, providerPresets } from './agentManager';
+import {
+  createAgent,
+  ollamaModels,
+  probeAgent,
+  protocolDefaults,
+  providerPresets,
+  translateProbeMessage,
+  type ProbeMessageSpec,
+} from './agentManager';
 import i18n from '../i18n';
 
 describe('agent catalog stored values and display keys', () => {
@@ -55,10 +63,24 @@ describe('agent catalog stored values and display keys', () => {
       await i18n.changeLanguage('en-US');
       const english = await probeAgent({ protocol: 'openai', baseUrl: '', model: 'gpt-4o-mini' });
       expect(english.message).toBe('Base URL is empty');
+      expect(english.messageSpec).toEqual({ key: 'agent.probe.emptyBaseUrl' });
+      const requestFailure: ProbeMessageSpec = {
+        key: 'agent.probe.requestFailed',
+        options: { status: 502 },
+        nested: {
+          details: {
+            key: 'agent.probe.detailsSuffix',
+            options: { details: 'upstream unavailable' },
+          },
+        },
+      };
+      expect(translateProbeMessage(requestFailure)).toBe('Request failed (502): upstream unavailable');
 
       await i18n.changeLanguage('zh-CN');
       const chinese = await probeAgent({ protocol: 'openai', baseUrl: '', model: 'gpt-4o-mini' });
       expect(chinese.message).toBe('Base URL 为空');
+      expect(chinese.messageSpec).toEqual({ key: 'agent.probe.emptyBaseUrl' });
+      expect(translateProbeMessage(requestFailure)).toBe('请求失败（502）：upstream unavailable');
     } finally {
       await i18n.changeLanguage(originalLanguage || 'zh-CN');
     }
