@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -12,10 +12,16 @@ function tempDir(): string {
   return mkdtempSync(join(scratchRoot, 'r7-metrics-json-'));
 }
 
-function runMetrics(jsonPath: string) {
-  return spawnSync(process.execPath, [script, '--json', jsonPath], {
+function runMetrics(jsonPath: string, preload?: { path: string; env: NodeJS.ProcessEnv }) {
+  return spawnSync(process.execPath, [
+    ...(preload ? ['--require', preload.path] : []),
+    script,
+    '--json',
+    jsonPath,
+  ], {
     cwd: root,
     encoding: 'utf8',
+    env: preload ? { ...process.env, ...preload.env } : process.env,
     maxBuffer: 8 * 1024 * 1024,
   });
 }
@@ -33,6 +39,89 @@ function skipIfLinkUnavailable(skip: () => void, error: unknown, kind: string): 
     return;
   }
   throw error;
+}
+
+const symlinkRaceHook = `
+const fs = require('node:fs');
+const path = require('node:path');
+const output = path.resolve(process.env.R7_RACE_OUTPUT);
+const outputDir = path.dirname(output);
+const repoAlias = path.resolve(process.env.R7_RACE_REPO_ALIAS);
+const backupDir = path.resolve(process.env.R7_RACE_BACKUP);
+const marker = path.resolve(process.env.R7_RACE_MARKER);
+const phase = process.env.R7_RACE_PHASE;
+let swapped = false;
+let outputFd;
+const originalRenameSync = fs.renameSync;
+const originalWriteFileSync = fs.writeFileSync;
+const isOutput = (file) => typeof file === 'string' && path.resolve(file) === output;
+function swapParent() {
+  if (swapped) return;
+  originalRenameSync(outputDir, backupDir);
+  originalRenameSync(repoAlias, outputDir);
+  swapped = true;
+  originalWriteFileSync(marker, 'race injected');
+}
+const originalOpenSync = fs.openSync;
+fs.openSync = function (file, ...args) {
+  if (!swapped && phase === 'open' && isOutput(file)) swapParent();
+  const fd = originalOpenSync.call(this, file, ...args);
+  if (isOutput(file)) outputFd = fd;
+  return fd;
+};
+fs.writeFileSync = function (file, ...args) {
+  if (!swapped && phase === 'open' && isOutput(file)) swapParent();
+  if (!swapped && phase === 'write' && (file === outputFd || isOutput(file))) swapParent();
+  return originalWriteFileSync.call(this, file, ...args);
+};
+`;
+
+function runSymlinkRace(skip: () => void, phase: 'open' | 'write'): void {
+  const fixture = tempDir();
+  const outputDir = join(fixture, 'output');
+  const repoAlias = join(fixture, 'repo-alias');
+  const backupDir = join(fixture, 'output-backup');
+  const marker = join(fixture, 'race-triggered');
+  const basename = outputName();
+  const output = join(outputDir, basename);
+  const repoOutput = join(root, basename);
+  const sentinel = `sentinel-${phase}`;
+  try {
+    mkdirSync(outputDir);
+    expect(existsSync(repoOutput)).toBe(false);
+    writeFileSync(repoOutput, sentinel);
+    try {
+      symlinkSync(root, repoAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      skipIfLinkUnavailable(skip, error, 'race directory junction');
+    }
+    const hookPath = join(fixture, `symlink-race-${phase}.cjs`);
+    writeFileSync(hookPath, symlinkRaceHook);
+    const result = runMetrics(output, {
+      path: hookPath,
+      env: {
+        R7_RACE_OUTPUT: output,
+        R7_RACE_REPO_ALIAS: repoAlias,
+        R7_RACE_BACKUP: backupDir,
+        R7_RACE_MARKER: marker,
+        R7_RACE_PHASE: phase,
+      },
+    });
+    expect(existsSync(marker), result.stderr || result.stdout || String(result.error)).toBe(true);
+    expect(readFileSync(repoOutput, 'utf8') === sentinel, 'race wrote into repository sentinel').toBe(true);
+    if (phase === 'open') {
+      expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(2);
+      expect(result.stderr).toMatch(/--json.*(?:outside|inside|repository|changed)|repository.*--json/i);
+    } else {
+      expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(0);
+      expect(JSON.parse(readFileSync(join(backupDir, basename), 'utf8'))).toHaveProperty('fileStats');
+    }
+  } finally {
+    if (existsSync(outputDir) && existsSync(backupDir)) renameSync(outputDir, repoAlias);
+    if (existsSync(backupDir)) renameSync(backupDir, outputDir);
+    rmSync(repoOutput, { force: true });
+    rmSync(fixture, { recursive: true, force: true });
+  }
 }
 
 it('rejects an ordinary --json path inside the repository before writing', () => {
@@ -95,4 +184,12 @@ it('allows a regular --json path outside the repository', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+it('rejects a repository directory-link swap before opening the --json target', (context) => {
+  runSymlinkRace(context.skip, 'open');
+});
+
+it('keeps --json writes bound to the validated file handle after a directory-link swap', (context) => {
+  runSymlinkRace(context.skip, 'write');
 });
