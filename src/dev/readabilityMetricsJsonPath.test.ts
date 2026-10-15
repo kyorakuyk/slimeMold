@@ -100,7 +100,6 @@ const originalRmdirSync = fs.rmdirSync;
 const originalUnlinkSync = fs.unlinkSync;
 const originalWriteFileSync = fs.writeFileSync;
 const originalOpenSync = fs.openSync;
-const originalRealpath = fs.realpathSync.native;
 const isOutput = (file) => typeof file === 'string' && path.resolve(file) === output;
 function swapParent() {
   if (swapped) return;
@@ -109,24 +108,22 @@ function swapParent() {
   swapped = true;
   originalWriteFileSync(marker, 'swapped');
 }
-fs.openSync = function (file, ...args) {
-  if (!swapped && isOutput(file)) swapParent();
-  return originalOpenSync.call(this, file, ...args);
-};
-fs.realpathSync.native = function (file, ...args) {
-  const actualPath = originalRealpath.call(this, file, ...args);
-  if (swapped && !restored && isOutput(file)) {
-    try {
-      if (process.platform === 'win32') originalRmdirSync(outputDir);
-      else originalUnlinkSync(outputDir);
-      originalRenameSync(backupDir, outputDir);
-      restored = true;
-      originalWriteFileSync(marker, 'restored');
-    } catch (error) {
-      originalWriteFileSync(marker, 'restore-unavailable:' + (error.code || 'unknown'));
-    }
+function restoreParent() {
+  if (!swapped || restored) return;
+  if (process.platform === 'win32') originalRmdirSync(outputDir);
+  else originalUnlinkSync(outputDir);
+  originalRenameSync(backupDir, outputDir);
+  restored = true;
+  originalWriteFileSync(marker, 'restored-before-realpath');
+}
+fs.openSync = function (file, flags, ...args) {
+  if (!swapped && isOutput(file) && typeof flags === 'number' && (flags & fs.constants.O_CREAT) !== 0) {
+    swapParent();
+    const fd = originalOpenSync.call(this, file, flags, ...args);
+    restoreParent();
+    return fd;
   }
-  return actualPath;
+  return originalOpenSync.call(this, file, flags, ...args);
 };
 `;
 
@@ -278,7 +275,7 @@ it('rejects an external hard-link alias to a repository file without changing it
   }
 });
 
-it('removes a repository entry created by a missing-output junction race before cleanup', (context) => {
+it('cleans a missing-output repo entry when the parent restores before the first realpath', (context) => {
   const fixture = tempDir();
   const outputDir = join(fixture, 'output');
   const repoAlias = join(fixture, 'repo-alias');
@@ -312,7 +309,7 @@ it('removes a repository entry created by a missing-output junction race before 
       context.skip();
       return;
     }
-    expect(raceState).toBe('restored');
+    expect(raceState).toBe('restored-before-realpath');
     expect(result.status, result.stderr || result.stdout || String(result.error)).toBe(2);
     expect(existsSync(repoOutput), 'cleanup left a repository output entry').toBe(false);
   } finally {
