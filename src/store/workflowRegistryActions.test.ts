@@ -127,6 +127,8 @@ describe('workflowRegistryActions', () => {
       const newWorkflows = {
         'new-workflow': { version: 1, name: 'New project', savedAt: '2026-01-01', nodes: [], edges: [], agents: [], roles: [] },
       } as WorkflowRegistryActionState['workflows'];
+      const oldWorkflowsBeforeAwait = JSON.parse(JSON.stringify(oldWorkflows)) as typeof oldWorkflows;
+      const newWorkflowsBeforeAwait = JSON.parse(JSON.stringify(newWorkflows)) as typeof newWorkflows;
       const addLog = vi.fn();
       const oldState = {
         workflows: oldWorkflows, activeWfId: 'old-workflow', workflowName: 'Old project',
@@ -166,8 +168,8 @@ describe('workflowRegistryActions', () => {
 
       expect(oldState.workflows).toBe(oldWorkflows);
       expect(currentState.workflows).toBe(newWorkflows);
-      expect(oldState.workflows).toEqual(oldWorkflows);
-      expect(currentState.workflows).toEqual(newWorkflows);
+      expect(oldState.workflows).toEqual(oldWorkflowsBeforeAwait);
+      expect(currentState.workflows).toEqual(newWorkflowsBeforeAwait);
       expect(setState).not.toHaveBeenCalled();
       expect(result).toEqual({ status: 'aborted', reason: 'project-changed' });
       expect(addLog).toHaveBeenCalledOnce();
