@@ -191,3 +191,23 @@ No tag was deleted, moved, or renamed. The Slice8/Slice9 lifecycle repairs remai
 
 - The prior `runNodeWithRetry` 120-line statement is inaccurate: `node scripts/readability-metrics.cjs --match runNodeWithRetry` reports **127** lines at `src/engine/executorNodePhases.ts:388` on the R5 baseline. R5 Slice4 may reduce it to ≤120; this correction does not edit the historical R4 entry.
 - The pre-Slice9 R4 verified baseline `39f54f4` entered sandbox setup only under `opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir`. The R4 repair target `3700d0c` instead awaited for every `opts.sandbox`, including copy mode. Therefore any earlier characterization that the baseline already yielded for sandbox copy runs is incorrect; R4 fixed the no-sandbox yield but left/introduced the copy-sandbox stop/duplicate-start race. R5 Slice3's test and repair remain pending.
+
+## R8 whole-branch supersession update (2026-10-16)
+
+The R8 full-range successor is reviewed code target `e1fa8f92f76c18be70da0b4fb83a80f38bc21619` on `refactor/monolith-split-2`, from base `1e2030983bbb606315e9d9a2f5b421f29c0b3855`. The exact reviewer passed with empty security/logic lists; same-code quality gates and the fresh Browser/real-Tauri bilingual matrix also passed. The paired R8 final tags both resolve to that reviewed code target:
+
+- `checkpoint/monolith-split-2-final-unverified-20261016-r8`
+- `checkpoint/monolith-split-2-final-verified-20261016-r8`
+
+The following historical snapshot groups are now **superseded by the R8 verified successor** for branch-level integration status. This addendum does not delete, move, rename, or retroactively rewrite any old tag or verdict; the earlier tables remain accurate as records of what was known at their original dates.
+
+| Historical group | R8 supersession scope |
+|---|---|
+| Living-graph first batch full target `31dc5794a76ef72601c2b00a76ea161b23759c05`, final unverified batch target, and associated rows in the 2026-10-12 first-batch table above | The R8 full-range code review, gates, and Browser/Tauri bilingual read-back supersede the old “no verified successor” integration status. The individual first-batch refs and their original reports remain unchanged. |
+| R4 backfill items explicitly left for integration verification (R4 rows 1a–5, including full-range target `43093da1c1d10fbafff25c6c88946abb22ad93be`) | Superseded at branch-integration level by R8. R4 slice-local verified tags for their exact snapshots remain valid only at those snapshots and are not moved to R8. |
+| R4 overtime slices 1a TopBar, 1b AgentEditorForm, 1c OrchestratorPanel, and overtime slice 2 runtime-log i18n | Their prior unverified integration status is superseded by R8's reviewed whole-branch target; the historical slice work and limitations remain recorded in the R4 report. |
+| R5 completed slice targets 0–11 and the two overtime comment batches; R5 Slice12 was skipped because its prerequisite did not hold | Their branch-level status is superseded by R8; no claim is made that skipped Slice12 ran. All R5 tags/reports remain intact. |
+| R6 slices 0–3 and full integration Slice4 target `f741960b873645d14de049d3cc76f83eb90e0f49` | Their branch-level status is superseded by R8's complete bilingual GUI and passing full-range review. R6's former findings remain historical; R8 evidence is bound to its own target. |
+| R7 pre-R8 unverified Slice5 candidates and exact-reviewed Slice1 target `8f7e93601dc96efa6177c36b8ba113ae34568d82` | R8 is the later full-range integration successor; prior R7 tags/verdicts remain exact-snapshot records. |
+
+This is a **snapshot supersession**, not a statement that every historical platform/authority risk in the older dossier was independently re-tested or that every non-blocking reviewer suggestion was implemented. The R8 reviewer suggestions and scope limits are recorded in `docs/DEVELOPMENT_LOG.md` §7.500 and `.hermes/reports/2026-10-16-r8.md`; the general current risk index above is not erased. The R8 GUI manifest is `.hermes/reports/r8-gui-readback-manifest.json` (104 captures, 0 missing/hash-mismatched assets).
