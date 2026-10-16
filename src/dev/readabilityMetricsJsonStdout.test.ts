@@ -24,7 +24,7 @@ it('prints raw metrics JSON to stdout when --json is used as a flag', () => {
   expectJsonStdout(runMetrics(['--json']));
 });
 
-it('does not write a legacy --json path argument to any file', () => {
+it('does not write a legacy --json path argument and still prints JSON to stdout', () => {
   const dir = mkdtempSync(join(tmpdir(), 'metrics-json-stdout-'));
   const output = join(dir, 'metrics.json');
   const sentinel = 'leave-this-file-unchanged';
@@ -34,6 +34,7 @@ it('does not write a legacy --json path argument to any file', () => {
     expect(existsSync(output)).toBe(true);
     expect(readFileSync(output, 'utf8')).toBe(sentinel);
     expectJsonStdout(result);
+    expect(result.stdout.includes('# Readability metrics')).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -103,7 +103,7 @@ TypeScript strict 覆盖了类型层面；但格式、React hooks 依赖、函�
 ```bash
 node scripts/readability-metrics.cjs                 # 总览、目录注释率、最长与最复杂函数、被引用最多的模块
 node scripts/readability-metrics.cjs --match auditWorkerRunConsistency
-node scripts/readability-metrics.cjs --json <仓库外的目录>/readability.json   # 路径须以 .json 结尾
+node scripts/readability-metrics.cjs --json   # 输出原始 JSON 到 stdout，不写文件
 ```
 
 建议跟踪的基线（本快照）：

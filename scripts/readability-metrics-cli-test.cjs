@@ -28,7 +28,7 @@ test('prints raw metrics JSON to stdout when --json is used without a file targe
   expectJsonStdout(runMetrics('--json'));
 });
 
-test('does not write a legacy --json path argument to any file', () => {
+test('does not write a legacy --json path argument and still prints JSON to stdout', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-json-stdout-'));
   const output = path.join(dir, 'metrics.json');
   const sentinel = 'leave-this-file-unchanged';
@@ -37,6 +37,7 @@ test('does not write a legacy --json path argument to any file', () => {
     const result = runMetrics('--json', output);
     assert.equal(fs.readFileSync(output, 'utf8'), sentinel);
     expectJsonStdout(result);
+    assert.equal(result.stdout.includes('# Readability metrics'), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -6,8 +6,7 @@
  *   node.exe scripts/readability-metrics.cjs              # summary + top lists
  *   node.exe scripts/readability-metrics.cjs --top 25     # longer top lists
  *   node.exe scripts/readability-metrics.cjs --match auditWorkerRunConsistency   # functions whose name or file matches
- *   node.exe scripts/readability-metrics.cjs --json out.json                     # raw data for trend tracking
- *     (the --json path must end in .json and resolve outside the repo)
+ *   node.exe scripts/readability-metrics.cjs --json  # raw JSON on stdout; does not write files
  *
  * Definitions:
  *   - lines: physical lines from the function's first token to its closing brace.
@@ -20,7 +19,6 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('node:child_process');
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -30,204 +28,9 @@ const opt = (name, fallback) => {
 const root = process.cwd();
 const top = Number(opt('--top', '15'));
 const match = opt('--match', '');
-const jsonOut = opt('--json', '');
-if (jsonOut && !/\.json$/i.test(jsonOut)) {
-  console.error(`--json expects a path ending in .json, got "${jsonOut}" (refusing to overwrite other files)`);
-  process.exit(2);
-}
-function lstatOrMissing(filePath) {
-  try {
-    return fs.lstatSync(filePath);
-  } catch (error) {
-    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return null;
-    throw error;
-  }
-}
-
-function resolveJsonOutputRealPath(filePath) {
-  const absolutePath = path.resolve(root, filePath);
-  const targetStat = lstatOrMissing(absolutePath);
-  if (targetStat?.isSymbolicLink()) {
-    throw new Error(`--json target must not be a symbolic link (refusing to write "${absolutePath}")`);
-  }
-
-  let ancestor = absolutePath;
-  const remaining = [];
-  while (!lstatOrMissing(ancestor)) {
-    const parent = path.dirname(ancestor);
-    if (parent === ancestor) throw new Error(`--json path has no existing ancestor: "${absolutePath}"`);
-    remaining.unshift(path.basename(ancestor));
-    ancestor = parent;
-  }
-  return path.resolve(fs.realpathSync.native(ancestor), ...remaining);
-}
-
-function isInsideRepo(resolvedRoot, candidatePath) {
-  const relativePath = path.relative(resolvedRoot, candidatePath);
-  return relativePath === '' || (
-    relativePath !== '..' &&
-    !relativePath.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relativePath)
-  );
-}
-
-function samePath(left, right) {
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
-function sameFile(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function writeJsonOutputViaDirectoryHandle(outputPath, resolvedRoot, jsonText) {
-  const parentPath = path.dirname(outputPath);
-  const fileName = path.basename(outputPath);
-  const fdRoot = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
-  const directoryFlags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0);
-  let directoryFd = null;
-  let fd = null;
-  let created = false;
-  let anchoredPath = null;
-  try {
-    directoryFd = fs.openSync(parentPath, directoryFlags);
-    const directoryStat = fs.fstatSync(directoryFd, { bigint: true });
-    const pathStat = fs.statSync(parentPath, { bigint: true });
-    const actualParent = fs.realpathSync.native(`${fdRoot}/${directoryFd}`);
-    if (!sameFile(directoryStat, pathStat)) {
-      throw new Error('--json output parent changed during validation (refusing to write)');
-    }
-    if (isInsideRepo(resolvedRoot, actualParent)) {
-      throw new Error(`--json output path resolves inside the repository (refusing to write "${actualParent}")`);
-    }
-
-    anchoredPath = `${fdRoot}/${directoryFd}/${fileName}`;
-    try {
-      fd = fs.openSync(anchoredPath, fs.constants.O_WRONLY);
-    } catch (error) {
-      if (!error || error.code !== 'ENOENT') throw error;
-      fd = fs.openSync(
-        anchoredPath,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
-        0o600,
-      );
-      created = true;
-    }
-
-    const openedPath = fs.realpathSync.native(anchoredPath);
-    const outputStat = fs.statSync(anchoredPath, { bigint: true });
-    const descriptorStat = fs.fstatSync(fd, { bigint: true });
-    if (!sameFile(outputStat, descriptorStat)) {
-      throw new Error('--json output target changed during validation (refusing to write)');
-    }
-    // Reject pre-existing aliases. Same-UID concurrent link creation is outside this
-    // CLI guard's threat model: that process already has direct filesystem write access.
-    if (outputStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
-      throw new Error('--json output target has multiple hard links (refusing to write)');
-    }
-    if (!samePath(openedPath, outputPath) || isInsideRepo(resolvedRoot, openedPath)) {
-      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${openedPath}")`);
-    }
-
-    const beforeWriteStat = fs.fstatSync(fd, { bigint: true });
-    if (!sameFile(descriptorStat, beforeWriteStat) || beforeWriteStat.nlink !== 1n) {
-      throw new Error('--json output target changed during validation (refusing to write)');
-    }
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, jsonText);
-  } catch (error) {
-    if (created && fd !== null && anchoredPath !== null) {
-      try {
-        fs.closeSync(fd);
-        fd = null;
-        // Resolve cleanup relative to the pinned directory descriptor, not outputPath.
-        fs.unlinkSync(anchoredPath);
-      } catch {
-        // Preserve the original write failure if best-effort cleanup is unavailable.
-      }
-    }
-    throw error;
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-    if (directoryFd !== null) fs.closeSync(directoryFd);
-  }
-}
-
-function writeJsonOutputViaWindowsHandle(outputPath, resolvedRoot, jsonText) {
-  const helper = path.join(__dirname, 'readability-metrics-json-output.ps1');
-  const result = spawnSync('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Run',
-  ], {
-    input: JSON.stringify({ outputPath, repositoryRoot: resolvedRoot, jsonText }),
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error((result.stderr || '').trim() || `Windows handle-based JSON writer failed (${result.status})`);
-  }
-}
-
-function writeJsonOutputViaExistingPath(outputPath, resolvedRoot, jsonText) {
-  const fd = fs.openSync(outputPath, fs.constants.O_WRONLY);
-  try {
-    const actualPath = fs.realpathSync.native(outputPath);
-    const pathStat = fs.statSync(outputPath, { bigint: true });
-    const descriptorStat = fs.fstatSync(fd, { bigint: true });
-    if (!sameFile(pathStat, descriptorStat)) {
-      throw new Error('--json output target changed during validation (refusing to write)');
-    }
-    if (pathStat.nlink !== 1n || descriptorStat.nlink !== 1n) {
-      throw new Error('--json output target has multiple hard links (refusing to write)');
-    }
-    if (!samePath(actualPath, outputPath) || isInsideRepo(resolvedRoot, actualPath)) {
-      throw new Error(`--json output path changed or resolves inside the repository (refusing to write "${actualPath}")`);
-    }
-    const beforeWriteStat = fs.fstatSync(fd, { bigint: true });
-    if (!sameFile(descriptorStat, beforeWriteStat) || beforeWriteStat.nlink !== 1n) {
-      throw new Error('--json output target changed during validation (refusing to write)');
-    }
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, jsonText);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function writeJsonOutputSafely(outputPath, resolvedRoot, jsonText) {
-  if (process.platform === 'win32' && lstatOrMissing(outputPath) === null) {
-    return writeJsonOutputViaWindowsHandle(outputPath, resolvedRoot, jsonText);
-  }
-  if (process.platform !== 'win32') {
-    return writeJsonOutputViaDirectoryHandle(outputPath, resolvedRoot, jsonText);
-  }
-  return writeJsonOutputViaExistingPath(outputPath, resolvedRoot, jsonText);
-}
-
-let resolvedRoot;
-let resolvedJsonOut;
-if (jsonOut) {
-  resolvedRoot = fs.realpathSync.native(root);
-  try {
-    resolvedJsonOut = resolveJsonOutputRealPath(jsonOut);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
-  }
-  const relativeJsonOut = path.relative(resolvedRoot, resolvedJsonOut);
-  const writesInsideRepo = relativeJsonOut === '' || (
-    relativeJsonOut !== '..' &&
-    !relativeJsonOut.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relativeJsonOut)
-  );
-  if (writesInsideRepo) {
-    console.error(`--json output must resolve outside the repository root (refusing to write "${resolvedJsonOut}")`);
-    process.exit(2);
-  }
-}
+// `--json` prints the raw metrics JSON. A trailing path-shaped argument (the previous
+// `--json <path>` form) is ignored: JSON now always goes to stdout and writes no file.
+const jsonOutput = args.includes('--json');
 const ts = require(path.join(root, 'node_modules', 'typescript'));
 
 const CJK = /[一-鿿]/;
@@ -379,12 +182,12 @@ const prodFns = fnStats.filter((f) => !f.isTest);
 const sum = (arr, k) => arr.reduce((s, x) => s + x[k], 0);
 const ratio = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : 'n/a');
 
-if (match) {
+if (!jsonOutput && match) {
   console.log(`| function | file:line | lines | complexity | depth | params |\n| --- | --- | --- | --- | --- | --- |`);
   for (const f of fnStats.filter((x) => x.name.includes(match) || x.file.includes(match)).sort((a, b) => b.lines - a.lines)) {
     console.log(`| ${f.name} | ${f.file}:${f.line} | ${f.lines} | ${f.complexity} | ${f.depth} | ${f.params} |`);
   }
-} else {
+} else if (!jsonOutput) {
   const fileLines = prodFiles.map((f) => f.lines);
   const fnLines = prodFns.map((f) => f.lines);
   const fnCx = prodFns.map((f) => f.complexity);
@@ -421,13 +224,8 @@ if (match) {
   }
 }
 
-if (jsonOut) {
+if (jsonOutput) {
   const jsonText = JSON.stringify({ generatedAt: new Date().toISOString(), fileStats, fnStats, hatches,
     fanIn: Object.fromEntries(fanIn) }, null, 2);
-  try {
-    writeJsonOutputSafely(resolvedJsonOut, resolvedRoot, jsonText);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
-  }
+  process.stdout.write(`${jsonText}\n`);
 }
