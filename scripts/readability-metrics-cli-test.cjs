@@ -9,33 +9,35 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const script = path.join(__dirname, 'readability-metrics.cjs');
 
-function uniqueRepoOutputPath() {
-  return path.join(root, `.r5-metrics-json-guard-${process.pid}-${Date.now()}.json`);
+const os = require('node:os');
+
+function runMetrics(...args) {
+  return spawnSync(process.execPath, [script, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
+  });
 }
 
-function assertRepoPathRejected(argument, absoluteOutput) {
-  assert.equal(fs.existsSync(absoluteOutput), false, 'test output path must start absent');
-  try {
-    const result = spawnSync(process.execPath, [script, '--json', argument], {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    assert.equal(result.status, 2, result.stderr || result.stdout || String(result.error));
-    assert.match(result.stderr, /--json.*(?:outside|inside).*repository|repository.*--json/i);
-    assert.equal(fs.existsSync(absoluteOutput), false, 'rejected path must not be created');
-  } finally {
-    if (fs.existsSync(absoluteOutput)) fs.rmSync(absoluteOutput);
-  }
+function expectJsonStdout(result) {
+  assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
+  assert.ok(JSON.parse(result.stdout).fileStats);
 }
 
-test('rejects an absolute --json output path inside the repository without writing it', () => {
-  const absoluteOutput = uniqueRepoOutputPath();
-  assertRepoPathRejected(absoluteOutput, absoluteOutput);
+test('prints raw metrics JSON to stdout when --json is used without a file target', () => {
+  expectJsonStdout(runMetrics('--json'));
 });
 
-test('rejects a relative --json output path inside the repository without writing it', () => {
-  const absoluteOutput = uniqueRepoOutputPath();
-  const relativeOutput = path.relative(root, absoluteOutput);
-  assertRepoPathRejected(relativeOutput, absoluteOutput);
+test('does not write a legacy --json path argument to any file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-json-stdout-'));
+  const output = path.join(dir, 'metrics.json');
+  const sentinel = 'leave-this-file-unchanged';
+  try {
+    fs.writeFileSync(output, sentinel);
+    const result = runMetrics('--json', output);
+    assert.equal(fs.readFileSync(output, 'utf8'), sentinel);
+    expectJsonStdout(result);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
