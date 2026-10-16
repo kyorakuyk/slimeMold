@@ -211,3 +211,5 @@ The following historical snapshot groups are now **superseded by the R8 verified
 | R7 pre-R8 unverified Slice5 candidates and exact-reviewed Slice1 target `8f7e93601dc96efa6177c36b8ba113ae34568d82` | R8 is the later full-range integration successor; prior R7 tags/verdicts remain exact-snapshot records. |
 
 This is a **snapshot supersession**, not a statement that every historical platform/authority risk in the older dossier was independently re-tested or that every non-blocking reviewer suggestion was implemented. The R8 reviewer suggestions and scope limits are recorded in `docs/DEVELOPMENT_LOG.md` §7.500 and `.hermes/reports/2026-10-16-r8.md`; the general current risk index above is not erased. The R8 GUI manifest is `.hermes/reports/r8-gui-readback-manifest.json` (104 captures, 0 missing/hash-mismatched assets).
+
+At R8 target `e1fa8f9`, `src/dev/readabilityMetricsJsonPath.test.ts`, `scripts/readability-metrics-json-output.ps1`, and `scripts/readability-metrics-json-output-race-test.ps1` are absent; their names in earlier development-log entries are historical references. The stdout test replaces the path test for the user-ordered stdout-only contract.
