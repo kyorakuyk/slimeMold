@@ -37,11 +37,21 @@ export function layoutGraphGrowth(
     || ![horizontalGap, verticalGap].every((gap) => Number.isFinite(gap) && gap >= 0)) {
     throw new Error('graph-growth layout 尺寸与间距必须是有效的非负有限数');
   }
+  const horizontalStride = nodeWidth + horizontalGap;
+  const verticalStride = nodeHeight + verticalGap;
+  if (!Number.isFinite(horizontalStride) || !Number.isFinite(verticalStride)) {
+    throw new Error('graph-growth layout overflow：派生间距超出有限数范围');
+  }
 
   const nodeById = new Map<string, GraphGrowthNode>();
   for (const node of nodes) {
     if (nodeById.has(node.id)) throw new Error(`graph-growth layout 节点 ID 重复：${node.id}`);
     nodeById.set(node.id, node);
+  }
+  for (const node of nodes) {
+    if (node.parentId && !nodeById.has(node.parentId)) {
+      throw new Error(`graph-growth layout missing parent for ${node.id}: ${node.parentId}`);
+    }
   }
 
   const positions = new Map<string, GraphGrowthPosition>();
@@ -66,12 +76,15 @@ export function layoutGraphGrowth(
         unresolved.push(node);
         continue;
       }
-      const y = parent ? parent.y + nodeHeight + verticalGap : 0;
-      const strideX = nodeWidth + horizontalGap;
+      const y = parent ? parent.y + verticalStride : 0;
+      if (!Number.isFinite(y)) throw new Error(`graph-growth layout coordinate overflow: ${node.id}.y`);
+      const originX = parent?.x ?? 0;
       let slot = 0;
       let candidate: GraphGrowthPosition;
       do {
-        candidate = { x: (parent?.x ?? 0) + slot * strideX, y };
+        const x = originX + slot * horizontalStride;
+        if (!Number.isFinite(x)) throw new Error(`graph-growth layout coordinate overflow: ${node.id}.x`);
+        candidate = { x, y };
         slot += 1;
       } while (!isFree(candidate, positions.values(), nodeWidth, nodeHeight));
       positions.set(node.id, candidate);
