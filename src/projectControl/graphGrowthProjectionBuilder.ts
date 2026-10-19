@@ -350,13 +350,17 @@ export function graphGrowthProjection(
     }
 
     const sessionModuleNodes = [...moduleNodeById.values()];
+    const linkedSessionEventIds = sessionEventIds.get(sessionId) ?? graphIds;
     nodes.push({
       id: sessionNodeId,
       kind: 'session',
       label: sessionId,
       status: aggregateStatus(sessionModuleNodes.map((node) => node.status)),
       sessionId,
-      eventIds: unique(sessionEventIds.get(sessionId) ?? graphIds),
+      eventIds: unique([
+        ...linkedSessionEventIds,
+        ...sessionModuleNodes.flatMap((node) => node.eventIds),
+      ]),
       evidenceIds: unique(sessionModuleNodes.flatMap((node) => node.evidenceIds)),
       leaseHeld: false,
       pulse: false,
