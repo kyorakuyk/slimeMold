@@ -85,4 +85,25 @@ describe('layoutGraphGrowth', () => {
     expect(entries(first)).toEqual(entries(reordered));
     expectNoOverlaps(nodes, first);
   });
+
+  it('rejects a visible child whose parent is absent from the current graph even if cached', () => {
+    const session = growthNode('session:removed-parent', 'session');
+    const parent = growthNode('module:removed-parent', 'module', session.id);
+    const cached = layoutGraphGrowth([session, parent]);
+    const orphan = growthNode('task:orphan', 'task', parent.id);
+
+    expect(() => layoutGraphGrowth([orphan], cached)).toThrow(/missing parent|parent.*缺失/i);
+  });
+
+  it('rejects finite layout options whose derived coordinates overflow', () => {
+    const roots = [
+      growthNode('session:overflow:a', 'session'),
+      growthNode('session:overflow:b', 'session'),
+    ];
+
+    expect(() => layoutGraphGrowth(roots, new Map(), {
+      nodeWidth: Number.MAX_VALUE,
+      horizontalGap: Number.MAX_VALUE,
+    })).toThrow(/overflow|finite|尺寸/i);
+  });
 });
