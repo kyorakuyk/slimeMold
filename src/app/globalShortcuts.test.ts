@@ -85,4 +85,42 @@ describe('global shortcuts adapter', () => {
     expect(deps.undo).toHaveBeenCalledOnce();
     dispose();
   });
+
+  it('preserves native editable-field shortcuts during replay while blocking app commands', () => {
+    const deps = baseDeps();
+    const dispose = installGlobalShortcuts({ ...deps, isReplayMode: () => true });
+    const input = document.createElement('input');
+    document.body.append(input);
+
+    const nativeShortcuts = ['z', 'y', 'c', 'v', 'd', 'a', 'b', 'm'];
+    for (const key of nativeShortcuts) {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented, `Ctrl+${key.toUpperCase()} should remain native in an input`).toBe(false);
+    }
+
+    for (const key of ['s', 'n', 'g']) {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented, `Ctrl+${key.toUpperCase()} remains an app command`).toBe(true);
+    }
+
+    expect(deps.copySelection).not.toHaveBeenCalled();
+    expect(deps.pasteClipboard).not.toHaveBeenCalled();
+    expect(deps.undo).not.toHaveBeenCalled();
+    expect(deps.exportWorkflow).not.toHaveBeenCalled();
+    expect(deps.newWorkflowInProject).not.toHaveBeenCalled();
+    dispose();
+    input.remove();
+  });
 });

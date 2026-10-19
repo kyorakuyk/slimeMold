@@ -30,6 +30,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 const REPLAY_BLOCKED_SHORTCUTS = new Set(['s', 'z', 'y', 'n', 'c', 'v', 'd', 'a', 'b', 'm', 'g']);
+const EDITABLE_NATIVE_SHORTCUTS = new Set(['z', 'y', 'c', 'v', 'd', 'a', 'b', 'm']);
 
 export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => void {
   // 把快捷键映射到注入的 action ports；编辑控件中的选择快捷键不抢占，保存/新建仍是全局键。
@@ -38,11 +39,12 @@ export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => 
     const mod = event.ctrlKey || event.metaKey;
     if (!mod) return;
     const key = event.key.toLowerCase();
-    if (deps.isReplayMode?.() && REPLAY_BLOCKED_SHORTCUTS.has(key)) {
+    const inEditable = isEditableTarget(event.target);
+    const preserveNativeInputShortcut = inEditable && EDITABLE_NATIVE_SHORTCUTS.has(key);
+    if (deps.isReplayMode?.() && REPLAY_BLOCKED_SHORTCUTS.has(key) && !preserveNativeInputShortcut) {
       event.preventDefault();
       return;
     }
-    const inEditable = isEditableTarget(event.target);
 
     if (key === 's') {
       event.preventDefault();
