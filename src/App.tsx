@@ -13,6 +13,7 @@ import WelcomeModal from './components/WelcomeModal';
 import NewProjectModal from './components/NewProjectModal';
 import InterventionModal from './components/InterventionModal';
 import BeginnerExperience from './components/BeginnerExperience';
+import ProfessionalCanvasWorkspace from './components/ProfessionalCanvasWorkspace';
 import WindowTitleBar from './components/WindowTitleBar';
 import WorkflowEditor from './canvas/WorkflowEditor';
 import { NamePrompt } from './components/NamePrompt';
@@ -123,6 +124,11 @@ export default function App() {
   const setViewTheme = useViewStore((s) => s.setTheme);
   const workspaceMode = useViewStore((s) => s.workspaceMode);
   const setWorkspaceMode = useViewStore((s) => s.setWorkspaceMode);
+  const projectId = useWorkflowStore((s) => s.projectId);
+  const projectPath = useWorkflowStore((s) => s.projectPath);
+  const [replayMode, setReplayMode] = useState(false);
+  const replayModeRef = useRef(replayMode);
+  replayModeRef.current = replayMode;
   const [prompt, setPrompt] = useState<{ title: string; initial: string; onConfirm: (name: string) => void } | null>(null);
   const splitView = useViewStore((s) => s.splitView);
   const splitWfId = useViewStore((s) => s.splitWfId);
@@ -292,6 +298,7 @@ export default function App() {
 
   // 全局快捷键由无 React 的 adapter 负责，App 只提供 store/UI ports。
   useEffect(() => installGlobalShortcuts({
+    isReplayMode: () => replayModeRef.current,
     exportWorkflow,
     undo: () => useWorkflowStore.getState().undo(),
     redo: () => useWorkflowStore.getState().redo(),
@@ -332,6 +339,7 @@ export default function App() {
           ) : (
             <>
             <TopBar
+              replayMode={replayMode}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               panelOpen={panelOpen}
@@ -389,9 +397,14 @@ export default function App() {
                   onNewProject={() => setNewProjectOpen(true)}
                 />
               ) : (
-                <div className="min-w-0 flex-1">
-                  <WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />
-                </div>
+                <ProfessionalCanvasWorkspace
+                  key={`${projectId ?? ''}\u0000${projectPath ?? ''}`}
+                  projectRoot={projectPath}
+                  projectId={projectId}
+                  isTauri={isTauri}
+                  onReplayModeChange={setReplayMode}
+                  editor={<WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />}
+                />
               )}
             </div>
             {inspectorOpen && (

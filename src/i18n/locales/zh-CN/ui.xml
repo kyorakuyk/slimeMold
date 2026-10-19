@@ -305,6 +305,12 @@
   <string name="canvas.node.status.muted">mute：已静音，不执行</string>
   <string name="canvas.node.status.duration">耗时 {{duration}}ms</string>
   <string name="canvas.livingGraph.empty">暂无可显示的活图内容</string>
+  <string name="canvas.livingGraph.tabs">专业画布视图</string>
+  <string name="canvas.livingGraph.tab.graph">活图</string>
+  <string name="canvas.livingGraph.tab.editor">工作流编辑器</string>
+  <string name="canvas.livingGraph.eventSourceError">无法读取此项目的事件历史。</string>
+  <string name="canvas.livingGraph.projectionError">无法将项目事件投影为活图。</string>
+  <string name="canvas.livingGraph.corruptEvents">已跳过无效事件行：{{count}}</string>
   <string name="canvas.livingGraph.details.title">事件溯源</string>
   <string name="canvas.livingGraph.details.eventIds">触发节点的事件 ID</string>
   <string name="canvas.livingGraph.details.noEvents">暂无关联事件 ID</string>

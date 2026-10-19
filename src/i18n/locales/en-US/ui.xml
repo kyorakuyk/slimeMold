@@ -305,6 +305,12 @@
   <string name="canvas.node.status.muted">Muted: not executed</string>
   <string name="canvas.node.status.duration">Duration {{duration}} ms</string>
   <string name="canvas.livingGraph.empty">No live graph content to display.</string>
+  <string name="canvas.livingGraph.tabs">Professional canvas views</string>
+  <string name="canvas.livingGraph.tab.graph">Living graph</string>
+  <string name="canvas.livingGraph.tab.editor">Workflow editor</string>
+  <string name="canvas.livingGraph.eventSourceError">Unable to read this project's event history.</string>
+  <string name="canvas.livingGraph.projectionError">Project events could not be projected into a graph.</string>
+  <string name="canvas.livingGraph.corruptEvents">Skipped invalid event rows: {{count}}</string>
   <string name="canvas.livingGraph.details.title">Event provenance</string>
   <string name="canvas.livingGraph.details.eventIds">Triggering event IDs</string>
   <string name="canvas.livingGraph.details.noEvents">No associated event IDs</string>
