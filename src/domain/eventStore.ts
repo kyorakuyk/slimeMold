@@ -391,6 +391,11 @@ function decodeEvent(value: unknown): DomainEvent {
   return eventBody(stored) as unknown as DomainEvent;
 }
 
+/** Decode one persisted event row without changing stream or replay state. */
+export function decodeEventRecord(value: unknown): DomainEvent {
+  return decodeEvent(value);
+}
+
 function equivalentEvents(left: DomainEvent, right: DomainEvent): boolean {
   return stableJson(eventBody(left)) === stableJson(eventBody(right));
 }
