@@ -106,4 +106,20 @@ describe('layoutGraphGrowth', () => {
       horizontalGap: Number.MAX_VALUE,
     })).toThrow(/overflow|finite|尺寸/i);
   });
+
+  it('finds a lower free slot when large cached coordinates cannot advance horizontally', () => {
+    const session = growthNode('session:large-coordinate', 'session');
+    const module = growthNode('module:large-coordinate', 'module', session.id);
+    const existingTask = growthNode('task:large-coordinate:existing', 'task', module.id);
+    const addedTask = growthNode('task:large-coordinate:added', 'task', module.id);
+    const cached = new Map([
+      [module.id, { x: Number.MAX_VALUE, y: 0 }],
+      [existingTask.id, { x: Number.MAX_VALUE, y: NODE_HEIGHT + 80 }],
+    ]);
+
+    const positions = layoutGraphGrowth([session, module, existingTask, addedTask], cached);
+
+    expect(positions.get(addedTask.id)).not.toEqual(positions.get(existingTask.id));
+    expect(positions.get(addedTask.id)!.y).toBeGreaterThan(positions.get(module.id)!.y + NODE_HEIGHT);
+  });
 });
