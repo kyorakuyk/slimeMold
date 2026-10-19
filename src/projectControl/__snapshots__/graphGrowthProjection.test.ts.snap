@@ -1,0 +1,248 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`graphGrowthProjection > is deterministic at a sequence cutoff and rebuilds hierarchy and dependency edges 1`] = `
+[
+  {
+    "id": "session:session-live-graph",
+    "kind": "session",
+    "status": "queued",
+  },
+  {
+    "id": "module:session-live-graph:core",
+    "kind": "module",
+    "status": "queued",
+  },
+  {
+    "id": "module:session-live-graph:ui",
+    "kind": "module",
+    "status": "idle",
+  },
+  {
+    "id": "task:graph-live-graph:task-a",
+    "kind": "task",
+    "status": "queued",
+  },
+  {
+    "id": "task:graph-live-graph:task-b",
+    "kind": "task",
+    "status": "idle",
+  },
+]
+`;
+
+exports[`graphGrowthProjection > is deterministic at a sequence cutoff and rebuilds hierarchy and dependency edges 2`] = `
+[
+  {
+    "id": "contains:module:session-live-graph:core:task:graph-live-graph:task-a",
+    "kind": "hierarchy",
+    "sourceId": "module:session-live-graph:core",
+    "targetId": "task:graph-live-graph:task-a",
+  },
+  {
+    "id": "contains:module:session-live-graph:ui:task:graph-live-graph:task-b",
+    "kind": "hierarchy",
+    "sourceId": "module:session-live-graph:ui",
+    "targetId": "task:graph-live-graph:task-b",
+  },
+  {
+    "id": "contains:session:session-live-graph:module:session-live-graph:core",
+    "kind": "hierarchy",
+    "sourceId": "session:session-live-graph",
+    "targetId": "module:session-live-graph:core",
+  },
+  {
+    "id": "contains:session:session-live-graph:module:session-live-graph:ui",
+    "kind": "hierarchy",
+    "sourceId": "session:session-live-graph",
+    "targetId": "module:session-live-graph:ui",
+  },
+  {
+    "id": "depends:graph-live-graph:task-a:task-b",
+    "kind": "dependency",
+    "sourceId": "task:graph-live-graph:task-a",
+    "targetId": "task:graph-live-graph:task-b",
+  },
+]
+`;
+
+exports[`graphGrowthProjection > projects queue, leased execution, feedback, blocking, evidence, failure, unknown, retry scars, and package markers 1`] = `
+[
+  {
+    "id": "session:session-live-graph",
+    "kind": "session",
+    "scar": false,
+    "status": "waiting-feedback",
+  },
+  {
+    "id": "module:session-live-graph:active",
+    "kind": "module",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "module:session-live-graph:blocked",
+    "kind": "module",
+    "scar": false,
+    "status": "blocked",
+  },
+  {
+    "id": "module:session-live-graph:complete",
+    "kind": "module",
+    "scar": false,
+    "status": "succeeded",
+  },
+  {
+    "id": "module:session-live-graph:failed",
+    "kind": "module",
+    "scar": false,
+    "status": "failed",
+  },
+  {
+    "id": "module:session-live-graph:retry",
+    "kind": "module",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "module:session-live-graph:unknown",
+    "kind": "module",
+    "scar": false,
+    "status": "blocked",
+  },
+  {
+    "id": "module:session-live-graph:waiting",
+    "kind": "module",
+    "scar": false,
+    "status": "waiting-feedback",
+  },
+  {
+    "id": "task:graph-live-graph:task-blocked",
+    "kind": "task",
+    "scar": false,
+    "status": "blocked",
+  },
+  {
+    "id": "task:graph-live-graph:task-complete",
+    "kind": "task",
+    "scar": false,
+    "status": "succeeded",
+  },
+  {
+    "id": "task:graph-live-graph:task-failed",
+    "kind": "task",
+    "scar": false,
+    "status": "failed",
+  },
+  {
+    "id": "task:graph-live-graph:task-feedback",
+    "kind": "task",
+    "scar": false,
+    "status": "waiting-feedback",
+  },
+  {
+    "id": "task:graph-live-graph:task-retry",
+    "kind": "task",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "task:graph-live-graph:task-running",
+    "kind": "task",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "task:graph-live-graph:task-unknown",
+    "kind": "task",
+    "scar": false,
+    "status": "unknown",
+  },
+  {
+    "id": "task:graph-live-graph:task-unleased",
+    "kind": "task",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-complete:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "succeeded",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-failed:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "failed",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-feedback:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "waiting-feedback",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-retry:attempt-1",
+    "kind": "attempt",
+    "scar": true,
+    "status": "failed",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-retry:attempt-2",
+    "kind": "attempt",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-running:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "running",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-unknown:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "unknown",
+  },
+  {
+    "id": "attempt:task-execution:run-live-graph:task-unleased:attempt-1",
+    "kind": "attempt",
+    "scar": false,
+    "status": "running",
+  },
+]
+`;
+
+exports[`graphGrowthProjection > projects queue, leased execution, feedback, blocking, evidence, failure, unknown, retry scars, and package markers 2`] = `
+[
+  {
+    "attemptId": "task-execution:run-live-graph:task-failed:attempt-1",
+    "eventId": "event-13-TaskFailed",
+    "id": "ring:task-execution:run-live-graph:task-failed:attempt-1",
+    "outcome": "failed",
+    "taskId": "task-failed",
+  },
+  {
+    "attemptId": "task-execution:run-live-graph:task-unknown:attempt-1",
+    "eventId": "event-16-TaskAttemptMarkedUnknown",
+    "id": "ring:task-execution:run-live-graph:task-unknown:attempt-1",
+    "outcome": "unknown",
+    "taskId": "task-unknown",
+  },
+  {
+    "attemptId": "task-execution:run-live-graph:task-complete:attempt-1",
+    "eventId": "event-19-TaskSucceeded",
+    "id": "ring:task-execution:run-live-graph:task-complete:attempt-1",
+    "outcome": "succeeded",
+    "taskId": "task-complete",
+  },
+  {
+    "attemptId": "task-execution:run-live-graph:task-retry:attempt-1",
+    "eventId": "event-22-TaskFailed",
+    "id": "ring:task-execution:run-live-graph:task-retry:attempt-1",
+    "outcome": "failed",
+    "taskId": "task-retry",
+  },
+]
+`;

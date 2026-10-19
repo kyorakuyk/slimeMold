@@ -92,14 +92,14 @@ function eventStream() {
     },
     { actor: 'master', sourceId: value.id, sourceVersion: value.graphVersion },
   );
-  const addQueued = (taskId: string, nextAttempt?: number): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(RUN_ID, taskId);
+  const addQueued = (taskId: string, nextAttempt?: number, runId = RUN_ID): DomainEvent => {
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
     return append(
       'TaskQueued',
       'TaskExecution',
       taskExecutionId,
       {
-        runId: RUN_ID,
+        runId,
         taskId,
         taskExecutionId,
         taskGraphId: GRAPH_ID,
@@ -108,36 +108,38 @@ function eventStream() {
       { sourceId: GRAPH_ID },
     );
   };
-  const addStarted = (taskId: string, attempt = 1): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(RUN_ID, taskId);
+  const addStarted = (taskId: string, attempt = 1, runId = RUN_ID, withLease = true): DomainEvent => {
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
     const attemptId = createAttemptId(taskExecutionId, attempt);
     return append(
       'TaskStarted',
       'TaskExecution',
       taskExecutionId,
       {
-        runId: RUN_ID,
+        runId,
         taskId,
         taskExecutionId,
         attemptId,
         attempt,
-        worktreeId: `worktree-${taskId}-${attempt}`,
-        worktreePath: `C:/worktrees/${taskId}-${attempt}`,
-        branch: `worker/${taskId}-${attempt}`,
-        baseRevision: 'base-revision',
-        worktreeStatus: 'created',
+        ...(withLease ? {
+          worktreeId: `worktree-${taskId}-${attempt}`,
+          worktreePath: `C:/worktrees/${taskId}-${attempt}`,
+          branch: `worker/${taskId}-${attempt}`,
+          baseRevision: 'base-revision',
+          worktreeStatus: 'created',
+        } : {}),
       },
       { sourceId: GRAPH_ID },
     );
   };
-  const addSucceeded = (taskId: string, attempt = 1): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(RUN_ID, taskId);
+  const addSucceeded = (taskId: string, attempt = 1, runId = RUN_ID): DomainEvent => {
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
     return append(
       'TaskSucceeded',
       'TaskExecution',
       taskExecutionId,
       {
-        runId: RUN_ID,
+        runId,
         taskId,
         taskExecutionId,
         attemptId: createAttemptId(taskExecutionId, attempt),
@@ -148,7 +150,24 @@ function eventStream() {
       { sourceId: GRAPH_ID },
     );
   };
-  return { events, append, addGraph, addQueued, addStarted, addSucceeded };
+  const addFailed = (taskId: string, attempt = 1, runId = RUN_ID): DomainEvent => {
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
+    return append(
+      'TaskFailed',
+      'TaskExecution',
+      taskExecutionId,
+      {
+        runId,
+        taskId,
+        taskExecutionId,
+        attemptId: createAttemptId(taskExecutionId, attempt),
+        attempt,
+        error: `failure-${taskId}-${runId}-${attempt}`,
+      },
+      { sourceId: GRAPH_ID },
+    );
+  };
+  return { events, append, addGraph, addQueued, addStarted, addSucceeded, addFailed };
 }
 
 function nodeForTask(
@@ -175,14 +194,17 @@ describe('graphGrowthProjection', () => {
 
     const atCutoff = graphGrowthProjection(stream.events, 2);
     const repeated = graphGrowthProjection(stream.events, 2);
-    const live = graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence);
+    const live = stream.events.map((event, index) => (
+      graphGrowthProjection(stream.events.slice(0, index + 1), event.sequence)
+    )).at(-1)!;
+    const replayed = graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence);
 
     expect(atCutoff).toEqual(repeated);
-    expect(live).toEqual(graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence));
+    expect(live).toEqual(replayed);
     expect(atCutoff.nodes.map(({ id, kind, status }) => ({ id, kind, status }))).toMatchSnapshot();
     expect(atCutoff.edges.map(({ id, sourceId, targetId, kind }) => ({ id, sourceId, targetId, kind }))).toMatchSnapshot();
     expect(nodeForTask(atCutoff, 'task-a')?.status).toBe('queued');
-    expect(nodeForTask(atCutoff, 'task-b')?.status).toBe('queued');
+    expect(nodeForTask(atCutoff, 'task-b')?.status).toBe('idle');
     expect(atCutoff.edges.some((edge) => edge.kind === 'dependency'
       && edge.sourceId.endsWith('task-a') && edge.targetId.endsWith('task-b'))).toBe(true);
     expect(atCutoff.lastSequence).toBe(2);
@@ -192,6 +214,7 @@ describe('graphGrowthProjection', () => {
     const stream = eventStream();
     const value = graph(GRAPH_ID, [
       task('task-running', 'active'),
+      task('task-unleased', 'active'),
       task('task-feedback', 'waiting'),
       task('task-blocked', 'blocked'),
       task('task-failed', 'failed'),
@@ -203,6 +226,8 @@ describe('graphGrowthProjection', () => {
 
     stream.addQueued('task-running');
     stream.addStarted('task-running');
+    stream.addQueued('task-unleased');
+    stream.addStarted('task-unleased', 1, RUN_ID, false);
 
     stream.addQueued('task-feedback');
     stream.addStarted('task-feedback');
@@ -281,19 +306,22 @@ describe('graphGrowthProjection', () => {
 
     const projection = graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence);
     const running = nodeForTask(projection, 'task-running');
+    const unleased = nodeForTask(projection, 'task-unleased');
     const complete = nodeForTask(projection, 'task-complete');
     const feedback = nodeForTask(projection, 'task-feedback');
     const blocked = nodeForTask(projection, 'task-blocked');
     const failed = nodeForTask(projection, 'task-failed');
-    const unknownExecution = createTaskExecutionId(RUN_ID, 'task-unknown');
     const retryAttempt1 = createAttemptId(retryExecutionId, 1);
     const retryAttempt2 = createAttemptId(retryExecutionId, 2);
 
     expect(running).toMatchObject({ status: 'running', leaseHeld: true, pulse: true });
+    expect(unleased).toMatchObject({ status: 'running', leaseHeld: false, pulse: false });
     expect(feedback?.status).toBe('waiting-feedback');
     expect(blocked?.status).toBe('blocked');
     expect(failed?.status).toBe('failed');
     expect(complete).toMatchObject({ status: 'succeeded', evidenceIds: ['evidence-task-complete-1'] });
+    expect(complete?.eventIds).toContain(stream.events.find((event) => event.eventType === 'TaskSucceeded'
+      && event.aggregateId === createTaskExecutionId(RUN_ID, 'task-complete'))?.eventId);
     expect(nodeForAttempt(projection, createAttemptId(unknownExecutionId, 1))?.status).toBe('unknown');
     expect(nodeForAttempt(projection, retryAttempt1)?.scar).toBe(true);
     expect(nodeForAttempt(projection, retryAttempt2)).toBeDefined();
@@ -304,7 +332,7 @@ describe('graphGrowthProjection', () => {
       && capsule.completionBasis === 'evidence-backed')).toBe(true);
     expect(projection.markers.some((marker) => marker.eventType === 'DepartmentWorkPackageDispatched'
       && marker.eventId === 'event-' + stream.events.at(-2)!.sequence + '-DepartmentWorkPackageDispatched')).toBe(true);
-    expect(projection.nodes.some((node) => node.kind === 'work-package')).toBe(false);
+    expect(projection.nodes.some((node) => node.id.includes('work-package-1'))).toBe(false);
     expect(projection.nodes.map(({ id, kind, status, scar }) => ({ id, kind, status, scar }))).toMatchSnapshot();
     expect(projection.rings).toMatchSnapshot();
   });
@@ -338,5 +366,24 @@ describe('graphGrowthProjection', () => {
     expect(nodeForTask(afterRevision, 'task-a')?.graphId).toBe(revision.id);
     expect(nodeForTask(afterRevision, 'task-b')?.graphId).toBe(revision.id);
     expect(afterRevision.nodes.filter((node) => node.kind === 'task' && node.taskId === 'task-a')).toHaveLength(1);
+  });
+
+  it('keeps earlier run attempts under the task while projecting the newest run status', () => {
+    const stream = eventStream();
+    stream.addGraph(graph(GRAPH_ID, [task('task-history', 'core')]));
+    stream.addQueued('task-history', undefined, 'run-old');
+    stream.addStarted('task-history', 1, 'run-old');
+    stream.addFailed('task-history', 1, 'run-old');
+    stream.addQueued('task-history', undefined, 'run-new');
+    stream.addStarted('task-history', 1, 'run-new');
+    stream.addSucceeded('task-history', 1, 'run-new');
+
+    const projection = graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence);
+    const oldAttempt = createAttemptId(createTaskExecutionId('run-old', 'task-history'), 1);
+    const newAttempt = createAttemptId(createTaskExecutionId('run-new', 'task-history'), 1);
+
+    expect(nodeForTask(projection, 'task-history')?.status).toBe('succeeded');
+    expect(nodeForAttempt(projection, oldAttempt)?.status).toBe('failed');
+    expect(nodeForAttempt(projection, newAttempt)).toMatchObject({ status: 'succeeded', scar: false });
   });
 });
