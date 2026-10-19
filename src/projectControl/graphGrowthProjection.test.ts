@@ -140,12 +140,16 @@ describe('graphGrowthProjection', () => {
     const feedback = nodeForTask(projection, 'task-feedback');
     const blocked = nodeForTask(projection, 'task-blocked');
     const failed = nodeForTask(projection, 'task-failed');
+    const session = projection.nodes.find((node) => node.kind === 'session');
+    const feedbackEvent = stream.events.find((event) => event.eventType === 'TaskFeedbackRequested'
+      && event.aggregateId === feedbackExecutionId)!;
     const retryAttempt1 = createAttemptId(retryExecutionId, 1);
     const retryAttempt2 = createAttemptId(retryExecutionId, 2);
 
     expect(running).toMatchObject({ status: 'running', leaseHeld: true, pulse: true });
     expect(unleased).toMatchObject({ status: 'running', leaseHeld: false, pulse: false });
     expect(feedback?.status).toBe('waiting-feedback');
+    expect(session?.eventIds).toContain(feedbackEvent.eventId);
     expect(blocked?.status).toBe('blocked');
     expect(failed?.status).toBe('failed');
     expect(complete).toMatchObject({ status: 'succeeded', evidenceIds: ['evidence-task-complete-1'] });
@@ -275,5 +279,59 @@ describe('graphGrowthProjection', () => {
       outcome: 'succeeded',
       eventId: success.eventId,
     });
+  });
+
+  it('adds a cancellation annulus with its TaskCancelled event ID', () => {
+    const stream = eventStream();
+    const taskId = 'task-cancelled';
+    stream.addGraph(graph(GRAPH_ID, [task(taskId, 'core')]));
+    stream.addQueued(taskId);
+    stream.addStarted(taskId);
+    const taskExecutionId = createTaskExecutionId(RUN_ID, taskId);
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const cancelled = stream.append('TaskCancelled', 'TaskExecution', taskExecutionId, {
+      runId: RUN_ID,
+      taskId,
+      taskExecutionId,
+      attempt: 1,
+      attemptId,
+      reason: 'operator cancelled attempt',
+    }, { actor: 'user', sourceId: GRAPH_ID });
+
+    const projection = graphGrowthProjection(stream.events, cancelled.sequence);
+
+    expect(nodeForAttempt(projection, attemptId)).toMatchObject({ status: 'cancelled' });
+    expect(projection.rings.find((ring) => ring.attemptId === attemptId)).toMatchObject({
+      outcome: 'cancelled',
+      eventId: cancelled.eventId,
+    });
+  });
+
+  it('rejects TaskSucceeded unless host evidence and acceptance are both present', () => {
+    const invalidProofs = [
+      { evidenceIds: [], acceptanceId: 'acceptance-without-evidence' },
+      { evidenceIds: ['evidence-without-acceptance'] },
+    ];
+
+    for (const proof of invalidProofs) {
+      const stream = eventStream();
+      const taskId = 'task-invalid-success';
+      const taskExecutionId = createTaskExecutionId(RUN_ID, taskId);
+      const attemptId = createAttemptId(taskExecutionId, 1);
+      stream.addGraph(graph(GRAPH_ID, [task(taskId, 'core')]));
+      stream.addQueued(taskId);
+      stream.addStarted(taskId);
+      stream.append('TaskSucceeded', 'TaskExecution', taskExecutionId, {
+        runId: RUN_ID,
+        taskId,
+        taskExecutionId,
+        attempt: 1,
+        attemptId,
+        ...proof,
+      }, { sourceId: GRAPH_ID });
+
+      expect(() => graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence))
+        .toThrow(/TaskSucceeded 缺少有效 Evidence\/Acceptance provenance/);
+    }
   });
 });
