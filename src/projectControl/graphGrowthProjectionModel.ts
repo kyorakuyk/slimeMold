@@ -176,7 +176,9 @@ export function eventLineage(event: DomainEvent): EventLineage | undefined {
   return {
     taskId,
     taskExecutionId,
-    ...(event.source?.objectId ? { graphId: event.source.objectId } : {}),
+    ...(event.source?.objectId && event.eventType !== 'TaskAttemptImported'
+      ? { graphId: event.source.objectId }
+      : {}),
     ...(text(payload, 'attemptId') ? { attemptId: text(payload, 'attemptId') } : {}),
   };
 }

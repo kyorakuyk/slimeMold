@@ -89,6 +89,7 @@ export function graphGrowthProjection(
   const attemptEventIds = new Map<string, string[]>();
   const attemptStartSequence = new Map<string, number>();
   const attemptTerminalEvent = new Map<string, string>();
+  const attemptTerminalSequence = new Map<string, number>();
   const successEventsByTask = new Map<string, DomainEvent[]>();
   const markers: GraphGrowthMarker[] = [];
 
@@ -117,9 +118,9 @@ export function graphGrowthProjection(
       if (event.eventType === 'TaskSucceeded'
         || event.eventType === 'TaskFailed'
         || event.eventType === 'TaskCancelled'
-        || event.eventType === 'TaskAttemptMarkedUnknown'
-        || event.eventType === 'TaskCleaned') {
+        || event.eventType === 'TaskAttemptMarkedUnknown') {
         attemptTerminalEvent.set(lineage.attemptId, event.eventId);
+        attemptTerminalSequence.set(lineage.attemptId, event.sequence);
       }
     }
     if (event.eventType === 'TaskSucceeded'
@@ -243,12 +244,11 @@ export function graphGrowthProjection(
 
         for (const item of taskAttempts) {
           const attemptNodeId = `attempt:${item.attemptId}`;
-          const startedAt = attemptStartSequence.get(item.attemptId);
+          const failedAt = attemptTerminalSequence.get(item.attemptId);
           const isScar = item.status === 'failed'
-            && taskAttempts.some((later) => later.taskExecutionId === item.taskExecutionId
-              && later.attempt > item.attempt
-              && attemptStartSequence.has(later.attemptId)
-              && (!startedAt || (attemptStartSequence.get(later.attemptId) ?? 0) > startedAt));
+            && failedAt !== undefined
+            && taskAttempts.some((later) => later.attemptId !== item.attemptId
+              && (attemptStartSequence.get(later.attemptId) ?? 0) > failedAt);
           const attemptIds = attemptEventIds.get(item.attemptId) ?? [];
           nodes.push({
             id: attemptNodeId,
@@ -293,14 +293,18 @@ export function graphGrowthProjection(
 
         const successes = successEventsByTask.get(`${graph.id}\u0000${task.id}`) ?? [];
         if (successes.length > 0) {
+          const successEventIds = successes.map((event) => event.eventId);
           const taskEdge = edges.find((edge) => edge.targetId === taskNode.id && edge.kind === 'hierarchy');
-          if (taskEdge) taskEdge.flowCount = successes.length;
+          if (taskEdge) {
+            taskEdge.flowCount = successes.length;
+            taskEdge.eventIds = unique([...taskEdge.eventIds, ...successEventIds]);
+          }
           flow.push({
             scope: 'task',
             taskId: task.id,
             moduleId,
             count: successes.length,
-            eventIds: successes.map((event) => event.eventId),
+            eventIds: successEventIds,
           });
         }
       }
@@ -311,13 +315,17 @@ export function graphGrowthProjection(
       moduleNode.evidenceIds = unique(moduleTaskNodes.flatMap((node) => node.evidenceIds));
       const moduleSuccesses = tasks.flatMap((task) => successEventsByTask.get(`${graph.id}\u0000${task.id}`) ?? []);
       if (moduleSuccesses.length > 0) {
+        const successEventIds = moduleSuccesses.map((event) => event.eventId);
         const sessionEdge = edges.find((edge) => edge.targetId === moduleNode.id && edge.kind === 'hierarchy');
-        if (sessionEdge) sessionEdge.flowCount = moduleSuccesses.length;
+        if (sessionEdge) {
+          sessionEdge.flowCount = moduleSuccesses.length;
+          sessionEdge.eventIds = unique([...sessionEdge.eventIds, ...successEventIds]);
+        }
         flow.push({
           scope: 'module',
           moduleId,
           count: moduleSuccesses.length,
-          eventIds: moduleSuccesses.map((event) => event.eventId),
+          eventIds: successEventIds,
         });
       }
       const sourceEvents = visibleEvents.filter((event) => moduleNode.eventIds.includes(event.eventId));
