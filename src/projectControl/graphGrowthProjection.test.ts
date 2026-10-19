@@ -1,188 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
-import type { DomainEvent } from '../domain/contracts';
-import type { ProjectTask, ProjectTaskGraph } from './types';
 import { graphGrowthProjection } from './graphGrowthProjection';
-
-const PROJECT_ID = 'project-live-graph';
-const SESSION_ID = 'session-live-graph';
-const GRAPH_ID = 'graph-live-graph';
-const RUN_ID = 'run-live-graph';
-
-function task(id: string, moduleId: string, dependsOn: string[] = []): ProjectTask {
-  return {
-    version: 1,
-    id,
-    architectureId: 'architecture-live-graph',
-    title: `Title ${id}`,
-    description: `Description ${id}`,
-    moduleId,
-    scope: [`src/${id}.ts`],
-    dependsOn,
-    acceptanceCriteria: [`acceptance ${id}`],
-    category: 'logic',
-    status: 'approved',
-    createdAt: '2026-10-20T00:00:00.000Z',
-    updatedAt: '2026-10-20T00:00:00.000Z',
-  };
-}
-
-function graph(id = GRAPH_ID, tasks: ProjectTask[] = [task('task-a', 'core')], graphVersion = 1): ProjectTaskGraph {
-  return {
-    version: 1,
-    id,
-    sessionId: SESSION_ID,
-    architectureId: 'architecture-live-graph',
-    graphVersion,
-    tasks,
-    approval: 'approved',
-    createdAt: '2026-10-20T00:00:00.000Z',
-    updatedAt: '2026-10-20T00:00:00.000Z',
-  };
-}
-
-function eventStream() {
-  const events: DomainEvent[] = [];
-  const aggregateVersions = new Map<string, number>();
-  const append = (
-    eventType: string,
-    aggregateType: string,
-    aggregateId: string,
-    payload: unknown,
-    options: {
-      actor?: DomainEvent['actor'];
-      sourceId?: string;
-      sourceVersion?: number;
-    } = {},
-  ): DomainEvent => {
-    const aggregateKey = `${aggregateType}\u0000${aggregateId}`;
-    const aggregateVersion = (aggregateVersions.get(aggregateKey) ?? 0) + 1;
-    aggregateVersions.set(aggregateKey, aggregateVersion);
-    const sequence = events.length + 1;
-    const event: DomainEvent = {
-      eventId: `event-${sequence}-${eventType}`,
-      streamId: PROJECT_ID,
-      sequence,
-      aggregateType,
-      aggregateId,
-      aggregateVersion,
-      eventType,
-      schemaVersion: 1,
-      payload,
-      actor: options.actor ?? 'runtime',
-      occurredAt: `2026-10-20T00:00:${String(sequence).padStart(2, '0')}.000Z`,
-      ...(options.sourceId ? {
-        source: { objectId: options.sourceId, objectVersion: options.sourceVersion ?? 1 },
-      } : {}),
-    };
-    events.push(event);
-    return event;
-  };
-  const addGraph = (value: ProjectTaskGraph, eventType = 'TaskGraphProposed'): DomainEvent => append(
-    eventType,
-    'TaskGraph',
-    value.id,
-    {
-      taskGraphId: value.id,
-      sessionId: value.sessionId,
-      architectureId: value.architectureId,
-      graphVersion: value.graphVersion,
-      taskIds: value.tasks.map((item) => item.id),
-      graph: value,
-    },
-    { actor: 'master', sourceId: value.id, sourceVersion: value.graphVersion },
-  );
-  const addQueued = (taskId: string, nextAttempt?: number, runId = RUN_ID): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(runId, taskId);
-    return append(
-      'TaskQueued',
-      'TaskExecution',
-      taskExecutionId,
-      {
-        runId,
-        taskId,
-        taskExecutionId,
-        taskGraphId: GRAPH_ID,
-        ...(nextAttempt ? { nextAttempt } : {}),
-      },
-      { sourceId: GRAPH_ID },
-    );
-  };
-  const addStarted = (taskId: string, attempt = 1, runId = RUN_ID, withLease = true): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(runId, taskId);
-    const attemptId = createAttemptId(taskExecutionId, attempt);
-    return append(
-      'TaskStarted',
-      'TaskExecution',
-      taskExecutionId,
-      {
-        runId,
-        taskId,
-        taskExecutionId,
-        attemptId,
-        attempt,
-        ...(withLease ? {
-          worktreeId: `worktree-${taskId}-${attempt}`,
-          worktreePath: `C:/worktrees/${taskId}-${attempt}`,
-          branch: `worker/${taskId}-${attempt}`,
-          baseRevision: 'base-revision',
-          worktreeStatus: 'created',
-        } : {}),
-      },
-      { sourceId: GRAPH_ID },
-    );
-  };
-  const addSucceeded = (taskId: string, attempt = 1, runId = RUN_ID): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(runId, taskId);
-    return append(
-      'TaskSucceeded',
-      'TaskExecution',
-      taskExecutionId,
-      {
-        runId,
-        taskId,
-        taskExecutionId,
-        attemptId: createAttemptId(taskExecutionId, attempt),
-        attempt,
-        evidenceIds: [`evidence-${taskId}-${attempt}`],
-        acceptanceId: `acceptance-${taskId}-${attempt}`,
-      },
-      { sourceId: GRAPH_ID },
-    );
-  };
-  const addFailed = (taskId: string, attempt = 1, runId = RUN_ID): DomainEvent => {
-    const taskExecutionId = createTaskExecutionId(runId, taskId);
-    return append(
-      'TaskFailed',
-      'TaskExecution',
-      taskExecutionId,
-      {
-        runId,
-        taskId,
-        taskExecutionId,
-        attemptId: createAttemptId(taskExecutionId, attempt),
-        attempt,
-        error: `failure-${taskId}-${runId}-${attempt}`,
-      },
-      { sourceId: GRAPH_ID },
-    );
-  };
-  return { events, append, addGraph, addQueued, addStarted, addSucceeded, addFailed };
-}
-
-function nodeForTask(
-  projection: ReturnType<typeof graphGrowthProjection>,
-  taskId: string,
-) {
-  return projection.nodes.find((node) => node.kind === 'task' && node.taskId === taskId);
-}
-
-function nodeForAttempt(
-  projection: ReturnType<typeof graphGrowthProjection>,
-  attemptId: string,
-) {
-  return projection.nodes.find((node) => node.kind === 'attempt' && node.attemptId === attemptId);
-}
+import {
+  GRAPH_ID,
+  PROJECT_ID,
+  RUN_ID,
+  SESSION_ID,
+  eventStream,
+  graph,
+  nodeForAttempt,
+  nodeForTask,
+  task,
+} from './graphGrowthProjectionTestUtils';
 
 describe('graphGrowthProjection', () => {
   it('is deterministic at a sequence cutoff and rebuilds hierarchy and dependency edges', () => {
@@ -322,6 +151,11 @@ describe('graphGrowthProjection', () => {
     expect(complete).toMatchObject({ status: 'succeeded', evidenceIds: ['evidence-task-complete-1'] });
     expect(complete?.eventIds).toContain(stream.events.find((event) => event.eventType === 'TaskSucceeded'
       && event.aggregateId === createTaskExecutionId(RUN_ID, 'task-complete'))?.eventId);
+    const successEvent = stream.events.find((event) => event.eventType === 'TaskSucceeded'
+      && event.aggregateId === createTaskExecutionId(RUN_ID, 'task-complete'))!;
+    const completeModule = projection.nodes.find((node) => node.kind === 'module' && node.moduleId === 'complete');
+    expect(projection.edges.find((edge) => edge.targetId === complete?.id)?.eventIds).toContain(successEvent.eventId);
+    expect(projection.edges.find((edge) => edge.targetId === completeModule?.id)?.eventIds).toContain(successEvent.eventId);
     expect(nodeForAttempt(projection, createAttemptId(unknownExecutionId, 1))?.status).toBe('unknown');
     expect(nodeForAttempt(projection, retryAttempt1)?.scar).toBe(true);
     expect(nodeForAttempt(projection, retryAttempt2)).toBeDefined();
@@ -384,6 +218,62 @@ describe('graphGrowthProjection', () => {
 
     expect(nodeForTask(projection, 'task-history')?.status).toBe('succeeded');
     expect(nodeForAttempt(projection, oldAttempt)?.status).toBe('failed');
+    expect(nodeForAttempt(projection, oldAttempt)?.scar).toBe(true);
+    expect(projection.scars).toContain(oldAttempt);
     expect(nodeForAttempt(projection, newAttempt)).toMatchObject({ status: 'succeeded', scar: false });
+  });
+
+  it('maps imported attempt provenance through its unique active task graph', () => {
+    const stream = eventStream();
+    stream.addGraph(graph(GRAPH_ID, [task('task-imported', 'core')]));
+    const runId = 'run-imported';
+    const taskId = 'task-imported';
+    const taskExecutionId = createTaskExecutionId(runId, taskId);
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const imported = stream.append('TaskAttemptImported', 'TaskExecution', taskExecutionId, {
+      runId,
+      taskId,
+      taskExecutionId,
+      attempt: 1,
+      attemptId,
+      reason: 'legacy-worker-snapshot-without-attempt-history',
+    }, {
+      actor: 'system',
+      sourceId: `${PROJECT_ID}:workerTask:${runId}:${taskId}`,
+      correlationId: 'migration-imported',
+      synthetic: true,
+    });
+
+    const projection = graphGrowthProjection(stream.events, imported.sequence);
+    const attempt = nodeForAttempt(projection, attemptId);
+
+    expect(attempt).toMatchObject({ graphId: GRAPH_ID, taskId, status: 'unknown' });
+    expect(attempt?.eventIds).toContain(imported.eventId);
+  });
+
+  it('keeps a success annulus bound to TaskSucceeded after the task is cleaned', () => {
+    const stream = eventStream();
+    stream.addGraph(graph(GRAPH_ID, [task('task-cleaned', 'core')]));
+    stream.addQueued('task-cleaned');
+    stream.addStarted('task-cleaned');
+    const success = stream.addSucceeded('task-cleaned');
+    const taskExecutionId = createTaskExecutionId(RUN_ID, 'task-cleaned');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    stream.append('TaskCleaned', 'TaskExecution', taskExecutionId, {
+      runId: RUN_ID,
+      taskId: 'task-cleaned',
+      taskExecutionId,
+      attempt: 1,
+      attemptId,
+      receiptId: 'cleanup-receipt-task-cleaned',
+      cleanupStatus: 'cleaned',
+    }, { actor: 'user', sourceId: GRAPH_ID });
+
+    const projection = graphGrowthProjection(stream.events, stream.events.at(-1)!.sequence);
+
+    expect(projection.rings.find((ring) => ring.attemptId === attemptId)).toMatchObject({
+      outcome: 'succeeded',
+      eventId: success.eventId,
+    });
   });
 });
