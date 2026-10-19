@@ -38,10 +38,8 @@ function expectNoOverlaps(
     for (let right = left + 1; right < rectangles.length; right += 1) {
       const a = rectangles[left];
       const b = rectangles[right];
-      const overlaps = a.x < b.x + NODE_WIDTH
-        && b.x < a.x + NODE_WIDTH
-        && a.y < b.y + NODE_HEIGHT
-        && b.y < a.y + NODE_HEIGHT;
+      const overlaps = Math.abs(a.x - b.x) < NODE_WIDTH
+        && Math.abs(a.y - b.y) < NODE_HEIGHT;
       expect(overlaps, `${a.id} overlaps ${b.id}`).toBe(false);
     }
   }
@@ -121,5 +119,6 @@ describe('layoutGraphGrowth', () => {
 
     expect(positions.get(addedTask.id)).not.toEqual(positions.get(existingTask.id));
     expect(positions.get(addedTask.id)!.y).toBeGreaterThan(positions.get(module.id)!.y + NODE_HEIGHT);
+    expectNoOverlaps([session, module, existingTask, addedTask], positions);
   });
 });

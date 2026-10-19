@@ -76,19 +76,37 @@ export function layoutGraphGrowth(
         unresolved.push(node);
         continue;
       }
-      const y = parent ? parent.y + verticalStride : 0;
-      if (!Number.isFinite(y)) throw new Error(`graph-growth layout coordinate overflow: ${node.id}.y`);
+      const firstRowY = parent ? parent.y + verticalStride : 0;
+      if (!Number.isFinite(firstRowY)) throw new Error(`graph-growth layout coordinate overflow: ${node.id}.y`);
       const originX = parent?.x ?? 0;
-      let slot = 0;
-      let candidate: GraphGrowthPosition;
-      do {
-        const x = originX + slot * horizontalStride;
-        if (!Number.isFinite(x)) throw new Error(`graph-growth layout coordinate overflow: ${node.id}.x`);
-        candidate = { x, y };
-        slot += 1;
-      } while (!isFree(candidate, positions.values(), nodeWidth, nodeHeight));
-      positions.set(node.id, candidate);
-      placedAny = true;
+      let row = 0;
+      let previousY: number | undefined;
+      let placed = false;
+      while (!placed) {
+        const y = firstRowY + row * verticalStride;
+        if (!Number.isFinite(y) || (previousY !== undefined && y <= previousY)) {
+          throw new Error(`graph-growth layout coordinate overflow: ${node.id}.y`);
+        }
+        let slot = 0;
+        let previousX: number | undefined;
+        while (true) {
+          const x = originX + slot * horizontalStride;
+          if (!Number.isFinite(x) || (previousX !== undefined && x <= previousX)) break;
+          const candidate = { x, y };
+          if (isFree(candidate, positions.values(), nodeWidth, nodeHeight)) {
+            positions.set(node.id, candidate);
+            placed = true;
+            placedAny = true;
+            break;
+          }
+          previousX = x;
+          slot += 1;
+        }
+        if (!placed) {
+          previousY = y;
+          row += 1;
+        }
+      }
     }
     if (!placedAny) {
       const blocked = unresolved.map((node) => `${node.id}→${node.parentId}`).join(', ');
@@ -106,10 +124,8 @@ function isFree(
   height: number,
 ): boolean {
   for (const position of occupied) {
-    const overlaps = candidate.x < position.x + width
-      && position.x < candidate.x + width
-      && candidate.y < position.y + height
-      && position.y < candidate.y + height;
+    const overlaps = Math.abs(candidate.x - position.x) < width
+      && Math.abs(candidate.y - position.y) < height;
     if (overlaps) return false;
   }
   return true;
