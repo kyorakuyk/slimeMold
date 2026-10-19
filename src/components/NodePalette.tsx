@@ -10,6 +10,7 @@ import { SUBGRAPH_REF_TYPE } from '../engine/subgraph';
 import type { NodeDefinition } from '../types/node';
 import { NODE_ROLE_META } from '../types/node';
 import { useT } from '../i18n/useT';
+import { localizeNodeCategory, localizedNodeRole } from '../i18n/nodeLabels';
 
 /** 左侧节点面板（ComfyUI 风）：搜索 + 分类折叠，支持拖入画布或点击添加 */
 export default function NodePalette({ width, embedded = false }: { width?: number; embedded?: boolean }) {
@@ -132,10 +133,10 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
   );
 
   const roleOptions: { value: NodeRole | 'all'; label: string }[] = [
-    { value: 'all', label: '全部角色' },
+    { value: 'all', label: t('node.role.all') },
     ...(Object.keys(NODE_ROLE_META) as NodeRole[]).map((r) => ({
       value: r,
-      label: NODE_ROLE_META[r].label,
+      label: localizedNodeRole(r, t).label,
     })),
   ];
 
@@ -144,11 +145,12 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
       {roleOptions.map((opt) => {
         const active = roleFilter === opt.value;
         const meta = opt.value !== 'all' ? NODE_ROLE_META[opt.value as NodeRole] : null;
+        const roleCopy = opt.value !== 'all' ? localizedNodeRole(opt.value as NodeRole, t) : null;
         return (
           <button
             key={opt.value}
             onClick={() => setRoleFilter(opt.value)}
-            title={meta ? meta.hint : t('roleFilterHint')}
+            title={roleCopy ? t('role.title', { label: roleCopy.label, hint: roleCopy.hint }) : t('roleFilterHint')}
             className="rounded-full border px-2 py-0.5 text-[10.5px] transition-colors"
             style={{
               borderColor: active
@@ -207,13 +209,14 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                 ) : (
                   <ChevronDown size={13} />
                 )}
-                {category}
+                {localizeNodeCategory(category, t)}
                 <span className="ml-auto text-[10px] normal-case">{list.length}</span>
               </button>
               {!isCollapsed && (
                 <ul className="mt-1 space-y-1">
                   {list.map((def) => {
                     const roleMeta = def.role ? NODE_ROLE_META[def.role] : null;
+                    const roleCopy = def.role ? localizedNodeRole(def.role, t) : null;
                     return (
                     <li
                       key={def.typeId}
@@ -231,7 +234,7 @@ export default function NodePalette({ width, embedded = false }: { width?: numbe
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full"
                             style={{ background: roleMeta.color }}
-                            title={t('role.title', { label: roleMeta.label, hint: roleMeta.hint })}
+                            title={roleCopy ? t('role.title', { label: roleCopy.label, hint: roleCopy.hint }) : undefined}
                           />
                         )}
                         <span className="truncate">{def.name}</span>

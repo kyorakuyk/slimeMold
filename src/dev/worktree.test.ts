@@ -18,6 +18,23 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(git).toHaveBeenCalledWith(['rev-parse', 'HEAD'], '/repo');
   });
 
+  it('create：成功的 HEAD 查询返回空 revision 时不创建 worktree', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('\n');
+      return ok();
+    });
+    const manager = new WorktreeManager({ git }, 'D:/repo');
+
+    await expect(manager.create('worker-empty-base', 'D:/repo-workers/worker-empty-base', {
+      branch: 'worker/worker-empty-base',
+    })).resolves.toBeNull();
+
+    expect(manager.getLastCreateError()).toMatch(/empty revision|revision 为空/);
+    expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'add')).toBe(false);
+  });
+
   it('create：绝对 worktree 路径不会把路径字符带入 Git branch', async () => {
     const calls: string[][] = [];
     const git = vi.fn(async (args: string[]) => {
@@ -57,6 +74,33 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(calls.at(-1)).toEqual([
       'worktree', 'add', '-q', 'D:/Temp/repo-workers/worker-1', '-b', 'worker/worker-1', 'HEAD',
     ]);
+  });
+
+  it('retains worktree assignment when target identity read fails after git add', async () => {
+    const calls: string[][] = [];
+    const git = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok(`${TIP_OID}\n`);
+      if (args[0] === 'show-ref') return { exitCode: 1, stdout: '', stderr: '', durationMs: 1 };
+      return ok();
+    });
+    const readIdentity = vi.fn(async () => { throw new Error('identity read unavailable'); });
+    const manager = new WorktreeManager({ git }, 'D:/repo', undefined, undefined, readIdentity);
+    const id = 'worker-identity-read-failure';
+    const path = `D:/repo-workers/${id}`;
+
+    await expect(manager.create(id, path, { branch: `worker/${id}` })).resolves.toBeNull();
+
+    expect(manager.get(id)).toMatchObject({
+      id,
+      path,
+      branch: `worker/${id}`,
+      baseRevision: TIP_OID,
+      status: 'created',
+    });
+    expect(manager.getLastCreateError()).toMatch(/identity read unavailable/);
+    expect(calls).toContainEqual(['worktree', 'add', '-q', path, '-b', `worker/${id}`, 'HEAD']);
+    expect(calls.some((args) => args[0] === 'worktree' && args[1] === 'remove')).toBe(false);
   });
 
   it('create：base tip 一致的 orphan worker branch 使用已有 branch 接管 worktree', async () => {
@@ -136,7 +180,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
     expect(restored).toBe(false);
   });
 
-  it('restores registration-pending lineage without requiring a live worktree', async () => {
+  it('restores unresolved registration-pending lineage without treating it as cleaned', async () => {
     const git = vi.fn(async () => ok());
     const m = new WorktreeManager({ git }, 'D:/repo');
     const info = {
@@ -150,7 +194,7 @@ describe('H4 WorktreeManager（fake git runner）', () => {
 
     await expect(m.restore(info)).resolves.toBe(true);
     expect(m.get(info.id)).toEqual(info);
-    await expect(m.cleanup(info.id, { confirm: true })).resolves.toBe(true);
+    await expect(m.cleanup(info.id, { confirm: true })).resolves.toBe(false);
     expect(m.get(info.id)?.status).toBe('registration-pending');
   });
 

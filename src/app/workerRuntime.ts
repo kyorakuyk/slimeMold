@@ -1,7 +1,7 @@
 import { EventStreamRepository } from '../domain/eventStore';
 import { isTauri as defaultIsTauri } from '../platform/env';
 import { ensureGuiDevSession, getDevGuiError } from '../dev/gui';
-import { saveProjectFile } from '../io/projectIO';
+import { openProjectByPath, saveProjectFile } from '../io/projectIO';
 import { buildProjectFile } from '../store/workflowSerialize';
 import { recordProjectEvents, flushPendingProjectEvents } from '../projectControl/eventBuffer';
 import { createGuiProjectWorkerRunCoordinator, type WorkerRuntime } from '../projectControl/workerRunCoordinator';
@@ -29,8 +29,10 @@ import { createWorkerRunHostInfrastructure } from '../projectControl/workerRunHo
 import { admitWorkerRunSession } from '../projectControl/workerRunSessionAdmission';
 import { createWorkerRunRecoveryAuditController } from '../projectControl/workerRunRecoveryAuditController';
 import { restoreWorkerWorktrees as restoreWorkerWorktreesFromState } from '../projectControl/workerWorktreeRestore';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectOperationGuard } from '../projectControl/projectOperation';
 import type { WorkflowState } from '../store/workflowStoreTypes';
+import { WORKER_RUNTIME_ERROR_MESSAGES } from './workerRuntimeErrorMessages';
 
 export interface AppWorkerRuntimeStore {
   getState: () => WorkflowState;
@@ -124,11 +126,37 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
   });
   const auditLoadedWorkerRunFacts = workerRunRecoveryAuditController.auditLoadedWorkerRunFacts;
 
-  const runQueuedWorker = async (runId: string, workerRuntime: WorkerRuntime = 'codex'): Promise<void> => {
+  const runQueuedWorker = async (
+    runId: string,
+    workerRuntime: WorkerRuntime = 'codex',
+    expectedProjectId?: string,
+    expectedProjectPath?: string,
+    expectedRunState?: WorkerRunQueueState,
+  ): Promise<void> => {
     const beforeSave = store.getState();
     const projectId = beforeSave.projectId;
     const projectPath = beforeSave.projectPath;
-    if (!projectId || !projectPath) throw new Error('项目必须先保存，Worker 才能创建隔离 worktree');
+    if (!projectId || !projectPath) throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.projectNotSaved);
+    const assertExpectedProject = (): void => {
+      const current = store.getState();
+      if ((expectedProjectId !== undefined && current.projectId !== expectedProjectId)
+        || (expectedProjectPath !== undefined && current.projectPath !== expectedProjectPath)) {
+        throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.projectContextChanged);
+      }
+    };
+    const assertExpectedRun = (expected: WorkerRunQueueState): void => {
+      assertExpectedProject();
+      const current = store.getState();
+      const currentRun = current.workerRuns.find((run) => run.runId === runId);
+      const currentTaskGraph = current.projectControl.taskGraphs?.find((graph) => graph.id === expected.taskGraphId);
+      if (!currentRun || JSON.stringify(currentRun) !== JSON.stringify(expected)
+        || !currentTaskGraph
+        || currentTaskGraph.graphVersion !== expected.taskGraphVersion) {
+        throw new Error(WORKER_RUNTIME_ERROR_MESSAGES.workerStateDrifted);
+      }
+    };
+    if (expectedRunState) assertExpectedRun(expectedRunState);
+    else assertExpectedProject();
     const operation = deps.getProjectOperation(projectId, projectPath);
     deps.assertProjectOperation(operation);
 
@@ -143,6 +171,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
       getCurrentProjectId: () => store.getState().projectId,
     });
     const current = store.getState();
+    if (expectedRunState) assertExpectedRun(expectedRunState);
     const infrastructure = await createWorkerRunHostInfrastructure({
       projectPath,
       listAcceptances: () => session.listAcceptances(),
@@ -155,7 +184,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     const coordinator = createGuiProjectWorkerRunCoordinator({
       projectId,
       projectPath,
-      runs: current.workerRuns,
+      runs: expectedRunState ? [expectedRunState] : current.workerRuns,
       session,
       workerRuntime,
       antigravity: antigravityAgent
@@ -169,6 +198,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
       sideEffects: infrastructure.sideEffects,
       signal: operation.controller.signal,
       assertConsistency: async () => {
+        if (expectedRunState) assertExpectedRun(expectedRunState);
         await assertWorkerRunConsistency({
           projectId,
           getState: store.getState,
@@ -178,6 +208,9 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
           auditWorkerRunConsistency,
           auditProjectControlConsistency,
         });
+      },
+      assertBeforeExternalWork: async (expectedState) => {
+        assertExpectedRun(expectedState);
       },
       persistTransition: createWorkerRunTransitionPersistence({
         projectId,
@@ -217,6 +250,15 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     saveProject: async (projectId, projectPath, signal) => {
       await store.getState().saveProject({ projectId, projectPath, signal });
     },
+    readProjectProjection: async (projectPath) => {
+      const file = await openProjectByPath(projectPath);
+      return file
+        ? {
+            workerRuns: file.workerRuns ?? [],
+            orchestrations: file.orchestrations ?? [],
+          }
+        : null;
+    },
     runQueuedWorker,
     isTauri,
     recoverySingleFlight: deps.recoverySingleFlight,
@@ -239,6 +281,7 @@ export function createAppWorkerRuntime(deps: AppWorkerRuntimeDependencies) {
     refreshWorkerCleanupProposals,
     runQueuedWorker,
     recoverWorkerRun: workerActionController.recoverWorkerRun,
+    retryFailedWorkerRecoveryPostCommit: workerActionController.retryFailedWorkerRecoveryPostCommit,
     cleanupWorkerRun: workerCleanupActionController.cleanupWorkerRun,
   };
 }

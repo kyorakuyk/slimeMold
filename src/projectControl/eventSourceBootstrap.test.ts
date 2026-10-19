@@ -87,6 +87,9 @@ describe('project control event source bootstrap', () => {
           worktreePath: 'C:/worktrees/task-1',
           branch: 'worker/task-1',
           baseRevision: 'base-1',
+          worktreeStatus: 'cleaned',
+          cleanupStatus: 'cleaned',
+          cleanupReceiptId: 'cleanup:task-execution:run-legacy:task-1:attempt-1:receipt',
           updatedAt: '2026-09-01T00:01:00.000Z',
         },
       },
@@ -103,11 +106,14 @@ describe('project control event source bootstrap', () => {
       expect.objectContaining({ eventType: 'RunSucceeded', synthetic: true }),
       expect.objectContaining({ eventType: 'TaskSucceeded', aggregateType: 'TaskExecution', synthetic: true }),
     ]));
+    expect(result.stream.events.some((event) => event.eventType === 'TaskCleaned')).toBe(false);
     const loaded = await repository.loadProjection();
     expect(loaded.projection?.taskExecutions[createTaskExecutionId('run-legacy', 'task-1')]).toMatchObject({
       status: 'succeeded',
       attemptIds: ['task-execution:run-legacy:task-1:attempt-1'],
     });
+    expect(loaded.projection?.taskExecutions[createTaskExecutionId('run-legacy', 'task-1')])
+      .not.toHaveProperty('cleanupStatus');
   });
 
   it('imports queued retry history without inventing a terminal outcome', async () => {

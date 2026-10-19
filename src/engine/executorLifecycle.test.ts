@@ -455,4 +455,45 @@ describe('runWorkflow 生命周期集成', () => {
     expect(result.error).toContain('已忽略重复启动');
     await first;
   });
+
+  it('传递上游输入、节点参数与合并后的变量到执行上下文', async () => {
+    const wfId = 'wf-life-node-context';
+    registerGateNode('gate.context-source');
+    let captured: {
+      inputs: Record<string, unknown>;
+      params: Record<string, unknown>;
+      vars: Record<string, unknown>;
+      aborted: boolean;
+    } | undefined;
+    useRegistryStore.getState().register([{
+      typeId: 'gate.context-capture',
+      name: 'context capture',
+      category: '测试',
+      description: '',
+      inputs: [{ id: 'in', label: 'in', type: 'text' }],
+      outputs: [{ id: 'out', label: 'out', type: 'text' }],
+      params: [],
+      execute: async (inputs, params, ctx) => {
+        captured = { inputs, params, vars: { ...ctx.vars }, aborted: ctx.signal.aborted };
+        return { out: 'captured' };
+      },
+    }]);
+    const source = mkNode('source', 'gate.context-source');
+    const capture = mkNode('capture', 'gate.context-capture');
+    capture.data.params = { label: 'node-param' };
+    seedStore(wfId, [source, capture], [mkEdge('edge', 'source', 'capture', 'out', 'in')], {
+      workflowOnly: 'workflow-value',
+    });
+    useWorkflowStore.setState({ projectVariables: { projectOnly: 'project-value' } });
+
+    await runWorkflow({ wfId });
+
+    expect(captured).toEqual({
+      inputs: { in: 'from-gate.context-source' },
+      params: { label: 'node-param' },
+      vars: { projectOnly: 'project-value', workflowOnly: 'workflow-value' },
+      aborted: false,
+    });
+    expect(useWorkflowStore.getState().nodes.find((item) => item.id === 'capture')?.data.status).toBe('success');
+  });
 });

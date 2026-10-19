@@ -119,3 +119,28 @@ describe('evalExpr 三元与错误', () => {
     expect(() => evalExpr('1 @ 2')).toThrow(ExprError);
   });
 });
+
+describe('evalExpr tokenizer characterization', () => {
+  it('preserves whitespace and numeric token boundaries', () => {
+    expect(evalExpr('\t.5 + 1.5')).toBe(2);
+    expect(Number.isNaN(evalExpr('1..2'))).toBe(true);
+  });
+
+  it('preserves string escape mapping', () => {
+    expect(evalExpr(String.raw`"line\nnext"`)).toBe('line\nnext');
+    expect(evalExpr(String.raw`"\q"`)).toBe('q');
+  });
+
+  it('preserves unterminated string token behavior', () => {
+    expect(evalExpr(String.raw`"unfinished`)).toBe('unfinished');
+  });
+
+  it('preserves existing three-character comparison tokenization', () => {
+    expect(evalExpr('1 === 1')).toBe(true);
+    expect(evalExpr('1 !== 2')).toBe(true);
+  });
+
+  it('preserves the unknown-character error message', () => {
+    expect(() => evalExpr('1 @ 2')).toThrow(new ExprError('无法识别的字符: "@"'));
+  });
+});

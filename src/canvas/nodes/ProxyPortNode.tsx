@@ -6,6 +6,7 @@
  */
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { useT } from '../../i18n/useT';
 
 const PORT_COLOR: Record<string, string> = {
   exec: '#ffd43b',
@@ -27,6 +28,7 @@ export type ProxyPortData = {
 };
 
 function ProxyPortNodeImpl({ data }: NodeProps) {
+  const t = useT('ui');
   const { side, ports } = data as ProxyPortData;
   const isIn = side === 'in';
   const n = ports.length;
@@ -41,7 +43,7 @@ function ProxyPortNodeImpl({ data }: NodeProps) {
       style={{ minWidth: 120 }}
     >
       <div className="px-1 text-[11px] font-semibold text-ink-soft">
-        {isIn ? '输入代理' : '输出代理'}
+        {t(isIn ? 'canvas.proxyPort.input' : 'canvas.proxyPort.output')}
       </div>
       {ports.map((p, i) => {
         const color = PORT_COLOR[p.type] ?? PORT_COLOR.any;
@@ -86,7 +88,7 @@ function ProxyPortNodeImpl({ data }: NodeProps) {
         );
       })}
       {ports.length === 0 && (
-        <span className="px-1 text-[11px] text-ink-faint">无</span>
+        <span className="px-1 text-[11px] text-ink-faint">{t('canvas.proxyPort.none')}</span>
       )}
     </div>
   );

@@ -18,6 +18,7 @@ export interface WorkerRecoveryTaskFactV1 {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  targetIdentity?: string;
   worktreeStatus?: WorkerQueueTask['worktreeStatus'];
   branchRevision?: string;
   cleanupStateSignature?: string;
@@ -70,6 +71,24 @@ export interface WorkerRecoveryEffectFactV1 {
     acceptanceId?: string;
     artifactCandidateId?: string;
     approvalId?: string;
+    cleanup?: {
+      worktreePath: string;
+      worktreeId: string;
+      targetIdentity?: string;
+      branch: string;
+      branchRevision: string;
+      baseRevision: string;
+      finalStatus: 'absent';
+      hostVerifiedAt: string;
+      hostReadback?: {
+        authority: 'native';
+        worktreePath: string;
+        branch: string;
+        branchRevision: string;
+        targetIdentity?: string;
+        finalStatus: 'absent';
+      };
+    };
     files?: Array<{ path: string; contentHash: string }>;
     error?: string;
   };

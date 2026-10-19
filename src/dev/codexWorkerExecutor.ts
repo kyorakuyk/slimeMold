@@ -4,6 +4,7 @@ import type {
   WorkerTaskLease,
 } from '../domain/workerQueue';
 import { codexWorkerExec, prepareCodexWorker } from '../agents/providers/codex';
+import { renderContextPackRuntimeInfo, renderTaskContract } from '../projectControl/workOrder';
 
 export interface CodexWorkerResponse {
   text: string;
@@ -76,24 +77,26 @@ export function createCodexWorkerInvoker(generation: number): CodexWorkerInvoker
 
 /** Build the only prompt a code-writing Worker receives from a queue lease. */
 export function buildCodexWorkerPrompt(lease: WorkerTaskLease): string {
-  const { task, assignment, attempt } = lease;
+  const { assignment, attempt } = lease;
+  const contextPackRuntimeInfo = renderContextPackRuntimeInfo(lease);
   return [
     '你是 SlimeMold 的实现 Worker。只在当前已分配的 worktree 内完成一个任务。',
+    '',
+    renderTaskContract(lease),
+    '',
+    '运行时信息：',
     `Worktree: ${assignment.path}`,
     `Attempt: ${attempt}`,
-    '',
-    `任务标题：${task.title}`,
-    `任务描述：${task.description}`,
-    `允许涉及的范围：${task.scope.length > 0 ? task.scope.join(', ') : '(未声明)'}`,
-    `依赖任务：${task.dependsOn.length > 0 ? task.dependsOn.join(', ') : '(无)'}`,
+    ...(contextPackRuntimeInfo ? [contextPackRuntimeInfo] : []),
     ...(lease.dependencyArtifacts && lease.dependencyArtifacts.length > 0
       ? [
         '已成功完成的依赖成果（只读参考；只能把需要的内容复制/整合到当前 Worktree，禁止修改这些路径）：',
-        ...lease.dependencyArtifacts.map((artifact) => `- ${artifact.taskId} attempt=${artifact.attempt} path=${artifact.path}${artifact.branchRevision ? ` revision=${artifact.branchRevision}` : ''}`),
+        ...lease.dependencyArtifacts.map((artifact) => {
+          const revision = artifact.branchRevision ? ` revision=${artifact.branchRevision}` : '';
+          return `- ${artifact.taskId} attempt=${artifact.attempt} path=${artifact.path}${revision}`;
+        }),
       ]
       : []),
-    '验收标准：',
-    ...task.acceptanceCriteria.map((criterion) => `- ${criterion}`),
     '',
     '约束：',
     '- 只能修改当前 worktree；只读依赖成果路径仅用于读取/复制参考，不得在原依赖 worktree 写入。',

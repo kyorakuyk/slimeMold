@@ -147,6 +147,10 @@ export const nodePlan: NodeDefinition = {
       ],
     },
   ],
+  /**
+   * User-visible planning node: offline mode supplies a fixed sample; live mode requires an explicit agent and parses task items.
+   * Agent/role/model are consumed as node parameters, not created as separate graph nodes (ADR-SM-080).
+   */
   async execute(inputs, params, ctx) {
     const goal = String(inputs.goal ?? '').trim();
     if (!goal) throw new Error('缺少目标输入（goal 端口未接入数据）');
@@ -311,6 +315,8 @@ export const nodeArchitect: NodeDefinition = {
       tooltip: '将该节点产出的 design 交付物写入项目级黑板对应阶段，供 Builder/施工方工作流读取。',
     },
   ],
+  // 将目标/约束转换为设计文本与模块候选；模拟模式不调 LLM，pipelineStage 非空时尝试发布 Artifact。
+  // 模块输出供后续规划与路由消费，不等同于已批准的 TaskGraph（ADR-SM-018、ADR-SM-023）。
   async execute(inputs, params, ctx) {
     const goal = String(inputs.goal ?? '').trim();
     if (!goal) throw new Error('缺少目标输入（goal 端口未接入数据）');
@@ -567,6 +573,10 @@ export const nodeHandoff: NodeDefinition = {
     { key: 'outDir', label: '落盘目录（相对项目/工作区）', type: 'text', default: 'deliverables', placeholder: '如 deliverables' },
     { key: 'outFile', label: '落盘文件名（留空按 kind 推断）', type: 'text', default: '', placeholder: '如 construction-project.md' },
   ],
+  /**
+   * Publish the stage artifact first; `writeOut` separately requests best-effort disk materialization.
+   * This node creates no Acceptance/Receipt, so `writtenPath` alone is not delivery proof (ADR-SM-018, ADR-SM-037).
+   */
   async execute(inputs, params, ctx) {
     const stage = String(params.stage ?? '').trim();
     if (!stage) throw new Error('pipeline.handoff 缺少目标阶段（stage 参数）');

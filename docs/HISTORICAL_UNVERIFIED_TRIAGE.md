@@ -116,3 +116,100 @@ The next repair must not be chosen implicitly:
 - **Current status:** `concrete-risk`, the Terraform-level local-tool baseline is confirmed but implementation is intentionally deferred until the frontend monolith split is complete. The selected baseline is project-local durable state, four phases, explicit inspect/finalize, no repeated CAS, and restart rebind/read-back. GUI/Worker full E2E does not close this native gap.
 
 Any future code or evidence change invalidates an exact reviewer verdict outside its snapshot. A claim may be upgraded only by a new RED/GREEN regression, full quality gate, exact-head independent review, and—where applicable—real Tauri/native read-back.
+
+## Living graph batch1（2026-10-11/12）
+
+### Scope and current boundary
+
+- Read-only inventory covered 40 `batch1-*` tags and 10 first-batch/night-run `checkpoint/*-20261012` tags (50 refs, 34 unique targets), including the later docs-only triage checkpoint below. No historical tag was moved or deleted.
+- The full code target is `31dc5794a76ef72601c2b00a76ea161b23759c05`; the independent full-range reviewer passed with `security_concerns=[]` and `logic_errors=[]`. This is not a verified successor: the required browser + real Tauri bilingual GUI read-back did not complete. `checkpoint/living-graph-batch1-unverified-20261012` is the only final batch-status tag; no `checkpoint/living-graph-batch1-verified-20261012` exists. Therefore **no historical tag is replaced by a verified tag** in this entry.
+
+### superseded — later bounded code/document snapshot exists, but remains unverified
+
+| Historical tags | Later unverified successor / reason | Verified successor |
+|---|---|---|
+| `batch1-slice0`, `batch1-slice1`, `batch1-slice1-review-recorded` | Later branch work updated the living-graph plan and ProjectControl command paths; the current full-range review covers the resulting descendant, not the old tag snapshot. | None |
+| `batch1-slice2`, `batch1-slice2-golden-unverified`, `batch1-slice2-review-fix-unverified`, `batch1-slice2-review-recorded-unverified`, `batch1-slice2-sidecar-boundary-repair-start-unverified`, `batch1-slice2-sidecar-boundary-repair-unverified`, `batch1-fix1-unverified`, `batch1-fix1-list-repair-unverified`, `batch1-fix1-reviewed-unverified` | The shared prompt/sidecar contract was successively repaired, the multi-dependency formatting was corrected, and Fix 4 later moved attempt-varying ContextPack identity out of the shared contract. Later refs include `batch1-fix4-unverified` and current `checkpoint/living-graph-batch1-unverified-20261012`; all remain unverified. | None |
+| `batch1-slice3-review-recorded-unverified`, `batch1-slice3-shadow-triage-unverified`, `batch1-slice3-start-unverified`, `batch1-slice3a-pure-rules-unverified`, `batch1-slice5-l0-eligibility-unverified`, `batch1-slice5-preflight-unverified`, `batch1-slice5-review-recorded-unverified`, `batch1-slice5-start-unverified`, `batch1-fix2-start-unverified`, `batch1-fix2-unverified`, `batch1-fix2-reviewed-unverified`, `batch1-fix3-start-unverified` | B0 triage and B1 preflight snapshots were changed by the later Fix 2/Fix 3 parser, scope, and rules-version repairs. Their implementation successors are unverified; Fix 3 remains in the current full-range reviewed target. | None |
+| `batch1-slice4-review-recorded-unverified`, `batch1-slice4-start-unverified`, `batch1-slice4a-placeholder-check-unverified` | The start/review records were followed by later locale placeholder and namespace-isolation changes; the final current locale tree is in the full-range target. | None |
+| `batch1-slice6-cost-model-unverified`, `batch1-slice6-eac-overflow-repair-start-unverified`, `batch1-slice6-start-unverified` | The initial cost-model snapshot was followed by the bounded EAC overflow repair `batch1-slice6-eac-overflow-fix-unverified`. | None |
+| `batch1-review-fixes-start-unverified`, `batch1-closeout-start-unverified`, `checkpoint/fix4-start-20261012`, `checkpoint/fix4-unverified-20261012`, `checkpoint/night-run-verify-and-split-start-20261012`, `checkpoint/slice0-baseline-start-20261012`, `checkpoint/slice0-baseline-unverified-20261012`, `checkpoint/test-env-start-20261012` | These are retained start/baseline anchors, not approval artifacts; subsequent bounded slices produced later unverified snapshots. Start refs remain unchanged for auditability. | None |
+
+### evidence-missing / environment-blocked — current implementation still lacks full acceptance evidence
+
+| Tags | Missing evidence / remaining boundary | Verified successor |
+|---|---|---|
+| `batch1-slice4-i18n-unverified`, `batch1-slice4a-namespace-isolation-unverified`, `batch1-slice6-eac-overflow-fix-unverified`, `batch1-slice6-review-recorded-unverified` | These slice results remain represented in the current branch, but the complete batch has no verified GUI acceptance. The final reviewer’s cost-model-underflow and production L0 risk-input notes are non-blocking suggestions, not logic findings; they were not silently promoted to blockers. | None |
+| `batch1-fix3-unverified`, `batch1-fix3-reviewed-unverified`, `batch1-fix4-unverified`, `batch1-fix4-reviewed-unverified`, `checkpoint/test-env-unverified-20261012` | Per-slice review/evidence exists for these exact snapshots, but it does not substitute for the required final bilingual GUI read-back on the full current target. | None |
+| `checkpoint/batch1-final-verification-start-20261012`, `checkpoint/living-graph-batch1-unverified-20261012`, `checkpoint/batch1-triage-unverified-20261012` | The start tag is not an approval. The final unverified code tag points to `31dc579`; the docs-only triage tag points to `27fbc96` and records classification, not code acceptance. GUI acceptance remains evidence-missing, so there is deliberately no verified counterpart. | None |
+
+Environment limits recorded for this classification: direct Linux Node 22 package acquisition ended in npm-registry `ETIMEDOUT` (Windows Node 22 and Linux Node 24 tests passed); browser screenshot capture after welcome-overlay dismissal was stale or timed out; the real Tauri app auto-restored an existing disposable Worker fixture with prior failure records, so the bilingual panel sequence stopped before any manual project mutation. The isolated browser DOM language read-back is partial evidence, not a substitute for the real-Tauri GUI gate.
+
+### concrete-risk
+
+- The final independent review reported no source-supported security or logic blocker in the full batch target. No first-batch tag is classified `concrete-risk` from that review.
+- The Tauri fixture displayed pre-existing Worker cleanup/native-identity and worktree-restore warnings. They were observed without file-level read-back, are not attributed to this batch, and were not modified or cleaned. They remain an out-of-scope observation for the later phase2 audit, not evidence that this batch caused or repaired them.
+- A browser-only ProjectSession navigation attempt automatically mounted `runMasterTurn` and showed `Failed to fetch`. There is no successful response evidence, and the read-only browser resource-origin list cannot prove that no outbound attempt occurred. No retry or Worker run followed; this is recorded in the night-run report as an execution-boundary deviation, not silently treated as a product verification failure or as a batch code finding.
+
+## Phase2 拆分与收口回填（2026-10-12/13）
+
+本节核对 2026-10-12/13 的 phase2 拆分、merged-run 与 closeout-run-r4 回填。历史 tag 一律不删除、不移动、不重命名；本节只修正账目。
+
+### 新增的 verified 回填
+
+| tag | target | 质量门 | 评审 | GUI |
+|---|---|---|---|---|
+| `checkpoint/test-hygiene-verified-20261013` | `cd4be6d4fc0f83f9fc4c278dada76fe7048179e5`（parent `0ac830fc2313a177d40018df5101d48abb9235b5`） | Windows Node 26.7.0 与 Node 22.23.2 各 3 次全量 232 files / 1,530 tests 通过；build、app tsc、i18n 1,112 keys、`git diff --check` 通过 | exact reviewer 只读 Git 对象（不 checkout/编辑/移动 refs），返回严格 JSON：`passed=true`、`security_concerns=[]`、`logic_errors=[]`；一条非阻塞 suggestion 关于测试单独提交 | 非界面改动，按边界第 8 条不要求 |
+
+与既有的 `checkpoint/test-hygiene-unverified-20261013` 成对指向同一 commit，保留两个 tag。WSL Node 24 全量运行在 scratch 安装后 420 秒超时、没有测试汇总；上一份任务书把该环境写为可选项，因此不构成本次回填的缺口，也不写成通过。
+
+### 不补 verified，记为被取代或证据缺失
+
+| 历史目标 | 处理 | 依据 |
+|---|---|---|
+| `0a66c2ff7eb3464e782a838aff43b7abddeb3608`（test-env：为 Worker 传 file-backed Web Storage 参数） | 不补 verified；记为被 `cd4be6d` 取代 | 同一批测试卫生问题（jsdom 存储隔离与超时）已在 `cd4be6d` 收敛并取得 exact 评审；`0a66c2f` 自身没有独立 reviewer verdict |
+| `1be58a18f92dddea02502131129abe72ed0da710`（fix4：ContextPack identity 移入 runtime prompt） | 不补 verified；保持 evidence-missing | 该快照当时全量测试有 10 项失败，不满足「同一快照质量门全过」；后续提交覆盖了同一区域，但没有同快照的质量门与评审证据 |
+
+### 更正：`checkpoint/readability-project-session-verified-20261013`
+
+该 tag 保留作为审计事实，不删除也不移动。按本轮边界第 8 条，界面改动必须有**同一快照**的 GUI 回读才能打 verified；该 tag 只有质量门与 exact 评审、没有同快照 GUI 回读，因此不满足 verified 条件。最终以 closeout run r4 切片 5 的分支整体验证为准：若切片 5 通过，则在当次回填中把该条标为被整体 verified tag 取代；若切片 5 不通过，则该条与切片 5 同等保持未验证。
+
+## R5 ledger correction: R4 verified-tag overclaims (2026-10-14)
+
+R5 plan `.hermes/plans/2026-10-13_233500-r5-long-run.md` re-evaluates two R4 tags. Both tag refs remain untouched for auditability; this section corrects their evidence classification and defines which R4 snapshot may serve as a verified ancestor in R5.
+
+| Tag retained | Target | Correction | Evidence / scope |
+| --- | --- | --- | --- |
+| `checkpoint/readability-execute-node-body-verified-20261013-r4` | `e66d89d13469cd189ff719544694bf375e02f14d` | **evidence-missing; not a valid verified ancestor** | The review `a583834..e66d89d` covered the Slice8 test/fix delta, not the full code ancestry: its target tree also contained the unreviewed Slice9 refactor and four unreviewed R4 add-ons. Optional isolated replay: archive exact `e66d89d` to `D:/Hermes/cache/scratch/r5-e66-lifecycle-probe-20261013`, overlay regression test blob `25b76f812d98ed62a45fa12334df22730ac86435` from `5ae675f`, and run the focused test. Both regressions failed as expected: immediate running state was `undefined`; `EventLogWriter.close` had 0 calls after injected session-init failure. |
+| `checkpoint/readability-run-workflow-verified-20261013-r4` | `3700d0c0321baf40ed6936c93c0a0c9a02550414` | **evidence-missing; not a valid verified ancestor** | The original Slice9 range `d84cff1..cbc6f4a` had `passed=false` with two lifecycle findings. The repair review `8a31eb5..3700d0c` passed for its delta, but did not review every intervening code change since the last valid verified ancestor; the target tree also includes four R4 add-ons without complete exact-review coverage. Separately, the repair changed the pre-Slice9 worktree-only await guard to `if (opts.sandbox)`, so copy-sandbox runs still yield before session startup. The verified target therefore retained an immediate stop/duplicate-start race; R5 Slice3 is authorized to fix this. |
+| `checkpoint/readability-check-params-verified-20261013-r4` | `81d22c69bbda64584ecddb76a9486a323eeb77d7` | **valid for its exact bounded snapshot** | Same-snapshot gates and clean exact review are recorded in the R4 report/development log. |
+| `checkpoint/readability-workflow-editor-verified-20261013-r4` | `39f54f45c7ac57ccee92728dff2b9a25738eb52e` | **valid for its exact bounded snapshot; nearest valid R4 verified ancestor** | Same-snapshot gates, Browser evidence and clean exact review are recorded in the R4 report/development log. |
+
+No tag was deleted, moved, or renamed. The Slice8/Slice9 lifecycle repairs remain useful code changes, but their historical `verified` labels do not satisfy the R5 coverage rule. R5's most recent valid verified ancestor is `39f54f45c7ac57ccee92728dff2b9a25738eb52e`; Slice5/12 still require full-range review of every code change after that ancestor plus their own same-snapshot GUI/gate requirements before any R5 verified tag.
+
+## R5 corrections to prior R4 metric and lifecycle notes
+
+- The prior `runNodeWithRetry` 120-line statement is inaccurate: `node scripts/readability-metrics.cjs --match runNodeWithRetry` reports **127** lines at `src/engine/executorNodePhases.ts:388` on the R5 baseline. R5 Slice4 may reduce it to ≤120; this correction does not edit the historical R4 entry.
+- The pre-Slice9 R4 verified baseline `39f54f4` entered sandbox setup only under `opts.sandboxMode === 'gitworktree' && isTauri && runWorkspaceDir`. The R4 repair target `3700d0c` instead awaited for every `opts.sandbox`, including copy mode. Therefore any earlier characterization that the baseline already yielded for sandbox copy runs is incorrect; R4 fixed the no-sandbox yield but left/introduced the copy-sandbox stop/duplicate-start race. R5 Slice3's test and repair remain pending.
+
+## R8 whole-branch supersession update (2026-10-16)
+
+The R8 full-range successor is reviewed code target `e1fa8f92f76c18be70da0b4fb83a80f38bc21619` on `refactor/monolith-split-2`, from base `1e2030983bbb606315e9d9a2f5b421f29c0b3855`. The exact reviewer passed with empty security/logic lists; same-code quality gates and the fresh Browser/real-Tauri bilingual matrix also passed. The paired R8 final tags both resolve to that reviewed code target:
+
+- `checkpoint/monolith-split-2-final-unverified-20261016-r8`
+- `checkpoint/monolith-split-2-final-verified-20261016-r8`
+
+The following historical snapshot groups are now **superseded by the R8 verified successor** for branch-level integration status. This addendum does not delete, move, rename, or retroactively rewrite any old tag or verdict; the earlier tables remain accurate as records of what was known at their original dates.
+
+| Historical group | R8 supersession scope |
+|---|---|
+| Living-graph first batch full target `31dc5794a76ef72601c2b00a76ea161b23759c05`, final unverified batch target, and associated rows in the 2026-10-12 first-batch table above | The R8 full-range code review, gates, and Browser/Tauri bilingual read-back supersede the old “no verified successor” integration status. The individual first-batch refs and their original reports remain unchanged. |
+| R4 backfill items explicitly left for integration verification (R4 rows 1a–5, including full-range target `43093da1c1d10fbafff25c6c88946abb22ad93be`) | Superseded at branch-integration level by R8. R4 slice-local verified tags for their exact snapshots remain valid only at those snapshots and are not moved to R8. |
+| R4 overtime slices 1a TopBar, 1b AgentEditorForm, 1c OrchestratorPanel, and overtime slice 2 runtime-log i18n | Their prior unverified integration status is superseded by R8's reviewed whole-branch target; the historical slice work and limitations remain recorded in the R4 report. |
+| R5 completed slice targets 0–11 and the two overtime comment batches; R5 Slice12 was skipped because its prerequisite did not hold | Their branch-level status is superseded by R8; no claim is made that skipped Slice12 ran. All R5 tags/reports remain intact. |
+| R6 slices 0–3 and full integration Slice4 target `f741960b873645d14de049d3cc76f83eb90e0f49` | Their branch-level status is superseded by R8's complete bilingual GUI and passing full-range review. R6's former findings remain historical; R8 evidence is bound to its own target. |
+| R7 pre-R8 unverified Slice5 candidates and exact-reviewed Slice1 target `8f7e93601dc96efa6177c36b8ba113ae34568d82` | R8 is the later full-range integration successor; prior R7 tags/verdicts remain exact-snapshot records. |
+
+This is a **snapshot supersession**, not a statement that every historical platform/authority risk in the older dossier was independently re-tested or that every non-blocking reviewer suggestion was implemented. The R8 reviewer suggestions and scope limits are recorded in `docs/DEVELOPMENT_LOG.md` §7.500 and `.hermes/reports/2026-10-16-r8.md`; the general current risk index above is not erased. The R8 GUI manifest is `.hermes/reports/r8-gui-readback-manifest.json` (104 captures, 0 missing/hash-mismatched assets).
+
+At R8 target `e1fa8f9`, `src/dev/readabilityMetricsJsonPath.test.ts`, `scripts/readability-metrics-json-output.ps1`, and `scripts/readability-metrics-json-output-race-test.ps1` are absent; their names in earlier development-log entries are historical references. The stdout test replaces the path test for the user-ordered stdout-only contract.

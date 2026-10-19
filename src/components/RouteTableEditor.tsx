@@ -62,7 +62,7 @@ export function RouteTableEditor() {
             className={`shrink-0 text-[10px] ${bound ? 'text-ok' : 'text-ink-faint'}`}
             title={bound ? `${bound.name}（${bound.model}）` : t('route.unbound')}
           >
-            {bound ? `● ${bound.name}` : '○ 未绑定'}
+            {bound ? `● ${bound.name}` : `○ ${t('route.unbound')}`}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -84,7 +84,7 @@ export function RouteTableEditor() {
         </div>
         <div className="mt-1.5">
           <div className="mb-1 flex items-center gap-1.5">
-            <span className="shrink-0 text-[10px] text-ink-faint">回退链</span>
+            <span className="shrink-0 text-[10px] text-ink-faint">{t('route.fallbackLabel')}</span>
             <span className="text-[10px] text-ink-faint">{t('route.fallbackPlaceholder')}</span>
           </div>
           <AgentSelect

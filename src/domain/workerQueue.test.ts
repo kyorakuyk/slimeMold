@@ -401,6 +401,24 @@ describe('WorkerTaskQueue', () => {
     expect(eventTypes).toContain('RunPartial');
   });
 
+  it('propagates a dispatch fence rejection without converting the queued task into failure', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence-reject',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:00:01.000Z',
+    });
+    const error = new Error('candidate drift');
+
+    await expect(runWorkerQueue(queue, {
+      allocator: allocatorFor([]),
+      executor: { execute: async () => ({ status: 'succeeded' as const, evidenceIds: ['e'], acceptanceId: 'a' }) },
+      assertBeforeExternalWork: () => { throw error; },
+    })).rejects.toThrow('candidate drift');
+    expect(queue.snapshot().tasks.a.status).toBe('queued');
+    expect(queue.drainEvents().map((event) => event.eventType)).not.toContain('TaskFailed');
+  });
+
   it('keeps host Evidence bindings when acceptance fails', async () => {
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
@@ -884,6 +902,7 @@ describe('WorkerTaskQueue', () => {
   });
 
   it('fails closed when an allocator reuses a worktree for another task in the same run', async () => {
+    const released: string[] = [];
     const queue = createWorkerRunQueue({
       projectId: 'project-1',
       runId: 'run-shared-worktree',
@@ -897,6 +916,7 @@ describe('WorkerTaskQueue', () => {
         branch: 'worker/shared',
         baseRevision: 'base-revision-1',
       }),
+      release: async (assignment) => { released.push(assignment.worktreeId); },
     };
 
     const state = await runWorkerQueue(queue, {
@@ -908,6 +928,7 @@ describe('WorkerTaskQueue', () => {
     expect(state.tasks.a.status).toBe('succeeded');
     expect(state.tasks.c.status).toBe('failed');
     expect(state.tasks.c.error).toMatch(/worktree.*复用|占用/);
+    expect(released).toEqual([]);
   });
 
   it('keeps allocation failure replayable and rejects invalid queued attempts', async () => {
@@ -928,6 +949,291 @@ describe('WorkerTaskQueue', () => {
     expect(transitions.map((event) => event.eventType)).toEqual(['RunCreated', 'TaskQueued', 'RunStarted', 'TaskStarted', 'TaskFailed', 'RunPartial']);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: -1 } } } })).toThrow(/attempt/);
     expect(() => restoreWorkerRunQueue({ taskGraph: graph([task('a')]), state: { ...failed, tasks: { a: { ...failed.tasks.a, status: 'queued', attempt: Number.MAX_SAFE_INTEGER + 1 } } } })).toThrow(/attempt/);
+  });
+
+  it('releases an allocation and fails closed when the dispatch fence changes after allocation', async () => {
+    const allocated: string[] = [];
+    const released: string[] = [];
+    let fenceChecks = 0;
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const allocator: WorkerWorktreeAllocator = {
+      allocate: async ({ task: queuedTask }) => {
+        allocated.push(queuedTask.id);
+        return {
+          worktreeId: `worktree-${queuedTask.id}`,
+          path: `C:/worktrees/${queuedTask.id}`,
+          branch: `worker/${queuedTask.id}`,
+          baseRevision: 'base-revision-1',
+        };
+      },
+      release: async (assignment) => {
+        released.push(assignment.worktreeId);
+      },
+    };
+
+    await expect(runWorkerQueue(queue, {
+      allocator,
+      executor: { execute: async () => ({ status: 'succeeded' }) },
+      assertBeforeExternalWork: () => {
+        fenceChecks += 1;
+        if (fenceChecks === 2) throw new Error('stale dispatch fence');
+      },
+    })).rejects.toThrow('stale dispatch fence');
+
+    expect(queue.snapshot().tasks.a.status).toBe('queued');
+    expect(allocated).toEqual(['a']);
+    expect(released).toEqual(['worktree-a']);
+  });
+
+  it('rolls back the claim when cancellation arrives during the post-allocation fence', async () => {
+    const controller = new AbortController();
+    const released: string[] = [];
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-cancel-during-fence',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    let fenceChecks = 0;
+    let executorCalls = 0;
+    const transitions: DomainEvent[] = [];
+
+    await expect(runWorkerQueue(queue, {
+      allocator: {
+        allocate: async () => ({
+          worktreeId: 'worktree-a',
+          path: 'C:/worktrees/a',
+          branch: 'worker/a',
+          baseRevision: 'base-revision-1',
+        }),
+        release: async (assignment) => { released.push(assignment.worktreeId); },
+      },
+      executor: {
+        execute: async () => {
+          executorCalls += 1;
+          return { status: 'succeeded' as const };
+        },
+      },
+      signal: controller.signal,
+      assertBeforeExternalWork: async () => {
+        fenceChecks += 1;
+        if (fenceChecks === 2) {
+          await Promise.resolve();
+          controller.abort();
+        }
+      },
+      onTransition: ({ events }) => { transitions.push(...events); },
+    })).rejects.toThrow();
+
+    expect(released).toEqual(['worktree-a']);
+    expect(queue.snapshot().tasks.a.status).toBe('queued');
+    expect(queue.drainEvents().map((event) => event.eventType)).not.toContain('TaskStarted');
+    expect(transitions).toEqual([]);
+    expect(executorCalls).toBe(0);
+  });
+
+  it('persists repair lineage when a later batched claim rollback fails', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-batch-rollback-failed',
+      taskGraph: graph([task('a'), task('c')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const allocated: string[] = [];
+    const released: string[] = [];
+    const transitions: Array<{ state: ReturnType<typeof queue.snapshot>; events: DomainEvent[] }> = [];
+    let fenceChecks = 0;
+    let executorCalls = 0;
+
+    await expect(runWorkerQueue(queue, {
+      allocator: {
+        allocate: async ({ task: queuedTask }) => {
+          allocated.push(queuedTask.id);
+          return {
+            worktreeId: `worktree-${queuedTask.id}`,
+            path: `C:/worktrees/${queuedTask.id}`,
+            branch: `worker/${queuedTask.id}`,
+            baseRevision: 'base-revision-1',
+            targetIdentity: `target-${queuedTask.id}`,
+          };
+        },
+        release: async (assignment) => {
+          released.push(assignment.worktreeId);
+          if (assignment.worktreeId === 'worktree-a') throw new Error('host cleanup unavailable');
+        },
+      },
+      executor: {
+        execute: async () => {
+          executorCalls += 1;
+          return { status: 'succeeded' as const };
+        },
+      },
+      concurrency: 2,
+      assertBeforeExternalWork: () => {
+        fenceChecks += 1;
+        if (fenceChecks === 4) throw new Error('stale dispatch fence');
+      },
+      onTransition: (transition) => { transitions.push(transition); },
+    })).rejects.toThrow(/stale dispatch fence.*rollback 失败/);
+
+    expect(allocated).toEqual(['a', 'c']);
+    expect(released).toEqual(['worktree-c', 'worktree-a']);
+    expect(queue.snapshot().tasks.a).toMatchObject({
+      status: 'failed',
+      worktreeId: 'worktree-a',
+      worktreePath: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+      targetIdentity: 'target-a',
+      worktreeStatus: 'orphaned',
+    });
+    expect(queue.snapshot().tasks.c.status).toBe('queued');
+    const persistedEvents = transitions.flatMap(({ events }) => events);
+    const failedEvent = persistedEvents
+      .find((event) => event.eventType === 'TaskFailed');
+    expect(failedEvent?.payload).toMatchObject({
+      taskId: 'a',
+      worktreeId: 'worktree-a',
+      worktreePath: 'C:/worktrees/a',
+      worktreeStatus: 'orphaned',
+    });
+    const attemptId = createAttemptId(createTaskExecutionId('run-batch-rollback-failed', 'a'), 1);
+    expect(replayDomainEvents(persistedEvents).attempts[attemptId]).toMatchObject({
+      status: 'failed',
+      worktreeId: 'worktree-a',
+      worktreePath: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+      targetIdentity: 'target-a',
+    });
+    expect(executorCalls).toBe(0);
+  });
+
+  it('persists orphaned allocation lineage when a stale fence rollback fails', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-fence-rollback-failed',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const assignment = {
+      worktreeId: 'worktree-a',
+      path: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+      branchRevision: 'base-revision-1',
+      targetIdentity: 'target-a',
+    };
+    const transitions: Array<{ state: ReturnType<typeof queue.snapshot>; events: DomainEvent[] }> = [];
+    let fenceChecks = 0;
+    let executorCalls = 0;
+
+    await expect(runWorkerQueue(queue, {
+      allocator: {
+        allocate: async () => assignment,
+        release: async () => { throw new Error('host cleanup unavailable'); },
+      },
+      executor: {
+        execute: async () => {
+          executorCalls += 1;
+          return { status: 'succeeded' as const };
+        },
+      },
+      assertBeforeExternalWork: () => {
+        fenceChecks += 1;
+        if (fenceChecks === 2) throw new Error('stale dispatch fence');
+      },
+      onTransition: (transition) => { transitions.push(transition); },
+    })).rejects.toThrow(/stale dispatch fence.*rollback 失败/);
+
+    expect(queue.snapshot().tasks.a).toMatchObject({
+      status: 'failed',
+      worktreeId: assignment.worktreeId,
+      worktreePath: assignment.path,
+      branch: assignment.branch,
+      baseRevision: assignment.baseRevision,
+      branchRevision: assignment.branchRevision,
+      targetIdentity: assignment.targetIdentity,
+      worktreeStatus: 'orphaned',
+      error: expect.stringMatching(/rollback 失败|cleanup unavailable/),
+    });
+    const persistedEvents = transitions.flatMap(({ events }) => events);
+    const failedEvent = persistedEvents.find((event) => event.eventType === 'TaskFailed');
+    expect(failedEvent?.payload).toMatchObject({
+      runId: 'run-fence-rollback-failed',
+      taskId: 'a',
+      taskExecutionId: 'task-execution:run-fence-rollback-failed:a',
+      attemptId: 'task-execution:run-fence-rollback-failed:a:attempt-1',
+      worktreeId: assignment.worktreeId,
+      worktreePath: assignment.path,
+      branch: assignment.branch,
+      baseRevision: assignment.baseRevision,
+      branchRevision: assignment.branchRevision,
+      targetIdentity: assignment.targetIdentity,
+      worktreeStatus: 'orphaned',
+    });
+    expect(transitions.some(({ state }) => state.tasks.a.status === 'failed')).toBe(true);
+    expect(executorCalls).toBe(0);
+  });
+
+  it('persists orphaned allocation lineage when cancellation follows an allocation without cleanup', async () => {
+    const queue = createWorkerRunQueue({
+      projectId: 'project-1',
+      runId: 'run-cancelled-allocation',
+      taskGraph: graph([task('a')]),
+      now: '2026-09-01T00:01:00.000Z',
+    });
+    const assignment = {
+      worktreeId: 'worktree-a',
+      path: 'C:/worktrees/a',
+      branch: 'worker/a',
+      baseRevision: 'base-revision-1',
+      targetIdentity: 'target-a',
+    };
+    const controller = new AbortController();
+    const transitions: Array<{ state: ReturnType<typeof queue.snapshot>; events: DomainEvent[] }> = [];
+    let executorCalls = 0;
+
+    await expect(runWorkerQueue(queue, {
+      allocator: {
+        allocate: async () => {
+          controller.abort();
+          return assignment;
+        },
+      },
+      executor: {
+        execute: async () => {
+          executorCalls += 1;
+          return { status: 'succeeded' as const };
+        },
+      },
+      signal: controller.signal,
+      onTransition: (transition) => { transitions.push(transition); },
+    })).rejects.toThrow();
+
+    expect(queue.snapshot().tasks.a).toMatchObject({
+      status: 'failed',
+      worktreeId: assignment.worktreeId,
+      worktreePath: assignment.path,
+      branch: assignment.branch,
+      baseRevision: assignment.baseRevision,
+      targetIdentity: assignment.targetIdentity,
+      worktreeStatus: 'orphaned',
+    });
+    const failedEvent = transitions.flatMap(({ events }) => events)
+      .find((event) => event.eventType === 'TaskFailed');
+    expect(failedEvent?.payload).toMatchObject({
+      taskId: 'a',
+      worktreeId: assignment.worktreeId,
+      worktreePath: assignment.path,
+      worktreeStatus: 'orphaned',
+    });
+    expect(executorCalls).toBe(0);
   });
 
   it('parks a running Worker on structured feedback instead of marking it failed', async () => {

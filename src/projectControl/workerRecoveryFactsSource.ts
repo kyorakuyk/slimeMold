@@ -27,6 +27,7 @@ import {
   requiredText,
   safeInteger,
   sortedStrings,
+  stringValue,
   uniqueStringsPreserveOrder,
 } from './workerRecoveryFactsRules';
 
@@ -73,6 +74,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
   if (task.worktreePath !== undefined) canonicalPath(task.worktreePath, 'worktree path');
   if (task.branch !== undefined) canonicalRef(task.branch, 'branch');
   if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'baseRevision');
+  if (task.targetIdentity !== undefined) requiredText(task.targetIdentity, 'target identity');
   if (task.branchRevision !== undefined) canonicalRevision(task.branchRevision, 'branchRevision');
   if (task.worktreeId !== undefined) requiredText(task.worktreeId, 'worktree id');
   if (task.attempt > 0 && (task.taskExecutionId === undefined || task.currentAttemptId === undefined)) {
@@ -108,6 +110,7 @@ function taskFact(task: WorkerQueueTask, runId: string): WorkerRecoveryTaskFactV
     ...(task.worktreePath === undefined ? {} : { worktreePath: comparableWorkerPath(task.worktreePath) }),
     ...(task.branch === undefined ? {} : { branch: canonicalRef(task.branch, 'branch') }),
     ...(task.baseRevision === undefined ? {} : { baseRevision: canonicalRevision(task.baseRevision, 'base revision') }),
+    ...(task.targetIdentity === undefined ? {} : { targetIdentity: requiredText(task.targetIdentity, 'target identity') }),
     ...(task.worktreeStatus === undefined ? {} : { worktreeStatus: task.worktreeStatus }),
     ...(task.branchRevision === undefined ? {} : { branchRevision: canonicalRevision(task.branchRevision, 'branch revision') }),
     ...(task.cleanupStateSignature === undefined ? {} : { cleanupStateSignature: requiredText(task.cleanupStateSignature, 'cleanup state signature') }),
@@ -150,9 +153,60 @@ function projectTaskFact(task: ProjectTask): WorkerRecoveryProjectTaskFactV1 {
   };
 }
 
+function cleanupReceiptFact(
+  cleanup: NonNullable<NonNullable<SideEffectRecord['receipt']>['cleanup']>,
+): NonNullable<NonNullable<WorkerRecoveryEffectFactV1['receipt']>['cleanup']> {
+  const cleanupObject = assertObject(cleanup, 'receipt.cleanup');
+  assertKeys(
+    cleanupObject,
+    ['worktreePath', 'worktreeId', 'targetIdentity', 'branch', 'branchRevision', 'baseRevision', 'finalStatus', 'hostVerifiedAt', 'hostReadback'],
+    'receipt.cleanup',
+  );
+  if (cleanup.finalStatus !== 'absent') throw new Error(`receipt.cleanup.finalStatus 无效：${cleanup.finalStatus}`);
+  const targetIdentity = requiredText(stringValue(cleanup.targetIdentity, 'receipt.cleanup target identity'), 'receipt.cleanup target identity');
+  const normalized = {
+    worktreePath: comparableWorkerPath(canonicalPath(requiredText(cleanup.worktreePath, 'receipt.cleanup worktree path'), 'receipt.cleanup worktree path')),
+    worktreeId: requiredText(cleanup.worktreeId, 'receipt.cleanup worktree id'),
+    targetIdentity,
+    branch: canonicalRef(cleanup.branch, 'receipt.cleanup branch'),
+    branchRevision: canonicalRevision(cleanup.branchRevision, 'receipt.cleanup branch revision'),
+    baseRevision: canonicalRevision(cleanup.baseRevision, 'receipt.cleanup base revision'),
+    finalStatus: 'absent' as const,
+    hostVerifiedAt: canonicalTimestamp(cleanup.hostVerifiedAt, 'receipt.cleanup hostVerifiedAt'),
+  };
+  if (cleanup.hostReadback === undefined) throw new Error('receipt.cleanup 缺少 native host read-back');
+  const hostReadback = assertObject(cleanup.hostReadback, 'receipt.cleanup.hostReadback');
+  assertKeys(
+    hostReadback,
+    ['authority', 'worktreePath', 'branch', 'branchRevision', 'targetIdentity', 'finalStatus'],
+    'receipt.cleanup.hostReadback',
+  );
+  if (hostReadback.authority !== 'native') throw new Error('receipt.cleanup.hostReadback.authority 无效');
+  if (hostReadback.finalStatus !== 'absent') throw new Error('receipt.cleanup.hostReadback.finalStatus 无效');
+  const hostTargetIdentity = requiredText(
+    stringValue(hostReadback.targetIdentity, 'receipt.cleanup.hostReadback target identity'),
+    'receipt.cleanup.hostReadback target identity',
+  );
+  if (hostTargetIdentity !== targetIdentity) throw new Error('receipt.cleanup.hostReadback target identity 不一致');
+  const normalizedHostReadback = {
+    authority: 'native' as const,
+    worktreePath: comparableWorkerPath(canonicalPath(stringValue(hostReadback.worktreePath, 'receipt.cleanup.hostReadback worktree path'), 'receipt.cleanup.hostReadback worktree path')),
+    branch: canonicalRef(stringValue(hostReadback.branch, 'receipt.cleanup.hostReadback branch'), 'receipt.cleanup.hostReadback branch'),
+    branchRevision: canonicalRevision(stringValue(hostReadback.branchRevision, 'receipt.cleanup.hostReadback branch revision'), 'receipt.cleanup.hostReadback branch revision'),
+    targetIdentity: hostTargetIdentity,
+    finalStatus: 'absent' as const,
+  };
+  if (normalizedHostReadback.worktreePath !== normalized.worktreePath
+    || normalizedHostReadback.branch !== normalized.branch
+    || normalizedHostReadback.branchRevision !== normalized.branchRevision) {
+    throw new Error('receipt.cleanup.hostReadback 与 cleanup provenance 不一致');
+  }
+  return { ...normalized, hostReadback: normalizedHostReadback };
+}
+
 function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerRecoveryEffectFactV1['receipt'] {
   const receiptObject = assertObject(receipt, 'receipt');
-  assertKeys(receiptObject, ['receiptId', 'observedAt', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'files', 'error'], 'receipt');
+  assertKeys(receiptObject, ['receiptId', 'observedAt', 'outputHash', 'outcome', 'evidenceIds', 'acceptanceId', 'artifactCandidateId', 'approvalId', 'cleanup', 'files', 'error'], 'receipt');
   if (receipt.outcome !== undefined && receipt.outcome !== 'succeeded' && receipt.outcome !== 'failed') {
     throw new Error(`receipt outcome 无效：${receipt.outcome}`);
   }
@@ -176,9 +230,16 @@ function receiptFact(receipt: NonNullable<SideEffectRecord['receipt']>): WorkerR
     ...(receipt.acceptanceId === undefined ? {} : { acceptanceId: requiredText(receipt.acceptanceId, 'acceptance id') }),
     ...(receipt.artifactCandidateId === undefined ? {} : { artifactCandidateId: requiredText(receipt.artifactCandidateId, 'artifact candidate id') }),
     ...(receipt.approvalId === undefined ? {} : { approvalId: requiredText(receipt.approvalId, 'approval id') }),
+    ...(receipt.cleanup === undefined ? {} : { cleanup: cleanupReceiptFact(receipt.cleanup) }),
     ...(files === undefined ? {} : { files }),
     ...(receipt.error === undefined ? {} : { error: requiredText(receipt.error, 'receipt error') }),
   };
+}
+
+export function normalizeWorkerRecoveryReceiptFactV1(
+  receipt: NonNullable<SideEffectRecord['receipt']>,
+): WorkerRecoveryEffectFactV1['receipt'] {
+  return receiptFact(receipt);
 }
 
 function validateSideEffectEnvelope(effect: SideEffectRecord): void {

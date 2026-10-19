@@ -43,6 +43,7 @@ export interface WorkerHostRepositoryBundle {
 export interface WorkerEvidenceRepositoryBundle {
   loadEvidence: () => Promise<EvidenceRecord[]>;
   loadSideEffects: () => Promise<SideEffectRecord[]>;
+  createEventRepository: () => EventStreamRepository;
 }
 
 export const loadWorkerHostRepositoryModules: WorkerHostRepositoryLoader = async () => {
@@ -99,6 +100,10 @@ function createEvidenceRepositoryBundleFromModules(
   return {
     loadEvidence: () => loadWorkerEvidence(evidencePersistence),
     loadSideEffects: () => loadWorkerSideEffects(sideEffectRepository),
+    createEventRepository: () => new EventStreamRepository(
+      modules.createTauriEventStoreAdapter(input.projectPath),
+      input.projectPath,
+    ),
   };
 }
 

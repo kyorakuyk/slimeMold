@@ -35,7 +35,7 @@
   <string name="param.role.placeholder">— 不使用角色 —</string>
   <string name="param.role.builtin">（内置）</string>
 
-  <string name="sg.stepsCount">内含 {count} 个步骤，运行时会自动展开执行。</string>
+  <string name="sg.stepsCount">内含 {{count}} 个步骤，运行时会自动展开执行。</string>
   <string name="sg.input">输入</string>
   <string name="sg.output">输出</string>
   <string name="sg.unpackTitle">把子图内部的节点还原到画布上</string>

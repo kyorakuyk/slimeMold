@@ -10,12 +10,14 @@ import type { ProjectOperation } from './projectLifecycleController';
 import { getRestoredWorkerRunForCleanup } from './workerRunRuntime';
 import {
   approveWorkerCleanupProposal,
+  workerCleanupDecisionId,
 } from './workerCleanup';
 import { executeWorkerCleanupWithReceipt } from './workerCleanupExecution';
 import { markWorkerTaskCleaned } from './workerCleanupCommand';
 import { mergeWorkerSideEffects } from './workerEvidence';
 import { projectWorkerRunsOntoOrchestrations } from './workerRunOrchestrationProjection';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { pathComparisonKey } from '../dev/path-utils';
 import { EventStreamRepository } from '../domain/eventStore';
 import { flushPendingProjectEvents } from './eventBuffer';
 import type { Orchestration } from '../types/orchestration';
@@ -109,6 +111,7 @@ export function createWorkerCleanupActionController(
       || proposal.taskExecutionId !== trustedTaskExecutionId
       || proposal.attemptId !== trustedAttemptId
       || proposal.worktreeId !== trustedTask.worktreeId
+      || proposal.targetIdentity !== trustedTask.targetIdentity
       || proposal.worktreePath !== trustedTask.worktreePath
       || proposal.branch !== trustedTask.branch
       || proposal.baseRevision !== trustedTask.baseRevision
@@ -141,25 +144,41 @@ export function createWorkerCleanupActionController(
     }
     const persistCleanupState = async (
       nextRuns: WorkerRunQueueState[],
+      expectedTaskCleanedEvent?: DomainEvent,
     ): Promise<void> => {
       const latest = deps.getState();
       const sameProject = latest.projectId === projectId && latest.projectPath === projectPath;
+      const { createTauriEventStoreAdapter } = await import('../domain/tauriEventStore');
+      const eventRepository = new EventStreamRepository(
+        createTauriEventStoreAdapter(projectPath),
+        projectPath,
+      );
       if (sameProject) {
         // Receipt 已经 durable 后，不再把当前 operation 的 cancellation 当作阻断条件。
         await latest.saveProject();
       } else {
-        const [{ createTauriEventStoreAdapter }] = await Promise.all([
-          import('../domain/tauriEventStore'),
-        ]);
         await flushPendingProjectEvents(
           projectId,
-          new EventStreamRepository(createTauriEventStoreAdapter(projectPath), projectPath),
+          eventRepository,
         );
         await saveProjectFile(buildProjectFile({
           ...current,
           workerRuns: nextRuns,
           orchestrations: projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
         }), projectPath);
+      }
+      if (expectedTaskCleanedEvent) {
+        const persistedEvents = await eventRepository.readStream();
+        if (persistedEvents.status === 'needs-repair') {
+          throw new Error(`Worker cleanup TaskCleaned event stream 需要修复：${runId}/${taskId}`);
+        }
+        const persistedEvent = persistedEvents.events.find((event) => event.eventId === expectedTaskCleanedEvent.eventId);
+        if (!persistedEvent
+          || persistedEvent.eventType !== 'TaskCleaned'
+          || persistedEvent.aggregateId !== expectedTaskCleanedEvent.aggregateId
+          || JSON.stringify(persistedEvent.payload) !== JSON.stringify(expectedTaskCleanedEvent.payload)) {
+          throw new Error(`Worker cleanup TaskCleaned event read-back 不一致：${runId}/${taskId}`);
+        }
       }
       const { openProjectByPath } = await import('../io/projectIO');
       const persisted = await openProjectByPath(projectPath);
@@ -205,7 +224,26 @@ export function createWorkerCleanupActionController(
     const cleanupResult = await executeWorkerCleanupWithReceipt({
       proposal,
       repository,
-      host: session,
+      host: {
+        confirmAndCleanup: session.confirmAndCleanup.bind(session),
+        readCleanupState: async (path, worktreeId, targetIdentity) => {
+          const info = worktreeId
+            ? session.manager.getByIdIncludingCleaned(worktreeId)
+            : session.manager.getByPathIncludingCleaned(path);
+          const pathMatches = !!info && pathComparisonKey(info.path) === pathComparisonKey(path);
+          const identityMatches = targetIdentity === undefined || info?.targetIdentity === targetIdentity;
+          const hostReadback = info && pathMatches && identityMatches
+            ? session.manager.getCleanupReadback(info.id)
+            : undefined;
+          return {
+            present: !!info && pathMatches && identityMatches && info.status !== 'cleaned',
+            status: info?.status === 'cleaned' && pathMatches && identityMatches
+              ? 'absent'
+              : (info?.status ?? 'absent'),
+            ...(hostReadback ? { hostReadback } : {}),
+          };
+        },
+      },
       now: new Date().toISOString(),
       signal: operation.controller.signal,
     });
@@ -270,7 +308,7 @@ export function createWorkerCleanupActionController(
       attemptId: proposal.attemptId,
       stateSignature: proposal.stateSignature,
       receipt: cleanupResult.sideEffect,
-      decisionId: globalThis.crypto?.randomUUID?.() ?? `cleanup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      decisionId: workerCleanupDecisionId(proposal.taskExecutionId, proposal.attemptId),
       now: new Date().toISOString(),
     });
     deps.recordProjectEvents(projectId, cleaned.events);
@@ -281,7 +319,7 @@ export function createWorkerCleanupActionController(
         projectWorkerRunsOntoOrchestrations(current.orchestrations, nextRuns),
       );
     }
-    await persistCleanupState(nextRuns);
+    await persistCleanupState(nextRuns, cleaned.events[0]);
     await deps.refreshWorkerCleanupProposals(session, runId, operation.controller.signal);
   };
 

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Coins } from 'lucide-react';
 import type { NodeUsageStat } from '../../types/graph';
+import { useT } from '../../i18n/useT';
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -41,8 +42,10 @@ function Row({
 /**
  * 节点底部的 token 用量徽标：常态只占一行，鼠标悬停时弹出该节点单独的用量明细。
  * 与左侧总览面板互不影响——总览看整体，这里看单个节点。
+ * 此处只投影调用方提供的 token/缓存/延迟统计，不估算费用或代表 provider 账单（ADR-SM-006、ADR-SM-073）。
  */
 export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
+  const t = useT('ui');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const barRef = useRef<HTMLSpanElement>(null);
@@ -82,9 +85,9 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
         <Coins size={10} className="shrink-0 opacity-70" />
         <span className="font-mono tabular-nums">{fmt(usage.totalTokens)}</span>
         <span className="opacity-60">tokens</span>
-        {usage.calls > 1 && <span className="opacity-60">· {usage.calls} 次</span>}
+        {usage.calls > 1 && <span className="opacity-60">· {t('nodeUsage.callsShort', { count: usage.calls })}</span>}
         {usage.failedCalls > 0 && (
-          <span className="ml-auto text-err">{usage.failedCalls} 失败</span>
+          <span className="ml-auto text-err">{t('nodeUsage.failuresShort', { count: usage.failedCalls })}</span>
         )}
       </span>
 
@@ -98,17 +101,17 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
             onClick={(e) => e.stopPropagation()}
           >
           <div className="mb-1.5 flex items-baseline justify-between gap-4 border-b border-line pb-1.5">
-            <span className="text-[10px] font-semibold text-ink">本节点用量</span>
+            <span className="text-[10px] font-semibold text-ink">{t('nodeUsage.title')}</span>
             <span className="font-mono text-[11px] tabular-nums text-ink">
               {usage.totalTokens.toLocaleString()}
             </span>
           </div>
 
           <div className="space-y-0.5">
-            <Row label="输入" value={usage.promptTokens.toLocaleString()} tone="in" />
+            <Row label={t('nodeUsage.input')} value={usage.promptTokens.toLocaleString()} tone="in" />
             {usage.cachedPromptTokens > 0 && (
               <Row
-                label="缓存命中"
+                label={t('nodeUsage.cachedPrompt')}
                 value={usage.cachedPromptTokens.toLocaleString()}
                 tone="hit"
                 indent
@@ -116,30 +119,30 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
             )}
             {usage.writtenPromptTokens > 0 && (
               <Row
-                label="缓存写入"
+                label={t('nodeUsage.cacheWrite')}
                 value={usage.writtenPromptTokens.toLocaleString()}
                 tone="muted"
                 indent
               />
             )}
-            <Row label="输出" value={usage.completionTokens.toLocaleString()} tone="out" />
+            <Row label={t('nodeUsage.output')} value={usage.completionTokens.toLocaleString()} tone="out" />
             {usage.reasoningTokens > 0 && (
               <Row
-                label="思考过程"
+                label={t('nodeUsage.reasoning')}
                 value={usage.reasoningTokens.toLocaleString()}
                 tone="muted"
                 indent
               />
             )}
             {usage.replyTokens > 0 && usage.reasoningTokens > 0 && (
-              <Row label="回复内容" value={usage.replyTokens.toLocaleString()} tone="muted" indent />
+              <Row label={t('nodeUsage.reply')} value={usage.replyTokens.toLocaleString()} tone="muted" indent />
             )}
           </div>
 
           {usage.cachedPromptTokens > 0 && (
             <div className="mt-1.5 border-t border-line pt-1.5">
               <div className="mb-1 flex items-baseline justify-between">
-                <span className="text-[10px] text-ink-soft">缓存命中率</span>
+                <span className="text-[10px] text-ink-soft">{t('nodeUsage.cacheRate')}</span>
                 <span className="font-mono text-[10px] tabular-nums text-ok">{cacheHitRate}%</span>
               </div>
               <div className="h-1 overflow-hidden rounded-full bg-paper-soft">
@@ -152,16 +155,16 @@ export default function NodeUsageBadge({ usage }: { usage: NodeUsageStat }) {
           )}
 
           <div className="mt-1.5 space-y-0.5 border-t border-line pt-1.5">
-            <Row label="调用次数" value={`${usage.calls} 次`} tone="muted" />
-            <Row label="平均耗时" value={`${avgMs}ms`} tone="muted" />
+            <Row label={t('nodeUsage.calls')} value={t('nodeUsage.callValue', { count: usage.calls })} tone="muted" />
+            <Row label={t('nodeUsage.avgDuration')} value={`${avgMs}ms`} tone="muted" />
             {usage.failedCalls > 0 && (
-              <Row label="失败次数" value={`${usage.failedCalls} 次`} tone="muted" />
+              <Row label={t('nodeUsage.failedCalls')} value={t('nodeUsage.callValue', { count: usage.failedCalls })} tone="muted" />
             )}
           </div>
 
           {usage.models.length > 0 && (
             <div className="mt-1.5 border-t border-line pt-1.5">
-              <div className="mb-0.5 text-[10px] text-ink-soft">模型</div>
+              <div className="mb-0.5 text-[10px] text-ink-soft">{t('nodeUsage.model')}</div>
               {usage.models.map((m) => (
                 <div key={m} className="truncate font-mono text-[10px] text-ink-faint" title={m}>
                   {m}

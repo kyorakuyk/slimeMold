@@ -34,7 +34,7 @@ export function markWorkerTaskCleaned(
   const taskId = requiredText(input.taskId, 'task id');
   const receiptId = requiredText(input.receiptId, 'receipt id');
   const stateSignature = requiredText(input.stateSignature, 'state signature');
-  const decisionId = requiredText(input.decisionId, 'decision id');
+  requiredText(input.decisionId, 'decision id');
   const now = requiredText(input.now, '时间');
   const task = input.state.tasks[taskId];
   if (!task) throw new Error(`队列中不存在任务：${taskId}`);
@@ -63,6 +63,25 @@ export function markWorkerTaskCleaned(
     || input.receipt.receipt?.receiptId !== `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:receipt`
     || input.receipt.receipt?.outcome !== 'succeeded'
     || input.receipt.receipt?.outputHash !== stateSignature
+    || !input.receipt.receipt.cleanup
+    || !input.receipt.receipt.cleanup.hostReadback
+    || input.receipt.receipt.cleanup.hostReadback.authority !== 'native'
+    || !input.receipt.receipt.cleanup.targetIdentity?.trim()
+    || !input.receipt.receipt.cleanup.hostReadback.targetIdentity?.trim()
+    || input.receipt.receipt.cleanup.hostReadback.finalStatus !== 'absent'
+    || pathComparisonKey(input.receipt.receipt.cleanup.hostReadback.worktreePath)
+      !== pathComparisonKey(input.receipt.receipt.cleanup.worktreePath)
+    || input.receipt.receipt.cleanup.hostReadback.branch !== input.receipt.receipt.cleanup.branch
+    || input.receipt.receipt.cleanup.hostReadback.branchRevision !== input.receipt.receipt.cleanup.branchRevision
+    || input.receipt.receipt.cleanup.hostReadback.targetIdentity !== input.receipt.receipt.cleanup.targetIdentity
+    || input.receipt.receipt.cleanup.worktreePath !== task.worktreePath
+    || input.receipt.receipt.cleanup.worktreeId !== task.worktreeId
+    || !task.targetIdentity?.trim()
+    || input.receipt.receipt.cleanup.targetIdentity !== task.targetIdentity
+    || input.receipt.receipt.cleanup.branch !== task.branch
+    || input.receipt.receipt.cleanup.branchRevision !== task.branchRevision
+    || input.receipt.receipt.cleanup.baseRevision !== task.baseRevision
+    || input.receipt.receipt.cleanup.finalStatus !== 'absent'
     || input.receipt.recovery !== 'skip'
     || input.receipt.runId !== input.state.runId
     || input.receipt.taskId !== taskId
@@ -95,7 +114,7 @@ export function markWorkerTaskCleaned(
     },
   };
   const event: DomainEvent = {
-    eventId: `${decisionId}:task-cleaned:${expectedTaskExecutionId}`,
+    eventId: `${workerCleanupEffectKey(expectedTaskExecutionId, expectedAttemptId)}:TaskCleaned`,
     streamId: input.state.projectId,
     sequence: 1,
     aggregateType: 'TaskExecution',

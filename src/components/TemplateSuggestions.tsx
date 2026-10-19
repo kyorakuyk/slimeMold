@@ -42,7 +42,7 @@ export default function TemplateSuggestions() {
         // 折叠连续重复（如多个 input.text 视为一类），保留结构特征
         const collapsed = seq.filter((t, i) => i === 0 || t !== seq[i - 1]);
         const key = collapsed.join(' › ');
-        const names = nodes.map((n) => n.label || getNodeDef(n.typeId)?.name || n.typeId || '未命名');
+        const names = nodes.map((n) => n.label || getNodeDef(n.typeId)?.name || n.typeId || t('templates.unnamed'));
         const prev = byKey.get(key);
         const tokens = rec.cost?.totalTokens ?? 0;
         if (prev) {
@@ -71,7 +71,7 @@ export default function TemplateSuggestions() {
       // 任何解析异常都不影响节点库面板本身
       return [];
     }
-  }, [runHistory]);
+  }, [runHistory, t]);
 
   if (runHistory.length === 0) {
     return (

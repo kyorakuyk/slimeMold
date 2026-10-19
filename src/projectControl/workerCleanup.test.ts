@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AcceptanceRecord } from '../dev/session';
+import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
-import { buildWorkerCleanupProposal, buildWorkerCleanupProposalSafely } from './workerCleanup';
+import {
+  buildWorkerCleanupProposal,
+  buildWorkerCleanupProposalSafely,
+  workerCleanupDecisionId,
+} from './workerCleanup';
 
 function run(): WorkerRunQueueState {
   return {
@@ -52,6 +57,14 @@ function acceptance(): AcceptanceRecord {
 }
 
 describe('worker cleanup proposal', () => {
+  it('derives the TaskCleaned decision id from the cleanup attempt lineage', () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(workerCleanupDecisionId(taskExecutionId, attemptId))
+      .toBe(`cleanup-decision:cleanup:${attemptId}`);
+  });
+
   it('binds cleanup to the accepted worktree baseline and current signature', async () => {
     const computeWorktreeSignature = vi.fn(async () => 'sig-1');
     const proposal = await buildWorkerCleanupProposal({
@@ -104,7 +117,27 @@ describe('worker cleanup proposal', () => {
     });
   });
 
-  it('binds cleanup to the Acceptance stage when it differs from the task id', async () => {
+  it('retains current task lineage on a blocked cleanup proposal', async () => {
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const task = { ...run().tasks['task-1'], taskExecutionId, currentAttemptId: attemptId };
+    const proposal = await buildWorkerCleanupProposalSafely({
+      run: run(),
+      task,
+      acceptance: acceptance(),
+      computeWorktreeSignature: vi.fn(async () => { throw new Error('git status read failed'); }),
+      sideEffects: [],
+    });
+
+    expect(proposal).toMatchObject({
+      status: 'blocked',
+      taskExecutionId,
+      attemptId,
+      reason: expect.stringContaining('git status read failed'),
+    });
+  });
+
+  it('binds the Acceptance stage when it differs from the task id', async () => {
     const task = { ...run().tasks['task-1'], acceptanceStageId: 'verify' };
     const proposal = await buildWorkerCleanupProposal({
       run: run(),
@@ -275,7 +308,7 @@ describe('worker cleanup proposal', () => {
     }));
   });
 
-  it('projects a cleaned task as a terminal proposal instead of asking to clean it again', async () => {
+  it('requires trusted identity read-back before projecting a cleanup receipt as completed', async () => {
     const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
     const attemptId = createAttemptId(taskExecutionId, 1);
     const cleanupKey = `cleanup:${attemptId}`;
@@ -283,37 +316,81 @@ describe('worker cleanup proposal', () => {
       ...run().tasks['task-1'],
       taskExecutionId,
       currentAttemptId: attemptId,
+      targetIdentity: 'target-1',
       cleanupStatus: 'cleaned' as const,
       cleanupReceiptId: `${cleanupKey}:receipt`,
     };
 
-    await expect(buildWorkerCleanupProposal({
+    const receipt: SideEffectRecord = {
+      idempotencyKey: cleanupKey,
+      kind: 'worktree-cleanup',
+      target: 'C:/project-workers/run-1/task-1',
+      inputHash: 'abc123:sig-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId,
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: `${cleanupKey}:receipt`,
+        observedAt: '2026-09-01T00:02:00.000Z',
+        outcome: 'succeeded',
+        outputHash: 'sig-1',
+        cleanup: {
+          worktreePath: 'C:/project-workers/run-1/task-1',
+          worktreeId: 'wt-1',
+          branch: 'worker/task-1',
+          branchRevision: 'a'.repeat(40),
+          baseRevision: 'abc123',
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-01T00:02:00.000Z',
+          hostReadback: {
+            authority: 'native',
+            worktreePath: 'C:/project-workers/run-1/task-1',
+            branch: 'worker/task-1',
+            branchRevision: 'a'.repeat(40),
+            finalStatus: 'absent',
+          },
+        },
+      },
+    };
+    const proposalInput = {
       run: run(),
       task: cleanedTask,
       acceptance: acceptance(),
       isWorktreeTracked: () => false,
       computeWorktreeSignature: vi.fn(async () => 'never'),
-      sideEffects: [{
-        idempotencyKey: cleanupKey,
-        kind: 'worktree-cleanup',
-        target: 'wt-1',
-        inputHash: 'abc123:sig-1',
-        runId: 'run-1',
-        taskId: 'task-1',
-        taskExecutionId,
-        attemptId,
-        status: 'receipt',
-        recovery: 'skip',
-        receipt: { receiptId: `${cleanupKey}:receipt`, observedAt: '2026-09-01T00:02:00.000Z', outcome: 'succeeded', outputHash: 'sig-1' },
-      }],
-    })).resolves.toEqual({
+    };
+
+    await expect(buildWorkerCleanupProposal({
+      ...proposalInput,
+      sideEffects: [receipt],
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'blocked',
+      reason: expect.stringMatching(/identity|readback/i),
+    }));
+
+    const trustedReceipt: SideEffectRecord = {
+      ...receipt,
+      receipt: {
+        ...receipt.receipt!,
+        cleanup: {
+          ...receipt.receipt!.cleanup!,
+          targetIdentity: 'target-1',
+          hostReadback: {
+            ...receipt.receipt!.cleanup!.hostReadback!,
+            targetIdentity: 'target-1',
+          },
+        },
+      },
+    };
+    await expect(buildWorkerCleanupProposal({
+      ...proposalInput,
+      sideEffects: [trustedReceipt],
+    })).resolves.toEqual(expect.objectContaining({
       status: 'cleaned',
-      runId: 'run-1',
-      taskId: 'task-1',
-      attempt: 1,
-      taskExecutionId: createTaskExecutionId('run-1', 'task-1'),
-      attemptId: createAttemptId(createTaskExecutionId('run-1', 'task-1'), 1),
       receiptId: `${cleanupKey}:receipt`,
-    });
+    }));
   });
 });

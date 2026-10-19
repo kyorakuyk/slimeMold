@@ -119,11 +119,13 @@ function applyTaskEvent(
   const worktreePath = text(p.worktreePath);
   const branch = text(p.branch);
   const baseRevision = text(p.baseRevision);
+  const targetIdentity = text(p.targetIdentity);
   const worktreeStatus = text(p.worktreeStatus) as WorkerQueueTask['worktreeStatus'] | undefined;
   if (worktreeId) next.worktreeId = worktreeId;
   if (worktreePath) next.worktreePath = worktreePath;
   if (branch) next.branch = branch;
   if (baseRevision) next.baseRevision = baseRevision;
+  if (targetIdentity) next.targetIdentity = targetIdentity;
   if (worktreeStatus && ['created', 'cleaned', 'orphaned', 'registration-pending'].includes(worktreeStatus)) {
     next.worktreeStatus = worktreeStatus;
   }
@@ -161,6 +163,7 @@ function applyTaskEvent(
     next.worktreePath = undefined;
     next.branch = undefined;
     next.baseRevision = undefined;
+    next.targetIdentity = undefined;
     next.worktreeStatus = undefined;
     next.branchRevision = undefined;
     next.cleanupStateSignature = undefined;

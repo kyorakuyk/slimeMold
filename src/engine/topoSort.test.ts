@@ -168,10 +168,10 @@ describe('topoStages', () => {
     const output = execFileSync(
       process.execPath,
       ['node_modules/tsx/dist/cli.mjs', '-e', script],
-      { cwd: process.cwd(), encoding: 'utf8', timeout: 2_000 },
+      { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 },
     );
     const result = JSON.parse(output) as { stages: string[][]; cyclic: string[] };
     expect(result.cyclic).toEqual([]);
     expect(result.stages.flat()).toEqual(['gate', 'body']);
-  });
+  }, 15_000);
 });

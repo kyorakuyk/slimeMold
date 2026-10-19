@@ -1,6 +1,7 @@
 import type { AgentConfig, RoleTemplate } from '../types/agent';
 import type { WorkflowCatalogState } from './workflowCatalogTypes';
 import type { WorkflowProjectionState } from './workflowProjectionTypes';
+import i18n from '../i18n';
 export type { WorkflowCatalogState } from './workflowCatalogTypes';
 export type WorkflowCatalogCommandState = WorkflowCatalogState & Pick<WorkflowProjectionState, 'agentRouteTable'>;
 import {
@@ -65,7 +66,7 @@ export function createWorkflowCatalogCommands<State extends WorkflowCatalogComma
     removeRole: (id: string): void => {
       const result = buildRemoveRoleState(ports.getState().roles, id);
       if (result.rejected) {
-        ports.addLog('error', result.message ?? '内置角色不可删除');
+        ports.addLog('error', i18n.t('log.catalog.builtinRoleRemovalRejected'));
         return;
       }
       setCatalog({ roles: result.roles });

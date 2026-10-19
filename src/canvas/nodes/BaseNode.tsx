@@ -9,8 +9,11 @@ import { retryNode, runToNode, runSingleNode } from '../../engine/executor';
 import { CanvasWfIdContext } from '../canvasWfId';
 import { resolvePorts, SUBGRAPH_REF_TYPE } from '../../engine/subgraph';
 import NodeUsageBadge from './NodeUsageBadge';
+import { useT } from '../../i18n/useT';
+import { localizeNodeCategory } from '../../i18n/nodeLabels';
 
 function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
+  const t = useT('ui');
   if (status === 'running') return <span className="sm-spinner" />;
   const cls: Record<NodeStatus, string> = {
     idle: 'bg-[#d0d0d0]',
@@ -24,13 +27,13 @@ function StatusDot({ status, error }: { status: NodeStatus; error?: string }) {
   };
   const title =
     status === 'cached'
-      ? '结果来自缓存（未实际执行）'
+      ? t('canvas.node.status.cached')
       : status === 'skipped'
-        ? '因分支条件未命中而跳过（未执行）'
+        ? t('canvas.node.status.skipped')
         : status === 'bypassed'
-          ? 'bypass：跳过执行，输入已透传到输出'
+          ? t('canvas.node.status.bypassed')
           : status === 'muted'
-            ? 'mute：已静音，不执行'
+            ? t('canvas.node.status.muted')
             : error;
   return (
     <span
@@ -82,16 +85,22 @@ const portBadgeCls: Record<string, string> = {
   image: 'bg-[#0891b2] text-[#0891b2]',
 };
 function PortBadge({ type }: { type?: string }) {
-  const t = type ?? 'any';
+  const translate = useT('ui');
+  const portType = type ?? 'any';
   return (
     <span
-      title={`端口类型：${t}`}
-      className={`sm-port-badge ${portBadgeCls[t] ?? portBadgeCls.any}`}
+      title={translate('canvas.node.portType', { type: portType })}
+      className={`sm-port-badge ${portBadgeCls[portType] ?? portBadgeCls.any}`}
     />
   );
 }
 
+/**
+ * 将节点数据与当前画布工作流的运行态投影组合成画布单元；拆分视图必须按 `canvasWfId` 读取运行态。
+ * 重跑/单节点运行仍受该工作流的 `running` 状态门控（ADR-SM-005）。
+ */
 const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
+  const t = useT('ui');
   const def = useRegistryStore((s) => s.defs[data.typeId]);
   // 方案 A：节点运行类操作需定位到所属工作流（拆分视图右栏）
   const canvasWfId = useContext(CanvasWfIdContext);
@@ -110,6 +119,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
   const unpack = useWorkflowStore((s) => s.unpackSubgraphNode);
   const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
   const debugMode = useViewStore((s) => s.debugMode);
+  const categoryLabel = def?.category ? localizeNodeCategory(def.category, t) : undefined;
 
   const missing = isSubgraph ? !subgraph : !def || def.missing;
   const resolved = resolvePorts(data.typeId, data.params, allDefs, allSubgraphs);
@@ -153,7 +163,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         e.stopPropagation();
         setExpanded((v) => !v);
       }}
-      title="双击展开 / 收起下方详情"
+      title={t('canvas.node.toggleDetails')}
     >
       {/* 分类配色标题栏（HUD 风格） */}
       <div className="sm-node-header" title={def?.description}>
@@ -165,14 +175,14 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         )}
         <span className="sm-node-title">{data.label}</span>
         {def?.pluginId && <span className="sm-node-tag">PLUGIN</span>}
-        <span className="sm-node-cat">{def?.category}</span>
+        <span className="sm-node-cat">{categoryLabel}</span>
         {data.bypass && (
-          <span className="sm-node-badge sm-badge-bypass" title="bypass：跳过执行，输入透传输出">
+          <span className="sm-node-badge sm-badge-bypass" title={t('canvas.node.bypassBadge')}>
             BYPASS
           </span>
         )}
         {data.mute && (
-          <span className="sm-node-badge sm-badge-mute" title="mute：已静音，不执行">
+          <span className="sm-node-badge sm-badge-mute" title={t('canvas.node.muteBadge')}>
             MUTE
           </span>
         )}
@@ -184,14 +194,14 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               className="sm-node-badge"
               title={
                 data.status === 'cached'
-                  ? '缓存命中（未实际执行）'
-                  : `耗时 ${data.durationMs}ms`
+                  ? t('canvas.node.cacheHit')
+                  : t('canvas.node.status.duration', { duration: data.durationMs })
               }
             >
               {data.status === 'cached' ? 'CACHED' : `${data.durationMs}ms`}
             </span>
           )}
-        <span className="sm-node-collapse-hint" title={expanded ? '双击收起' : '双击展开下方详情'}>
+        <span className="sm-node-collapse-hint" title={expanded ? t('canvas.node.collapse') : t('canvas.node.expand')}>
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
         <StatusGlyph status={data.status} />
@@ -250,13 +260,13 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
         <div className="border-t border-line px-3 py-2">
           {missing && (
             <p className="text-[11px] leading-relaxed text-err">
-              {isSubgraph ? '子图定义已丢失，请重新创建或删除该节点' : `节点类型缺失：${data.typeId}`}
+              {isSubgraph ? t('canvas.node.subgraphMissing') : t('canvas.node.typeMissing', { typeId: data.typeId })}
             </p>
           )}
           {isSubgraph && subgraph && (
             <p className="flex items-center gap-1 text-[11px] leading-relaxed text-ink-faint">
               <Boxes size={11} />
-              内含 {subgraph.nodes.length} 个步骤 · {inputs.length} 入 / {outputs.length} 出
+              {t('canvas.node.subgraphSummary', { steps: subgraph.nodes.length, inputs: inputs.length, outputs: outputs.length })}
             </p>
           )}
           {paramSummary.map((s, i) => (
@@ -274,7 +284,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
           {previewValue !== null && previewImage === null && (
             <div>
               <p className={`sm-node-preview ${isTextOutput ? 'is-text' : ''}`}>
-                {previewValue || '（空）'}
+                {previewValue || t('canvas.node.emptyPreview')}
               </p>
               {isTextOutput && previewValue && (
                 <button
@@ -283,9 +293,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
                     e.stopPropagation();
                     void navigator.clipboard?.writeText(previewValue);
                   }}
-                  title="复制文本内容"
+                  title={t('canvas.node.copyTitle')}
                 >
-                  <Copy size={11} /> 复制文本
+                  <Copy size={11} /> {t('canvas.node.copyAction')}
                 </button>
               )}
             </div>
@@ -304,9 +314,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               e.stopPropagation();
               setFocusedSubgraph(String(data.params?.subgraphId ?? ''));
             }}
-            title="进入子图内部进行编辑"
+            title={t('canvas.node.subgraphEditTitle')}
           >
-            <Boxes size={11} /> 进入子图
+            <Boxes size={11} /> {t('canvas.node.subgraphEditAction')}
           </button>
           <span className="sm-sep" />
           <button
@@ -315,9 +325,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               if (!running) unpack(id);
             }}
             disabled={running}
-            title="把子图内部的节点还原到画布上（解组）"
+            title={t('canvas.node.subgraphUnpackTitle')}
           >
-            <Ungroup size={11} /> 展开子图
+            <Ungroup size={11} /> {t('canvas.node.subgraphUnpackAction')}
           </button>
         </div>
       )}
@@ -330,9 +340,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               if (!running) void retryNode(id, canvasWfId);
             }}
             disabled={running}
-            title="重新执行此节点及其下游（复用上游已有输出，并清除该节点缓存）"
+            title={t('canvas.node.retryTitle')}
           >
-            <RotateCcw size={11} /> 重跑子图
+            <RotateCcw size={11} /> {t('canvas.node.retryAction')}
           </button>
           <span className="sm-sep" />
           <button
@@ -341,9 +351,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               if (!running) void runToNode(id, canvasWfId);
             }}
             disabled={running}
-            title="只重跑到此节点为止，其下游不再执行（标记 skipped）"
+            title={t('canvas.node.runToTitle')}
           >
-            <StepForward size={11} /> 重跑到此节点
+            <StepForward size={11} /> {t('canvas.node.runToAction')}
           </button>
           <span className="sm-sep" />
           <button
@@ -352,9 +362,9 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               if (!running) void runSingleNode(id, canvasWfId);
             }}
             disabled={running}
-            title="单独运行此节点（不执行上游/下游，用于孤立调试）"
+            title={t('canvas.node.runSingleTitle')}
           >
-            <Play size={11} /> 单独运行
+            <Play size={11} /> {t('canvas.node.runSingleAction')}
           </button>
           <span className="sm-sep" />
           <button
@@ -363,7 +373,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               useWorkflowStore.getState().toggleNodeBypass(id);
             }}
             className={data.bypass ? 'is-active' : ''}
-            title="bypass：跳过执行，同名端口输入透传输出（再次点击取消）"
+            title={t('canvas.node.bypassTitle')}
           >
             <ArrowRightLeft size={11} /> Bypass
           </button>
@@ -374,7 +384,7 @@ const BaseNode = memo(({ data, selected, id }: NodeProps<FlowNode>) => {
               useWorkflowStore.getState().toggleNodeMute(id);
             }}
             className={data.mute ? 'is-active' : ''}
-            title="mute：完全屏蔽该节点（不执行，输出为空）"
+            title={t('canvas.node.muteTitle')}
           >
             <VolumeX size={11} /> Mute
           </button>

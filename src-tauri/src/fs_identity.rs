@@ -10,6 +10,12 @@ pub(crate) struct StableDirectoryIdentity {
     pub(crate) file_or_inode: u64,
 }
 
+impl StableDirectoryIdentity {
+    pub(crate) fn token(&self) -> String {
+        format!("v1:{}:{}", self.volume_or_device, self.file_or_inode)
+    }
+}
+
 pub(crate) fn stable_directory_identity(
     path: &std::path::Path,
 ) -> Result<StableDirectoryIdentity, String> {

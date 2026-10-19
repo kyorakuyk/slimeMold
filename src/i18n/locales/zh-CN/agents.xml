@@ -24,7 +24,6 @@
   <string name="agent.list.default">当前默认智能体</string>
   <string name="agent.list.setDefault">设为默认</string>
   <string name="agent.list.newByPreset">+ 按供应商预设新建…</string>
-  <string name="agent.list.customProxy">（自定义中转）</string>
   <string name="agent.list.addTitle">新建{{label}}智能体</string>
   <string name="agent.list.importTitle">从 APIKEYS 库导入已配置的接入点</string>
   <string name="agent.list.importOption">⇩ 从 API 库导入已配置的接入点…</string>
@@ -34,6 +33,18 @@
   <string name="agent.edit.close">收起编辑配置</string>
   <string name="agent.field.name">名称</string>
   <string name="agent.field.protocol">协议</string>
+  <string name="agent.protocol.openai">OpenAI 兼容</string>
+  <string name="agent.protocol.anthropic">Anthropic</string>
+  <string name="agent.protocol.ollama">Ollama 本地</string>
+  <string name="agent.protocol.codex">OpenAI Codex（ChatGPT 订阅）</string>
+  <string name="agent.protocol.antigravity">Antigravity CLI（交互式）</string>
+  <string name="agent.provider.openai">OpenAI 官方</string>
+  <string name="agent.provider.deepseek">DeepSeek 官方</string>
+  <string name="agent.provider.siliconflow">硅基流动 SiliconFlow</string>
+  <string name="agent.provider.openrouter">OpenRouter 聚合</string>
+  <string name="agent.provider.custom">自定义中转</string>
+  <string name="agent.provider.codex">OpenAI Codex（ChatGPT 订阅）</string>
+  <string name="agent.provider.antigravity">Antigravity CLI（交互式）</string>
   <string name="agent.field.baseUrl">Base URL</string>
   <string name="agent.ollamaHint">本地 Ollama 模型无需 API Key，凭据留空即可。</string>
   <string name="agent.field.model">模型</string>
@@ -70,7 +81,26 @@
   <string name="agent.model.noAnthropicModels">未获取到模型。Anthropic 原生无 /models 端点，中转站请改用「OpenAI 兼容」协议</string>
   <string name="agent.model.noModels">未获取到模型，请检查 Base URL 与 Key 是否正确</string>
   <string name="agent.model.pullFailed">拉取模型失败：{{error}}</string>
+  <string name="agent.model.note.qwen25_3b">~2GB 显存 · 6GB 显卡首选，流畅</string>
+  <string name="agent.model.note.qwen25_7b">~4.5GB 显存 · 质量更好，6GB 偏吃紧</string>
+  <string name="agent.model.note.llama31_8b">~5GB 显存 · 8GB+ 显卡推荐</string>
+  <string name="agent.model.note.deepseekR1_7b">~4.5GB 显存 · 推理强，6GB 偏吃紧</string>
+  <string name="agent.model.note.qwen25_05b">~0.5GB 显存 · 极轻量</string>
   <string name="agent.probe.proxied">经代理</string>
+  <string name="agent.probe.antigravityRegistration">Antigravity CLI 配置已登记；真实可用性由 Worker 启动和 Host Acceptance 验证</string>
+  <string name="agent.probe.emptyBaseUrl">Base URL 为空</string>
+  <string name="agent.probe.ollamaOk">连接成功，模型可用</string>
+  <string name="agent.probe.ollamaModelMissing">模型 "{{model}}" 不存在于该 Ollama 服务</string>
+  <string name="agent.probe.ollamaStatus">Ollama 返回 {{status}}</string>
+  <string name="agent.probe.connected">连接成功，模型与 Key 均有效</string>
+  <string name="agent.probe.authFailed">鉴权失败（{{status}}），API Key 无效或无权限</string>
+  <string name="agent.probe.anthropicUrl404">地址返回 404，请检查 Anthropic Base URL（应含 /v1 或正确域名）</string>
+  <string name="agent.probe.modelUnavailable">模型 "{{model}}" 不可用：{{details}}</string>
+  <string name="agent.probe.detailsSuffix">：{{details}}</string>
+  <string name="agent.probe.baseAndModelHint">，请检查 Base URL 与模型名</string>
+  <string name="agent.probe.requestFailed">请求失败（{{status}}）{{details}}</string>
+  <string name="agent.probe.openAiUrl404">地址返回 404，请检查 Base URL（OpenAI 兼容需带 /v1）</string>
+  <string name="agent.probe.connectionFailed">无法连接（网络/地址错误）：{{message}}</string>
 
   <!-- ApiKeyField -->
   <string name="agent.apikey.label">API Key（存于系统密钥库）</string>

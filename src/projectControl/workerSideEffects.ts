@@ -817,6 +817,7 @@ export function applyWorkerRunRecoveryDecision(input: {
           baseRevision: undefined,
           worktreeStatus: undefined,
           branchRevision: undefined,
+          cleanupStateSignature: undefined,
           evidenceIds: [],
           currentAttemptId: undefined,
           pendingAttempt: task.attempt + 1,

@@ -60,7 +60,9 @@ export type NodeDecision =
   | { kind: 'cached'; outputs: Record<string, unknown>; branches?: string[] }
   | { kind: 'execute' };
 
-/** 前置决策（纯函数）。 */
+/** 依次归约 mode、分支剪枝、stopAfter cut 和缓存命中，产出单一 NodeDecision。
+ * `forced` 只跳过缓存读取，不覆盖更早的 mode、prune 或 cut 判定（ADR-SM-017）。
+ */
 export function decideNodeExecution(input: NodeExecutionDecisionInput): NodeDecision {
   const {
     id,

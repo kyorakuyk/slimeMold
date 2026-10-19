@@ -4,6 +4,7 @@ import { chatAnthropic } from './providers/anthropic';
 import { chatOllama } from './providers/ollama';
 import { chatCodex } from './providers/codex';
 import { httpFetch } from '../platform/env';
+import i18n from '../i18n';
 
 /** 内置角色库：作为 Agent 的"职业"预设，开箱即用。
  * 用户可在角色库面板查看/基于它们创建自定义角色（不修改此处）。 */
@@ -119,30 +120,35 @@ export async function chatWithAgent(
 
 export const protocolDefaults: Record<
   Protocol,
-  { baseUrl: string; model: string; label: string }
+  { baseUrl: string; model: string; label: string; labelKey: string }
 > = {
   openai: {
     label: 'OpenAI 兼容',
+    labelKey: 'agent.protocol.openai',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
   },
   anthropic: {
     label: 'Anthropic',
+    labelKey: 'agent.protocol.anthropic',
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-sonnet-4-20250514',
   },
   ollama: {
     label: 'Ollama 本地',
+    labelKey: 'agent.protocol.ollama',
     baseUrl: 'http://localhost:11434',
     model: 'qwen2.5:3b',
   },
   codex: {
     label: 'OpenAI Codex（ChatGPT 订阅）',
+    labelKey: 'agent.protocol.codex',
     baseUrl: 'codex://local',
     model: '',
   },
   antigravity: {
     label: 'Antigravity CLI（交互式）',
+    labelKey: 'agent.protocol.antigravity',
     baseUrl: 'antigravity://local',
     model: '',
   },
@@ -152,7 +158,10 @@ export const protocolDefaults: Record<
  * 适用于 OpenAI 兼容中转/官方。自定义项仅占位，Base URL 留空让用户手填。 */
 export interface ProviderPreset {
   id: string;
+  /** Stable creation value; do not localize or replace with the display label. */
   name: string;
+  /** Locale key used only by catalog/settings UI. */
+  labelKey: string;
   /** 显示名（面板下拉可选，缺省回退 name） */
   label?: string;
   protocol: Protocol;
@@ -166,6 +175,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'openai',
     name: 'OpenAI 官方',
+    labelKey: 'agent.provider.openai',
     protocol: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
@@ -174,6 +184,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek 官方',
+    labelKey: 'agent.provider.deepseek',
     protocol: 'openai',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
@@ -182,6 +193,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'siliconflow',
     name: '硅基流动 SiliconFlow',
+    labelKey: 'agent.provider.siliconflow',
     protocol: 'openai',
     baseUrl: 'https://api.siliconflow.cn/v1',
     defaultModel: 'deepseek-ai/DeepSeek-V3',
@@ -190,6 +202,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'openrouter',
     name: 'OpenRouter 聚合',
+    labelKey: 'agent.provider.openrouter',
     protocol: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'openai/gpt-4o-mini',
@@ -198,6 +211,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'custom',
     name: '自定义中转',
+    labelKey: 'agent.provider.custom',
     protocol: 'openai',
     baseUrl: '',
     defaultModel: '',
@@ -206,6 +220,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'codex',
     name: 'OpenAI Codex（ChatGPT 订阅）',
+    labelKey: 'agent.provider.codex',
     protocol: 'codex',
     baseUrl: 'codex://local',
     defaultModel: '',
@@ -214,6 +229,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: 'antigravity',
     name: 'Antigravity CLI（交互式）',
+    labelKey: 'agent.provider.antigravity',
     protocol: 'antigravity',
     baseUrl: 'antigravity://local',
     defaultModel: '',
@@ -227,12 +243,12 @@ export function findProviderPreset(id?: string): ProviderPreset | undefined {
 
 /** 推荐给本地 Ollama 的模型（按显存友好度排序）。
  * 6GB 显存（如 RTX 2060）优先 qwen2.5:3b；7b/8b 也能跑但接近占满显存。 */
-export const ollamaModels: { id: string; note: string }[] = [
-  { id: 'qwen2.5:3b', note: '~2GB 显存 · 6GB 显卡首选，流畅' },
-  { id: 'qwen2.5:7b', note: '~4.5GB 显存 · 质量更好，6GB 偏吃紧' },
-  { id: 'llama3.1:8b', note: '~5GB 显存 · 8GB+ 显卡推荐' },
-  { id: 'deepseek-r1:7b', note: '~4.5GB 显存 · 推理强，6GB 偏吃紧' },
-  { id: 'qwen2.5:0.5b', note: '~0.5GB 显存 · 极轻量' },
+export const ollamaModels: { id: string; note: string; noteKey: string }[] = [
+  { id: 'qwen2.5:3b', note: '~2GB 显存 · 6GB 显卡首选，流畅', noteKey: 'agent.model.note.qwen25_3b' },
+  { id: 'qwen2.5:7b', note: '~4.5GB 显存 · 质量更好，6GB 偏吃紧', noteKey: 'agent.model.note.qwen25_7b' },
+  { id: 'llama3.1:8b', note: '~5GB 显存 · 8GB+ 显卡推荐', noteKey: 'agent.model.note.llama31_8b' },
+  { id: 'deepseek-r1:7b', note: '~4.5GB 显存 · 推理强，6GB 偏吃紧', noteKey: 'agent.model.note.deepseekR1_7b' },
+  { id: 'qwen2.5:0.5b', note: '~0.5GB 显存 · 极轻量', noteKey: 'agent.model.note.qwen25_05b' },
 ];
 
 /** 拉取本地 Ollama 已安装的模型列表（用于 UI 下拉候选）。
@@ -337,22 +353,58 @@ export async function fetchModelsByProtocol(
   return fetchOpenAIModels(baseUrl, apiKey, proxyUrl);
 }
 
+/** A translatable probe message, kept as a key and interpolation data in UI state. */
+export interface ProbeMessageSpec {
+  key: string;
+  options?: Record<string, string | number>;
+  nested?: Record<string, ProbeMessageSpec>;
+}
+
 /** API 可用性探测结果。
  * stage 表示失败发生在哪一环，便于用户区分"网址错"还是"key 错"还是"模型错"。 */
 export interface ProbeResult {
   ok: boolean;
   stage: 'url' | 'auth' | 'model' | 'ok';
+  /** Current-locale compatibility string; UI state should retain messageSpec instead. */
   message: string;
+  messageSpec: ProbeMessageSpec;
   /** 本次探测是否经本地代理转发（proxyUrl / 全局代理） */
   proxied?: boolean;
 }
 
+export type ProbeStatus = Pick<ProbeResult, 'ok' | 'stage'>;
+
+type ProbeTranslator = (key: string, options?: Record<string, string | number>) => string;
+
+export function translateProbeMessage(
+  spec: ProbeMessageSpec,
+  translate: ProbeTranslator = (key, options) => i18n.t(key, options),
+): string {
+  const options: Record<string, string | number> = { ...spec.options };
+  for (const [name, nested] of Object.entries(spec.nested ?? {})) {
+    options[name] = translateProbeMessage(nested, translate);
+  }
+  return translate(spec.key, options);
+}
+
+function createProbeResult(
+  ok: boolean,
+  stage: ProbeResult['stage'],
+  messageSpec: ProbeMessageSpec,
+  proxied?: boolean,
+): ProbeResult {
+  return {
+    ok,
+    stage,
+    message: translateProbeMessage(messageSpec),
+    messageSpec,
+    ...(proxied === undefined ? {} : { proxied }),
+  };
+}
+
 /**
- * 探测一个智能体配置是否真正可用：发一个最小请求（max_tokens=1）。
- * - 网络层/URL 失败 → stage='url'
- * - 401/403 → stage='auth'（key 无效或无权限）
- * - 404/400 且提示模型不存在 → stage='model'
- * - 正常返回 → stage='ok'
+ * 用最小请求或注册信号区分 provider 的 url/auth/model/ok 可用性阶段。
+ * 结果用于诊断，不授予执行能力；协议、认证、可用性保持分离（ADR-SM-019、ADR-SM-073）。
  */
 export async function probeAgent(
   config: { protocol: Protocol; baseUrl: string; model: string },
@@ -362,18 +414,13 @@ export async function probeAgent(
   const base = (config.baseUrl || '').replace(/\/+$/, '');
   const proxied = !!proxyUrl?.trim();
   if (config.protocol === 'antigravity') {
-    return {
-      ok: true,
-      stage: 'ok',
-      message: 'Antigravity CLI 配置已登记；真实可用性由 Worker 启动和 Host Acceptance 验证',
-      proxied: false,
-    };
+    return createProbeResult(true, 'ok', { key: 'agent.probe.antigravityRegistration' }, false);
   }
   // 本地代理转发（参考 cc-switch 路由）：经该代理出口做连通性探测，
   // 代理通 + 目标可达 → 证明整条链路（含代理）可用。
   const proxyOpt = proxied ? { proxy: proxyUrl!.trim() } : {};
   if (!base) {
-    return { ok: false, stage: 'url', message: 'Base URL 为空', proxied };
+    return createProbeResult(false, 'url', { key: 'agent.probe.emptyBaseUrl' }, proxied);
   }
   try {
     if (config.protocol === 'ollama') {
@@ -388,11 +435,19 @@ export async function probeAgent(
           options: { num_predict: 1 },
         }),
       });
-      if (res.ok) return { ok: true, stage: 'ok', message: '连接成功，模型可用', proxied };
-      if (res.status === 404) {
-        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不存在于该 Ollama 服务`, proxied };
+      if (res.ok) {
+        return createProbeResult(true, 'ok', { key: 'agent.probe.ollamaOk' }, proxied);
       }
-      return { ok: false, stage: 'url', message: `Ollama 返回 ${res.status}`, proxied };
+      if (res.status === 404) {
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.ollamaModelMissing',
+          options: { model: config.model },
+        }, proxied);
+      }
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.ollamaStatus',
+        options: { status: res.status },
+      }, proxied);
     }
 
     // Anthropic 原生协议：POST /v1/messages + x-api-key + anthropic-version
@@ -413,13 +468,16 @@ export async function probeAgent(
         }),
       });
       if (res.ok) {
-        return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+        return createProbeResult(true, 'ok', { key: 'agent.probe.connected' }, proxied);
       }
       if (res.status === 401 || res.status === 403) {
-        return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
+        return createProbeResult(false, 'auth', {
+          key: 'agent.probe.authFailed',
+          options: { status: res.status },
+        }, proxied);
       }
       if (res.status === 404) {
-        return { ok: false, stage: 'url', message: `地址返回 404，请检查 Anthropic Base URL（应含 /v1 或正确域名）`, proxied };
+        return createProbeResult(false, 'url', { key: 'agent.probe.anthropicUrl404' }, proxied);
       }
       let adetail = '';
       try {
@@ -429,14 +487,20 @@ export async function probeAgent(
         /* ignore */
       }
       if (/model/i.test(adetail) && /(not|exist|found|invalid)/i.test(adetail)) {
-        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${adetail}`, proxied };
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.modelUnavailable',
+          options: { model: config.model, details: adetail },
+        }, proxied);
       }
-      return {
-        ok: false,
-        stage: 'url',
-        message: `请求失败（${res.status}）${adetail ? '：' + adetail : '，请检查 Base URL 与模型名'}`,
-        proxied,
-      };
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.requestFailed',
+        options: { status: res.status },
+        nested: {
+          details: adetail
+            ? { key: 'agent.probe.detailsSuffix', options: { details: adetail } }
+            : { key: 'agent.probe.baseAndModelHint' },
+        },
+      }, proxied);
     }
 
     // OpenAI 兼容（遍历候选：原 base 优先，缺 /v1 时补 /v1 兜底）
@@ -456,10 +520,13 @@ export async function probeAgent(
         }),
       });
       if (res.ok) {
-        return { ok: true, stage: 'ok', message: '连接成功，模型与 Key 均有效', proxied };
+        return createProbeResult(true, 'ok', { key: 'agent.probe.connected' }, proxied);
       }
       if (res.status === 401 || res.status === 403) {
-        return { ok: false, stage: 'auth', message: `鉴权失败（${res.status}），API Key 无效或无权限`, proxied };
+        return createProbeResult(false, 'auth', {
+          key: 'agent.probe.authFailed',
+          options: { status: res.status },
+        }, proxied);
       }
       if (res.status === 404) {
         // 可能是缺 /v1 路径：继续尝试下一个候选；全部失败再返回 url 错误
@@ -473,24 +540,28 @@ export async function probeAgent(
         /* ignore */
       }
       if (/model/i.test(odetail) && /(not|exist|found|invalid)/i.test(odetail)) {
-        return { ok: false, stage: 'model', message: `模型 "${config.model}" 不可用：${odetail}`, proxied };
+        return createProbeResult(false, 'model', {
+          key: 'agent.probe.modelUnavailable',
+          options: { model: config.model, details: odetail },
+        }, proxied);
       }
-      return {
-        ok: false,
-        stage: 'url',
-        message: `请求失败（${res.status}）${odetail ? '：' + odetail : '，请检查 Base URL 与模型名'}`,
-        proxied,
-      };
+      return createProbeResult(false, 'url', {
+        key: 'agent.probe.requestFailed',
+        options: { status: res.status },
+        nested: {
+          details: odetail
+            ? { key: 'agent.probe.detailsSuffix', options: { details: odetail } }
+            : { key: 'agent.probe.baseAndModelHint' },
+        },
+      }, proxied);
     }
-    return { ok: false, stage: 'url', message: '地址返回 404，请检查 Base URL（OpenAI 兼容需带 /v1）', proxied };
+    return createProbeResult(false, 'url', { key: 'agent.probe.openAiUrl404' }, proxied);
   } catch (e: any) {
     const msg = e?.message ?? String(e);
-    return {
-      ok: false,
-      stage: 'url',
-      message: `无法连接（网络/地址错误）：${msg}`,
-      proxied,
-    };
+    return createProbeResult(false, 'url', {
+      key: 'agent.probe.connectionFailed',
+      options: { message: msg },
+    }, proxied);
   }
 }
 

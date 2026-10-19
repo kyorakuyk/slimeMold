@@ -1,0 +1,535 @@
+import { describe, expect, it } from 'vitest';
+import type { DomainEvent } from '../domain/contracts';
+import { InMemoryEventStoreAdapter } from '../domain/eventStore';
+import type { WorkerRunQueueState } from '../domain/workerQueue';
+import { createAttemptId, createTaskExecutionId } from '../domain/execution';
+import {
+  WorkerRecoveryDecisionCasError,
+  WorkerRecoveryDecisionPersistence,
+} from './workerRecoveryDecisionPersistence';
+
+const factsFingerprint = (hex: string): string => `worker-recovery-facts-v1:sha256:${hex.repeat(64)}`;
+
+function candidate(decision: 'retry' | 'skip' = 'retry', decisionId = 'decision-1') {
+  const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+  const retry = decision === 'retry';
+  const taskEvent: DomainEvent = retry
+    ? {
+      eventId: `${decisionId}:TaskQueued:${taskExecutionId}`,
+      streamId: 'project-1',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 1,
+      eventType: 'TaskQueued',
+      schemaVersion: 1,
+      payload: {
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        nextAttempt: 1,
+        recoveryDecisionId: decisionId,
+      },
+      actor: 'user',
+      occurredAt: '2026-09-22T00:00:00.000Z',
+      correlationId: 'run-1',
+      source: { objectId: 'graph-1', objectVersion: 1 },
+      sensitivity: 'normal',
+    }
+    : {
+      eventId: `${decisionId}:TaskFailed:${taskExecutionId}`,
+      streamId: 'project-1',
+      sequence: 2,
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      aggregateVersion: 1,
+      eventType: 'TaskFailed',
+      schemaVersion: 1,
+      payload: {
+        runId: 'run-1',
+        taskId: 'task-1',
+        taskExecutionId,
+        error: '恢复决策导致任务跳过',
+        attempt: 1,
+        attemptId: createAttemptId(taskExecutionId, 1),
+      },
+      actor: 'user',
+      occurredAt: '2026-09-22T00:00:00.000Z',
+      correlationId: 'run-1',
+      source: { objectId: 'graph-1', objectVersion: 1 },
+      sensitivity: 'normal',
+    };
+  const decisionEvent: DomainEvent = {
+    eventId: `${decisionId}:WorkerRunRecoveryDecided:run-1`,
+    streamId: 'project-1',
+    sequence: 1,
+    aggregateType: 'Run',
+    aggregateId: 'run-1',
+    aggregateVersion: 1,
+    eventType: 'WorkerRunRecoveryDecided',
+    schemaVersion: 1,
+    payload: {
+      runId: 'run-1',
+      decision,
+      reason: '恢复 durable decision',
+      effectKeys: [],
+      requiresNewAttempt: decision === 'retry',
+      taskIds: ['task-1'],
+    },
+    actor: 'user',
+    occurredAt: '2026-09-22T00:00:00.000Z',
+    correlationId: 'run-1',
+    source: { objectId: 'graph-1', objectVersion: 1 },
+    sensitivity: 'normal',
+  };
+  return {
+    taskGraphTaskIds: ['task-1'],
+    state: {
+      version: 1,
+      projectId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      status: retry ? 'queued' : 'partial',
+      createdAt: '2026-09-22T00:00:00.000Z',
+      updatedAt: '2026-09-22T00:00:00.000Z',
+      tasks: {
+        'task-1': {
+          taskId: 'task-1',
+          taskDefinitionVersion: 1,
+          taskExecutionId,
+          status: retry ? 'queued' : 'failed',
+          attempt: retry ? 0 : 1,
+          ...(retry ? { pendingAttempt: 1 } : { currentAttemptId: createAttemptId(taskExecutionId, 1), error: '恢复决策导致任务跳过' }),
+          evidenceIds: [],
+          updatedAt: '2026-09-22T00:00:00.000Z',
+        },
+      },
+    } satisfies WorkerRunQueueState,
+    events: [decisionEvent, taskEvent],
+  };
+}
+
+function input(overrides: Record<string, unknown> = {}) {
+  return {
+    projectId: 'project-1',
+    runId: 'run-1',
+    requestIdentity: 'request-1',
+    action: 'retry' as const,
+    semanticPayloadVersion: 1 as const,
+    decisionId: 'decision-1',
+    factsFingerprint: factsFingerprint('a'),
+    candidate: candidate(),
+    now: '2026-09-22T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('WorkerRecoveryDecisionPersistence', () => {
+  it('rejects a TaskQueued event that uses the Run aggregate before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskQueued'
+        ? { ...event, aggregateType: 'Run' as const, aggregateId: 'run-1' }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/aggregateType|TaskQueued/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a recovery decision event without reason or effect keys', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'WorkerRunRecoveryDecided'
+        ? {
+          ...event,
+          payload: (() => {
+            const payload = { ...(event.payload as Record<string, unknown>) };
+            delete payload.reason;
+            delete payload.effectKeys;
+            return payload;
+          })(),
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/reason|effectKeys/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects an empty TaskBlocked blockedBy list before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate('skip');
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskFailed'
+        ? {
+          ...event,
+          eventId: 'decision-1:TaskBlocked:task-execution-run-1-task-1',
+          eventType: 'TaskBlocked' as const,
+          payload: {
+            ...(event.payload as Record<string, unknown>),
+            blockedBy: [],
+            reason: '依赖未完成',
+          },
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ action: 'skip', candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/blockedBy/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a queued candidate carrying live worktree authority fields', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      state: {
+        ...valid.state,
+        tasks: {
+          ...valid.state.tasks,
+          'task-1': {
+            ...valid.state.tasks['task-1'],
+            worktreeId: 'forged-worktree',
+            worktreePath: 'C:/forged-workers/task-1',
+            branch: 'worker/forged-task-1',
+            baseRevision: 'b'.repeat(40),
+            targetIdentity: 'forged-target',
+          },
+        },
+      },
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow(/queued|assignment|worktree/);
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a retry TaskQueued event without its next-attempt fence before journal write', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const valid = candidate();
+    const malformed = {
+      ...valid,
+      events: valid.events.map((event) => event.eventType === 'TaskQueued'
+        ? {
+          ...event,
+          payload: {
+            ...(event.payload as Record<string, unknown>),
+            nextAttempt: undefined,
+          },
+        }
+        : event),
+    };
+
+    await expect(persistence.admit(input({ candidate: malformed }), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+    })).rejects.toThrow('TaskQueued');
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('rejects a stale captured fingerprint before writing an admission', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+
+    await expect(persistence.admit(
+      input(),
+      { readCurrentFactsFingerprint: async () => factsFingerprint('b') },
+    )).rejects.toMatchObject({ code: 'stale' });
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('runs semantic candidate validation before persisting an admission', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+
+    await expect(persistence.admit(input(), {
+      readCurrentFactsFingerprint: async () => factsFingerprint('a'),
+      validateCandidate: async () => {
+        throw new WorkerRecoveryDecisionCasError('needs-repair', 'candidate reducer replay failed');
+      },
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'empty' });
+  });
+
+  it('durably admits, commits, and replays an exact request after a repository restart', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const first = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    const fresh = { readCurrentFactsFingerprint: async () => exact.factsFingerprint };
+
+    await expect(first.admit(exact, fresh)).resolves.toMatchObject({ kind: 'admitted' });
+    await expect(first.commit(exact)).resolves.toMatchObject({ status: 'committed' });
+
+    const restarted = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    await expect(restarted.admit(exact, {
+      readCurrentFactsFingerprint: async () => factsFingerprint('c'),
+      isCandidateApplied: async () => true,
+    })).resolves.toMatchObject({ kind: 'replay', record: { status: 'committed' } });
+  });
+
+  it('resumes a committed request when its durable candidate is missing from the projection', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await persistence.commit(exact);
+
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+      isCandidateApplied: async () => false,
+    })).resolves.toMatchObject({ kind: 'resume', record: { status: 'committed' } });
+  });
+
+  it('tracks retry post-commit dispatch and reads the status back durably', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await expect(persistence.commit(exact)).resolves.toMatchObject({
+      status: 'committed',
+      postCommitStatus: 'pending',
+    });
+    await expect(persistence.markPostCommit(exact, 'dispatching', exact.now)).resolves.toMatchObject({
+      postCommitStatus: 'dispatching',
+    });
+    await expect(persistence.markPostCommit(exact, 'completed', exact.now)).resolves.toMatchObject({
+      postCommitStatus: 'completed',
+    });
+    await expect(persistence.markPostCommit(exact, 'failed', exact.now)).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ postCommitStatus: 'completed' })] },
+    });
+  });
+
+  it('rechecks the projection under the durable commit lock', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    await expect(persistence.commit(exact, {
+      verifyProjection: async () => false,
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ status: 'admitted' })] },
+    });
+    await expect(persistence.commit(exact, {
+      verifyProjection: async () => true,
+    })).resolves.toMatchObject({ status: 'committed' });
+  });
+
+  it('marks a staged decision as needs-repair after a projection write failure', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    await expect(persistence.markNeedsRepair(exact, 'ProjectFile read-back failed', exact.now))
+      .resolves.toMatchObject({ repairReason: 'ProjectFile read-back failed' });
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+    await expect(persistence.read()).resolves.toMatchObject({
+      journal: { entries: [expect.objectContaining({ repairReason: 'ProjectFile read-back failed' })] },
+    });
+  });
+
+  it('resumes an admitted request with its durable candidate after a restart', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const first = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await first.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    const restarted = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    await expect(restarted.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    })).resolves.toMatchObject({ kind: 'resume', record: { status: 'admitted' } });
+  });
+
+  it('revalidates an existing durable candidate before replay or projection repair', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+    await persistence.commit(exact);
+
+    await expect(persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+      isCandidateApplied: async () => true,
+      validateCandidate: () => {
+        throw new WorkerRecoveryDecisionCasError('needs-repair', 'persisted candidate reducer drift');
+      },
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+  });
+
+  it('fails closed on a same request identity with changed facts or action', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    await expect(persistence.admit({
+      ...exact,
+      action: 'skip',
+      factsFingerprint: exact.factsFingerprint,
+      candidate: candidate('skip'),
+    }, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    })).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('rejects a second request for the same run facts and action', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await persistence.admit(exact, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    });
+
+    await expect(persistence.admit({
+      ...exact,
+      requestIdentity: 'request-2',
+      decisionId: 'decision-2',
+      candidate: candidate('retry', 'decision-2'),
+    }, {
+      readCurrentFactsFingerprint: async () => exact.factsFingerprint,
+    })).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('does not silently overwrite a malformed durable decision journal', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    await adapter.writeTextAtomic(persistence.path, '{broken');
+
+    await expect(persistence.admit(input(), {
+      readCurrentFactsFingerprint: async () => input().factsFingerprint,
+    })).rejects.toMatchObject({ code: 'needs-repair' });
+    expect(persistence).toBeInstanceOf(WorkerRecoveryDecisionPersistence);
+    expect(WorkerRecoveryDecisionCasError).toBeDefined();
+  });
+
+  it('rejects a durable candidate with an invalid run state before admission', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+        candidate: {
+          ...exact.candidate,
+          state: { ...exact.candidate.state, status: 'not-a-worker-run-status' },
+        },
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
+  });
+
+  it('rejects a durable candidate whose attempt has no execution lineage', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+        candidate: {
+          ...exact.candidate,
+          state: {
+            ...exact.candidate.state,
+            tasks: {
+              'task-1': {
+                taskId: 'task-1',
+                status: 'failed',
+                attempt: 1,
+                evidenceIds: [],
+                updatedAt: exact.now,
+              },
+            },
+          },
+        },
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
+  });
+
+  it('rejects an empty mutating recovery candidate event set', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input();
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+        candidate: { ...exact.candidate, events: [] },
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
+  });
+
+  it('rejects a recovery event whose decision payload disagrees with the admitted action', async () => {
+    const adapter = new InMemoryEventStoreAdapter();
+    const persistence = new WorkerRecoveryDecisionPersistence(adapter, 'project-1');
+    const exact = input({
+      candidate: candidate('skip'),
+    });
+
+    await adapter.writeTextAtomic(persistence.path, JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        schemaVersion: 1,
+        ...exact,
+        status: 'admitted',
+        admittedAt: exact.now,
+      }],
+    }));
+
+    await expect(persistence.read()).resolves.toMatchObject({ status: 'needs-repair' });
+  });
+});

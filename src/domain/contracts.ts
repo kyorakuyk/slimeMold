@@ -68,6 +68,7 @@ export interface AttemptRecord {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  targetIdentity?: string;
   evidenceIds?: string[];
   acceptanceId?: string;
   feedbackId?: string;
@@ -193,6 +194,11 @@ function taskLineageFor(
   payload: EventPayload,
   projection: DomainProjection,
 ): TaskLineage | undefined {
+  if (event.eventType === 'TaskBlocked'
+    && (Object.prototype.hasOwnProperty.call(payload, 'attempt')
+      || Object.prototype.hasOwnProperty.call(payload, 'attemptId'))) {
+    throw new Error(`TaskBlocked 不得携带 Attempt lineage：${event.eventId}`);
+  }
   const runId = payloadIdentityText(payload, 'runId');
   const taskId = taskIdFor(event, payload);
   if (!runId || !taskId) {
@@ -249,6 +255,7 @@ function taskExecutionPatch(payload: EventPayload, eventType: string): Partial<T
   const error = payloadText(payload, 'error');
   const receiptId = payloadText(payload, 'receiptId');
   return {
+
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
@@ -271,6 +278,8 @@ function attemptPatch(payload: EventPayload, eventType: string): Partial<Attempt
     ...(typeof payload.worktreePath === 'string' ? { worktreePath: payload.worktreePath } : {}),
     ...(typeof payload.branch === 'string' ? { branch: payload.branch } : {}),
     ...(typeof payload.baseRevision === 'string' ? { baseRevision: payload.baseRevision } : {}),
+    ...(typeof payload.targetIdentity === 'string' ? { targetIdentity: payload.targetIdentity } : {}),
+
     ...(evidenceIds !== undefined ? { evidenceIds } : {}),
     ...(acceptanceId ? { acceptanceId } : {}),
     ...(feedbackId ? { feedbackId } : {}),
@@ -368,6 +377,16 @@ function applyTaskLineageProjection(
     || eventType === 'TaskCleaned';
   if (payload.cleanupStatus === 'cleaned' && eventType !== 'TaskCleaned') {
     throw new Error(`cleanupStatus 只能由 TaskCleaned 事件写入：${lineage.taskExecutionId}`);
+  }
+  if (eventType === 'TaskBlocked') {
+    if (previous?.currentAttemptId
+      && currentAttempt
+      && (currentAttempt.status === 'running' || currentAttempt.status === 'waiting-feedback')) {
+      throw new Error(`TaskBlocked 不能保留 active Attempt：${lineage.taskExecutionId}`);
+    }
+    if (previous && previous.status !== 'queued') {
+      throw new Error(`TaskBlocked 只能从 queued 状态变更：${lineage.taskExecutionId}`);
+    }
   }
   if (eventType === 'TaskSucceeded' && !hasWorkerSuccessProvenance({
     evidenceIds: payloadEvidenceIds(payload),
@@ -502,6 +521,7 @@ function applyTaskLineageProjection(
         }
       : {}),
     ...(lineage.attemptId ? { currentAttemptId: lineage.attemptId } : {}),
+    ...(eventType === 'TaskBlocked' ? { currentAttemptId: undefined, pendingAttempt: undefined } : {}),
     ...taskExecutionPatch(payload, eventType),
   };
   if (eventType === 'TaskStarted' || eventType === 'TaskBlocked' || isCompletion) delete nextExecution.pendingAttempt;
@@ -586,6 +606,16 @@ function applyTaskEvent(
   const payload = payloadRecord(event.payload);
   const taskId = taskIdFor(event, payload);
   const runId = payloadIdentityText(payload, 'runId');
+  if (event.eventType === 'TaskBlocked') {
+    const blockedBy = payload.blockedBy;
+    if (!Array.isArray(blockedBy)
+      || blockedBy.length === 0
+      || blockedBy.some((dependency) => typeof dependency !== 'string' || !dependency.trim() || dependency.trim() !== dependency)
+      || new Set(blockedBy).size !== blockedBy.length
+      || (taskId !== undefined && blockedBy.includes(taskId))) {
+      throw new Error(`TaskBlocked blockedBy 无效：${taskId ?? event.aggregateId}`);
+    }
+  }
   if (taskId) applyLegacyTaskProjection(projection, taskId, runId, status, event.eventType, payload);
   const lineage = taskLineageFor(event, payload, projection);
   if (lineage) applyTaskLineageProjection(projection, lineage, status, event.eventType, payload, event);
@@ -845,17 +875,31 @@ export function validateApprovalGrant(
   return { ok: true };
 }
 
+export function isCanonicalTaskIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((taskId) => typeof taskId === 'string' && !!taskId.trim() && taskId.trim() === taskId)
+    && new Set(value).size === value.length;
+}
+
 export function approvePlanAndEnqueueRun(input: {
   grant: ApprovalGrant;
   current: ApprovalFingerprint;
   streamId: string;
   runId: string;
+  taskGraphId: string;
+  taskGraphVersion: number;
+  taskIds: readonly string[];
   sequence: number;
   projectVersion: number;
   now: string;
 }): DomainEvent[] {
   const validation = validateApprovalGrant(input.grant, input.current);
   if (!validation.ok) throw new Error(`不能批准计划：${validation.reason}`);
+  if (!isCanonicalTaskIdList(input.taskIds)) {
+    throw new Error('不能批准计划：taskIds 必须是非空、canonical 且唯一的 ID 列表');
+  }
+  const taskIds = [...input.taskIds];
 
   return [
     {
@@ -887,10 +931,18 @@ export function approvePlanAndEnqueueRun(input: {
       payload: {
         grantId: input.grant.id,
         runId: input.runId,
+        taskGraphId: input.taskGraphId,
+        taskGraphVersion: input.taskGraphVersion,
+        taskIds,
       },
       actor: 'runtime',
       occurredAt: input.now,
       causationId: input.grant.id,
+      correlationId: input.runId,
+      source: {
+        objectId: input.taskGraphId,
+        objectVersion: input.taskGraphVersion,
+      },
     },
   ];
 }
@@ -933,6 +985,27 @@ export function validateWorkerCapability(
 export type SideEffectStatus = 'planned' | 'started' | 'receipt' | 'unknown';
 export type SideEffectRecovery = 'retry' | 'skip' | 'needs-user';
 
+export interface CleanupHostReadback {
+  authority: 'native';
+  worktreePath: string;
+  branch: string;
+  branchRevision: string;
+  targetIdentity?: string;
+  finalStatus: 'absent';
+}
+
+export interface CleanupReceipt {
+  worktreePath: string;
+  worktreeId: string;
+  targetIdentity?: string;
+  branch: string;
+  branchRevision: string;
+  baseRevision: string;
+  finalStatus: 'absent';
+  hostVerifiedAt: string;
+  hostReadback?: CleanupHostReadback;
+}
+
 export interface SideEffectReceipt {
   receiptId: string;
   observedAt: string;
@@ -942,6 +1015,7 @@ export interface SideEffectReceipt {
   acceptanceId?: string;
   artifactCandidateId?: string;
   approvalId?: string;
+  cleanup?: CleanupReceipt;
   files?: Array<{ path: string; contentHash: string }>;
   error?: string;
 }

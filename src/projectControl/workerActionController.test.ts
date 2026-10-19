@@ -27,6 +27,7 @@ function controller(isTauri: boolean) {
     assertProjectOperation: vi.fn(),
     recordProjectEvents: vi.fn(),
     saveProject: vi.fn(async () => {}),
+    readProjectProjection: vi.fn(async () => null),
     runQueuedWorker: vi.fn(async () => {}),
     isTauri,
   }).recoverWorkerRun;
@@ -76,6 +77,7 @@ describe('worker action controller', () => {
       assertProjectOperation: vi.fn(),
       recordProjectEvents: vi.fn(),
       saveProject: vi.fn(async () => {}),
+      readProjectProjection: vi.fn(async () => null),
       runQueuedWorker: vi.fn(async () => {}),
       isTauri: true,
       ensureGuiDevSession,

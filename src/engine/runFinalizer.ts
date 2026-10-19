@@ -35,6 +35,8 @@ import {
 } from '../agents/experienceStore';
 import { modelPrice } from '../agents/routerScoring';
 import { skippedCount } from './nodeCache';
+import i18n from '../i18n';
+import { buildFinalizerRunRecord, summarizeFinalizerCosts } from './runFinalizerRecords';
 
 /** 收尾结果（H3b 编排器依赖：status 判定执行成败） */
 export interface RunFinalizeResult {
@@ -78,6 +80,173 @@ export interface FinalizeInput {
   stages: string[][];
 }
 
+interface FinalizerNodeSnapshot {
+  nodesNow: FlowNode[];
+  pruned: number;
+}
+
+function reconstructLatestRunNodes(wfId: string, nodes: FlowNode[]): FinalizerNodeSnapshot {
+  // F2：从目标工作流的最新 store 状态重建节点运行态视图（局部 plan.nodes 不会自动同步）。
+  const latestState = useWorkflowStore.getState();
+  const latestNodes =
+    wfId === latestState.activeWfId ? latestState.nodes : (latestState.workflows[wfId]?.nodes ?? []);
+  const freshById = new Map(latestNodes.map((n) => [n.id, n.data]));
+  const nodesNow = nodes.map((n) => {
+    const fresh = freshById.get(ownerRefId(n.id) ?? n.id);
+    if (!fresh) return n;
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        status: fresh.status,
+        outputs: fresh.outputs,
+        error: fresh.error,
+        startedAt: fresh.startedAt,
+        durationMs: fresh.durationMs,
+      },
+    };
+  });
+  return { nodesNow, pruned: nodesNow.filter((n) => n.data.status === 'skipped').length };
+}
+
+interface FinalizerStatusLogInput {
+  rt: ExecutionRuntime;
+  signal: AbortSignal;
+  failed: Set<string>;
+  elapsed: string;
+  skipped: number;
+  pruned: number;
+}
+
+function logFinalizerStatus({ rt, signal, failed, elapsed, skipped, pruned }: FinalizerStatusLogInput): void {
+  if (signal.aborted && failed.size === 0) {
+    rt.addLog('info', i18n.t('log.runFinalizer.manualStop', { elapsed }));
+  } else if (failed.size > 0) {
+    rt.addLog('error', i18n.t('log.runFinalizer.failedSteps', { count: failed.size, elapsed }));
+  } else {
+    const cacheSuffix = skipped > 0
+      ? i18n.t('log.runFinalizer.cachedSteps', { count: skipped })
+      : '';
+    const pruneSuffix = pruned > 0
+      ? i18n.t('log.runFinalizer.conditionSkippedSteps', { count: pruned })
+      : '';
+    rt.addLog('info', i18n.t('log.runFinalizer.completed', { elapsed, cacheSuffix, pruneSuffix }));
+  }
+}
+
+function deriveFinalizerStatus(failed: Set<string>, signal: AbortSignal): RunRecord['status'] {
+  return failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
+}
+
+function recordAgentOutcomeMetrics(costLog: CostRecord[]): void {
+  // P2/G3：指标不受 selfImprove 开关影响；记录失败不影响运行。
+  const metricProjectId = useWorkflowStore.getState().projectId ?? '';
+  if (metricProjectId) {
+    try {
+      for (const record of costLog) {
+        if (record.agentId) {
+          const price = modelPrice(record.model);
+          const costUsd = estimateUsageCostUsd(price, record.usage);
+          recordAgentOutcome(metricProjectId, record.agentId, !!record.ok, record.usage, costUsd);
+        }
+      }
+    } catch {
+      /* 指标记录失败不影响运行 */
+    }
+  }
+}
+
+interface UpdateFinalizerExperienceInput {
+  wfId: string;
+  myRun: number;
+  status: RunRecord['status'];
+  failed: Set<string>;
+  nodesNow: FlowNode[];
+  costLog: CostRecord[];
+  workflowName: string;
+  sink: ExperienceSink;
+  rt: ExecutionRuntime;
+}
+
+/** With self-improvement enabled, store this run's experience in the current project-ID bucket (empty string when none) and launch a combined review if a reviewer exists.
+ * The review is fire-and-forget, not an awaited finalization dependency (ADR-SM-079).
+ */
+function updateFinalizerExperience({
+  wfId,
+  myRun,
+  status,
+  failed,
+  nodesNow,
+  costLog,
+  workflowName,
+  sink,
+  rt,
+}: UpdateFinalizerExperienceInput): void {
+  // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘。
+  if (!isSelfImprove()) return;
+
+  // E 自我学习：运行结果归约为结构化经验入经验库（零 LLM 费用）。
+  try {
+    const agentByNode: Record<string, string> = {};
+    for (const record of costLog) {
+      if (record.nodeId && record.agentId && !agentByNode[record.nodeId]) {
+        agentByNode[record.nodeId] = record.agentId;
+      }
+    }
+    const projectId = useWorkflowStore.getState().projectId ?? '';
+    const expList = summarizeExperience({
+      projectId,
+      wfId,
+      runId: myRun,
+      status,
+      agentByNode,
+      nodes: nodesNow.map((n) => ({
+        id: n.id,
+        typeId: n.data.typeId,
+        status: n.data.status ?? 'idle',
+        error: n.data.error ?? null,
+        durationMs: n.data.durationMs ?? null,
+        label: n.data.label,
+      })),
+    });
+    let learned = 0;
+    for (const experience of expList) {
+      if (addExperience(projectId, experience)) learned += 1;
+    }
+    if (learned > 0) {
+      rt.addLog('info', i18n.t('log.runFinalizer.experienceSaved', { count: learned, status }));
+    }
+  } catch (e) {
+    rt.addLog('warn', i18n.t('log.runFinalizer.experienceSaveFailed', {
+      message: e instanceof Error ? e.message : String(e),
+    }));
+  }
+
+  const stReview = useWorkflowStore.getState();
+  const reviewerAgent = mergeAgentPool(stReview.agents, stReview.globalAgents).find((a) => a.id === 'role.reviewer');
+  if (reviewerAgent) {
+    sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
+    const root = useWorkflowStore.getState().projectPath ?? null;
+    void (async () => {
+      try {
+        const memory = root ? (await readProjectText(root, MEMORY_REL)) ?? undefined : undefined;
+        const skills = Object.values(useWorkflowStore.getState().subgraphs).map((s) => s.name);
+        runReview({
+          kind: '_COMBINED',
+          reviewerAgent,
+          context: { goal: workflowName, trace: sink.toTraceText(), memory, skills },
+          async: true,
+          projectRoot: root,
+        });
+      } catch (e) {
+        rt.addLog('warn', i18n.t('log.runFinalizer.reviewTriggerFailed', {
+          message: e instanceof Error ? e.message : String(e),
+        }));
+      }
+    })();
+  }
+}
+
 /** 由 runWorkflow 收尾调用；返回 Promise<RunFinalizeResult>（checkpoint 落盘 await）。 */
 export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResult> {
   const {
@@ -103,135 +272,35 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
   const elapsed = ((performance.now() - startAt) / 1000).toFixed(1);
   const skipped = skippedCount();
 
-  // F2：从目标工作流的最新 store 状态重建节点运行态视图（局部 plan.nodes 不会自动同步）。
-  const latestState = useWorkflowStore.getState();
-  const latestNodes =
-    wfId === latestState.activeWfId ? latestState.nodes : (latestState.workflows[wfId]?.nodes ?? []);
-  const freshById = new Map(latestNodes.map((n) => [n.id, n.data]));
-  const nodesNow = nodes.map((n) => {
-    const fresh = freshById.get(ownerRefId(n.id) ?? n.id);
-    if (!fresh) return n;
-    return {
-      ...n,
-      data: {
-        ...n.data,
-        status: fresh.status,
-        outputs: fresh.outputs,
-        error: fresh.error,
-        startedAt: fresh.startedAt,
-        durationMs: fresh.durationMs,
-      },
-    };
-  });
-  const pruned = nodesNow.filter((n) => n.data.status === 'skipped').length;
+  const { nodesNow, pruned } = reconstructLatestRunNodes(wfId, nodes);
 
   if (!isCurrentRun) {
     // 手动停止（stopWorkflow 已自增代次）会走到这里，但这并非「被新运行替代」。
     // 用 signal.aborted 区分：停止是用户主动中止，stopWorkflow 已打过「已停止」日志，
     // 这里只补一条收尾说明，不写历史/复盘（避免污染后续运行）。
     if (signal.aborted) {
-      rt.addLog('info', `已停止（旧协程收尾，用时 ${elapsed}s）`);
+      rt.addLog('info', i18n.t('log.runFinalizer.stoppedOldRun', { elapsed }));
       return { status: 'aborted', runId: myRun };
     }
     // 真正被新一次运行顶替的旧运行：只留最简日志，不写历史/复盘
-    rt.addLog('warn', `旧运行已由新一次运行替代，不再记录本次收尾（用时 ${elapsed}s）`);
+    rt.addLog('warn', i18n.t('log.runFinalizer.superseded', { elapsed }));
     return { status: 'aborted', runId: myRun };
   }
-  if (signal.aborted && failed.size === 0) {
-    rt.addLog('info', `已手动停止（用时 ${elapsed}s）`);
-  } else if (failed.size > 0) {
-    rt.addLog('error', `有 ${failed.size} 个步骤没跑通，请检查标红的节点（用时 ${elapsed}s）`);
-  } else {
-    const skipMsg = skipped > 0 ? `，${skipped} 步用了缓存结果` : '';
-    const pruneMsg = pruned > 0 ? `，${pruned} 步因条件不成立而跳过` : '';
-    rt.addLog('info', `全部完成 ✓（用时 ${elapsed}s${skipMsg}${pruneMsg}）`);
-  }
-
-  const status: RunRecord['status'] = failed.size > 0 ? 'error' : signal.aborted ? 'aborted' : 'success';
-
-  // 成本聚合：按模型归类，便于「性价比」分析
-  const byModel: Record<string, { promptTokens: number; completionTokens: number; calls: number }> = {};
-  let totalPrompt = 0;
-  let totalCompletion = 0;
-  let totalDuration = 0;
-  let cacheHitTokens = 0;
-  let cacheWriteTokens = 0;
-  let reasoningTokens = 0;
-  let replyTokens = 0;
-  for (const r of costLog) {
-    totalDuration += r.durationMs;
-    if (!r.usage) continue;
-    const prompt = r.usage.promptTokens ?? 0;
-    const completion = r.usage.completionTokens ?? 0;
-    totalPrompt += prompt;
-    totalCompletion += completion;
-    cacheHitTokens += r.usage.cachedPromptTokens ?? 0;
-    cacheWriteTokens += r.usage.writtenPromptTokens ?? 0;
-    reasoningTokens += r.usage.reasoningTokens ?? 0;
-    replyTokens += r.usage.replyTokens ?? completion;
-    const m = (byModel[r.model] ??= { promptTokens: 0, completionTokens: 0, calls: 0 });
-    m.promptTokens += prompt;
-    m.completionTokens += completion;
-    m.calls += 1;
-  }
-  const cacheMissTokens = Math.max(0, totalPrompt - cacheHitTokens - cacheWriteTokens);
-  const hasCost = costLog.length > 0;
-
-  // P2/G3：Agent 运行指标（成功/失败 + token + 估算成本）始终记录，不受 selfImprove 开关影响
-  const metricProjectId = useWorkflowStore.getState().projectId ?? '';
-  if (metricProjectId) {
-    try {
-      for (const r of costLog) {
-        if (r.agentId) {
-          const p = modelPrice(r.model);
-          const costUsd = estimateUsageCostUsd(p, r.usage);
-          recordAgentOutcome(metricProjectId, r.agentId, !!r.ok, r.usage, costUsd);
-        }
-      }
-    } catch {
-      /* 指标记录失败不影响运行 */
-    }
-  }
-
-  const rec: RunRecord = {
-    id: `run_${Date.now()}`,
-    name: workflowName,
-    startedAt: new Date(startedWall).toISOString(),
-    endedAt: new Date().toISOString(),
-    durationMs: Math.round(performance.now() - startAt),
+  logFinalizerStatus({ rt, signal, failed, elapsed, skipped, pruned });
+  const status = deriveFinalizerStatus(failed, signal);
+  const costSummary = summarizeFinalizerCosts(costLog);
+  recordAgentOutcomeMetrics(costLog);
+  const rec = buildFinalizerRunRecord({
+    workflowName,
+    startedWall,
+    startAt,
     status,
-    nodeCount: nodes.length,
-    nodes: nodesNow.map((n) => ({
-      id: n.id,
-      label: n.data.label,
-      typeId: n.data.typeId,
-      status: n.data.status ?? 'idle',
-      outputs: n.data.outputs ?? null,
-      error: n.data.error ?? null,
-      startedAt: n.data.startedAt ?? null,
-      durationMs: n.data.durationMs ?? null,
-      cost: costByNode.get(n.id) ?? null,
-    })),
-    cost: hasCost
-      ? {
-          totalPromptTokens: totalPrompt,
-          totalCompletionTokens: totalCompletion,
-          totalTokens: totalPrompt + totalCompletion,
-          totalDurationMs: totalDuration,
-          cache: {
-            hitTokens: cacheHitTokens,
-            missTokens: cacheMissTokens,
-            writeTokens: cacheWriteTokens,
-          },
-          output: {
-            reasoningTokens,
-            replyTokens,
-          },
-          byModel,
-          records: costLog,
-        }
-      : null,
-  };
+    nodes,
+    nodesNow,
+    costByNode,
+    costLog,
+    costSummary,
+  });
   rt.pushRunHistory(rec);
 
   // C：可恢复执行——运行结束即独立落盘检查点（覆盖式，不标脏、await 落盘完成）
@@ -252,63 +321,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
     elapsed: Number(elapsed),
   });
 
-  // #8 自优化闭环：selfImprove 开启且配置了 reviewer 角色时，本轮结束后异步触发综合复盘
-  if (isSelfImprove()) {
-    // E 自我学习：运行结果归约为结构化经验入经验库（零 LLM 费用）
-    try {
-      const agentByNode: Record<string, string> = {};
-      for (const r of costLog) {
-        if (r.nodeId && r.agentId && !agentByNode[r.nodeId]) agentByNode[r.nodeId] = r.agentId;
-      }
-      const projectId = useWorkflowStore.getState().projectId ?? '';
-      const expList = summarizeExperience({
-        projectId,
-        wfId,
-        runId: myRun,
-        status,
-        agentByNode,
-        nodes: nodesNow.map((n) => ({
-          id: n.id,
-          typeId: n.data.typeId,
-          status: n.data.status ?? 'idle',
-          error: n.data.error ?? null,
-          durationMs: n.data.durationMs ?? null,
-          label: n.data.label,
-        })),
-      });
-      let learned = 0;
-      for (const exp of expList) {
-        if (addExperience(projectId, exp)) learned += 1;
-      }
-      if (learned > 0) {
-        rt.addLog('info', `自我学习：已沉淀 ${learned} 条运行经验（${status}）`);
-      }
-    } catch (e) {
-      rt.addLog('warn', `经验沉淀失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    const stReview = useWorkflowStore.getState();
-    const reviewerAgent = mergeAgentPool(stReview.agents, stReview.globalAgents).find((a) => a.id === 'role.reviewer');
-    if (reviewerAgent) {
-      sink.setOutcome(failed.size > 0 ? 'failure' : 'success');
-      const root = useWorkflowStore.getState().projectPath ?? null;
-      void (async () => {
-        try {
-          const memory = root ? (await readProjectText(root, MEMORY_REL)) ?? undefined : undefined;
-          const skills = Object.values(useWorkflowStore.getState().subgraphs).map((s) => s.name);
-          runReview({
-            kind: '_COMBINED',
-            reviewerAgent,
-            context: { goal: workflowName, trace: sink.toTraceText(), memory, skills },
-            async: true,
-            projectRoot: root,
-          });
-        } catch (e) {
-          rt.addLog('warn', `复盘触发失败（不影响本次运行）：${e instanceof Error ? e.message : String(e)}`);
-        }
-      })();
-    }
-  }
+  updateFinalizerExperience({ wfId, myRun, status, failed, nodesNow, costLog, workflowName, sink, rt });
 
   // 非循环工作流 + 正常跑完（无失败、未被手动停止）：将「运行指针」回退到第一个节点
   const finishedClean = !hasLoop && failed.size === 0 && !signal.aborted;
@@ -317,7 +330,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<RunFinalizeResu
     if (firstId && firstId !== store.selectedNodeId) {
       store.setSelected(firstId, wfId);
     }
-    rt.addLog('info', '工作流已就绪，运行指针已回到首个节点，可直接开始下一个任务');
+    rt.addLog('info', i18n.t('log.runFinalizer.workflowReady'));
   }
 
   // 返回明确运行结果（H3b 编排器依赖：status 判定执行成败，runId 精确对应本次运行）

@@ -6,20 +6,25 @@
  */
 import type { LogEntry } from '../types/execution';
 import type { WorkflowFile } from '../types/workflow';
+import i18n from '../i18n';
 import {
   buildNewWorkflowInProjectState,
   buildRegisteredWorkflowState,
   buildRemoveWorkflowState,
   buildRenameWorkflowState,
   buildSwitchWorkflowState,
+  type NewWorkflowInProjectResult,
   type WorkflowSwitchView,
 } from './workflowRegistryState';
+import { createWorkflowId } from './workflowId';
 
 export interface WorkflowRegistryActionState extends Omit<WorkflowSwitchView, 'activeWfId'> {
   activeWfId: string;
   projectId: string | null;
+  projectPath: string | null;
   selectedNodeId: string | null;
   logs: LogEntry[];
+  addLog: (level: LogEntry['level'], message: string) => void;
 }
 
 export interface WorkflowRegistryActionDeps {
@@ -35,7 +40,7 @@ export interface WorkflowRegistryActionDeps {
 
 export interface WorkflowRegistryActions {
   switchWorkflow: (id: string) => void;
-  newWorkflowInProject: (workspaceDir?: string | null) => Promise<void>;
+  newWorkflowInProject: (workspaceDir?: string | null) => Promise<NewWorkflowInProjectResult>;
   registerWorkflow: (workflow: WorkflowFile, opts?: { activate?: boolean; name?: string }) => string;
   renameWorkflow: (name: string) => void;
   removeWorkflow: (id: string) => void;
@@ -54,16 +59,35 @@ export function createWorkflowRegistryActions(
     deps.setDirtySuppressed(false);
   };
 
-  const newWorkflowInProject = async (workspaceDir?: string | null): Promise<void> => {
-    const state = deps.getState();
-    const inProject = !!state.projectId;
+  const newWorkflowInProject = async (workspaceDir?: string | null) => {
+    const stateBeforePathResolution = deps.getState();
+    const projectContextBeforePathResolution = {
+      projectId: stateBeforePathResolution.projectId,
+      projectPath: stateBeforePathResolution.projectPath,
+    };
+    const inProject = !!projectContextBeforePathResolution.projectId;
     const standalonePath = inProject
       ? undefined
       : await deps.resolveStandalonePath(workspaceDir);
+    const state = deps.getState();
+    if (
+      !inProject && (
+        state.projectId !== projectContextBeforePathResolution.projectId ||
+        state.projectPath !== projectContextBeforePathResolution.projectPath
+      )
+    ) {
+      state.addLog('warn', i18n.t('log.workflowRegistry.projectChanged'));
+      return { status: 'aborted', reason: 'project-changed' } as const;
+    }
     const shouldCapture = !state.activeWfId && (state.nodes.length || state.edges.length);
-    const capturedWorkflowId = shouldCapture ? `wf-${deps.now()}` : state.activeWfId;
+    const capturedWorkflowId = shouldCapture
+      ? createWorkflowId(deps.now(), Object.keys(state.workflows))
+      : state.activeWfId;
     const capturedSavedAt = shouldCapture ? deps.nowIso() : '';
-    const id = `wf-${deps.now() + 1}`;
+    const id = createWorkflowId(deps.now() + 1, [
+      ...Object.keys(state.workflows),
+      capturedWorkflowId,
+    ]);
     const result = buildNewWorkflowInProjectState({
       workflows: state.workflows,
       activeWfId: state.activeWfId,
@@ -85,6 +109,7 @@ export function createWorkflowRegistryActions(
       savedAt: deps.nowIso(),
     });
     deps.setState({ workflows: result.workflows, ...result.activation });
+    return { status: 'created', workflowId: id } as const;
   };
 
   const registerWorkflow = (

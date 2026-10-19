@@ -57,6 +57,7 @@ function summarizeLedger(costLog: CostRecord[]) {
  * - 用 createPortal 渲染到 body 避免 React Flow 的 overflow:hidden 裁切。
  * - 可拖动，位置持久化到 localStorage。
  * - 运行结束后仍保留最近一次统计，可手动收起/重置。
+ * 面板读取 workflow store 的运行/成本投影；停止与重置委托现有 action，本地仅保存开合和位置偏好（ADR-SM-006、ADR-SM-075）。
  */
 export default function Companion() {
   const t = useT('panels');

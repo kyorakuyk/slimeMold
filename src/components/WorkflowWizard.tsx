@@ -41,7 +41,9 @@ function mkEdge(s: string, sh: string, t: string, th: string): FlowEdge {
   } as FlowEdge;
 }
 
-/** 根据问答结果组装一份工作流草稿 */
+/** 根据向导的目标/输入/输出选择，构造可编辑的起始工作流草稿；实际加载由 `finish` 负责。
+ * 生成的边使用对应节点的 handles，批量路径额外插入 `flow.map`（ADR-SM-017）。
+ */
 function buildDraft(
   goal: GoalKind,
   src: DataSource,

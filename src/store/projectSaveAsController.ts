@@ -1,5 +1,6 @@
 import { persistProjectFile } from './projectFilePersistence';
 import type { ProjectFile } from '../types/projectFile';
+import i18n from '../i18n';
 
 export interface ProjectSaveAsState {
   projectName: string | null;
@@ -30,7 +31,7 @@ export function createProjectSaveAsController<State extends ProjectSaveAsState>(
     saveProjectAs: async () => {
       const state = deps.getState();
       if (!deps.isTauri) {
-        deps.addLog('warn', '「将项目另存为」需要桌面端（Tauri）环境');
+        deps.addLog('warn', i18n.t('dialog.saveAsNeedTauri'));
         return null;
       }
       const picked = await deps.showSaveDirDialog(state.projectName ?? '未命名项目');
@@ -38,7 +39,9 @@ export function createProjectSaveAsController<State extends ProjectSaveAsState>(
       try {
         await deps.prepareForSave?.();
       } catch (error) {
-        deps.addLog('warn', `项目另存为失败：${error instanceof Error ? error.message : String(error)}`);
+        deps.addLog('warn', i18n.t('log.projectSaveAs.failed', {
+          message: error instanceof Error ? error.message : String(error),
+        }));
         return null;
       }
       const preparedState = deps.getState();
@@ -52,7 +55,9 @@ export function createProjectSaveAsController<State extends ProjectSaveAsState>(
         deps.onSaved(root, preparedState.activeWfId);
         return root;
       } catch (error) {
-        deps.addLog('warn', `项目另存为失败：${error instanceof Error ? error.message : String(error)}`);
+        deps.addLog('warn', i18n.t('log.projectSaveAs.failed', {
+          message: error instanceof Error ? error.message : String(error),
+        }));
         return null;
       }
     },

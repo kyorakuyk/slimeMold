@@ -6,11 +6,11 @@ import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 import type { WorkerCleanupProposalReady } from '../projectControl/workerCleanup';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async () => {
+const mockInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]): Promise<unknown> => {
     throw new Error('register rejected');
-  }),
 }));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 
 function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '', durationMs: 1 };
@@ -28,6 +28,34 @@ function trustedProposal(session: ReturnType<typeof initDevSession>, path: strin
 describe('DevSession cleanup', () => {
   afterEach(() => {
     resetDevSession();
+    mockInvoke.mockReset();
+    mockInvoke.mockRejectedValue(new Error('register rejected'));
+  });
+
+  it('does not unregister identity-less registration-pending allocation lineage', async () => {
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git: vi.fn(async () => ok()) },
+    });
+    const info = {
+      id: 'worker-identityless-pending',
+      path: '/repo-workers/identityless',
+      branch: 'worker/identityless',
+      baseRevision: TIP_OID,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      status: 'registration-pending' as const,
+    };
+    mockInvoke.mockResolvedValue('unexpected-success');
+
+    await expect(session.manager.restore(info)).resolves.toBe(true);
+    await expect(session.manager.cleanup(info.id, { confirm: true })).resolves.toBe(false);
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'dev_unregister_worktree',
+      expect.objectContaining({ path: info.path }),
+    );
+    expect(session.manager.get(info.id)?.status).toBe('registration-pending');
   });
 
   it('cleans a Worker worktree by its registered id when approval addresses its path', async () => {
@@ -136,6 +164,58 @@ describe('DevSession cleanup', () => {
 
     await expect(session.confirmAndCleanup(replacement!.path)).resolves.toBe(false);
     expect(session.manager.get(replacement!.id)?.status).toBe('created');
+  });
+
+  it('rejects cleanup when the registered target identity changes after approval', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    const session = initDevSession({ baseRepoPath: '/repo', gitRunner: { git } });
+    const info = await session.manager.create('worker-id', '/repo-workers/identity', { branch: 'worker/identity' });
+    expect(info).not.toBeNull();
+    session.manager.bindTargetIdentity(info!.id, 'target-old');
+    session.computeWorktreeSignature = vi.fn(async () => 'sig-1');
+    const acceptanceId = session.nextAcceptanceId();
+    const taskExecutionId = createTaskExecutionId('run-1', 'task-1');
+    session.recordAcceptance({
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      worktreePath: info!.path,
+      passed: true,
+      failedChecks: [],
+      at: '2026-09-01T00:00:00.000Z',
+    });
+    session.approveCleanup(info!.path, {
+      worktreeId: info!.id,
+      branch: info!.branch,
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId,
+      attemptId: createAttemptId(taskExecutionId, 1),
+      branchRevision: TIP_OID,
+      branchRevisionRequired: true,
+      baseRevision: info!.baseRevision,
+      stateSignature: 'sig-1',
+      acceptanceId,
+      orchestrationId: 'orch-1',
+      stageId: 'task-1',
+      attempt: 1,
+      taskStatus: 'succeeded',
+      cleanupStatus: 'active',
+    });
+    const fingerprint = cleanupBindingFingerprint(session.getCleanupApproval(info!.path)!);
+    session.registerTrustedCleanupBinding(trustedProposal(session, info!.path));
+    session.manager.bindTargetIdentity(info!.id, 'target-new');
+
+    await expect(session.confirmAndCleanup(info!.path, undefined, fingerprint)).resolves.toBe(false);
+    expect(session.manager.get(info!.id)?.status).toBe('created');
   });
 
   it('rejects cleanup when the live branch tip changes after approval', async () => {

@@ -22,6 +22,14 @@ type ProjectSave = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
+function sameEventIgnoringStoragePosition(expected: DomainEvent, actual: DomainEvent): boolean {
+  const normalize = (event: DomainEvent) => {
+    const { sequence: _sequence, aggregateVersion: _aggregateVersion, ...semantic } = event;
+    return semantic;
+  };
+  return JSON.stringify(normalize(expected)) === JSON.stringify(normalize(actual));
+}
+
 export interface WorkerRecoveryIoState {
   projectId: string | null;
   projectPath: string | null;
@@ -105,6 +113,11 @@ export function createWorkerRecoveryIoController(
         { projectPath },
         await modulesPromise,
       );
+      const modules = await modulesPromise;
+      const sideEffectRepository = new modules.SideEffectJournalRepository(
+        modules.createTauriEventStoreAdapter(projectPath),
+        projectPath,
+      );
       if (signal?.aborted) return;
       const records = await repositories.loadEvidence();
       if (signal?.aborted) return;
@@ -112,23 +125,53 @@ export function createWorkerRecoveryIoController(
       if (signal?.aborted) return;
       const current = deps.getState();
       if (current.projectPath !== projectPath) return;
-      const mergedEffects = mergeWorkerSideEffects(current.workerRunSideEffects, effects);
+      const initialEffects = mergeWorkerSideEffects(current.workerRunSideEffects, effects);
+      const initialReconciliation = reconcileSuccessfulCleanupReceipts(current.workerRuns, initialEffects);
+      for (const migration of initialReconciliation.migrations) {
+        await sideEffectRepository.migrateLegacyRecord(migration.legacyKey, migration.replacement);
+      }
+      const persistedEffects = initialReconciliation.migrations.length > 0
+        ? await repositories.loadSideEffects()
+        : effects;
+      const migratedLegacyKeys = new Set(initialReconciliation.migrations.map((migration) => migration.legacyKey));
+      const mergedEffects = mergeWorkerSideEffects(
+        current.workerRunSideEffects.filter((entry) => !migratedLegacyKeys.has(entry.idempotencyKey)),
+        persistedEffects,
+      );
       const reconciled = reconcileSuccessfulCleanupReceipts(current.workerRuns, mergedEffects);
       current.setWorkerRunEvidence(mergeWorkerEvidence(current.workerRunEvidence, records));
       current.setWorkerRunSideEffects(mergedEffects);
-      if (reconciled.events.length > 0 && current.projectId) {
-        deps.recordProjectEvents(current.projectId, reconciled.events);
+      const eventStream = reconciled.events.length > 0
+        ? await repositories.createEventRepository().readStream()
+        : undefined;
+      if (eventStream?.status === 'needs-repair') {
+        throw new Error('cleanup reconciliation event stream 需要修复');
+      }
+      const existingEvents = new Map(
+        (eventStream?.events ?? []).map((event) => [event.eventId, event]),
+      );
+      const reconciliationEvents = reconciled.events.filter((event) => {
+        const existing = existingEvents.get(event.eventId);
+        if (!existing) return true;
+        if (!sameEventIgnoringStoragePosition(event, existing)) {
+          throw new Error(`cleanup reconciliation eventId 语义冲突：${event.eventId}`);
+        }
+        return false;
+      });
+      const runsChanged = JSON.stringify(current.workerRuns) !== JSON.stringify(reconciled.runs);
+      if ((reconciliationEvents.length > 0 || runsChanged) && current.projectId) {
+        if (reconciliationEvents.length > 0) deps.recordProjectEvents(current.projectId, reconciliationEvents);
         current.setWorkerRuns(reconciled.runs);
         current.setOrchestrations(
           projectWorkerRunsOntoOrchestrations(current.orchestrations, reconciled.runs),
         );
         await deps.saveProject(current.projectId, projectPath, signal);
       }
-      const cleanupUnknownRuns = cleanupUnknownRunIds(mergedEffects);
+      const cleanupUnknownRuns = cleanupUnknownRunIds(mergedEffects, reconciled.runs);
       if (cleanupUnknownRuns.size > 0) {
         current.setWorkerRunRecoveries([
           ...current.workerRunRecoveries.filter((item) => !cleanupUnknownRuns.has(item.runId)),
-          ...current.workerRuns
+          ...reconciled.runs
             .filter((run) => cleanupUnknownRuns.has(run.runId))
             .map((run): WorkerRunRecovery => ({
               runId: run.runId,

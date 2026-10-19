@@ -16,6 +16,7 @@ import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { XMLParser } from 'fast-xml-parser';
+import { checkPlaceholderConsistency, type PlaceholderTranslation } from '../src/i18n/placeholderCheck';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = join(__dirname, '..', 'src', 'i18n', 'locales');
@@ -23,11 +24,18 @@ const BASE_LANG = 'zh-CN';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
-/** 递归收集一个 XML 对象里所有 <string name="..."> 的 name 值（嵌套亦兼容），并记录重复 key。 */
-function collectStringNames(node: unknown, out: Set<string>, duplicates: Set<string>): void {
+/** 递归收集 XML 中的字符串 key/值（兼容嵌套），并记录重复 key。 */
+function collectStringNames(
+  node: unknown,
+  out: Set<string>,
+  duplicates: Set<string>,
+  language: string,
+  namespace: string,
+  translations: PlaceholderTranslation[],
+): void {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) {
-    for (const item of node) collectStringNames(item, out, duplicates);
+    for (const item of node) collectStringNames(item, out, duplicates, language, namespace, translations);
     return;
   }
   const obj = node as Record<string, unknown>;
@@ -39,31 +47,39 @@ function collectStringNames(node: unknown, out: Set<string>, duplicates: Set<str
         if (typeof name === 'string') {
           if (out.has(name)) duplicates.add(name);
           out.add(name);
+          const value = (s as Record<string, unknown>)['#text'];
+          translations.push({ language, namespace, key: name, value: typeof value === 'string' ? value : '' });
         }
       }
     }
   }
   for (const key of Object.keys(obj)) {
     if (key === 'string') continue;
-    collectStringNames(obj[key], out, duplicates);
+    collectStringNames(obj[key], out, duplicates, language, namespace, translations);
   }
 }
 
 /** 读取一个语言目录，返回该语言所有 key 的扁平集合和重复 key。 */
-function loadLangKeys(langDir: string): { keys: Set<string>; duplicates: Set<string> } {
+function loadLangKeys(langDir: string, language: string): {
+  keys: Set<string>;
+  duplicates: Set<string>;
+  translations: PlaceholderTranslation[];
+} {
   const keys = new Set<string>();
   const duplicates = new Set<string>();
+  const translations: PlaceholderTranslation[] = [];
   const files = readdirSync(langDir).filter((f) => f.endsWith('.xml'));
   for (const f of files) {
+    const namespace = f.replace(/\.xml$/, '');
     const raw = readFileSync(join(langDir, f), 'utf-8');
     const parsed = parser.parse(raw);
     const fileKeys = new Set<string>();
     const fileDuplicates = new Set<string>();
-    collectStringNames(parsed, fileKeys, fileDuplicates);
+    collectStringNames(parsed, fileKeys, fileDuplicates, language, namespace, translations);
     for (const key of fileKeys) keys.add(key);
     for (const key of fileDuplicates) duplicates.add(`${f}:${key}`);
   }
-  return { keys, duplicates };
+  return { keys, duplicates, translations };
 }
 
 function main(): number {
@@ -81,8 +97,9 @@ function main(): number {
     return 1;
   }
 
-  const baseResult = loadLangKeys(join(LOCALES_DIR, BASE_LANG));
+  const baseResult = loadLangKeys(join(LOCALES_DIR, BASE_LANG), BASE_LANG);
   const baseKeys = baseResult.keys;
+  const translations = [...baseResult.translations];
   let hasError = false;
   console.log(`[check-i18n] 基准语言 ${BASE_LANG} 共 ${baseKeys.size} 个 key`);
   if (baseResult.duplicates.size > 0) {
@@ -93,7 +110,8 @@ function main(): number {
 
   for (const lang of langs) {
     if (lang === BASE_LANG) continue;
-    const langResult = loadLangKeys(join(LOCALES_DIR, lang));
+    const langResult = loadLangKeys(join(LOCALES_DIR, lang), lang);
+    translations.push(...langResult.translations);
     const keys = langResult.keys;
     const missing = [...baseKeys].filter((k) => !keys.has(k)).sort();
     const extra = [...keys].filter((k) => !baseKeys.has(k)).sort();
@@ -118,6 +136,15 @@ function main(): number {
       for (const k of extra) console.log(`    + ${k}`);
     }
     console.log('');
+  }
+
+  for (const issue of checkPlaceholderConsistency(translations)) {
+    hasError = true;
+    if (issue.code === 'single-brace-placeholder') {
+      console.log(`✗ ${issue.language}:${issue.namespace}:${issue.key} 使用单花括号占位符 {${issue.placeholders.join('}, {')}}；i18next 必须使用双花括号。`);
+    } else {
+      console.log(`✗ ${issue.namespace}:${issue.key} 占位符不一致：${issue.baseLanguage}=${issue.basePlaceholders.join(', ')}；${issue.comparedLanguage}=${issue.comparedPlaceholders.join(', ')}`);
+    }
   }
 
   if (hasError) {

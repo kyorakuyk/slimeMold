@@ -543,6 +543,7 @@ function addWorkerTask(
         ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
         ...(task.branch ? { branch: task.branch } : {}),
         ...(task.baseRevision ? { baseRevision: task.baseRevision } : {}),
+        ...(task.targetIdentity ? { targetIdentity: task.targetIdentity } : {}),
         ...(task.evidenceIds.length > 0 ? { evidenceIds: [...task.evidenceIds] } : {}),
         ...(task.acceptanceId ? { acceptanceId: task.acceptanceId } : {}),
         ...(task.error ? { error: task.error } : {}),
@@ -594,22 +595,4 @@ function addWorkerTask(
     eventType: taskEventType(task.status),
     payload,
   });
-  if (task.status === 'succeeded' && task.cleanupStatus === 'cleaned') {
-    add({
-      ...common,
-      eventId: `${migrationId}:worker-task:${taskExecutionId}:TaskCleaned`,
-      aggregateType: 'TaskExecution',
-      aggregateId: taskExecutionId,
-      eventType: 'TaskCleaned',
-      payload: {
-        runId: run.runId,
-        taskId,
-        taskExecutionId,
-        attempt: task.attempt,
-        attemptId,
-        receiptId: task.cleanupReceiptId,
-        cleanupStatus: 'cleaned',
-      },
-    });
-  }
 }

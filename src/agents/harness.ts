@@ -14,6 +14,7 @@
 
 import type { AgentConfig, ChatMessage, LLMToolSpec, ToolCall, ContentPart } from '../types/agent';
 import type { ExecContext } from '../types/node';
+import i18n from '../i18n';
 import { chatWithAgent } from './agentManager';
 import { toolRegistry, type ToolContext } from './toolRegistry';
 import { assembleSystemPrompt, type SystemPromptParts } from './prompts';
@@ -152,6 +153,10 @@ export function renderScopeContext(scopeStack: Record<string, unknown>[]): strin
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 按 `maxRounds` 协调 provider 回复、注册工具调用、取消与瞬时错误重试；`tokenBudget` 仅裁剪初始 history。
+ * 工具可见性和上下文由调用方注入；模型输出本身不是项目事实或权限来源（ADR-SM-009、ADR-SM-010）。
+ */
 export async function runAgentLoop(opts: HarnessOptions): Promise<HarnessResult> {
   const {
     agent,
@@ -349,6 +354,23 @@ export function buildHarnessOptions(args: {
       content: userContent !== undefined ? userContent : (prompt ?? ''),
     },
   ];
+
+  const displayLog = (message: string): string => {
+    const round = /^Harness 第 (\d+) 轮 \/ 模型 (.*)$/.exec(message);
+    if (round) return i18n.t('log.harness.roundInfo', { round: round[1], model: round[2] });
+    const retry = /^瞬时错误（(\d+)\/(\d+)）： ([\s\S]*)，退避重试$/.exec(message);
+    if (retry) {
+      return i18n.t('log.harness.retryTransient', {
+        attempt: retry[1],
+        retries: retry[2],
+        message: retry[3],
+      });
+    }
+    const maxRounds = /^达到最大轮次 (\d+)，强制结束（可能存在未完成的工具链）$/.exec(message);
+    if (maxRounds) return i18n.t('log.harness.maxRoundsReached', { maxRounds: maxRounds[1] });
+    return message;
+  };
+
   return {
     agent,
     userMessages,
@@ -362,10 +384,16 @@ export function buildHarnessOptions(args: {
         else ctx.setPartial('text', text);
       },
       onToolCall: (info) => {
-        if (info.error) ctx.logger.error(`工具 ${info.name} 失败：${info.error}`);
-        else ctx.logger.info(`工具 ${info.name} 执行完成`);
+        if (info.error) {
+          ctx.logger.error(i18n.t('log.harness.toolCallFailed', {
+            name: info.name,
+            message: info.error,
+          }));
+        } else {
+          ctx.logger.info(i18n.t('log.harness.toolCallSucceeded', { name: info.name }));
+        }
       },
-      onLog: (lv, m) => ctx.logger[lv]?.(m),
+      onLog: (lv, m) => ctx.logger[lv]?.(displayLog(m)),
     },
     toolCtx: {
       logger: ctx.logger,

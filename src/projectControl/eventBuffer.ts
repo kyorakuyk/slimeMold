@@ -10,6 +10,13 @@ import { replayDomainEvents } from '../domain/contracts';
 
 const pendingByProject = new Map<string, DomainEvent[]>();
 const flushTails = new Map<string, Promise<void>>();
+const quarantinedByProject = new Map<string, ProjectEventBufferQuarantine>();
+
+export interface ProjectEventBufferQuarantine {
+  requestIdentity: string;
+  eventIds: string[];
+  reason: string;
+}
 
 type PersistedEvent = DomainEvent & {
   appendGeneration?: number;
@@ -52,13 +59,79 @@ function latestAggregateVersion(events: readonly DomainEvent[], event: DomainEve
 export function clearProjectEventBuffer(projectId?: string): void {
   if (projectId === undefined) {
     pendingByProject.clear();
+    quarantinedByProject.clear();
     return;
   }
-  pendingByProject.delete(requiredProjectId(projectId));
+  const normalizedProjectId = requiredProjectId(projectId);
+  pendingByProject.delete(normalizedProjectId);
+  quarantinedByProject.delete(normalizedProjectId);
 }
 
 export function getPendingProjectEvents(projectId: string): DomainEvent[] {
   return [...(pendingByProject.get(requiredProjectId(projectId)) ?? [])];
+}
+
+export function getProjectEventBufferQuarantine(projectId: string): ProjectEventBufferQuarantine | undefined {
+  const quarantine = quarantinedByProject.get(requiredProjectId(projectId));
+  return quarantine ? { ...quarantine, eventIds: [...quarantine.eventIds] } : undefined;
+}
+
+export function quarantineProjectEventBuffer(
+  projectId: string,
+  quarantine: ProjectEventBufferQuarantine,
+): void {
+  const normalizedProjectId = requiredProjectId(projectId);
+  const requestIdentity = quarantine.requestIdentity.trim();
+  const reason = quarantine.reason.trim();
+  const eventIds = [...new Set(quarantine.eventIds)];
+  if (!requestIdentity || requestIdentity !== quarantine.requestIdentity || !reason
+    || eventIds.length === 0
+    || eventIds.length !== quarantine.eventIds.length
+    || eventIds.some((eventId) => !eventId || eventId.trim() !== eventId)) {
+    throw new EventStoreError('needs-repair', `recovery event buffer quarantine 不完整：${normalizedProjectId}`);
+  }
+  const existing = quarantinedByProject.get(normalizedProjectId);
+  if (existing && existing.requestIdentity !== requestIdentity) {
+    throw new EventStoreError(
+      'needs-repair',
+      `项目已有其它 recovery event buffer quarantine：${normalizedProjectId} (${existing.requestIdentity})`,
+    );
+  }
+  quarantinedByProject.set(normalizedProjectId, {
+    requestIdentity,
+    eventIds: [...new Set([...(existing?.eventIds ?? []), ...eventIds])],
+    reason,
+  });
+}
+
+function assertProjectEventBufferNotQuarantined(projectId: string): void {
+  const quarantine = quarantinedByProject.get(projectId);
+  if (quarantine) {
+    throw new EventStoreError(
+      'needs-repair',
+      `项目 pending events 已隔离，禁止自动 flush：${projectId} (${quarantine.requestIdentity}: ${quarantine.reason})`,
+    );
+  }
+}
+
+function removeFlushedEvents(projectId: string, flushed: readonly DomainEvent[]): void {
+  const flushedIds = new Set(flushed.map((event) => event.eventId));
+  const remaining = (pendingByProject.get(projectId) ?? []).filter((event) => !flushedIds.has(event.eventId));
+  if (remaining.length === 0) pendingByProject.delete(projectId);
+  else pendingByProject.set(projectId, remaining);
+}
+
+/** Restore a previously captured pending-event snapshot after a failed command. */
+export function restoreProjectEventBuffer(projectId: string, events: readonly DomainEvent[]): void {
+  const normalizedProjectId = requiredProjectId(projectId);
+  if (events.some((event) => event.streamId !== normalizedProjectId)) {
+    throw new EventStoreError('event-conflict', `恢复 pending events 时 streamId 与项目不一致：${normalizedProjectId}`);
+  }
+  if (events.length === 0) {
+    pendingByProject.delete(normalizedProjectId);
+    return;
+  }
+  pendingByProject.set(normalizedProjectId, [...events]);
 }
 
 /** Add command facts to the project-local pending buffer without doing I/O. */
@@ -113,6 +186,7 @@ export async function flushPendingProjectEvents(
   flushTails.set(normalizedProjectId, queued);
   await previous.catch(() => {});
   try {
+    assertProjectEventBufferNotQuarantined(normalizedProjectId);
     const pending = getPendingProjectEvents(normalizedProjectId);
     if (pending.length === 0) return { status: 'empty', count: 0 };
 
@@ -148,15 +222,16 @@ export async function flushPendingProjectEvents(
 
     if (newEvents.length === 0) {
       await repository.writeProjectionSnapshot(replayDomainEvents(working));
-      clearProjectEventBuffer(normalizedProjectId);
+      removeFlushedEvents(normalizedProjectId, pending);
       return { status: 'already-present', count: pending.length };
     }
 
+    assertProjectEventBufferNotQuarantined(normalizedProjectId);
     const appended = await repository.appendBatch(newEvents, parsed.lastSequence);
     // Keep a verifiable replay checkpoint beside the append-only facts. If this
     // second write fails, pending events remain available for an idempotent retry.
     await repository.writeProjectionSnapshot(replayDomainEvents(appended.events));
-    clearProjectEventBuffer(normalizedProjectId);
+    removeFlushedEvents(normalizedProjectId, pending);
     return { status: 'flushed', count: newEvents.length };
   } finally {
     release();

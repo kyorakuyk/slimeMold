@@ -9,6 +9,10 @@ import type {
   ProjectTaskGraph,
   DepartmentWorkPackage,
 } from './types';
+import {
+  WORK_ORDER_PREFLIGHT_COMPLETED_EVENT,
+  WORK_ORDER_PREFLIGHT_WAIVED_EVENT,
+} from './workOrderPreflight';
 
 export type ProjectControlConsistencyIssueCode =
   | 'invalid-event-stream'
@@ -61,6 +65,7 @@ const recognized = new Set([
   'BriefProposed', 'LegacyBriefImported', 'BriefApproved',
   'ArchitectureProposed', 'LegacyArchitectureImported', 'ArchitectureApproved',
   'TaskGraphProposed', 'TaskGraphRevisionCreated', 'TaskGraphSuperseded', 'LegacyTaskGraphImported', 'TaskGraphApproved', 'LegacyTaskImported',
+  WORK_ORDER_PREFLIGHT_COMPLETED_EVENT, WORK_ORDER_PREFLIGHT_WAIVED_EVENT,
   'ProjectPlanProposed', 'ProjectPlanApproved', 'DepartmentWorkPackageDispatched',
   'IssueStatusChanged', 'LegacyIssueImported', 'IssueCreated', 'LegacyDecisionImported',
 ]);

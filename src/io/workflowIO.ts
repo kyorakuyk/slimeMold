@@ -2,6 +2,7 @@ import type { NodeDefinition } from '../types/node';
 import type { WorkflowFile } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types/graph';
 import type { EdgeKind } from '../types/graph';
+import i18n from '../i18n';
 import { isTauri } from '../platform/env';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useRegistryStore } from '../store/registryStore';
@@ -42,13 +43,16 @@ export function serializeWorkflow(): WorkflowFile {
 }
 
 /* ---------- 反序列化与校验 ---------- */
+/** 检查 version 与 nodes/edges 容器后载入当前 workflow；缺失的节点类型保留为占位定义。
+ * 已知 typeId 先规范为注册表拼写；这不是完整 schema 校验，也不恢复 ProjectFile/项目级状态（ADR-SM-016、ADR-SM-017）。
+ */
 export function applyWorkflowFile(text: string, standalonePath?: string): void {
   const raw = JSON.parse(text) as WorkflowFile;
   if (raw.version !== 1) {
-    throw new Error(`不支持的工作流版本: ${String(raw.version)}`);
+    throw new Error(i18n.t('log.workflowIO.unsupportedVersion', { version: String(raw.version) }));
   }
   if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges)) {
-    throw new Error('工作流文件缺少 nodes/edges');
+    throw new Error(i18n.t('log.workflowIO.missingNodesEdges'));
   }
 
   // 缺失节点类型 -> 注册占位定义，保证图可打开
@@ -64,20 +68,23 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
     if (!known && !missingDefs.some((d) => d.typeId === n.typeId)) {
       missingTypeIds.push(n.typeId);
       const isCustom = looksLikeCustom(n.typeId);
-      const hint = isCustom
+      const persistedHint = isCustom
         ? '疑似自定义节点（custom node）：请到「插件面板」点「扫描自定义节点」，或将对应节点包放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后重新打开。'
         : '该类型不属于内置节点，可能来自尚未加载的插件。';
+      const uiHint = isCustom
+        ? i18n.t('log.workflowIO.customNodeHint')
+        : i18n.t('log.workflowIO.pluginNodeHint');
       missingDefs.push({
         typeId: n.typeId,
-        name: `缺失: ${n.typeId}`,
-        category: '缺失类型',
-        description: `节点类型未注册。${hint}`,
+        name: i18n.t('log.workflowIO.missingNodeName', { typeId: n.typeId }),
+        category: i18n.t('log.workflowIO.missingTypeCategory'),
+        description: i18n.t('log.workflowIO.nodeTypeUnregistered', { hint: uiHint }),
         inputs: [],
         outputs: [],
         params: [],
         missing: true,
         async execute() {
-          throw new Error(`节点类型 ${n.typeId} 缺失，无法执行。${hint}`);
+          throw new Error(`节点类型 ${n.typeId} 缺失，无法执行。${persistedHint}`);
         },
       });
     }
@@ -85,10 +92,13 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
   if (missingDefs.length > 0) {
     registry.register(missingDefs);
     const customCount = missingTypeIds.filter(looksLikeCustom).length;
-    const detail = missingTypeIds.join('、');
-    log('error',
-      `有 ${missingDefs.length} 种节点类型缺失（其中 ${customCount} 个疑似自定义节点），已用占位节点显示。缺失类型：${detail}。` +
-      `修复：在「插件面板」点「扫描自定义节点」并确保节点包已放入程序目录/custom_nodes（全局）或当前项目/custom_nodes（仅本项目）后，重新打开本工作流。`);
+    const detail = missingTypeIds.join(i18n.t('log.workflowIO.missingNodeTypesSeparator'));
+    const missingMessage = i18n.t('log.workflowIO.missingNodeTypes', {
+      count: missingDefs.length,
+      customCount,
+      detail,
+    });
+    log('error', `${missingMessage}${i18n.t('log.workflowIO.missingNodeTypesFix')}`);
   }
 
   // 将大小写写错但可命中的 typeId 规范化回注册表里的正确写法
@@ -144,7 +154,11 @@ export function applyWorkflowFile(text: string, standalonePath?: string): void {
       });
     }
   }
-  log('info', `工作流已导入：${raw.name}（${nodes.length} 节点 / ${edges.length} 连线）`);
+  log('info', i18n.t('log.workflowIO.imported', {
+    name: String(raw.name),
+    nodes: nodes.length,
+    edges: edges.length,
+  }));
 }
 
 /* ---------- 导出 ---------- */
@@ -158,11 +172,11 @@ export async function exportWorkflow(): Promise<void> {
     const fs = await import('@tauri-apps/plugin-fs');
     const path = await dialog.save({
       defaultPath: fileName,
-      filters: [{ name: '工作流文件', extensions: ['json'] }],
+      filters: [{ name: i18n.t('dialog.workflowFileType'), extensions: ['json'] }],
     });
     if (!path) return;
     await fs.writeTextFile(path, text);
-    log('info', `工作流已导出：${path}`);
+    log('info', i18n.t('log.workflowIO.exported', { target: path }));
     return;
   }
 
@@ -175,7 +189,7 @@ export async function exportWorkflow(): Promise<void> {
   a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
-  log('info', `工作流已导出：${fileName}`);
+  log('info', i18n.t('log.workflowIO.exported', { target: fileName }));
 }
 
 /* ---------- 导入 ---------- */
@@ -185,7 +199,7 @@ export async function importWorkflow(): Promise<void> {
     const fs = await import('@tauri-apps/plugin-fs');
     const path = await dialog.open({
       multiple: false,
-      filters: [{ name: '工作流文件', extensions: ['json'] }],
+      filters: [{ name: i18n.t('dialog.workflowFileType'), extensions: ['json'] }],
     });
     if (typeof path !== 'string') return;
     const text = await fs.readTextFile(path);
@@ -220,7 +234,9 @@ export async function openWorkflowFromText(
     applyWorkflowFile(text, name);
     return true;
   } catch (e) {
-    log('error', `拖入的文件不是有效的工作流：${e instanceof Error ? e.message : String(e)}`);
+    log('error', i18n.t('log.workflowIO.invalidFileDropped', {
+      message: e instanceof Error ? e.message : String(e),
+    }));
     return false;
   }
 }
@@ -231,8 +247,8 @@ export async function copyWorkflowText(): Promise<void> {
   const text = JSON.stringify(wf, null, 2);
   try {
     await navigator.clipboard.writeText(text);
-    log('info', '工作流文本已复制到剪贴板，可直接发给同事');
+    log('info', i18n.t('log.workflowIO.clipboardCopied'));
   } catch {
-    log('error', '复制失败：当前环境不支持剪贴板，请改用「导出工作流」保存为文件');
+    log('error', i18n.t('log.workflowIO.clipboardUnsupported'));
   }
 }

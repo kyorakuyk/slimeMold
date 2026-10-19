@@ -7,7 +7,12 @@
 import type { WorkflowFile, WorkflowFileInMemory } from '../types/workflow';
 import type { FlowEdge, FlowNode } from '../types/graph';
 import { fromDisk, serializeCurrent } from './workflowSerialize';
+import { createWorkflowId } from './workflowId';
 import { builtinRoles, createAgent } from '../agents/agentManager';
+
+export type NewWorkflowInProjectResult =
+  | { status: 'created'; workflowId: string }
+  | { status: 'aborted'; reason: 'project-changed' };
 
 export function resolveActiveWorkflowWorkspaceDir(input: {
   workflows: Record<string, Pick<WorkflowFileInMemory, 'workspaceDir'>>;
@@ -60,7 +65,7 @@ export function buildSwitchWorkflowState(
   if (id === view.activeWfId) return null;
   // 写回当前编辑态（若为游离态则先收纳为临时工作流，避免节点丢失）
   const synced: Record<string, WorkflowFileInMemory> = { ...view.workflows };
-  const curId = view.activeWfId || `wf-${Date.now()}`;
+  const curId = view.activeWfId || createWorkflowId(Date.now(), Object.keys(view.workflows));
   const prev = view.workflows[curId];
   synced[curId] = serializeCurrent(
     view,
@@ -215,6 +220,8 @@ export interface RegisteredWorkflowState {
 /**
  * 构建 registerWorkflow 的 normalized registry 与可选 canvas activation state。
  * 不触碰 store；ID生成和 set 由 facade负责。
+ * 非空输入 agents/roles 优先；否则保留当前字段的任意已定义值（包括空数组），仅字段缺失时回退内置项。
+ * activate=true 时返回供 facade 应用的完整激活载荷，不直接写 store（ADR-SM-005、ADR-SM-016）。
  */
 export function buildRegisteredWorkflowState(input: RegisteredWorkflowStateInput): RegisteredWorkflowState {
   const current = input.workflows[input.activeWfId];

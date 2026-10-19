@@ -22,11 +22,8 @@ export function inferAssetKind(filename: string): string {
   return 'text';
 }
 
-/**
- * 自动推断文件名：让上游全能 worker 自行决定文件叫什么。
- * 1) 从 hint（上游任务文本，如「帮我生成一个 helloworld.py 文件」）提取显式文件名；
- * 2) 从内容首行/代码块语言推断扩展名；
- * 3) 兜底 output.txt。
+/** 优先从 hint、再从内容启发式推断默认输出文件名；没有有效线索时回退 `output.txt`。
+ * 会剥离 hint 中的目录前缀，但这只是命名，不提供路径授权、Artifact 校验或 Acceptance（ADR-SM-018）。
  */
 export function inferFilename(opts: { hint: string; content: string }): string {
   const { hint, content } = opts;

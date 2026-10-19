@@ -1,0 +1,65 @@
+import type { ProjectControlSnapshot, ProjectPlan } from './types';
+
+export function architectureSnapshot(approval: 'draft' | 'approved' = 'draft'): ProjectControlSnapshot {
+  return {
+    version: 1,
+    activeSessionId: 'session-1',
+    sessions: [{
+      version: 1,
+      id: 'session-1',
+      projectId: 'project-1',
+      status: approval === 'draft' ? 'architecture-review' : 'plan-review',
+      messages: [],
+      openQuestions: [],
+      decisionIds: [],
+      architectureId: 'architecture-1',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    }],
+    decisions: [],
+    briefs: [],
+    architectures: [{
+      version: 1,
+      id: 'architecture-1',
+      sessionId: 'session-1',
+      briefId: 'brief-1',
+      architectureVersion: 1,
+      overview: '分层架构',
+      modules: [],
+      interfaces: [],
+      tasks: [{
+        id: 'task-1',
+        title: '实现任务',
+        description: '实现最小功能',
+        moduleId: 'core',
+        scope: ['src/core.ts'],
+        dependsOn: [],
+        acceptanceCriteria: ['测试通过'],
+        category: 'logic',
+      }],
+      risks: [],
+      approval,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    }],
+    issues: [],
+  };
+}
+
+export const projectPlan: ProjectPlan = {
+  version: 1,
+  id: 'project-plan-1',
+  projectId: 'project-1',
+  sessionId: 'session-1',
+  planVersion: 1,
+  requirementsRef: { id: 'requirements-1', version: 1 },
+  solutionRef: { id: 'solution-1', version: 1 },
+  feasibilityRef: { id: 'feasibility-1', version: 1 },
+  milestonePlanRef: { id: 'milestones-1', version: 1 },
+  departmentCharterRefs: [{ id: 'charter-1', version: 1 }],
+  feasibilityStatus: 'feasible',
+  blockingQuestionCount: 0,
+  approval: 'draft',
+  createdAt: '2026-09-12T09:05:00.000Z',
+  updatedAt: '2026-09-12T09:05:00.000Z',
+};

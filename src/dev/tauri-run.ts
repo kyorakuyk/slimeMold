@@ -23,6 +23,15 @@ interface DevExecResult {
   code: number;
 }
 
+interface DevCleanupReadback {
+  authority: 'native';
+  worktreePath: string;
+  branch: string;
+  branchRevision: string;
+  targetIdentity?: string | null;
+  finalStatus: 'absent';
+}
+
 /** invoke 封装（延迟 import，避免非 Tauri 构建硬依赖）。 */
 async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
@@ -70,14 +79,23 @@ export function createTauriGitRunner(generation: number): DevGitRunner {
           branchRevision,
           generation: sessionGeneration,
         });
-        await call<void>('dev_cleanup_worktree', {
+        const readback = await call<DevCleanupReadback>('dev_cleanup_worktree', {
           path,
           branch,
           branchRevision,
           approvalToken,
           generation: sessionGeneration,
         });
-        return { exitCode: 0, stdout: '', stderr: '', durationMs: 0 };
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 0,
+          cleanupReadback: {
+            ...readback,
+            targetIdentity: readback.targetIdentity ?? undefined,
+          },
+        };
       } catch (e) {
         return {
           exitCode: -1,

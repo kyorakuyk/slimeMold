@@ -132,4 +132,51 @@ describe('project lifecycle controller', () => {
 
     controller.dispose();
   });
+
+  it('restores worktrees after the recovery audit rehydrates durable Worker runs', async () => {
+    const rehydratedRun = { runId: 'run-rehydrated', tasks: {} } as never;
+    let currentState = state({ projectId: 'project-1', projectPath: 'C:/project-1' });
+    const transitionOrder: string[] = [];
+    let runsAtRestore: unknown[] = [];
+    const session = { listAcceptances: () => [] };
+    const restoreWorkerWorktrees = vi.fn(async (_session, runs) => {
+      transitionOrder.push('restore');
+      runsAtRestore = [...runs];
+    });
+    const auditLoadedWorkerRunFacts = vi.fn(async () => {
+      transitionOrder.push('audit');
+      currentState = { ...currentState, workerRuns: [rehydratedRun] };
+    });
+    const refreshWorkerCleanupProposals = vi.fn(async () => {
+      transitionOrder.push('proposal');
+    });
+    const controller = createProjectLifecycleController({
+      getState: () => currentState,
+      subscribe: () => () => {},
+      setShowWelcome: vi.fn(),
+      getProjectOperation: vi.fn((projectId, projectPath) => operation(projectId, projectPath)),
+      clearProjectOperation: vi.fn(),
+      reportWarning: vi.fn(),
+      restoreWorkerWorktrees,
+      loadProjectWorkerEvidence: vi.fn(async () => {}),
+      auditLoadedWorkerRunFacts,
+      refreshWorkerCleanupProposals,
+      recoverInterruptedWorkerEffects: vi.fn(async () => {}),
+      ensureGuiDevSession: vi.fn(async () => session) as never,
+      teardownGuiDevSession: vi.fn(async () => {}),
+      scanProjectCustomNodes: vi.fn(async () => 0),
+      terminatePluginRuntime: vi.fn(),
+      unloadProjectCustomNodes: vi.fn(),
+    });
+
+    controller.start();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(auditLoadedWorkerRunFacts).toHaveBeenCalledTimes(1);
+    expect(restoreWorkerWorktrees).toHaveBeenCalledTimes(1);
+    expect(runsAtRestore).toEqual([rehydratedRun]);
+    expect(refreshWorkerCleanupProposals).toHaveBeenCalledWith(session, 'run-rehydrated', expect.any(AbortSignal));
+    expect(transitionOrder).toEqual(['audit', 'restore', 'proposal']);
+    controller.dispose();
+  });
 });

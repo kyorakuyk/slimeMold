@@ -5,6 +5,7 @@ export interface WorkerWorktreeRestoreInfo {
   path: string;
   branch: string;
   baseRevision: string;
+  targetIdentity?: string;
   branchRevision?: string;
   createdAt: string;
   status: 'created' | 'cleaned' | 'orphaned' | 'registration-pending';
@@ -43,6 +44,7 @@ export async function restoreWorkerWorktrees(
         path: task.worktreePath,
         branch: task.branch,
         baseRevision: task.baseRevision,
+        targetIdentity: task.targetIdentity,
         branchRevision: task.branchRevision,
         createdAt: task.updatedAt,
         status: task.worktreeStatus ?? 'created',

@@ -31,10 +31,12 @@ import type { FlowNode, FlowEdge, NodeStatus, WorkflowNodeData } from '../types/
 import type { SubgraphDef, SubgraphPort } from '../types/workflow';
 import type { PortType } from '../types/graph';
 import { resolvePorts } from '../engine/subgraph';
+import { useT } from '../i18n/useT';
 
 const nodeTypes = { base: BaseNode, proxyIn: ProxyPortNode, proxyOut: ProxyPortNode } as unknown as NodeTypes;
 
 export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
+  const t = useT('ui');
   const sg = useWorkflowStore((s) => s.subgraphs[subgraphId]);
   const saveSubgraphDef = useWorkflowStore((s) => s.saveSubgraphDef);
   const syncGroupProxies = useWorkflowStore((s) => s.syncGroupProxies);
@@ -158,6 +160,10 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
     setInnerNodes((ns) => [...ns, node]);
   };
 
+  /**
+   * 写回真实子图节点/边，并把虚拟代理端点连线转换为子图输入/输出端口。
+   * 保存后同步父图代理端口，使引用该定义的画布投影保持一致（ADR-SM-017）。
+   */
   const close = () => {
     // 写回子图定义：排除虚拟代理端点节点；涉及代理节点的连线转为子图对外端口语义
     const innerNodesArr = innerNodes;
@@ -257,17 +263,17 @@ export default function SubgraphEditor({ subgraphId }: { subgraphId: string }) {
     <div className="fixed inset-0 z-40 flex flex-col bg-[rgba(18,18,20,0.96)]">
       {/* 面包屑 / 标题栏 */}
       <div className="flex items-center gap-3 border-b border-line px-4 py-2 text-[13px] text-ink">
-        <span className="text-ink-faint">父图</span>
+        <span className="text-ink-faint">{t('canvas.subgraph.parentGraph')}</span>
         <span className="text-ink-faint">/</span>
-        <span className="font-semibold">子图：{sg.name}</span>
+        <span className="font-semibold">{t('canvas.subgraph.title', { name: sg.name })}</span>
         <span className="ml-2 rounded bg-paper-soft px-2 py-0.5 text-[11px] text-ink-soft">
-          左侧=输入代理端口，右侧=输出代理端口
+          {t('canvas.subgraph.proxyDirectionHint')}
         </span>
         <button
           className="ml-auto flex items-center gap-1 rounded-md border border-line px-3 py-1 text-[12.5px] text-ink transition-colors hover:bg-paper-soft"
           onClick={close}
         >
-          <X size={14} /> 完成并返回
+          <X size={14} /> {t('canvas.subgraph.finish')}
         </button>
       </div>
 

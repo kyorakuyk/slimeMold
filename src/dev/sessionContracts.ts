@@ -22,6 +22,7 @@ export interface AcceptancePersistence {
 export interface CleanupApproval {
   worktreePath: string;
   worktreeId?: string;
+  targetIdentity?: string;
   branch?: string;
   branchRevision?: string;
   branchRevisionRequired?: boolean;

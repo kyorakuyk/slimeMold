@@ -3,12 +3,14 @@ import {
   createSideEffect,
   markSideEffectUnknown,
   startSideEffect,
+  type CleanupReceipt,
   type SideEffectRecord,
 } from '../domain/contracts';
 import {
   SideEffectJournalError,
   SideEffectJournalRepository,
 } from '../domain/sideEffects';
+import type { CleanupHostReadback } from '../domain/contracts';
 import {
   cleanupBindingFingerprint,
   workerCleanupEffectKey,
@@ -19,6 +21,12 @@ import { pathComparisonKey } from '../dev/path-utils';
 export interface WorkerCleanupExecutionHost {
   /** Host method must re-check approval, acceptance, baseline, and state signature. */
   confirmAndCleanup(path: string, signal?: AbortSignal, expectedFingerprint?: string): Promise<boolean>;
+  /** Read back the host-owned worktree registry after cleanup; no in-memory UI state. */
+  readCleanupState(path: string, worktreeId?: string, targetIdentity?: string): Promise<{
+    present: boolean;
+    status: 'absent' | 'created' | 'orphaned' | 'registration-pending' | 'cleaned';
+    hostReadback?: CleanupHostReadback;
+  }>;
 }
 
 export interface WorkerCleanupExecutionInput {
@@ -89,12 +97,32 @@ function matchesCompletedCleanupReceipt(
   proposal: Extract<WorkerCleanupProposal, { status: 'ready' }>,
   isLegacyKey: boolean,
 ): boolean {
+  const cleanup = entry.receipt?.cleanup;
+  const hostReadback = cleanup?.hostReadback;
   return entry.status === 'receipt'
+    && !!proposal.targetIdentity?.trim()
     && matchesProposal(entry, proposal, isLegacyKey)
     && entry.receipt?.receiptId === `${entry.idempotencyKey}:receipt`
     && entry.recovery === 'skip'
     && entry.receipt.outcome === 'succeeded'
-    && entry.receipt.outputHash === proposal.stateSignature;
+    && entry.receipt.outputHash === proposal.stateSignature
+    && !!cleanup
+    && cleanup.worktreePath === proposal.worktreePath
+    && cleanup.worktreeId === proposal.worktreeId
+    && !!cleanup.targetIdentity?.trim()
+    && cleanup.targetIdentity === proposal.targetIdentity
+    && cleanup.branch === proposal.branch
+    && cleanup.branchRevision === proposal.branchRevision
+    && cleanup.baseRevision === proposal.baseRevision
+    && cleanup.finalStatus === 'absent'
+    && !!hostReadback
+    && hostReadback.authority === 'native'
+    && pathComparisonKey(hostReadback.worktreePath) === pathComparisonKey(proposal.worktreePath)
+    && hostReadback.branch === proposal.branch
+    && hostReadback.branchRevision === proposal.branchRevision
+    && !!hostReadback.targetIdentity?.trim()
+    && hostReadback.targetIdentity === proposal.targetIdentity
+    && hostReadback.finalStatus === 'absent';
 }
 
 /** Execute only after the caller has already recorded the explicit host approval. */
@@ -104,6 +132,7 @@ export async function executeWorkerCleanupWithReceipt(
   if (input.proposal.status === 'blocked') throw new Error(`清理提案不可执行：${input.proposal.reason}`);
   if (input.proposal.status === 'cleaned') throw new Error('清理提案已经完成，不能重复执行');
   const proposal = input.proposal;
+  requiredText(proposal.targetIdentity ?? '', 'cleanup target identity');
   const now = requiredText(input.now, '时间');
   const key = effectKey(proposal);
   const legacyKey = legacyEffectKey(proposal);
@@ -193,6 +222,14 @@ export async function executeWorkerCleanupWithReceipt(
 
   try {
     throwIfAborted(input.signal);
+    if (!proposal.targetIdentity?.trim()) {
+      const unknown = markSideEffectUnknown(startedRecord, 'cleanup-target-identity-missing');
+      const journal = await input.repository.record(unknown);
+      return {
+        cleaned: false,
+        sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+      };
+    }
     const fingerprint = cleanupBindingFingerprint(proposal);
     const cleaned = input.signal
       ? await input.host.confirmAndCleanup(proposal.worktreePath, input.signal, fingerprint)
@@ -205,11 +242,63 @@ export async function executeWorkerCleanupWithReceipt(
         sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
       };
     }
+    const readback = await input.host.readCleanupState(
+      proposal.worktreePath,
+      proposal.worktreeId,
+      proposal.targetIdentity,
+    );
+    if (readback.present || readback.status !== 'absent') {
+      const unknown = markSideEffectUnknown(startedRecord, 'cleanup-host-readback-retained-worktree');
+      const journal = await input.repository.record(unknown);
+      return {
+        cleaned: false,
+        sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+      };
+    }
+    if (!readback.hostReadback) {
+      const unknown = markSideEffectUnknown(startedRecord, 'cleanup-native-readback-missing');
+      const journal = await input.repository.record(unknown);
+      return {
+        cleaned: false,
+        sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+      };
+    }
+    if (readback.hostReadback) {
+      const authoritative = readback.hostReadback;
+      if (
+        authoritative.authority !== 'native'
+        || pathComparisonKey(authoritative.worktreePath) !== pathComparisonKey(proposal.worktreePath)
+        || authoritative.branch !== proposal.branch
+        || authoritative.branchRevision !== proposal.branchRevision
+        || !authoritative.targetIdentity?.trim()
+        || authoritative.targetIdentity !== proposal.targetIdentity
+        || authoritative.finalStatus !== 'absent'
+      ) {
+        const unknown = markSideEffectUnknown(startedRecord, 'cleanup-native-readback-mismatch');
+        const journal = await input.repository.record(unknown);
+        return {
+          cleaned: false,
+          sideEffect: findEntry(journal.entries, [key, legacyKey]) ?? unknown,
+        };
+      }
+    }
+    const cleanupReceipt: CleanupReceipt = {
+      worktreePath: proposal.worktreePath,
+      worktreeId: proposal.worktreeId,
+      ...(proposal.targetIdentity ? { targetIdentity: proposal.targetIdentity } : {}),
+      branch: proposal.branch,
+      branchRevision: proposal.branchRevision,
+      baseRevision: proposal.baseRevision,
+      finalStatus: 'absent',
+      hostVerifiedAt: now,
+      ...(readback.hostReadback ? { hostReadback: readback.hostReadback } : {}),
+    };
     const receipt = completeSideEffect(startedRecord, {
       receiptId: `${key}:receipt`,
       observedAt: now,
       outputHash: proposal.stateSignature,
       outcome: 'succeeded',
+      cleanup: cleanupReceipt,
     });
     const journal = await input.repository.record(receipt);
     return {

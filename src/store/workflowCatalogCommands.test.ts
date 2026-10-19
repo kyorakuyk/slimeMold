@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import i18n from '../i18n';
 import { createWorkflowCatalogCommands } from './workflowCatalogCommands';
 import type { WorkflowCatalogCommandState } from './workflowCatalogCommands';
 
@@ -55,5 +56,28 @@ describe('workflow catalog commands', () => {
     expect(addLog).toHaveBeenCalledWith('error', '内置角色不可删除');
     expect(saveGlobalAgents).toHaveBeenCalledTimes(2);
     expect(clearGlobalMasterAgent).toHaveBeenCalledOnce();
+  });
+
+  it('localizes the builtin-role rejection log without changing the catalog fact', async () => {
+    const originalLanguage = i18n.language;
+    const current = state();
+    const addLog = vi.fn();
+    const commands = createWorkflowCatalogCommands({
+      getState: () => current,
+      setState: vi.fn(),
+      saveGlobalAgents: vi.fn(),
+      getGlobalMasterAgentId: () => null,
+      clearGlobalMasterAgent: vi.fn(),
+      addLog,
+    });
+
+    try {
+      await i18n.changeLanguage('en-US');
+      commands.removeRole('role-builtin');
+      expect(addLog).toHaveBeenCalledWith('error', 'Built-in roles cannot be removed');
+      expect(current.roles[0].builtin).toBe(true);
+    } finally {
+      await i18n.changeLanguage(originalLanguage || 'zh-CN');
+    }
   });
 });

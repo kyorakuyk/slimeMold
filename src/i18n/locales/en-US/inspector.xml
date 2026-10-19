@@ -36,7 +36,7 @@ edit its params and view results</string>
   <string name="param.role.placeholder">— No Role —</string>
   <string name="param.role.builtin">(built-in)</string>
 
-  <string name="sg.stepsCount">Contains {count} steps; will be auto-expanded at runtime.</string>
+  <string name="sg.stepsCount">Contains {{count}} steps; will be auto-expanded at runtime.</string>
   <string name="sg.input">Input</string>
   <string name="sg.output">Output</string>
   <string name="sg.unpackTitle">Restore the subgraph's inner nodes onto the canvas</string>

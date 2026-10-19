@@ -157,7 +157,7 @@ export default function GroupsPanel({ embedded = false }: { embedded?: boolean }
               className="group/f flex w-full items-center gap-1.5 rounded px-1.5 py-1.5 text-left"
               style={{ borderLeft: '3px solid var(--sm-line)' }}
               onClick={() => selectMember(m.id)}
-              title={`${m.info!.label} · ${m.info!.typeId}（未分组）`}
+              title={t('groups.unassignedTitle', { label: m.info!.label, typeId: m.info!.typeId })}
             >
               <Box size={15} className="shrink-0" style={{ color: 'var(--sm-ink-faint)' }} />
               <span className="truncate text-[13px]" style={{ color: 'var(--sm-ink)' }}>

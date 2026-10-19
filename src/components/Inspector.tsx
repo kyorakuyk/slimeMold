@@ -8,9 +8,14 @@ import { alertDialog, isTauri, downloadBlob } from '../platform/env';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import type { ParamDef } from '../types/graph';
 import { useT } from '../i18n/useT';
+import { formatDateTime } from '../i18n/dateTime';
 import { AgentSelect } from './AgentSelect';
 import { mergeAgentPool } from '../agents/globalAgents';
 
+/**
+ * 将一个 `ParamDef` 与当前值映射为表单控件，并通过 `onChange` 回传编辑结果。
+ * 控件不拥有工作流节点状态（ADR-SM-005）。
+ */
 function ParamField({
   def,
   value,
@@ -33,7 +38,7 @@ function ParamField({
     const isFile = typeof value === 'string' && (value.startsWith('path:') || value.startsWith('file:'));
     const fileLabel = isFile
           ? value.startsWith('file:')
-            ? t('asset.localLabel')
+            ? t('param.asset.localLabel')
             : value.slice(5)
       : '';
 
@@ -175,7 +180,10 @@ function ParamField({
   );
 }
 
-/** 右侧属性检查面板 */
+/**
+ * 展示焦点工作流的节点参数/错误，或 `activeWfId` 所指工作流中所选资产的详情。
+ * 事实留在 store owner 中，组件通过既有 action 编辑或移除（ADR-SM-005、ADR-SM-006）。
+ */
 export default function Inspector({ width = 288 }: { width?: number }) {
   const selectedId = useWorkflowStore((s) => s.selectedNodeId);
   const focusWfId = useWorkflowStore((s) => s.focusWfId);
@@ -222,10 +230,12 @@ export default function Inspector({ width = 288 }: { width?: number }) {
       try {
         await revealItemInDir(winPath);
       } catch (err1) {
+        // Developer-console diagnostic only; intentionally not rendered as localized UI.
         console.error('revealItemInDir 失败', err1);
         try {
           await openPath(dir);
         } catch (err2) {
+          // Developer-console diagnostic only; intentionally not rendered as localized UI.
           console.error('openPath 失败', err2);
           void alertDialog(`${t('asset.cannotOpen')}\n${winPath}`);
         }
@@ -245,7 +255,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             <p className="mt-0.5 text-[11px] text-ink-faint">{t('asset.title')}{asset.kind}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title="下载 / 导出" onClick={() => downloadBlob(asset.name, asset.content, asset.kind === 'image' ? 'image/png' : 'text/plain')}>
+            <button className="sm-btn border-transparent px-1.5 text-ink-faint hover:text-ink" title={t('asset.download')} onClick={() => downloadBlob(asset.name, asset.content, asset.kind === 'image' ? 'image/png' : 'text/plain')}>
               <Download size={14} />
             </button>
             {asset.path && isTauri && (
@@ -263,7 +273,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.type')}{asset.kind}</div>
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.size')}{fmtBytes(asset.content)}</div>
             <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.source')}{asset.inWorkspace ? t('asset.source.workspace') : t('asset.source.workflow')}</div>
-            <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.created')}{new Date(asset.createdAt).toLocaleString()}</div>
+            <div className="rounded bg-paper-deep px-2.5 py-1.5">{t('asset.created')}{formatDateTime(asset.createdAt)}</div>
           </div>
           {asset.path && (
             <div>
@@ -272,7 +282,7 @@ export default function Inspector({ width = 288 }: { width?: number }) {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs text-ink-soft">内容预览</label>
+            <label className="mb-1 block text-xs text-ink-soft">{t('asset.preview')}</label>
             {asset.kind === 'image' ? (
               <img src={asset.content.startsWith('data:') ? asset.content : `data:image/png;base64,${asset.content}`} alt={asset.name} className="max-w-full rounded border border-line" />
             ) : (

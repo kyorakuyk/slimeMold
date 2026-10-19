@@ -6,6 +6,7 @@
  */
 import type { FlowEdge, FlowNode } from '../types/graph';
 import type { LogEntry } from '../types/execution';
+import i18n from '../i18n';
 import {
   remapPasted,
   sanitizeForClipboard,
@@ -77,7 +78,7 @@ export function createWorkflowGraphCommands(deps: GraphCommandDeps): WorkflowGra
       (edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target),
     );
     deps.setState({ clipboard: { nodes: selectedNodes, edges: [...selectedEdges] } });
-    deps.addLog('info', `已复制 ${selectedIds.size} 个节点到剪贴板`);
+    deps.addLog('info', i18n.t('log.workflowGraph.copiedNodes', { count: selectedIds.size }));
   };
 
   const pasteClipboard = (): void => {

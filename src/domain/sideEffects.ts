@@ -1,6 +1,8 @@
 import {
   markSideEffectUnknown,
   type SideEffectRecord,
+  type CleanupHostReadback,
+  type CleanupReceipt,
   type SideEffectReceipt,
 } from './contracts';
 import {
@@ -60,6 +62,57 @@ function isRecovery(value: unknown): value is SideEffectRecord['recovery'] {
   return value === 'retry' || value === 'skip' || value === 'needs-user';
 }
 
+function decodeCleanupReceipt(value: unknown): CleanupReceipt | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error('receipt.cleanup 必须是对象');
+  const required = (field: string): string => {
+    const fieldValue = value[field];
+    if (typeof fieldValue !== 'string' || !fieldValue.trim()) throw new Error(`receipt.cleanup.${field} 无效`);
+    return fieldValue;
+  };
+  if (value.finalStatus !== 'absent') throw new Error('receipt.cleanup.finalStatus 无效');
+  const targetIdentity = value.targetIdentity === undefined
+    ? undefined
+    : required('targetIdentity');
+  let hostReadback: CleanupHostReadback | undefined;
+  if (value.hostReadback !== undefined) {
+    if (!isRecord(value.hostReadback) || value.hostReadback.authority !== 'native') {
+      throw new Error('receipt.cleanup.hostReadback 无效');
+    }
+    const readback = value.hostReadback;
+    const readbackRequired = (field: string): string => {
+      const fieldValue = readback[field];
+      if (typeof fieldValue !== 'string' || !fieldValue.trim()) {
+        throw new Error(`receipt.cleanup.hostReadback.${field} 无效`);
+      }
+      return fieldValue;
+    };
+    if (readback.finalStatus !== 'absent') throw new Error('receipt.cleanup.hostReadback.finalStatus 无效');
+    const readbackTargetIdentity = readback.targetIdentity === undefined
+      ? undefined
+      : readbackRequired('targetIdentity');
+    hostReadback = {
+      authority: 'native',
+      worktreePath: readbackRequired('worktreePath'),
+      branch: readbackRequired('branch'),
+      branchRevision: readbackRequired('branchRevision'),
+      ...(readbackTargetIdentity ? { targetIdentity: readbackTargetIdentity } : {}),
+      finalStatus: 'absent',
+    };
+  }
+  return {
+    worktreePath: required('worktreePath'),
+    worktreeId: required('worktreeId'),
+    ...(targetIdentity ? { targetIdentity } : {}),
+    branch: required('branch'),
+    branchRevision: required('branchRevision'),
+    baseRevision: required('baseRevision'),
+    finalStatus: 'absent',
+    hostVerifiedAt: required('hostVerifiedAt'),
+    ...(hostReadback ? { hostReadback } : {}),
+  };
+}
+
 function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error('receipt 必须是对象');
@@ -92,6 +145,7 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
   if (value.approvalId !== undefined && (typeof value.approvalId !== 'string' || !value.approvalId.trim())) {
     throw new Error('receipt.approvalId 无效');
   }
+  const cleanup = decodeCleanupReceipt(value.cleanup);
   if (value.files !== undefined
     && (!Array.isArray(value.files)
       || value.files.some((file) => !isRecord(file)
@@ -119,6 +173,7 @@ function decodeReceipt(value: unknown): SideEffectReceipt | undefined {
     ...(typeof value.acceptanceId === 'string' ? { acceptanceId: value.acceptanceId } : {}),
     ...(typeof value.artifactCandidateId === 'string' ? { artifactCandidateId: value.artifactCandidateId } : {}),
     ...(typeof value.approvalId === 'string' ? { approvalId: value.approvalId } : {}),
+    ...(cleanup ? { cleanup } : {}),
     ...(Array.isArray(value.files)
       ? {
         files: value.files.map((file) => ({

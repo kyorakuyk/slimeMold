@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ParsedEventStream } from '../domain/eventStore';
+import type { SideEffectRecord } from '../domain/contracts';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { ProjectControlSnapshot } from './types';
 import {
@@ -115,6 +116,58 @@ describe('createWorkerRunRecoveryAuditController', () => {
     expect(fixture.auditWorker).not.toHaveBeenCalled();
     expect(fixture.deps.setWorkerCleanupProposals).toHaveBeenCalledWith([]);
     expect(fixture.deps.addLog).toHaveBeenCalledWith('warn', expect.stringContaining('Worker 事实源审计未通过'));
+  });
+
+  it('preserves cleanup-unknown when an identity-less receipt otherwise passes the facts audit', async () => {
+    const fixture = makeDeps();
+    fixture.state.workerRuns = [run('run-1')];
+    const identitylessReceipt: SideEffectRecord = {
+      idempotencyKey: 'cleanup:attempt-1',
+      kind: 'worktree-cleanup',
+      target: 'C:/workers/task-1',
+      inputHash: 'base-1:signature-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      taskExecutionId: 'execution-1' as SideEffectRecord['taskExecutionId'],
+      attemptId: 'attempt-1' as SideEffectRecord['attemptId'],
+      status: 'receipt',
+      recovery: 'skip',
+      receipt: {
+        receiptId: 'cleanup:attempt-1:receipt',
+        observedAt: '2026-09-21T00:00:00.000Z',
+        outcome: 'succeeded',
+        outputHash: 'signature-1',
+        cleanup: {
+          worktreePath: 'C:/workers/task-1',
+          worktreeId: 'wt-1',
+          branch: 'worker/task-1',
+          branchRevision: 'a'.repeat(40),
+          baseRevision: 'base-1',
+          finalStatus: 'absent',
+          hostVerifiedAt: '2026-09-21T00:00:00.000Z',
+          hostReadback: {
+            authority: 'native',
+            worktreePath: 'C:/workers/task-1',
+            branch: 'worker/task-1',
+            branchRevision: 'a'.repeat(40),
+            finalStatus: 'absent',
+          },
+        },
+      },
+    };
+    fixture.state.workerRunSideEffects = [identitylessReceipt];
+    const controller = createWorkerRunRecoveryAuditController(fixture.deps);
+
+    await controller.auditLoadedWorkerRunFacts('C:/project', [], new AbortController().signal);
+
+    expect(fixture.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      consistency: expect.objectContaining({ ok: false }),
+    }));
+    expect(fixture.deps.setWorkerRunRecoveries).toHaveBeenLastCalledWith([
+      expect.objectContaining({ runId: 'run-1', reason: 'cleanup-unknown' }),
+    ]);
+    expect(fixture.deps.suppressInvalidWorkerRunProjection).toHaveBeenCalled();
+    expect(fixture.deps.setWorkerCleanupProposals).toHaveBeenCalledWith([]);
   });
 
   it('converts repository failures into event-stream-invalid recovery without swallowing the warning', async () => {

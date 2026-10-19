@@ -16,6 +16,7 @@ import { ChevronDown, ChevronRight, Palette, X } from 'lucide-react';
 import type { NodeGroup } from '../types/workflow';
 import type { FlowNode } from '../types/graph';
 import { useWorkflowStore } from '../store/workflowStore';
+import { useT } from '../i18n/useT';
 
 /** 组框相对成员包围盒的内边距 */
 const PAD = 22;
@@ -67,6 +68,7 @@ function GroupBox({
   box: Box;
   zoom: number;
 }) {
+  const t = useT('ui');
   const moveGroup = useWorkflowStore((s) => s.moveGroup);
   const updateGroup = useWorkflowStore((s) => s.updateGroup);
   const removeGroup = useWorkflowStore((s) => s.removeGroup);
@@ -167,7 +169,7 @@ function GroupBox({
           // 仅在未拖动（无移动）时展开
           if (!movedRef.current) toggleCollapsed(group.id);
         }}
-        title="拖动可整组移动，双击重命名"
+        title={t('canvas.group.dragHint')}
       >
         <div className="sm-group-header">
           <span className="sm-group-dot" />
@@ -191,7 +193,7 @@ function GroupBox({
           ) : (
             <span className="sm-group-title">{group.title}</span>
           )}
-          <span className="sm-group-cat">组</span>
+          <span className="sm-group-cat">{t('canvas.group.category')}</span>
           <button
             className="sm-group-expand-btn"
             onPointerDown={(e) => e.stopPropagation()}
@@ -200,14 +202,14 @@ function GroupBox({
               if (!group.collapsed) updateGroup(group.id, { bounds: box });
               toggleCollapsed(group.id);
             }}
-            title="展开这一组"
+            title={t('canvas.group.expandTitle')}
           >
             <ChevronRight size={15} />
-            <span>展开</span>
+            <span>{t('canvas.group.expand')}</span>
           </button>
         </div>
         <div className="sm-group-body">
-          <span className="sm-group-count">含 {group.nodeIds.length} 个节点</span>
+          <span className="sm-group-count">{t('canvas.group.nodeCount', { count: group.nodeIds.length })}</span>
         </div>
       </div>
     );
@@ -238,7 +240,7 @@ function GroupBox({
           setDraft(group.title);
           setEditing(true);
         }}
-        title="拖动可整组移动，双击可重命名"
+        title={t('canvas.group.dragHint')}
       >
         <button
           className="shrink-0 rounded p-0.5 hover:bg-white/20"
@@ -249,7 +251,7 @@ function GroupBox({
             if (!group.collapsed) updateGroup(group.id, { bounds: box });
             toggleCollapsed(group.id);
           }}
-          title={group.collapsed ? '展开这一组' : '折叠这一组'}
+          title={group.collapsed ? t('canvas.group.expandTitle') : t('canvas.group.collapseTitle')}
         >
           {group.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         </button>
@@ -285,7 +287,7 @@ function GroupBox({
               e.stopPropagation();
               setPalette((v) => !v);
             }}
-            title="换个颜色"
+            title={t('canvas.group.changeColor')}
           >
             <Palette size={13} />
           </button>
@@ -317,7 +319,7 @@ function GroupBox({
             e.stopPropagation();
             removeGroup(group.id);
           }}
-          title="解散这一组（节点保留）"
+          title={t('canvas.group.dissolveTitle')}
         >
           <X size={13} />
         </button>

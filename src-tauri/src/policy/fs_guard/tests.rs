@@ -103,6 +103,115 @@ fn canonicalize_hardened_git_diff_normalizes_pathspecs() {
     assert!(canonical[7].ends_with("App.tsx"));
 }
 
+fn hardened_git_diff_args(pathspec: &str) -> Vec<String> {
+    [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "HEAD",
+        "--",
+        pathspec,
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+#[test]
+fn hardened_git_diff_accepts_a_missing_safe_pathspec_under_worktree() {
+    let base = TestDir::new("canonicalize-git-diff-missing");
+    let worktree = base.path().join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let args = hardened_git_diff_args("src/components");
+
+    let validation = dev_exec_validate_paths(worktree.to_str().unwrap(), &args);
+    let canonicalization = canonicalize_dev_exec_args(&worktree, &args);
+
+    assert!(
+        validation.is_ok(),
+        "missing safe pathspec rejected: {validation:?}"
+    );
+    assert!(
+        canonicalization.is_ok(),
+        "missing safe pathspec could not be canonicalized: {canonicalization:?}"
+    );
+    let canonical = canonicalization.unwrap();
+    assert!(Path::new(&canonical[7]).is_absolute());
+    assert!(Path::new(&canonical[7]).ends_with(Path::new("src").join("components")));
+    assert!(git_diff_pathspec_allowed(&worktree, Path::new(&canonical[7])).is_ok());
+}
+
+#[test]
+fn hardened_git_diff_rejects_a_pathspec_through_a_dangling_symlink() {
+    let base = TestDir::new("canonicalize-git-diff-dangling-symlink");
+    let worktree = base.path().join("wt");
+    let target_parent = base.path().join("outside");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&target_parent).unwrap();
+    let link = worktree.join("src");
+    let target = target_parent.join("missing");
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir;
+        if let Err(error) = symlink_dir(&target, &link) {
+            let unsupported = matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            ) || error.raw_os_error() == Some(1314);
+            if unsupported {
+                return;
+            }
+            panic!("unexpected symlink creation error: {error}");
+        }
+    }
+
+    let args = hardened_git_diff_args("src/components");
+    assert!(dev_exec_validate_paths(worktree.to_str().unwrap(), &args).is_err());
+    assert!(canonicalize_dev_exec_args(&worktree, &args).is_err());
+}
+
+#[test]
+fn hardened_git_diff_rejects_a_missing_pathspec_under_escaping_symlink() {
+    let base = TestDir::new("canonicalize-git-diff-missing-symlink");
+    let worktree = base.path().join("wt");
+    let outside = base.path().join("outside");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let link = worktree.join("src");
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::symlink_dir;
+        if let Err(error) = symlink_dir(&outside, &link) {
+            let unsupported = matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            ) || error.raw_os_error() == Some(1314);
+            if unsupported {
+                return;
+            }
+            panic!("unexpected symlink creation error: {error}");
+        }
+    }
+
+    let args = hardened_git_diff_args("src/components");
+    let validation_error = dev_exec_validate_paths(worktree.to_str().unwrap(), &args).unwrap_err();
+    let canonicalization_error = canonicalize_dev_exec_args(&worktree, &args).unwrap_err();
+
+    assert!(validation_error.contains("逃逸"), "{validation_error}");
+    assert!(
+        canonicalization_error.contains("逃逸"),
+        "{canonicalization_error}"
+    );
+}
+
 #[test]
 fn canonicalize_dev_exec_args_rejects_existing_symlink_escape() {
     let base = TestDir::new("canonicalize-symlink");

@@ -40,7 +40,7 @@ export function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
   const taskIds = new Set<string>();
   for (const task of facts.run.tasks) {
     const record = assertObject(task, 'facts.run task');
-    assertKeys(record, ['taskId', 'acceptanceStageId', 'taskDefinitionVersion', 'taskExecutionId', 'status', 'attempt', 'pendingAttempt', 'currentAttemptId', 'worktreeId', 'worktreePath', 'branch', 'baseRevision', 'worktreeStatus', 'branchRevision', 'cleanupStateSignature', 'evidenceIds', 'contextPackId', 'contextPackVersion', 'feedbackId', 'acceptanceId', 'cleanupStatus', 'cleanupReceiptId', 'error'], 'facts.run task');
+    assertKeys(record, ['taskId', 'acceptanceStageId', 'taskDefinitionVersion', 'taskExecutionId', 'status', 'attempt', 'pendingAttempt', 'currentAttemptId', 'worktreeId', 'worktreePath', 'branch', 'baseRevision', 'targetIdentity', 'worktreeStatus', 'branchRevision', 'cleanupStateSignature', 'evidenceIds', 'contextPackId', 'contextPackVersion', 'feedbackId', 'acceptanceId', 'cleanupStatus', 'cleanupReceiptId', 'error'], 'facts.run task');
     requiredText(task.taskId, 'facts task id');
     if (taskIds.has(task.taskId)) throw new Error('facts task id 重复');
     taskIds.add(task.taskId);
@@ -69,6 +69,7 @@ export function validateFactsDto(facts: WorkerRecoveryFactsV1): void {
     if (task.worktreePath !== undefined) comparableWorkerPath(task.worktreePath);
     if (task.branch !== undefined) canonicalRef(task.branch, 'facts task branch');
     if (task.baseRevision !== undefined) canonicalRevision(task.baseRevision, 'facts task baseRevision');
+    if (task.targetIdentity !== undefined) requiredText(task.targetIdentity, 'facts task targetIdentity');
     if (task.branchRevision !== undefined) canonicalRevision(task.branchRevision, 'facts task branchRevision');
     if (task.pendingAttempt !== undefined && (task.status !== 'queued' || task.pendingAttempt !== task.attempt + 1 || task.currentAttemptId !== undefined)) throw new Error('facts pendingAttempt fence 无效');
     if (task.cleanupStatus === 'cleaned' && (task.status !== 'succeeded' || task.worktreeStatus !== 'cleaned' || task.cleanupReceiptId === undefined)) throw new Error('facts cleanup invariant 无效');

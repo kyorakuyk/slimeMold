@@ -147,8 +147,6 @@ export function createProjectLifecycleController(
         const session = await ensureGuiDevSession(next.projectPath, operation.controller.signal);
         if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
         if (!session) return;
-        await deps.restoreWorkerWorktrees(session, deps.getState().workerRuns, operation.controller.signal);
-        if (operation.controller.signal.aborted) return;
         await deps.loadProjectWorkerEvidence(next.projectPath, operation.controller.signal);
         if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
         await deps.auditLoadedWorkerRunFacts(
@@ -156,6 +154,9 @@ export function createProjectLifecycleController(
           session.listAcceptances(),
           operation.controller.signal,
         );
+        if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
+        // The audit can rehydrate Worker runs from durable events; restore only after that projection is current.
+        await deps.restoreWorkerWorktrees(session, deps.getState().workerRuns, operation.controller.signal);
         if (operation.controller.signal.aborted || !projectLifecycle.isCurrent(epoch, next)) return;
         const restoredRuns = deps.getState().workerRuns;
         for (const run of restoredRuns) {

@@ -8,7 +8,9 @@ import type { CapabilityLevel } from '../types/capability';
 import type { ExecContext } from '../types/node';
 import type { FlowEdge, NodeUsageStat } from '../types/graph';
 
-/** 按节点定义推导其能力等级（单一真相源：minCapability 优先，否则按 typeId 前缀推断）。 */
+/** 先采用显式 `minCapability`，否则按 typeId 家族分类；未知类型归入 compute。
+ * 这是后续 `applyCapability` 裁剪上下文的分类输入，本身不授予宿主权限（ADR-SM-034）。
+ */
 export function resolveCapability(def: NodeDefinition): CapabilityLevel {
   if (def.minCapability) return def.minCapability;
   const t = def.typeId;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileText, Code, Bug, ClipboardList, Box, Download } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { formatTime } from '../i18n/dateTime';
 
 /**
  * 产物/交付物面板：展示项目级黑板 s.artifacts（stage → kind → Artifact）。
@@ -82,7 +83,7 @@ export function ArtifactsPanel() {
                         v{a.version}
                       </span>
                       <span className="text-[10px]" style={{ color: 'var(--sm-ink-faint)' }}>
-                        {new Date(a.updatedAt).toLocaleTimeString()}
+                        {formatTime(a.updatedAt)}
                       </span>
                     </button>
                     {isOpen && (

@@ -45,7 +45,7 @@
   <string name="settings.general.eventPersistence.off">关闭（默认）</string>
   <string name="settings.general.eventPersistence.summary">摘要（脱敏，仅结构化字段）</string>
   <string name="settings.general.eventPersistence.full">完整（含输出，剥离密钥）</string>
-  <string name="settings.general.eventPersistenceDesc">把每次运行的事件流落盘到 .slimemold/runs/{工作流}/{运行号}/events.jsonl，用于运行回放与审计。摘要模式剥离敏感内容；完整模式保留输出但会移除 apiKey 等字段。</string>
+  <string name="settings.general.eventPersistenceDesc">把每次运行的事件流落盘到 .slimemold/runs/&lt;工作流&gt;/&lt;运行号&gt;/events.jsonl，用于运行回放与审计。摘要模式剥离敏感内容；完整模式保留输出但会移除 apiKey 等字段。</string>
   <string name="settings.general.llmChannelDesc">后端：经 Rust 命令发起，密钥不出渲染层（推荐）；前端：WebView 直接请求</string>
   <string name="settings.channel.backend">后端（推荐）</string>
   <string name="settings.channel.frontend">前端</string>
@@ -104,6 +104,11 @@
   <string name="settings.apikeys.unknownError">未知错误</string>
   <string name="settings.apikeys.deleted">已删除：{{name}}</string>
   <string name="settings.apikeys.deleteFail">删除失败：{{error}}</string>
+  <string name="settings.apikeys.migrationSuccess">已自动迁移 {{count}} 条旧接入点为分组密钥库（Vault）</string>
+  <string name="settings.apikeys.missingKey">缺少密钥</string>
+  <string name="settings.apikeys.noModels">网址可达但拉不到模型，检查 Base URL / Key</string>
+  <string name="settings.apikeys.autoGroup">自动分组：</string>
+  <string name="settings.apikeys.nameFromDomain">（名称将自动取域名 {{domain}}）</string>
 
   <!-- ToggleRow -->
   <string name="settings.toggle.on">已开启</string>

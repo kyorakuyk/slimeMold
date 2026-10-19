@@ -5,7 +5,19 @@ import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { cleanupBindingFingerprint } from '../projectControl/workerCleanup';
 import type { WorkerCleanupProposalReady } from '../projectControl/workerCleanup';
 
-const hostState = vi.hoisted(() => ({ rejectRegister: false, rejectUnregister: false }));
+const hostState = vi.hoisted(() => ({
+  rejectRegister: false,
+  rejectUnregister: false,
+  registerIdentity: 'v1:1:2' as string | undefined,
+  cleanupReadback: undefined as {
+    authority: 'native';
+    worktreePath: string;
+    branch: string;
+    branchRevision: string;
+    targetIdentity?: string;
+    finalStatus: 'absent';
+  } | undefined,
+}));
 
 function trustedProposal(session: ReturnType<typeof initDevSession>, path: string): WorkerCleanupProposalReady {
   return {
@@ -17,14 +29,14 @@ const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =
   if (command === 'dev_register_worktree' && hostState.rejectRegister) {
     throw new Error('transient register failure');
   }
-  if (command === 'dev_register_worktree') return undefined;
+  if (command === 'dev_register_worktree') return hostState.registerIdentity;
   if (command === 'dev_restore_worktree') return undefined;
   if (command === 'dev_unregister_worktree' && hostState.rejectUnregister) {
     throw new Error('transient unregister failure');
   }
   if (command === 'dev_register_orphan_worktree') return undefined;
   if (command === 'dev_approve_cleanup') return 'native-cleanup-token';
-  if (command === 'dev_cleanup_worktree') return undefined;
+  if (command === 'dev_cleanup_worktree') return hostState.cleanupReadback;
   if (command === 'dev_unregister_worktree') return undefined;
   throw new Error(`unexpected command: ${command}`);
 }));
@@ -42,6 +54,8 @@ describe('DevSession Tauri orphan cleanup', () => {
     resetDevSession();
     hostState.rejectRegister = false;
     hostState.rejectUnregister = false;
+    hostState.registerIdentity = 'v1:1:2';
+    hostState.cleanupReadback = undefined;
     invoke.mockClear();
   });
 
@@ -91,6 +105,138 @@ describe('DevSession Tauri orphan cleanup', () => {
       path: info!.path,
       generation: 1,
     });
+  });
+
+  it('persists the native target identity returned during worktree registration', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    hostState.registerIdentity = 'v1:1:2';
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+
+    const info = await session.manager.create(
+      'worker-id',
+      '/repo-workers/task-1',
+      { branch: 'worker/task-1' },
+    );
+
+    expect(info?.targetIdentity).toBe('v1:1:2');
+  });
+
+  it('fails closed when native worktree registration omits the stable target identity', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    hostState.registerIdentity = undefined;
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+
+    await expect(session.manager.create(
+      'worker-id',
+      '/repo-workers/task-1',
+      { branch: 'worker/task-1' },
+    )).rejects.toThrow(/stable target identity|native registration/);
+  });
+
+  it('re-registers a live worktree after host restart from durable target identity', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        return ok('worktree /repo-workers/task-1\nHEAD base-1\nbranch refs/heads/worker/task-1\n');
+      }
+      return ok();
+    });
+    hostState.registerIdentity = 'v1:1:2';
+    const firstSession = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+    const info = await firstSession.manager.create(
+      'worker-id',
+      '/repo-workers/task-1',
+      { branch: 'worker/task-1' },
+    );
+    expect(info?.targetIdentity).toBe('v1:1:2');
+
+    resetDevSession();
+    invoke.mockClear();
+    const restartedSession = initDevSession({
+      env: 'tauri',
+      hostGeneration: 2,
+      baseRepoPath: '/repo',
+      gitRunner: { git },
+    });
+
+    await expect(restartedSession.manager.restore(info!)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('dev_restore_worktree', {
+      path: '/repo-workers/task-1',
+      branch: 'worker/task-1',
+      generation: 2,
+      targetIdentity: 'v1:1:2',
+    });
+    expect(restartedSession.manager.get('worker-id')).toEqual(expect.objectContaining({
+      status: 'created',
+      targetIdentity: 'v1:1:2',
+    }));
+  });
+
+  it('retains the native cleanup read-back for the receipt boundary', async () => {
+    const git = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return ok('base-1\n');
+      if (args[0] === 'rev-parse') return ok(`${TIP_OID}\n`);
+      return ok();
+    });
+    hostState.registerIdentity = 'v1:1:2';
+    hostState.cleanupReadback = {
+      authority: 'native',
+      worktreePath: '/repo-workers/task-1',
+      branch: 'worker/task-1',
+      branchRevision: TIP_OID,
+      targetIdentity: 'v1:1:2',
+      finalStatus: 'absent',
+    };
+    const session = initDevSession({
+      env: 'tauri',
+      hostGeneration: 1,
+      baseRepoPath: '/repo',
+      gitRunner: {
+        git,
+        cleanupWorktree: async () => ({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 1,
+          cleanupReadback: hostState.cleanupReadback,
+        }),
+      },
+    });
+    const info = await session.manager.create(
+      'worker-id',
+      '/repo-workers/task-1',
+      { branch: 'worker/task-1' },
+    );
+
+    await expect(session.manager.cleanup(info!.id, {
+      confirm: true,
+      branchRevision: TIP_OID,
+    })).resolves.toBe(true);
+    expect(session.manager.getCleanupReadback(info!.id)).toEqual(hostState.cleanupReadback);
   });
 
   it('keeps cleanup retryable when Rust unregister fails after Git cleanup', async () => {
@@ -157,6 +303,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     });
     session.approveCleanup(info!.path, {
       worktreeId: info!.id,
+      targetIdentity: info!.targetIdentity,
       branch: info!.branch,
       runId: 'run-1',
       taskId: 'task-1',
@@ -183,6 +330,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     hostState.rejectUnregister = false;
     session.approveCleanup(info!.path, {
       worktreeId: info!.id,
+      targetIdentity: info!.targetIdentity,
       branch: info!.branch,
       runId: 'run-1',
       taskId: 'task-1',
@@ -268,6 +416,7 @@ describe('DevSession Tauri orphan cleanup', () => {
       path: '/repo-workers/live-worker',
       branch: 'worker/live-worker',
       baseRevision: 'base-1',
+      targetIdentity: 'v1:target-live-worker',
       createdAt: '2026-09-01T00:00:00.000Z',
       status: 'created' as const,
     };
@@ -276,6 +425,7 @@ describe('DevSession Tauri orphan cleanup', () => {
     expect(invoke).toHaveBeenCalledWith('dev_restore_worktree', {
       path: info.path,
       branch: info.branch,
+      targetIdentity: info.targetIdentity,
       generation: 3,
     });
     expect(invoke).not.toHaveBeenCalledWith('dev_register_worktree', expect.anything());

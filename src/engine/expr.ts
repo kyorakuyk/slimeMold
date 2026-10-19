@@ -81,106 +81,110 @@ const isDigit = (c: string) => c >= '0' && c <= '9';
 const isIdentStart = (c: string) => /[A-Za-z_$]/.test(c);
 const isIdentPart = (c: string) => /[A-Za-z0-9_$]/.test(c);
 
+interface TokenScan {
+  token: Tok;
+  nextIndex: number;
+}
+
+function scanNumberToken(src: string, start: number): TokenScan {
+  let end = start + 1;
+  while (end < src.length && (isDigit(src[end]) || src[end] === '.')) end++;
+  return { token: { type: 'num', value: src.slice(start, end) }, nextIndex: end };
+}
+
+function scanStringToken(src: string, start: number): TokenScan {
+  const quote = src[start];
+  let end = start + 1;
+  let value = '';
+  while (end < src.length && src[end] !== quote) {
+    if (src[end] === '\\' && end + 1 < src.length) {
+      const next = src[end + 1];
+      value += next === 'n' ? '\n' : next === 't' ? '\t' : next === '\\' ? '\\' : next;
+      end += 2;
+    } else {
+      value += src[end];
+      end++;
+    }
+  }
+  return { token: { type: 'str', value }, nextIndex: end + 1 };
+}
+
+function scanIdentifierToken(src: string, start: number): TokenScan {
+  let end = start + 1;
+  while (end < src.length && isIdentPart(src[end])) end++;
+  return { token: { type: 'ident', value: src.slice(start, end) }, nextIndex: end };
+}
+
+function scanOperatorToken(src: string, start: number): TokenScan | null {
+  const three = src.slice(start, start + 3);
+  if (three === '===' || three === '!==') {
+    return { token: { type: 'op', value: three.slice(0, 2) }, nextIndex: start + 3 };
+  }
+  const two = src.slice(start, start + 2);
+  if (two === '==' || two === '!=' || two === '<=' || two === '>=' || two === '&&' || two === '||') {
+    return { token: { type: 'op', value: two }, nextIndex: start + 2 };
+  }
+  const operator = src[start];
+  if ('+-*/%<>!'.includes(operator)) {
+    return { token: { type: 'op', value: operator }, nextIndex: start + 1 };
+  }
+  return null;
+}
+
+function scanPunctuationToken(char: string): Tok | null {
+  switch (char) {
+    case '(': return { type: 'lparen', value: char };
+    case ')': return { type: 'rparen', value: char };
+    case '[': return { type: 'lbracket', value: char };
+    case ']': return { type: 'rbracket', value: char };
+    case ',': return { type: 'comma', value: char };
+    case '.': return { type: 'dot', value: char };
+    case '?': return { type: 'ques', value: char };
+    case ':': return { type: 'colon', value: char };
+    default: return null;
+  }
+}
+
 function tokenize(src: string): Tok[] {
   const toks: Tok[] = [];
   let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
+  while (i < src.length) {
+    const char = src[i];
+    if (char === ' ' || char === '\t' || char === '\n' || char.charCodeAt(0) === 13) {
       i++;
       continue;
     }
-    if (isDigit(c) || (c === '.' && isDigit(src[i + 1] ?? ''))) {
-      let j = i + 1;
-      while (j < n && (isDigit(src[j]) || src[j] === '.')) j++;
-      toks.push({ type: 'num', value: src.slice(i, j) });
-      i = j;
+    if (isDigit(char) || (char === '.' && isDigit(src[i + 1] ?? ''))) {
+      const scan = scanNumberToken(src, i);
+      toks.push(scan.token);
+      i = scan.nextIndex;
       continue;
     }
-    if (c === '"' || c === "'") {
-      const quote = c;
-      let j = i + 1;
-      let str = '';
-      while (j < n && src[j] !== quote) {
-        if (src[j] === '\\' && j + 1 < n) {
-          const nx = src[j + 1];
-          str += nx === 'n' ? '\n' : nx === 't' ? '\t' : nx === '\\' ? '\\' : nx;
-          j += 2;
-        } else {
-          str += src[j];
-          j++;
-        }
-      }
-      toks.push({ type: 'str', value: str });
-      i = j + 1;
+    if (char === '"' || char === "'") {
+      const scan = scanStringToken(src, i);
+      toks.push(scan.token);
+      i = scan.nextIndex;
       continue;
     }
-    if (isIdentStart(c)) {
-      let j = i + 1;
-      while (j < n && isIdentPart(src[j])) j++;
-      toks.push({ type: 'ident', value: src.slice(i, j) });
-      i = j;
+    if (isIdentStart(char)) {
+      const scan = scanIdentifierToken(src, i);
+      toks.push(scan.token);
+      i = scan.nextIndex;
       continue;
     }
-    const two = src.slice(i, i + 2);
-    const three = src.slice(i, i + 3);
-    if (three === '===' || three === '!==') {
-      toks.push({ type: 'op', value: three.slice(0, 2) });
-      i += 3;
+    const operator = scanOperatorToken(src, i);
+    if (operator) {
+      toks.push(operator.token);
+      i = operator.nextIndex;
       continue;
     }
-    if (two === '==' || two === '!=' || two === '<=' || two === '>=' || two === '&&' || two === '||') {
-      toks.push({ type: 'op', value: two });
-      i += 2;
-      continue;
-    }
-    if ('+-*/%<>!'.includes(c)) {
-      toks.push({ type: 'op', value: c });
+    const punctuation = scanPunctuationToken(char);
+    if (punctuation) {
+      toks.push(punctuation);
       i++;
       continue;
     }
-    if (c === '(') {
-      toks.push({ type: 'lparen', value: c });
-      i++;
-      continue;
-    }
-    if (c === ')') {
-      toks.push({ type: 'rparen', value: c });
-      i++;
-      continue;
-    }
-    if (c === '[') {
-      toks.push({ type: 'lbracket', value: c });
-      i++;
-      continue;
-    }
-    if (c === ']') {
-      toks.push({ type: 'rbracket', value: c });
-      i++;
-      continue;
-    }
-    if (c === ',') {
-      toks.push({ type: 'comma', value: c });
-      i++;
-      continue;
-    }
-    if (c === '.') {
-      toks.push({ type: 'dot', value: c });
-      i++;
-      continue;
-    }
-    if (c === '?') {
-      toks.push({ type: 'ques', value: c });
-      i++;
-      continue;
-    }
-    if (c === ':') {
-      toks.push({ type: 'colon', value: c });
-      i++;
-      continue;
-    }
-    throw new ExprError(`无法识别的字符: "${c}"`);
+    throw new ExprError(`无法识别的字符: "${char}"`);
   }
   toks.push({ type: 'eof', value: '' });
   return toks;

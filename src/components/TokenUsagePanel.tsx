@@ -1,6 +1,7 @@
 import { Zap, Cpu, ArrowUpRight } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { formatDateTime } from '../i18n/dateTime';
 
 function num(n: number): string {
   return n.toLocaleString();
@@ -81,7 +82,7 @@ export default function TokenUsagePanel({
           <div className="rounded-lg border border-line bg-paper-deep p-3">
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-soft">{t('token.detail')}</span>
-              <span className="text-[10px] text-ink-faint">{new Date(last.startedAt).toLocaleString()}</span>
+              <span className="text-[10px] text-ink-faint">{formatDateTime(last.startedAt)}</span>
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-2xl font-bold tabular-nums text-ink">{num(cost.totalTokens)}</span>
@@ -153,7 +154,7 @@ export default function TokenUsagePanel({
                   <div key={model} className="flex items-center justify-between text-xs">
                     <span className="truncate text-ink-soft" title={model}>{model}</span>
                     <span className="tabular-nums text-ink-faint">
-                      {num(m.promptTokens)} + {num(m.completionTokens)} tok · {m.calls} 次
+                      {num(m.promptTokens)} + {num(m.completionTokens)} tok · {t('token.modelCalls', { count: m.calls })}
                     </span>
                   </div>
                 ))}

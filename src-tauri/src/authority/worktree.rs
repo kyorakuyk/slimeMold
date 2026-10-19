@@ -3,6 +3,7 @@
 //! This module is the sole home for worktree target admission, registration
 //! identity predicates, and pending rollback lease bookkeeping.
 
+use std::cell::Cell;
 use std::fs;
 use std::process::Command;
 use std::time::Duration;
@@ -100,6 +101,18 @@ where
         return Err(phase_error.to_string());
     }
     Ok(())
+}
+
+fn execute_cleanup_mutations<Remove, Delete>(
+    remove_worktree: Remove,
+    delete_branch: Delete,
+) -> Result<(), String>
+where
+    Remove: FnOnce() -> Result<(), String>,
+    Delete: FnOnce() -> Result<(), String>,
+{
+    remove_worktree()?;
+    delete_branch()
 }
 
 pub(crate) fn worker_target_is_valid(repo: &std::path::Path, raw_path: &str) -> bool {
@@ -656,9 +669,72 @@ fn git_branch_exists(repo: &std::path::Path, branch: &str) -> Result<bool, Strin
     }
 }
 
+fn preserve_branch_only_orphan(
+    base_path: &std::path::Path,
+    base: &str,
+    base_identity: &StableDirectoryIdentity,
+    generation: u64,
+    path: &str,
+    branch: &str,
+) -> Result<(), String> {
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed before read-back".into(),
+        );
+    }
+    if !cleanup_target_absence_is_confirmed(base_path, std::path::Path::new(path))? {
+        return Err("branch-only orphan preservation requires an absent, unlisted target".into());
+    }
+    if !git_branch_exists(base_path, branch)? {
+        return Err("branch-only orphan preservation requires a live branch".into());
+    }
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed before revision capture".into(),
+        );
+    }
+    let branch_revision = git_branch_revision(base_path, branch)?;
+    if stable_directory_identity(base_path)? != *base_identity {
+        return Err(
+            "branch-only orphan preservation: base identity changed after revision capture".into(),
+        );
+    }
+    let mut state = DEV_STATE.lock().unwrap();
+    if state.base_repo.as_deref() != Some(base)
+        || state.base_identity.as_ref() != Some(base_identity)
+        || state.generation != generation
+    {
+        return Err("branch-only orphan preservation: session changed".into());
+    }
+    let existing = orphan_records_for_path(&state.orphan_worktrees, path);
+    if !existing.is_empty() {
+        if existing.len() == 1
+            && exact_orphan_record_matches(existing[0], generation, branch, &branch_revision)
+        {
+            return Ok(());
+        }
+        return Err("branch-only orphan preservation: duplicate lineage conflict".into());
+    }
+    state
+        .registrations
+        .retain(|item| !registered_worktree_identity_matches(item, generation, path, branch));
+    state
+        .worktrees
+        .retain(|item| path_compare_key(item) != path_compare_key(path));
+    state.orphan_worktrees.push(PendingWorktree {
+        generation,
+        path: path.to_string(),
+        branch: branch.to_string(),
+        identity: None,
+        branch_revision: Some(branch_revision),
+        removed: true,
+    });
+    Ok(())
+}
+
 /// 登记一个 worktree（前端 dev.worktree.create 成功后调用；支持相对路径基于主仓库根解析）。
 #[tauri::command]
-pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<(), String> {
+pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<String, String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_register_worktree")?;
     let (base, base_identity, registration_generation) = {
@@ -761,7 +837,7 @@ pub(crate) fn dev_register_worktree(path: String, generation: u64) -> Result<(),
     }
     st.pending_worktrees
         .retain(|pending| path_compare_key(&pending.path) != path_compare_key(&canonical_path));
-    Ok(())
+    Ok(identity.token())
 }
 
 #[tauri::command]
@@ -769,6 +845,7 @@ pub(crate) fn dev_restore_worktree(
     path: String,
     branch: String,
     generation: u64,
+    target_identity: Option<String>,
 ) -> Result<(), String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_restore_worktree")?;
@@ -793,7 +870,7 @@ pub(crate) fn dev_restore_worktree(
         return Err("dev_restore_worktree: 主仓库 directory identity 已变化".into());
     }
     let canon = dev_abs_of(&path)?;
-    let trusted_target_identity = {
+    let registered_target_identity = {
         let state = DEV_STATE.lock().unwrap();
         state
             .registrations
@@ -807,9 +884,6 @@ pub(crate) fn dev_restore_worktree(
                 )
             })
             .map(|registered| registered.identity.clone())
-            .ok_or_else(|| {
-                "dev_restore_worktree: 缺少 trusted target identity，拒绝重绑定当前路径".to_string()
-            })?
     };
     if !canon.is_dir() {
         return Err(format!(
@@ -817,9 +891,19 @@ pub(crate) fn dev_restore_worktree(
         ));
     }
     let identity = stable_directory_identity(&canon)?;
-    if identity != trusted_target_identity {
+    let expected_identity_token = target_identity
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            registered_target_identity
+                .as_ref()
+                .map(StableDirectoryIdentity::token)
+        })
+        .ok_or_else(|| {
+            "dev_restore_worktree: 缺少 durable target identity，拒绝重绑定当前路径".to_string()
+        })?;
+    if identity.token() != expected_identity_token {
         return Err(
-            "dev_restore_worktree: current target identity 不匹配 trusted registration".into(),
+            "dev_restore_worktree: current target identity 不匹配 durable registration".into(),
         );
     }
     let canonical_path = canon.to_string_lossy().to_string();
@@ -1214,6 +1298,17 @@ pub(crate) fn cleanup_target_identity_is_current(
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DevCleanupReadback {
+    pub(crate) authority: &'static str,
+    pub(crate) worktree_path: String,
+    pub(crate) branch: String,
+    pub(crate) branch_revision: String,
+    pub(crate) target_identity: Option<String>,
+    pub(crate) final_status: &'static str,
+}
+
 #[tauri::command]
 pub(crate) fn dev_cleanup_worktree(
     path: String,
@@ -1221,7 +1316,7 @@ pub(crate) fn dev_cleanup_worktree(
     branch_revision: String,
     approval_token: String,
     generation: u64,
-) -> Result<(), String> {
+) -> Result<DevCleanupReadback, String> {
     let _operation_guard = lock_dev_operation();
     assert_session_generation(generation, "dev_cleanup_worktree")?;
     if !is_full_object_id(&branch_revision) || !worker_branch_is_valid(&branch) {
@@ -1329,78 +1424,23 @@ pub(crate) fn dev_cleanup_worktree(
             return Err("dev_cleanup_worktree: 当前 Git worktree path/branch 不匹配".into());
         }
     }
-    cleanup_identity_guard(
-        &approval_token,
-        stable_directory_identity(&base_path),
-        &base_identity,
-        "dev_cleanup_worktree: branch CAS 前 identity 已漂移",
-        || {
-            cleanup_target_identity_is_current(
-                &base_path,
-                &canon,
-                &branch,
-                expected_target_identity.as_ref(),
-            )
-        },
-    )?;
-    let mut delete = Command::new(resolve_dev_program("git"));
-    delete
-        .current_dir(&base_path)
-        .args(["update-ref", "-d"])
-        .arg(format!("refs/heads/{branch}"))
-        .arg(&branch_revision);
-    apply_dev_env(&mut delete);
-    let result = match run_with_timeout(&mut delete, Duration::from_secs(30)) {
-        Ok(result) => result,
-        Err(error) => {
-            invalidate_cleanup_binding(&approval_token);
-            return Err(error);
-        }
-    };
-    if result.code != 0 {
-        invalidate_cleanup_binding(&approval_token);
-        return Err(format!(
-            "dev_cleanup_worktree: branch CAS 删除失败：{}",
-            result.stderr
-        ));
-    }
-    cleanup_identity_guard(
-        &approval_token,
-        stable_directory_identity(&base_path),
-        &base_identity,
-        "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理",
-        || {
-            cleanup_target_identity_is_current(
-                &base_path,
-                &canon,
-                &branch,
-                expected_target_identity.as_ref(),
-            )
-        },
-    )?;
-    let listed_after_cas = match git_worktree_is_listed(&base_path, &canon) {
-        Ok(listed) => listed,
-        Err(error) => {
-            invalidate_cleanup_binding(&approval_token);
-            return Err(format!(
-                "dev_cleanup_worktree: branch CAS 后无法确认 worktree 状态：{error}"
-            ));
-        }
-    };
-    if expected_target_identity.is_some() && !listed_after_cas {
+    let listed_before_removal =
+        cleanup_probe_or_invalidate(&approval_token, git_worktree_is_listed(&base_path, &canon))?;
+    if expected_target_identity.is_some() && !listed_before_removal {
         invalidate_cleanup_binding(&approval_token);
         return Err(
-            "dev_cleanup_worktree: branch CAS 后 worktree listing 消失，结果必须按 unknown 处理"
-                .into(),
+            "dev_cleanup_worktree: 当前 worktree listing 消失，结果必须按 unknown 处理".into(),
         );
     }
-    if expected_target_identity.is_none() && listed_after_cas {
+    if expected_target_identity.is_none() && listed_before_removal {
         invalidate_cleanup_binding(&approval_token);
-        return Err(
-            "dev_cleanup_worktree: branch-only orphan 在 CAS 后重新出现在 worktree listing".into(),
-        );
+        return Err("dev_cleanup_worktree: branch-only orphan 重新出现在 worktree listing".into());
     }
-    if listed_after_cas {
+    let worktree_removed = Cell::new(!listed_before_removal);
+    let remove_worktree = || -> Result<(), String> {
+        if !listed_before_removal {
+            return Ok(());
+        }
         cleanup_identity_guard(
             &approval_token,
             stable_directory_identity(&base_path),
@@ -1421,20 +1461,87 @@ pub(crate) fn dev_cleanup_worktree(
             .args(["worktree", "remove", "--force"]);
         remove.arg(&canon);
         apply_dev_env(&mut remove);
-        let result = match run_with_timeout(&mut remove, Duration::from_secs(30)) {
-            Ok(result) => result,
-            Err(error) => {
-                invalidate_cleanup_binding(&approval_token);
-                return Err(error);
-            }
-        };
+        let result = run_with_timeout(&mut remove, Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
         if result.code != 0 {
-            invalidate_cleanup_binding(&approval_token);
             return Err(format!(
-                "dev_cleanup_worktree: branch 已按 CAS 删除，但 worktree remove 失败：{}",
+                "dev_cleanup_worktree: worktree remove 失败，branch 保持可修复：{}",
                 result.stderr
             ));
         }
+        worktree_removed.set(true);
+        Ok(())
+    };
+    let delete_branch = || -> Result<(), String> {
+        let target_absent = cleanup_probe_or_invalidate(
+            &approval_token,
+            cleanup_target_absence_is_confirmed(&base_path, &canon),
+        )?;
+        if !target_absent {
+            return Err(
+                "dev_cleanup_worktree: worktree remove 后 target 或 listing 仍存在，禁止 branch CAS".into(),
+            );
+        }
+        let current_base =
+            cleanup_probe_or_invalidate(&approval_token, stable_directory_identity(&base_path))?;
+        if current_base != base_identity {
+            return Err("dev_cleanup_worktree: branch CAS 前 base identity 已漂移".into());
+        }
+        let mut delete = Command::new(resolve_dev_program("git"));
+        delete
+            .current_dir(&base_path)
+            .args(["update-ref", "-d"])
+            .arg(format!("refs/heads/{branch}"))
+            .arg(&branch_revision);
+        apply_dev_env(&mut delete);
+        let result = run_with_timeout(&mut delete, Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
+        if result.code != 0 {
+            return Err(format!(
+                "dev_cleanup_worktree: branch CAS 删除失败，worktree lineage 已保留：{}",
+                result.stderr
+            ));
+        }
+        Ok(())
+    };
+    if let Err(error) = execute_cleanup_mutations(remove_worktree, delete_branch) {
+        if worktree_removed.get() {
+            let orphan_result = preserve_branch_only_orphan(
+                &base_path,
+                &base,
+                &base_identity,
+                generation,
+                &c,
+                &branch,
+            );
+            if let Err(orphan_error) = orphan_result {
+                invalidate_cleanup_binding(&approval_token);
+                return Err(format!(
+                    "{error}; branch-only orphan lineage preservation failed: {orphan_error}"
+                ));
+            }
+            invalidate_cleanup_binding(&approval_token);
+            return Err(format!(
+                "{error}; branch-only orphan lineage preserved for manual repair"
+            ));
+        }
+        invalidate_cleanup_binding(&approval_token);
+        return Err(error);
+    }
+    cleanup_identity_guard(
+        &approval_token,
+        stable_directory_identity(&base_path),
+        &base_identity,
+        "dev_cleanup_worktree: branch CAS 后 identity 漂移，结果必须按 unknown 处理",
+        || cleanup_target_absence_is_confirmed(&base_path, &canon),
+    )?;
+    let branch_still_exists =
+        cleanup_probe_or_invalidate(&approval_token, git_branch_exists(&base_path, &branch))?;
+    if branch_still_exists {
+        invalidate_cleanup_binding(&approval_token);
+        return Err(
+            "dev_cleanup_worktree: branch CAS 后 branch 仍存在，结果必须按 unknown 处理".into(),
+        );
     }
     let cleanup_readback = cleanup_probe_or_invalidate(
         &approval_token,
@@ -1475,7 +1582,14 @@ pub(crate) fn dev_cleanup_worktree(
     state
         .orphan_worktrees
         .retain(|item| path_compare_key(&item.path) != path_compare_key(&c));
-    Ok(())
+    Ok(DevCleanupReadback {
+        authority: "native",
+        worktree_path: c,
+        branch,
+        branch_revision,
+        target_identity: expected_target_identity.map(|identity| identity.token()),
+        final_status: "absent",
+    })
 }
 
 /// 注销 worktree（前端清理成功后调用）。
@@ -1559,4 +1673,46 @@ pub(crate) fn dev_unregister_worktree(path: String, generation: u64) -> Result<(
         !registered_worktree_identity_matches(registered, generation, &c, &branch)
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execute_cleanup_mutations;
+    use std::cell::RefCell;
+
+    #[test]
+    fn cleanup_does_not_delete_branch_when_worktree_remove_fails() {
+        let order = RefCell::new(Vec::new());
+        let result = execute_cleanup_mutations(
+            || {
+                order.borrow_mut().push("remove");
+                Err("remove failed".to_string())
+            },
+            || {
+                order.borrow_mut().push("delete-branch");
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Err("remove failed".to_string()));
+        assert_eq!(*order.borrow(), vec!["remove"]);
+    }
+
+    #[test]
+    fn cleanup_deletes_branch_only_after_worktree_remove_succeeds() {
+        let order = RefCell::new(Vec::new());
+        let result = execute_cleanup_mutations(
+            || {
+                order.borrow_mut().push("remove");
+                Ok(())
+            },
+            || {
+                order.borrow_mut().push("delete-branch");
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(*order.borrow(), vec!["remove", "delete-branch"]);
+    }
 }

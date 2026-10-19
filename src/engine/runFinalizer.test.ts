@@ -184,4 +184,35 @@ describe('finalizeRun 收尾', () => {
     // 主要验证不抛错、历史正常写入
     expect(useWorkflowStore.getState().runHistory[0]!.status).toBe('success');
   });
+
+  it('历史快照使用最新节点状态并保留成本聚合字段', async () => {
+    const wfId = 'wf-fin-latest-node';
+    const plannedNodes = [mkNode('a', 'running')];
+    seedStore(wfId, plannedNodes);
+    const latestNode = mkNode('a', 'success');
+    latestNode.data.outputs = { final: 'ok' };
+    useWorkflowStore.setState({ nodes: [latestNode] } as never);
+    const costLog: CostRecord[] = [{
+      nodeId: 'a', nodeLabel: 'a', agentId: 'ag1', model: 'gpt-4o-mini',
+      usage: {
+        promptTokens: 10, completionTokens: 5, cachedPromptTokens: 0,
+        writtenPromptTokens: 0, reasoningTokens: 1, replyTokens: 4,
+      },
+      durationMs: 5, at: 't1', ok: true,
+    }];
+
+    await finalizeRun(baseInput(wfId, plannedNodes, { costLog }));
+
+    const record = useWorkflowStore.getState().runHistory[0]!;
+    expect(record.nodes[0]).toMatchObject({ status: 'success', outputs: { final: 'ok' } });
+    expect(record.cost).toMatchObject({
+      totalPromptTokens: 10,
+      totalCompletionTokens: 5,
+      totalDurationMs: 5,
+      cache: { hitTokens: 0, missTokens: 10, writeTokens: 0 },
+      output: { reasoningTokens: 1, replyTokens: 4 },
+      byModel: { 'gpt-4o-mini': { promptTokens: 10, completionTokens: 5, calls: 1 } },
+      records: costLog,
+    });
+  });
 });

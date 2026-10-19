@@ -7,6 +7,7 @@ import type { Orchestration } from '../types/orchestration';
 import type { ProjectControlSnapshot } from './types';
 import type { WorkerCleanupProposal } from './workerCleanup';
 import type { WorkerRunRecovery } from './workerRunRuntime';
+import { cleanupUnknownRunIds } from './workerRecoveryFacts';
 
 export type WorkerRunAuditEventRepository = EventStreamRepository;
 export type WorkerRunAuditBaseline = typeof import('./eventSourceBootstrap')['ensureProjectControlEventBaseline'];
@@ -173,6 +174,24 @@ export function createWorkerRunRecoveryAuditController(
           };
         }
       }
+      const cleanupUnknownRuns = cleanupUnknownRunIds(
+        current.workerRunSideEffects,
+        current.workerRuns,
+      );
+      if (cleanupUnknownRuns.size > 0) {
+        const runIds = [...cleanupUnknownRuns].join(', ');
+        report = {
+          ...report,
+          ok: false,
+          issues: [
+            ...report.issues,
+            {
+              code: 'side-effect-lineage-drift',
+              message: `Cleanup receipt 缺少可信 native identity read-back：${runIds}`,
+            },
+          ],
+        };
+      }
       if (signal?.aborted) return;
       const runtime = deps.installWorkerRunRuntime({
         projectId,
@@ -180,7 +199,17 @@ export function createWorkerRunRecoveryAuditController(
         runs: current.workerRuns,
         consistency: report,
       });
-      deps.setWorkerRunRecoveries(runtime.recoveries);
+      const recoveriesByRun = new Map(runtime.recoveries.map((item) => [item.runId, item]));
+      for (const run of current.workerRuns) {
+        if (!cleanupUnknownRuns.has(run.runId) || recoveriesByRun.has(run.runId)) continue;
+        recoveriesByRun.set(run.runId, {
+          runId: run.runId,
+          projectId: run.projectId,
+          reason: 'cleanup-unknown',
+          message: 'Cleanup receipt 缺少可信 native identity read-back，必须人工核对后才能继续。',
+        });
+      }
+      deps.setWorkerRunRecoveries([...recoveriesByRun.values()]);
       const controlOk = controlReport === null || controlReport.ok;
       const hasWorkerProjection = current.workerRuns.length > 0
         || current.orchestrations.some((orchestration) => (

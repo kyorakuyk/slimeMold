@@ -19,6 +19,7 @@ export const GROUP_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec489
  * - 内部共需 2×img + 1×txt 输入 -> 仅生成 img、txt 两个聚合输入端口。
  * - 外部多对一：多个父图连线可连到同一个聚合端口。
  * - 内部一对多：聚合端口 -> 所有同类型内部端口（virtualEdges.targets）。
+ * 这里只生成折叠组投影，不修改工作流边；实际图更新由调用方负责（ADR-SM-017）。
  */
 export function recomputeProxyPorts(
   group: NodeGroup,

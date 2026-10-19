@@ -9,6 +9,7 @@ import { ChevronRight, X } from 'lucide-react';
 import type { NodeGroup, ProxyPort } from '../../types/workflow';
 import { useViewStore } from '../../store/viewStore';
 import { useWorkflowStore } from '../../store/workflowStore';
+import { useT } from '../../i18n/useT';
 
 export type GroupProxyData = {
   group: NodeGroup;
@@ -39,6 +40,7 @@ function portLabel(p: ProxyPort): string {
 }
 
 function GroupProxyNodeImpl({ data, selected }: NodeProps) {
+  const t = useT('ui');
   const { group, box } = data as GroupProxyData;
   const setFocusedSubgraph = useViewStore((s) => s.setFocusedSubgraph);
   const toggleGroupCollapsed = useWorkflowStore((s) => s.toggleGroupCollapsed);
@@ -64,7 +66,7 @@ function GroupProxyNodeImpl({ data, selected }: NodeProps) {
         e.stopPropagation();
         if (group.subgraphId) setFocusedSubgraph(group.subgraphId);
       }}
-      title="双击进入子图编辑"
+      title={t('canvas.node.subgraphEditTitle')}
     >
       {/* 左侧聚合输入端口（端点按类型标注） */}
       {inputs.map((p, i) => (
@@ -157,7 +159,7 @@ function GroupProxyNodeImpl({ data, selected }: NodeProps) {
             {group.title}
           </span>
         )}
-        <span className="sm-group-cat">组</span>
+        <span className="sm-group-cat">{t('canvas.group.category')}</span>
         <button
           className="sm-group-expand-btn"
           onPointerDown={(e) => e.stopPropagation()}
@@ -165,7 +167,7 @@ function GroupProxyNodeImpl({ data, selected }: NodeProps) {
             e.stopPropagation();
             removeGroup(group.id);
           }}
-          title="解散这一组（节点保留）"
+          title={t('canvas.group.dissolveTitle')}
         >
           <X size={14} />
         </button>
@@ -176,15 +178,15 @@ function GroupProxyNodeImpl({ data, selected }: NodeProps) {
             e.stopPropagation();
             toggleGroupCollapsed(group.id);
           }}
-          title="展开这一组"
+          title={t('canvas.group.expandTitle')}
         >
           <ChevronRight size={15} />
-          <span>展开</span>
+          <span>{t('canvas.group.expand')}</span>
         </button>
       </div>
       <div className="sm-group-body">
         <span className="sm-group-count">
-          含 {group.nodeIds.length} 个节点 · {inputs.length} 入 / {outputs.length} 出
+          {t('canvas.group.proxyCount', { nodes: group.nodeIds.length, inputs: inputs.length, outputs: outputs.length })}
         </span>
       </div>
     </div>

@@ -174,6 +174,9 @@ function matchesKeywords(entry: EvidenceIndexEntry, keywords: readonly string[])
   });
 }
 
+/** Apply scope, identity, and keyword filters before limiting rows; `matchedCount` remains pre-limit.
+ * Status distinguishes out-of-scope, empty/not-found, truncated, and complete results (ADR-SM-026).
+ */
 export function queryEvidenceIndex(
   index: EvidenceIndex,
   query: EvidenceIndexQuery,

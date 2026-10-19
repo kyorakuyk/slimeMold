@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Trash2, RotateCcw } from 'lucide-react';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useT } from '../i18n/useT';
+import { formatDateTime, formatTime } from '../i18n/dateTime';
 
 const statusCls: Record<string, string> = {
   success: 'text-grn',
@@ -81,7 +82,7 @@ export default function RunHistoryPanel({
                 {r.name}
               </div>
               <div className="text-[10px] text-ink-faint">
-                {(r.durationMs / 1000).toFixed(1)}s · {new Date(r.startedAt).toLocaleString()}
+                {(r.durationMs / 1000).toFixed(1)}s · {formatDateTime(r.startedAt)}
               </div>
             </button>
           ))
@@ -98,7 +99,7 @@ export default function RunHistoryPanel({
                   .getState()
                   .addLog(
                     ok ? 'info' : 'warn',
-                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                    ok ? t('runHistory.log.checkpointRestored') : t('runHistory.log.noCheckpoint'),
                   );
               }}
               title={t('runHistory.restoreTitle')}
@@ -124,10 +125,10 @@ export default function RunHistoryPanel({
           <div className="space-y-3">
             <div className="rounded border border-line p-2 text-xs text-ink-soft">
               <div>
-                {t('runHistory.status.label')}：<span className={statusCls[selected.status]}>{t(`runHistory.status.${selected.status}`)}</span>
+                {t('runHistory.status.label')}<span className={`ml-1 ${statusCls[selected.status]}`}>{t(`runHistory.status.${selected.status}`)}</span>
               </div>
               <div>{t('runHistory.duration', { sec: (selected.durationMs / 1000).toFixed(1) })}</div>
-              <div>{t('runHistory.start', { time: new Date(selected.startedAt).toLocaleString() })}</div>
+              <div>{t('runHistory.start', { time: formatDateTime(selected.startedAt) })}</div>
               {selected.cost ? (
                 <div className="mt-1 border-t border-line pt-1 text-ink">
                   <div>
@@ -168,7 +169,7 @@ export default function RunHistoryPanel({
                       </span>
                       <span className="shrink-0 tabular-nums text-ink-faint">
                         {m.promptTokens.toLocaleString()}+{m.completionTokens.toLocaleString()} tok ·{' '}
-                        {m.calls} 次
+                        {t('runHistory.calls', { count: m.calls })}
                       </span>
                     </div>
                   ))}
@@ -187,7 +188,9 @@ export default function RunHistoryPanel({
                       {n.durationMs != null ? (
                         <span
                           className="rounded bg-paper px-1 text-[10px] tabular-nums text-ink-faint"
-                          title={`开始：${n.startedAt ? new Date(n.startedAt).toLocaleTimeString() : '—'}`}
+                          title={t('runHistory.node.startedAt', {
+                            time: n.startedAt ? formatTime(n.startedAt) : '—',
+                          })}
                         >
                           {n.durationMs}ms
                         </span>
@@ -195,7 +198,10 @@ export default function RunHistoryPanel({
                       {n.cost && n.cost.length > 0 ? (
                         <span
                           className="rounded bg-amber-50 px-1 text-[10px] tabular-nums text-amber-700"
-                          title={`模型：${n.cost.map((c) => c.model).join(', ')}；含失败 ${n.cost.filter((c) => !c.ok).length} 次`}
+                          title={t('runHistory.node.cost', {
+                            models: n.cost.map((c) => c.model).join(', '),
+                            failed: n.cost.filter((c) => !c.ok).length,
+                          })}
                         >
                           {n.cost
                             .reduce((s, c) => s + (c.usage?.totalTokens ?? 0), 0)
@@ -271,7 +277,7 @@ export default function RunHistoryPanel({
                   .getState()
                   .addLog(
                     ok ? 'info' : 'warn',
-                    ok ? '已从检查点恢复画布：成功节点复用、失败节点可续跑' : '当前工作流没有可恢复的运行检查点',
+                    ok ? t('runHistory.log.checkpointRestored') : t('runHistory.log.noCheckpoint'),
                   );
               }}
               title={t('runHistory.restoreTitle')}

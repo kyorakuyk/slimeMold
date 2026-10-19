@@ -77,8 +77,8 @@ pub(crate) use session_authority::{dev_cwd_kind, DevCwdKind};
 #[cfg(test)]
 pub(crate) use worktree_authority::{
     cleanup_target_absence_is_confirmed, cleanup_target_identity_is_current,
-    dev_main_repo_git_allowed_at, dev_register_worktree, dev_unregister_worktree,
-    main_repo_worktree_args_are_valid, record_pending_worktree_add,
+    dev_main_repo_git_allowed_at, dev_register_worktree, dev_restore_worktree,
+    dev_unregister_worktree, main_repo_worktree_args_are_valid, record_pending_worktree_add,
     registered_worktree_identity_conflicts, registered_worktree_identity_matches, worker_root_path,
     worker_target_is_safe_for_existing_operation, worktree_add_target_is_safe,
 };
@@ -287,7 +287,8 @@ fn grant_project_access(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 fn git_top_level(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    let mut cmd = Command::new(execution::dev_exec::resolve_dev_program("git"));
+    let program = execution::dev_exec::resolve_dev_program("git");
+    let mut cmd = Command::new(&program);
     cmd.arg("-C")
         .arg(path)
         .args(["rev-parse", "--show-toplevel"]);
@@ -295,7 +296,48 @@ fn git_top_level(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
     execution::dev_exec::apply_dev_env(&mut cmd);
     let result = execution::dev_exec::run_with_timeout(&mut cmd, Duration::from_secs(5))?;
     if result.code != 0 {
-        return Err("Git top-level probe 失败".to_string());
+        let stderr = result.stderr.trim();
+        let env = execution::dev_exec::dev_sanitized_env();
+        let path_value = env
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value.as_str());
+        let path_entries = path_value
+            .map(|value| std::env::split_paths(std::ffi::OsStr::new(value)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let runtime_bin = program
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|root| root.join("mingw64").join("bin"));
+        let path_has = |path: &std::path::Path| {
+            path_entries.iter().any(|entry| {
+                path_compare_key(&entry.to_string_lossy())
+                    == path_compare_key(&path.to_string_lossy())
+            })
+        };
+        let env_has = |name: &str| env.keys().any(|key| key.eq_ignore_ascii_case(name));
+        let cwd = std::env::current_dir()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "<unavailable>".to_string());
+        let context = format!(
+            "exit code {}; exe={}; cwd={}; path_entries={}; git_cmd_on_path={}; git_mingw_bin_on_path={}; systemroot_present={}; windir_present={}; temp_present={}; tmp_present={}; comspec_present={}",
+            result.code,
+            program.display(),
+            cwd,
+            path_entries.len(),
+            program.parent().is_some_and(path_has),
+            runtime_bin.as_deref().is_some_and(path_has),
+            env_has("SYSTEMROOT"),
+            env_has("WINDIR"),
+            env_has("TEMP"),
+            env_has("TMP"),
+            env_has("COMSPEC"),
+        );
+        return Err(if stderr.is_empty() {
+            format!("Git top-level probe 失败（{context}）")
+        } else {
+            format!("Git top-level probe 失败（{context}）：{stderr}")
+        });
     }
     std::path::PathBuf::from(result.stdout.trim())
         .canonicalize()
@@ -532,3 +574,5 @@ mod dev_exec_tests;
 /* ---------------- dev_write_file 符号链接逃逸（P1 审计修复） ---------------- */
 #[cfg(test)]
 mod dev_write_symlink_tests;
+#[cfg(test)]
+mod git_probe_diagnostics_tests;

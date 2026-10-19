@@ -623,7 +623,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({
           logs: [
             ...get().logs.slice(-199),
-            { time: new Date().toLocaleTimeString(), level, message },
+            { time: new Date().toLocaleTimeString(useViewStore.getState().locale), level, message },
           ],
         }),
       clearLogs: () => set({ logs: [] }),

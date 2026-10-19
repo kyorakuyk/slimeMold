@@ -181,6 +181,33 @@ describe('side-effect journal', () => {
     expect((await repository.read()).journal.entries).toHaveLength(0);
   });
 
+  it('rejects a cleanup receipt without canonical host read-back provenance', () => {
+    const parsed = parseSideEffectJournal(JSON.stringify({
+      schemaVersion: 1,
+      entries: [{
+        ...planned,
+        kind: 'worktree-cleanup',
+        status: 'receipt',
+        recovery: 'skip',
+        receipt: {
+          receiptId: 'cleanup:receipt',
+          observedAt: '2026-09-22T00:00:00.000Z',
+          outcome: 'succeeded',
+          outputHash: 'state-signature',
+          cleanup: {
+            worktreePath: 'C:/workers/task-1',
+            worktreeId: 'wt-1',
+            branch: 'worker/task-1',
+            baseRevision: 'a'.repeat(40),
+            finalStatus: 'absent',
+            hostVerifiedAt: '2026-09-22T00:00:00.000Z',
+          },
+        },
+      }],
+    }));
+    expect(parsed.status).toBe('needs-repair');
+  });
+
   it('rejects a delivery receipt containing a path traversal', () => {
     const parsed = parseSideEffectJournal(JSON.stringify({
       schemaVersion: 1,

@@ -157,6 +157,38 @@ describe('worker run consistency audit', () => {
     ))).toBe(true);
   });
 
+  it('preserves the full ordered report across issue families', () => {
+    const report = auditWorkerRunConsistency({
+      projectId: 'project-1',
+      runs: [run],
+      events: [
+        ...events,
+        event({
+          eventId: 'foreign-run-queued',
+          streamId: 'project-2',
+          sequence: 1,
+          aggregateType: 'Run',
+          aggregateId: 'foreign-run',
+          eventType: 'RunQueued',
+          payload: { runId: 'foreign-run' },
+        }),
+      ],
+      evidence: [evidence1, { ...evidence1 }],
+      acceptances: [acceptance1],
+      sideEffects: [{
+        idempotencyKey: 'unscoped-effect',
+        kind: 'worker-execution',
+        target: 'worktree-1',
+        inputHash: 'input-1',
+        runId: 'run-1',
+        status: 'unknown',
+        recovery: 'needs-user',
+      }],
+    });
+
+    expect(report).toMatchSnapshot('full issue report');
+  });
+
   it('rejects duplicate persisted Evidence records instead of silently overwriting them', () => {
     const duplicate = { ...evidence1 };
     const report = auditWorkerRunConsistency({

@@ -28,6 +28,7 @@ import GroupsPanel from './GroupsPanel';
 import TokenUsagePanel from './TokenUsagePanel';
 import OrchestratorPanel from './OrchestratorPanel';
 import type { WorkerRuntime } from '../projectControl/workerRunCoordinator';
+import { useT } from '../i18n/useT';
 
 export type SidePanelKey =
   | 'nodes'
@@ -44,22 +45,22 @@ export type SidePanelKey =
 
 interface PanelItem {
   key: SidePanelKey;
-  label: string;
+  labelKey: string;
   icon: LucideIcon;
   shortcut?: string;
 }
 
 // 上半部分：点击展开左侧面板内容（示例库改为独立次级窗口，不在此展开）
 const PANEL_ITEMS: PanelItem[] = [
-  { key: 'nodes', label: '节点库', icon: Boxes, shortcut: '' },
-  { key: 'groups', label: '组', icon: FolderTree, shortcut: '' },
-  { key: 'plugins', label: '插件', icon: Puzzle, shortcut: '' },
-  { key: 'agents', label: '智能体库', icon: Users, shortcut: '' },
-  { key: 'orchestrator', label: '编排', icon: Workflow, shortcut: '' },
-  { key: 'assets', label: '资产', icon: Archive, shortcut: '' },
-  { key: 'variables', label: '变量', icon: Variable, shortcut: '' },
-  { key: 'history', label: '运行历史', icon: History, shortcut: '' },
-  { key: 'tokens', label: 'Token', icon: BarChart3, shortcut: '' },
+  { key: 'nodes', labelKey: 'sidebar.nodes', icon: Boxes, shortcut: '' },
+  { key: 'groups', labelKey: 'sidebar.groups', icon: FolderTree, shortcut: '' },
+  { key: 'plugins', labelKey: 'sidebar.plugins', icon: Puzzle, shortcut: '' },
+  { key: 'agents', labelKey: 'sidebar.agents', icon: Users, shortcut: '' },
+  { key: 'orchestrator', labelKey: 'sidebar.orchestrator', icon: Workflow, shortcut: '' },
+  { key: 'assets', labelKey: 'sidebar.assets', icon: Archive, shortcut: '' },
+  { key: 'variables', labelKey: 'sidebar.variables', icon: Variable, shortcut: '' },
+  { key: 'history', labelKey: 'sidebar.history', icon: History, shortcut: '' },
+  { key: 'tokens', labelKey: 'sidebar.tokens', icon: BarChart3, shortcut: '' },
 ];
 
 // 下半部分：帮助中心（展开面板）/ 底部面板 / 快捷键查看 / 设置（从下到上）
@@ -105,26 +106,31 @@ export function renderSidePanel(
         />
       );
     case 'help':
-      return (
-        <div className="flex-1 overflow-y-auto px-4 py-3">
-          <p className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>
-            帮助中心
-          </p>
-          <button
-            className="mt-3 flex w-full items-center gap-2 rounded border border-line px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-accent-soft/30"
-            style={{ color: 'var(--sm-ink-soft)' }}
-            title="（占位）即将上线"
-          >
-            <HelpCircle size={15} /> 帮助与支持
-          </button>
-          <p className="mt-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
-            更多帮助内容即将上线。
-          </p>
-        </div>
-      );
+      return <HelpPanel />;
     default:
       return null;
   }
+}
+
+function HelpPanel() {
+  const t = useT('panels');
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-3">
+      <p className="text-[13px] font-medium" style={{ color: 'var(--sm-ink)' }}>
+        {t('sidebar.helpCenter')}
+      </p>
+      <button
+        className="mt-3 flex w-full items-center gap-2 rounded border border-line px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-accent-soft/30"
+        style={{ color: 'var(--sm-ink-soft)' }}
+        title={t('sidebar.helpPlaceholderTitle')}
+      >
+        <HelpCircle size={15} /> {t('sidebar.helpSupport')}
+      </button>
+      <p className="mt-3 text-[11px]" style={{ color: 'var(--sm-ink-faint)' }}>
+        {t('sidebar.helpComingSoon')}
+      </p>
+    </div>
+  );
 }
 
 function IconButton({
@@ -205,6 +211,7 @@ export function SideRail({
   panelOpen,
   onTogglePanel,
 }: SideRailProps) {
+  const t = useT('panels');
   return (
     <nav
       className="sm-pro-rail flex w-12 shrink-0 flex-col items-center justify-between border-r py-2"
@@ -213,7 +220,7 @@ export function SideRail({
       {/* 上半：展开面板类（示例库为独立次级窗口，单独处理） */}
       <div className="sm-pro-rail-section flex flex-col items-center gap-1">
         <IconButton
-          label="示例库"
+          label={t('sidebar.examples')}
           icon={LayoutTemplate}
           isActive={!!examplesActive}
           onClick={onOpenExamples}
@@ -221,7 +228,7 @@ export function SideRail({
         {PANEL_ITEMS.map((it) => (
           <IconButton
             key={it.key}
-            label={it.label}
+            label={t(it.labelKey)}
             icon={it.icon}
             shortcut={it.shortcut}
             isActive={active === it.key}
@@ -233,25 +240,25 @@ export function SideRail({
       {/* 下半（从下到上）：帮助中心 / 底部面板 / 快捷键查看 / 深浅色 / 设置 */}
       <div className="sm-pro-rail-section sm-pro-rail-section-bottom flex flex-col items-center gap-1">
         <IconButton
-          label="帮助中心"
+          label={t('sidebar.helpCenter')}
           icon={HelpCircle}
           isActive={active === 'help'}
           onClick={() => (active === 'help' ? onClose() : onOpen('help'))}
         />
         <IconButton
-          label="底部面板"
+          label={t('sidebar.bottomPanel')}
           icon={PanelBottom}
           isActive={panelOpen}
           onClick={onTogglePanel}
         />
         <IconButton
-          label="快捷键查看"
+          label={t('sidebar.shortcuts')}
           icon={Keyboard}
           isActive={shortcutsOpen}
           onClick={onToggleShortcuts}
         />
-        <IconButton label="切换深浅色" icon={Sun} isActive={false} onClick={onToggleTheme} />
-        <IconButton label="设置" icon={Settings} isActive={false} onClick={onOpenSettings} />
+        <IconButton label={t('sidebar.theme')} icon={Sun} isActive={false} onClick={onToggleTheme} />
+        <IconButton label={t('sidebar.settings')} icon={Settings} isActive={false} onClick={onOpenSettings} />
       </div>
     </nav>
   );
@@ -275,6 +282,7 @@ export function SidePanel({
   onRecoverWorkerRun,
   onCleanupWorkerRun,
 }: SidePanelProps) {
+  const t = useT('panels');
   const item = PANEL_ITEMS.find((i) => i.key === active) ?? null;
   if (!item) return null;
 
@@ -288,13 +296,13 @@ export function SidePanel({
         style={{ borderColor: 'var(--sm-line)' }}
       >
         <span className="sm-pro-side-panel-title text-[13px] font-semibold" style={{ color: 'var(--sm-ink)' }}>
-          {item.label}
+          {t(item.labelKey)}
         </span>
         <button
           className="sm-pro-side-panel-close cursor-pointer"
           style={{ color: 'var(--sm-ink-faint)' }}
           onClick={onClose}
-          title="收起"
+          title={t('sidebar.collapse')}
         >
           <X size={15} />
         </button>
@@ -324,7 +332,7 @@ export function SidePanel({
           }}
           className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize"
           style={{ background: 'transparent' }}
-          title="拖动调节宽度"
+          title={t('sidebar.resize')}
         />
       )}
     </div>

@@ -8,6 +8,7 @@
 import type { CommandResult } from './node-run';
 import { runCommand } from './node-run';
 import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
+import { inspectFailedWorktreeAdd } from './worktreeAddRecovery';
 import { WORKER_IDENTITY_MAX_LENGTH } from '../domain/execution';
 
 export interface DevGitRunner {
@@ -101,6 +102,7 @@ export type WorktreeIdentityReader = (path: string, mustExist: boolean) => Promi
 
 export class WorktreeManager {
   private infos = new Map<string, WorktreeInfo>();
+  private cleanupReadbacks = new Map<string, NonNullable<CommandResult['cleanupReadback']>>();
   private lastCreateError: string | null = null;
 
   constructor(
@@ -113,6 +115,14 @@ export class WorktreeManager {
 
   getBaseRepoPath(): string {
     return this.baseRepoPath;
+  }
+
+  getCleanupReadback(id: string): NonNullable<CommandResult['cleanupReadback']> | undefined {
+    return this.cleanupReadbacks.get(id);
+  }
+
+  getByIdIncludingCleaned(id: string): WorktreeInfo | undefined {
+    return this.infos.get(id);
   }
 
   getLastCreateError(): string | null {
@@ -158,6 +168,10 @@ export class WorktreeManager {
       return null;
     }
     const baseRevision = rev.stdout.trim();
+    if (!baseRevision) {
+      this.lastCreateError = 'git rev-parse HEAD returned an empty revision';
+      return null;
+    }
     const branch = opts?.branch ?? `dev-${branchStem(id)}-${Date.now().toString(36)}`;
     if (!isSafeBranchName(branch)) {
       this.lastCreateError = `unsafe branch: ${branch}`;
@@ -179,21 +193,61 @@ export class WorktreeManager {
       }
     }
     const add = await this.runner.git(addArgs, this.baseRepoPath);
-    if (add.exitCode !== 0) {
-      this.lastCreateError = `git ${addArgs.join(' ')} failed: ${add.stderr.trim() || `exit ${add.exitCode}`}`;
+    if (add.exitCode !== 0 || add.unknownEffects) {
+      const detail = add.stderr.trim() || `exit ${add.exitCode}`;
+      this.lastCreateError = `git ${addArgs.join(' ')} ${add.unknownEffects ? 'outcome unknown' : 'failed'}: ${detail}`;
+      if (add.unknownEffects) {
+        this.infos.set(id, {
+          id,
+          path,
+          branch,
+          baseRevision,
+          createdAt: new Date().toISOString(),
+          status: 'registration-pending',
+        });
+      } else {
+        const readback = await inspectFailedWorktreeAdd(
+          this.runner,
+          this.baseRepoPath,
+          path,
+          branch,
+          this.verifyPathIdentity,
+        );
+        if (readback.status !== 'none') {
+          this.infos.set(id, {
+            id,
+            path,
+            branch,
+            baseRevision,
+            ...(readback.branchRevision ? { branchRevision: readback.branchRevision } : {}),
+            createdAt: new Date().toISOString(),
+            status: readback.status,
+          });
+        }
+      }
       return null;
     }
-    const targetIdentity = this.readPathIdentity
-      ? await this.readPathIdentity(path, true)
-      : undefined;
-    const info: WorktreeInfo = {
+    const baseInfo: WorktreeInfo = {
       id,
       path,
       branch,
       baseRevision,
-      ...(targetIdentity ? { targetIdentity } : {}),
       createdAt: new Date().toISOString(),
       status: 'created',
+    };
+    this.infos.set(id, baseInfo);
+    let targetIdentity: string | null | undefined;
+    try {
+      targetIdentity = this.readPathIdentity
+        ? await this.readPathIdentity(path, true)
+        : undefined;
+    } catch (cause) {
+      this.lastCreateError = `worktree target identity read failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      return null;
+    }
+    const info: WorktreeInfo = {
+      ...baseInfo,
+      ...(targetIdentity ? { targetIdentity } : {}),
     };
     this.infos.set(id, info);
     if (this.readPathIdentity && !targetIdentity) {
@@ -222,6 +276,11 @@ export class WorktreeManager {
         (info.status === 'created' || info.status === 'registration-pending' || info.status === 'orphaned') &&
         pathComparisonKey(info.path) === normalized,
     );
+  }
+
+  getByPathIncludingCleaned(path: string): WorktreeInfo | undefined {
+    const normalized = pathComparisonKey(path);
+    return [...this.infos.values()].find((info) => pathComparisonKey(info.path) === normalized);
   }
 
   /** Read the current branch tip for approval/CAS fingerprints. */
@@ -340,6 +399,16 @@ export class WorktreeManager {
     this.infos.delete(id);
   }
 
+  /** Attach the host-owned stable target identity returned by native registration. */
+  bindTargetIdentity(id: string, targetIdentity: string): WorktreeInfo | undefined {
+    const normalized = targetIdentity.trim();
+    const info = this.infos.get(id);
+    if (!info || !normalized) return info;
+    const updated = { ...info, targetIdentity: normalized };
+    this.infos.set(id, updated);
+    return updated;
+  }
+
   markRegistrationPending(id: string): void {
     const info = this.infos.get(id);
     if (info?.status === 'cleaned') this.infos.set(id, { ...info, status: 'registration-pending' });
@@ -420,6 +489,7 @@ export class WorktreeManager {
         this.infos.set(info.id, { ...info, branchRevision, status: 'orphaned' });
         return false;
       }
+      if (cleanup.cleanupReadback) this.cleanupReadbacks.set(info.id, cleanup.cleanupReadback);
       this.infos.set(info.id, { ...info, branchRevision, status: 'cleaned' });
       return true;
     }
@@ -456,7 +526,9 @@ export class WorktreeManager {
     if (!info || info.status === 'cleaned') return false;
     if (!opts.confirm) return false; // 确认门：未确认拒绝清理（防误删未提交改动）
     if (opts.signal?.aborted) return false;
-    if (info.status === 'registration-pending') return true;
+    if (info.status === 'registration-pending') {
+      return Boolean(info.targetIdentity?.trim() && info.branchRevision?.trim());
+    }
     if (info.status === 'orphaned') {
       if (!info.branchRevision) return false;
       if (opts.branchRevision !== info.branchRevision) return false;
@@ -476,6 +548,7 @@ export class WorktreeManager {
           this.baseRepoPath,
         );
         if (cleanup.exitCode !== 0) return false;
+        if (cleanup.cleanupReadback) this.cleanupReadbacks.set(id, cleanup.cleanupReadback);
         this.infos.set(id, { ...info, status: 'cleaned' });
         return true;
       }

@@ -26,6 +26,10 @@ vi.mock('../i18n/useT', () => ({
 }));
 
 import AgentPanel from './AgentPanel';
+import AgentCatalogList from './agentPanel/AgentCatalogList';
+import RolesTab from './agentPanel/RolesTab';
+import { ApiKeyField } from './agentPanel/ProviderFields';
+import AgentEditorForm from './agentPanel/AgentEditorForm';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -219,5 +223,123 @@ describe('AgentPanel', () => {
       (container.querySelector('ul li') as HTMLLIElement).click();
     });
     expect(container.querySelector('.absolute.left-full')).not.toBeNull();
+  });
+
+  it('persists role edits through the real catalog action', async () => {
+    await act(async () => {
+      root.render(<RolesTab />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('roles.add'),
+    );
+    expect(addButton).toBeDefined();
+    await act(async () => {
+      addButton?.click();
+    });
+
+    const nameInput = container.querySelector('input') as HTMLInputElement;
+    const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setNativeValue.call(nameInput, '研究角色');
+    await act(async () => {
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(useWorkflowStore.getState().roles).toEqual([
+      expect.objectContaining({
+        name: '研究角色',
+        system: '',
+        contextScope: 'shared',
+      }),
+    ]);
+  });
+
+  it('keeps API-key entry disabled in a browser runtime', async () => {
+    await act(async () => {
+      root.render(
+        <ApiKeyField
+          agentId="agent-browser-test"
+          onSaved={() => {}}
+          onCleared={() => {}}
+        />,
+      );
+    });
+
+    const apiKeyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(apiKeyInput.disabled).toBe(true);
+    expect(apiKeyInput.placeholder).toBe('agent.apikey.placeholderWeb');
+  });
+
+  it('forwards editor field changes through its owner port', async () => {
+    const onPatch = vi.fn();
+    await act(async () => {
+      root.render(
+        <AgentEditorForm
+          variant="center"
+          editing={{ ...baseAgent }}
+          remoteModels={[]}
+          loadingModels={false}
+          modelHint=""
+          probing={false}
+          probe={null}
+          onPatch={onPatch}
+          onProtocolChange={() => {}}
+          onPullModels={async () => {}}
+          onProbe={async () => {}}
+          onKeySaved={() => {}}
+          onKeyCleared={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onToggleEnabled={() => {}}
+        />,
+      );
+    });
+
+    const nameInput = container.querySelector('input') as HTMLInputElement;
+    const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setNativeValue.call(nameInput, '编辑器测试模型');
+    await act(async () => {
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(onPatch).toHaveBeenCalledWith({ name: '编辑器测试模型' });
+  });
+
+  it('routes default-agent selection through the direct catalog-list owner', async () => {
+    const onSetDefaultAgent = vi.fn();
+    await act(async () => {
+      root.render(
+        <AgentCatalogList
+          variant="center"
+          editingId={null}
+          filter="all"
+          pool={[baseAgent]}
+          filteredPool={[baseAgent]}
+          projectSet={new Set(['agent-1'])}
+          globalSet={new Set()}
+          defaultAgentId={null}
+          probeStates={{}}
+          vaults={[]}
+          belongsToGlobal={() => false}
+          onFilterChange={() => {}}
+          onSelectAgent={() => {}}
+          onSetDefaultAgent={onSetDefaultAgent}
+          onToggleGlobal={() => {}}
+          onAddPreset={() => {}}
+          onAddAgent={() => {}}
+          onImportFromVault={() => {}}
+        />,
+      );
+    });
+
+    const setDefaultButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('☆'),
+    );
+    expect(setDefaultButton).toBeDefined();
+    await act(async () => {
+      setDefaultButton?.click();
+    });
+
+    expect(onSetDefaultAgent).toHaveBeenCalledWith('agent-1');
   });
 });

@@ -2,6 +2,8 @@ import type { FlowNode, FlowEdge } from '../types/graph';
 
 export interface StarterTemplate {
   id: string;
+  displayNameKey: string;
+  displayDescKey: string;
   name: string;
   emoji: string;
   desc: string;
@@ -47,6 +49,8 @@ function edge(
 export const STARTER_TEMPLATES: StarterTemplate[] = [
   {
     id: 'polish-email',
+    displayNameKey: 'starterTemplate.polish-email.name',
+    displayDescKey: 'starterTemplate.polish-email.description',
     name: '把一句话变成正式邮件',
     emoji: '✉️',
     desc: '输入一句想法，AI 帮你扩写、润色成得体的正式邮件。开箱即用，无需配置模型。',
@@ -72,6 +76,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'batch-translate',
+    displayNameKey: 'starterTemplate.batch-translate.name',
+    displayDescKey: 'starterTemplate.batch-translate.description',
     name: '批量翻译清单',
     emoji: '🌐',
     desc: '把一列短句逐条交给 AI 翻译，最后合并成一段结果。适合处理名单、标签、短语。',
@@ -100,6 +106,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'condition-route',
+    displayNameKey: 'starterTemplate.condition-route.name',
+    displayDescKey: 'starterTemplate.condition-route.description',
     name: '按条件分流',
     emoji: '🔀',
     desc: '判断输入是否包含某个关键词，命中走一条分支、否则走另一条。演示条件分支怎么用。',
@@ -121,6 +129,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'article-outline',
+    displayNameKey: 'starterTemplate.article-outline.name',
+    displayDescKey: 'starterTemplate.article-outline.description',
     name: '文章大纲生成',
     emoji: '📝',
     desc: '给一个主题，AI 先列出大纲，再据此扩写成开篇段落。适合写公众号、周报、文档。',
@@ -148,6 +158,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'extract-json',
+    displayNameKey: 'starterTemplate.extract-json.name',
+    displayDescKey: 'starterTemplate.extract-json.description',
     name: '从文本提取结构化信息',
     emoji: '🧾',
     desc: '把一段杂乱的文字交给 AI，按你给的字段整理成结构化内容，便于后续处理。',
@@ -169,6 +181,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'summarize',
+    displayNameKey: 'starterTemplate.summarize.name',
+    displayDescKey: 'starterTemplate.summarize.description',
     name: '长文一键摘要',
     emoji: '✂️',
     desc: '贴入一段长文，AI 帮你压缩成 3 条要点，快速抓住重点。',
@@ -189,6 +203,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'sentiment-route',
+    displayNameKey: 'starterTemplate.sentiment-route.name',
+    displayDescKey: 'starterTemplate.sentiment-route.description',
     name: '情绪分类分流',
     emoji: '😊',
     desc: '判断一条评论是正面还是负面，分别送到不同结果里。演示「条件 + 分流」组合用法。',
@@ -214,6 +230,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'multilingual-titles',
+    displayNameKey: 'starterTemplate.multilingual-titles.name',
+    displayDescKey: 'starterTemplate.multilingual-titles.description',
     name: '多语言标题生成',
     emoji: '🌍',
     desc: '给一个主题，AI 同时生成中文、英文、日文三个标题，循环批处理一次搞定。',
@@ -240,6 +258,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   },
   {
     id: 'game-2048-three-party',
+    displayNameKey: 'starterTemplate.game-2048-three-party.name',
+    displayDescKey: 'starterTemplate.game-2048-three-party.description',
     name: '2048 小游戏（三方协作）',
     emoji: '🎮',
     desc: '承建方规划→架构师拆解功能模块→仲裁委员会可回流重派→生成器自动注册「施工方/物业」两张工作流。预置 2048 的 7 个功能模块清单，全程 simulate 离线模式，无需 API Key 即可跑通端口流通，作为开发参照骨架。',

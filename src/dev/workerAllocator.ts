@@ -5,6 +5,7 @@ import type {
   WorkerWorktreeAllocator,
   WorkerWorktreeAssignment,
 } from '../domain/workerQueue';
+import { WorkerAllocationRepairRequiredError } from '../domain/workerQueue';
 import {
   assertTaskExecutionLineage,
   createAttemptId,
@@ -20,7 +21,9 @@ export interface WorktreeCreator {
     path: string,
     options?: { branch?: string; signal?: AbortSignal },
   ): Promise<WorktreeInfo | null>;
+  get?: (id: string) => WorktreeInfo | undefined;
   getLastCreateError?: () => string | null;
+  cleanup?: (id: string, opts?: { confirm?: boolean; signal?: AbortSignal }) => Promise<boolean>;
 }
 
 export type WorkerWorktreePathFactory = (input: {
@@ -70,8 +73,38 @@ export function createWorktreeAllocator(
       }
       reservedPaths.set(pathKey, executionAttemptId);
       const branch = `worker/${identitySegment}`;
+      let createReturned = false;
+      let createdInfo: WorktreeInfo | null = null;
+      let createdByThisCall = false;
+      const repairError = (info: WorktreeInfo, reason: string): WorkerAllocationRepairRequiredError => {
+        const assignment: WorkerWorktreeAssignment = {
+          worktreeId: requiredText(info.id, 'worktree id'),
+          path: requiredText(info.path, 'worktree 路径'),
+          branch: requiredText(info.branch, 'worktree 分支'),
+          baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
+          ...(info.branchRevision ? { branchRevision: requiredText(info.branchRevision, 'worktree 分支 revision') } : {}),
+          ...(info.targetIdentity ? { targetIdentity: requiredText(info.targetIdentity, 'worktree target identity') } : {}),
+        };
+        return new WorkerAllocationRepairRequiredError(reason, {
+          taskId: task.id,
+          attempt,
+          taskExecutionId: executionId,
+          attemptId: executionAttemptId,
+          assignment,
+          worktreeStatus: info.status === 'registration-pending' ? 'registration-pending' : 'orphaned',
+          reason,
+        });
+      };
       try {
         const info = await creator.create(worktreeId, path, { branch, signal });
+        createReturned = true;
+        createdByThisCall = Boolean(
+          info?.status === 'created'
+          && info.id === worktreeId
+          && pathComparisonKey(info.path) === pathKey
+          && info.branch === branch,
+        );
+        createdInfo = info ?? creator.get?.(worktreeId) ?? null;
         if (signal?.aborted) throw new Error('Worker worktree 分配已取消');
         if (!info || info.status !== 'created') {
           const detail = creator.getLastCreateError?.();
@@ -89,11 +122,53 @@ export function createWorktreeAllocator(
           path: requiredText(info.path, 'worktree 路径'),
           branch: requiredText(info.branch, 'worktree 分支'),
           baseRevision: requiredText(info.baseRevision, 'worktree 基线'),
+          ...(info.branchRevision ? { branchRevision: requiredText(info.branchRevision, 'worktree 分支 revision') } : {}),
+          ...(info.targetIdentity ? { targetIdentity: requiredText(info.targetIdentity, 'worktree target identity') } : {}),
         };
       } catch (error) {
-        reservedPaths.delete(pathKey);
+        if (!createdInfo) createdInfo = creator.get?.(worktreeId) ?? null;
+        if (createdInfo?.status === 'created' && createdByThisCall) {
+          if (!creator.cleanup) {
+            const reason = `${error instanceof Error ? error.message : String(error)}；创建后的 worktree 无法回滚：宿主未提供 cleanup（${createdInfo.id}）`;
+            throw repairError(createdInfo, reason);
+          }
+          let cleaned: boolean;
+          try {
+            cleaned = await creator.cleanup(createdInfo.id, { confirm: true });
+          } catch (cleanupCause) {
+            const latestInfo = creator.get?.(createdInfo.id) ?? createdInfo;
+            const reason = `${error instanceof Error ? error.message : String(error)}；创建后的 worktree 回滚失败：${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}`;
+            throw repairError(latestInfo, reason);
+          }
+          if (!cleaned) {
+            const latestInfo = creator.get?.(createdInfo.id) ?? createdInfo;
+            const reason = `${error instanceof Error ? error.message : String(error)}；worktree rollback 未确认完成：${createdInfo.id}`;
+            throw repairError(latestInfo, reason);
+          }
+          reservedPaths.delete(pathKey);
+        } else if (
+          createdInfo?.status === 'created'
+          || createdInfo?.status === 'orphaned'
+          || createdInfo?.status === 'registration-pending'
+        ) {
+          const reason = `${error instanceof Error ? error.message : String(error)}；宿主保留 worktree 修复记录：${createdInfo.id}`;
+          throw repairError(createdInfo, reason);
+        } else if (createReturned) {
+          // The creator returned no created worktree; the reservation is safe to release.
+          reservedPaths.delete(pathKey);
+        }
+        // If create itself threw, keep the reservation: the host may have mutated
+        // before reporting the error and the path must not be reused blindly.
         throw error;
       }
+    },
+    async release(assignment, signal): Promise<void> {
+      if (!creator.cleanup) {
+        throw new Error(`无法回滚已分配 worktree：宿主未提供 cleanup（${assignment.worktreeId}）`);
+      }
+      const cleaned = await creator.cleanup(assignment.worktreeId, { confirm: true, signal });
+      if (!cleaned) throw new Error(`worktree rollback 未确认完成：${assignment.worktreeId}`);
+      reservedPaths.delete(pathComparisonKey(assignment.path));
     },
   };
 }

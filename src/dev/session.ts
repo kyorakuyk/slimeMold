@@ -27,7 +27,9 @@ import { createDevNodeDefs } from '../nodes/dev/index';
 import { normalizeAbsolutePath, pathComparisonKey } from './path-utils';
 import { readTextFile, resolveInside } from './node-run';
 import { createTauriGitRunner, createTauriDeps } from './tauri-run';
-import { assertTaskExecutionLineage, createAttemptId, createTaskExecutionId } from '../domain/execution';
+import { assertTaskExecutionLineage } from '../domain/execution';
+import { confirmSessionCleanup } from './sessionCleanup';
+import { installSessionWorktreeLifecycle } from './sessionWorktreeLifecycle';
 import {
   cleanupBindingFingerprint,
   type WorkerCleanupProposalReady,
@@ -201,6 +203,7 @@ export interface DevSession {
     path: string,
     opts?: {
       worktreeId?: string;
+      targetIdentity?: string;
       branch?: string;
       branchRevision?: string;
       branchRevisionRequired?: boolean;
@@ -373,10 +376,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
     path: string,
     branch?: string,
     branchRevision?: string,
-  ): Promise<void> => {
-    if (env !== 'tauri') return;
+    targetIdentity?: string,
+  ): Promise<string | undefined> => {
+    if (env !== 'tauri') return undefined;
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke(fn === 'register'
+    const result = await invoke<unknown>(fn === 'register'
       ? 'dev_register_worktree'
       : fn === 'restore'
         ? 'dev_restore_worktree'
@@ -387,93 +391,11 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       generation: hostGeneration,
       ...(branch ? { branch } : {}),
       ...(branchRevision ? { branchRevision } : {}),
+      ...(targetIdentity ? { targetIdentity } : {}),
     });
+    return typeof result === 'string' && result.trim() ? result : undefined;
   };
-  // Host registration is a separate side effect from Git cleanup. Keep its
-  // success state so a failed initial registration never turns a later Git
-  // rollback into an invalid unregister call.
-  const registeredWorktrees = new Set<string>();
-  const rawCreate = manager.create.bind(manager);
-  const rawRestore = manager.restore.bind(manager);
-  const rawCleanup = manager.cleanup.bind(manager);
-  manager.create = async (id, path, opts) => {
-    const info = await rawCreate(id, path, opts);
-    if (info) {
-      // GUI 动态 worktree：宿主固定证据根 + 断言证据在 worktree 外 → 惰性绑定宿主 EvidenceStore
-      if (env === 'tauri' && evidenceRoot) {
-        const { createTauriEvidenceStore } = await import('./tauri-run');
-        try {
-          collector.attachPersistence(createTauriEvidenceStore(evidenceRoot, info.path, 'host'));
-        } catch {
-          // 证据根与 worktree 相交 → 拒绝持久化（forceCleanup 等依赖持久化的操作将不可用，fail-closed）
-        }
-      }
-      try {
-        await syncRust('register', info.path);
-        registeredWorktrees.add(info.id);
-      } catch (error) {
-        // Tauri host keeps a pending add lease until registration succeeds, so
-        // this cleanup can pass the host gate. Preserve the manager record when
-        // rollback itself fails; forgetting it would lose orphan lineage.
-        const rolledBack = await rawCleanup(id, { confirm: true, signal: opts?.signal }).catch(() => false);
-        if (rolledBack) manager.forget(id);
-        throw error;
-      }
-    }
-    return info;
-  };
-  manager.restore = async (info, opts) => {
-    const restored = await rawRestore(info, opts);
-    if (!restored) return false;
-    if (info.status === 'registration-pending') return true;
-    if (info.status === 'orphaned') {
-      try {
-        await syncRust('register-orphan', info.path, info.branch, info.branchRevision);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    try {
-      await syncRust('restore', info.path, info.branch);
-      registeredWorktrees.add(info.id);
-      return true;
-    } catch {
-      // Keep the live Git worktree record so registration can be retried after
-      // a transient host/session failure; forgetting it would lose recovery lineage.
-      return false;
-    }
-  };
-  manager.cleanup = async (id, opts) => {
-    const info = manager.get(id);
-    if (info?.status === 'registration-pending') {
-      if (!opts?.confirm || opts?.signal?.aborted) return false;
-      try {
-        await syncRust('unregister', info.path);
-        registeredWorktrees.delete(id);
-        manager.markCleaned(id);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    const cleaned = await rawCleanup(id, opts);
-    if (!cleaned || !info) return cleaned;
-    if (!registeredWorktrees.has(id)) {
-      // Git cleanup completed, but Rust registration never did. There is no
-      // host registration to unregister; drop the resolved manager lineage.
-      manager.forget(id);
-      return true;
-    }
-    try {
-      await syncRust('unregister', info.path);
-      registeredWorktrees.delete(id);
-    } catch {
-      manager.markRegistrationPending(id);
-      return false;
-    }
-    return cleaned;
-  };
+  installSessionWorktreeLifecycle({ env, manager, collector, evidenceRoot, syncRust });
   const session: DevSession = {
     policy,
     hostGeneration,
@@ -589,6 +511,7 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       approvedCleanups.set(key, {
         worktreePath: normalizedPath,
         worktreeId: opts?.worktreeId,
+        targetIdentity: opts?.targetIdentity,
         branch: opts?.branch,
         branchRevision: opts?.branchRevision,
         branchRevisionRequired: opts?.branchRevisionRequired,
@@ -639,94 +562,18 @@ export function initDevSession(opts: DevSessionOptions = {}): DevSession {
       throw new Error('legacy forceCleanup 已禁用：破坏性清理必须通过 TaskGraph Worker fingerprint gate');
     },
     async confirmAndCleanup(path, signal, expectedFingerprint) {
-      // P1（审计）：宿主级互斥锁——同一 worktree 的确认清理串行，防并发窗口；
-      // 锁内完成「取审批 → 校验验收三元组 → 重新计算状态签名 → 校验基线 → cleanup」，
-      // 并在 cleanup 前**二次**重算签名（computeWorktreeSignature 与删除紧邻，窗口最小化）。
-      const key = pathComparisonKey(path);
-      if (signal?.aborted || this.confirmCleanupInFlight.has(key)) return false;
-      this.confirmCleanupInFlight.add(key);
-      try {
-        const approval = approvedCleanups.get(key);
-        const info = this.manager.getByPath(path);
-        if (!approval || approval.consumed) return false;
-        const rejectCleanup = (): boolean => {
-          trustedCleanupBindings.delete(cleanupBindingFingerprint(approval));
-          approvedCleanups.set(key, { ...approval, consumed: true });
-          return false;
-        };
-        if (!expectedFingerprint?.trim()) return false;
-        if (!trustedCleanupBindings.has(expectedFingerprint)
-          || cleanupBindingFingerprint(approval) !== expectedFingerprint) return rejectCleanup();
-        if (approval.taskStatus !== 'succeeded'
-          || approval.cleanupStatus !== 'active'
-          || approval.branchRevisionRequired !== true
-          || typeof approval.attempt !== 'number'
-          || !Number.isSafeInteger(approval.attempt)
-          || approval.attempt < 1) return rejectCleanup();
-        if (!approval.worktreeId || !approval.branch
-          || !approval.runId || !approval.taskId || !approval.taskExecutionId || !approval.attemptId
-          || !info
-          || info.id !== approval.worktreeId
-          || info.branch !== approval.branch) return rejectCleanup();
-        if (approval.taskExecutionId !== createTaskExecutionId(approval.runId, approval.taskId)
-          || approval.attemptId !== createAttemptId(approval.taskExecutionId, approval.attempt)) return rejectCleanup();
-        if (!approval.acceptanceId || !approval.stateSignature || !approval.baseRevision) return rejectCleanup();
-        const acc = this.getAcceptance(approval.acceptanceId);
-        const accOk =
-          !!acc &&
-          acc.passed &&
-          acc.orchestrationId === approval.orchestrationId &&
-          acc.stageId === approval.stageId &&
-          acc.runId === approval.runId &&
-          acc.taskId === approval.taskId &&
-          acc.taskExecutionId === approval.taskExecutionId &&
-          acc.attemptId === approval.attemptId &&
-          pathComparisonKey(acc.worktreePath) === key;
-        const revOk = info?.baseRevision === approval.baseRevision;
-        const branchRevisionOk = !approval.branchRevisionRequired
-          || (info?.status === 'created'
-            ? !!approval.branchRevision
-            : !!approval.branchRevision && info?.branchRevision === approval.branchRevision);
-        if (!branchRevisionOk) return rejectCleanup();
-        if (approval.branchRevisionRequired && info?.status === 'created') {
-          const liveBranchRevision = await this.manager.getBranchRevision(approval.branch);
-          if (liveBranchRevision !== approval.branchRevision) return rejectCleanup();
-        }
-        if (info?.status === 'registration-pending' || info?.status === 'orphaned') {
-          if (!accOk || !revOk) return rejectCleanup();
-          const cleaned = await this.manager.cleanup(info.id, {
-            confirm: true,
-            signal,
-            branchRevision: approval.branchRevision,
-          });
-          if (cleaned) {
-            this.consumeCleanup(path);
-            return true;
-          }
-          return rejectCleanup();
-        }
-        // 第一次签名校验
-        const sig = await this.computeWorktreeSignature(path);
-        if (signal?.aborted) return false;
-        const sigOk = sig === approval.stateSignature;
-        if (!accOk || !revOk || !sigOk) return rejectCleanup();
-        // cleanup 前二次签名校验（与删除紧邻——window 内签名变化即拒绝）
-        const sig2 = await this.computeWorktreeSignature(path);
-        if (signal?.aborted) return false;
-        if (sig2 !== approval.stateSignature) return rejectCleanup();
-        const cleaned = await this.manager.cleanup(info.id, {
-          confirm: true,
-          signal,
-          branchRevision: approval.branchRevision,
-        });
-        if (cleaned) {
-          this.consumeCleanup(path);
-          return true;
-        }
-        return rejectCleanup();
-      } finally {
-        this.confirmCleanupInFlight.delete(key);
-      }
+      return confirmSessionCleanup({
+        path,
+        signal,
+        expectedFingerprint,
+        manager: this.manager,
+        confirmCleanupInFlight: this.confirmCleanupInFlight,
+        approvedCleanups,
+        trustedCleanupBindings,
+        getAcceptance: (acceptanceId) => this.getAcceptance(acceptanceId),
+        computeWorktreeSignature: (worktreePath) => this.computeWorktreeSignature(worktreePath),
+        consumeCleanup: (worktreePath) => this.consumeCleanup(worktreePath),
+      });
     },
   };
   session.defs = createDevNodeDefs(session);

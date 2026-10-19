@@ -10,6 +10,7 @@ import type { AcceptanceRecord } from '../dev/session';
 import type { WorkerRunQueueState } from '../domain/workerQueue';
 import type { EvidenceRecord } from '../dev/evidence';
 import type { ProjectControlSnapshot } from './types';
+import { cleanupUnknownRunIds } from './workerRecoveryFacts';
 
 export interface WorkerRunConsistencyActionState {
   workerRuns: readonly WorkerRunQueueState[];
@@ -60,6 +61,13 @@ export async function assertWorkerRunConsistency(
   });
   if (!report.ok) {
     throw new Error(`Worker 事实源不一致：${report.issues.map((item) => item.message).join('；')}`);
+  }
+  const cleanupUnknownRuns = cleanupUnknownRunIds(
+    current.workerRunSideEffects,
+    current.workerRuns,
+  );
+  if (cleanupUnknownRuns.size > 0) {
+    throw new Error(`Cleanup receipt 缺少可信 native identity read-back：${[...cleanupUnknownRuns].join(', ')}`);
   }
   const controlReport = deps.auditProjectControlConsistency({
     projectId: deps.projectId,

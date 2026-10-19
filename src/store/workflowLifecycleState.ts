@@ -11,6 +11,7 @@ import type { NodeGroup, SubgraphDef, WorkflowFileInMemory } from '../types/work
 import type { ProjectFile } from '../types/projectFile';
 import type { FlowEdge, FlowNode } from '../types/graph';
 import { flowEdgesFrom, flowNodesFrom, fromDisk } from './workflowSerialize';
+import { createWorkflowId } from './workflowId';
 import { builtinRoles, createAgent } from '../agents/agentManager';
 import { createEmptyProjectControlSnapshot, parseProjectControlSnapshot } from '../projectControl/persistence';
 import type { ProjectControlSnapshot } from '../projectControl/types';
@@ -301,7 +302,7 @@ export interface NewProjectState {
  * 不触碰 store 单例；suppressDirty + set 由调用方执行。
  */
 export function buildNewProjectState(name: string): NewProjectState {
-  const id = `wf-${Date.now()}`;
+  const id = createWorkflowId(Date.now());
   const projId = `proj-${Date.now()}`;
   const now = new Date().toISOString();
   const wf: WorkflowFileInMemory = {

@@ -17,6 +17,15 @@ export interface CommandResult {
   durationMs: number;
   /** Host-side spawn/capture/cleanup failed after the command may have started. */
   unknownEffects?: boolean;
+  /** Authoritative native cleanup postcondition, when a native host performed cleanup. */
+  cleanupReadback?: {
+    authority: 'native';
+    worktreePath: string;
+    branch: string;
+    branchRevision: string;
+    targetIdentity?: string;
+    finalStatus: 'absent';
+  };
 }
 
 /** 常见凭据/密钥环境变量名（执行子命令时剥离，防止开发节点读取宿主凭据）。 */
@@ -72,7 +81,8 @@ function trustedWindowsPath(candidate: string): string | null {
     const stat = lstatSync(candidate);
     if (stat.isSymbolicLink()) return null;
     const real = realpathSync(candidate);
-    if (pathComparisonKey(real) !== pathComparisonKey(candidate)) return null;
+    // PATH may contain a Windows parent-junction alias. Execute the canonical target
+    // so the command is still bound to the file that was checked above.
     return real;
   } catch {
     return null;

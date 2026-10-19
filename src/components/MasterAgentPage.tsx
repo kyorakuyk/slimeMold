@@ -46,6 +46,9 @@ function mergeCandidates(globalAgents: AgentConfig[], projectAgents: AgentConfig
   ];
 }
 
+/** 编辑 `projectControl.masterAgentId` 覆盖；显示继承候选时查 `globalMasterAgentId ?? defaultAgentId`。
+ * 这不是完整的 runtime resolver：运行路径还会跳过缺失/禁用 ID 并回退首个启用 Agent（ADR-SM-071）。
+ */
 export default function MasterAgentPage({ onBack, onOpenAdvanced }: MasterAgentPageProps) {
   const t = useT('beginner');
   const projectName = useWorkflowStore((state) => state.projectName);

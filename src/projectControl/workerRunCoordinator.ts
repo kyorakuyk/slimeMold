@@ -100,6 +100,7 @@ export function createGuiProjectWorkerRunCoordinator(
     runs: options.runs,
     concurrency: options.concurrency,
     sideEffects: options.sideEffects,
+    assertBeforeExternalWork: options.assertBeforeExternalWork,
     signal: options.signal,
     assertConsistency: options.assertConsistency,
     persistTransition: options.persistTransition,
@@ -135,6 +136,7 @@ export function createProjectWorkerRunCoordinator(
           executor: options.executor,
           concurrency: options.concurrency,
           sideEffects: options.sideEffects,
+          assertBeforeExternalWork: options.assertBeforeExternalWork,
           signal: options.signal,
         },
         async ({ state, events }) => {

@@ -30,7 +30,7 @@ const DEV_TYPE_IDS = [
 ];
 
 /** GUI DevSession 就绪状态（审计 P1：初始化失败须显式可见，不静默吞异常）。 */
-export type DevGuiStatus = 'idle' | 'ready' | 'unavailable';
+export type DevGuiStatus = 'idle' | 'ready' | 'unavailable' | 'error';
 let devGuiStatus: DevGuiStatus = 'idle';
 let devGuiError: string | null = null;
 let devSessionGeneration = 0;
@@ -54,6 +54,12 @@ export function getDevGuiStatus(): DevGuiStatus {
 export function getDevGuiError(): string | null {
   return devGuiError;
 }
+
+function isExpectedNonGitProjectFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Git top-level probe 失败') && message.includes('fatal: not a git repository');
+}
+
 export function setDevGuiStatus(s: DevGuiStatus): void {
   devGuiStatus = s;
   if (s === 'ready') devGuiError = null;
@@ -114,10 +120,16 @@ async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal
     }
   } catch (e) {
     if (generation !== devSessionGeneration) return null;
-    // 审计 P1：不静默吞异常——显式标记不可用，GUI 面板提示
+    const message = e instanceof Error ? e.message : String(e);
+    devGuiError = message;
+    if (isExpectedNonGitProjectFailure(e)) {
+      console.warn('[H4] dev_init_session unavailable for non-Git project:', e);
+      setDevGuiStatus('unavailable');
+      return null;
+    }
+    // Unexpected host failures remain error-level and keep development unavailable.
     console.error('[H4] dev_init_session 失败：', e);
-    devGuiError = e instanceof Error ? e.message : String(e);
-    setDevGuiStatus('unavailable');
+    setDevGuiStatus('error');
     return null;
   }
 
@@ -160,7 +172,7 @@ async function initializeGuiDevSession(projectPath: string, signal?: AbortSignal
     devGuiError = e instanceof Error ? e.message : String(e);
     await teardownGuiDevSession().catch(() => {});
     resetDevSession();
-    setDevGuiStatus('unavailable');
+    setDevGuiStatus('error');
     return null;
   }
 }

@@ -21,7 +21,7 @@
   <string name="runHistory.recent">(last {{count}} runs)</string>
   <string name="runHistory.empty">No run history yet</string>
   <string name="runHistory.selectHint">Select a run to view node results</string>
-  <string name="runHistory.status.label">Status</string>
+  <string name="runHistory.status.label">Status:</string>
   <string name="runHistory.status.success">Success</string>
   <string name="runHistory.status.partial">Partial</string>
   <string name="runHistory.status.failed">Failed</string>
@@ -44,6 +44,11 @@
   <string name="runHistory.clearTitle">Clear history</string>
   <string name="runHistory.restore">Restore</string>
   <string name="runHistory.restoreTitle">Restore latest run node results to canvas (reuse success, resume failed)</string>
+  <string name="runHistory.calls">{{count}} calls</string>
+  <string name="runHistory.node.startedAt">Started: {{time}}</string>
+  <string name="runHistory.node.cost">Models: {{models}}; {{failed}} failed</string>
+  <string name="runHistory.log.checkpointRestored">Canvas restored from the checkpoint: successful nodes are reused and failed nodes can resume</string>
+  <string name="runHistory.log.noCheckpoint">This workflow has no restorable run checkpoint</string>
 
   <!-- InterventionModal -->
   <string name="intervention.title">Human Takeover</string>
@@ -120,6 +125,7 @@
   <string name="groups.focus">Focus this group</string>
   <string name="groups.remove">Remove this group (nodes stay)</string>
   <string name="groups.ungrouped">(ungrouped)</string>
+  <string name="groups.unassignedTitle">{{label}} · {{typeId}} (ungrouped)</string>
 
   <!-- ExamplesPanel -->
   <string name="examples.intro">Pick a scenario template and click the card to load it. All AI templates enable offline simulation by default — no model config needed to try.</string>
@@ -144,6 +150,9 @@
   <string name="token.legendWrite">Write</string>
   <string name="token.legendMiss">Miss</string>
   <string name="token.byModel">By model</string>
+  <string name="token.modelCalls">{{count}} calls</string>
+  <string name="token.modelCalls_one">{{count}} call</string>
+  <string name="token.modelCalls_other">{{count}} calls</string>
 
   <!-- Companion -->
   <string name="companion.title">Companion</string>
@@ -167,15 +176,33 @@
   <string name="templates.empty">Workflows you run will crystallize into reusable templates here. Run one to get started.</string>
   <string name="templates.freqTag">Frequent pattern</string>
   <string name="templates.noPattern">No repeated high-frequency pattern yet (needs ≥2 successful runs with similar structure).</string>
+  <string name="templates.unnamed">Untitled</string>
   <string name="templates.genDraft">Generate draft</string>
   <string name="templates.genHint">Distilled from your successful runs — learns you over time</string>
   <string name="templates.genToast">Draft generated — adjust on the canvas</string>
+
+  <!-- DevSessionPanel -->
+  <string name="devSession.nonGitProject">H4 development features are unavailable because this project is not a Git repository.</string>
+  <string name="devSession.initializationFailed">H4 development session initialization failed.</string>
+  <string name="devSession.retryHint">Reopen the project or check the logs, then try again.</string>
+  <string name="devSession.desktopOnly">H4 development sessions are available only in the desktop (Tauri) app.</string>
+  <string name="devSession.notInitialized">H4 DevSession is not initialized (open a project first).</string>
+  <string name="devSession.header">DevSession (host navigation)</string>
+  <string name="devSession.persistenceBound">EvidenceStore connected</string>
+  <string name="devSession.persistenceUnavailable">No host persistence</string>
+  <string name="devSession.worktrees">Worktree count: {{count}}</string>
+  <string name="devSession.noWorktrees">No worktrees yet (bootstrap tasks begin with dev.worktree.create).</string>
+  <string name="devSession.baseRevision">Base commit</string>
+  <string name="devSession.approved">· Approved</string>
+  <string name="devSession.acceptances">Acceptance record count: {{count}}</string>
+  <string name="devSession.noAcceptances">No acceptance records yet.</string>
 
   <!-- RouteTableEditor -->
   <string name="route.title">Category → Agent routing (bound to workers at build time)</string>
   <string name="route.fillDefaults">Fill defaults</string>
   <string name="route.fillDefaultsTitle">Bind all categories to the default agent</string>
   <string name="route.unbound">— Default / unbound —</string>
+  <string name="route.fallbackLabel">Fallback chain</string>
   <string name="route.fallbackPlaceholder">Fallback chain (optional, comma-separated agentId; global agents work too)</string>
   <string name="route.noAgents">No usable agents (project + global both empty). Add one in the Agent panel first.</string>
   <string name="route.globalSuffix"> (global)</string>
@@ -346,4 +373,36 @@
   <string name="orchestrator.taskGraph.selectTask">Select a TaskGraph node first</string>
   <string name="orchestrator.taskGraph.revisionUnavailable">The current TaskGraph revision is not editable</string>
   <string name="orchestrator.taskGraph.revisionEmpty">Change a title or dependency before creating a revision</string>
+  <string name="orchestrator.stageCount">{{count}} stages</string>
+  <string name="orchestrator.log.draftGenerated">Draft {{id}} generated with {{count}} stages. Bind workflows and confirm.</string>
+  <string name="orchestrator.log.prepareFailed">Could not materialize workflows: {{failed}}</string>
+  <string name="orchestrator.log.prepared">Materialized workflow bindings for {{count}} stages. Open to edit or start execution.</string>
+  <string name="orchestrator.log.confirmed">Draft confirmed and awaiting execution. You can materialize/edit stage workflows before starting.</string>
+  <string name="orchestrator.log.cancelRequested">Cancellation requested; stopping the current stage…</string>
+  <string name="orchestrator.log.historyDeleted">Orchestration history deleted</string>
+  <string name="orchestrator.log.draftDiscarded">Orchestration draft discarded</string>
+  <string name="orchestrator.log.workflowSwitched">Switched to workflow "{{name}}". Edit it, then return here to run.</string>
+  <string name="orchestrator.log.workflowMissing">Workflow not found: {{id}} (materialize it first)</string>
+
+  <!-- LeftSidebar -->
+  <string name="sidebar.nodes">Node library</string>
+  <string name="sidebar.groups">Groups</string>
+  <string name="sidebar.plugins">Plugins</string>
+  <string name="sidebar.agents">Agent library</string>
+  <string name="sidebar.orchestrator">Orchestrator</string>
+  <string name="sidebar.assets">Assets</string>
+  <string name="sidebar.variables">Variables</string>
+  <string name="sidebar.history">Run history</string>
+  <string name="sidebar.tokens">Tokens</string>
+  <string name="sidebar.examples">Examples</string>
+  <string name="sidebar.helpCenter">Help center</string>
+  <string name="sidebar.bottomPanel">Bottom panel</string>
+  <string name="sidebar.shortcuts">Keyboard shortcuts</string>
+  <string name="sidebar.theme">Toggle light/dark theme</string>
+  <string name="sidebar.settings">Settings</string>
+  <string name="sidebar.collapse">Collapse</string>
+  <string name="sidebar.resize">Drag to resize</string>
+  <string name="sidebar.helpPlaceholderTitle">Coming soon</string>
+  <string name="sidebar.helpSupport">Help and support</string>
+  <string name="sidebar.helpComingSoon">More help content is coming soon.</string>
 </resources>

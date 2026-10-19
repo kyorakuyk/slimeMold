@@ -73,7 +73,7 @@ describe('sanitizeEnv', () => {
 
   it('resolves the npm command shim on Windows headless runs', async () => {
     const result = await runCommand('npm', ['--version'], process.cwd(), 30_000);
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout.trim()).toMatch(/\d+\.\d+/);
   });
 });

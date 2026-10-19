@@ -1,3 +1,5 @@
+import i18n from '../i18n';
+
 export interface GlobalShortcutDependencies {
   exportWorkflow: () => void;
   undo: () => void;
@@ -27,6 +29,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => void {
+  // 把快捷键映射到注入的 action ports；编辑控件中的选择快捷键不抢占，保存/新建仍是全局键。
+  // UI 输入不另建项目事实，状态仍由对应 action owner 更新（ADR-SM-005）。
   const onKey = (event: KeyboardEvent) => {
     const mod = event.ctrlKey || event.metaKey;
     if (!mod) return;
@@ -77,12 +81,12 @@ export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => 
       event.preventDefault();
       const ids = deps.getSelectedNodeIds();
       if (ids.length === 0) {
-        deps.addLog('error', '请先框选若干节点，再按 Ctrl+G');
+        deps.addLog('error', i18n.t('log.shortcut.selectNodesBeforeGrouping'));
         return;
       }
       if (event.shiftKey) {
         deps.promptForName(
-          '给这个子图起个名字',
+          i18n.t('dialog.subgraphNamePrompt'),
           `子图 ${deps.getSubgraphCount() + 1}`,
           (name) => deps.packSelectionAsSubgraph(ids, name),
         );

@@ -288,6 +288,9 @@ export default function IssueBoard({ onBack, onOpenAdvanced }: IssueBoardProps) 
   );
 }
 
+/** Render an Issue with its optional TaskGraph projection; linked task status/evidence come from `taskNode` and actions from parent callbacks.
+ * The card is a shared projection, not a second task-status owner (ADR-SM-005、ADR-SM-008).
+ */
 function IssueCard({
   issue,
   taskNode,

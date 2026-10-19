@@ -21,6 +21,18 @@ export interface WorkerWorktreeAssignment {
   path: string;
   branch: string;
   baseRevision: string;
+  branchRevision?: string;
+  targetIdentity?: string;
+}
+
+export interface WorkerAllocationRepairFact {
+  taskId: string;
+  attempt: number;
+  taskExecutionId: TaskExecutionId;
+  attemptId: AttemptId;
+  assignment: WorkerWorktreeAssignment;
+  worktreeStatus: 'orphaned' | 'registration-pending';
+  reason: string;
 }
 
 export interface WorkerDependencyArtifact {
@@ -43,6 +55,8 @@ export interface WorkerWorktreeAllocator {
     attemptId: AttemptId;
     signal?: AbortSignal;
   }): Promise<WorkerWorktreeAssignment>;
+  /** Best-effort rollback for an allocation that lost its dispatch fence before execution. */
+  release?(assignment: WorkerWorktreeAssignment, signal?: AbortSignal): Promise<void>;
 }
 
 export interface WorkerTaskLease {
@@ -103,6 +117,8 @@ export interface WorkerQueueTask {
   worktreePath?: string;
   branch?: string;
   baseRevision?: string;
+  /** Host-owned stable identity used to rebind the live worktree after restart. */
+  targetIdentity?: string;
   worktreeStatus?: WorkerWorktreeStatus;
   branchRevision?: string;
   cleanupStateSignature?: string;
@@ -154,9 +170,34 @@ export interface RunWorkerQueueOptions {
   concurrency?: number;
   /** 每个并发 batch 完成后，把最新状态与新事实交给持久层。 */
   onTransition?: (update: { state: WorkerRunQueueState; events: DomainEvent[] }) => Promise<void> | void;
-  /** 可选：在 executor 前后记录 Worker side-effect receipt。 */
+  /** 执行前后记录 Worker side-effect receipt。 */
   sideEffects?: WorkerSideEffectRecorder;
+  /** 在分配 worktree 和开始 Worker 外部副作用前重新核对 dispatch fence。 */
+  assertBeforeExternalWork?: (state: WorkerRunQueueState) => Promise<void> | void;
   signal?: AbortSignal;
+}
+
+export class WorkerDispatchFenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkerDispatchFenceError';
+  }
+}
+
+export class WorkerAllocationRepairRequiredError extends Error {
+  constructor(message: string, readonly allocation: WorkerAllocationRepairFact) {
+    super(message);
+    this.name = 'WorkerAllocationRepairRequiredError';
+  }
+}
+
+interface WorkerTaskQueueCheckpoint {
+  state: WorkerRunQueueState;
+  events: DomainEvent[];
+  eventHistory: DomainEvent[];
+  nextSequence: number;
+  aggregateVersions: Array<[string, number]>;
+  runStartedEmitted: boolean;
 }
 
 function requiredText(value: string, field: string): string {
@@ -496,6 +537,32 @@ export class WorkerTaskQueue {
     };
   }
 
+  checkpointForClaimBatch(): WorkerTaskQueueCheckpoint {
+    return {
+      state: this.snapshot(),
+      events: [...this.events],
+      eventHistory: [...this.eventHistory],
+      nextSequence: this.nextSequence,
+      aggregateVersions: [...this.aggregateVersions.entries()],
+      runStartedEmitted: this.runStartedEmitted,
+    };
+  }
+
+  restoreClaimBatch(checkpoint: WorkerTaskQueueCheckpoint): void {
+    this.state = {
+      ...checkpoint.state,
+      tasks: Object.fromEntries(
+        Object.entries(checkpoint.state.tasks).map(([id, task]) => [id, cloneQueueTask(task)]),
+      ),
+    };
+    this.events = [...checkpoint.events];
+    this.eventHistory = [...checkpoint.eventHistory];
+    this.nextSequence = checkpoint.nextSequence;
+    this.aggregateVersions.clear();
+    for (const [key, version] of checkpoint.aggregateVersions) this.aggregateVersions.set(key, version);
+    this.runStartedEmitted = checkpoint.runStartedEmitted;
+  }
+
   getTask(taskId: string): ProjectTask | undefined {
     const task = this.tasksById.get(taskId);
     return task ? cloneTask(task) : undefined;
@@ -527,6 +594,8 @@ export class WorkerTaskQueue {
     taskId: string,
     allocator: WorkerWorktreeAllocator,
     signal?: AbortSignal,
+    assertBeforeAllocation?: () => Promise<void> | void,
+    assertAfterAllocation?: () => Promise<void> | void,
   ): Promise<WorkerTaskLease | null> {
     throwIfAborted(signal);
     this.reconcileBlocked(this.state.updatedAt);
@@ -564,8 +633,10 @@ export class WorkerTaskQueue {
       throw new Error(`ContextPack 与当前 claim Attempt 不一致：${taskId}`);
     }
     this.claiming.add(taskId);
+    let allocatedAssignment: WorkerWorktreeAssignment | undefined;
     try {
-      const assignment = await allocator.allocate({
+      await assertBeforeAllocation?.();
+      allocatedAssignment = await allocator.allocate({
         projectId: this.state.projectId,
         runId: this.state.runId,
         task: cloneTask(task),
@@ -574,15 +645,19 @@ export class WorkerTaskQueue {
         attemptId,
         signal,
       });
-      throwIfAborted(signal);
       const reusedBy = Object.values(this.state.tasks).find(
         (item) => item.taskId !== taskId
-          && (item.worktreeId === assignment.worktreeId
-            || (item.worktreePath !== undefined && workerPathKey(item.worktreePath) === workerPathKey(assignment.path))),
+          && (item.worktreeId === allocatedAssignment!.worktreeId
+            || (item.worktreePath !== undefined && workerPathKey(item.worktreePath) === workerPathKey(allocatedAssignment!.path))),
       );
       if (reusedBy) {
-        throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用`);
+        const duplicateId = allocatedAssignment.worktreeId;
+        allocatedAssignment = undefined;
+        throw new Error(`worktree 已被任务 ${reusedBy.taskId} 占用，拒绝复用：${duplicateId}`);
       }
+      throwIfAborted(signal);
+      await assertAfterAllocation?.();
+      throwIfAborted(signal);
       const now = new Date().toISOString();
       this.state = {
         ...this.state,
@@ -597,10 +672,11 @@ export class WorkerTaskQueue {
             status: 'running',
             attempt,
             pendingAttempt: undefined,
-            worktreeId: requiredText(assignment.worktreeId, 'worktree id'),
-            worktreePath: requiredText(assignment.path, 'worktree 路径'),
-            branch: requiredText(assignment.branch, 'worktree 分支'),
-            baseRevision: requiredText(assignment.baseRevision, 'worktree 基线'),
+            worktreeId: requiredText(allocatedAssignment!.worktreeId, 'worktree id'),
+            worktreePath: requiredText(allocatedAssignment!.path, 'worktree 路径'),
+            branch: requiredText(allocatedAssignment!.branch, 'worktree 分支'),
+            baseRevision: requiredText(allocatedAssignment!.baseRevision, 'worktree 基线'),
+            targetIdentity: allocatedAssignment!.targetIdentity,
             worktreeStatus: 'created',
             branchRevision: undefined,
             cleanupStateSignature: undefined,
@@ -616,10 +692,11 @@ export class WorkerTaskQueue {
         taskId,
         taskExecutionId,
         attemptId,
-        worktreeId: assignment.worktreeId,
-        worktreePath: assignment.path,
-        branch: assignment.branch,
-        baseRevision: assignment.baseRevision,
+        worktreeId: allocatedAssignment!.worktreeId,
+        worktreePath: allocatedAssignment!.path,
+        branch: allocatedAssignment!.branch,
+        baseRevision: allocatedAssignment!.baseRevision,
+        targetIdentity: allocatedAssignment!.targetIdentity,
         worktreeStatus: 'created',
         branchRevision: undefined,
         attempt,
@@ -629,7 +706,7 @@ export class WorkerTaskQueue {
         runId: this.state.runId,
         orchestrationId: this.state.orchestrationId,
         task: cloneTask(task),
-        assignment,
+        assignment: allocatedAssignment!,
         attempt,
         taskExecutionId,
         attemptId,
@@ -637,6 +714,33 @@ export class WorkerTaskQueue {
         ...(dependencyArtifacts.length > 0 ? { dependencyArtifacts } : {}),
       };
     } catch (cause) {
+      if (cause instanceof WorkerAllocationRepairRequiredError) throw cause;
+      let rollbackError: unknown;
+      if (allocatedAssignment && allocator.release) {
+        try {
+          await allocator.release(allocatedAssignment, signal);
+        } catch (releaseCause) {
+          rollbackError = releaseCause;
+        }
+      } else if (allocatedAssignment) {
+        rollbackError = new Error(`宿主未提供 worktree cleanup：${allocatedAssignment.worktreeId}`);
+      }
+      if (allocatedAssignment && rollbackError) {
+        const message = `${errorMessage(cause)}；worktree rollback 失败：${errorMessage(rollbackError)}`;
+        throw new WorkerAllocationRepairRequiredError(message, {
+          taskId,
+          attempt,
+          taskExecutionId,
+          attemptId,
+          assignment: allocatedAssignment,
+          worktreeStatus: 'orphaned',
+          reason: message,
+        });
+      }
+      if (cause instanceof WorkerDispatchFenceError) throw cause;
+      if (rollbackError) {
+        cause = new Error(`${errorMessage(cause)}；worktree rollback 失败：${errorMessage(rollbackError)}`);
+      }
       if (signal?.aborted) throwIfAborted(signal);
       const now = new Date().toISOString();
       const message = `worktree 分配失败：${errorMessage(cause)}`;
@@ -780,9 +884,96 @@ export class WorkerTaskQueue {
       attempt: current.attempt,
       ...(uniqueEvidenceIds.length > 0 ? { evidenceIds: uniqueEvidenceIds } : {}),
       ...(normalizedAcceptanceId ? { acceptanceId: normalizedAcceptanceId } : {}),
+      ...(current.worktreeStatus === 'orphaned' || current.worktreeStatus === 'registration-pending' ? {
+        worktreeId: current.worktreeId,
+        worktreePath: current.worktreePath,
+        branch: current.branch,
+        baseRevision: current.baseRevision,
+        ...(current.targetIdentity ? { targetIdentity: current.targetIdentity } : {}),
+        worktreeStatus: current.worktreeStatus,
+        branchRevision: current.branchRevision,
+      } : {}),
     }, now);
     this.reconcileBlocked(now);
     this.recomputeRunStatus(now);
+  }
+
+  recordAllocationRepairRequired(allocation: WorkerAllocationRepairFact, now: string): void {
+    const current = this.state.tasks[allocation.taskId];
+    if (!current || current.status !== 'queued') {
+      throw new Error(`allocation repair task is not queued: ${allocation.taskId}`);
+    }
+    const taskExecutionId = createTaskExecutionId(this.state.runId, allocation.taskId);
+    const parsedAttempt = parseAttemptId(allocation.attemptId);
+    if (allocation.taskExecutionId !== taskExecutionId
+      || parsedAttempt.taskExecutionId !== taskExecutionId
+      || parsedAttempt.attempt !== allocation.attempt
+      || allocation.attempt !== (current.pendingAttempt ?? current.attempt + 1)) {
+      throw new Error(`allocation repair lineage mismatch: ${allocation.taskId}`);
+    }
+    const worktreeId = requiredText(allocation.assignment.worktreeId, 'worktree id');
+    const worktreePath = requiredText(allocation.assignment.path, 'worktree 路径');
+    const branch = requiredText(allocation.assignment.branch, 'worktree 分支');
+    const baseRevision = requiredText(allocation.assignment.baseRevision, 'worktree 基线');
+    const branchRevision = requiredText(
+      allocation.assignment.branchRevision ?? baseRevision,
+      'worktree 分支 revision',
+    );
+    if (!this.runStartedEmitted) {
+      this.emitRun('RunStarted', { runId: this.state.runId }, now);
+    }
+    this.state = {
+      ...this.state,
+      status: 'running',
+      updatedAt: now,
+      tasks: {
+        ...this.state.tasks,
+        [allocation.taskId]: {
+          ...current,
+          taskExecutionId,
+          currentAttemptId: allocation.attemptId,
+          status: 'running',
+          attempt: allocation.attempt,
+          pendingAttempt: undefined,
+          worktreeId,
+          worktreePath,
+          branch,
+          baseRevision,
+          branchRevision,
+          targetIdentity: allocation.assignment.targetIdentity,
+          worktreeStatus: allocation.worktreeStatus,
+          cleanupStatus: undefined,
+          cleanupReceiptId: undefined,
+          cleanupStateSignature: undefined,
+          evidenceIds: [],
+          acceptanceId: undefined,
+          error: undefined,
+          updatedAt: now,
+        },
+      },
+    };
+    this.emitTask('TaskStarted', allocation.taskId, {
+      runId: this.state.runId,
+      taskId: allocation.taskId,
+      taskExecutionId,
+      attemptId: allocation.attemptId,
+      attempt: allocation.attempt,
+      worktreeId,
+      worktreePath,
+      branch,
+      baseRevision,
+      ...(allocation.assignment.targetIdentity ? { targetIdentity: allocation.assignment.targetIdentity } : {}),
+      worktreeStatus: allocation.worktreeStatus,
+      branchRevision,
+    }, now);
+    this.markFailed(
+      allocation.taskId,
+      allocation.reason,
+      now,
+      [],
+      undefined,
+      allocation.attemptId,
+    );
   }
 
   markWaitingFeedback(
@@ -1045,6 +1236,13 @@ export async function runWorkerQueue(
   options: RunWorkerQueueOptions,
 ): Promise<WorkerRunQueueState> {
   const throwIfCancelled = (): void => throwIfAborted(options.signal);
+  const assertDispatchFence = async (expectedState = queue.snapshot()): Promise<void> => {
+    try {
+      await options.assertBeforeExternalWork?.(expectedState);
+    } catch (cause) {
+      throw new WorkerDispatchFenceError(errorMessage(cause));
+    }
+  };
   const concurrency = options.concurrency === undefined
     ? Number.MAX_SAFE_INTEGER
     : Math.max(1, Math.floor(options.concurrency));
@@ -1069,12 +1267,77 @@ export async function runWorkerQueue(
     }
     const batch = runnable.slice(0, concurrency);
     const leases: WorkerTaskLease[] = [];
-    await Promise.all(batch.map(async (taskId) => {
-      const lease = await queue.claimTask(taskId, options.allocator, options.signal);
-      if (lease) leases.push(lease);
-    }));
+    const claimCheckpoint = queue.checkpointForClaimBatch();
+    const claimBaseState = queue.snapshot();
+    const assertClaimDispatchFence = async (): Promise<void> => assertDispatchFence(claimBaseState);
+    try {
+      // Claims mutate the in-memory queue and allocate host resources. Serialize
+      // this phase so a later claim never fences against an unpersisted sibling.
+      for (const taskId of batch) {
+        const lease = await queue.claimTask(
+          taskId,
+          options.allocator,
+          options.signal,
+          assertClaimDispatchFence,
+          assertClaimDispatchFence,
+        );
+        if (lease) leases.push(lease);
+      }
+    } catch (cause) {
+      let rollbackError: unknown;
+      const unresolvedAllocations: WorkerAllocationRepairFact[] = [];
+      if (cause instanceof WorkerAllocationRepairRequiredError) {
+        unresolvedAllocations.push(cause.allocation);
+      }
+      for (const lease of [...leases].reverse()) {
+        if (!options.allocator.release) {
+          const reason = `无法回滚 dispatch fence 前的 worktree：${lease.assignment.worktreeId}`;
+          rollbackError ??= new Error(reason);
+          unresolvedAllocations.push({
+            taskId: lease.task.id,
+            attempt: lease.attempt,
+            taskExecutionId: lease.taskExecutionId,
+            attemptId: lease.attemptId,
+            assignment: lease.assignment,
+            worktreeStatus: 'orphaned',
+            reason,
+          });
+          continue;
+        }
+        try {
+          await options.allocator.release(lease.assignment, options.signal);
+        } catch (releaseCause) {
+          const reason = `批量 claim rollback 失败：${errorMessage(releaseCause)}`;
+          rollbackError ??= releaseCause;
+          unresolvedAllocations.push({
+            taskId: lease.task.id,
+            attempt: lease.attempt,
+            taskExecutionId: lease.taskExecutionId,
+            attemptId: lease.attemptId,
+            assignment: lease.assignment,
+            worktreeStatus: 'orphaned',
+            reason,
+          });
+        }
+      }
+      queue.restoreClaimBatch(claimCheckpoint);
+      if (unresolvedAllocations.length > 0) {
+        const now = new Date().toISOString();
+        for (const allocation of unresolvedAllocations) {
+          queue.recordAllocationRepairRequired(allocation, now);
+        }
+        await flushTransition(true);
+      }
+      if (rollbackError) {
+        throw new WorkerDispatchFenceError(
+          `${errorMessage(cause)}；批量 claim rollback 失败：${errorMessage(rollbackError)}`,
+        );
+      }
+      throw cause;
+    }
     // 先把 running lease 写入事实源，再允许 Worker 触碰 worktree/外部副作用。
     await flushTransition();
+    await assertDispatchFence();
     let terminalizedInBatch = false;
     const settled = await Promise.allSettled(leases.map(async (lease) => {
       const taskId = lease.task.id;

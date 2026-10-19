@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isTauri } from '../platform/env';
 import { openWorkflowFromText } from '../io/workflowIO';
+import i18n from '../i18n';
 
 /**
  * 允许从窗口外拖拽 .workflow.json 文件进入应用直接打开工作流。
@@ -24,7 +25,7 @@ export function useWorkflowFileDrop() {
     }
     if (opened > 0) {
       const st = (await import('../store/workflowStore')).useWorkflowStore.getState();
-      st.addLog('info', `已从拖入的文件打开 ${opened} 个工作流`);
+      st.addLog('info', i18n.t('log.workflowFileDrop.opened', { count: opened }));
     }
   }, []);
 
@@ -57,7 +58,7 @@ export function useWorkflowFileDrop() {
             }
             if (opened > 0) {
               const st = (await import('../store/workflowStore')).useWorkflowStore.getState();
-              st.addLog('info', `已从拖入的文件打开 ${opened} 个工作流`);
+              st.addLog('info', i18n.t('log.workflowFileDrop.opened', { count: opened }));
             }
           } else if (event.payload.type === 'leave') {
             setDragActive(false);

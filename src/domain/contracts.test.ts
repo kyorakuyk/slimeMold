@@ -97,6 +97,206 @@ describe('Phase 0a domain contracts', () => {
       payload: { runId: 'run-orphan-cleaned', receiptId: 'cleanup-receipt-1' },
     })])).toThrow(/TaskCleaned|succeeded|Attempt/i);
   });
+
+  it('allows a queued retry to become blocked without reopening its terminal Attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-blocked', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+    const projection = replayDomainEvents([
+      event({ eventId: 'blocked-queued', aggregateType: 'TaskExecution', aggregateId: taskExecutionId, eventType: 'TaskQueued', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId,
+      } }),
+      event({ eventId: 'blocked-started', sequence: 2, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 2, eventType: 'TaskStarted', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+      } }),
+      event({ eventId: 'blocked-failed', sequence: 3, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 3, eventType: 'TaskFailed', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId, error: 'dependency failed',
+      } }),
+      event({ eventId: 'blocked-retry-queued', sequence: 4, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 4, eventType: 'TaskQueued', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, nextAttempt: 2,
+      } }),
+      event({ eventId: 'blocked-event', sequence: 5, aggregateType: 'TaskExecution', aggregateId: taskExecutionId, aggregateVersion: 5, eventType: 'TaskBlocked', payload: {
+        runId: 'run-blocked', taskId: 'task-1', taskExecutionId, blockedBy: ['dependency-1'], reason: 'dependency failed',
+      } }),
+    ]);
+
+    expect(projection.taskExecutions[taskExecutionId]).toMatchObject({ status: 'blocked' });
+    expect(projection.taskExecutions[taskExecutionId].currentAttemptId).toBeUndefined();
+    expect(projection.attempts[attemptId].status).toBe('failed');
+  });
+
+  it('rejects TaskBlocked while the current Attempt is active', () => {
+    const taskExecutionId = createTaskExecutionId('run-active-blocked', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => replayDomainEvents([
+      event({
+        eventId: 'active-blocked-queued',
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId },
+      }),
+      event({
+        eventId: 'active-blocked-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+        },
+      }),
+      event({
+        eventId: 'active-blocked-event',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskBlocked',
+        payload: {
+          runId: 'run-active-blocked', taskId: 'task-1', taskExecutionId,
+          blockedBy: ['dependency-1'], reason: 'dependency failed',
+        },
+      }),
+    ])).toThrow(/TaskBlocked.*active Attempt/);
+  });
+
+  it('rejects TaskBlocked after a succeeded Attempt without a queued retry fence', () => {
+    const taskExecutionId = createTaskExecutionId('run-blocked-after-success', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => replayDomainEvents([
+      event({
+        eventId: 'blocked-after-success-queued',
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-blocked-after-success', taskId: 'task-1', taskExecutionId },
+      }),
+      event({
+        eventId: 'blocked-after-success-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-blocked-after-success', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+        },
+      }),
+      event({
+        eventId: 'blocked-after-success-succeeded',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskSucceeded',
+        payload: {
+          runId: 'run-blocked-after-success', taskId: 'task-1', taskExecutionId,
+          attempt: 1, attemptId, evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1',
+        },
+      }),
+      event({
+        eventId: 'blocked-after-success-event',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 4,
+        eventType: 'TaskBlocked',
+        payload: {
+          runId: 'run-blocked-after-success', taskId: 'task-1', taskExecutionId,
+          blockedBy: ['dependency-1'], reason: 'dependency failed',
+        },
+      }),
+    ])).toThrow(/TaskBlocked.*queued/);
+  });
+
+  it('rejects TaskBlocked carrying Attempt lineage that could rewrite a terminal Attempt', () => {
+    const taskExecutionId = createTaskExecutionId('run-blocked-stale-attempt', 'task-1');
+    const attemptId = createAttemptId(taskExecutionId, 1);
+
+    expect(() => replayDomainEvents([
+      event({
+        eventId: 'stale-attempt-queued',
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        eventType: 'TaskQueued',
+        payload: { runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId },
+      }),
+      event({
+        eventId: 'stale-attempt-started',
+        sequence: 2,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 2,
+        eventType: 'TaskStarted',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId, attempt: 1, attemptId,
+        },
+      }),
+      event({
+        eventId: 'stale-attempt-succeeded',
+        sequence: 3,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 3,
+        eventType: 'TaskSucceeded',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId,
+          attempt: 1, attemptId, evidenceIds: ['evidence-1'], acceptanceId: 'acceptance-1',
+        },
+      }),
+      event({
+        eventId: 'stale-attempt-blocked',
+        sequence: 4,
+        aggregateType: 'TaskExecution',
+        aggregateId: taskExecutionId,
+        aggregateVersion: 4,
+        eventType: 'TaskBlocked',
+        payload: {
+          runId: 'run-blocked-stale-attempt', taskId: 'task-1', taskExecutionId,
+          attempt: 1, attemptId, blockedBy: ['dependency-1'], reason: 'dependency failed',
+        },
+      }),
+    ])).toThrow(/TaskBlocked.*Attempt lineage/);
+  });
+
+  it('rejects a TaskBlocked event with an empty blockedBy list at replay', () => {
+    const taskExecutionId = createTaskExecutionId('run-empty-blocked-by', 'task-1');
+    expect(() => replayDomainEvents([event({
+      aggregateType: 'TaskExecution',
+      aggregateId: taskExecutionId,
+      eventType: 'TaskBlocked',
+      payload: {
+        runId: 'run-empty-blocked-by',
+        taskId: 'task-1',
+        taskExecutionId,
+        blockedBy: [],
+        reason: 'missing dependency',
+      },
+    })])).toThrow(/blockedBy|blocked/);
+  });
+
+  it('rejects malformed TaskBlocked blockers even without TaskExecution lineage', () => {
+    const invalidBlockedBy: unknown[][] = [
+      [],
+      [' dependency-1'],
+      ['dependency-1', 'dependency-1'],
+      ['task-1'],
+    ];
+    for (const [index, blockedBy] of invalidBlockedBy.entries()) {
+      expect(() => replayDomainEvents([event({
+        eventId: `legacy-blocked-${index}`,
+        eventType: 'TaskBlocked',
+        payload: {
+          taskId: 'task-1',
+          blockedBy,
+          reason: 'invalid dependency list',
+        },
+      })])).toThrow(/TaskBlocked blockedBy/);
+    }
+  });
   it('replays an unknown interrupted attempt before a retry attempt starts', () => {
     const taskExecutionId = createTaskExecutionId('run-replay-retry', 'task-1');
     const attempt1 = createAttemptId(taskExecutionId, 1);
@@ -888,13 +1088,57 @@ describe('Phase 0a domain contracts', () => {
       current,
       streamId: 'project-1',
       runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      taskIds: ['task-1'],
       sequence: 10,
       projectVersion: 1,
       now: '2026-09-01T00:01:00.000Z',
     })).toEqual([
       expect.objectContaining({ eventType: 'PlanApproved', aggregateVersion: 2 }),
-      expect.objectContaining({ eventType: 'RunCreated', aggregateVersion: 1 }),
+      expect.objectContaining({
+        eventType: 'RunCreated',
+        aggregateVersion: 1,
+        payload: expect.objectContaining({ taskIds: ['task-1'] }),
+        correlationId: 'run-1',
+        source: { objectId: 'graph-1', objectVersion: 1 },
+      }),
     ]);
+  });
+
+  it('rejects non-canonical or duplicate task ids before creating a RunCreated event', () => {
+    const grant = createApprovalGrant({
+      id: 'grant-task-ids',
+      planHash: 'plan-v1',
+      policyHash: 'policy-v1',
+      baseRevision: 'commit-a',
+      worktreePath: 'D:/repo/.slime-wt/task-1',
+      targetRef: 'refs/heads/feature/task-1',
+      capabilities: ['codex.write'],
+      approvedBy: 'user',
+      approvedAt: '2026-09-01T00:00:00.000Z',
+    });
+    const input = {
+      grant,
+      current: {
+        planHash: 'plan-v1',
+        policyHash: 'policy-v1',
+        baseRevision: 'commit-a',
+        worktreePath: 'D:/repo/.slime-wt/task-1',
+        targetRef: 'refs/heads/feature/task-1',
+        capabilities: ['codex.write'],
+      },
+      streamId: 'project-1',
+      runId: 'run-1',
+      taskGraphId: 'graph-1',
+      taskGraphVersion: 1,
+      sequence: 10,
+      projectVersion: 1,
+      now: '2026-09-01T00:01:00.000Z',
+    };
+
+    expect(() => approvePlanAndEnqueueRun({ ...input, taskIds: [' task-1'] })).toThrow(/taskIds/);
+    expect(() => approvePlanAndEnqueueRun({ ...input, taskIds: ['task-1', 'task-1'] })).toThrow(/taskIds/);
   });
 
   it('rejects Planner write access and accepts a Worker in a dedicated worktree', () => {

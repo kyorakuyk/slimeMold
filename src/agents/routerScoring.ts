@@ -234,6 +234,7 @@ export interface HistoricalPrice {
  *   2. 内置价格表
  *   3. 运行历史估计（historical 参数）
  *   4. 默认价
+ * 此处只解析成本估算；subscription 置零不代表协议登录或 provider 可用（ADR-SM-073）。
  */
 export function resolveModelPrice(
   agent: Pick<AgentConfig, 'model' | 'cost' | 'subscription'>,
