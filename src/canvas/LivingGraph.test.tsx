@@ -48,7 +48,6 @@ vi.mock('../i18n/useT', () => ({
   ),
 }));
 
-import { ReactFlowProvider } from '@xyflow/react';
 import LivingGraph from './LivingGraph';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -154,12 +153,12 @@ describe('LivingGraph', () => {
       evidenceIds: ['evidence-success'],
       acceptanceId: 'acceptance-success',
     });
-    const failedScar = graphNode('attempt:scar', 'attempt', 'failed', 'task-failed', {
+    const failedScar = graphNode('attempt:scar', 'attempt', 'failed', 'task:failed', {
       taskId: 'task-failed',
       attemptId: 'attempt:scar',
       scar: true,
     });
-    const unknownAttempt = graphNode('attempt:unknown', 'attempt', 'unknown', 'task-unknown', {
+    const unknownAttempt = graphNode('attempt:unknown', 'attempt', 'unknown', 'task:unknown', {
       taskId: 'task-unknown',
       attemptId: 'attempt:unknown',
     });
@@ -191,7 +190,9 @@ describe('LivingGraph', () => {
     for (const status of ['idle', ...statuses]) {
       expect(container.querySelector(`[data-growth-status="${status}"]`)).toBeTruthy();
     }
-    expect(getNode(container, 'task:running')?.className).toContain('motion-reduce:animate-none');
+    expect(getNode(container, 'task:running')?.className).not.toContain('motion-safe:animate-pulse');
+    expect(container.querySelector('[data-testid="living-graph-pulse-task:running"]')?.className)
+      .toContain('motion-reduce:animate-none');
     expect(getNode(container, 'task:blocked')?.style.borderColor).toBe('var(--sm-run)');
     expect(getNode(container, 'task:succeeded')?.style.borderColor).toBe('var(--sm-ok)');
     expect(getNode(container, 'task:failed')?.style.borderColor).toBe('var(--sm-err)');
@@ -211,6 +212,7 @@ describe('LivingGraph', () => {
       selectionOnDrag: false,
       deleteKeyCode: null,
     });
+    expect(flowProps.minZoom).toBeGreaterThanOrEqual(0.5);
     expect(flowProps.onConnect).toBeUndefined();
     const renderedEdge = (flowProps.edges as Array<{ id: string; style: { strokeWidth: number } }>)
       .find((candidate) => candidate.id === edge.id);
@@ -258,6 +260,7 @@ describe('LivingGraph', () => {
       `[data-testid="living-graph-capsule-toggle-${module.id}"]`,
     );
     expect(capsuleToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(capsuleToggle?.className).not.toContain('truncate');
 
     await act(async () => {
       capsuleToggle?.click();
