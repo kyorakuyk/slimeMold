@@ -403,7 +403,9 @@ export default function App() {
                   projectId={projectId}
                   isTauri={isTauri}
                   onReplayModeChange={setReplayMode}
-                  editor={<WorkflowEditor onNewProject={() => setNewProjectOpen(true)} />}
+                  renderEditor={(isActive) => (
+                    <WorkflowEditor isActive={isActive} onNewProject={() => setNewProjectOpen(true)} />
+                  )}
                 />
               )}
             </div>

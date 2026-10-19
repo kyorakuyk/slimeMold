@@ -56,7 +56,7 @@ export { DND_MIME };
  * NodePalette 的拖入坐标换算、GroupsPanel 的聚焦等外部面板的 useReactFlow() 仍作用于它；
  * 分栏画布（有 wfId）套一层自己的 Provider 与主画布隔离。
  */
-export default function WorkflowEditor(props: { wfId?: string; onNewProject?: () => void }) {
+export default function WorkflowEditor(props: { wfId?: string; onNewProject?: () => void; isActive?: boolean }) {
   if (!props.wfId) return <WorkflowEditorInner {...props} />;
   return (
     <ReactFlowProvider>
@@ -71,9 +71,11 @@ export default function WorkflowEditor(props: { wfId?: string; onNewProject?: ()
 function WorkflowEditorInner({
   wfId,
   onNewProject,
+  isActive = true,
 }: {
   wfId?: string;
   onNewProject?: () => void;
+  isActive?: boolean;
 }) {
   const t = useT();
   // 无 wfId：渲染当前激活工作流（全局状态）；有 wfId：渲染并编辑指定工作流（拆分视图分栏）
@@ -184,7 +186,7 @@ function WorkflowEditorInner({
   const noWorkflows = workflowCount === 0;
   const [zoomPct, setZoomPct] = useState(100);
 
-  const nodePicker = useCanvasNodePicker({ isSplit, addNode, addSubgraphRef });
+  const nodePicker = useCanvasNodePicker({ isSplit, isActive, addNode, addSubgraphRef });
   const contextMenu = useCanvasContextMenu({ nodes, isSplit, noWorkflows, rightMovedRef });
 
   // 鼠标模式：click=仅点击选中（左键不平移画布、不框选）；move=拖动；select=框选

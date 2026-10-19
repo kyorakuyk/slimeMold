@@ -17,7 +17,8 @@ export interface ProfessionalCanvasWorkspaceProps {
   projectId: string | null;
   isTauri: boolean;
   eventStoreAdapter?: Pick<EventStoreAdapter, 'readText'>;
-  editor: ReactNode;
+  editor?: ReactNode;
+  renderEditor?: (isActive: boolean) => ReactNode;
   onReplayModeChange: (replaying: boolean) => void;
 }
 
@@ -51,6 +52,7 @@ export default function ProfessionalCanvasWorkspace({
   isTauri,
   eventStoreAdapter,
   editor,
+  renderEditor,
   onReplayModeChange,
 }: ProfessionalCanvasWorkspaceProps) {
   const t = useT();
@@ -224,7 +226,7 @@ export default function ProfessionalCanvasWorkspace({
           className="absolute inset-0 min-h-0"
           data-testid="workspace-editor-panel"
         >
-          {editor}
+          {renderEditor ? renderEditor(activeTab === 'editor') : editor}
         </section>
       </div>
 

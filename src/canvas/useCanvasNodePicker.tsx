@@ -8,11 +8,12 @@ import { useWorkflowStore } from '../store/workflowStore';
 
 type CanvasNodePickerProps = {
   isSplit: boolean;
+  isActive: boolean;
   addNode: ReturnType<typeof useWorkflowStore.getState>['addNode'];
   addSubgraphRef: ReturnType<typeof useWorkflowStore.getState>['addSubgraphRefNode'];
 };
 
-export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }: CanvasNodePickerProps) {
+export default function useCanvasNodePicker({ isSplit, isActive, addNode, addSubgraphRef }: CanvasNodePickerProps) {
   const { screenToFlowPosition } = useReactFlow();
   const [pickerPos, setPickerPos] = useState<{ x: number; y: number } | null>(null);
   // 从端口拖拽到空白处建节点时，先缓存源端口上下文，待用户在命令面板选好节点后自动连边
@@ -24,6 +25,11 @@ export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }
   } | null>(null);
 
   useEffect(() => {
+    if (!isActive) {
+      pendingConn.current = null;
+      setPickerPos(null);
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key.toLowerCase() === 'k' || e.code === 'Space')) {
@@ -37,7 +43,7 @@ export default function useCanvasNodePicker({ isSplit, addNode, addSubgraphRef }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     if (!pickerPos) return;

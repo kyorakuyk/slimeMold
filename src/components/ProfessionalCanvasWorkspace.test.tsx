@@ -43,9 +43,9 @@ function eventText(taskId: string, moduleId: string): string {
   return eventRecords(taskId, moduleId).map((event) => JSON.stringify(event)).join('\n');
 }
 
-function EditorProbe() {
+function EditorProbe({ isActive }: { isActive: boolean }) {
   const [count, setCount] = useState(0);
-  return <button data-testid="editor-probe" onClick={() => setCount((value) => value + 1)}>editor {count}</button>;
+  return <button data-testid="editor-probe" data-active={isActive} onClick={() => setCount((value) => value + 1)}>editor {count}</button>;
 }
 
 async function waitForUi(assertion: () => void): Promise<void> {
@@ -88,7 +88,7 @@ describe('ProfessionalCanvasWorkspace', () => {
         isTauri={options.isTauri}
         eventStoreAdapter={options.adapter}
         onReplayModeChange={options.onReplayModeChange ?? vi.fn()}
-        editor={options.editor ?? <EditorProbe />}
+        renderEditor={(isActive) => options.editor ?? <EditorProbe isActive={isActive} />}
       />,
     ));
   }
@@ -162,9 +162,11 @@ describe('ProfessionalCanvasWorkspace', () => {
     await waitForUi(() => expect(container.querySelector('[data-testid="workspace-living-graph"]')?.getAttribute('data-task-ids')).toBe('task-a'));
 
     act(() => (container.querySelector('[data-testid="workspace-editor-tab"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="editor-probe"]')?.getAttribute('data-active')).toBe('true');
     act(() => (container.querySelector('[data-testid="editor-probe"]') as HTMLButtonElement).click());
     expect(container.querySelector('[data-testid="editor-probe"]')?.textContent).toBe('editor 1');
     act(() => (container.querySelector('[data-testid="workspace-graph-tab"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="editor-probe"]')?.getAttribute('data-active')).toBe('false');
     act(() => (container.querySelector('[data-testid="workspace-editor-tab"]') as HTMLButtonElement).click());
     expect(container.querySelector('[data-testid="editor-probe"]')?.textContent).toBe('editor 1');
 

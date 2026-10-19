@@ -151,6 +151,39 @@ describe('WorkflowEditor characterization', () => {
     expect(DND_MIME).toBe('application/x-slime-node');
   });
 
+  it('closes the node picker and ignores global picker shortcuts while its editor tab is inactive', async () => {
+    await act(async () => {
+      root.render(
+        <ReactFlowProvider>
+          <WorkflowEditor isActive />
+        </ReactFlowProvider>,
+      );
+    });
+    const activeShortcut = new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => window.dispatchEvent(activeShortcut));
+    expect(activeShortcut.defaultPrevented).toBe(true);
+    expect(container.querySelector('input')).not.toBeNull();
+
+    await act(async () => {
+      root.render(
+        <ReactFlowProvider>
+          <WorkflowEditor isActive={false} />
+        </ReactFlowProvider>,
+      );
+    });
+    expect(container.querySelector('input')).toBeNull();
+
+    const ctrlK = new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true });
+    const cmdSpace = new KeyboardEvent('keydown', { key: ' ', code: 'Space', metaKey: true, bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(ctrlK);
+      window.dispatchEvent(cmdSpace);
+    });
+    expect(ctrlK.defaultPrevented).toBe(false);
+    expect(cmdSpace.defaultPrevented).toBe(false);
+    expect(container.querySelector('input')).toBeNull();
+  });
+
   it('loads a starter template through the real project workflow store', async () => {
     const template = STARTER_TEMPLATES[0];
     await act(async () => {
