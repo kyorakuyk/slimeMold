@@ -4,6 +4,7 @@ type TFn = (key: string, vars?: Record<string, unknown>) => string;
 
 export interface TopBarActionButtonsProps {
   t: TFn;
+  replayMode?: boolean;
   splitView: boolean;
   onToggleSplit: () => void;
   onResetStatus: () => void;
@@ -25,6 +26,7 @@ export interface TopBarActionButtonsProps {
  */
 export default function TopBarActionButtons({
   t,
+  replayMode = false,
   splitView,
   onToggleSplit,
   onResetStatus,
@@ -53,7 +55,7 @@ export default function TopBarActionButtons({
         <Columns2 size={15} />
       </button>
 
-      <button className="sm-btn px-1.5" title={t('topbar.resetStatus')} onClick={onResetStatus}>
+      <button className="sm-btn px-1.5" title={t('topbar.resetStatus')} disabled={replayMode} onClick={onResetStatus}>
         <RotateCcw size={14} />
       </button>
 
@@ -67,24 +69,24 @@ export default function TopBarActionButtons({
         <Bug size={14} />
       </button>
 
-      <button className="sm-btn px-1.5" title={t('topbar.undo')} disabled={!canUndo} onClick={onUndo}>
+      <button className="sm-btn px-1.5" title={t('topbar.undo')} disabled={replayMode || !canUndo} onClick={onUndo}>
         <Undo2 size={14} />
       </button>
-      <button className="sm-btn px-1.5" title={t('topbar.redo')} disabled={!canRedo} onClick={onRedo}>
+      <button className="sm-btn px-1.5" title={t('topbar.redo')} disabled={replayMode || !canRedo} onClick={onRedo}>
         <Redo2 size={14} />
       </button>
 
       {running ? (
         <>
-          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} onClick={onStop}>
+          <button className="sm-btn px-1.5 text-err hover:border-err hover:text-err" title={t('topbar.stop')} disabled={replayMode} onClick={onStop}>
             <Square size={14} />
           </button>
-          <button className="sm-btn px-1.5" title={t('topbar.rerunForce')} onClick={onRerunForce}>
+          <button className="sm-btn px-1.5" title={t('topbar.rerunForce')} disabled={replayMode} onClick={onRerunForce}>
             <RefreshCw size={14} />
           </button>
         </>
       ) : (
-        <button className="sm-pro-run-button sm-btn sm-btn-primary px-2" title={t('topbar.run')} onClick={onRun}>
+        <button className="sm-pro-run-button sm-btn sm-btn-primary px-2" title={t('topbar.run')} disabled={replayMode} onClick={onRun}>
           <Play size={14} />
           <span className="sm-pro-run-label">{t('topbar.run')}</span>
         </button>

@@ -16,6 +16,7 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { openProjectFile, pushRecentProject, saveLastSession } from '../io/projectIO';
 
 interface TopBarProps {
+  replayMode?: boolean;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   panelOpen: boolean;
@@ -30,6 +31,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({
+  replayMode = false,
   sidebarOpen,
   onToggleSidebar,
   panelOpen,
@@ -185,6 +187,7 @@ export default function TopBar({
 
   const menus: MenuDef[] = buildTopBarMenus({
     t,
+    replayMode,
     running,
     failFast,
     skipFailed,
@@ -215,7 +218,7 @@ export default function TopBar({
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  useTopBarKeyboardShortcuts({ zoomIn, zoomOut, fitView }, handleNewProject);
+  useTopBarKeyboardShortcuts({ zoomIn, zoomOut, fitView }, handleNewProject, replayMode);
 
   return (
     <header
@@ -235,6 +238,7 @@ export default function TopBar({
 
       {/* 工具条：工作流标签浏览器（右侧动作按钮作为 children 保持同一 DOM 层级） */}
       <WorkflowTabStrip
+        replayMode={replayMode}
         projectName={projectName}
         projectDirty={projectDirty}
         wfList={wfList}
@@ -249,6 +253,7 @@ export default function TopBar({
       >
         <TopBarActionButtons
           t={t}
+          replayMode={replayMode}
           splitView={splitView}
           onToggleSplit={toggleSplit}
           onResetStatus={() => {

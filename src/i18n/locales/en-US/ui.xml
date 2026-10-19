@@ -397,4 +397,15 @@
   <string name="nodeUsage.avgDuration">Average latency</string>
   <string name="nodeUsage.failedCalls">Failed calls</string>
   <string name="nodeUsage.model">Model</string>
+  <string name="timeline.title">Task timeline</string>
+  <string name="timeline.replay.title">Viewing history</string>
+  <string name="timeline.returnToLive">Back to live</string>
+  <string name="timeline.eventDensity">Event density by sequence</string>
+  <string name="timeline.markerLegend">Timeline marker legend</string>
+  <string name="timeline.marker.decision">Decision</string>
+  <string name="timeline.marker.failure">Failure</string>
+  <string name="timeline.marker.userIntervention">User intervention</string>
+  <string name="timeline.scrubber">Replay sequence</string>
+  <string name="timeline.sequence">Sequence</string>
+  <string name="timeline.empty">No project events to display yet.</string>
 </resources>

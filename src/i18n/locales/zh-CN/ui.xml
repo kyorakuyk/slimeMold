@@ -397,4 +397,15 @@
   <string name="nodeUsage.avgDuration">平均耗时</string>
   <string name="nodeUsage.failedCalls">失败次数</string>
   <string name="nodeUsage.model">模型</string>
+  <string name="timeline.title">任务时间轴</string>
+  <string name="timeline.replay.title">正在查看历史</string>
+  <string name="timeline.returnToLive">回到实时</string>
+  <string name="timeline.eventDensity">按序号显示事件密度</string>
+  <string name="timeline.markerLegend">时间轴标记说明</string>
+  <string name="timeline.marker.decision">决策</string>
+  <string name="timeline.marker.failure">失败</string>
+  <string name="timeline.marker.userIntervention">用户介入</string>
+  <string name="timeline.scrubber">回放事件序号</string>
+  <string name="timeline.sequence">序号</string>
+  <string name="timeline.empty">暂无可显示的项目事件。</string>
 </resources>

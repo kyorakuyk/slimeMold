@@ -14,6 +14,7 @@ export interface WorkflowTabStripProps {
   onRename: (name: string) => void;
   onRemove: (id: string) => void;
   onNewWorkflow: () => void;
+  replayMode?: boolean;
   t: TFn;
   /** 右侧动作按钮（保持与原内联 JSX 相同的 DOM 层级：位于同一条 workflow-bar 内） */
   children?: ReactNode;
@@ -34,6 +35,7 @@ export default function WorkflowTabStrip({
   onRename,
   onRemove,
   onNewWorkflow,
+  replayMode = false,
   t,
   children,
 }: WorkflowTabStripProps) {
@@ -72,7 +74,7 @@ export default function WorkflowTabStrip({
                 if (!active) e.currentTarget.style.background = 'transparent';
               }}
             >
-              {editingId === id ? (
+              {editingId === id && !replayMode ? (
                 <input
                   autoFocus
                   className="w-24 bg-transparent text-[12.5px] outline-none"
@@ -90,8 +92,12 @@ export default function WorkflowTabStrip({
               ) : (
                 <button
                   className="flex min-w-0 items-center gap-1.5 truncate text-[12.5px]"
-                  onClick={() => onSwitch(id)}
+                  disabled={replayMode}
+                  onClick={() => {
+                    if (!replayMode) onSwitch(id);
+                  }}
                   onDoubleClick={() => {
+                    if (replayMode) return;
                     onSwitch(id);
                     setEditingId(id);
                   }}
@@ -104,7 +110,9 @@ export default function WorkflowTabStrip({
               <button
                 className="shrink-0 rounded p-0.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-err"
                 title={t('topbar.closeWorkflow')}
+                disabled={replayMode}
                 onClick={(e) => {
+                  if (replayMode) return;
                   e.stopPropagation();
                   onRemove(id);
                 }}
@@ -117,7 +125,10 @@ export default function WorkflowTabStrip({
         <button
           className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-black/10 hover:text-ink"
           title={projectName ? t('topbar.newWorkflowHint') : t('topbar.newWorkflowHintFree')}
-          onClick={onNewWorkflow}
+          disabled={replayMode}
+          onClick={() => {
+            if (!replayMode) onNewWorkflow();
+          }}
         >
           <Plus size={14} />
         </button>

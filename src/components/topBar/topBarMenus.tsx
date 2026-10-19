@@ -43,6 +43,7 @@ type TFn = (key: string, vars?: Record<string, unknown>) => string;
  */
 export interface TopBarMenuDeps {
   t: TFn;
+  replayMode?: boolean;
   running: boolean;
   failFast: boolean;
   skipFailed: boolean;
@@ -71,9 +72,18 @@ export interface TopBarMenuDeps {
   onOpenRecent: (path: string) => void;
 }
 
+function disableReplayMenuItem(item: MenuDef['items'][number]): MenuDef['items'][number] {
+  if (item === 'separator') return item;
+  if ('type' in item) {
+    return { ...item, items: item.items.map((subItem) => ({ ...subItem, disabled: true })) };
+  }
+  return { ...item, disabled: true };
+}
+
 export function buildTopBarMenus(deps: TopBarMenuDeps): MenuDef[] {
   const {
     t,
+    replayMode = false,
     running,
     failFast,
     skipFailed,
@@ -102,7 +112,7 @@ export function buildTopBarMenus(deps: TopBarMenuDeps): MenuDef[] {
     onOpenRecent,
   } = deps;
 
-  return [
+  const menus: MenuDef[] = [
     {
       label: t('topbar.file'),
       items: [
@@ -193,4 +203,12 @@ export function buildTopBarMenus(deps: TopBarMenuDeps): MenuDef[] {
       ],
     },
   ];
+
+  if (!replayMode) return menus;
+  const commandMenus = new Set([t('topbar.file'), t('topbar.edit'), t('topbar.run')]);
+  return menus.map((menu) => (
+    commandMenus.has(menu.label)
+      ? { ...menu, items: menu.items.map(disableReplayMenuItem) }
+      : menu
+  ));
 }

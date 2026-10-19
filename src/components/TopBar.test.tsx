@@ -1,7 +1,9 @@
-import { act, type ComponentProps } from 'react';
+import { act, useState, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ReactFlowProvider } from '@xyflow/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DomainEvent } from '../domain/contracts';
+import type { GraphGrowthProjection } from '../projectControl/graphGrowthProjection';
 import { useViewStore } from '../store/viewStore';
 import { useWorkflowStore } from '../store/workflowStore';
 
@@ -42,6 +44,7 @@ vi.mock('../engine/executor', async () => {
 });
 
 import TopBar from './TopBar';
+import TaskGrowthTimeline from './TaskGrowthTimeline';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -179,5 +182,153 @@ describe('TopBar characterization', () => {
     });
 
     expect(onNewProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables workflow editing and run commands while replaying, then restores them live', () => {
+    useWorkflowStore.setState({
+      selectedNodeId: 'node-1',
+      nodes: [{ id: 'node-1', type: 'default', position: { x: 0, y: 0 }, data: {} } as never],
+    });
+    renderTopBar({ replayMode: true });
+
+    const fileMenu = Array.from(container.querySelectorAll('.sm-pro-menu-button')).find(
+      (button) => button.textContent === 'topbar.file',
+    ) as HTMLButtonElement;
+    act(() => fileMenu.click());
+    const newWorkflow = Array.from(container.querySelectorAll('.sm-pro-menu button')).find(
+      (button) => button.textContent?.includes('menu.newWorkflow'),
+    ) as HTMLButtonElement;
+    expect(newWorkflow.disabled).toBe(true);
+
+    act(() => {
+      const editMenu = Array.from(container.querySelectorAll('.sm-pro-menu-button'))
+        .find((button) => button.textContent === 'topbar.edit') as HTMLButtonElement;
+      editMenu.click();
+    });
+    const deleteSelected = Array.from(container.querySelectorAll('.sm-pro-menu button')).find(
+      (button) => button.textContent?.includes('menu.deleteSelected'),
+    ) as HTMLButtonElement;
+    expect(deleteSelected.disabled).toBe(true);
+
+    act(() => {
+      Array.from(container.querySelectorAll('.sm-pro-menu-button'))
+        .find((button) => button.textContent === 'topbar.run')?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true }),
+        );
+    });
+    const run = Array.from(container.querySelectorAll('.sm-pro-menu button')).find(
+      (button) => button.textContent?.includes('menu.runFull'),
+    ) as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(container.querySelector('button[title="topbar.run"]')?.hasAttribute('disabled')).toBe(true);
+
+    renderTopBar({ replayMode: false });
+    const liveRun = container.querySelector('button[title="topbar.run"]') as HTMLButtonElement;
+    expect(liveRun.disabled).toBe(false);
+  });
+
+  it('blocks the new-project shortcut during replay', () => {
+    const onNewProject = vi.fn();
+    renderTopBar({ onNewProject, replayMode: true });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'N',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }));
+    });
+
+    expect(onNewProject).not.toHaveBeenCalled();
+  });
+
+  it('disables stop, rerun, reset, undo, and redo while replaying', () => {
+    useWorkflowStore.setState({
+      running: true,
+      past: [{} as never],
+      future: [{} as never],
+    });
+    renderTopBar({ replayMode: true });
+
+    for (const title of ['topbar.stop', 'topbar.rerunForce', 'topbar.resetStatus', 'topbar.undo', 'topbar.redo']) {
+      expect((container.querySelector(`button[title="${title}"]`) as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    renderTopBar({ replayMode: false });
+    for (const title of ['topbar.stop', 'topbar.rerunForce', 'topbar.resetStatus', 'topbar.undo', 'topbar.redo']) {
+      expect((container.querySelector(`button[title="${title}"]`) as HTMLButtonElement).disabled).toBe(false);
+    }
+  });
+
+  it('connects timeline scrubbing to replay command gates and restores them with Back to live', () => {
+    const events: DomainEvent[] = Array.from({ length: 4 }, (_, index) => {
+      const sequence = index + 1;
+      return {
+        eventId: `timeline-${sequence}`,
+        streamId: 'stream-1',
+        sequence,
+        aggregateType: 'Project',
+        aggregateId: 'project-1',
+        aggregateVersion: sequence,
+        eventType: `Event${sequence}`,
+        schemaVersion: 1,
+        payload: {},
+        actor: 'runtime',
+        occurredAt: `2026-10-20T00:00:0${sequence}.000Z`,
+      };
+    });
+    const baseProjection: GraphGrowthProjection = {
+      uptoSeq: 4,
+      lastSequence: 4,
+      nodes: [],
+      edges: [],
+      flow: [],
+      scars: [],
+      rings: [],
+      capsules: [],
+      markers: [],
+      legacyGraphIds: [],
+    };
+    const topBarProps: ComponentProps<typeof TopBar> = {
+      sidebarOpen: true,
+      onToggleSidebar: vi.fn(),
+      panelOpen: true,
+      onTogglePanel: vi.fn(),
+      inspectorOpen: true,
+      onToggleInspector: vi.fn(),
+      onOpenPanel: vi.fn(),
+      onOpenShortcuts: vi.fn(),
+      onNewProject: vi.fn(),
+      onOpenWizard: vi.fn(),
+      onOpenSimpleView: vi.fn(),
+    };
+    function ReplayHarness() {
+      const [uptoSeq, setUptoSeq] = useState(4);
+      return (
+        <>
+          <TaskGrowthTimeline
+            events={events}
+            projection={{ ...baseProjection, uptoSeq }}
+            onSeek={setUptoSeq}
+            onReturnToLive={() => setUptoSeq(4)}
+          />
+          <TopBar {...topBarProps} replayMode={uptoSeq < 4} />
+        </>
+      );
+    }
+    act(() => root.render(<ReactFlowProvider><ReplayHarness /></ReactFlowProvider>));
+
+    const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '2');
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="timeline-replay-state"]')).not.toBeNull();
+    expect((container.querySelector('button[title="topbar.run"]') as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => (container.querySelector('[data-testid="timeline-return-live"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="timeline-replay-state"]')).toBeNull();
+    expect((container.querySelector('button[title="topbar.run"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });

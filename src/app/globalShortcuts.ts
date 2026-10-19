@@ -1,6 +1,7 @@
 import i18n from '../i18n';
 
 export interface GlobalShortcutDependencies {
+  isReplayMode?: () => boolean;
   exportWorkflow: () => void;
   undo: () => void;
   redo: () => void;
@@ -28,6 +29,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+const REPLAY_BLOCKED_SHORTCUTS = new Set(['s', 'z', 'y', 'n', 'c', 'v', 'd', 'a', 'b', 'm', 'g']);
+
 export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => void {
   // 把快捷键映射到注入的 action ports；编辑控件中的选择快捷键不抢占，保存/新建仍是全局键。
   // UI 输入不另建项目事实，状态仍由对应 action owner 更新（ADR-SM-005）。
@@ -35,6 +38,10 @@ export function installGlobalShortcuts(deps: GlobalShortcutDependencies): () => 
     const mod = event.ctrlKey || event.metaKey;
     if (!mod) return;
     const key = event.key.toLowerCase();
+    if (deps.isReplayMode?.() && REPLAY_BLOCKED_SHORTCUTS.has(key)) {
+      event.preventDefault();
+      return;
+    }
     const inEditable = isEditableTarget(event.target);
 
     if (key === 's') {

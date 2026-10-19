@@ -7,13 +7,14 @@ type TopBarFlowActions = Pick<ReactFlowActions, 'zoomIn' | 'zoomOut' | 'fitView'
 export function useTopBarKeyboardShortcuts(
   { zoomIn, zoomOut, fitView }: TopBarFlowActions,
   handleNewProject: () => void,
+  replayMode = false,
 ): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        handleNewProject();
+        if (!replayMode) handleNewProject();
       } else if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
         zoomIn();
@@ -27,5 +28,5 @@ export function useTopBarKeyboardShortcuts(
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [zoomIn, zoomOut, fitView]);
+  }, [zoomIn, zoomOut, fitView, handleNewProject, replayMode]);
 }

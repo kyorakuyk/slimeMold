@@ -64,4 +64,25 @@ describe('global shortcuts adapter', () => {
     dispose();
     input.remove();
   });
+
+  it('blocks state-changing keyboard shortcuts in replay and restores them live', () => {
+    const deps = baseDeps();
+    let replayMode = true;
+    const dispose = installGlobalShortcuts({ ...deps, isReplayMode: () => replayMode });
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
+
+    expect(deps.exportWorkflow).not.toHaveBeenCalled();
+    expect(deps.undo).not.toHaveBeenCalled();
+    expect(deps.newWorkflowInProject).not.toHaveBeenCalled();
+    expect(deps.createGroup).not.toHaveBeenCalled();
+
+    replayMode = false;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }));
+    expect(deps.undo).toHaveBeenCalledOnce();
+    dispose();
+  });
 });
