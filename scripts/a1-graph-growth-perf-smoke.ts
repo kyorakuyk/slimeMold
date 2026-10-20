@@ -62,6 +62,7 @@ const sha256 = createHash('sha256').update(jsonl).digest('hex');
 const projectionTimes: number[] = [];
 const layoutTimes: number[] = [];
 const latestSequence = parsed.events.at(-1)!.sequence;
+// This untimed pass plus the loop warmups are all warmup runs.
 let projection = graphGrowthProjection(parsed.events, latestSequence);
 let positions = layoutGraphGrowth(projection.nodes);
 for (let run = 0; run < WARMUP_RUNS + MEASURED_RUNS; run += 1) {
@@ -96,7 +97,7 @@ console.log(JSON.stringify({
     eventSha256: sha256,
   },
   benchmark: {
-    warmupRuns: WARMUP_RUNS,
+    warmupRuns: WARMUP_RUNS + 1,
     measuredRuns: MEASURED_RUNS,
     projectionMs: { samples: projectionTimes, median: median(projectionTimes), max: Math.max(...projectionTimes) },
     layoutMs: { samples: layoutTimes, median: median(layoutTimes), max: Math.max(...layoutTimes) },
