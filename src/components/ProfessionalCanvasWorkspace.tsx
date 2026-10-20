@@ -153,6 +153,7 @@ export default function ProfessionalCanvasWorkspace({
     const boundedSequence = Math.min(Math.max(sequence, 0), lastSequence);
     const nextReplaySequence = boundedSequence < lastSequence ? boundedSequence : null;
     setReplaySequence(nextReplaySequence);
+    if (nextReplaySequence !== null) setActiveTab('graph');
     onReplayModeChange(nextReplaySequence !== null);
   }, [lastSequence, onReplayModeChange]);
 
@@ -183,6 +184,7 @@ export default function ProfessionalCanvasWorkspace({
           aria-selected={activeTab === 'editor'}
           aria-controls="professional-canvas-editor-panel"
           data-testid="workspace-editor-tab"
+          disabled={replaying}
           className="rounded px-2.5 py-1 text-xs text-sm-ink-soft aria-selected:bg-sm-bg aria-selected:font-medium aria-selected:text-sm-ink"
           onClick={() => setActiveTab('editor')}
         >

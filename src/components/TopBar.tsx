@@ -234,6 +234,7 @@ export default function TopBar({
         inspectorOpen={inspectorOpen}
         onToggleInspector={onToggleInspector}
         onOpenSimpleView={onOpenSimpleView}
+        replayMode={replayMode}
       />
 
       {/* 工具条：工作流标签浏览器（右侧动作按钮作为 children 保持同一 DOM 层级） */}

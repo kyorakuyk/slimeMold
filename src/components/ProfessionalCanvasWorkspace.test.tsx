@@ -177,6 +177,43 @@ describe('ProfessionalCanvasWorkspace', () => {
     expect((container.querySelector('[data-testid="workspace-graph-tab"]') as HTMLButtonElement).getAttribute('aria-selected')).toBe('true');
   });
 
+  it('returns to the read-only graph and locks the editor during replay', async () => {
+    const projectRoot = 'C:/synthetic/project-replay';
+    const readText = vi.fn(async () => eventText('task-replay', 'module-replay'));
+    renderWorkspace({ projectRoot, isTauri: true, adapter: { readText } });
+    await waitForUi(() => expect(readText).toHaveBeenCalledOnce());
+
+    const editorTab = container.querySelector('[data-testid="workspace-editor-tab"]') as HTMLButtonElement;
+    const graphTab = container.querySelector('[data-testid="workspace-graph-tab"]') as HTMLButtonElement;
+    act(() => editorTab.click());
+    expect(editorTab.getAttribute('aria-selected')).toBe('true');
+
+    const editorProbe = container.querySelector('[data-testid="editor-probe"]') as HTMLButtonElement;
+    act(() => editorProbe.click());
+    expect(editorProbe.textContent).toBe('editor 1');
+
+    const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '1');
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(container.querySelector('[data-testid="timeline-replay-state"]')).not.toBeNull();
+    expect(editorTab.disabled).toBe(true);
+    expect(graphTab.getAttribute('aria-selected')).toBe('true');
+    expect(editorTab.getAttribute('aria-selected')).toBe('false');
+    expect((container.querySelector('[data-testid="workspace-editor-panel"]') as HTMLElement).hidden).toBe(true);
+    expect(editorProbe.getAttribute('data-active')).toBe('false');
+
+    act(() => editorTab.click());
+    expect(graphTab.getAttribute('aria-selected')).toBe('true');
+    act(() => (container.querySelector('[data-testid="timeline-return-live"]') as HTMLButtonElement).click());
+    expect(editorTab.disabled).toBe(false);
+    act(() => editorTab.click());
+    expect(editorProbe.getAttribute('data-active')).toBe('true');
+    expect(editorProbe.textContent).toBe('editor 1');
+  });
+
   it('surfaces event read failures instead of presenting them as an empty successful read', async () => {
     const projectRoot = 'C:/synthetic/project-error';
     const readText = vi.fn(async () => { throw new Error('synthetic read failure'); });

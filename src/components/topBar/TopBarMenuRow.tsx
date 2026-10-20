@@ -31,6 +31,7 @@ interface TopBarMenuRowProps {
   inspectorOpen: boolean;
   onToggleInspector: () => void;
   onOpenSimpleView: () => void;
+  replayMode: boolean;
 }
 
 export default function TopBarMenuRow({
@@ -42,6 +43,7 @@ export default function TopBarMenuRow({
   inspectorOpen,
   onToggleInspector,
   onOpenSimpleView,
+  replayMode,
 }: TopBarMenuRowProps) {
   const t = useT();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -172,8 +174,9 @@ export default function TopBarMenuRow({
 
       <div className="sm-pro-header-actions ml-auto flex items-center gap-1">
         <button
-          className="sm-btn h-6 px-2"
+          className="sm-btn h-6 px-2 disabled:cursor-not-allowed disabled:opacity-50"
           title={t('topbar.simpleView')}
+          disabled={replayMode}
           onClick={onOpenSimpleView}
         >
           <LayoutDashboard size={14} />

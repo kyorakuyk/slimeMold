@@ -331,4 +331,20 @@ describe('TopBar characterization', () => {
     expect(container.querySelector('[data-testid="timeline-replay-state"]')).toBeNull();
     expect((container.querySelector('button[title="topbar.run"]') as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('keeps the simple-view switch disabled until replay returns to live', () => {
+    const onOpenSimpleView = vi.fn();
+    renderTopBar({ onOpenSimpleView, replayMode: true });
+    const replaySwitch = container.querySelector('button[title="topbar.simpleView"]') as HTMLButtonElement;
+
+    expect(replaySwitch.disabled).toBe(true);
+    act(() => replaySwitch.click());
+    expect(onOpenSimpleView).not.toHaveBeenCalled();
+
+    renderTopBar({ onOpenSimpleView, replayMode: false });
+    const liveSwitch = container.querySelector('button[title="topbar.simpleView"]') as HTMLButtonElement;
+    expect(liveSwitch.disabled).toBe(false);
+    act(() => liveSwitch.click());
+    expect(onOpenSimpleView).toHaveBeenCalledOnce();
+  });
 });
