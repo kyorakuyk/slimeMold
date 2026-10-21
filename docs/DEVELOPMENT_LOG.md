@@ -6448,3 +6448,22 @@ Reviewer strict JSON（原样）：
 - R3 TDD/审查修复历程：RED `89568e8` 后实现 `a5da71b`；review 指出 nearest-anchor 越界清缓存和 production marker 未接线；RED `edf37a2` 后实现 `acfa077`；review 指出 StrictMode count 被清零；RED `062db21` 后实现 `3669678`；review 再指出两个 R9 slot 场景未显式覆盖；最终测试提交 `09a185f` 补上 x=0 conflict/x=320 free 与横向不推进阻塞槽位两个夹具。先前失败 verdict 保留，未迁移到最终 target。
 - GREEN focused `npx vitest run src/projectControl/graphGrowthLayout.test.ts src/canvas/LivingGraph.test.tsx --reporter=verbose` — 2 files / 12 passed；全量 `npm run test -- --reporter=dot` — 265 files / 1,671 passed；`npm run build` — 2,178 modules transformed、exit 0；app/root TypeScript no-emit、`npm run i18n:check`（1,457 keys）、`git diff --check` 均 exit 0。既有 mixed dynamic/static import 与 >500 kB chunk warnings 保留。涉及文件 `graphGrowthLayout.ts` 186 行、其测试 178 行、`LivingGraph.tsx` 206 行、其测试 315 行。
 - 最终 exact review range `04508a2f5493d05729f0287bdc49f71dd9446ea3..09a185f369ae4586ab4149def6dd66f201f910b6`（7 commits / 4 files）`passed=true`，security/logic findings、suggestions 皆为空；reviewed tag 指向 target。review 在 R3 start tag 的 1h 时限结束后 3m40s 才返回；代码与测试 target 在截止前已固定，review 也在截止前派发；截止后没有源代码/测试修改。四轮原始 strict JSON verdict 及实际返回时点见 `.hermes/reports/2026-10-22-r10.md`。
+
+### 7.516 R10 R4 二维占用索引布局优化（slice review passed / overall unverified）
+
+R4 同机 profiling 暴露布局候选槽位逐次扫描全部已占坐标是主热点。本轮先在原实现上冻结中等规模布局坐标，再优化碰撞候选发现：
+
+- `src/projectControl/graphGrowthLayout.test.ts`：增加 421 节点合成层级 characterization，先在旧实现上通过并单独提交 `9bc9636e3afaf6c5e8fb42b7fdda0c918bbae8a5`；固定坐标 SHA-256 `cc0f0418364ea14acaba4122cf3dd7074d682af7cbafec9cf034fd524cfb896c`，并断言节点数量、无重叠、子节点低于父节点。
+- `src/projectControl/graphGrowthLayout.ts`：以二维 `Map` 占用索引按节点宽高定位邻近 cell，仅缩小候选集合；仍使用原精确坐标差 overlap predicate，并在每次新增节点布局后增量插入。实现提交 `56f29bfa1631c37433911437d4d3a67a89037fe1`，未引入依赖。
+- R4 基线 `a7836f9a1aabae04554d6f58f9f10510cec0b2ed`：Node v26.12.0 / win32 x64，4,801 events、800 tasks、40 modules、2,441 nodes；3 次预热 + 5 次测量，layout median/max `6,499.9868 / 6,512.5712 ms`，projection median/max `248.8706 / 289.096 ms`。CPU profile 的 `isFree` 累计 36,378.8 / 40,139.333 ms（90.63%），确认为逐槽全量扫描热点。
+- exact target `56f29bfa1631c37433911437d4d3a67a89037fe1` 同 runtime/fixture 复测：layout median/max `139.5366 / 145.3045 ms`，projection median/max `222.0282 / 227.3448 ms`；layout median 比 R4 基线快 46.58×、降低 97.85%，达到 `<1,000 ms` 目标。对比 R9 `2,674.4214 ms` median 时 runtime 是 Node v26.7.0，因此只作为跨版本参考，不作因果归因。
+- R4 exact review range `a7836f9a1aabae04554d6f58f9f10510cec0b2ed..56f29bfa1631c37433911437d4d3a67a89037fe1`（2 commits / 2 files；parent `9bc9636e3afaf6c5e8fb42b7fdda0c918bbae8a5`）`passed=true`，security/logic findings 为空；唯一 suggestion 是更新 R4 报告状态，已修订 ignored 报告并归档 benchmark JSON。`checkpoint/r10-layout-perf-unverified-20261022-r10` 指向 reviewed target；按计划仅 Slice F 有权标记 A1 verified。
+
+验证结果：
+
+- `npx vitest run src/projectControl/graphGrowthLayout.test.ts --reporter=verbose`：1 个测试文件、9 个测试通过；
+- `npm run test -- --reporter=dot`：265 个测试文件、1,672 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过，2,178 modules transformed；app/root `tsc --noEmit` 均通过；
+- `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
+
+构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。性能原始 JSON、CPU profiles 与 R9 fixture hash/read-back 记录存于 ignored `.hermes/reports/assets/r10/a1-layout-perf-*`；R9 合成事件文件内容 hash 未变（3,466,378 bytes，SHA-256 `0e3e18d3db36ab0942b8669577424c4c7dc9b973fcc11c697f4ed532ba79d6ac`），仅 mtime 因 smoke script 重写而更新。
