@@ -10,6 +10,8 @@ export interface GraphGrowthLayoutOptions {
   nodeHeight?: number;
   horizontalGap?: number;
   verticalGap?: number;
+  /** Called once for each cached subtree invalidated by a non-advancing child row. */
+  onCacheFallback?: (rootNodeId: string) => void;
 }
 
 const DEFAULT_NODE_WIDTH = 240;
@@ -53,6 +55,13 @@ export function layoutGraphGrowth(
       throw new Error(`graph-growth layout missing parent for ${node.id}: ${node.parentId}`);
     }
   }
+  const childrenByParent = new Map<string, GraphGrowthNode[]>();
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    const children = childrenByParent.get(node.parentId) ?? [];
+    children.push(node);
+    childrenByParent.set(node.parentId, children);
+  }
 
   const positions = new Map<string, GraphGrowthPosition>();
   for (const [nodeId, position] of [...cachedPositions.entries()].sort(([left], [right]) => left.localeCompare(right))) {
@@ -60,6 +69,49 @@ export function layoutGraphGrowth(
       throw new Error(`graph-growth layout 缓存坐标无效：${nodeId}`);
     }
     positions.set(nodeId, position);
+  }
+
+  const fallbackCandidates = new Set<string>();
+  for (const node of nodes) {
+    if (positions.has(node.id)) continue;
+    let parentId = node.parentId;
+    let highestInvalidParentId: string | undefined;
+    const visitedParents = new Set<string>();
+    while (parentId && !visitedParents.has(parentId)) {
+      visitedParents.add(parentId);
+      const parentPosition = positions.get(parentId);
+      if (parentPosition) {
+        const nextY = parentPosition.y + verticalStride;
+        if (!Number.isFinite(nextY) || nextY <= parentPosition.y) {
+          highestInvalidParentId = parentId;
+        }
+      }
+      parentId = nodeById.get(parentId)?.parentId;
+    }
+    if (highestInvalidParentId) fallbackCandidates.add(highestInvalidParentId);
+  }
+
+  const fallbackRoots = [...fallbackCandidates].filter((nodeId) => {
+    let parentId = nodeById.get(nodeId)?.parentId;
+    const visitedParents = new Set<string>();
+    while (parentId && !visitedParents.has(parentId)) {
+      if (fallbackCandidates.has(parentId)) return false;
+      visitedParents.add(parentId);
+      parentId = nodeById.get(parentId)?.parentId;
+    }
+    return true;
+  });
+  for (const rootNodeId of fallbackRoots) {
+    const subtree = [rootNodeId];
+    const invalidatedNodes = new Set<string>();
+    while (subtree.length > 0) {
+      const nodeId = subtree.pop()!;
+      if (invalidatedNodes.has(nodeId)) continue;
+      invalidatedNodes.add(nodeId);
+      positions.delete(nodeId);
+      for (const child of childrenByParent.get(nodeId) ?? []) subtree.push(child.id);
+    }
+    options.onCacheFallback?.(rootNodeId);
   }
 
   let pending = nodes
