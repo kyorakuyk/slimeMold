@@ -78,13 +78,11 @@ describe('TaskGrowthTimeline', () => {
     events: readonly DomainEvent[];
     projection: GraphGrowthProjection;
     onSeek: (sequence: number) => void;
-    onReturnToLive: () => void;
   }> = {}) {
     const props = {
       events: [event(1), event(2), event(3), event(4)],
       projection: projection(2, 4),
       onSeek: vi.fn(),
-      onReturnToLive: vi.fn(),
       ...overrides,
     };
     act(() => root.render(<TaskGrowthTimeline {...props} />));

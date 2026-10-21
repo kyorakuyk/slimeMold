@@ -336,7 +336,6 @@ describe('TopBar characterization', () => {
             events={events}
             projection={{ ...baseProjection, uptoSeq }}
             onSeek={setUptoSeq}
-            onReturnToLive={() => setUptoSeq(4)}
           />
           <TopBar {...topBarProps} replayMode={uptoSeq < 4} />
         </>
