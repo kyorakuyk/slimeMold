@@ -125,32 +125,40 @@ describe('layoutGraphGrowth', () => {
   it('reflows an extreme cached parent subtree when the first child row cannot advance', () => {
     const session = growthNode('session:extreme-y-free-slot', 'session');
     const parent = growthNode('module:extreme-y-free-slot', 'module', session.id);
+    const cachedChild = growthNode('task:extreme-y-free-slot:cached', 'task', parent.id);
     const child = growthNode('task:extreme-y-free-slot', 'task', parent.id);
     const fallbackRoots: string[] = [];
-    const cached = new Map([[parent.id, { x: 0, y: Number.MAX_VALUE }]]);
+    const cached = new Map([
+      [parent.id, { x: 0, y: Number.MAX_VALUE }],
+      [cachedChild.id, { x: 0, y: Number.MAX_VALUE }],
+    ]);
 
-    const positions = layoutGraphGrowth([session, parent, child], cached, {
+    const positions = layoutGraphGrowth([session, parent, cachedChild, child], cached, {
       onCacheFallback: (nodeId: string) => fallbackRoots.push(nodeId),
     });
 
     expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
-    expectNoOverlaps([session, parent, child], positions);
+    expectNoOverlaps([session, parent, cachedChild, child], positions);
     expect(fallbackRoots).toEqual([parent.id]);
   });
 
   it('reflows instead of throwing when an extreme parent blocks every advancing horizontal slot', () => {
     const session = growthNode('session:extreme-y-blocked-slots', 'session');
     const parent = growthNode('module:extreme-y-blocked-slots', 'module', session.id);
+    const cachedChild = growthNode('task:extreme-y-blocked-slots:cached', 'task', parent.id);
     const child = growthNode('task:extreme-y-blocked-slots', 'task', parent.id);
     const fallbackRoots: string[] = [];
-    const cached = new Map([[parent.id, { x: Number.MAX_VALUE, y: Number.MAX_VALUE }]]);
+    const cached = new Map([
+      [parent.id, { x: Number.MAX_VALUE, y: Number.MAX_VALUE }],
+      [cachedChild.id, { x: Number.MAX_VALUE, y: Number.MAX_VALUE }],
+    ]);
 
-    const positions = layoutGraphGrowth([session, parent, child], cached, {
+    const positions = layoutGraphGrowth([session, parent, cachedChild, child], cached, {
       onCacheFallback: (nodeId: string) => fallbackRoots.push(nodeId),
     });
 
     expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
-    expectNoOverlaps([session, parent, child], positions);
+    expectNoOverlaps([session, parent, cachedChild, child], positions);
     expect(fallbackRoots).toEqual([parent.id]);
   });
 
