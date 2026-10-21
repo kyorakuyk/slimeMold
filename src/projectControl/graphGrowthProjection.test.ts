@@ -227,6 +227,60 @@ describe('graphGrowthProjection', () => {
     expect(nodeForAttempt(projection, newAttempt)).toMatchObject({ status: 'succeeded', scar: false });
   });
 
+  it('includes the same-run TaskStarted event that triggers a prior attempt scar', () => {
+    const stream = eventStream();
+    const taskId = 'task-scar-same-run';
+    stream.addGraph(graph(GRAPH_ID, [task(taskId, 'core')]));
+    stream.addQueued(taskId);
+    const firstStart = stream.addStarted(taskId);
+    const failure = stream.addFailed(taskId);
+    stream.addQueued(taskId, 2);
+    const trigger = stream.addStarted(taskId, 2);
+    const oldAttempt = createAttemptId(createTaskExecutionId(RUN_ID, taskId), 1);
+
+    const beforeTrigger = graphGrowthProjection(stream.events, trigger.sequence - 1);
+    const afterTrigger = graphGrowthProjection(stream.events, trigger.sequence);
+    const priorScarBefore = nodeForAttempt(beforeTrigger, oldAttempt)!;
+    const priorScarAfter = nodeForAttempt(afterTrigger, oldAttempt)!;
+
+    expect(priorScarBefore.scar).toBe(false);
+    expect(priorScarBefore.eventIds).not.toContain(trigger.eventId);
+    expect(priorScarAfter.scar).toBe(true);
+    expect(priorScarAfter.eventIds).toEqual(expect.arrayContaining([
+      firstStart.eventId,
+      failure.eventId,
+      trigger.eventId,
+    ]));
+  });
+
+  it('includes the cross-run TaskStarted event that triggers a prior attempt scar', () => {
+    const stream = eventStream();
+    const taskId = 'task-scar-cross-run';
+    const firstRunId = 'run-scar-old';
+    const nextRunId = 'run-scar-new';
+    stream.addGraph(graph(GRAPH_ID, [task(taskId, 'core')]));
+    stream.addQueued(taskId, undefined, firstRunId);
+    const firstStart = stream.addStarted(taskId, 1, firstRunId);
+    const failure = stream.addFailed(taskId, 1, firstRunId);
+    stream.addQueued(taskId, undefined, nextRunId);
+    const trigger = stream.addStarted(taskId, 1, nextRunId);
+    const oldAttempt = createAttemptId(createTaskExecutionId(firstRunId, taskId), 1);
+
+    const beforeTrigger = graphGrowthProjection(stream.events, trigger.sequence - 1);
+    const afterTrigger = graphGrowthProjection(stream.events, trigger.sequence);
+    const priorScarBefore = nodeForAttempt(beforeTrigger, oldAttempt)!;
+    const priorScarAfter = nodeForAttempt(afterTrigger, oldAttempt)!;
+
+    expect(priorScarBefore.scar).toBe(false);
+    expect(priorScarBefore.eventIds).not.toContain(trigger.eventId);
+    expect(priorScarAfter.scar).toBe(true);
+    expect(priorScarAfter.eventIds).toEqual(expect.arrayContaining([
+      firstStart.eventId,
+      failure.eventId,
+      trigger.eventId,
+    ]));
+  });
+
   it('maps imported attempt provenance through its unique active task graph', () => {
     const stream = eventStream();
     stream.addGraph(graph(GRAPH_ID, [task('task-imported', 'core')]));
