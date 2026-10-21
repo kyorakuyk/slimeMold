@@ -134,6 +134,29 @@ describe('TopBar characterization', () => {
     expect(splitButton.getAttribute('data-active')).toBe('true');
   });
 
+  it('blocks split-view navigation during replay and restores it when live', () => {
+    renderTopBar({ replayMode: true });
+    const replayButton = container.querySelector(
+      'header.sm-pro-topbar button[title="topbar.splitView"]',
+    ) as HTMLButtonElement;
+
+    expect(replayButton.disabled).toBe(true);
+    act(() => {
+      replayButton.focus();
+      replayButton.click();
+    });
+    expect(document.activeElement).not.toBe(replayButton);
+    expect(useViewStore.getState().splitView).toBe(false);
+
+    renderTopBar({ replayMode: false });
+    const liveButton = container.querySelector(
+      'header.sm-pro-topbar button[title="topbar.splitView"]',
+    ) as HTMLButtonElement;
+    expect(liveButton.disabled).toBe(false);
+    act(() => liveButton.click());
+    expect(useViewStore.getState().splitView).toBe(true);
+  });
+
   it('surfaces a browser-safe project-open rejection and closes the menu', async () => {
     mocks.openProjectFile.mockRejectedValueOnce(new Error('fixture open failure'));
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
