@@ -87,7 +87,7 @@ export function graphGrowthProjection(
   const executionEventIds = new Map<string, string[]>();
   const executionLatestSequence = new Map<string, number>();
   const attemptEventIds = new Map<string, string[]>();
-  const attemptStartSequence = new Map<string, number>();
+  const attemptStartedAt = new Map<string, { sequence: number; eventId: string }>();
   const attemptTerminalEvent = new Map<string, string>();
   const attemptTerminalSequence = new Map<string, number>();
   const successEventsByTask = new Map<string, DomainEvent[]>();
@@ -114,7 +114,9 @@ export function graphGrowthProjection(
       const attemptIds = attemptEventIds.get(lineage.attemptId) ?? [];
       attemptIds.push(event.eventId);
       attemptEventIds.set(lineage.attemptId, attemptIds);
-      if (event.eventType === 'TaskStarted') attemptStartSequence.set(lineage.attemptId, event.sequence);
+      if (event.eventType === 'TaskStarted' && !attemptStartedAt.has(lineage.attemptId)) {
+        attemptStartedAt.set(lineage.attemptId, { sequence: event.sequence, eventId: event.eventId });
+      }
       if (event.eventType === 'TaskSucceeded'
         || event.eventType === 'TaskFailed'
         || event.eventType === 'TaskCancelled'
@@ -245,11 +247,16 @@ export function graphGrowthProjection(
         for (const item of taskAttempts) {
           const attemptNodeId = `attempt:${item.attemptId}`;
           const failedAt = attemptTerminalSequence.get(item.attemptId);
-          const isScar = item.status === 'failed'
-            && failedAt !== undefined
-            && taskAttempts.some((later) => later.attemptId !== item.attemptId
-              && (attemptStartSequence.get(later.attemptId) ?? 0) > failedAt);
-          const attemptIds = attemptEventIds.get(item.attemptId) ?? [];
+          const scarTrigger = item.status === 'failed' && failedAt !== undefined
+            ? taskAttempts.map((later) => attemptStartedAt.get(later.attemptId))
+              .filter((start) => start && start.sequence > failedAt)
+              .sort((left, right) => (left?.sequence ?? 0) - (right?.sequence ?? 0))[0]
+            : undefined;
+          const isScar = !!scarTrigger;
+          const attemptIds = unique([
+            ...(attemptEventIds.get(item.attemptId) ?? []),
+            ...(scarTrigger ? [scarTrigger.eventId] : []),
+          ]);
           nodes.push({
             id: attemptNodeId,
             kind: 'attempt',
