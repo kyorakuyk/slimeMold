@@ -236,12 +236,22 @@ export function attemptOutcome(status: AttemptRecord['status']): GraphGrowthOutc
 
 export function eventMarker(event: DomainEvent): GraphGrowthMarker | undefined {
   let kind: GraphGrowthMarker['kind'] | undefined;
-  if (event.eventType === 'DepartmentWorkPackageDispatched') kind = 'work-package';
-  else if (event.eventType === 'TaskFailed') kind = 'failure';
-  else if (event.eventType === 'TaskAttemptMarkedUnknown') kind = 'unknown';
-  else if (event.eventType === 'TaskFeedbackRequested') kind = 'feedback';
-  else if (DECISION_EVENT_TYPES.has(event.eventType)) kind = 'decision';
-  else if (event.actor === 'user' && TASK_GRAPH_SNAPSHOT_EVENT_TYPES.has(event.eventType)) kind = 'user-intervention';
+  if (event.actor === 'user'
+    && (event.eventType === 'TaskAttemptMarkedUnknown' || event.eventType === 'TaskCancelled')) {
+    kind = 'user-intervention';
+  } else if (event.eventType === 'DepartmentWorkPackageDispatched') {
+    kind = 'work-package';
+  } else if (event.eventType === 'TaskFailed') {
+    kind = 'failure';
+  } else if (event.eventType === 'TaskAttemptMarkedUnknown') {
+    kind = 'unknown';
+  } else if (event.eventType === 'TaskFeedbackRequested') {
+    kind = 'feedback';
+  } else if (DECISION_EVENT_TYPES.has(event.eventType)) {
+    kind = 'decision';
+  } else if (event.actor === 'user' && TASK_GRAPH_SNAPSHOT_EVENT_TYPES.has(event.eventType)) {
+    kind = 'user-intervention';
+  }
   if (!kind) return undefined;
   return {
     id: `marker:${event.eventId}`,
