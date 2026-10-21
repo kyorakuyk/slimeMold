@@ -116,12 +116,10 @@ describe('TaskGrowthTimeline', () => {
     expect(bars.at(-1)?.getAttribute('data-sequence-end')).toBe('120');
   });
 
-  it('shows history mode, seeks immediately by sequence, and returns to live', () => {
+  it('seeks immediately by sequence', () => {
     const onSeek = vi.fn();
-    const onReturnToLive = vi.fn();
-    renderTimeline({ onSeek, onReturnToLive });
+    renderTimeline({ onSeek });
 
-    expect(container.textContent).toContain('timeline.replay.title');
     const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
     expect(slider.value).toBe('2');
     expect(slider.max).toBe('4');
@@ -132,17 +130,13 @@ describe('TaskGrowthTimeline', () => {
       slider.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(onSeek).toHaveBeenCalledWith(3);
-
-    const returnButton = container.querySelector('[data-testid="timeline-return-live"]') as HTMLButtonElement;
-    act(() => returnButton.click());
-    expect(onReturnToLive).toHaveBeenCalledOnce();
   });
 
-  it('does not show a history banner at the live sequence', () => {
-    renderTimeline({ projection: projection(4, 4) });
+  it('leaves replay status controls to the workspace owner', () => {
+    renderTimeline({ projection: projection(2, 4) });
 
     expect(container.querySelector('[data-testid="timeline-return-live"]')).toBeNull();
-    expect(container.textContent).not.toContain('timeline.replay.title');
+    expect(container.querySelector('[data-testid="timeline-replay-state"]')).toBeNull();
   });
 
   it('shows an empty state when the event stream has no sequence', () => {

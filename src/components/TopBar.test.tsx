@@ -284,7 +284,7 @@ describe('TopBar characterization', () => {
     }
   });
 
-  it('connects timeline scrubbing to replay command gates and restores them with Back to live', () => {
+  it('connects timeline scrubbing to replay command gates and restores them when the parent returns live', () => {
     const events: DomainEvent[] = Array.from({ length: 4 }, (_, index) => {
       const sequence = index + 1;
       return {
@@ -326,8 +326,10 @@ describe('TopBar characterization', () => {
       onOpenWizard: vi.fn(),
       onOpenSimpleView: vi.fn(),
     };
+    let returnToLive: (() => void) | undefined;
     function ReplayHarness() {
       const [uptoSeq, setUptoSeq] = useState(4);
+      returnToLive = () => setUptoSeq(4);
       return (
         <>
           <TaskGrowthTimeline
@@ -347,11 +349,9 @@ describe('TopBar characterization', () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(slider, '2');
       slider.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    expect(container.querySelector('[data-testid="timeline-replay-state"]')).not.toBeNull();
     expect((container.querySelector('button[title="topbar.run"]') as HTMLButtonElement).disabled).toBe(true);
 
-    act(() => (container.querySelector('[data-testid="timeline-return-live"]') as HTMLButtonElement).click());
-    expect(container.querySelector('[data-testid="timeline-replay-state"]')).toBeNull();
+    act(() => returnToLive?.());
     expect((container.querySelector('button[title="topbar.run"]') as HTMLButtonElement).disabled).toBe(false);
   });
 

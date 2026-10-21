@@ -117,10 +117,17 @@ describe('ProfessionalCanvasWorkspace', () => {
       slider.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(onReplayModeChange).toHaveBeenLastCalledWith(true);
-    expect(container.querySelector('[data-testid="timeline-replay-state"]')).not.toBeNull();
+    const workspace = container.querySelector('[data-testid="professional-canvas-workspace"]') as HTMLElement;
+    const replayBanner = container.querySelector('[data-testid="timeline-replay-state"]') as HTMLElement;
+    expect(replayBanner.parentElement).toBe(workspace);
+    expect(workspace.firstElementChild).toBe(replayBanner);
+    expect(replayBanner.textContent).toContain('timeline.replay.title');
+    expect(replayBanner.querySelector('[data-testid="timeline-return-live"]')?.textContent)
+      .toContain('timeline.returnToLive');
 
     act(() => (container.querySelector('[data-testid="timeline-return-live"]') as HTMLButtonElement).click());
     expect(onReplayModeChange).toHaveBeenLastCalledWith(false);
+    expect(container.querySelector('[data-testid="timeline-replay-state"]')).toBeNull();
   });
 
   it('projects the active project-session event buffer before the project has a disk root', async () => {
