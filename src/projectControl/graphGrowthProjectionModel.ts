@@ -228,7 +228,7 @@ function projectedIssueStatus(status: GraphGrowthStatus): TaskGraphProjectionNod
 }
 
 export function attemptOutcome(status: AttemptRecord['status']): GraphGrowthOutcome | undefined {
-  if (status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'unknown') {
+  if (status === 'succeeded' || status === 'failed' || status === 'cancelled') {
     return status;
   }
   return undefined;
