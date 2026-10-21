@@ -61,9 +61,14 @@ function LivingGraphCanvas({ projection }: LivingGraphProps) {
   const [expandedCapsules, setExpandedCapsules] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const cachedPositions = useRef<ReadonlyMap<string, GraphGrowthPosition>>(new Map());
+  const layoutCacheFallbackCount = useRef(0);
 
   const positions = useMemo(() => {
-    const next = layoutGraphGrowth(projection.nodes, cachedPositions.current);
+    let fallbackCount = 0;
+    const next = layoutGraphGrowth(projection.nodes, cachedPositions.current, {
+      onCacheFallback: () => { fallbackCount += 1; },
+    });
+    layoutCacheFallbackCount.current = fallbackCount;
     cachedPositions.current = new Map(next);
     return next;
   }, [projection.nodes]);
@@ -150,6 +155,7 @@ function LivingGraphCanvas({ projection }: LivingGraphProps) {
   return (
     <div
       data-testid="living-graph-root"
+      data-layout-cache-fallback-count={layoutCacheFallbackCount.current}
       className="relative h-full min-h-[320px] w-full overflow-hidden rounded-lg bg-sm-canvas"
       aria-label={t('canvas.livingGraph.details.title')}
     >

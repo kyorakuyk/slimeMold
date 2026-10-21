@@ -84,6 +84,8 @@ export function layoutGraphGrowth(
         const nextY = parentPosition.y + verticalStride;
         if (!Number.isFinite(nextY) || nextY <= parentPosition.y) {
           highestInvalidParentId = parentId;
+        } else {
+          break;
         }
       }
       parentId = nodeById.get(parentId)?.parentId;
