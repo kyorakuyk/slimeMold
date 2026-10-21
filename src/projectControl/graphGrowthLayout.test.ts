@@ -153,4 +153,26 @@ describe('layoutGraphGrowth', () => {
     expectNoOverlaps([session, parent, child], positions);
     expect(fallbackRoots).toEqual([parent.id]);
   });
+
+  it('keeps a nearer usable cached anchor when a higher ancestor cannot advance', () => {
+    const session = growthNode('session:nearer-cache-anchor', 'session');
+    const ancestor = growthNode('module:nearer-cache-anchor', 'module', session.id);
+    const parent = growthNode('task:nearer-cache-anchor', 'task', ancestor.id);
+    const child = growthNode('attempt:nearer-cache-anchor', 'attempt', parent.id);
+    const fallbackRoots: string[] = [];
+    const cachedParent = { x: 320, y: 0 };
+    const cached = new Map([
+      [ancestor.id, { x: 0, y: Number.MAX_VALUE }],
+      [parent.id, cachedParent],
+    ]);
+
+    const positions = layoutGraphGrowth([session, ancestor, parent, child], cached, {
+      onCacheFallback: (nodeId: string) => fallbackRoots.push(nodeId),
+    });
+
+    expect(positions.get(parent.id)).toEqual(cachedParent);
+    expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
+    expectNoOverlaps([session, ancestor, parent, child], positions);
+    expect(fallbackRoots).toEqual([]);
+  });
 });
