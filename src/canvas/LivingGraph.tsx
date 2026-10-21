@@ -19,6 +19,7 @@ interface LivingGraphProps {
 type ZoomMode = 'far' | 'near';
 
 const SEMANTIC_ZOOM_THRESHOLD = 0.72;
+const layoutFallbackRootIdsByNodes = new WeakMap<object, Set<string>>();
 const nodeTypes = { livingGraphNode: LivingGraphNodeView };
 
 function capsuleKey(graphId?: string, moduleId?: string): string | undefined {
@@ -61,14 +62,16 @@ function LivingGraphCanvas({ projection }: LivingGraphProps) {
   const [expandedCapsules, setExpandedCapsules] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const cachedPositions = useRef<ReadonlyMap<string, GraphGrowthPosition>>(new Map());
-  const layoutCacheFallbackCount = useRef(0);
+  let fallbackRootIds = layoutFallbackRootIdsByNodes.get(projection.nodes);
+  if (!fallbackRootIds) {
+    fallbackRootIds = new Set();
+    layoutFallbackRootIdsByNodes.set(projection.nodes, fallbackRootIds);
+  }
 
   const positions = useMemo(() => {
-    let fallbackCount = 0;
     const next = layoutGraphGrowth(projection.nodes, cachedPositions.current, {
-      onCacheFallback: () => { fallbackCount += 1; },
+      onCacheFallback: (rootNodeId) => { fallbackRootIds.add(rootNodeId); },
     });
-    layoutCacheFallbackCount.current = fallbackCount;
     cachedPositions.current = new Map(next);
     return next;
   }, [projection.nodes]);
@@ -155,7 +158,7 @@ function LivingGraphCanvas({ projection }: LivingGraphProps) {
   return (
     <div
       data-testid="living-graph-root"
-      data-layout-cache-fallback-count={layoutCacheFallbackCount.current}
+      data-layout-cache-fallback-count={fallbackRootIds.size}
       className="relative h-full min-h-[320px] w-full overflow-hidden rounded-lg bg-sm-canvas"
       aria-label={t('canvas.livingGraph.details.title')}
     >
