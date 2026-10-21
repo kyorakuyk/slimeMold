@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAttemptId, createTaskExecutionId } from '../domain/execution';
 import { graphGrowthProjection } from './graphGrowthProjection';
+import { eventMarker } from './graphGrowthProjectionModel';
 import {
   GRAPH_ID,
   PROJECT_ID,
@@ -96,7 +97,7 @@ describe('graphGrowthProjection', () => {
     stream.addQueued('task-unknown');
     stream.addStarted('task-unknown');
     const unknownExecutionId = createTaskExecutionId(RUN_ID, 'task-unknown');
-    stream.append('TaskAttemptMarkedUnknown', 'TaskExecution', unknownExecutionId, {
+    const userUnknownEvent = stream.append('TaskAttemptMarkedUnknown', 'TaskExecution', unknownExecutionId, {
       runId: RUN_ID,
       taskId: 'task-unknown',
       taskExecutionId: unknownExecutionId,
@@ -163,6 +164,8 @@ describe('graphGrowthProjection', () => {
     const unknownAttemptId = createAttemptId(unknownExecutionId, 1);
     expect(nodeForAttempt(projection, unknownAttemptId)?.status).toBe('unknown');
     expect(projection.rings.some((ring) => ring.attemptId === unknownAttemptId)).toBe(false);
+    expect(projection.markers.find((marker) => marker.eventId === userUnknownEvent.eventId)?.kind).toBe('user-intervention');
+    expect(eventMarker({ ...userUnknownEvent, actor: 'system' }).kind).toBe('unknown');
     expect(nodeForAttempt(projection, retryAttempt1)?.scar).toBe(true);
     expect(nodeForAttempt(projection, retryAttempt2)).toBeDefined();
     expect(projection.rings.some((ring) => ring.attemptId === createAttemptId(failedExecutionId, 1)
@@ -361,6 +364,7 @@ describe('graphGrowthProjection', () => {
       outcome: 'cancelled',
       eventId: cancelled.eventId,
     });
+    expect(projection.markers.find((marker) => marker.eventId === cancelled.eventId)?.kind).toBe('user-intervention');
   });
 
   it('rejects TaskSucceeded unless host evidence and acceptance are both present', () => {
