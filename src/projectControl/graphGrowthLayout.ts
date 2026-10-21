@@ -25,6 +25,47 @@ const KIND_ORDER: Record<GraphGrowthNodeKind, number> = {
   attempt: 3,
 };
 
+class GraphGrowthPositionIndex {
+  private readonly columns = new Map<number, Map<number, GraphGrowthPosition[]>>();
+
+  constructor(
+    private readonly width: number,
+    private readonly height: number,
+  ) {}
+
+  add(position: GraphGrowthPosition): void {
+    const column = Math.floor(position.x / this.width);
+    const row = Math.floor(position.y / this.height);
+    let rows = this.columns.get(column);
+    if (!rows) {
+      rows = new Map();
+      this.columns.set(column, rows);
+    }
+    const cell = rows.get(row) ?? [];
+    cell.push(position);
+    rows.set(row, cell);
+  }
+
+  isFree(candidate: GraphGrowthPosition): boolean {
+    const column = Math.floor(candidate.x / this.width);
+    const row = Math.floor(candidate.y / this.height);
+    const nearbyColumns = new Set([column - 1, column, column + 1]);
+    const nearbyRows = new Set([row - 1, row, row + 1]);
+    for (const nearbyColumn of nearbyColumns) {
+      const rows = this.columns.get(nearbyColumn);
+      if (!rows) continue;
+      for (const nearbyRow of nearbyRows) {
+        for (const position of rows.get(nearbyRow) ?? []) {
+          const overlaps = Math.abs(candidate.x - position.x) < this.width
+            && Math.abs(candidate.y - position.y) < this.height;
+          if (overlaps) return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+
 /** Assign stable positions without moving any coordinate already cached by node ID. */
 export function layoutGraphGrowth(
   nodes: readonly GraphGrowthNode[],
@@ -116,6 +157,9 @@ export function layoutGraphGrowth(
     options.onCacheFallback?.(rootNodeId);
   }
 
+  const occupancy = new GraphGrowthPositionIndex(nodeWidth, nodeHeight);
+  for (const position of positions.values()) occupancy.add(position);
+
   let pending = nodes
     .filter((node) => !positions.has(node.id))
     .sort((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]
@@ -147,8 +191,9 @@ export function layoutGraphGrowth(
           const x = originX + slot * horizontalStride;
           if (!Number.isFinite(x) || (previousX !== undefined && x <= previousX)) break;
           const candidate = { x, y };
-          if (isFree(candidate, positions.values(), nodeWidth, nodeHeight)) {
+          if (occupancy.isFree(candidate)) {
             positions.set(node.id, candidate);
+            occupancy.add(candidate);
             placed = true;
             placedAny = true;
             break;
@@ -169,18 +214,4 @@ export function layoutGraphGrowth(
     pending = unresolved;
   }
   return positions;
-}
-
-function isFree(
-  candidate: GraphGrowthPosition,
-  occupied: Iterable<GraphGrowthPosition>,
-  width: number,
-  height: number,
-): boolean {
-  for (const position of occupied) {
-    const overlaps = Math.abs(candidate.x - position.x) < width
-      && Math.abs(candidate.y - position.y) < height;
-    if (overlaps) return false;
-  }
-  return true;
 }
