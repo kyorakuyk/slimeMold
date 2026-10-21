@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { GraphGrowthNode, GraphGrowthNodeKind } from './graphGrowthProjection';
 import { layoutGraphGrowth } from './graphGrowthLayout';
@@ -182,5 +183,41 @@ describe('layoutGraphGrowth', () => {
     expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
     expectNoOverlaps([session, ancestor, parent, child], positions);
     expect(fallbackRoots).toEqual([]);
+  });
+
+  it('preserves the medium-scale baseline coordinates and layout invariants', () => {
+    const session = growthNode('sessiona', 'session');
+    const modules = Array.from({ length: 20 }, (_, index) => growthNode(
+      `modulea${String(index).padStart(2, '0')}`,
+      'module',
+      session.id,
+    ));
+    const tasks = modules.flatMap((module, moduleIndex) => Array.from({ length: 10 }, (_, taskIndex) => (
+      growthNode(
+        `taska${String(moduleIndex).padStart(2, '0')}${String(taskIndex).padStart(2, '0')}`,
+        'task',
+        module.id,
+      )
+    )));
+    const attempts = tasks.map((task, index) => growthNode(
+      `attempta${String(index).padStart(3, '0')}`,
+      'attempt',
+      task.id,
+    ));
+    const nodes = [session, ...modules, ...tasks, ...attempts];
+
+    const positions = layoutGraphGrowth(nodes);
+    const coordinates = [...positions.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, position]) => [id, position.x, position.y]);
+    const digest = createHash('sha256').update(JSON.stringify(coordinates)).digest('hex');
+
+    expect(positions.size).toBe(421);
+    expect(digest).toBe('cc0f0418364ea14acaba4122cf3dd7074d682af7cbafec9cf034fd524cfb896c');
+    expectNoOverlaps(nodes, positions);
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      expect(positions.get(node.id)!.y).toBeGreaterThan(positions.get(node.parentId)!.y);
+    }
   });
 });
