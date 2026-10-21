@@ -6503,3 +6503,20 @@ R9 final review 指出 user-authored `TaskAttemptMarkedUnknown` 被投影为通�
 - `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
 
 构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。R6 在 start tag `checkpoint/r10-user-intervention-start-20261022-r10` 的 1 小时时限内完成代码、质量门和 exact review；没有 push 或 merge。
+
+### 7.519 R10 R7 回放提示移至工作区顶部（slice review passed / overall unverified）
+
+R9 final review 的 UI 缺口是 history/back-to-live 提示置于底部时间轴区域，无法保证用户在画布/时间轴状态变化时仍能看到。本轮将提示放在 `ProfessionalCanvasWorkspace` 根容器首行，作为 `shrink-0` 的 role=status flex child；控件继续使用既有 i18n keys 与 `returnToLive` callback。`TaskGrowthTimeline` 不再渲染 replay banner，避免底部重复。test-only RED commit `6fa0cfa1ddd1061643150108236bafc196fa432d` 锁定 workspace 首 child 和 timeline 不再拥有控件；test API alignment `7a4660a7b3dd060446c22079b40e0bfa0aba89f2` 移除已迁移 callback；implementation `0b316678f22e7c425078926965649891409c7280`。
+
+Browser readback 使用隔离 Browser Use session `r10-r7-browser` 打开 `http://127.0.0.1:1420/`，1258×566 viewport；用 projectPath=null 的内存 fixture 和 4 个合成事件只验证 UI，不创建 ProjectFile/ProjectSession、不运行 Worker 或模型。replay sequence 1/4 时 banner 是 workspace 首 child、可见 rect x=56/y=91/w=910/h=33；英文显示 `Viewing history · Back to live`，中文显示 `正在查看历史 · 回到实时`，按钮为 `回到实时`。点击按钮后读回 banner 消失、timeline sequence=4。截图与 read-back manifest 保存在 ignored `.hermes/reports/assets/r10/r7-replay-banner/`：en-US PNG 37,057 bytes / SHA-256 `91e87da0621f4c2947d4f3d746b856e388a2138596957964f57b621ca2c3fd2d`；zh-CN PNG 36,681 bytes / SHA-256 `221d3b030e63a50d2e09137eed416c0f9fa71a145011d7812e990a95dd1dd130`；manifest 复核两张图均为 1258×566 且 hash 相符。此 Browser fixture 不代表真实 Tauri/native 或 durable ProjectSession/Worker，留 Slice F 验收。
+
+R7 exact review `9855e1a15c286b1593b1aa81a7748704be109ba9..0b316678f22e7c425078926965649891409c7280`（3 commits / 5 files；parent `7a4660a7b3dd060446c22079b40e0bfa0aba89f2`）`passed=true`，security/logic findings 与 suggestions 为空；`checkpoint/r10-replay-banner-unverified-20261022-r10` 指向 reviewed code target。切片在 1.5 小时 start-tag 时间盒内完成；A1 总体验收仍 unverified。
+
+验证结果：
+
+- `npx vitest run src/components/ProfessionalCanvasWorkspace.test.tsx src/components/TaskGrowthTimeline.test.tsx src/components/TopBar.test.tsx --reporter=verbose`：3 个测试文件、21 个测试通过；
+- `npm run test -- --reporter=dot`：265 个测试文件、1,673 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过，2,178 modules transformed；app/root `tsc --noEmit` 均通过；
+- `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
+
+构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings。全量 Vitest 中 `[H4] ... Git top-level probe 失败` 是 `src/dev/gui.test.ts` 指定用例的预期诊断，不是 suite failure。没有 push 或 merge。
