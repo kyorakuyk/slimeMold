@@ -6486,3 +6486,20 @@ R9 final review 发现回放状态下切到 split view 会卸载 `ProfessionalCa
 - `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
 
 构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。R5 在 start tag `checkpoint/r10-replay-split-start-20261022-r10` 的 1 小时时限内完成代码、质量门与 exact review；没有 push 或 merge。
+
+### 7.518 R10 R6 用户介入时间轴标记（slice review passed / overall unverified）
+
+R9 final review 指出 user-authored `TaskAttemptMarkedUnknown` 被投影为通用 unknown marker、`TaskCancelled` 没有用户介入 marker。本轮在事件 marker 分类处按 actor 优先处理这两个事件类型：
+
+- `src/projectControl/graphGrowthProjectionModel.ts`：actor=user 的 unknown/cancel 映射 `user-intervention`；非 user 的 unknown 仍为原 `unknown` kind，`TaskGrowthTimeline` 不显示该 kind。没有改 annulus/ring 行为；R2 unknown 无 annulus 决策保持。
+- `src/projectControl/graphGrowthProjection.test.ts`：复用现有 user-authored unknown 和 cancellation 夹具，断言两者 marker；同一 unknown event 改 actor=system 的 helper regression 断言仍为 `unknown`。先提交 test-only `9860a7e5ed2c8d592d7cdf43d5207e216b6b650d`；focused RED 两项断言失败、其余 8 项通过。全量 build 首次发现 test-only actor marker result 的可选返回值访问缺 optional chaining；test-only commit `4e2da8805f04b7712e287a4e7f51d2f6de3e4ff7` 仅修正类型安全访问，没有改变运行断言。实现 commit `a1eef311ad77bb65c447b9cf2457f4883d13e368`。
+- Exact review `ce8915d26e26e474aeaa0ac889bc306823e2ce39..a1eef311ad77bb65c447b9cf2457f4883d13e368`（3 commits / 2 files；parent `4e2da8805f04b7712e287a4e7f51d2f6de3e4ff7`）`passed=true`，security/logic findings、suggestions 均为空；unverified tag 指向 target。R6 review pass 不代表 A1 verified，只有 Slice F 可根据最终验收决定。
+
+验证结果：
+
+- `npx vitest run src/projectControl/graphGrowthProjection.test.ts src/components/TaskGrowthTimeline.test.tsx --reporter=verbose`：2 个测试文件、15 个测试通过；
+- `npm run test -- --reporter=dot`：265 个测试文件、1,673 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过，2,178 modules transformed；app/root `tsc --noEmit` 均通过；
+- `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
+
+构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。R6 在 start tag `checkpoint/r10-user-intervention-start-20261022-r10` 的 1 小时时限内完成代码、质量门和 exact review；没有 push 或 merge。
