@@ -224,13 +224,6 @@ exports[`graphGrowthProjection > projects queue, leased execution, feedback, blo
     "taskId": "task-failed",
   },
   {
-    "attemptId": "task-execution:run-live-graph:task-unknown:attempt-1",
-    "eventId": "event-16-TaskAttemptMarkedUnknown",
-    "id": "ring:task-execution:run-live-graph:task-unknown:attempt-1",
-    "outcome": "unknown",
-    "taskId": "task-unknown",
-  },
-  {
     "attemptId": "task-execution:run-live-graph:task-complete:attempt-1",
     "eventId": "event-19-TaskSucceeded",
     "id": "ring:task-execution:run-live-graph:task-complete:attempt-1",

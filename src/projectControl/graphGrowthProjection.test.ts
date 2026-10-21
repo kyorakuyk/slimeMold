@@ -160,7 +160,9 @@ describe('graphGrowthProjection', () => {
     const completeModule = projection.nodes.find((node) => node.kind === 'module' && node.moduleId === 'complete');
     expect(projection.edges.find((edge) => edge.targetId === complete?.id)?.eventIds).toContain(successEvent.eventId);
     expect(projection.edges.find((edge) => edge.targetId === completeModule?.id)?.eventIds).toContain(successEvent.eventId);
-    expect(nodeForAttempt(projection, createAttemptId(unknownExecutionId, 1))?.status).toBe('unknown');
+    const unknownAttemptId = createAttemptId(unknownExecutionId, 1);
+    expect(nodeForAttempt(projection, unknownAttemptId)?.status).toBe('unknown');
+    expect(projection.rings.some((ring) => ring.attemptId === unknownAttemptId)).toBe(false);
     expect(nodeForAttempt(projection, retryAttempt1)?.scar).toBe(true);
     expect(nodeForAttempt(projection, retryAttempt2)).toBeDefined();
     expect(projection.rings.some((ring) => ring.attemptId === createAttemptId(failedExecutionId, 1)
