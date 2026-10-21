@@ -165,7 +165,7 @@ describe('graphGrowthProjection', () => {
     expect(nodeForAttempt(projection, unknownAttemptId)?.status).toBe('unknown');
     expect(projection.rings.some((ring) => ring.attemptId === unknownAttemptId)).toBe(false);
     expect(projection.markers.find((marker) => marker.eventId === userUnknownEvent.eventId)?.kind).toBe('user-intervention');
-    expect(eventMarker({ ...userUnknownEvent, actor: 'system' }).kind).toBe('unknown');
+    expect(eventMarker({ ...userUnknownEvent, actor: 'system' })?.kind).toBe('unknown');
     expect(nodeForAttempt(projection, retryAttempt1)?.scar).toBe(true);
     expect(nodeForAttempt(projection, retryAttempt2)).toBeDefined();
     expect(projection.rings.some((ring) => ring.attemptId === createAttemptId(failedExecutionId, 1)
