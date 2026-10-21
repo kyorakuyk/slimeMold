@@ -49,6 +49,7 @@ export default function TopBarActionButtons({
         className="sm-btn px-1.5"
         title={t('topbar.splitView')}
         data-active={splitView}
+        disabled={replayMode}
         onClick={onToggleSplit}
         style={splitView ? { color: 'var(--sm-accent)', background: 'color-mix(in srgb, var(--sm-accent) 14%, transparent)' } : undefined}
       >
