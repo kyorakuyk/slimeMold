@@ -1,10 +1,10 @@
-import { act, type ReactNode } from 'react';
+import { act, StrictMode, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GraphGrowthProjection, GraphGrowthNode, GraphGrowthNodeKind, GraphGrowthStatus } from '../projectControl/graphGrowthProjection';
 
 const graphHarness = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
-const layoutHarness = vi.hoisted(() => ({ options: [] as unknown[], triggerFallback: false }));
+const layoutHarness = vi.hoisted(() => ({ options: [] as unknown[], triggerFallbackOnce: false }));
 
 vi.mock('@xyflow/react', async (importActual) => {
   const actual = await importActual<typeof import('@xyflow/react')>();
@@ -57,7 +57,8 @@ vi.mock('../projectControl/graphGrowthLayout', async (importActual) => {
       const [, , options] = args;
       layoutHarness.options.push(options);
       const positions = actual.layoutGraphGrowth(...args);
-      if (layoutHarness.triggerFallback) {
+      if (layoutHarness.triggerFallbackOnce) {
+        layoutHarness.triggerFallbackOnce = false;
         const marker = (options as unknown as {
           onCacheFallback?: (rootNodeId: string) => void;
         } | undefined)?.onCacheFallback;
@@ -134,7 +135,7 @@ describe('LivingGraph', () => {
   beforeEach(() => {
     graphHarness.props = [];
     layoutHarness.options = [];
-    layoutHarness.triggerFallback = false;
+    layoutHarness.triggerFallbackOnce = false;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -249,11 +250,11 @@ describe('LivingGraph', () => {
   });
 
   it('exposes the fallback count from the production layout call', async () => {
-    layoutHarness.triggerFallback = true;
+    layoutHarness.triggerFallbackOnce = true;
     const session = graphNode('session:layout-fallback', 'session', 'idle');
 
     await act(async () => {
-      root.render(<LivingGraph projection={projection([session])} />);
+      root.render(<StrictMode><LivingGraph projection={projection([session])} /></StrictMode>);
     });
 
     expect(layoutHarness.options.at(-1)).toHaveProperty('onCacheFallback', expect.any(Function));
