@@ -164,6 +164,26 @@ export default function ProfessionalCanvasWorkspace({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col" data-testid="professional-canvas-workspace">
+      {replaying && (
+        <div
+          className="flex shrink-0 items-center justify-between gap-2 border-b border-sm-line bg-sm-bg-soft px-4 py-2 text-xs text-sm-ink-soft"
+          role="status"
+          data-testid="timeline-replay-state"
+        >
+          <span>{t('timeline.replay.title')}</span>
+          <div className="flex items-center gap-2">
+            <span aria-hidden="true">·</span>
+            <button
+              type="button"
+              className="font-medium text-sm-ink underline-offset-2 hover:underline"
+              data-testid="timeline-return-live"
+              onClick={returnToLive}
+            >
+              {t('timeline.returnToLive')}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-sm-line px-3" role="tablist" aria-label={t('canvas.livingGraph.tabs')}>
         <button
           id="professional-canvas-graph-tab"
@@ -236,7 +256,6 @@ export default function ProfessionalCanvasWorkspace({
         events={events}
         projection={projection}
         onSeek={handleSeek}
-        onReturnToLive={returnToLive}
       />
     </div>
   );

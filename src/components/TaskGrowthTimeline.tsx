@@ -7,7 +7,6 @@ export interface TaskGrowthTimelineProps {
   events: readonly DomainEvent[];
   projection: GraphGrowthProjection;
   onSeek: (sequence: number) => void;
-  onReturnToLive: () => void;
 }
 
 interface DensityBucket {
@@ -62,12 +61,10 @@ export default function TaskGrowthTimeline({
   events,
   projection,
   onSeek,
-  onReturnToLive,
 }: TaskGrowthTimelineProps) {
   const t = useT();
   const lastSequence = projection.lastSequence;
   const currentSequence = Math.min(Math.max(projection.uptoSeq, 0), lastSequence);
-  const replaying = currentSequence < lastSequence;
   const buckets = densityBuckets(events, lastSequence);
   const maxDensity = Math.max(1, ...buckets.map((bucket) => bucket.count));
   const markers = projection.markers
@@ -80,26 +77,8 @@ export default function TaskGrowthTimeline({
 
   return (
     <section className="sm-growth-timeline border-t border-sm-line px-4 py-3" aria-label={t('timeline.title')}>
-      <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <header className="mb-3">
         <h2 className="text-xs font-semibold text-sm-ink-soft">{t('timeline.title')}</h2>
-        {replaying && (
-          <div
-            className="flex items-center gap-2 rounded-full border border-sm-line px-2.5 py-1 text-xs text-sm-ink-soft"
-            role="status"
-            data-testid="timeline-replay-state"
-          >
-            <span>{t('timeline.replay.title')}</span>
-            <span aria-hidden="true">·</span>
-            <button
-              type="button"
-              className="font-medium text-sm-ink underline-offset-2 hover:underline"
-              data-testid="timeline-return-live"
-              onClick={onReturnToLive}
-            >
-              {t('timeline.returnToLive')}
-            </button>
-          </div>
-        )}
       </header>
 
       {lastSequence > 0 && events.length > 0 ? (
