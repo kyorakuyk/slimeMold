@@ -6467,3 +6467,22 @@ R4 同机 profiling 暴露布局候选槽位逐次扫描全部已占坐标是主
 - `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
 
 构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。性能原始 JSON、CPU profiles 与 R9 fixture hash/read-back 记录存于 ignored `.hermes/reports/assets/r10/a1-layout-perf-*`；R9 合成事件文件内容 hash 未变（3,466,378 bytes，SHA-256 `0e3e18d3db36ab0942b8669577424c4c7dc9b973fcc11c697f4ed532ba79d6ac`），仅 mtime 因 smoke script 重写而更新。
+
+### 7.517 R10 R5 回放态分屏切换门控（slice review passed / overall unverified）
+
+R9 final review 发现回放状态下切到 split view 会卸载 `ProfessionalCanvasWorkspace`，cleanup 将 `replayMode` 清零并重新开放编辑/运行入口。本轮封住唯一的分屏切换控制：
+
+- `src/components/topBar/TopBarActionButtons.tsx`：split-view button 增加原生 `disabled={replayMode}`；`TopBar` 是唯一 `toggleSplit` 生产 caller，App 的 `SplitCanvas`/replay workspace 分支由同一个 `splitView` store 值控制。
+- `src/components/TopBar.test.tsx`：新增真实 `viewStore` regression，断言 replay 时按钮 disabled、点击不改变 splitView、禁用按钮无法获得焦点；模拟 return-to-live 后按钮重新 enabled 且点击会切换。
+- 先单独提交 test commit `22b80f32306b5d304641aa65954a8e0c2035013b`，focused RED 为 10 tests 中 9 passed、1 failed，失败精确为 replay 时 split button 仍 enabled；实现 commit `d51a2b7d2aabc3d588c4b4fbd0321aaa44636639`。`checkpoint/r10-replay-split-red-20261022-r10` 与 `checkpoint/r10-replay-split-unverified-20261022-r10` 分别锚定 RED 与实现 target。
+- 额外入口盘点：File/Edit/Run 菜单项在 replay 下 disabled；View menu 无 split action；header simple-view switch、editor tab 已按回放门控；BeginnerExperience 的 advanced 入口仅在 simple mode 渲染；TopBar/global keyboard handlers 没有 split/workspace shortcut，且已有 replay-sensitive commands 被拦截。未发现其它分屏开关或能在同项目历史回放期间卸载 replay owner 的入口。
+- Exact review `80e289f746dd2f7ee743ee6a9f7e0fa1037b7fcf..d51a2b7d2aabc3d588c4b4fbd0321aaa44636639`（2 commits / 2 files；parent `22b80f32306b5d304641aa65954a8e0c2035013b`）`passed=true`，security/logic findings、suggestions 均为空。R5 仍保持 unverified；A1 overall 仅能由 Slice F 按最终验收决定。
+
+验证结果：
+
+- `npx vitest run src/components/TopBar.test.tsx src/app/globalShortcuts.test.ts --reporter=verbose`：2 个测试文件、14 个测试通过；
+- `npm run test -- --reporter=dot`：265 个测试文件、1,673 个测试通过；
+- `npm run build`：TypeScript/Vite 构建通过，2,178 modules transformed；app/root `tsc --noEmit` 均通过；
+- `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
+
+构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，无新增失败。R5 在 start tag `checkpoint/r10-replay-split-start-20261022-r10` 的 1 小时时限内完成代码、质量门与 exact review；没有 push 或 merge。
