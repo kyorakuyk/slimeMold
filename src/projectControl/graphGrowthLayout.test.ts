@@ -121,4 +121,36 @@ describe('layoutGraphGrowth', () => {
     expect(positions.get(addedTask.id)!.y).toBeGreaterThan(positions.get(module.id)!.y + NODE_HEIGHT);
     expectNoOverlaps([session, module, existingTask, addedTask], positions);
   });
+
+  it('reflows an extreme cached parent subtree when the first child row cannot advance', () => {
+    const session = growthNode('session:extreme-y-free-slot', 'session');
+    const parent = growthNode('module:extreme-y-free-slot', 'module', session.id);
+    const child = growthNode('task:extreme-y-free-slot', 'task', parent.id);
+    const fallbackRoots: string[] = [];
+    const cached = new Map([[parent.id, { x: 0, y: Number.MAX_VALUE }]]);
+
+    const positions = layoutGraphGrowth([session, parent, child], cached, {
+      onCacheFallback: (nodeId: string) => fallbackRoots.push(nodeId),
+    });
+
+    expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
+    expectNoOverlaps([session, parent, child], positions);
+    expect(fallbackRoots).toEqual([parent.id]);
+  });
+
+  it('reflows instead of throwing when an extreme parent blocks every advancing horizontal slot', () => {
+    const session = growthNode('session:extreme-y-blocked-slots', 'session');
+    const parent = growthNode('module:extreme-y-blocked-slots', 'module', session.id);
+    const child = growthNode('task:extreme-y-blocked-slots', 'task', parent.id);
+    const fallbackRoots: string[] = [];
+    const cached = new Map([[parent.id, { x: Number.MAX_VALUE, y: Number.MAX_VALUE }]]);
+
+    const positions = layoutGraphGrowth([session, parent, child], cached, {
+      onCacheFallback: (nodeId: string) => fallbackRoots.push(nodeId),
+    });
+
+    expect(positions.get(child.id)!.y).toBeGreaterThan(positions.get(parent.id)!.y);
+    expectNoOverlaps([session, parent, child], positions);
+    expect(fallbackRoots).toEqual([parent.id]);
+  });
 });
