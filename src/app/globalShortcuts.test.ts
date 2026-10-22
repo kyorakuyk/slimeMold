@@ -70,19 +70,34 @@ describe('global shortcuts adapter', () => {
     let replayMode = true;
     const dispose = installGlobalShortcuts({ ...deps, isReplayMode: () => replayMode });
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
+    const replayActions = ['s', 'z', 'y', 'n', 'c', 'v', 'd', 'a', 'b', 'm', 'g'];
+    for (const key of replayActions) {
+      const event = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented, `Ctrl+${key.toUpperCase()} should be blocked in replay`).toBe(true);
+    }
 
     expect(deps.exportWorkflow).not.toHaveBeenCalled();
     expect(deps.undo).not.toHaveBeenCalled();
+    expect(deps.redo).not.toHaveBeenCalled();
     expect(deps.newWorkflowInProject).not.toHaveBeenCalled();
+    expect(deps.copySelection).not.toHaveBeenCalled();
+    expect(deps.pasteClipboard).not.toHaveBeenCalled();
+    expect(deps.duplicateSelection).not.toHaveBeenCalled();
+    expect(deps.selectAll).not.toHaveBeenCalled();
+    expect(deps.toggleNodeBypass).not.toHaveBeenCalled();
+    expect(deps.toggleNodeMute).not.toHaveBeenCalled();
     expect(deps.createGroup).not.toHaveBeenCalled();
 
     replayMode = false;
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true }));
     expect(deps.undo).toHaveBeenCalledOnce();
+    expect(deps.copySelection).toHaveBeenCalledOnce();
+    expect(deps.pasteClipboard).toHaveBeenCalledOnce();
+    expect(deps.redo).toHaveBeenCalledOnce();
     dispose();
   });
 

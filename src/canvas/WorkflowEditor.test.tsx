@@ -1,10 +1,11 @@
-import { act, type ReactNode } from 'react';
+import { act, type ComponentType, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const canvasHarness = vi.hoisted(() => ({
   storeApis: [] as unknown[],
   reactFlowProps: [] as Array<Record<string, unknown>>,
+  useRealReactFlow: false,
   runWorkflow: vi.fn(),
   stopWorkflow: vi.fn(),
 }));
@@ -12,11 +13,15 @@ const canvasHarness = vi.hoisted(() => ({
 vi.mock('@xyflow/react', async (importActual) => {
   const actual = await importActual<typeof import('@xyflow/react')>();
   const React = await import('react');
+  const RealReactFlow = actual.ReactFlow as unknown as ComponentType<
+    Record<string, unknown> & { children?: ReactNode }
+  >;
   return {
     ...actual,
     ReactFlow: (props: Record<string, unknown> & { children?: ReactNode }) => {
       canvasHarness.storeApis.push(actual.useStoreApi());
       canvasHarness.reactFlowProps.push(props);
+      if (canvasHarness.useRealReactFlow) return React.createElement(RealReactFlow, props);
       return React.createElement('div', { 'data-testid': 'workflow-editor-flow' }, props.children);
     },
     Panel: ({ children }: { children?: ReactNode }) =>
@@ -39,10 +44,10 @@ vi.mock('../i18n/useT', () => ({
     options ? `${key} ${JSON.stringify(options)}` : key,
 }));
 
-import { ReactFlowProvider, useStoreApi } from '@xyflow/react';
+import { ReactFlowProvider, useStoreApi, type Connection, type OnEdgesChange, type OnNodesChange } from '@xyflow/react';
 import { STARTER_TEMPLATES } from '../data/starterTemplates';
 import { useWorkflowStore } from '../store/workflowStore';
-import type { FlowNode } from '../types/graph';
+import type { FlowEdge, FlowNode } from '../types/graph';
 import type { WorkflowFileInMemory } from '../types/workflow';
 import WorkflowEditor, { DND_MIME } from './WorkflowEditor';
 
@@ -117,6 +122,7 @@ describe('WorkflowEditor characterization', () => {
     resetCanvasStore();
     canvasHarness.storeApis.length = 0;
     canvasHarness.reactFlowProps.length = 0;
+    canvasHarness.useRealReactFlow = false;
     canvasHarness.runWorkflow.mockReset().mockResolvedValue(undefined);
     canvasHarness.stopWorkflow.mockReset();
   });
@@ -125,6 +131,7 @@ describe('WorkflowEditor characterization', () => {
     act(() => root.unmount());
     container.remove();
     resetCanvasStore();
+    canvasHarness.useRealReactFlow = false;
   });
 
   it('keeps the empty-canvas new-project action on the supplied owner callback', async () => {
@@ -183,6 +190,117 @@ describe('WorkflowEditor characterization', () => {
     expect(cmdSpace.defaultPrevented).toBe(false);
     expect(container.querySelector('input')).toBeNull();
   });
+
+  it.each(['Backspace', 'Delete'] as const)(
+    'does not let the mounted hidden ReactFlow delete selected nodes with document %s during replay',
+    async (key) => {
+      await act(async () => {
+        await useWorkflowStore.getState().newWorkflowInProject();
+      });
+      const initial = useWorkflowStore.getState();
+      const wfId = initial.activeWfId;
+      const workflow = initial.workflows[wfId];
+      expect(workflow).toBeDefined();
+
+      const nodes: FlowNode[] = [
+        {
+          id: 'r11-node-a',
+          type: 'base',
+          position: { x: 80, y: 60 },
+          data: { typeId: 'input.text', label: 'A', params: {}, status: 'idle' },
+          selected: true,
+        } as FlowNode,
+        {
+          id: 'r11-node-b',
+          type: 'base',
+          position: { x: 260, y: 60 },
+          data: { typeId: 'input.text', label: 'B', params: {}, status: 'idle' },
+          selected: true,
+        } as FlowNode,
+      ];
+      const edges: FlowEdge[] = [{
+        id: 'r11-edge-ab',
+        source: 'r11-node-a',
+        target: 'r11-node-b',
+        type: 'kind',
+        data: { kind: 'data' },
+        selected: true,
+      }];
+      useWorkflowStore.setState({
+        nodes,
+        edges,
+        selectedIds: nodes.map((node) => node.id),
+        workflows: { ...initial.workflows, [wfId]: { ...workflow!, nodes, edges } },
+      });
+
+      canvasHarness.useRealReactFlow = true;
+      const renderHiddenEditor = (isActive: boolean) => root.render(
+        <ReactFlowProvider>
+          <div hidden={!isActive} style={{ width: 800, height: 600 }}>
+            <WorkflowEditor isActive={isActive} />
+          </div>
+        </ReactFlowProvider>,
+      );
+      await act(async () => renderHiddenEditor(true));
+      await act(async () => renderHiddenEditor(false));
+
+      const keyDown = () => document.dispatchEvent(new KeyboardEvent('keydown', {
+        key,
+        code: key,
+        bubbles: true,
+        cancelable: true,
+      }));
+      const keyUp = () => document.dispatchEvent(new KeyboardEvent('keyup', {
+        key,
+        code: key,
+        bubbles: true,
+        cancelable: true,
+      }));
+      await act(async () => {
+        keyDown();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => keyUp());
+
+      expect(useWorkflowStore.getState().nodes.map((node) => node.id)).toEqual(['r11-node-a', 'r11-node-b']);
+      expect(useWorkflowStore.getState().edges.map((edge) => edge.id)).toEqual(['r11-edge-ab']);
+      const replayProps = canvasHarness.reactFlowProps.at(-1)!;
+      expect(replayProps.deleteKeyCode).toBeNull();
+      expect(replayProps.disableKeyboardA11y).toBe(true);
+      expect(replayProps.nodesDraggable).toBe(false);
+      expect(replayProps.nodesConnectable).toBe(false);
+      expect(replayProps.elementsSelectable).toBe(false);
+      expect(replayProps.edgesReconnectable).toBe(false);
+      expect(replayProps.onReconnect).toBeUndefined();
+
+      const replayOnNodesChange = replayProps.onNodesChange as OnNodesChange<FlowNode>;
+      const replayOnEdgesChange = replayProps.onEdgesChange as OnEdgesChange<FlowEdge>;
+      const replayOnConnect = replayProps.onConnect as (connection: Connection) => void;
+      await act(async () => {
+        replayOnNodesChange([{ type: 'remove', id: 'r11-node-a' }]);
+        replayOnEdgesChange([{ type: 'remove', id: 'r11-edge-ab' }]);
+        replayOnConnect({ source: 'r11-node-a', target: 'r11-node-b' });
+      });
+      expect(useWorkflowStore.getState().nodes.map((node) => node.id)).toEqual(['r11-node-a', 'r11-node-b']);
+      expect(useWorkflowStore.getState().edges.map((edge) => edge.id)).toEqual(['r11-edge-ab']);
+
+      await act(async () => renderHiddenEditor(true));
+      const liveProps = canvasHarness.reactFlowProps.at(-1)!;
+      expect(liveProps.deleteKeyCode).toEqual(['Backspace', 'Delete']);
+      expect(liveProps.disableKeyboardA11y).toBe(false);
+      expect(liveProps.nodesDraggable).toBe(true);
+      expect(liveProps.nodesConnectable).toBe(true);
+      expect(liveProps.elementsSelectable).toBe(true);
+      expect(liveProps.edgesReconnectable).toBe(true);
+      await act(async () => {
+        keyDown();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => keyUp());
+      expect(useWorkflowStore.getState().nodes).toHaveLength(0);
+      expect(useWorkflowStore.getState().edges).toHaveLength(0);
+    },
+  );
 
   it('loads a starter template through the real project workflow store', async () => {
     const template = STARTER_TEMPLATES[0];
