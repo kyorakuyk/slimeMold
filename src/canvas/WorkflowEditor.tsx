@@ -105,12 +105,13 @@ function WorkflowEditorInner({
   // （原实现依赖节点瞬态 selected 字段，拆分视图右栏的运行态节点不会被同步，导致全图误选堆叠）
   const onSelectionChange = useCallback(
     ({ nodes: selNodes }: { nodes: FlowNode[] }) => {
+      if (!isActive) return;
       // 右键框选期间不写入，避免覆盖框选结果
       if (suppressSelectionSync.current) return;
       // 仅维护 selectedIds 供对齐/分布使用；不回写节点 selected，避免与受控渲染形成无限循环
       setSelectedIds(selNodes.map((n) => n.id));
     },
-    [setSelectedIds],
+    [isActive, setSelectedIds],
   );
   const groups = useWorkflowStore((s) => s.groups);
   const allDefs = useRegistryStore((s) => s.defs);
@@ -130,18 +131,24 @@ function WorkflowEditorInner({
     subgraphs,
   });
 
-  const onNodesChange: OnNodesChange<FlowNode> = isSplit
-    ? (changes) => setSplitNodes((ns) => applyNodeChanges(changes, ns))
-    : storeOnNodesChange;
-  const onEdgesChange: OnEdgesChange<FlowEdge> = isSplit
-    ? (changes) => setSplitEdges((es) => applyEdgeChanges(changes, es))
-    : storeOnEdgesChange;
-  const onConnect: (conn: Connection) => void = isSplit
-    ? (conn) =>
+  const onNodesChange: OnNodesChange<FlowNode> = !isActive
+    ? () => {}
+    : isSplit
+      ? (changes) => setSplitNodes((ns) => applyNodeChanges(changes, ns))
+      : storeOnNodesChange;
+  const onEdgesChange: OnEdgesChange<FlowEdge> = !isActive
+    ? () => {}
+    : isSplit
+      ? (changes) => setSplitEdges((es) => applyEdgeChanges(changes, es))
+      : storeOnEdgesChange;
+  const onConnect: (conn: Connection) => void = !isActive
+    ? () => {}
+    : isSplit
+      ? (conn) =>
         setSplitEdges((es) =>
           addEdge({ ...conn, id: `e-${conn.source}-${conn.target}-${Date.now()}`, type: 'kind', data: { kind: 'data' } }, es),
         )
-    : storeOnConnect;
+      : storeOnConnect;
 
   // 重新连线：环路/类型校验与「主画布写 store / 分栏写本地副本」的分支由 useCanvasReconnect 拥有
   const onReconnect = useCanvasReconnect({ isSplit, nodes, setSplitEdges, t });
@@ -214,10 +221,10 @@ function WorkflowEditorInner({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onReconnect={onReconnect}
-        onConnectEnd={nodePicker.onConnectEnd}
+        onReconnect={isActive ? onReconnect : undefined}
+        onConnectEnd={isActive ? nodePicker.onConnectEnd : undefined}
         isValidConnection={isValidConnection}
-        onSelectionChange={onSelectionChange}
+        onSelectionChange={isActive ? onSelectionChange : undefined}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={(_, node) => {
           if (node.type === 'groupProxy') {
@@ -267,17 +274,22 @@ function WorkflowEditorInner({
         // 子图编辑视图打开时，父图 ReactFlow 实例仍需挂载（作为兄弟节点），
         // 但其 deleteKeyCode 监听挂在 document 上会与子图实例冲突（误删分组）。
         // 因此子图打开期间临时禁用父图删除快捷键，交由其内部实例处理。
-        deleteKeyCode={focusedSubgraphId ? null : ['Backspace', 'Delete']}
+        deleteKeyCode={isActive && !focusedSubgraphId ? ['Backspace', 'Delete'] : null}
         // 中键（button 1）始终拖动画布；右键长按（rightSelecting）时仅中键平移，左键用于框选
-        panOnDrag={panOnDrag}
-        selectionOnDrag={selectionOnDrag}
+        panOnDrag={isActive ? panOnDrag : false}
+        selectionOnDrag={isActive && selectionOnDrag}
         selectionMode={selectionOnDrag ? SelectionMode.Partial : SelectionMode.Full}
         // 滚轮始终缩放画布（不平移），与鼠标模式无关
         panOnScroll={false}
         zoomOnScroll
         selectionKeyCode={null}
         multiSelectionKeyCode={['Meta', 'Shift', 'Control']}
-        nodesDraggable
+        nodesDraggable={isActive}
+        nodesConnectable={isActive}
+        elementsSelectable={isActive}
+        edgesReconnectable={isActive}
+        edgesFocusable={isActive}
+        disableKeyboardA11y={!isActive}
         fitView
         onMoveEnd={(_, vp) => setZoomPct(Math.round(vp.zoom * 100))}
         proOptions={{ hideAttribution: true }}

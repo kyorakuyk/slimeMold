@@ -279,7 +279,7 @@ describe('WorkflowEditor characterization', () => {
       await act(async () => {
         replayOnNodesChange([{ type: 'remove', id: 'r11-node-a' }]);
         replayOnEdgesChange([{ type: 'remove', id: 'r11-edge-ab' }]);
-        replayOnConnect({ source: 'r11-node-a', target: 'r11-node-b' });
+        replayOnConnect({ source: 'r11-node-a', target: 'r11-node-b', sourceHandle: null, targetHandle: null });
       });
       expect(useWorkflowStore.getState().nodes.map((node) => node.id)).toEqual(['r11-node-a', 'r11-node-b']);
       expect(useWorkflowStore.getState().edges.map((edge) => edge.id)).toEqual(['r11-edge-ab']);
