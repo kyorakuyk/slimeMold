@@ -6520,3 +6520,13 @@ R7 exact review `9855e1a15c286b1593b1aa81a7748704be109ba9..0b316678f22e7c4250789
 - `npm run i18n:check`：中英文 1,457 个 key 对齐；`git diff --check`：无空白错误。
 
 构建保留既有 mixed dynamic/static import 与 >500 kB chunk warnings。全量 Vitest 中 `[H4] ... Git top-level probe 失败` 是 `src/dev/gui.test.ts` 指定用例的预期诊断，不是 suite failure。没有 push 或 merge。
+
+### 7.520 R10 Slice F 终验发现隐藏 WorkflowEditor 快捷键旁路（overall unverified）
+
+代码目标 `0e4e52030d0647d5edcfae758225ee3b2c9151f3`，full-range base `e1fa8f92f76c18be70da0b4fb83a80f38bc21619`，68 commits / 38 files。最终同目标质量门：`npm run test -- --reporter=dot` 265 files / 1,673 passed；`npm run build` 2,178 modules、exit 0（保留既有 mixed dynamic/static import 与 >500 kB chunk warnings，main bundle 1,437.03 kB）；app/root TypeScript no-emit、`npm run i18n:check` 1,457 keys、`git diff --check` 均 exit 0。Node v26.12.0 / win32 x64；CI target Node 22。
+
+Readability metrics R9→R10：production 380 files / 73,380→73,490 LOC；tests 266 files / 43,124→43,340 LOC；总计646 files / 116,504→116,830 LOC。Perf smoke 4,801 events / 800 tasks / 2,441 nodes，projection median/max 336.7382/383.7992 ms、layout 200.8254/205.8819 ms，均低于1秒。metrics/perf JSON 保存在 ignored `.hermes/reports/assets/r10/quality/`。
+
+Browser/Tauri 双语读回：Browser 52+6 张截图；真实 native Tauri/CDP 64 张矩阵图，另有 en-US/zh-CN 两张原生 unknown-attempt 截图。截图 hash/bytes 完整复核通过，记录的 console exceptions/dialogs/provider/non-local request 均为0。Tauri fixture 是 synthetic（10 events、0 ProjectSessions、0 WorkerRuns），没有真实 Worker 或模型调用；不能据此声称真实 ProjectSession 验收。证据归档在 ignored `.hermes/reports/assets/r10/final-gui-20261022-0e4e520/`。
+
+Full-range exact reviewer 确认 R9 的四项逻辑 blocker 与顶部 banner UI gap 均 fixed，但 `passed=false`：replay 时 `ProfessionalCanvasWorkspace` 仍挂载隐藏的 `WorkflowEditor`；`isActive=false` 只约束 node picker，而 `deleteKeyCode` 仍为 Backspace/Delete。ReactFlow 全局 document listener 在 editor hidden 时仍可删除预选节点并经 `storeOnNodesChange` 更新 workflow store，绕过 replay gate。源码路径已核对；本轮没有时间在 F deadline 前完成 RED→GREEN、全量 gates 与重新 review，故未改代码。当前 A1 checklist 4 未满足；checklist 5 的真实 ProjectSession 进入路径未由 synthetic fixture 证明（reviewer 列为 deferred suggestion，受本轮禁止创建真实 ProjectSession 的约束）。保留 reviewer 建议：测量事件解析/poll 成本；无 final verified/unverified tags，仅保留 F start tag。报告与 strict JSON verdict 见 `.hermes/reports/2026-10-22-r10.md`。没有 push/merge。
